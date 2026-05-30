@@ -78,6 +78,13 @@ Recoverable in a focused pass, not a rewrite.
 - **E-d — IV rank uses last *stored* IV, not live** (`iv.py:34`).
 - **E-e — Roll execution undefined** — `build_limit_order` always single-leg SELL; nothing stops a `ROLL`
   candidate reaching the executor.
+- **E-f — EOD realized-P&L day window mixes local and UTC dates** (`eod_report.py:40`). `_compute_realized_pnl`
+  builds the day window as `datetime(today.year, today.month, today.day, tzinfo=UTC)` from a *local*
+  `date.today()`. In UTC+8 (your tz), between local midnight and 08:00 the local date is ahead of the UTC
+  date, so fills stored via `datetime.now(UTC)` fall outside the UTC window and realized P&L reads 0.
+  Surfaced by `test_compute_realized_pnl_sums_fills` failing when run just after local midnight. Pre-existing
+  (fails on the baseline commit too). Fix: anchor the EOD "day" to the market timezone (ET) consistently for
+  both storage comparison and the window. Tracked in Phase D.
 
 ---
 
@@ -109,6 +116,8 @@ Recoverable in a focused pass, not a rewrite.
 11. Write `filled` (executor), `risk_rejected` (approval re-validation), `expired` (TTL) outcomes. *(L1)*
 12. Pass quotes into `get_iv_stats`; fix `_infer_spot` via put-call parity or `ticker.last`. *(L2)*
 13. Honor `min_candidate_score` / `top_n_for_claude`, or delete them. *(L5)*
+13b. Anchor the EOD realized-P&L day window to the market timezone (ET) for both storage comparison
+    and the window bounds, so it doesn't read 0 across the local/UTC midnight gap. *(E-f)*
 
 ### Phase E — Robustness & efficiency (post-safety)  ☐
 14. Replace `run_in_executor` IB calls with proper async on the loop thread. *(L3)*

@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from src.common.schemas import (
     AccountSnapshot,
+    OptionQuote,
     OptionRight,
     PositionSnapshot,
     ScoreCard,
@@ -14,7 +15,7 @@ from src.common.schemas import (
     Verdict,
 )
 from src.engine.decision_engine import select_top_candidates
-from src.engine.risk_engine import validate_candidates
+from src.engine.risk_engine import validate_candidates, validate_live_quote
 from src.engine.scoring import score_candidates
 
 # ---------------------------------------------------------------------------
@@ -55,6 +56,7 @@ def _candidate(
     delta: float | None = -0.20,
     contracts: int = 1,
     collateral: float = 3_000.0,
+    iv_rank: float | None = None,
 ) -> TradeCandidate:
     return TradeCandidate(
         candidate_id=candidate_id,
@@ -70,6 +72,7 @@ def _candidate(
         annualized_yield_pct=annualized_yield_pct,
         breakeven=147.0,
         delta=delta,
+        iv_rank=iv_rank,
         dte=dte,
         scores=scores or _scores(),
     )
@@ -263,9 +266,12 @@ class TestValidateCandidates:
         verdicts = validate_candidates([_candidate(delta=-0.50)], _account(), [])
         assert "delta_out_of_range" in verdicts[0].reasons
 
-    def test_skip_delta_check_when_none(self) -> None:
+    def test_missing_delta_rejected_for_income_strategy(self) -> None:
+        # Missing greeks on a CC/CSP must REJECT (defense-in-depth), not silently pass.
         verdicts = validate_candidates([_candidate(delta=None)], _account(), [])
+        assert "delta_missing" in verdicts[0].reasons
         assert "delta_out_of_range" not in verdicts[0].reasons
+        assert verdicts[0].verdict == Verdict.REJECT
 
     def test_reject_no_contracts(self) -> None:
         verdicts = validate_candidates([_candidate(contracts=0)], _account(), [])
@@ -339,3 +345,151 @@ class TestValidateCandidates:
         candidates = [_candidate(candidate_id=str(i)) for i in range(5)]
         verdicts = validate_candidates(candidates, _account(), [])
         assert len(verdicts) == 5
+
+    # --- Cumulative / portfolio-aware enforcement (S2) ---
+
+    def test_cumulative_concentration_across_same_ticker(self) -> None:
+        # max 5% of 100k = 5000. Three AAPL candidates @ 3000 collateral each: only the
+        # first fits; the next two breach the per-ticker cap cumulatively.
+        cands = [
+            _candidate(candidate_id=f"c{i}", underlying="AAPL", collateral=3_000.0)
+            for i in range(3)
+        ]
+        verdicts = validate_candidates(cands, _account(net_liquidation=100_000.0), [])
+        passed = [v for v in verdicts if v.verdict == Verdict.PASS]
+        assert len(passed) == 1
+        assert all("concentration_limit" in v.reasons for v in verdicts if v.verdict == Verdict.REJECT)
+
+    def test_cumulative_buying_power_buffer(self) -> None:
+        # bp=20k, required buffer=15% of 100k=15k → only 5k of NEW collateral fits.
+        acc = _account(net_liquidation=100_000.0, buying_power=20_000.0, maintenance_margin=10_000.0)
+        # Use distinct tickers so per-ticker concentration doesn't mask the BP check.
+        cands = [
+            _candidate(candidate_id="a", underlying="AAPL", collateral=4_000.0),
+            _candidate(candidate_id="b", underlying="MSFT", collateral=4_000.0),
+        ]
+        verdicts = validate_candidates(cands, acc, [])
+        assert verdicts[0].verdict == Verdict.PASS  # 20k-4k=16k >= 15k
+        assert "buying_power_buffer" in verdicts[1].reasons  # 20k-8k=12k < 15k
+
+    # --- Sector concentration (S1) ---
+
+    def test_sector_within_cap_passes(self) -> None:
+        # Four "tech" names (AAPL/MSFT/GOOGL/AMZN per universe.yaml) @ 4k each on a 100k
+        # account: each under the 5% ticker cap (5k), tech bucket 16k under the 25% cap (25k).
+        acc = _account(net_liquidation=100_000.0, buying_power=90_000.0, maintenance_margin=0.0)
+        cands = [
+            _candidate(candidate_id="aapl", underlying="AAPL", collateral=4_000.0),
+            _candidate(candidate_id="msft", underlying="MSFT", collateral=4_000.0),
+            _candidate(candidate_id="googl", underlying="GOOGL", collateral=4_000.0),
+            _candidate(candidate_id="amzn", underlying="AMZN", collateral=4_000.0),
+        ]
+        verdicts = validate_candidates(cands, acc, [])
+        assert all(v.verdict == Verdict.PASS for v in verdicts)
+        assert all("sector_limit" not in v.reasons for v in verdicts)
+
+    def test_sector_limit_binds_with_existing_position(self) -> None:
+        # Existing NVDA (semis) position already fills most of the 25% sector cap (25k of 100k).
+        # A new SMH (also semis) candidate @ 4k tips the semis bucket to 27k > 25k → sector_limit,
+        # while SMH itself stays under the 5% ticker cap.
+        existing = PositionSnapshot(
+            symbol="NVDA", sec_type="STK", position=100.0, avg_cost=230.0, market_value=23_000.0
+        )
+        cand = _candidate(underlying="SMH", collateral=4_000.0)
+        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing])
+        assert "sector_limit" in verdicts[0].reasons
+        assert "concentration_limit" not in verdicts[0].reasons  # SMH ticker itself is fine
+
+    # --- CSP allocation cap (S1/S3) ---
+
+    def test_csp_allocation_within_cap_passes(self) -> None:
+        # CSP cap = 60% of 100k = 60k. One small CSP well under it must not trip the cap.
+        cand = _candidate(strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20)
+        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [])
+        assert "csp_allocation_limit" not in verdicts[0].reasons
+
+    def test_csp_allocation_cap_binds_with_existing_puts(self) -> None:
+        # Existing short put ties up 57k of the 60k CSP budget (strike 570 * 100 * 1).
+        # A new 4k CSP on an unmapped ticker tips total CSP collateral to 61k > 60k.
+        existing_put = PositionSnapshot(
+            symbol="SPYPUT", sec_type="OPT", position=-1.0, avg_cost=5.0,
+            right=OptionRight.PUT, strike=570.0,
+        )
+        cand = _candidate(
+            underlying="ZZTOP", strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20
+        )
+        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing_put])
+        assert "csp_allocation_limit" in verdicts[0].reasons
+        assert "concentration_limit" not in verdicts[0].reasons
+
+    # --- IV rank gate (S1) ---
+
+    def test_iv_rank_below_minimum_rejected(self) -> None:
+        verdicts = validate_candidates([_candidate(iv_rank=10.0)], _account(), [])
+        assert "iv_rank_below_minimum" in verdicts[0].reasons
+
+    def test_iv_rank_none_does_not_reject(self) -> None:
+        # Missing IV history must not silently zero out the scan.
+        verdicts = validate_candidates([_candidate(iv_rank=None)], _account(), [])
+        assert "iv_rank_below_minimum" not in verdicts[0].reasons
+
+    def test_iv_rank_above_minimum_passes(self) -> None:
+        verdicts = validate_candidates([_candidate(iv_rank=80.0)], _account(), [])
+        assert "iv_rank_below_minimum" not in verdicts[0].reasons
+
+    # --- Earnings blackout (F3) ---
+
+    def test_earnings_within_option_life_rejected(self) -> None:
+        # Earnings before expiry → option lives through earnings → reject.
+        cand = _candidate(dte=30)
+        cand = cand.model_copy(update={"next_earnings": date.today() + timedelta(days=10)})
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "earnings_blackout" in verdicts[0].reasons
+
+    def test_no_earnings_date_does_not_reject(self) -> None:
+        verdicts = validate_candidates([_candidate(dte=30)], _account(), [])
+        assert "earnings_blackout" not in verdicts[0].reasons
+
+    def test_earnings_after_expiry_not_blackout(self) -> None:
+        # Earnings well after expiry and beyond the blackout window → allowed.
+        cand = _candidate(dte=21)
+        cand = cand.model_copy(update={"next_earnings": date.today() + timedelta(days=90)})
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "earnings_blackout" not in verdicts[0].reasons
+
+
+# ---------------------------------------------------------------------------
+# risk_engine.py — validate_live_quote (send-time second gate, S4)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateLiveQuote:
+    def _quote(self, *, bid=2.0, ask=2.2, delta=-0.20) -> OptionQuote:
+        return OptionQuote(
+            underlying="AAPL",
+            right=OptionRight.PUT,
+            strike=150.0,
+            expiry=date.today() + timedelta(days=30),
+            bid=bid,
+            ask=ask,
+            delta=delta,
+        )
+
+    def test_passes_when_delta_in_range(self) -> None:
+        v = validate_live_quote(_candidate(), self._quote(delta=-0.20))
+        assert v.verdict == Verdict.PASS
+
+    def test_rejects_when_live_delta_out_of_range(self) -> None:
+        # Drifted deep ITM intraday: delta now 0.95, outside CSP 0.15–0.30.
+        v = validate_live_quote(_candidate(), self._quote(delta=-0.95))
+        assert v.verdict == Verdict.REJECT
+        assert "live_delta_out_of_range" in v.reasons
+
+    def test_rejects_when_no_mid(self) -> None:
+        v = validate_live_quote(_candidate(), self._quote(bid=0.0, ask=0.0, delta=-0.20))
+        assert "live_no_mid" in v.reasons
+
+    def test_passes_when_live_delta_missing(self) -> None:
+        # Missing live greeks degrade to the decision-time gate, not a block.
+        v = validate_live_quote(_candidate(), self._quote(delta=None))
+        assert v.verdict == Verdict.PASS

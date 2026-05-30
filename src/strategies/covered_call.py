@@ -111,6 +111,7 @@ def generate_cc_candidates(
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 dte=dte,
+                next_earnings=fund_stats.next_earnings,
                 scores=scores,
             )
         )

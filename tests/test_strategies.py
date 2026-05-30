@@ -307,13 +307,14 @@ class TestCashSecuredPut:
         expected_contracts = result[0].contracts
         assert result[0].collateral == pytest.approx(strike * expected_contracts * 100)
 
-    def test_contracts_sized_by_buying_power(self):
-        # _account() buying_power=80_000, strike=170 → contracts = floor(80000/(170*100)) = 4
+    def test_contracts_sized_by_cash(self):
+        # CSPs size off CASH (not margin buying power): total_cash=50_000, strike=170
+        # → contracts = floor(50000 / (170*100)) = 2.
         result = generate_csp_candidates(
             "AAPL", [_put_quote()], _account(), _iv(), _tech(), _fund()
         )
         assert len(result) == 1
-        assert result[0].contracts >= 1  # at least 1 contract always
+        assert result[0].contracts == 2
 
     def test_filters_call_quotes(self):
         result = generate_csp_candidates(

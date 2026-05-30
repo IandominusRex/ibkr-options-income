@@ -21,13 +21,25 @@ from ib_async import IB, Contract
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.common.config import get_config
-from src.common.schemas import OptionQuote, OrderState, TradeCandidate
+from src.common.schemas import OptionQuote, OrderState, TradeCandidate, Verdict
+from src.engine.risk_engine import validate_live_quote
 from src.execution.order_builder import build_limit_order
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
 from src.storage.models import FillRow, OrderRow
 
 log = logging.getLogger(__name__)
+
+
+def _safe_float(val: object) -> float | None:
+    """Coerce an ib_async tick value to float, treating None/NaN/non-numeric as None."""
+    if val is None:
+        return None
+    try:
+        f = float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f  # NaN check
 
 # Seconds to wait for a live bid/ask tick before giving up on the quote.
 # Configurable via execution.quote_timeout_seconds in settings.yaml.
@@ -76,7 +88,9 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
     qualified = cast(Contract, qualified_list[0])
 
     timeout = _quote_timeout()
-    ticker = ib.reqMktData(qualified, genericTickList="", snapshot=False, regulatorySnapshot=False)
+    # "101" requests open interest; model greeks (delta/IV) stream by default for options
+    # and are used for the send-time re-gate and for storing entry IV at fill.
+    ticker = ib.reqMktData(qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False)
     deadline = asyncio.get_running_loop().time() + timeout
     while (
         ticker.bid is None or ticker.bid <= 0 or ticker.ask is None or ticker.ask <= 0
@@ -92,6 +106,7 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
             f"No live bid/ask received for {candidate.candidate_id} within {timeout}s"
         )
 
+    greeks = getattr(ticker, "modelGreeks", None)
     quote = OptionQuote(
         underlying=candidate.underlying,
         right=candidate.right,
@@ -99,6 +114,8 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
         expiry=candidate.expiry,
         bid=bid,
         ask=ask,
+        delta=_safe_float(getattr(greeks, "delta", None)) if greeks else None,
+        iv=_safe_float(getattr(greeks, "impliedVol", None)) if greeks else None,
     )
     return quote, qualified
 
@@ -116,6 +133,30 @@ async def execute_candidate(
 
     try:
         quote, qualified = await _fetch_quote(ib, candidate)
+
+        # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
+        live_verdict = validate_live_quote(candidate, quote)
+        if live_verdict.verdict != Verdict.PASS:
+            log.warning(
+                "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s",
+                order_id,
+                candidate.candidate_id,
+                live_verdict.reasons,
+            )
+            with session_scope() as session:
+                row = session.get(OrderRow, order_id)
+                if row:
+                    row.state = OrderState.REJECTED
+                    row.detail = f"Live re-validation failed: {live_verdict.reasons}"
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"Order NOT placed — {candidate.underlying} failed live re-validation "
+                    f"({', '.join(live_verdict.reasons)})."
+                ),
+            )
+            return
+
         order = build_limit_order(candidate, quote)
 
         if cfg.is_live:

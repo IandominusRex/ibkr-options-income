@@ -63,7 +63,10 @@ def generate_csp_candidates(
         if not passes_liquidity_gates(quote):
             continue
 
-        contracts = max(1, min(max_contracts, int(account.buying_power // (quote.strike * 100))))
+        # Size off real CASH, not margin buying power — a cash-secured put must be cash
+        # secured. The cumulative max_csp_allocation_pct cap (risk engine) bounds the total
+        # across all CSPs; max_contracts bounds any single one.
+        contracts = max(1, min(max_contracts, int(account.total_cash // (quote.strike * 100))))
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100
         annualized_yield_pct = roc_pct * (365 / dte)
@@ -102,6 +105,7 @@ def generate_csp_candidates(
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 dte=dte,
+                next_earnings=fund_stats.next_earnings,
                 scores=scores,
             )
         )

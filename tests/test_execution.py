@@ -170,6 +170,9 @@ def _make_mock_ib(filled: bool = True, fill_qty: float = 1.0, avg_price: float =
     ticker = MagicMock()
     ticker.bid = 1.44
     ticker.ask = 1.60
+    # No live greeks in the mock → send-time re-gate degrades to the decision-time gate
+    # (delta is only enforced live when greeks are actually present).
+    ticker.modelGreeks = None
     mock_ib.reqMktData.return_value = ticker
     mock_ib.cancelMktData = MagicMock()
 

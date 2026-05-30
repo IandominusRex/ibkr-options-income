@@ -102,7 +102,7 @@ Each module takes the analytics data and generates specific trades you could pla
 | File | What it generates |
 |---|---|
 | `covered_call.py` | Covered call candidates: for each stock you own, finds the best call strike to sell (target delta, expiry, annualized yield) |
-| `cash_secured_put.py` | Cash-secured put candidates: for `would_own` stocks not yet held, finds put strikes that offer good yield without excessive assignment risk |
+| `cash_secured_put.py` | Cash-secured put candidates: for `would_own` stocks, finds put strikes that offer good yield without excessive assignment risk. Contract count is sized off **available cash** (`total_cash`), not margin buying power — a cash-secured put must be cash-secured; the Rules Engine then caps the *total* across all CSPs. |
 | `rolling.py` | Roll candidates: for existing short options approaching expiry or breaching delta limits, suggests the best roll-forward trade |
 | `buy_candidates.py` | Buy-to-own candidates: stocks from the watchlist worth buying specifically so you can sell covered calls against them |
 
@@ -116,7 +116,7 @@ This is where candidates get ranked and filtered.
 |---|---|
 | `scoring.py` | Normalizes raw analytics scores (IV rank, RSI, etc.) into a 0–100 scale |
 | `decision_engine.py` | Combines scores with the configured weights, ranks candidates by total score, and selects the top N |
-| `risk_engine.py` | **The safety gate.** Checks hard limits: per-ticker concentration, delta range, DTE window, earnings blackout, buying power, margin. Returns PASS or REJECT with reasons. Contains no AI. Runs twice — once when ranking, again at the moment of execution. |
+| `risk_engine.py` | **The safety gate.** Checks hard limits and returns PASS/REJECT with reasons. No AI. `validate_candidates` is **portfolio-aware**: it walks the ranked batch in priority order and enforces *cumulative* limits — per-ticker concentration, per-sector concentration (via the `sectors:` map in `universe.yaml`), total cash-secured-put collateral (`max_csp_allocation_pct`), and the buying-power buffer — so multiple candidates can't each claim the whole account. It also gates per candidate: ROC/yield minimums, IV-rank floor (when known), DTE window, delta (required for income strategies), and the earnings blackout. `validate_live_quote` is the second pass at execution time, re-checking a single candidate against the fresh live quote (delta drift / collapsed mid). |
 
 ---
 
@@ -287,7 +287,7 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 | `PositionSnapshot` | A current open position (symbol, quantity, cost basis, Greeks) |
 | `MarketContext` | The full market context for a scan (positions, quotes, IV history) |
 | `ScoreCard` | All analytics scores for a symbol (IV rank, RSI, fundamentals, liquidity) |
-| `TradeCandidate` | A specific trade proposal (symbol, strategy, strike, expiry, premium, scores) |
+| `TradeCandidate` | A specific trade proposal (symbol, strategy, strike, expiry, premium, scores, and `next_earnings` for the earnings-blackout gate) |
 | `RiskVerdict` | The Rules Engine's decision: PASS or REJECT, with reasons |
 | `ClaudeReview` | Claude's structured review of a candidate (recommendation, rationale, risks) |
 

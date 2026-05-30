@@ -204,6 +204,7 @@ class TradeCandidate(BaseModel):
     delta: float | None = None
     iv_rank: float | None = None
     dte: int
+    next_earnings: date | None = None  # earnings date within the option's life → blackout (risk engine)
     # Provenance
     scores: ScoreCard
     blended_score: float = 0.0  # weighted 0-100

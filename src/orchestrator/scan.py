@@ -302,16 +302,22 @@ async def run_scan(
     # --- 5. Buy-to-own recommendations ---
     result.buy_candidates = generate_buy_candidates(would_own, holdings_symbols, analytics_map)
 
-    # --- 6. Risk gate + scoring ---
+    # --- 6. Scoring THEN risk gate ---
+    # Score first so the risk engine consumes its cumulative budgets (per-ticker /
+    # per-sector / total-CSP / buying-power) greedily in priority order.
     all_option_candidates = cc_candidates + csp_candidates
     if all_option_candidates:
-        verdicts = validate_candidates(all_option_candidates, account, positions)
+        scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
+        verdicts = validate_candidates(scored, account, positions)
         verdict_map = {v.candidate_id: v for v in verdicts}
-        passed = [c for c in all_option_candidates if verdict_map.get(c.candidate_id) and verdict_map[c.candidate_id].verdict.value == "pass"]
+        passed = [
+            c
+            for c in scored
+            if verdict_map.get(c.candidate_id)
+            and verdict_map[c.candidate_id].verdict.value == "pass"
+        ]
         log.info("scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates))
-
-        scored = score_candidates(passed)
-        top = select_top_candidates(scored)
+        top = select_top_candidates(passed)
     else:
         top = []
 

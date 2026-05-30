@@ -42,11 +42,11 @@ events:
 
 # --- Portfolio concentration / sizing ---
 portfolio:
-  max_pct_per_ticker: 5.0        # of net liquidation
-  max_pct_per_sector: 25.0
-  max_correlated_exposure_pct: 35.0
+  max_pct_per_ticker: 5.0        # of net liquidation (enforced, cumulative)
+  max_pct_per_sector: 25.0       # of net liquidation; uses universe.yaml `sectors:` map (enforced, cumulative)
+  max_correlated_exposure_pct: 35.0  # NOT YET ENFORCED — needs a price-correlation engine (see IMPROVEMENTS_PLAN.md, deferred)
   max_margin_usage_pct: 50.0
-  max_csp_allocation_pct: 40.0   # total collateral tied up in CSPs
+  max_csp_allocation_pct: 60.0   # total CASH collateral tied up across all CSPs, as % of net liq (enforced cumulatively)
   # Always keep this much buying power free as a buffer.
   min_buying_power_buffer_pct: 15.0
   # Max NEW positions a single morning scan may propose.

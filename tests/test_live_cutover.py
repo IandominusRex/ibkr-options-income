@@ -102,6 +102,7 @@ def _make_mock_ib() -> MagicMock:
     ticker = MagicMock()
     ticker.bid = 1.44
     ticker.ask = 1.60
+    ticker.modelGreeks = None  # no live greeks → send-time re-gate defers to decision-time gate
     mock_ib.reqMktData.return_value = ticker
     mock_ib.cancelMktData = MagicMock()
     mock_fill = MagicMock()
