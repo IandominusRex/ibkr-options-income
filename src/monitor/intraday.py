@@ -1,0 +1,408 @@
+"""Event-driven intraday position monitor.
+
+Runs as a long-lived asyncio process (clientId 12). Subscribes to live market
+data for every short option position, fires trigger conditions on each tick, and
+delivers Telegram roll alerts with optional Claude recommendations.
+
+Key design points:
+- IB ticks arrive via pendingTickersEvent (ib_async event).
+- Claude subprocess runs in a ThreadPoolExecutor to avoid blocking the loop.
+- Alert de-duplication: the roll_alerts DB table gates re-alerts per
+  (position_symbol, trigger) within alert_cooldown_minutes.
+- Multiple triggers for the same position in one pass are combined into a
+  single Telegram message.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import math
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from ib_async import IB
+
+from src.claude.runner import review_roll
+from src.common.config import Config, get_config
+from src.common.schemas import (
+    OptionQuote,
+    OptionRight,
+    PositionSnapshot,
+    RollAlert,
+    RollReview,
+)
+from src.ibkr.contracts import build_option
+from src.ibkr.portfolio import get_positions
+from src.monitor.triggers import check_all
+from src.storage.db import init_db, session_scope
+from src.storage.models import RollAlertRow
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _safe(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def _ticker_to_quote(ticker: Any, pos: PositionSnapshot) -> OptionQuote:
+    """Convert an ib_async Ticker to an OptionQuote using the position for metadata."""
+    g = ticker.modelGreeks
+    return OptionQuote(
+        underlying=pos.underlying or pos.symbol,
+        right=pos.right or OptionRight.CALL,
+        strike=pos.strike or 0.0,
+        expiry=pos.expiry or datetime.now(UTC).date(),
+        bid=_safe(ticker.bid),
+        ask=_safe(ticker.ask),
+        last=_safe(ticker.last),
+        volume=int(ticker.volume)
+        if ticker.volume and not math.isnan(float(ticker.volume))
+        else None,
+        iv=_safe(g.impliedVol) if g else None,
+        delta=_safe(g.delta) if g else None,
+        gamma=_safe(g.gamma) if g else None,
+        theta=_safe(g.theta) if g else None,
+        vega=_safe(g.vega) if g else None,
+        greeks_source="ibkr",
+    )
+
+
+def _is_recent_alert(alert: RollAlert, cooldown_minutes: int) -> bool:
+    """Return True if the same (position_symbol, trigger) was alerted within cooldown."""
+    cutoff = datetime.now(UTC) - timedelta(minutes=cooldown_minutes)
+    with session_scope() as session:
+        existing = (
+            session.query(RollAlertRow)
+            .filter(
+                RollAlertRow.position_symbol == alert.position_symbol,
+                RollAlertRow.trigger == alert.trigger,
+                RollAlertRow.created_at >= cutoff,
+            )
+            .first()
+        )
+        return existing is not None
+
+
+def _persist_alert(alert: RollAlert, review: RollReview | None) -> None:
+    """Write a RollAlertRow to the DB."""
+    with session_scope() as session:
+        row = RollAlertRow(
+            position_symbol=alert.position_symbol,
+            underlying=alert.underlying,
+            trigger=alert.trigger,
+            detail=alert.detail,
+            claude_recommendation=review.recommendation if review else None,
+            payload={
+                "alert": alert.model_dump(mode="json"),
+                "review": review.model_dump(mode="json") if review else None,
+            },
+        )
+        session.add(row)
+
+
+def _build_alert_text(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    alerts: list[RollAlert],
+    review: RollReview | None,
+) -> str:
+    """Format the Telegram alert message."""
+    right_label = pos.right.value if pos.right else "?"
+    strategy = "CC" if right_label == "C" else "CSP"
+    triggers_str = " + ".join(a.trigger for a in alerts)
+    strike_str = f"${pos.strike:.0f}" if pos.strike else "?"
+
+    header = f"Roll Alert: {pos.underlying} {strategy} {strike_str} — {triggers_str}"
+    detail_lines = [a.detail for a in alerts]
+
+    parts = [header, ""]
+    for detail in detail_lines:
+        parts.append(detail)
+
+    meta = []
+    if quote.delta is not None:
+        meta.append(f"Delta: {quote.delta:.2f}")
+    if quote.dte:
+        meta.append(f"DTE: {quote.dte}")
+    if quote.iv is not None:
+        meta.append(f"IV: {quote.iv:.1%}")
+    if meta:
+        parts.append(" | ".join(meta))
+
+    if review:
+        parts.append("")
+        parts.append(
+            f"Claude: [{review.recommendation.upper()}] {review.roll_target or review.rationale}"
+        )
+        if review.risks:
+            parts.append(f"Risk: {review.risks}")
+    else:
+        parts.append("")
+        parts.append("(Claude review unavailable — manual evaluation required)")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Core alert-firing logic (async, testable)
+# ---------------------------------------------------------------------------
+
+
+async def fire_alerts(
+    alerts: list[RollAlert],
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    bot: Any,
+    chat_id: str,
+    cfg: Config,
+    executor: ThreadPoolExecutor,
+) -> None:
+    """De-dup, call Claude, send Telegram, persist. No-op if all alerts are recent.
+
+    This function is the testable heart of the monitor — the IB event subscription
+    code in IntradayMonitor calls into here.
+    """
+    fresh = [a for a in alerts if not _is_recent_alert(a, cfg.monitor.alert_cooldown_minutes)]
+    if not fresh:
+        log.debug(
+            "All %d alert(s) for %s are within cooldown — suppressed", len(alerts), pos.symbol
+        )
+        return
+
+    # Claude review in thread (subprocess — blocks; run off the event loop)
+    review: RollReview | None = None
+    if cfg.claude.enabled:
+        loop = asyncio.get_event_loop()
+        try:
+            review = await loop.run_in_executor(
+                executor,
+                lambda: review_roll(fresh[0], pos, quote),
+            )
+        except Exception:
+            log.exception("Claude roll review failed for %s", pos.symbol)
+
+    text = _build_alert_text(pos, quote, fresh, review)
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+        log.info(
+            "Roll alert sent: %s triggers=%s recommendation=%s",
+            pos.symbol,
+            [a.trigger for a in fresh],
+            review.recommendation if review else "n/a",
+        )
+    except Exception:
+        log.exception("Telegram send failed for roll alert %s", pos.symbol)
+
+    for alert in fresh:
+        try:
+            _persist_alert(alert, review)
+        except Exception:
+            log.exception("Failed to persist roll alert for %s", alert.position_symbol)
+
+
+# ---------------------------------------------------------------------------
+# Monitor class
+# ---------------------------------------------------------------------------
+
+
+class IntradayMonitor:
+    """Subscribes to ib_async pendingTickersEvent for short option positions."""
+
+    def __init__(
+        self,
+        ib: IB,
+        bot: Any,
+        chat_id: str,
+        cfg: Config,
+        executor: ThreadPoolExecutor,
+    ) -> None:
+        self._ib = ib
+        self._bot = bot
+        self._chat_id = chat_id
+        self._cfg = cfg
+        self._executor = executor
+        # Maps OCC symbol (localSymbol) → PositionSnapshot
+        self._subscriptions: dict[str, PositionSnapshot] = {}
+
+    # ------------------------------------------------------------------
+    # Subscription management (sync — called from executor or on startup)
+    # ------------------------------------------------------------------
+
+    def _refresh_subscriptions(self) -> None:
+        """Load positions; subscribe to new short options, unsubscribe from closed ones."""
+        try:
+            positions = get_positions(self._ib)
+        except Exception:
+            log.exception("Failed to load positions during subscription refresh")
+            return
+
+        active_symbols: set[str] = set()
+
+        for pos in positions:
+            if pos.sec_type != "OPT" or pos.position >= 0:
+                continue
+            if pos.expiry is None or pos.strike is None or pos.right is None:
+                continue
+
+            active_symbols.add(pos.symbol)
+
+            already_subscribed = pos.symbol in self._subscriptions
+            self._subscriptions[pos.symbol] = pos  # always update position snapshot
+
+            if not already_subscribed or not any(
+                t.contract
+                and (t.contract.localSymbol == pos.symbol or t.contract.symbol == pos.underlying)
+                for t in self._ib.tickers()
+            ):
+                try:
+                    contract = build_option(
+                        pos.underlying or pos.symbol, pos.expiry, pos.strike, pos.right.value
+                    )
+                    self._ib.reqMktData(contract, "101", False, False)
+                    log.info("Subscribed market data: %s", pos.symbol)
+                except Exception:
+                    log.exception("reqMktData failed for %s", pos.symbol)
+
+        # Unsubscribe from positions that are no longer held
+        for sym in list(self._subscriptions):
+            if sym not in active_symbols:
+                old_pos = self._subscriptions.pop(sym)
+                if old_pos.expiry and old_pos.strike and old_pos.right:
+                    try:
+                        contract = build_option(
+                            old_pos.underlying or old_pos.symbol,
+                            old_pos.expiry,
+                            old_pos.strike,
+                            old_pos.right.value,
+                        )
+                        self._ib.cancelMktData(contract)
+                        log.info("Unsubscribed market data: %s", sym)
+                    except Exception:
+                        log.exception("cancelMktData failed for %s", sym)
+
+    # ------------------------------------------------------------------
+    # Ticker event handler
+    # ------------------------------------------------------------------
+
+    async def _on_pending_tickers(self, tickers: Any) -> None:
+        """Called by ib_async for every pendingTickersEvent batch."""
+        for ticker in tickers:
+            if ticker.contract is None:
+                continue
+            local_sym = (ticker.contract.localSymbol or "").strip()
+            pos = self._subscriptions.get(local_sym)
+            if pos is None:
+                continue
+            quote = _ticker_to_quote(ticker, pos)
+            limits = {
+                "delta_ceiling": self._cfg.monitor.delta_ceiling,
+                "dte_threshold": self._cfg.monitor.dte_threshold,
+                "iv_spike_pct": self._cfg.monitor.iv_spike_pct,
+                "ex_div_days_ahead": self._cfg.monitor.ex_div_days_ahead,
+            }
+            alerts = check_all(pos, quote, entry_iv=None, fund_stats=None, limits=limits)
+            if alerts:
+                await fire_alerts(
+                    alerts, pos, quote, self._bot, self._chat_id, self._cfg, self._executor
+                )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def start(self, stop_event: asyncio.Event) -> None:
+        """Subscribe to IB events and run until stop_event is set."""
+        loop = asyncio.get_event_loop()
+
+        # Initial position load (blocking IB call — run in executor)
+        await loop.run_in_executor(self._executor, self._refresh_subscriptions)
+
+        self._ib.pendingTickersEvent += self._on_pending_tickers
+
+        poll_seconds = self._cfg.scheduler.intraday_poll_seconds
+
+        async def _refresh_loop() -> None:
+            while not stop_event.is_set():
+                await asyncio.sleep(poll_seconds)
+                await loop.run_in_executor(self._executor, self._refresh_subscriptions)
+
+        refresh_task = asyncio.create_task(_refresh_loop())
+        log.info("Intraday monitor running (refresh every %ds)", poll_seconds)
+
+        try:
+            await stop_event.wait()
+        finally:
+            refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await refresh_task
+            self._ib.pendingTickersEvent -= self._on_pending_tickers
+            log.info("Intraday monitor stopped")
+
+
+# ---------------------------------------------------------------------------
+# Process entrypoint
+# ---------------------------------------------------------------------------
+
+
+async def run(stop_event: asyncio.Event | None = None) -> None:
+    """Connect to IBKR, start the monitor, block until stopped."""
+    cfg = get_config()
+    init_db()
+
+    mode = "LIVE" if cfg.is_live else "PAPER"
+    log.warning(
+        "=" * 60 + "\n  INTRADAY MONITOR  |  mode=%s  port=%s  clientId=%s\n" + "=" * 60,
+        mode,
+        cfg.ibkr_port,
+        cfg.ibkr.client_ids.get("monitor", 12),
+    )
+
+    token = cfg.secrets.telegram_bot_token
+    chat_id = cfg.secrets.telegram_chat_id
+    if not token or not chat_id:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
+
+    from telegram import Bot
+
+    ib = IB()
+    try:
+        await ib.connectAsync(
+            cfg.ibkr.host,
+            cfg.ibkr_port,
+            clientId=cfg.ibkr.client_ids.get("monitor", 12),
+            timeout=cfg.ibkr.connect_timeout_seconds,
+        )
+    except Exception:
+        log.exception("IBKR connection failed — monitor cannot start")
+        raise
+
+    if stop_event is None:
+        stop_event = asyncio.Event()
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, stop_event.set)
+
+    async with Bot(token=token) as bot:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="monitor") as executor:
+            monitor = IntradayMonitor(ib, bot, chat_id, cfg, executor)
+            try:
+                await monitor.start(stop_event)
+            finally:
+                ib.disconnect()
+                log.info("IBKR monitor connection closed")

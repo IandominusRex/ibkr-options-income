@@ -1,0 +1,481 @@
+"""Tests for Phase 6: Telegram notification + approval loop.
+
+All tests mock python-telegram-bot — no live Telegram API needed.
+DB tests use tmp_path to avoid touching real state.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.common.schemas import (
+    ClaudeReview,
+    OptionRight,
+    ScoreCard,
+    Strategy,
+    TradeCandidate,
+)
+from src.notify.formatters import _md, format_candidate
+from src.notify.sender import send_candidates
+from src.storage.models import ApprovalRow, OrderRow
+
+# --------------------------------------------------------------------------- #
+# Shared fixtures
+# --------------------------------------------------------------------------- #
+
+
+def _make_candidate(
+    candidate_id: str = "test-001",
+    underlying: str = "AAPL",
+    strategy: Strategy = Strategy.COVERED_CALL,
+    premium: float = 1.50,
+    blended_score: float = 74.5,
+    rationale_tags: list[str] | None = None,
+) -> TradeCandidate:
+    if rationale_tags is None:
+        rationale_tags = ["high_iv_rank", "liquid"]
+    scores = ScoreCard(
+        symbol=underlying,
+        iv_score=72.0,
+        technical_score=65.0,
+        fundamental_score=80.0,
+        liquidity_score=90.0,
+        assignment_safety_score=70.0,
+    )
+    return TradeCandidate(
+        candidate_id=candidate_id,
+        strategy=strategy,
+        underlying=underlying,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date(2026, 7, 17),
+        contracts=1,
+        premium=premium,
+        collateral=18_000.0,
+        roc_pct=0.83,
+        annualized_yield_pct=18.5,
+        breakeven=183.50,
+        prob_profit=0.72,
+        delta=0.28,
+        iv_rank=65.0,
+        dte=48,
+        scores=scores,
+        blended_score=blended_score,
+        rationale_tags=rationale_tags,
+    )
+
+
+def _make_review(candidate_id: str = "test-001") -> ClaudeReview:
+    return ClaudeReview(
+        candidate_id=candidate_id,
+        priority=1,
+        recommendation="sell",
+        why_attractive="High IV rank provides above-average premium income.",
+        risks="Earnings next quarter could cause a gap move.",
+        tradeoffs="Caps upside above strike.",
+        assignment_considerations="Low probability given 0.28 delta.",
+        rolling_considerations="Could roll up-and-out if stock approaches strike.",
+        confidence=0.82,
+    )
+
+
+def _db_setup(tmp_path, monkeypatch) -> None:
+    """Redirect DB to a temp file and re-initialise the ORM engine."""
+    import src.storage.db as dbmod
+    from src.common.config import Config
+
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 't.db'}")
+    dbmod.init_db()
+
+
+# --------------------------------------------------------------------------- #
+# formatters — format_candidate
+# --------------------------------------------------------------------------- #
+
+
+def test_format_with_review_contains_symbol_and_recommendation():
+    text = format_candidate(_make_candidate(), _make_review())
+    assert "AAPL" in text
+    assert "SELL" in text
+
+
+def test_format_without_review_contains_symbol_and_score():
+    text = format_candidate(_make_candidate(), None)
+    assert "AAPL" in text
+    assert r"74\.5" in text  # dot is escaped in MarkdownV2
+    assert "Claude Review" not in text
+
+
+def test_format_without_review_no_claude_section():
+    text = format_candidate(_make_candidate(), None)
+    assert "Why attractive" not in text
+    assert "Risks" not in text
+
+
+def test_format_with_review_contains_key_fields():
+    review = _make_review()
+    text = format_candidate(_make_candidate(), review)
+    assert "High IV rank" in text
+    assert "Earnings next quarter" in text
+    assert "Caps upside" in text
+
+
+def test_format_escapes_special_chars_in_symbol():
+    candidate = _make_candidate(underlying="SPY.X")
+    text = format_candidate(candidate, None)
+    # The dot in "SPY.X" must be escaped as "\."
+    assert "SPY\\.X" in text
+
+
+def test_format_escapes_special_chars_in_tags():
+    candidate = _make_candidate(rationale_tags=["high-iv", "near_support"])
+    text = format_candidate(candidate, None)
+    # Hyphen and underscore must be escaped
+    assert "high\\-iv" in text
+    assert "near\\_support" in text
+
+
+def test_format_includes_dte_and_expiry():
+    text = format_candidate(_make_candidate(), None)
+    assert "48" in text
+    assert "2026" in text
+
+
+def test_format_includes_premium_and_contract_value():
+    text = format_candidate(_make_candidate(premium=1.50), None)
+    assert r"1\.50" in text  # dot escaped in MarkdownV2
+    assert "150" in text
+
+
+def test_format_empty_tags_no_tags_line():
+    candidate = _make_candidate(rationale_tags=[])
+    text = format_candidate(candidate, None)
+    assert "Tags:" not in text
+
+
+def test_format_truncates_long_message():
+    review = ClaudeReview(
+        candidate_id="test-001",
+        priority=1,
+        recommendation="sell",
+        why_attractive="x" * 1500,
+        risks="y" * 1500,
+        tradeoffs="z" * 1500,
+        assignment_considerations="",
+    )
+    text = format_candidate(_make_candidate(), review)
+    assert len(text) <= 4010  # small buffer for escape sequences
+
+
+def test_md_escapes_all_special_chars():
+    special = r"_.[]()~`>#+-=|{}.!\\"
+    escaped = _md(special)
+    # Every char in the output must be preceded by a backslash
+    assert "\\" in escaped
+    # No unescaped special char sequence (the function adds backslashes)
+    assert "_" not in escaped.replace("\\_", "")
+
+
+# --------------------------------------------------------------------------- #
+# sender — send_candidates
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def mock_bot_cls():
+    """Fixture: a Bot class whose instances behave as async context managers."""
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=42)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+    return mock_cls, mock_instance
+
+
+def _mock_cfg(monkeypatch, *, token: str = "tok", chat_id: str = "99999", ttl: int = 60):
+    mock = MagicMock()
+    mock.secrets.telegram_bot_token = token
+    mock.secrets.telegram_chat_id = chat_id
+    mock.approval.ttl_minutes = ttl
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: mock)
+    return mock
+
+
+async def test_send_candidates_empty_list_no_bot_calls(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, _ = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([], [], session)
+
+    mock_cls.assert_not_called()
+
+
+async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch, token="")
+    mock_cls, _ = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([_make_candidate()], [], session)
+
+    mock_cls.assert_not_called()
+
+
+async def test_send_candidates_one_message_per_candidate(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    candidates = [_make_candidate("c-001"), _make_candidate("c-002", underlying="MSFT")]
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates(candidates, [], session)
+
+    assert mock_instance.send_message.call_count == 2
+
+
+async def test_send_candidates_persists_approval_row(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch, chat_id="12345")
+    mock_cls, mock_instance = mock_bot_cls
+    mock_instance.send_message.return_value = MagicMock(message_id=77)
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([_make_candidate("c-001")], [], session)
+
+    with dbmod.session_scope() as s:
+        rows = s.execute(select(ApprovalRow)).scalars().all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.candidate_id == "c-001"
+    assert row.status == "pending"
+    assert row.telegram_message_id == 77
+    assert row.chat_id == "12345"
+
+
+async def test_send_candidates_approval_has_expires_at(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch, ttl=30)
+    mock_cls, _ = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([_make_candidate()], [], session)
+
+    with dbmod.session_scope() as s:
+        row = s.execute(select(ApprovalRow)).scalar_one()
+    assert row.expires_at is not None
+    delta = row.expires_at - row.created_at
+    assert 25 * 60 < delta.total_seconds() < 35 * 60  # ~30 min
+
+
+async def test_send_candidates_uses_review_when_available(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    candidate = _make_candidate("c-001")
+    review = _make_review("c-001")
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([candidate], [review], session)
+
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    assert "SELL" in call_kwargs["text"]  # recommendation from review
+
+
+async def test_send_candidates_no_review_for_unmatched(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    candidate = _make_candidate("c-001")
+    review = _make_review("other-id")  # doesn't match
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([candidate], [review], session)
+
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    assert "Claude Review" not in call_kwargs["text"]
+
+
+async def test_send_candidates_keyboard_uses_approval_id(mock_bot_cls, monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as session:
+            await send_candidates([_make_candidate("c-001")], [], session)
+
+    keyboard = mock_instance.send_message.call_args.kwargs["reply_markup"]
+    buttons = keyboard.inline_keyboard[0]
+    assert buttons[0].callback_data.startswith("approve:")
+    assert buttons[1].callback_data.startswith("reject:")
+    # Callback data must be short enough for Telegram's 64-byte limit
+    assert all(len(b.callback_data.encode()) <= 64 for b in buttons)
+
+
+# --------------------------------------------------------------------------- #
+# approval_service — handle_button
+# --------------------------------------------------------------------------- #
+
+
+def _make_update(chat_id: int, callback_data: str) -> MagicMock:
+    update = MagicMock()
+    update.effective_chat.id = chat_id
+    update.callback_query = AsyncMock()
+    update.callback_query.data = callback_data
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    return update
+
+
+def _mock_svc_cfg(monkeypatch, chat_id: str = "99999"):
+    mock = MagicMock()
+    mock.secrets.telegram_chat_id = chat_id
+    monkeypatch.setattr("src.notify.approval_service.get_config", lambda: mock)
+    return mock
+
+
+async def test_callback_ignores_wrong_chat_id(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from src.notify.approval_service import handle_button
+
+    update = _make_update(chat_id=11111, callback_data="approve:1")
+    await handle_button(update, MagicMock())
+
+    update.callback_query.edit_message_text.assert_not_called()
+
+
+async def test_callback_approve_sets_status_and_queues_order(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    # Insert a pending approval row.
+    with dbmod.session_scope() as session:
+        approval = ApprovalRow(
+            candidate_id="c-approve-001",
+            status="pending",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(approval)
+        session.flush()
+        approval_id = approval.id
+
+    from src.notify.approval_service import handle_button
+
+    update = _make_update(chat_id=99999, callback_data=f"approve:{approval_id}")
+    await handle_button(update, MagicMock())
+
+    with dbmod.session_scope() as s:
+        row = s.get(ApprovalRow, approval_id)
+        assert row.status == "approved"
+        assert row.decided_at is not None
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalars().all()
+        )
+    assert len(orders) == 1
+    assert orders[0].state == "queued"
+    assert orders[0].candidate_id == "c-approve-001"
+
+    update.callback_query.edit_message_text.assert_called_once()
+
+
+async def test_callback_reject_sets_status_no_order(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with dbmod.session_scope() as session:
+        approval = ApprovalRow(
+            candidate_id="c-reject-001",
+            status="pending",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(approval)
+        session.flush()
+        approval_id = approval.id
+
+    from src.notify.approval_service import handle_button
+
+    update = _make_update(chat_id=99999, callback_data=f"reject:{approval_id}")
+    await handle_button(update, MagicMock())
+
+    with dbmod.session_scope() as s:
+        row = s.get(ApprovalRow, approval_id)
+        assert row.status == "rejected"
+        assert row.decided_at is not None
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalars().all()
+        )
+    assert len(orders) == 0
+
+    update.callback_query.edit_message_text.assert_called_once()
+
+
+async def test_callback_unknown_approval_id_does_not_crash(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from src.notify.approval_service import handle_button
+
+    update = _make_update(chat_id=99999, callback_data="approve:99999")
+    await handle_button(update, MagicMock())  # must not raise
+
+    update.callback_query.edit_message_text.assert_called_once()
+    assert "not found" in update.callback_query.edit_message_text.call_args.args[0].lower()
+
+
+async def test_callback_malformed_data_is_ignored(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from src.notify.approval_service import handle_button
+
+    for bad_data in ("", "approve", "approve:notanint", "unknown:1"):
+        update = _make_update(chat_id=99999, callback_data=bad_data)
+        await handle_button(update, MagicMock())
+        update.callback_query.edit_message_text.assert_not_called()

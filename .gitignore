@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.local
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Data & logs (local state, never commit)
+data/*.db
+data/*.parquet
+data/*.sqlite
+logs/*.log
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Keep empty dirs tracked
+!data/.gitkeep
+!logs/.gitkeep

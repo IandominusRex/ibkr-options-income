@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); [[ \"$f\" == *.py && \"$f\" != */tests/* && \"$f\" != */test_* ]] && jq -n --arg path \"$f\" '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":(\"[CLAUDE.md doc-update] Modified \" + $path + \" — check the trigger table in CLAUDE.md and update README.md / ARCHITECTURE.md / SETUP.md before completing this task.\")}}' || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

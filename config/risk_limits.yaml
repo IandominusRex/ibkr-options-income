@@ -1,0 +1,58 @@
+# Deterministic hard limits enforced by the Rules Engine (engine/risk_engine.py).
+# These are the circuit breaker between a recommendation and the broker.
+# Conservative theta-gang defaults — tune freely; no code change required.
+
+# --- Strike / delta targeting (per strategy) ---
+covered_call:
+  delta_min: 0.20
+  delta_max: 0.35
+  dte_min: 21
+  dte_max: 45
+  # Reject if selling the call caps upside below this fraction of cost basis.
+  min_strike_vs_basis: 1.00   # strike must be >= cost basis (no locking in a loss)
+
+cash_secured_put:
+  delta_min: 0.15
+  delta_max: 0.30
+  dte_min: 21
+  dte_max: 45
+
+# --- Income quality gates ---
+income:
+  # Minimum return on capital for the trade to be worth it (premium / collateral).
+  min_roc_pct: 1.0
+  # Minimum annualized yield to surface the candidate.
+  min_annualized_yield_pct: 12.0
+
+# --- Liquidity gates ---
+liquidity:
+  max_bid_ask_spread_pct: 10.0   # of mid
+  min_open_interest: 100
+  min_option_volume: 10
+
+# --- IV environment ---
+iv:
+  # Only sell premium when it's relatively expensive.
+  min_iv_rank: 30
+
+# --- Event blackouts ---
+events:
+  earnings_blackout_days: 14     # no new short premium within N days of earnings
+  ex_dividend_assignment_guard: true   # flag ITM short calls before ex-div
+
+# --- Portfolio concentration / sizing ---
+portfolio:
+  max_pct_per_ticker: 5.0        # of net liquidation
+  max_pct_per_sector: 25.0
+  max_correlated_exposure_pct: 35.0
+  max_margin_usage_pct: 50.0
+  max_csp_allocation_pct: 40.0   # total collateral tied up in CSPs
+  # Always keep this much buying power free as a buffer.
+  min_buying_power_buffer_pct: 15.0
+  # Max NEW positions a single morning scan may propose.
+  max_new_positions_per_run: 10
+
+# --- Approval lifecycle ---
+approval:
+  ttl_minutes: 720               # approvals older than this auto-expire
+  transmit_only_in_rth: true     # queue orders placed outside regular hours

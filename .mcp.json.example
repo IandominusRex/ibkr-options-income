@@ -1,0 +1,18 @@
+{
+  "_comment": "Rename to .mcp.json to enable. This registers the staskh/trading_skills MCP so headless `claude -p` calls can do ad-hoc IBKR/option lookups during roll & assignment reasoning. NOTE: enabling this auto-runs code from an external repo at Claude Code startup — review that repo before activating. It opens its OWN TWS connection, so it uses clientId 20 (distinct from the engine's ids in settings.yaml). Verify the actual entrypoint/args against the repo's README before use.",
+  "mcpServers": {
+    "trading_skills": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/staskh/trading_skills",
+        "trading-skills-mcp"
+      ],
+      "env": {
+        "IB_HOST": "127.0.0.1",
+        "IB_PORT": "7497",
+        "IB_CLIENT_ID": "20"
+      }
+    }
+  }
+}

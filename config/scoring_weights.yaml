@@ -1,0 +1,25 @@
+# Weights for combining component scores into a single 0-100 candidate score
+# (engine/decision_engine.py). Each block must sum to ~1.0; the engine normalizes
+# regardless. Component scores themselves are normalized to 0-100 in scoring.py.
+
+covered_call:
+  iv: 0.30            # higher IV rank = richer premium = better
+  technical: 0.25     # resistance proximity, trend (capped upside is OK in sideways)
+  fundamental: 0.10   # less critical for CC (you already own it)
+  liquidity: 0.15
+  assignment_risk: 0.20   # lower assignment likelihood scores higher (we keep shares)
+  sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
+
+cash_secured_put:
+  iv: 0.30
+  technical: 0.20     # support proximity matters for strike placement
+  fundamental: 0.25   # must be a quality name we'd own
+  liquidity: 0.15
+  assignment_risk: 0.10   # assignment is acceptable here (we'd own it), so low weight
+  sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
+
+# Minimum blended score to surface a candidate to Claude / Telegram.
+min_candidate_score: 55
+
+# How many top candidates to forward to Claude for review.
+top_n_for_claude: 15

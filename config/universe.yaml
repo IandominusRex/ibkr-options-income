@@ -1,0 +1,46 @@
+# The scan universe and the CSP "would-own" allowlist.
+# The system will ONLY recommend cash-secured puts on names in `would_own`.
+
+# Indexes / ETFs to scan for both CC and CSP opportunities.
+indexes:
+  - QQQ
+  - SPY
+  - IWM
+  - SOXL
+  - LABU
+  - SMH
+
+# Individual stocks on your watchlist to scan.
+watchlist:
+  - NVDA
+  - AAPL
+  - MSFT
+  - AMD
+  - GOOGL
+  - AMZN
+
+# Stocks/ETFs you are genuinely comfortable being assigned (owning long term).
+# CSP candidates are filtered to this set. Keep it honest.
+would_own:
+  - QQQ
+  - SPY
+  - SMH
+  - NVDA
+  - AAPL
+  - MSFT
+  - GOOGL
+
+# Rough sector tags used for concentration limits. Extend as needed.
+sectors:
+  QQQ: index
+  SPY: index
+  IWM: index
+  SMH: semis
+  SOXL: semis
+  LABU: biotech
+  NVDA: semis
+  AMD: semis
+  AAPL: tech
+  MSFT: tech
+  GOOGL: tech
+  AMZN: tech
