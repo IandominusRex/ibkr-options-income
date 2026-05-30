@@ -2,6 +2,16 @@
 
 Cross-referenced against PLAN.md and PHASE1–PHASE12 handoff documents. Every finding includes the file and line where the issue lives, the root cause, the production impact, and the recommended fix. Critical and major bugs are fixed as part of the `/scan` + learning-loop implementation; the rest are noted for future cleanup.
 
+> **⚠️ Reconciliation note (2026-05-30).** An independent re-audit verified each "✅ Fixed" claim against
+> the actual code. **Several were not wired into the codebase.** Corrected below: **C3** and **O6**
+> (IV-spike `entry_iv`) are reopened — the `FillRow.entry_iv` column was added but is never populated by
+> the executor (`executor.py:204`) nor read by the monitor (`intraday.py:318` still hardcodes
+> `entry_iv=None`), so `check_iv_spike` still cannot fire. A related gap, the ex-dividend trigger
+> (`fund_stats=None` at `intraday.py:318`), was never tracked and is also open. The authoritative,
+> verified roadmap for closing these is **`IMPROVEMENTS_PLAN.md`** (project root). Treat that file as the
+> source of truth for status; the per-item "✅" markers below are historical and only trustworthy where
+> re-confirmed.
+
 ---
 
 ## CRITICAL — Will cause silent wrong behaviour in production
@@ -43,7 +53,7 @@ The guard that should prevent double-subscription is evaluated *after* the key i
 
 **Impact:** IV spike trigger never fires regardless of market conditions or position size.
 
-**Fix:** Add `entry_iv: float | None` column to `FillRow`; populate it from the live `OptionQuote.iv` at order placement; load it in the monitor at startup per position. ✅ Fixed in this release.
+**Fix:** Add `entry_iv: float | None` column to `FillRow`; populate it from the live `OptionQuote.iv` at order placement; load it in the monitor at startup per position. ❌ **REOPENED (re-audit):** only the column was added (`models.py:137`). `executor.py:204` never sets it and `intraday.py:318` still passes `entry_iv=None`. Trigger remains dead. Tracked as Phase C / item F1 in `IMPROVEMENTS_PLAN.md`.
 
 ---
 
@@ -240,7 +250,7 @@ The ATM band for term-structure and skew calculations is defined as `spot ± 5%`
 
 **Root cause:** `FillRow` stores fill price and commission but not the IV of the option at the time of execution. Even with the C3 fix applied, `check_all(entry_iv=...)` in the monitor has no source for this value.
 
-**Impact:** IV spike trigger cannot fire for any position, regardless of how large the IV move is. ✅ Fixed by adding `entry_iv` to `FillRow` in this release.
+**Impact:** IV spike trigger cannot fire for any position, regardless of how large the IV move is. ❌ **REOPENED (re-audit):** adding the `FillRow.entry_iv` column did not fix this — nothing writes the column (`executor.py:204`) and nothing reads it (`intraday.py:318`). End-to-end wiring is tracked as Phase C / item F1 in `IMPROVEMENTS_PLAN.md`.
 
 ---
 
