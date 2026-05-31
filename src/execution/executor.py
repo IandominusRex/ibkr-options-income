@@ -20,6 +20,7 @@ from typing import cast
 from ib_async import IB, Contract
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
+from src.claude.memory import FILLED, record_outcome
 from src.common.config import get_config
 from src.common.schemas import OptionQuote, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_live_quote
@@ -259,6 +260,7 @@ async def execute_candidate(
                     row.filled_qty = filled_qty
                     row.avg_fill_price = avg_price
 
+            record_outcome(candidate.candidate_id, FILLED)
             log.info(
                 "Fill recorded — candidate=%s qty=%.0f @ %.2f state=%s",
                 candidate.candidate_id,

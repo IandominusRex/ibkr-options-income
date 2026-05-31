@@ -30,12 +30,13 @@ from ib_async import IB
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.schemas import ApprovalStatus, OrderState
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
 from src.storage.db import init_db, session_scope
-from src.storage.models import ApprovalRow, ClaudeMemoryRow, OrderRow
+from src.storage.models import ApprovalRow, OrderRow
 
 logger = logging.getLogger(__name__)
 
@@ -92,29 +93,9 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
         else:
             approval.status = ApprovalStatus.REJECTED
             decision_text = f"Rejected\n({candidate_short})"
-            _update_memory_outcome(approval.candidate_id, "user_rejected")
+            record_outcome(approval.candidate_id, USER_REJECTED)
 
     return found, decision_text, candidate_short
-
-
-def _update_memory_outcome(candidate_id: str, outcome: str) -> None:
-    """Set outcome on the most recent ClaudeMemoryRow for this candidate, if any."""
-    from datetime import date
-
-    from sqlalchemy import select
-    try:
-        with session_scope() as sess:
-            row = sess.execute(
-                select(ClaudeMemoryRow)
-                .where(ClaudeMemoryRow.candidate_id == candidate_id)
-                .order_by(ClaudeMemoryRow.created_at.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-            if row:
-                row.outcome = outcome
-                row.outcome_date = date.today()
-    except Exception:
-        logger.exception("Failed to update ClaudeMemoryRow outcome for %s", candidate_id)
 
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -190,8 +190,11 @@ def _persist_candidates(
 
 def _fetch_analytics(
     symbol: str,
+    quotes: list[OptionQuote] | None = None,
 ) -> tuple[IVStats, TechnicalStats, FundamentalStats]:
-    iv_stats = get_iv_stats(symbol)
+    # Pass the live chain so IV term-structure slope + put/call skew actually compute
+    # (they are None without quotes).
+    iv_stats = get_iv_stats(symbol, quotes)
     tech_stats = get_technical_stats(symbol)
     fund_stats = get_fundamental_stats(symbol)
     return iv_stats, tech_stats, fund_stats
@@ -264,7 +267,7 @@ async def run_scan(
         # Analytics (yfinance — run in executor to avoid blocking)
         try:
             iv_stats, tech_stats, fund_stats = await asyncio.get_running_loop().run_in_executor(
-                None, _fetch_analytics, symbol
+                None, _fetch_analytics, symbol, quotes
             )
         except Exception:
             log.exception("scan: analytics failed for %s", symbol)
@@ -317,6 +320,9 @@ async def run_scan(
             and verdict_map[c.candidate_id].verdict.value == "pass"
         ]
         log.info("scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates))
+        # Score floor: only surface candidates above the configured quality bar.
+        min_score = cfg.weights.get("min_candidate_score", 0)
+        passed = [c for c in passed if c.blended_score >= min_score]
         top = select_top_candidates(passed)
     else:
         top = []

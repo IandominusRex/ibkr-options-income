@@ -18,8 +18,10 @@ cash_secured_put:
   assignment_risk: 0.10   # assignment is acceptable here (we'd own it), so low weight
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
 
-# Minimum blended score to surface a candidate to Claude / Telegram.
+# Minimum blended score (0-100) to surface a candidate to Claude / Telegram.
+# Enforced in orchestrator/scan.py after the risk gate.
 min_candidate_score: 55
 
-# How many top candidates to forward to Claude for review.
-top_n_for_claude: 15
+# NOTE: the number of candidates surfaced per run is governed by
+# portfolio.max_new_positions_per_run in risk_limits.yaml (a single count cap for the
+# whole pipeline). The former `top_n_for_claude` knob was redundant and has been removed.

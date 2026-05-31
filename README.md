@@ -82,7 +82,7 @@ python -m pytest               # all tests pass without TWS
 | `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate |
-| `src/claude/` | Headless `claude -p` runner and output parser |
+| `src/claude/` | Headless `claude -p` runner, output parser, and learning-loop outcome recorder |
 | `src/execution/` | Order building and execution via IBKR |
 | `src/notify/` | Telegram messaging and approval service |
 | `src/monitor/` | Event-driven intraday position monitoring |

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import Bot
 
@@ -34,11 +35,20 @@ from src.storage.models import FillRow, JournalRow
 
 logger = logging.getLogger(__name__)
 
+_ET = ZoneInfo("America/New_York")
+
 
 def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
-    """Return (realized_pnl, fill_count, fill_ids) for today's option fills."""
-    today_start = datetime(today.year, today.month, today.day, tzinfo=UTC)
-    tomorrow_start = today_start + timedelta(days=1)
+    """Return (realized_pnl, fill_count, fill_ids) for the option fills on the *ET* trading day.
+
+    `today` is interpreted as a market-timezone (ET) calendar date. The day window is built
+    at ET midnight and converted to UTC so it lines up with how fills are stored (UTC).
+    This avoids the local-vs-UTC midnight gap that previously zeroed out P&L when the report
+    ran between local midnight and the UTC-date rollover (e.g. early morning in UTC+8).
+    """
+    next_day = today + timedelta(days=1)
+    today_start = datetime(today.year, today.month, today.day, tzinfo=_ET).astimezone(UTC)
+    tomorrow_start = datetime(next_day.year, next_day.month, next_day.day, tzinfo=_ET).astimezone(UTC)
     with session_scope() as session:
         fills = (
             session.query(FillRow)
@@ -160,8 +170,8 @@ async def run() -> None:
         account = get_account_snapshot(ib, cfg.secrets.ibkr_account)
     logger.info("Disconnected from IBKR")
 
-    # 2. Compute realized P&L from DB fills.
-    today = date.today()
+    # 2. Compute realized P&L from DB fills (anchored to the ET trading day).
+    today = datetime.now(_ET).date()
     realized_pnl, fill_count, fill_ids = _compute_realized_pnl(today)
 
     # 3. Load yesterday's baseline for unrealized delta.

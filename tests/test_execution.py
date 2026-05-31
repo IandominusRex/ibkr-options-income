@@ -239,6 +239,42 @@ async def test_execute_candidate_writes_fill_row(monkeypatch, tmp_path):
     assert order_row.filled_qty == 1.0
 
 
+def test_record_outcome_sets_and_does_not_clobber(monkeypatch, tmp_path):
+    """The learning loop records the eventual outcome and never overwrites a set one."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from src.claude.memory import FILLED, USER_REJECTED, record_outcome
+    from src.storage.db import session_scope
+    from src.storage.models import ClaudeMemoryRow
+
+    with session_scope() as s:
+        s.add(
+            ClaudeMemoryRow(
+                scan_date=date.today(),
+                underlying="AAPL",
+                strategy_type="covered_call",
+                recommendation="sell",
+                candidate_id="cand-x",
+            )
+        )
+
+    record_outcome("cand-x", FILLED)
+    with session_scope() as s:
+        row = s.query(ClaudeMemoryRow).filter_by(candidate_id="cand-x").one()
+        assert row.outcome == "filled"
+        assert row.outcome_date == date.today()
+
+    # A later outcome must NOT clobber the recorded one.
+    record_outcome("cand-x", USER_REJECTED)
+    with session_scope() as s:
+        row = s.query(ClaudeMemoryRow).filter_by(candidate_id="cand-x").one()
+        assert row.outcome == "filled"
+
+    # Unknown candidate / None are safe no-ops (never raise).
+    record_outcome("does-not-exist", FILLED)
+    record_outcome(None, FILLED)
+
+
 async def test_execute_candidate_stores_entry_iv(monkeypatch, tmp_path):
     """When the live quote carries greeks, the fill records entry_iv (IV-spike baseline)."""
     _db_setup(tmp_path, monkeypatch)

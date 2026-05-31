@@ -9,6 +9,7 @@ import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -219,7 +220,9 @@ def test_compute_realized_pnl_sums_fills(isolated_db) -> None:
     from src.orchestrator.eod_report import _compute_realized_pnl
     from src.storage.models import FillRow
 
-    today = date.today()
+    # The EOD day window is anchored to the ET trading day; fills are timestamped "now"
+    # (UTC), which always falls inside ET-today's window regardless of local wall clock.
+    today = datetime.now(ZoneInfo("America/New_York")).date()
     Session = isolated_db
     with Session() as session:
         # Two fills today: 2 contracts @ $1.50 and 1 contract @ $0.80
@@ -268,7 +271,9 @@ def test_compute_realized_pnl_excludes_yesterday(isolated_db) -> None:
         )
         session.commit()
 
-    realized, count, _ = _compute_realized_pnl(date.today())
+    realized, count, _ = _compute_realized_pnl(
+        datetime.now(ZoneInfo("America/New_York")).date()
+    )
     assert realized == pytest.approx(0.0)
     assert count == 0
 

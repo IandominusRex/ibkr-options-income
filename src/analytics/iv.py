@@ -112,12 +112,35 @@ def _chain_stats(symbol: str, quotes: list[OptionQuote]) -> tuple[float | None, 
 
 
 def _infer_spot(quotes: list[OptionQuote]) -> float | None:
-    """Estimate spot from the mid of the tightest-spread near-the-money options."""
+    """Estimate the underlying spot price from the option chain.
+
+    Uses put-call parity on same-strike/expiry pairs: spot ≈ strike + call_mid − put_mid.
+    Takes the median across all available pairs for robustness. Falls back to the
+    tightest-spread option's strike only when no call/put pair exists.
+    """
+    from collections import defaultdict
+
+    pairs: dict[tuple[float, object], dict[OptionRight, float]] = defaultdict(dict)
+    for q in quotes:
+        if q.mid is not None:
+            pairs[(q.strike, q.expiry)][q.right] = q.mid
+
+    parity_spots: list[float] = []
+    for (strike, _expiry), sides in pairs.items():
+        call_mid = sides.get(OptionRight.CALL)
+        put_mid = sides.get(OptionRight.PUT)
+        if call_mid is not None and put_mid is not None:
+            parity_spots.append(strike + call_mid - put_mid)
+
+    if parity_spots:
+        parity_spots.sort()
+        return parity_spots[len(parity_spots) // 2]  # median
+
+    # Fallback: no paired strikes — use the tightest-spread option's strike (rough).
     candidates = [q for q in quotes if q.mid is not None and q.spread_pct is not None]
     if not candidates:
         return None
-    tightest = min(candidates, key=lambda q: q.spread_pct or 999)
-    return tightest.strike  # close enough for ATM selection
+    return min(candidates, key=lambda q: q.spread_pct or 999).strike
 
 
 def _term_structure_slope(quotes: list[OptionQuote], spot: float) -> float | None:

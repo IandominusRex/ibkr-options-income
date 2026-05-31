@@ -18,6 +18,7 @@ from ib_async import IB
 from sqlalchemy.orm import Session
 from telegram import Bot
 
+from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
@@ -95,6 +96,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 approval.status = ApprovalStatus.EXPIRED
                 order_row.state = OrderState.CANCELLED
                 order_row.detail = "TTL expired"
+                record_outcome(order_row.candidate_id, EXPIRED)
                 continue
 
             # --- RTH gate ---
@@ -125,6 +127,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 )
                 order_row.state = OrderState.CANCELLED
                 order_row.detail = f"Re-validation failed: {reasons}"
+                record_outcome(order_row.candidate_id, RISK_REJECTED)
                 continue
 
             to_execute.append((order_row.id, candidate))

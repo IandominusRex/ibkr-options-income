@@ -128,6 +128,7 @@ Invokes Claude to add plain-English reasoning to the top candidates.
 |---|---|
 | `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response |
 | `parser.py` | Validates and parses Claude's JSON response into a structured `ClaudeReview` object. On any failure, returns an empty result — the pipeline always continues. |
+| `memory.py` | The learning-loop outcome recorder. Back-fills each `claude_memory` row with what actually happened — `filled` (executor), `user_rejected` (Telegram reject), `risk_rejected` (re-validation), `expired` (TTL) — so later scans inject real outcomes (not just rejections) into the strategist prompt. |
 | `prompts/` | Prompt templates for different scenarios (morning review, roll alerts, EOD journal) |
 
 **Important:** Claude is enrichment only. If it is unavailable or returns bad output, the system

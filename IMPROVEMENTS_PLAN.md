@@ -90,11 +90,11 @@ Recoverable in a focused pass, not a rewrite.
 
 ## Phases
 
-### Phase A — Integrity & truth  ☐
+### Phase A — Integrity & truth  ✅
 1. `git init` the project as its own repo; baseline commit (`.gitignore` already present). *(P1)*
 2. Reconcile `Improvements.md`: downgrade every "✅ Fixed" that isn't (F1, F2, F3) to open. *(doc drift)*
 
-### Phase B — Make the Rules Engine real (safety-critical)  ☐
+### Phase B — Make the Rules Engine real (safety-critical)  ✅
 3. Enforce `min_iv_rank`, `max_pct_per_sector`, `max_correlated_exposure_pct` (add symbol→sector map to
    `universe.yaml`; start with sector, defer correlation if no data). *(S1)*
 4. Make `validate_candidates` portfolio-aware: walk ranked list accumulating per-ticker exposure,
@@ -107,12 +107,12 @@ Recoverable in a focused pass, not a rewrite.
 8. Add `next_earnings` to `TradeCandidate`, populate from `FundamentalStats`, reject when
    `expiry >= next_earnings`. *(F3)*
 
-### Phase C — Revive dead monitor triggers  ☐
+### Phase C — Revive dead monitor triggers  ✅
 9. Wire `entry_iv` end-to-end: capture `quote.iv` in `_fetch_quote`, store on `FillRow.entry_iv`, load
    latest fill IV per position in the monitor and pass into `check_all`. *(F1)*
 10. Fetch/cache `FundamentalStats` per monitored underlying; pass into `check_all` for ex-div. *(F2)*
 
-### Phase D — Correctness & learning loop  ☐
+### Phase D — Correctness & learning loop  ✅
 11. Write `filled` (executor), `risk_rejected` (approval re-validation), `expired` (TTL) outcomes. *(L1)*
 12. Pass quotes into `get_iv_stats`; fix `_infer_spot` via put-call parity or `ticker.last`. *(L2)*
 13. Honor `min_candidate_score` / `top_n_for_claude`, or delete them. *(L5)*
