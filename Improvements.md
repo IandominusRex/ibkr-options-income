@@ -3,14 +3,68 @@
 Cross-referenced against PLAN.md and PHASE1–PHASE12 handoff documents. Every finding includes the file and line where the issue lives, the root cause, the production impact, and the recommended fix. Critical and major bugs are fixed as part of the `/scan` + learning-loop implementation; the rest are noted for future cleanup.
 
 > **⚠️ Reconciliation note (2026-05-30).** An independent re-audit verified each "✅ Fixed" claim against
-> the actual code. **Several were not wired into the codebase.** Corrected below: **C3** and **O6**
-> (IV-spike `entry_iv`) are reopened — the `FillRow.entry_iv` column was added but is never populated by
-> the executor (`executor.py:204`) nor read by the monitor (`intraday.py:318` still hardcodes
-> `entry_iv=None`), so `check_iv_spike` still cannot fire. A related gap, the ex-dividend trigger
-> (`fund_stats=None` at `intraday.py:318`), was never tracked and is also open. The authoritative,
-> verified roadmap for closing these is **`IMPROVEMENTS_PLAN.md`** (project root). Treat that file as the
-> source of truth for status; the per-item "✅" markers below are historical and only trustworthy where
-> re-confirmed.
+> the actual code and found several were not wired into the codebase. The authoritative, verified roadmap
+> is **`IMPROVEMENTS_PLAN.md`** (project root).
+>
+> **✅ Remediation complete (2026-05-31).** All verified findings were fixed across Phases A–E (see the
+> **Remediation Log** immediately below for the per-finding → commit mapping). The previously-reopened
+> items (**C3 / O6** IV-spike `entry_iv`, **M7** earnings blackout, **O3** `_infer_spot`) are now genuinely
+> resolved and re-confirmed in code + tests. Full quality gate: **352 passed**, `ruff` + `mypy` clean
+> (only the pre-existing `streamlit`-not-installed dashboard tests fail in environments without that
+> optional dependency).
+
+---
+
+## Remediation Log — Phases A–E (2026-05-31)
+
+Every change is on `main` (repo: `IandominusRex/ibkr-options-income`), one commit per phase. Findings use
+the `IMPROVEMENTS_PLAN.md` IDs; the older `Improvements.md` IDs are cross-referenced where they overlap.
+
+### Phase A — Integrity & truth (`b1d761a`, `a592909`)
+- **P1** — Project brought under its own git repo (was untracked inside the home dir); GitHub remote added.
+- Reconciled this file: reopened the false "✅ Fixed" claims, then (below) closed them for real.
+
+### Phase B — Rules Engine made real (`a2d3395`)
+- **S1** — Enforce previously-ignored config limits: `min_iv_rank` (when IV rank known), `max_pct_per_sector`
+  (via `universe.yaml` `sectors:`), `max_csp_allocation_pct`. `max_correlated_exposure_pct` left explicitly
+  documented as not-yet-enforced (needs a correlation engine).
+- **S2** — `validate_candidates` is now portfolio-aware: walks the ranked batch and enforces *cumulative*
+  per-ticker / per-sector / CSP-collateral / buying-power budgets (was per-candidate, cumulative-blind).
+- **S3** — CSPs size off `total_cash` (genuinely cash-secured), not margin buying power; cumulative cap raised 40→60%.
+- **S4** — New `validate_live_quote`: the send-time gate now re-checks the *fresh* live quote (delta drift /
+  collapsed mid) before `placeOrder`, not just the stale morning candidate.
+- **S5** — Delta presence is required for income strategies regardless of the limits-dict.
+- **M7 / F3** — Earnings blackout enforced via the new `TradeCandidate.next_earnings` (populated by strategies).
+
+### Phase C — Dead monitor triggers revived (`f7387c6`)
+- **C3 / O6 / F1** — IV-spike trigger works end-to-end: executor stores `FillRow.entry_iv`; monitor loads it
+  per position (`_load_entry_iv`) and passes it into `check_all`. **Genuinely fixed now** (re-confirmed in code + tests).
+- **F2** — Ex-dividend trigger works: monitor caches per-underlying `FundamentalStats` and passes it into `check_all`.
+
+### Phase D — Learning loop + correctness (`b3801b0`)
+- **L1** — New `src/claude/memory.py` records the full outcome set on `claude_memory` (`filled`, `user_rejected`,
+  `risk_rejected`, `expired`) — previously only `user_rejected` was written, biasing Claude's memory.
+- **O3 / L2** — Term-structure & skew now compute (live chain passed into `get_iv_stats`); `_infer_spot` uses
+  put-call parity instead of returning an arbitrary strike. **O3 genuinely fixed now.**
+- **L5** — `min_candidate_score` enforced as a score floor; redundant `top_n_for_claude` removed.
+- **E-f** — EOD realized-P&L day window anchored to the ET trading day (fixes the UTC/local midnight gap that
+  zeroed P&L in UTC+8 mornings).
+
+### Phase E — Robustness & efficiency (`efd0ab0`, `5cfdd50`)
+- **E-a** — Claude parser recovers JSON even when wrapped in prose (balanced-span extraction).
+- **E-b** — Tick-size-aware limit pricing ($0.01 < $3.00, $0.05 ≥ $3.00) instead of always $0.05.
+- **E-c** — Documented that CC ROC is intentionally measured against cost basis.
+- **E-e** — Executor refuses `ROLL` candidates (single-leg builder can't place a two-leg roll).
+- **M5 / L6** — Remaining deprecated `asyncio.get_event_loop()` calls replaced (`get_running_loop`).
+- **L3** — Cross-thread `ib_async` calls removed: async market-data path (`get_option_chain_quotes_async`)
+  and an async monitor `_refresh_subscriptions` keep all IBKR calls on the loop thread; only blocking
+  yfinance is offloaded. ⚠️ *Logic verified by mocked tests; still needs a live paper-session smoke test.*
+- **L4** — Per-symbol analytics + sentiment run concurrently (`asyncio.gather`); chain fetches stay sequential
+  to respect the market-data line cap.
+
+> **Note:** items C1, C2, C4, M1–M6, O1–O7, E1–E5 below were addressed in the earlier `/scan` + learning-loop
+> release; the ones that the re-audit found *not actually wired* (C3, O6, M7, O3) were closed for real in
+> Phases B–D above. Inline markers below have been updated accordingly.
 
 ---
 
@@ -53,7 +107,7 @@ The guard that should prevent double-subscription is evaluated *after* the key i
 
 **Impact:** IV spike trigger never fires regardless of market conditions or position size.
 
-**Fix:** Add `entry_iv: float | None` column to `FillRow`; populate it from the live `OptionQuote.iv` at order placement; load it in the monitor at startup per position. ❌ **REOPENED (re-audit):** only the column was added (`models.py:137`). `executor.py:204` never sets it and `intraday.py:318` still passes `entry_iv=None`. Trigger remains dead. Tracked as Phase C / item F1 in `IMPROVEMENTS_PLAN.md`.
+**Fix:** Add `entry_iv: float | None` column to `FillRow`; populate it from the live `OptionQuote.iv` at order placement; load it in the monitor at startup per position. ✅ **Fixed for real in Phase C (`f7387c6`):** `executor` now sets `FillRow.entry_iv` from the live quote, and the monitor loads it per position (`_load_entry_iv`) and passes it into `check_all`. Re-confirmed in code + tests.
 
 ---
 
@@ -174,7 +228,7 @@ Neither Phase 5 nor Phase 8 implemented this.
 
 **Impact:** Candidates can be selected for expiries that span an earnings date, creating assignment risk and undefined P&L scenarios.
 
-**Fix:** Pass `next_earnings: date | None` through `TradeCandidate`; reject in risk engine if `expiry > next_earnings >= today + 1`. Noted for next phase; not included in this release to avoid scope creep.
+**Fix:** Pass `next_earnings: date | None` through `TradeCandidate`; reject in risk engine if `expiry > next_earnings >= today + 1`. ✅ **Fixed in Phase B (`a2d3395`):** `TradeCandidate.next_earnings` added and populated by the strategies; the risk engine rejects when the option lives through earnings (or earnings is within the configured blackout window).
 
 ---
 
@@ -221,7 +275,7 @@ The ATM band for term-structure and skew calculations is defined as `spot ± 5%`
 
 **Impact:** Near-ATM option selection for term-structure slope and put/call skew calculations can be systematically biased. When the chain is sparse, this distorts both analytics.
 
-**Fix:** Use the mid-price average of the call and put with the same strike (put-call parity gives spot ≈ call_mid − put_mid + strike), or fall back to `ticker.last` from IBKR.
+**Fix:** Use the mid-price average of the call and put with the same strike (put-call parity gives spot ≈ call_mid − put_mid + strike), or fall back to `ticker.last` from IBKR. ✅ **Fixed in Phase D (`b3801b0`):** `_infer_spot` now uses put-call parity (median across strike pairs) with a tightest-spread fallback; the scan also passes the live chain into `get_iv_stats` so this path actually runs.
 
 ---
 
@@ -250,7 +304,7 @@ The ATM band for term-structure and skew calculations is defined as `spot ± 5%`
 
 **Root cause:** `FillRow` stores fill price and commission but not the IV of the option at the time of execution. Even with the C3 fix applied, `check_all(entry_iv=...)` in the monitor has no source for this value.
 
-**Impact:** IV spike trigger cannot fire for any position, regardless of how large the IV move is. ❌ **REOPENED (re-audit):** adding the `FillRow.entry_iv` column did not fix this — nothing writes the column (`executor.py:204`) and nothing reads it (`intraday.py:318`). End-to-end wiring is tracked as Phase C / item F1 in `IMPROVEMENTS_PLAN.md`.
+**Impact:** IV spike trigger cannot fire for any position, regardless of how large the IV move is. ✅ **Fixed for real in Phase C (`f7387c6`):** end-to-end wiring done — `entry_iv` is written at fill and read by the monitor; an end-to-end test asserts the spike fires with a loaded baseline.
 
 ---
 
