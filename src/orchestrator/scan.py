@@ -43,7 +43,7 @@ from src.common.schemas import (
 from src.engine.decision_engine import select_top_candidates
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
-from src.ibkr.market_data import get_option_chain_quotes
+from src.ibkr.market_data import get_option_chain_quotes_async
 from src.ibkr.portfolio import get_account_snapshot, get_positions
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
@@ -255,33 +255,30 @@ async def run_scan(
     for symbol in all_symbols:
         log.info("scan: processing %s", symbol)
 
-        # Option chain (I/O bound but synchronous — ib_async uses its own event loop)
+        loop = asyncio.get_running_loop()
+
+        # Option chain — IB calls run on the loop thread (async), NOT in a worker thread.
+        # Chain fetches stay sequential per symbol to respect the ~100 market-data line cap.
         try:
-            quotes: list[OptionQuote] = await asyncio.get_running_loop().run_in_executor(
-                None, get_option_chain_quotes, ib, symbol
-            )
+            quotes: list[OptionQuote] = await get_option_chain_quotes_async(ib, symbol)
         except Exception:
             log.exception("scan: option chain failed for %s", symbol)
             quotes = []
 
-        # Analytics (yfinance — run in executor to avoid blocking)
-        try:
-            iv_stats, tech_stats, fund_stats = await asyncio.get_running_loop().run_in_executor(
-                None, _fetch_analytics, symbol, quotes
-            )
-        except Exception:
-            log.exception("scan: analytics failed for %s", symbol)
+        # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
+        # concurrently in the default executor to cut per-symbol latency.
+        analytics_res, sentiment_res = await asyncio.gather(
+            loop.run_in_executor(None, _fetch_analytics, symbol, quotes),
+            loop.run_in_executor(None, sentiment.score, symbol),
+            return_exceptions=True,
+        )
+        if isinstance(analytics_res, BaseException):
+            log.exception("scan: analytics failed for %s", symbol, exc_info=analytics_res)
             continue
+        iv_stats, tech_stats, fund_stats = analytics_res
+        sentiment_score = None if isinstance(sentiment_res, BaseException) else sentiment_res
 
         analytics_map[symbol] = (iv_stats, tech_stats, fund_stats)
-
-        # Sentiment (non-blocking, best-effort)
-        try:
-            sentiment_score = await asyncio.get_running_loop().run_in_executor(
-                None, sentiment.score, symbol
-            )
-        except Exception:
-            sentiment_score = None
 
         # CC candidates for held stock positions
         stock_pos = next(

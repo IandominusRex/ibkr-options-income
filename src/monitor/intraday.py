@@ -269,11 +269,14 @@ class IntradayMonitor:
         self._fund_stats: dict[str, FundamentalStats] = {}
 
     # ------------------------------------------------------------------
-    # Subscription management (sync — called from executor or on startup)
+    # Subscription management — async, runs on the ib_async loop thread.
+    # IB calls (positions, reqMktData, cancelMktData) are non-blocking and stay on
+    # the loop; only the blocking yfinance fundamentals fetch is offloaded to a thread.
     # ------------------------------------------------------------------
 
-    def _refresh_subscriptions(self) -> None:
+    async def _refresh_subscriptions(self) -> None:
         """Load positions; subscribe to new short options, unsubscribe from closed ones."""
+        loop = asyncio.get_running_loop()
         try:
             positions = get_positions(self._ib)
         except Exception:
@@ -300,7 +303,10 @@ class IntradayMonitor:
             underlying = pos.underlying or pos.symbol
             if underlying not in self._fund_stats:
                 try:
-                    self._fund_stats[underlying] = get_fundamental_stats(underlying)
+                    # yfinance is blocking — keep it off the event loop.
+                    self._fund_stats[underlying] = await loop.run_in_executor(
+                        self._executor, get_fundamental_stats, underlying
+                    )
                 except Exception:
                     log.exception("Failed to fetch fundamentals for %s", underlying)
 
@@ -372,10 +378,8 @@ class IntradayMonitor:
 
     async def start(self, stop_event: asyncio.Event) -> None:
         """Subscribe to IB events and run until stop_event is set."""
-        loop = asyncio.get_running_loop()
-
-        # Initial position load (blocking IB call — run in executor)
-        await loop.run_in_executor(self._executor, self._refresh_subscriptions)
+        # Initial position load — IB calls run on the loop; yfinance is offloaded inside.
+        await self._refresh_subscriptions()
 
         self._ib.pendingTickersEvent += self._on_pending_tickers
 
@@ -384,7 +388,7 @@ class IntradayMonitor:
         async def _refresh_loop() -> None:
             while not stop_event.is_set():
                 await asyncio.sleep(poll_seconds)
-                await loop.run_in_executor(self._executor, self._refresh_subscriptions)
+                await self._refresh_subscriptions()
 
         refresh_task = asyncio.create_task(_refresh_loop())
         log.info("Intraday monitor running (refresh every %ds)", poll_seconds)

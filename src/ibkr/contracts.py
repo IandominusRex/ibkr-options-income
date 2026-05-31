@@ -41,3 +41,27 @@ def qualify_options(ib: IB, contracts: list[Option]) -> list[Option]:
     ok = cast(list[Option], [c for c in qualified if c.conId])
     log.debug("qualify_options: %d/%d contracts qualified", len(ok), len(contracts))
     return ok
+
+
+async def qualify_stock_async(ib: IB, symbol: str) -> Stock:
+    """Async variant of qualify_stock — runs on the ib_async loop thread."""
+    contract = build_stock(symbol)
+    result = await ib.qualifyContractsAsync(contract)
+    qualified = result if isinstance(result, list) else [result]
+    first = qualified[0] if qualified else None
+    if first is None or not getattr(first, "conId", None):
+        raise ValueError(f"Could not qualify stock contract for {symbol!r}")
+    return cast(Stock, first)
+
+
+async def qualify_options_async(ib: IB, contracts: list[Option]) -> list[Option]:
+    """Async variant of qualify_options — runs on the ib_async loop thread."""
+    if not contracts:
+        return []
+    result = await ib.qualifyContractsAsync(*contracts)
+    items = result if isinstance(result, list) else [result]
+    ok: list[Option] = [
+        cast(Option, c) for c in items if c is not None and getattr(c, "conId", None)
+    ]
+    log.debug("qualify_options_async: %d/%d contracts qualified", len(ok), len(contracts))
+    return ok

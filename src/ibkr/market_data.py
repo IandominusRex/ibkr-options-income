@@ -9,6 +9,7 @@ Internal helpers are module-private (_prefix) but importable by tests.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Iterable
 from datetime import date
@@ -19,7 +20,13 @@ from ib_async import IB, Option
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import OptionQuote, OptionRight
-from src.ibkr.contracts import build_option, qualify_options, qualify_stock
+from src.ibkr.contracts import (
+    build_option,
+    qualify_options,
+    qualify_options_async,
+    qualify_stock,
+    qualify_stock_async,
+)
 from src.storage.db import session_scope
 from src.storage.models import OptionQuoteRow
 
@@ -62,6 +69,18 @@ def _get_spot(ib: IB, stock: Any) -> float:
     return p
 
 
+async def _get_spot_async(ib: IB, stock: Any) -> float:
+    """Async variant of _get_spot — awaits on the loop instead of ib.sleep."""
+    ticker = ib.reqMktData(stock, snapshot=True)
+    await asyncio.sleep(get_config().market_data.quote_sleep_seconds)
+    price = ticker.marketPrice()
+    ib.cancelMktData(stock)
+    p = _safe(price)
+    if p is None:
+        raise ValueError(f"Could not get spot price for {stock.symbol!r}")
+    return p
+
+
 # ---------------------------------------------------------------------------
 # Chain filtering
 # ---------------------------------------------------------------------------
@@ -88,6 +107,32 @@ def _filter_strikes(strikes: Iterable[float], spot: float, band_pct: float = 0.1
 # ---------------------------------------------------------------------------
 
 
+def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
+    """Map a (contract, ticker) pair to an OptionQuote. Pure — shared by sync + async."""
+    exp_str = c.lastTradeDateOrContractMonth
+    exp_date = date(int(exp_str[:4]), int(exp_str[4:6]), int(exp_str[6:]))
+    right = OptionRight.CALL if c.right == "C" else OptionRight.PUT
+    g = ticker.modelGreeks
+    oi = _safe_int(ticker.callOpenInterest if c.right == "C" else ticker.putOpenInterest)
+    return OptionQuote(
+        underlying=c.symbol,
+        right=right,
+        strike=float(c.strike),
+        expiry=exp_date,
+        bid=_safe(ticker.bid),
+        ask=_safe(ticker.ask),
+        last=_safe(ticker.last),
+        volume=_safe_int(ticker.volume),
+        open_interest=oi,
+        iv=_safe(g.impliedVol) if g else None,
+        delta=_safe(g.delta) if g else None,
+        gamma=_safe(g.gamma) if g else None,
+        theta=_safe(g.theta) if g else None,
+        vega=_safe(g.vega) if g else None,
+        greeks_source="ibkr",
+    )
+
+
 def _batch_quotes(
     ib: IB,
     contracts: list[Option],
@@ -96,6 +141,7 @@ def _batch_quotes(
 ) -> list[OptionQuote]:
     """Fetch live quotes + Greeks for *contracts* in batches, respecting the line cap.
 
+    Synchronous variant (used by the standalone backfill/healthcheck paths and tests).
     Always cancels every market-data line before opening the next batch.
     Waits at least 2 s per batch (regardless of throttle) so modelGreeks populate.
     """
@@ -112,36 +158,47 @@ def _batch_quotes(
         ib.sleep(wait)
 
         for c, ticker in zip(batch, tickers, strict=True):
-            exp_str = c.lastTradeDateOrContractMonth
-            exp_date = date(int(exp_str[:4]), int(exp_str[4:6]), int(exp_str[6:]))
-            right = OptionRight.CALL if c.right == "C" else OptionRight.PUT
-
-            g = ticker.modelGreeks
-            oi = _safe_int(ticker.callOpenInterest if c.right == "C" else ticker.putOpenInterest)
-
-            quotes.append(
-                OptionQuote(
-                    underlying=c.symbol,
-                    right=right,
-                    strike=float(c.strike),
-                    expiry=exp_date,
-                    bid=_safe(ticker.bid),
-                    ask=_safe(ticker.ask),
-                    last=_safe(ticker.last),
-                    volume=_safe_int(ticker.volume),
-                    open_interest=oi,
-                    iv=_safe(g.impliedVol) if g else None,
-                    delta=_safe(g.delta) if g else None,
-                    gamma=_safe(g.gamma) if g else None,
-                    theta=_safe(g.theta) if g else None,
-                    vega=_safe(g.vega) if g else None,
-                    greeks_source="ibkr",
-                )
-            )
+            quotes.append(_ticker_to_quote(c, ticker))
 
         for c in batch:
             ib.cancelMktData(c)
 
+        log.debug(
+            "chain batch %d-%d complete (%d quotes accumulated)",
+            i,
+            min(i + batch_size, len(contracts)),
+            len(quotes),
+        )
+
+    return quotes
+
+
+async def _batch_quotes_async(
+    ib: IB,
+    contracts: list[Option],
+    batch_size: int,
+    throttle: float,
+) -> list[OptionQuote]:
+    """Async variant of _batch_quotes — runs on the ib_async event loop thread.
+
+    Uses ``await asyncio.sleep`` instead of ``ib.sleep`` so it never blocks (or
+    cross-threads) the loop. ``reqMktData`` is non-blocking; ticks populate via the
+    loop while we await. Same batching + cancel discipline as the sync version.
+    """
+    quotes: list[OptionQuote] = []
+    wait = max(throttle, 2.0)
+
+    for i in range(0, len(contracts), batch_size):
+        batch = contracts[i : i + batch_size]
+        tickers = [
+            ib.reqMktData(c, genericTickList="101", snapshot=False, regulatorySnapshot=False)
+            for c in batch
+        ]
+        await asyncio.sleep(wait)
+        for c, ticker in zip(batch, tickers, strict=True):
+            quotes.append(_ticker_to_quote(c, ticker))
+        for c in batch:
+            ib.cancelMktData(c)
         log.debug(
             "chain batch %d-%d complete (%d quotes accumulated)",
             i,
@@ -205,6 +262,53 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
 
     quotes = _batch_quotes(ib, qualified, md.chain_batch_size, md.request_throttle_seconds)
     log.info("get_option_chain_quotes: %d quotes for %s", len(quotes), symbol)
+    return quotes
+
+
+async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote]:
+    """Async sibling of get_option_chain_quotes — runs every IB call on the loop thread.
+
+    This is what the orchestrator uses: calling the sync version from a thread-pool
+    executor cross-threads the ib_async event loop (the bug PLAN.md warns against).
+    Same scope/filters as the sync version; only the await/qualify mechanics differ.
+    """
+    cfg = get_config()
+    md = cfg.market_data
+    risk = cfg.risk
+
+    dte_min = min(risk["covered_call"]["dte_min"], risk["cash_secured_put"]["dte_min"])
+    dte_max = max(risk["covered_call"]["dte_max"], risk["cash_secured_put"]["dte_max"])
+
+    stock = await qualify_stock_async(ib, symbol)
+    spot = await _get_spot_async(ib, stock)
+    log.info("get_option_chain_quotes_async: symbol=%s spot=%.2f", symbol, spot)
+
+    chains = await ib.reqSecDefOptParamsAsync(stock.symbol, "", stock.secType, stock.conId)
+    smart = next((c for c in chains if c.exchange == "SMART"), None)
+    if smart is None:
+        smart = next(iter(chains), None)
+    if smart is None:
+        log.warning("No option chain params returned for %s", symbol)
+        return []
+
+    expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
+    strikes = _filter_strikes(smart.strikes, spot)
+    log.info("symbol=%s expirations=%s strikes=%d", symbol, expirations, len(strikes))
+
+    raw: list[Option] = [
+        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)
+        for e in expirations
+        for st in strikes
+        for right in ("C", "P")
+    ]
+
+    qualified = await qualify_options_async(ib, raw)
+    if not qualified:
+        log.warning("No qualified option contracts for %s", symbol)
+        return []
+
+    quotes = await _batch_quotes_async(ib, qualified, md.chain_batch_size, md.request_throttle_seconds)
+    log.info("get_option_chain_quotes_async: %d quotes for %s", len(quotes), symbol)
     return quotes
 
 

@@ -75,7 +75,7 @@ Handles everything that talks directly to Interactive Brokers via the `ib_async`
 | File | What it does |
 |---|---|
 | `connection.py` | Opens and manages the connection to TWS/Gateway; auto-reconnects on drops; enforces one connection per process |
-| `market_data.py` | Fetches live quotes, option chains, Greeks (delta/theta/IV), and historical IV data |
+| `market_data.py` | Fetches live quotes, option chains, Greeks (delta/theta/IV), and historical IV data. Provides both a sync API and an `async` chain fetcher (`get_option_chain_quotes_async`) — the orchestrator uses the async one so every IBKR call runs on the `ib_async` event-loop thread (never a worker thread), respecting the line-limit batching. |
 | `portfolio.py` | Reads your current positions, account balance, buying power, and margin |
 | `contracts.py` | Builds valid IBKR contract objects for stocks and options; runs `qualifyContracts` to validate them |
 

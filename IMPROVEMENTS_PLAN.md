@@ -119,7 +119,7 @@ Recoverable in a focused pass, not a rewrite.
 13b. Anchor the EOD realized-P&L day window to the market timezone (ET) for both storage comparison
     and the window bounds, so it doesn't read 0 across the local/UTC midnight gap. *(E-f)*
 
-### Phase E — Robustness & efficiency (post-safety)  ☐
+### Phase E — Robustness & efficiency (post-safety)  ✅
 14. Replace `run_in_executor` IB calls with proper async on the loop thread. *(L3)*
 15. Batch/parallelize the scan within the market-data line limit. *(L4)*
 16. Harden parser to extract the first JSON span. *(E-a)*

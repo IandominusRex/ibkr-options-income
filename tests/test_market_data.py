@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -287,6 +287,28 @@ def test_batch_quotes_right_enum_mapped_correctly():
 
     assert quotes[0].right is OptionRight.CALL
     assert quotes[1].right is OptionRight.PUT
+
+
+# ---------------------------------------------------------------------------
+# _batch_quotes_async: async path runs IB calls on the loop (no worker thread)
+# ---------------------------------------------------------------------------
+
+
+async def test_batch_quotes_async_returns_quotes_and_cancels(monkeypatch):
+    from src.ibkr.market_data import _batch_quotes_async
+
+    # Don't actually wait the per-batch settle time.
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+
+    ib = MagicMock()
+    ib.reqMktData.return_value = _make_ticker(bid=2.0, ask=2.4)
+    contracts = [_make_option_contract(strike=400.0 + i) for i in range(5)]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert len(quotes) == 5
+    assert ib.cancelMktData.call_count == 5
+    assert quotes[0].bid == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------
