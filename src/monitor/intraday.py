@@ -26,9 +26,11 @@ from typing import Any
 
 from ib_async import IB
 
+from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.runner import review_roll
 from src.common.config import Config, get_config
 from src.common.schemas import (
+    FundamentalStats,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
@@ -39,7 +41,7 @@ from src.ibkr.contracts import build_option
 from src.ibkr.portfolio import get_positions
 from src.monitor.triggers import check_all
 from src.storage.db import init_db, session_scope
-from src.storage.models import RollAlertRow
+from src.storage.models import CandidateRow, FillRow, RollAlertRow
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +82,30 @@ def _ticker_to_quote(ticker: Any, pos: PositionSnapshot) -> OptionQuote:
         vega=_safe(g.vega) if g else None,
         greeks_source="ibkr",
     )
+
+
+def _load_entry_iv(pos: PositionSnapshot) -> float | None:
+    """Return the IV recorded at fill for this short option position, or None.
+
+    Matches the position's contract (underlying/strike/expiry/right) back to the
+    candidate that produced its most recent fill and reads FillRow.entry_iv.
+    """
+    if pos.strike is None or pos.expiry is None or pos.right is None:
+        return None
+    with session_scope() as session:
+        row = (
+            session.query(FillRow.entry_iv)
+            .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+            .filter(
+                CandidateRow.underlying == (pos.underlying or pos.symbol),
+                CandidateRow.strike == pos.strike,
+                CandidateRow.expiry == pos.expiry,
+                CandidateRow.right == pos.right.value,
+            )
+            .order_by(FillRow.filled_at.desc())
+            .first()
+        )
+    return row[0] if row and row[0] is not None else None
 
 
 def _is_recent_alert(alert: RollAlert, cooldown_minutes: int) -> bool:
@@ -238,6 +264,9 @@ class IntradayMonitor:
         self._executor = executor
         # Maps OCC symbol (localSymbol) → PositionSnapshot
         self._subscriptions: dict[str, PositionSnapshot] = {}
+        # OCC symbol → IV at entry (IV-spike baseline); underlying → fundamentals (ex-div).
+        self._entry_iv: dict[str, float | None] = {}
+        self._fund_stats: dict[str, FundamentalStats] = {}
 
     # ------------------------------------------------------------------
     # Subscription management (sync — called from executor or on startup)
@@ -264,6 +293,17 @@ class IntradayMonitor:
             already_subscribed = pos.symbol in self._subscriptions
             self._subscriptions[pos.symbol] = pos  # always update position snapshot
 
+            # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
+            if pos.symbol not in self._entry_iv:
+                self._entry_iv[pos.symbol] = _load_entry_iv(pos)
+            # Fundamentals (ex-div date) — cache once per underlying for the session.
+            underlying = pos.underlying or pos.symbol
+            if underlying not in self._fund_stats:
+                try:
+                    self._fund_stats[underlying] = get_fundamental_stats(underlying)
+                except Exception:
+                    log.exception("Failed to fetch fundamentals for %s", underlying)
+
             if not already_subscribed or not any(
                 t.contract
                 and (t.contract.localSymbol == pos.symbol or t.contract.symbol == pos.underlying)
@@ -282,6 +322,7 @@ class IntradayMonitor:
         for sym in list(self._subscriptions):
             if sym not in active_symbols:
                 old_pos = self._subscriptions.pop(sym)
+                self._entry_iv.pop(sym, None)
                 if old_pos.expiry and old_pos.strike and old_pos.right:
                     try:
                         contract = build_option(
@@ -315,7 +356,11 @@ class IntradayMonitor:
                 "iv_spike_pct": self._cfg.monitor.iv_spike_pct,
                 "ex_div_days_ahead": self._cfg.monitor.ex_div_days_ahead,
             }
-            alerts = check_all(pos, quote, entry_iv=None, fund_stats=None, limits=limits)
+            entry_iv = self._entry_iv.get(local_sym)
+            fund_stats = self._fund_stats.get(pos.underlying or pos.symbol)
+            alerts = check_all(
+                pos, quote, entry_iv=entry_iv, fund_stats=fund_stats, limits=limits
+            )
             if alerts:
                 await fire_alerts(
                     alerts, pos, quote, self._bot, self._chat_id, self._cfg, self._executor

@@ -239,6 +239,41 @@ async def test_execute_candidate_writes_fill_row(monkeypatch, tmp_path):
     assert order_row.filled_qty == 1.0
 
 
+async def test_execute_candidate_stores_entry_iv(monkeypatch, tmp_path):
+    """When the live quote carries greeks, the fill records entry_iv (IV-spike baseline)."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    from src.execution.executor import execute_candidate
+
+    mock_ib = _make_mock_ib(filled=True, fill_qty=1.0, avg_price=1.52)
+    greeks = MagicMock()
+    greeks.delta = -0.20  # in CSP range → live re-gate passes
+    greeks.impliedVol = 0.42
+    mock_ib.reqMktData.return_value.modelGreeks = greeks
+    mock_bot = _make_mock_bot()
+
+    await execute_candidate(mock_ib, mock_bot, "99999", order_id, _make_candidate())
+
+    with dbmod.session_scope() as s:
+        fill = s.execute(select(FillRow).where(FillRow.order_id == order_id)).scalars().one()
+    assert fill.entry_iv == pytest.approx(0.42)
+
+
 async def test_execute_candidate_sends_telegram_confirmation(monkeypatch, tmp_path):
     _db_setup(tmp_path, monkeypatch)
 

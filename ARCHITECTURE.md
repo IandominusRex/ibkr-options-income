@@ -175,8 +175,8 @@ Watches your open positions during market hours and fires alerts when action may
 
 | File | What it does |
 |---|---|
-| `intraday.py` | Subscribes to live IBKR price feeds for each open position; runs checks every tick |
-| `triggers.py` | Defines trigger conditions: delta too high (roll needed), DTE too short, IV spike, ex-dividend risk. Each trigger calls Claude for a roll recommendation and sends a Telegram alert. |
+| `intraday.py` | Subscribes to live IBKR price feeds for each open position; runs checks every tick. On subscribe it loads each position's **entry IV** (from the originating fill's `FillRow.entry_iv`, matched by contract) as the IV-spike baseline, and caches the underlying's **fundamentals** (ex-dividend date) — so all four triggers can actually fire. |
+| `triggers.py` | Defines trigger conditions: delta too high (roll needed), DTE too short, IV spike (vs. entry IV), ex-dividend risk. Each trigger calls Claude for a roll recommendation and sends a Telegram alert. |
 
 ---
 

@@ -249,6 +249,7 @@ async def execute_candidate(
                     filled_qty=filled_qty,
                     avg_price=avg_price,
                     commission=commission,
+                    entry_iv=quote.iv,  # IV at execution → monitor's IV-spike baseline
                     is_live=cfg.is_live,
                 )
                 session.add(fill_row)

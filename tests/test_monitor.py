@@ -488,3 +488,75 @@ def test_parse_roll_output_invalid_schema_returns_none() -> None:
     inner = {"some": "garbage", "data": 123}
     envelope = {"type": "result", "result": json.dumps(inner)}
     assert parse_roll_output(json.dumps(envelope)) is None
+
+
+# ---------------------------------------------------------------------------
+# Phase C: entry_iv wiring (IV-spike baseline) — was permanently dead before.
+# ---------------------------------------------------------------------------
+
+
+def _isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import src.storage.db as _db_mod
+    from src.storage.models import Base
+
+    db_url = f"sqlite:///{tmp_path / 'entry_iv.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(_db_mod, "_engine", engine)
+    monkeypatch.setattr(_db_mod, "_SessionLocal", Session)
+
+
+def test_load_entry_iv_matches_position(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A filled candidate's entry_iv is recovered by matching the position's contract."""
+    from src.monitor.intraday import _load_entry_iv
+    from src.storage.db import session_scope
+    from src.storage.models import CandidateRow, FillRow
+
+    _isolated_db(tmp_path, monkeypatch)
+    expiry = date.today() + timedelta(days=30)
+
+    with session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="cand-iv", run_id="r1", strategy="covered_call",
+                underlying="AAPL", right="C", strike=185.0, expiry=expiry,
+                blended_score=70.0, payload={},
+            )
+        )
+        s.add(
+            FillRow(
+                order_id=1, candidate_id="cand-iv", filled_qty=1.0,
+                avg_price=1.50, entry_iv=0.32,
+            )
+        )
+
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000", sec_type="OPT", position=-1.0, avg_cost=1.50,
+        right=OptionRight.CALL, strike=185.0, expiry=expiry, underlying="AAPL",
+    )
+    assert _load_entry_iv(pos) == pytest.approx(0.32)
+
+
+def test_load_entry_iv_none_when_no_fill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.monitor.intraday import _load_entry_iv
+
+    _isolated_db(tmp_path, monkeypatch)
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000", sec_type="OPT", position=-1.0, avg_cost=1.50,
+        right=OptionRight.CALL, strike=185.0, expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
+    assert _load_entry_iv(pos) is None
+
+
+def test_iv_spike_fires_end_to_end_with_loaded_entry_iv() -> None:
+    """With a real entry_iv (as the monitor now loads), a large IV move fires the trigger."""
+    pos = _make_short_call(delta=0.20)
+    quote = _make_quote(delta=0.20, iv=0.60)  # IV jumped from 0.32 → 0.60 (+87%)
+    limits = {"delta_ceiling": 0.45, "dte_threshold": 7, "iv_spike_pct": 40.0}
+    alerts = check_all(pos, quote, entry_iv=0.32, fund_stats=None, limits=limits)
+    assert any(a.trigger == "iv_spike" for a in alerts)
