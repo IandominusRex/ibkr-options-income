@@ -74,6 +74,10 @@ def generate_cc_candidates(
             continue
 
         collateral = position.avg_cost * contracts * 100  # full capital at risk for all contracts
+        # ROC is deliberately measured against the cost BASIS (avg_cost), i.e. return on the
+        # capital actually tied up in the shares you own — not the current market price. For a
+        # name that has run up this understates yield-on-market-value, which is the conservative
+        # choice for an income screen (you don't want the run-up to inflate the apparent yield).
         roc_pct = (mid / position.avg_cost) * 100
         annualized_yield_pct = roc_pct * (365 / dte)
 

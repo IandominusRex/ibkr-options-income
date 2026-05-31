@@ -213,7 +213,7 @@ async def fire_alerts(
     # Claude review in thread (subprocess — blocks; run off the event loop)
     review: RollReview | None = None
     if cfg.claude.enabled:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             review = await loop.run_in_executor(
                 executor,
@@ -372,7 +372,7 @@ class IntradayMonitor:
 
     async def start(self, stop_event: asyncio.Event) -> None:
         """Subscribe to IB events and run until stop_event is set."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Initial position load (blocking IB call — run in executor)
         await loop.run_in_executor(self._executor, self._refresh_subscriptions)
@@ -438,7 +438,7 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
 
     if stop_event is None:
         stop_event = asyncio.Event()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(sig, stop_event.set)

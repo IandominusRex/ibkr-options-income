@@ -109,18 +109,18 @@ def _db_setup(tmp_path, monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_build_limit_order_rounds_to_tick():
-    """Mid of 1.52 should round to 1.50 (nearest $0.05)."""
-    quote = _make_quote(bid=1.44, ask=1.60)  # mid = 1.52
+def test_build_limit_order_penny_tick_below_3():
+    """Sub-$3 premium uses $0.01 ticks (penny pilot): mid 1.523 → 1.52."""
+    quote = _make_quote(bid=1.446, ask=1.60)  # mid = 1.523
     order = build_limit_order(_make_candidate(), quote)
-    assert order.lmtPrice == 1.50
+    assert order.lmtPrice == 1.52
 
 
-def test_build_limit_order_rounds_up_to_tick():
-    """Mid of 1.53 should round to 1.55 (nearest $0.05)."""
-    quote = _make_quote(bid=1.46, ask=1.60)  # mid = 1.53
+def test_build_limit_order_nickel_tick_at_or_above_3():
+    """Premium >= $3 uses $0.05 ticks: mid 3.53 → 3.55."""
+    quote = _make_quote(bid=3.51, ask=3.55)  # mid = 3.53
     order = build_limit_order(_make_candidate(), quote)
-    assert order.lmtPrice == 1.55
+    assert order.lmtPrice == 3.55
 
 
 def test_build_limit_order_exact_tick_unchanged():
@@ -273,6 +273,39 @@ def test_record_outcome_sets_and_does_not_clobber(monkeypatch, tmp_path):
     # Unknown candidate / None are safe no-ops (never raise).
     record_outcome("does-not-exist", FILLED)
     record_outcome(None, FILLED)
+
+
+async def test_execute_candidate_rejects_roll(monkeypatch, tmp_path):
+    """A ROLL candidate must be refused outright — the single-leg executor can't place it."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    from src.execution.executor import execute_candidate
+
+    mock_ib = _make_mock_ib()
+    mock_bot = _make_mock_bot()
+
+    await execute_candidate(
+        mock_ib, mock_bot, "99999", order_id, _make_candidate(strategy=Strategy.ROLL)
+    )
+
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+    assert row.state == OrderState.REJECTED
+    mock_ib.placeOrder.assert_not_called()
+    assert "ROLL" in mock_bot.send_message.call_args.kwargs["text"]
 
 
 async def test_execute_candidate_stores_entry_iv(monkeypatch, tmp_path):

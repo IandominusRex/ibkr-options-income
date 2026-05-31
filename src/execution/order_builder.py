@@ -12,6 +12,17 @@ from ib_async import LimitOrder
 from src.common.schemas import OptionQuote, TradeCandidate
 
 
+def _round_to_tick(price: float) -> float:
+    """Round a premium to its exchange tick size.
+
+    Penny-pilot classes (which cover essentially all of this system's liquid
+    ETF/large-cap universe) quote in $0.01 below $3.00 and $0.05 at/above $3.00.
+    Rounding everything to $0.05 (the old behaviour) mispriced sub-$3 premiums.
+    """
+    tick = 0.01 if price < 3.0 else 0.05
+    return round(round(price / tick) * tick, 2)
+
+
 def build_limit_order(candidate: TradeCandidate, quote: OptionQuote) -> LimitOrder:
     """Return a mid-price DAY LimitOrder (SELL) for the given candidate.
 
@@ -24,8 +35,7 @@ def build_limit_order(candidate: TradeCandidate, quote: OptionQuote) -> LimitOrd
             f"({candidate.underlying} {candidate.right} {candidate.strike} "
             f"{candidate.expiry}) — bid={quote.bid} ask={quote.ask}"
         )
-    # Round to nearest $0.05 tick (standard for liquid equity options).
-    price = round(round(mid / 0.05) * 0.05, 2)
+    price = _round_to_tick(mid)
     return LimitOrder(
         action="SELL",
         totalQuantity=candidate.contracts,

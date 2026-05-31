@@ -143,8 +143,8 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 
 | File | What it does |
 |---|---|
-| `order_builder.py` | Builds a mid-price limit order for an approved candidate (never market orders) |
-| `executor.py` | Places the order via IBKR, monitors for a fill, handles timeouts and cancellations, records the fill |
+| `order_builder.py` | Builds a mid-price limit order for an approved candidate (never market orders), rounded to the correct tick size ($0.01 below $3.00, $0.05 at/above — penny-pilot rule) |
+| `executor.py` | Places the order via IBKR, monitors for a fill, handles timeouts and cancellations, records the fill (with entry IV) and the `filled` learning-loop outcome. Refuses `ROLL` candidates (alert-only; the single-leg builder can't place a two-leg roll). |
 | `approval.py` | Maps a Telegram approval event → re-validates against the Rules Engine with a fresh live quote → hands off to executor |
 
 ---

@@ -22,7 +22,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.claude.memory import FILLED, record_outcome
 from src.common.config import get_config
-from src.common.schemas import OptionQuote, OrderState, TradeCandidate, Verdict
+from src.common.schemas import OptionQuote, OrderState, Strategy, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_live_quote
 from src.execution.order_builder import build_limit_order
 from src.ibkr.contracts import build_option
@@ -131,6 +131,27 @@ async def execute_candidate(
     """Execute a single pre-validated TradeCandidate: qualify → quote → place → monitor → confirm."""
     cfg = get_config()
     fill_timeout = cfg.execution.fill_timeout_minutes * 60.0
+
+    # ROLL is a two-leg combo (buy-to-close + sell-to-open); this single-leg executor
+    # would mis-send it as a naked SELL. Rolls are alert-only — refuse outright.
+    if candidate.strategy == Strategy.ROLL:
+        log.error(
+            "ROLL candidate %s reached the executor — rolls are alert-only; rejecting",
+            candidate.candidate_id,
+        )
+        with session_scope() as session:
+            row = session.get(OrderRow, order_id)
+            if row:
+                row.state = OrderState.REJECTED
+                row.detail = "ROLL is not executable via the single-leg order builder"
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"Order NOT placed — {candidate.underlying} is a ROLL. "
+                f"Rolls are alert-only and cannot be auto-executed."
+            ),
+        )
+        return
 
     try:
         quote, qualified = await _fetch_quote(ib, candidate)

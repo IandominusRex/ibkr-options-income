@@ -157,6 +157,16 @@ def test_parse_optional_fields_default():
 # --------------------------------------------------------------------------- #
 
 
+def test_parse_recovers_json_wrapped_in_prose():
+    """claude -p sometimes wraps the array in explanatory text; recover it anyway."""
+    inner = json.dumps([_review_dict()])
+    result_text = f"Sure — here are the candidates I'd prioritize:\n{inner}\nHope this helps!"
+    raw = json.dumps({"type": "result", "result": result_text})
+    reviews = parse_claude_output(raw)
+    assert len(reviews) == 1
+    assert reviews[0].candidate_id == "test-001"
+
+
 def test_parse_malformed_outer_json():
     reviews = parse_claude_output("not json at all {{{")
     assert reviews == []

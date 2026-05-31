@@ -27,6 +27,53 @@ def _strip_fences(text: str) -> str:
     return m.group(1) if m else text.strip()
 
 
+def _first_json_span(text: str) -> str | None:
+    """Return the first balanced JSON array/object substring, or None.
+
+    Scans for the first '[' or '{' and returns through its matching close,
+    respecting string literals and escapes. Lets us recover the payload when
+    `claude -p` wraps the JSON in explanatory prose.
+    """
+    start = next((i for i, ch in enumerate(text) if ch in "[{"), None)
+    if start is None:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for j in range(start, len(text)):
+        ch = text[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                return text[start : j + 1]
+    return None
+
+
+def _loads_lenient(text: str) -> object:
+    """json.loads, but if the whole string isn't valid JSON, parse the first
+    balanced array/object found within it. Raises JSONDecodeError if neither works."""
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        span = _first_json_span(text)
+        if span is None:
+            raise
+        return json.loads(span)
+
+
 def parse_claude_output(raw: str) -> list[ClaudeReview]:
     """Parse raw claude -p JSON output → list[ClaudeReview]. Returns [] on any failure."""
     if not raw or not raw.strip():
@@ -57,9 +104,9 @@ def parse_claude_output(raw: str) -> list[ClaudeReview]:
     # Step 3: strip markdown fences if present
     inner_text = _strip_fences(inner_text)
 
-    # Step 4: parse inner JSON
+    # Step 4: parse inner JSON (tolerating surrounding prose)
     try:
-        payload = json.loads(inner_text)
+        payload = _loads_lenient(inner_text)
     except json.JSONDecodeError as exc:
         log.warning("claude: inner JSON parse failed: %s", exc)
         return []
@@ -112,7 +159,7 @@ def parse_roll_output(raw: str) -> RollReview | None:
     inner_text = _strip_fences(inner_text)
 
     try:
-        payload = json.loads(inner_text)
+        payload = _loads_lenient(inner_text)
     except json.JSONDecodeError as exc:
         log.warning("claude roll: inner JSON parse failed: %s", exc)
         return None
@@ -158,7 +205,7 @@ def parse_journal_output(raw: str) -> str | None:
     inner_text = _strip_fences(inner_text)
 
     try:
-        payload = json.loads(inner_text)
+        payload = _loads_lenient(inner_text)
     except json.JSONDecodeError as exc:
         log.warning("claude eod: inner JSON parse failed: %s", exc)
         return None
