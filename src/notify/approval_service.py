@@ -542,6 +542,42 @@ async def _run_service(token: str, chat_id: str) -> None:
         await app.updater.start_polling()
         logger.info("Approval service running — Telegram polling active")
 
+        # Send startup notification to Telegram.
+        try:
+            from src.notify.formatters import format_startup
+
+            db_ok = False
+            try:
+                from src.storage.db import session_scope as _ss
+
+                with _ss():
+                    db_ok = True
+            except Exception:
+                pass
+
+            mode = "LIVE" if cfg.is_live else "PAPER"
+            services = [
+                "Telegram bot (polling)",
+                f"IBKR exec (clientId {exec_id})" + (" — connected" if ib else " — OFFLINE"),
+                f"IBKR scan (clientId {scan_id})" + (" — connected" if ib_scan else " — OFFLINE"),
+                "Order execution loop" + (" — active" if ib else " — disabled (no exec connection)"),
+            ]
+            thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+            await app.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=format_startup(
+                    ib_exec_ok=ib is not None,
+                    ib_scan_ok=ib_scan is not None,
+                    db_ok=db_ok,
+                    mode=mode,
+                    services=services,
+                ),
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            logger.warning("Could not send startup notification to Telegram", exc_info=True)
+
         poll_task: asyncio.Task | None = None
         if ib is not None:
             poll_task = asyncio.create_task(

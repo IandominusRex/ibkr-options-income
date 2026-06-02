@@ -276,6 +276,32 @@ def format_status(
     return text
 
 
+def format_startup(
+    ib_exec_ok: bool,
+    ib_scan_ok: bool,
+    db_ok: bool,
+    mode: str,
+    services: list[str],
+) -> str:
+    """Format system startup notification for Telegram."""
+
+    def icon(ok: bool) -> str:
+        return "OK" if ok else "FAIL"
+
+    service_lines = "\n".join(f"  {_md(s)}" for s in services)
+    parts = [
+        f"*IBKR Options System Started \\— {_md(mode)} MODE*",
+        "",
+        f"IBKR Exec connection:  {_md(icon(ib_exec_ok))}",
+        f"IBKR Scan connection:  {_md(icon(ib_scan_ok))}",
+        f"Database:              {_md(icon(db_ok))}",
+        "",
+        "*Active services*",
+        service_lines,
+    ]
+    return "\n".join(parts)
+
+
 def _eod_sign(v: float) -> str:
     return f"+${v:.2f}" if v >= 0 else f"-${abs(v):.2f}"
 

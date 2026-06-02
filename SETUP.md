@@ -246,11 +246,25 @@ Trade approval messages include Claude's full reasoning: why the trade is attrac
 
 ## 7. Set up the daily cron jobs
 
-The morning scan and EOD report run on a schedule. Add these to your crontab with `crontab -e`.
+Two jobs need to fire on a market-hours schedule: the morning scan (9:45 AM ET Mon–Fri) and the
+EOD report (4:15 PM ET Mon–Fri). Choose the instructions for your operating system below.
 
-> **Timezone note:** cron uses the system's local timezone — not necessarily ET. A UTC server
-> fires `45 9 * * 1-5` at 9:45 UTC = 5:45 AM ET. The `TZ=` prefix sets the timezone for
-> the entire crontab so times are interpreted as ET regardless of server timezone.
+> **What these jobs do:** `run_morning` connects to IBKR, runs the full scanning pipeline, and
+> sends Approve/Reject messages to Telegram. `run_eod` fetches positions and P&L and sends an
+> end-of-day summary to Telegram. Both are short-lived (they exit when done); the always-on
+> daemons (`scripts.start`) are separate and must already be running.
+
+---
+
+### macOS / Linux — crontab
+
+Open the crontab editor:
+
+```bash
+crontab -e
+```
+
+Paste the following (replace `/path/to/IBKR Investments` with the real absolute path):
 
 ```
 TZ=America/New_York
@@ -261,7 +275,193 @@ TZ=America/New_York
 15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
 ```
 
-Replace `/path/to/IBKR Investments` with the actual absolute path to your project folder.
+> **Timezone note:** The `TZ=America/New_York` line at the top of the crontab sets Eastern Time
+> for all jobs in the file, regardless of the system timezone. Without it, a UTC server running
+> `45 9 * * 1-5` fires at 9:45 UTC = 5:45 AM ET — too early.
+
+Save and exit. Verify cron registered the jobs:
+
+```bash
+crontab -l
+```
+
+**Tip (macOS):** macOS requires Full Disk Access for `cron` if the project is under `~/Desktop` or
+`~/Documents`. Go to **System Settings → Privacy & Security → Full Disk Access** and add
+`/usr/sbin/cron`.
+
+---
+
+### macOS — auto-start daemons on login with launchd
+
+`crontab` only schedules the two short-lived scans. The always-on daemons (`scripts.start`) need
+to restart automatically if the machine reboots. The macOS-native way is a launchd plist.
+
+Create `~/Library/LaunchAgents/com.ibkr.start.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ibkr.start</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/IBKR Investments/.venv/bin/python</string>
+    <string>-m</string>
+    <string>scripts.start</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/path/to/IBKR Investments</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/path/to/IBKR Investments/logs/start.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/path/to/IBKR Investments/logs/start.log</string>
+</dict>
+</plist>
+```
+
+Load it immediately (no reboot needed):
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.ibkr.start.plist
+```
+
+To stop it: `launchctl unload ~/Library/LaunchAgents/com.ibkr.start.plist`
+
+> **Note:** launchd restarts the process if it crashes — the same behaviour as `scripts.start`'s
+> built-in supervisor, so you get two layers of restart protection.
+
+---
+
+### Windows — Task Scheduler
+
+Windows does not have cron. Use **Task Scheduler** (`taskschd.msc`) instead.
+
+#### Option A — command line (fastest)
+
+Open PowerShell **as Administrator** and run these four commands. Replace `C:\path\to\IBKR Investments` with your real path.
+
+```powershell
+# Morning scan — 9:45 AM ET Mon-Fri
+$action = New-ScheduledTaskAction `
+  -Execute "C:\path\to\IBKR Investments\.venv\Scripts\python.exe" `
+  -Argument "-m scripts.run_morning" `
+  -WorkingDirectory "C:\path\to\IBKR Investments"
+$trigger = New-ScheduledTaskTrigger -Weekly `
+  -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
+  -At "09:45AM"
+Register-ScheduledTask -TaskName "IBKR Morning Scan" `
+  -Action $action -Trigger $trigger `
+  -RunLevel Highest -Force
+
+# EOD report — 4:15 PM ET Mon-Fri
+$action2 = New-ScheduledTaskAction `
+  -Execute "C:\path\to\IBKR Investments\.venv\Scripts\python.exe" `
+  -Argument "-m scripts.run_eod" `
+  -WorkingDirectory "C:\path\to\IBKR Investments"
+$trigger2 = New-ScheduledTaskTrigger -Weekly `
+  -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
+  -At "04:15PM"
+Register-ScheduledTask -TaskName "IBKR EOD Report" `
+  -Action $action2 -Trigger $trigger2 `
+  -RunLevel Highest -Force
+```
+
+> **Timezone:** Task Scheduler always uses the system clock. Set Windows timezone to Eastern Time
+> (**Settings → Time & Language → Date & Time → Time zone → Eastern Time (US & Canada)**) and the
+> times above are correct. If you are in a different timezone, convert ET to local time manually.
+
+Verify the tasks were created:
+```powershell
+Get-ScheduledTask -TaskName "IBKR Morning Scan"
+Get-ScheduledTask -TaskName "IBKR EOD Report"
+```
+
+#### Option B — Task Scheduler GUI
+
+1. Open **Task Scheduler** (search the Start menu for `taskschd.msc`).
+2. In the right panel click **Create Basic Task…**
+3. Name: `IBKR Morning Scan` → Next
+4. Trigger: **Weekly** → Next → set time `9:45 AM`, tick Mon/Tue/Wed/Thu/Fri → Next
+5. Action: **Start a program** → Next
+   - Program: `C:\path\to\IBKR Investments\.venv\Scripts\python.exe`
+   - Arguments: `-m scripts.run_morning`
+   - Start in: `C:\path\to\IBKR Investments`
+6. Finish → tick **Open the Properties dialog** → **Run with highest privileges** → OK.
+7. Repeat for the EOD report (name `IBKR EOD Report`, time `4:15 PM`).
+
+#### Auto-start daemons on Windows boot
+
+To have `scripts.start` run automatically when the machine starts:
+
+```powershell
+$action = New-ScheduledTaskAction `
+  -Execute "C:\path\to\IBKR Investments\.venv\Scripts\python.exe" `
+  -Argument "-m scripts.start" `
+  -WorkingDirectory "C:\path\to\IBKR Investments"
+$trigger = New-ScheduledTaskTrigger -AtStartup
+Register-ScheduledTask -TaskName "IBKR Daemons" `
+  -Action $action -Trigger $trigger `
+  -RunLevel Highest -Force
+```
+
+This starts the approval service and intraday monitor at boot. Task Scheduler will not restart them
+if they crash mid-day — `scripts.start`'s built-in supervisor handles that.
+
+---
+
+### Linux — systemd service (recommended for servers)
+
+For a Linux server, systemd is more reliable than cron for the always-on daemons, and cron handles
+the two timed jobs.
+
+**Daemon service** — create `/etc/systemd/system/ibkr-start.service`:
+
+```ini
+[Unit]
+Description=IBKR Options Income Daemons
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/IBKR Investments
+ExecStart=/path/to/IBKR Investments/.venv/bin/python -m scripts.start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable ibkr-start
+sudo systemctl start ibkr-start
+sudo systemctl status ibkr-start   # confirm it is running
+```
+
+**Cron jobs** — add as above using `crontab -e`:
+
+```
+TZ=America/New_York
+45 9  * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_morning >> logs/morning.log 2>&1
+15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod    >> logs/eod.log    2>&1
+```
 
 ---
 

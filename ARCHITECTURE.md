@@ -156,7 +156,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 |---|---|
 | `sender.py` | One-shot message sender: sends text and formatted messages to your Telegram (used by morning scan and EOD report) |
 | `approval_service.py` | The long-running daemon: runs the Telegram polling loop, handles Approve/Reject callbacks, drives order execution, and serves all interactive query commands (see table below) |
-| `formatters.py` | Converts all data types into nicely formatted Telegram MarkdownV2 messages: trade candidates with full Claude reasoning, positions, account, health, status |
+| `formatters.py` | Converts all data types into nicely formatted Telegram MarkdownV2 messages: trade candidates with full Claude reasoning, positions, account, health, status, and system startup notification (`format_startup`) |
 
 **Telegram commands served by `approval_service.py`:**
 
