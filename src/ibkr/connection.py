@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 import time
 from collections.abc import Awaitable, Callable
 
@@ -116,6 +117,10 @@ class IBKRConnection:
         self.disconnect()
 
     def connect(self) -> IB:
+        # ProactorEventLoop (Windows default) fails in Python 3.14 due to a
+        # broken socket.socketpair() fallback. SelectorEventLoop avoids it.
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         self._safety_banner()
         host = self.cfg.ibkr.host
         port = self.cfg.ibkr_port

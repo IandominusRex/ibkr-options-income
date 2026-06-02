@@ -8,7 +8,7 @@ making structural changes.
 > analytics → strategies → scoring → deterministic risk gate → Claude review → Telegram approval →
 > execution → intraday monitor → EOD reporting → Streamlit dashboard — is implemented and covered by
 > the test suite (IBKR mocked). **Not yet validated on a live account.** Live cutover is gated behind
-> `LIVE_TRADING=true` + the live port + a per-order second confirmation (see `SETUP.md` §12).
+> `LIVE_TRADING=true` + the live port + a per-order second confirmation (see `SETUP.md` §11).
 
 ---
 
@@ -159,6 +159,6 @@ not been exercised against a live TWS/Gateway:
 ## Live cutover gate
 
 Do not flip `LIVE_TRADING=true` until **≥ 10–20 successful paper cycles** have filled and confirmed
-back to Telegram. The full checklist is in `SETUP.md` §12. The three-layer guard
+back to Telegram. The full checklist is in `SETUP.md` §11. The three-layer guard
 (`LIVE_TRADING=true` + live port + per-order `[CONFIRM LIVE]` second tap) and the loud startup banner
 must both be verified on the first live run with a single small position.

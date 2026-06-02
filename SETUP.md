@@ -148,22 +148,43 @@ fundamentals, liquidity, assignment risk). You can leave these at the defaults t
 
 ---
 
-## 6. Set up the approval service (background daemon)
+## 6. Set up the daemons
 
-The approval service is a long-running process that:
-- Listens for Telegram button presses (Approve / Reject)
-- Holds the execution connection to IBKR (clientId 14) and a market-data connection (clientId 15)
-- Places orders for approved candidates
-- Responds to interactive commands sent from your Telegram chat
+Two processes must stay running during market hours:
 
-Start it in a terminal window or as a background service:
+| Daemon | Client IDs | What it does |
+|---|---|---|
+| Approval service | 14 (exec) + 15 (scan) | Telegram bot, order execution, interactive commands |
+| Intraday monitor | 12 | Watches open positions for roll alerts |
+
+### Option A — single launcher (recommended)
+
+`scripts/start.py` starts **both** daemons together and auto-restarts either if it crashes:
 
 ```bash
-python -m scripts.run_approval_service
+python -m scripts.start
 ```
 
-Keep this running at all times during market hours. **A terminal that closes kills the daemon** —
-no Telegram responses, no order fills. Use a supervisor to restart it automatically on crash:
+Logs are written to `logs/approval.log` and `logs/monitor.log`. Stop with Ctrl-C.
+Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval service.
+
+> **Note:** The cron jobs (morning scan, EOD report) are NOT started by this launcher — they
+> must be scheduled separately (§7).
+
+### Option B — run each daemon separately
+
+```bash
+# Terminal 1
+python -m scripts.run_approval_service
+
+# Terminal 2
+python -m scripts.run_monitor
+```
+
+Keep both terminals open during market hours. **A terminal that closes kills the daemon** —
+no Telegram responses, no order fills.
+
+### Keeping daemons alive across crashes (production setup)
 
 **Quick restart wrapper (any platform):**
 ```bash
@@ -223,20 +244,7 @@ Trade approval messages include Claude's full reasoning: why the trade is attrac
 
 ---
 
-## 7. Set up the intraday monitor
-
-The intraday monitor watches your open positions for roll alerts during market hours:
-
-```bash
-python -m scripts.run_monitor
-```
-
-Run this in a separate terminal window. It will alert you via Telegram if delta drifts too far,
-IV spikes, DTE drops below the threshold, or an ex-dividend date approaches.
-
----
-
-## 8. Set up the daily cron jobs
+## 7. Set up the daily cron jobs
 
 The morning scan and EOD report run on a schedule. Add these to your crontab with `crontab -e`.
 
@@ -257,7 +265,7 @@ Replace `/path/to/IBKR Investments` with the actual absolute path to your projec
 
 ---
 
-## 9. Backfill IV history (one-time)
+## 8. Backfill IV history (one-time)
 
 IV Rank requires at least 30 days of historical implied-volatility data. Run this once on setup:
 
@@ -270,7 +278,7 @@ Future scans will update the history incrementally.
 
 ---
 
-## 10. Run the test suite
+## 9. Run the test suite
 
 All tests can run without a live TWS connection (IBKR is mocked):
 
@@ -287,7 +295,7 @@ mypy src                          # type check
 
 ---
 
-## 11. Start the Streamlit dashboard (optional)
+## 10. Start the Streamlit dashboard (optional)
 
 The dashboard gives you a read-only view of your portfolio, open candidates, IV conditions, and
 trade history:
@@ -301,7 +309,7 @@ Open `http://localhost:8501` in your browser. The dashboard reads from the SQLit
 
 ---
 
-## 12. Going live
+## 11. Going live
 
 **Do not rush this step.** The system must have run successfully in paper mode for several weeks
 before switching to live.
@@ -329,3 +337,4 @@ When you are ready:
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
 | Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
+| `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |

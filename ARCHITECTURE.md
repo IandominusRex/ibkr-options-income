@@ -248,6 +248,7 @@ These are the scripts you run directly:
 | Script | How to run | What it does |
 |---|---|---|
 | `healthcheck.py` | `python -m scripts.healthcheck` | Verifies IBKR connection and prints account summary |
+| `start.py` | `python -m scripts.start` | **Single-command launcher**: starts both always-on daemons (approval service + monitor) as supervised subprocesses with auto-restart on crash. Accepts `--no-monitor` / `--no-approval` flags. Does NOT start the cron jobs. |
 | `run_morning.py` | `python -m scripts.run_morning` | Runs the morning scan (also called by cron) |
 | `run_eod.py` | `python -m scripts.run_eod` | Runs the EOD report (also called by cron) |
 | `run_approval_service.py` | `python -m scripts.run_approval_service` | Starts the long-running approval + execution daemon |
