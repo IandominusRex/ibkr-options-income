@@ -228,7 +228,8 @@ async def run() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    from src.common.logging import setup_logging
+    setup_logging()
     asyncio.run(run())
 
 

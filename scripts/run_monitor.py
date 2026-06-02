@@ -9,17 +9,13 @@ Runs until SIGINT/SIGTERM.
 """
 
 import asyncio
-import logging
 
+from src.common.logging import setup_logging
 from src.monitor.intraday import run
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-    logging.getLogger("ib_async").setLevel(logging.WARNING)
+    setup_logging()
 
     try:
         asyncio.run(run())

@@ -217,7 +217,7 @@ Every stage of the pipeline writes its results here. This means:
 |---|---|
 | `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.) |
 | `config.py` | Loads and validates `config/*.yaml` and `.env` |
-| `logging.py` | Structured logging setup |
+| `logging.py` | Structured logging setup — colourised console output (green INFO, yellow WARNING, red ERROR) and a plain rotating file log; `setup_logging()` is the single call-site used by all entry points |
 
 **Rule:** Modules never pass raw IBKR objects to each other — they always convert to these shared
 schemas first. This keeps modules independent and testable.

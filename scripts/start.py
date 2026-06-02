@@ -16,7 +16,6 @@ Stop with Ctrl-C or SIGTERM — both child processes are cleanly terminated.
 
 import argparse
 import logging
-import os
 import signal
 import subprocess
 import sys
@@ -39,10 +38,11 @@ SERVICES = {
     },
 }
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-7s  %(message)s",
-)
+# Add project root to path so src.common is importable before any install
+sys.path.insert(0, str(PROJECT_ROOT))
+from src.common.logging import setup_logging  # noqa: E402
+
+setup_logging()
 log = logging.getLogger("launcher")
 
 

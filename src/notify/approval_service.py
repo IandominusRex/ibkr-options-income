@@ -542,6 +542,21 @@ async def _run_service(token: str, chat_id: str) -> None:
         await app.updater.start_polling()
         logger.info("Approval service running — Telegram polling active")
 
+        # Register commands so "/" shows the autocomplete menu in Telegram.
+        try:
+            from telegram import BotCommand
+            await app.bot.set_my_commands([
+                BotCommand("scan",      "Run full pipeline scan (CC/CSP/buy candidates)"),
+                BotCommand("status",    "Account + active shorts + pending approvals"),
+                BotCommand("positions", "Full portfolio positions with P&L"),
+                BotCommand("account",   "Account balances (buying power, net liq, margin)"),
+                BotCommand("health",    "System health: connections, DB, last scan"),
+                BotCommand("help",      "List all available commands"),
+            ])
+            logger.info("Telegram bot commands registered")
+        except Exception:
+            logger.warning("Could not register Telegram bot commands", exc_info=True)
+
         # Send startup notification to Telegram.
         try:
             from src.notify.formatters import format_startup
@@ -617,7 +632,8 @@ async def _run_service(token: str, chat_id: str) -> None:
 
 def main() -> None:
     """Entry point for `python -m scripts.run_approval_service`."""
-    logging.basicConfig(level=logging.INFO)
+    from src.common.logging import setup_logging
+    setup_logging()
     init_db()
 
     cfg = get_config()
