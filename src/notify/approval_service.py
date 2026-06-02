@@ -13,6 +13,9 @@ Responsibilities:
       /account   — account balances
       /health    — system health check
       /status    — combined overview
+      /pending   — list pending approvals
+      /fills     — recent fills (last 7 days)
+      /expire    — expire all pending approvals
       /help      — command list
 
 Only the configured TELEGRAM_CHAT_ID can trigger any command or approval.
@@ -24,7 +27,7 @@ import asyncio
 import contextlib
 import logging
 import signal
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from ib_async import IB
 from sqlalchemy.exc import IntegrityError
@@ -38,7 +41,7 @@ from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
 from src.ibkr.connection import AutoReconnect
 from src.storage.db import init_db, session_scope
-from src.storage.models import ApprovalRow, OrderRow
+from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,7 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
     """Synchronous DB work: update approval status, optionally enqueue an order.
 
     Returns (found, decision_text, candidate_id_short).
+    decision_text is plain text (no parse_mode) suitable for edit_message_text.
     """
     found = False
     decision_text = ""
@@ -86,10 +90,25 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
             )
 
             # Idempotency guard: Telegram retries the same callback if our ack is slow.
-            # Without this check, two concurrent deliveries both see status==PENDING and
-            # both enqueue an OrderRow, causing two identical orders to reach the broker.
             if approval.status != ApprovalStatus.PENDING:
                 return found, f"Already {approval.status}\n({candidate_short})", candidate_short
+
+            # Fetch candidate for human-readable display in the decision text.
+            from sqlalchemy import select
+
+            crow = session.execute(
+                select(CandidateRow).where(CandidateRow.candidate_id == approval.candidate_id)
+            ).scalar_one_or_none()
+
+            if crow:
+                right_lbl = "Call" if crow.right == "C" else "Put"
+                strat_lbl = crow.strategy.replace("_", " ").title()
+                expiry_str = f" · {crow.expiry}" if crow.expiry else ""
+                candidate_display = (
+                    f"{crow.underlying} {strat_lbl} ${crow.strike:.0f} {right_lbl}{expiry_str}"
+                )
+            else:
+                candidate_display = candidate_short
 
             approval.decided_at = datetime.now(UTC)
 
@@ -101,10 +120,10 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
                     state=OrderState.QUEUED,
                 )
                 session.add(order)
-                decision_text = f"Approved — QUEUED for execution\n({candidate_short})"
+                decision_text = f"✅ Approved — queued for execution\n{candidate_display}"
             else:
                 approval.status = ApprovalStatus.REJECTED
-                decision_text = f"Rejected\n({candidate_short})"
+                decision_text = f"❌ Rejected\n{candidate_display}"
                 record_outcome(approval.candidate_id, USER_REJECTED)
 
     except IntegrityError:
@@ -152,6 +171,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text("Trade not found (may have been cleared).")
         return
 
+    # decision_text is plain text — no parse_mode needed.
     await query.edit_message_text(decision_text)
     logger.info("Button %s for approval_id=%s processed", action, approval_id)
 
@@ -182,7 +202,9 @@ async def handle_live_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     resolved = resolve_live_confirm(order_id)
     if resolved:
-        await query.edit_message_text(f"LIVE order {order_id} confirmed — executing now.")
+        await query.edit_message_text(
+            f"✅ LIVE order confirmed — executing now. (order_id={order_id})"
+        )
         logger.info("Live confirmation received for order_id=%s", order_id)
     else:
         await query.edit_message_text(
@@ -213,19 +235,22 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     ib_scan: IB | None = context.bot_data.get("ib_scan")
     if ib_scan is None or not ib_scan.isConnected():
-        await update.message.reply_text("IBKR market data connection unavailable — scan aborted.")
+        await update.message.reply_text(
+            "IBKR market data connection unavailable — scan aborted\\.", parse_mode="MarkdownV2"
+        )
         return
 
-    # Single-flight: a scan drives reqMktData on the shared scan connection; two overlapping
-    # scans would interleave requests and blow the market-data line cap. Reject re-entry.
+    # Single-flight: two overlapping scans would interleave market data requests.
     if context.bot_data.get("scan_running"):
-        await update.message.reply_text("A scan is already running — please wait for it to finish.")
+        await update.message.reply_text(
+            "A scan is already running — please wait for it to finish\\.", parse_mode="MarkdownV2"
+        )
         return
     context.bot_data["scan_running"] = True
 
     await update.message.reply_text(
-        "Scan started — fetching market data and running analytics. "
-        "This takes up to a couple of minutes. Results will arrive shortly."
+        "🔍 *Scan started*\nFetching market data and running analytics\\. Results arrive in \\~1\\-2 minutes\\.",
+        parse_mode="MarkdownV2",
     )
 
     chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
@@ -243,7 +268,8 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_message(
                     chat_id=chat_id,
                     message_thread_id=thread_id,
-                    text="Scan encountered an error — check logs.",
+                    text="⚠️ Scan encountered an error — check logs\\.",
+                    parse_mode="MarkdownV2",
                 )
             except Exception:
                 pass
@@ -261,24 +287,29 @@ async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT
     ib: IB | None = context.bot_data.get("ib_scan")
     if ib is None or not ib.isConnected():
         await update.message.reply_text(
-            "IBKR connection unavailable — start the approval service with TWS running."
+            "IBKR connection unavailable — start the approval service with TWS running\\.",
+            parse_mode="MarkdownV2",
         )
         return
 
     try:
         cfg = get_config()
-        from src.ibkr.portfolio import get_account_snapshot, get_positions
+        from src.ibkr.portfolio import get_account_snapshot_async, get_positions
         from src.notify.formatters import format_positions
 
         positions = get_positions(ib)
         account = (
-            get_account_snapshot(ib, cfg.secrets.ibkr_account) if cfg.secrets.ibkr_account else None
+            await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
+            if cfg.secrets.ibkr_account
+            else None
         )
         text = format_positions(positions, account)
         await update.message.reply_text(text, parse_mode="MarkdownV2")
     except Exception:
         logger.exception("/positions command failed")
-        await update.message.reply_text("Failed to fetch positions — check logs.")
+        await update.message.reply_text(
+            "Failed to fetch positions — check logs\\.", parse_mode="MarkdownV2"
+        )
 
 
 async def handle_account_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -288,23 +319,25 @@ async def handle_account_command(update: Update, context: ContextTypes.DEFAULT_T
 
     ib: IB | None = context.bot_data.get("ib_scan")
     if ib is None or not ib.isConnected():
-        await update.message.reply_text("IBKR connection unavailable.")
+        await update.message.reply_text("IBKR connection unavailable\\.", parse_mode="MarkdownV2")
         return
 
     cfg = get_config()
     if not cfg.secrets.ibkr_account:
-        await update.message.reply_text("IBKR_ACCOUNT not set in .env")
+        await update.message.reply_text("IBKR\\_ACCOUNT not set in \\.env", parse_mode="MarkdownV2")
         return
 
     try:
-        from src.ibkr.portfolio import get_account_snapshot
+        from src.ibkr.portfolio import get_account_snapshot_async
         from src.notify.formatters import format_account
 
-        account = get_account_snapshot(ib, cfg.secrets.ibkr_account)
+        account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
         await update.message.reply_text(format_account(account), parse_mode="MarkdownV2")
     except Exception:
         logger.exception("/account command failed")
-        await update.message.reply_text("Failed to fetch account data — check logs.")
+        await update.message.reply_text(
+            "Failed to fetch account data — check logs\\.", parse_mode="MarkdownV2"
+        )
 
 
 async def handle_health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -368,16 +401,17 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     if ib is not None and ib.isConnected():
         try:
             cfg = get_config()
-            from src.ibkr.portfolio import get_account_snapshot, get_positions
+            from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 
             positions = get_positions(ib)
             if cfg.secrets.ibkr_account:
-                account = get_account_snapshot(ib, cfg.secrets.ibkr_account)
+                account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
         except Exception:
             logger.exception("/status: failed to fetch IBKR data")
     else:
         await update.message.reply_text(
-            "IBKR connection unavailable — account/position data not shown."
+            "_IBKR connection unavailable — account/position data not shown\\._",
+            parse_mode="MarkdownV2",
         )
 
     pending_approvals = 0
@@ -403,6 +437,134 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     text = format_status(positions, account, pending_approvals, open_orders)
     await update.message.reply_text(text, parse_mode="MarkdownV2")
+
+
+async def handle_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all pending approvals with expiry times."""
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    try:
+        from sqlalchemy import select
+
+        with session_scope() as session:
+            approvals = (
+                session.query(ApprovalRow)
+                .filter(ApprovalRow.status == ApprovalStatus.PENDING)
+                .order_by(ApprovalRow.created_at.asc())
+                .all()
+            )
+
+            pending_data: list[dict] = []
+            for a in approvals:
+                crow = session.execute(
+                    select(CandidateRow).where(CandidateRow.candidate_id == a.candidate_id)
+                ).scalar_one_or_none()
+                pending_data.append(
+                    {
+                        "approval_id": a.id,
+                        "candidate_id": a.candidate_id,
+                        "underlying": crow.underlying if crow else "?",
+                        "strategy": crow.strategy if crow else "?",
+                        "right": crow.right if crow else "?",
+                        "strike": crow.strike if crow else 0.0,
+                        "expiry": crow.expiry if crow else None,
+                        "blended_score": crow.blended_score if crow else 0.0,
+                        "expires_at": a.expires_at,
+                        "created_at": a.created_at,
+                    }
+                )
+
+        from src.notify.formatters import format_pending_approvals
+
+        text = format_pending_approvals(pending_data)
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("/pending command failed")
+        await update.message.reply_text(
+            "Failed to fetch pending approvals — check logs\\.", parse_mode="MarkdownV2"
+        )
+
+
+async def handle_fills_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show recent fills from the last 7 days."""
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    try:
+        from sqlalchemy import select
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+
+        with session_scope() as session:
+            rows = session.execute(
+                select(FillRow, CandidateRow)
+                .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+                .where(FillRow.filled_at >= cutoff)
+                .order_by(FillRow.filled_at.desc())
+                .limit(20)
+            ).all()
+
+            fills_data: list[dict] = []
+            for fill, candidate in rows:
+                fills_data.append(
+                    {
+                        "filled_at": fill.filled_at,
+                        "underlying": candidate.underlying,
+                        "strategy": candidate.strategy,
+                        "right": candidate.right,
+                        "strike": candidate.strike,
+                        "expiry": candidate.expiry,
+                        "filled_qty": fill.filled_qty,
+                        "avg_price": fill.avg_price,
+                        "action": fill.action,
+                        "is_live": fill.is_live,
+                    }
+                )
+
+        from src.notify.formatters import format_fills_history
+
+        text = format_fills_history(fills_data)
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("/fills command failed")
+        await update.message.reply_text(
+            "Failed to fetch fills — check logs\\.", parse_mode="MarkdownV2"
+        )
+
+
+async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Expire all pending approvals (clears the approval queue without acting on them)."""
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    try:
+        with session_scope() as session:
+            pending = (
+                session.query(ApprovalRow)
+                .filter(ApprovalRow.status == ApprovalStatus.PENDING)
+                .all()
+            )
+            count = len(pending)
+            for row in pending:
+                row.status = ApprovalStatus.EXPIRED
+
+        if count == 0:
+            await update.message.reply_text(
+                "No pending approvals to expire\\.", parse_mode="MarkdownV2"
+            )
+        else:
+            s = "s" if count != 1 else ""
+            await update.message.reply_text(
+                f"✅ Expired *{count}* pending approval{s}\\.",
+                parse_mode="MarkdownV2",
+            )
+        logger.info("Manual /expire: cleared %d pending approval(s)", count)
+    except Exception:
+        logger.exception("/expire command failed")
+        await update.message.reply_text(
+            "Failed to expire approvals — check logs\\.", parse_mode="MarkdownV2"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +675,6 @@ async def _run_service(token: str, chat_id: str) -> None:
         )
 
     app = Application.builder().token(token).build()
-    # Store both connections so command handlers can access them.
     app.bot_data["ib_exec"] = ib
     app.bot_data["ib_scan"] = ib_scan
 
@@ -528,6 +689,9 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("account", handle_account_command))
     app.add_handler(CommandHandler("health", handle_health_command))
     app.add_handler(CommandHandler("status", handle_status_command))
+    app.add_handler(CommandHandler("pending", handle_pending_command))
+    app.add_handler(CommandHandler("fills", handle_fills_command))
+    app.add_handler(CommandHandler("expire", handle_expire_command))
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -545,14 +709,20 @@ async def _run_service(token: str, chat_id: str) -> None:
         # Register commands so "/" shows the autocomplete menu in Telegram.
         try:
             from telegram import BotCommand
-            await app.bot.set_my_commands([
-                BotCommand("scan",      "Run full pipeline scan (CC/CSP/buy candidates)"),
-                BotCommand("status",    "Account + active shorts + pending approvals"),
-                BotCommand("positions", "Full portfolio positions with P&L"),
-                BotCommand("account",   "Account balances (buying power, net liq, margin)"),
-                BotCommand("health",    "System health: connections, DB, last scan"),
-                BotCommand("help",      "List all available commands"),
-            ])
+
+            await app.bot.set_my_commands(
+                [
+                    BotCommand("scan", "Run full pipeline scan (CC/CSP/buy candidates)"),
+                    BotCommand("status", "Account · shorts · pending approvals"),
+                    BotCommand("positions", "Full portfolio positions with P&L"),
+                    BotCommand("account", "Account balances (buying power, net liq, margin)"),
+                    BotCommand("pending", "List pending approvals with expiry times"),
+                    BotCommand("fills", "Recent fills (last 7 days)"),
+                    BotCommand("expire", "Expire all pending approvals"),
+                    BotCommand("health", "System health: connections, DB, last scan"),
+                    BotCommand("help", "List all available commands"),
+                ]
+            )
             logger.info("Telegram bot commands registered")
         except Exception:
             logger.warning("Could not register Telegram bot commands", exc_info=True)
@@ -575,9 +745,12 @@ async def _run_service(token: str, chat_id: str) -> None:
                 "Telegram bot (polling)",
                 f"IBKR exec (clientId {exec_id})" + (" — connected" if ib else " — OFFLINE"),
                 f"IBKR scan (clientId {scan_id})" + (" — connected" if ib_scan else " — OFFLINE"),
-                "Order execution loop" + (" — active" if ib else " — disabled (no exec connection)"),
+                "Order execution loop"
+                + (" — active" if ib else " — disabled (no exec connection)"),
             ]
-            thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+            thread_id = (
+                int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+            )
             await app.bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
@@ -610,8 +783,6 @@ async def _run_service(token: str, chat_id: str) -> None:
         try:
             await stop_event.wait()
         finally:
-            # Disable auto-reconnect before tearing connections down so shutdown doesn't
-            # trigger a reconnect storm.
             for rc in reconnectors:
                 rc.stop()
             if poll_task is not None:
@@ -633,6 +804,7 @@ async def _run_service(token: str, chat_id: str) -> None:
 def main() -> None:
     """Entry point for `python -m scripts.run_approval_service`."""
     from src.common.logging import setup_logging
+
     setup_logging()
     init_db()
 

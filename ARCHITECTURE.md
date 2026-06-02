@@ -156,18 +156,22 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 |---|---|
 | `sender.py` | One-shot message sender: sends text and formatted messages to your Telegram (used by morning scan and EOD report) |
 | `approval_service.py` | The long-running daemon: runs the Telegram polling loop, handles Approve/Reject callbacks, drives order execution, and serves all interactive query commands (see table below) |
-| `formatters.py` | Converts all data types into nicely formatted Telegram MarkdownV2 messages: trade candidates with full Claude reasoning, positions, account, health, status, and system startup notification (`format_startup`) |
+| `formatters.py` | Converts all data types into MarkdownV2 messages with emoji visual hierarchy. Covers: trade candidates, positions, account, health, status, startup, EOD report, fill confirmations (`format_fill_confirm`), live-order confirmation requests (`format_live_confirm_request`), roll alerts (`format_roll_alert`), pending approvals list (`format_pending_approvals`), fills history (`format_fills_history`) |
 
 **Telegram commands served by `approval_service.py`:**
 
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) |
+| `/status` | Compact overview: account + active short options + pending approvals |
 | `/positions` | Show live portfolio positions (stocks + options) with P&L |
 | `/account` | Show account balances: net liquidation, buying power, margin, excess liquidity |
+| `/pending` | List all pending approvals with score and time-to-expiry |
+| `/fills` | Recent fills from the last 7 days with quantity, price, and credit received |
+| `/expire` | Expire all pending approvals (clears the queue without acting on them) |
 | `/health` | System health check: IBKR connection status, DB, last scan time, open orders |
-| `/status` | Compact overview: account + active short options + pending approvals |
 | `/help` | List all available commands |
+| `✅ Approve` / `❌ Reject` inline buttons | Tap to approve or reject each trade candidate; approval enqueues the order for execution |
 | `[CONFIRM LIVE]` inline button | Second-confirmation tap required for each order when `LIVE_TRADING=true`. Appears as an inline keyboard button on the pre-execution message; times out after `fill_timeout_minutes` if not tapped. |
 
 ---

@@ -23,7 +23,7 @@ from src.common.config import get_config
 from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
 from src.execution.executor import execute_candidate
-from src.ibkr.portfolio import get_account_snapshot, get_positions
+from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
 
@@ -72,7 +72,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
     try:
         managed = ib.managedAccounts()
         acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
-        account_snap = get_account_snapshot(ib, acct)
+        account_snap = await get_account_snapshot_async(ib, acct)
         positions = get_positions(ib)
     except Exception:
         log.exception("Could not fetch account data from IB — skipping execution pass")

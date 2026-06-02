@@ -233,14 +233,17 @@ Once the approval service is running, you can interact with the system from your
 
 | Command | What you get |
 |---|---|
-| `/scan` | Triggers a full pipeline scan — same as the morning cron. Results arrive as Approve/Reject messages with Claude's full reasoning. |
+| `/scan` | Triggers a full pipeline scan — same as the morning cron. Results arrive as ✅ Approve / ❌ Reject messages with Claude's full reasoning. |
+| `/status` | Compact overview: account totals, all active short options sorted by days-to-expiry, and pending approval / open order counts. Good morning check. |
 | `/positions` | Live snapshot of all open positions (stocks and options), with market value and unrealized P&L per position. |
 | `/account` | Account balances: net liquidation, total cash, buying power, maintenance margin, excess liquidity. |
+| `/pending` | Lists all pending approvals by score and time-to-expiry. Useful if you want to review what's waiting before deciding. |
+| `/fills` | Shows the last 7 days of executed fills: symbol, strike, quantity, fill price, and credit received. |
+| `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. Use this to confirm the service is healthy before the morning scan. |
-| `/status` | Compact overview: account totals, all active short options sorted by days-to-expiry, and pending approval / open order counts. Good morning check. |
 | `/help` | Lists all available commands. |
 
-Trade approval messages include Claude's full reasoning: why the trade is attractive, key risks, tradeoffs, assignment considerations, rolling considerations, and confidence level — all embedded in the message before the Approve / Reject buttons.
+Trade approval messages include Claude's full reasoning: why the trade is attractive, key risks, tradeoffs, assignment considerations, rolling considerations, and confidence level — all embedded in the message before the ✅ Approve / ❌ Reject buttons.
 
 ---
 

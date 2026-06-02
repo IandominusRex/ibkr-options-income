@@ -396,7 +396,8 @@ async def test_fire_alerts_sends_telegram(tmp_path: Path) -> None:
 
     mock_bot.send_message.assert_called_once()
     sent_text = mock_bot.send_message.call_args.kwargs.get("text", "")
-    assert "delta_drift" in sent_text
+    # trigger name is MarkdownV2-escaped (_→\_) so check for the prefix
+    assert "delta" in sent_text and "drift" in sent_text
 
 
 @pytest.mark.asyncio
@@ -431,7 +432,7 @@ async def test_fire_alerts_suppressed_when_recent(tmp_path: Path) -> None:
 
 
 def test_build_alert_text_no_review() -> None:
-    from src.monitor.intraday import _build_alert_text
+    from src.notify.formatters import format_roll_alert
 
     pos = _make_short_call()
     quote = _make_quote(delta=0.48, iv=0.55)
@@ -443,15 +444,16 @@ def test_build_alert_text_no_review() -> None:
         current_delta=0.48,
         dte=30,
     )
-    text = _build_alert_text(pos, quote, [alert], review=None)
+    text = format_roll_alert(pos, quote, [alert], review=None)
     assert "Roll Alert" in text
     assert "AAPL" in text
-    assert "delta_drift" in text
+    # trigger name is MarkdownV2-escaped (_→\_); check both parts individually
+    assert "delta" in text and "drift" in text
     assert "manual evaluation" in text
 
 
 def test_build_alert_text_with_review() -> None:
-    from src.monitor.intraday import _build_alert_text
+    from src.notify.formatters import format_roll_alert
 
     pos = _make_short_call()
     quote = _make_quote(delta=0.48)
@@ -469,7 +471,7 @@ def test_build_alert_text_with_review() -> None:
         risks="Stock in momentum; assignment risk remains.",
         confidence=0.82,
     )
-    text = _build_alert_text(pos, quote, [alert], review=review)
+    text = format_roll_alert(pos, quote, [alert], review=review)
     assert "ROLL" in text
     assert "$190" in text
 

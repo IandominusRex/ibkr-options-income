@@ -1,6 +1,10 @@
 """Format TradeCandidate + optional ClaudeReview into a Telegram MarkdownV2 message.
 
-Also provides formatters for query commands: positions, account, health, status.
+Provides formatters for:
+- Trade candidates with approval buttons
+- Query commands: positions, account, health, status, fills history, pending approvals
+- Execution notifications: fills, live confirmation, roll alerts
+- System events: startup, EOD report
 """
 
 from __future__ import annotations
@@ -12,8 +16,11 @@ from src.common.schemas import (
     AccountSnapshot,
     ClaudeReview,
     EODSummary,
+    OptionQuote,
     OptionRight,
     PositionSnapshot,
+    RollAlert,
+    RollReview,
     TradeCandidate,
 )
 
@@ -27,55 +34,67 @@ def _md(text: str) -> str:
     return _ESCAPE_RE.sub(r"\\\1", str(text))
 
 
+def _icon(ok: bool) -> str:
+    return "🟢" if ok else "🔴"
+
+
+def _pnl(v: float) -> str:
+    """Format a P&L value with no decimals, e.g. +$1,234 or -$567."""
+    return f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
+
+
+def _pnl2(v: float) -> str:
+    """Format a P&L value with two decimal places."""
+    return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
+
+
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
 ) -> str:
-    """Build the human-readable Telegram MarkdownV2 message for one trade candidate."""
+    """Build the Telegram MarkdownV2 message for one trade candidate."""
     strategy_label = candidate.strategy.value.replace("_", " ").title()
     right_label = "Call" if candidate.right == OptionRight.CALL else "Put"
     contract_value = candidate.premium * 100
 
     parts: list[str] = [
-        f"*{_md(candidate.underlying)} \\- {_md(strategy_label)} \\({_md(right_label)}\\)*",
+        f"*{_md(candidate.underlying)} — {_md(strategy_label)}*",
         (
-            f"Strike: \\${_md(f'{candidate.strike:.2f}')} \\| "
-            f"Expiry: {_md(str(candidate.expiry))} \\({_md(str(candidate.dte))} DTE\\)"
+            f"\\${_md(f'{candidate.strike:.0f}')} {_md(right_label)}"
+            f" · {_md(str(candidate.expiry))} \\({_md(str(candidate.dte))}d\\)"
         ),
         "",
+        f"💰 \\${_md(f'{candidate.premium:.2f}')}/sh · \\${_md(f'{contract_value:.0f}')}/contract",
         (
-            f"Premium: \\${_md(f'{candidate.premium:.2f}')}/share "
-            f"\\(\\${_md(f'{contract_value:.0f}')}/contract\\)"
-        ),
-        (
-            f"ROC: {_md(f'{candidate.roc_pct:.2f}')}% \\| "
-            f"Ann\\. Yield: {_md(f'{candidate.annualized_yield_pct:.1f}')}%"
+            f"ROC {_md(f'{candidate.roc_pct:.2f}')}%"
+            f" · Ann\\. {_md(f'{candidate.annualized_yield_pct:.1f}')}%"
         ),
     ]
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
-    parts.append(f"Delta: {_md(delta_str)} \\| IV Rank: {_md(iv_str)}")
+    parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}")
 
-    parts.append(f"Score: {_md(f'{candidate.blended_score:.1f}')}/100")
-
+    score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
     if candidate.rationale_tags:
-        tags_str = ", ".join(_md(t) for t in candidate.rationale_tags)
-        parts.append(f"Tags: {tags_str}")
+        tags_str = " · ".join(_md(t) for t in candidate.rationale_tags)
+        score_line += f"   _{tags_str}_"
+    parts.append(score_line)
 
     if review is not None:
         conf_str = (
-            f" \\| confidence {_md(f'{review.confidence:.0%}')}"
+            f" · {_md(f'{review.confidence:.0%}')} confidence"
             if review.confidence is not None
             else ""
         )
+        rec = review.recommendation.upper()
         parts += [
             "",
-            f"*── Claude Analysis \\(Priority {_md(str(review.priority))}\\) ──*",
-            f"Decision: *{_md(review.recommendation.upper())}*{conf_str}",
-            f"Why attractive: {_md(review.why_attractive)}",
-            f"Risks: {_md(review.risks)}",
-            f"Tradeoffs: {_md(review.tradeoffs)}",
+            f"*── Claude \\(Priority {_md(str(review.priority))}\\) ──*",
+            f"*{_md(rec)}*{conf_str}",
+            f"Why: {_md(review.why_attractive)}",
+            f"Risk: {_md(review.risks)}",
+            f"Tradeoff: {_md(review.tradeoffs)}",
         ]
         if review.assignment_considerations:
             parts.append(f"Assignment: {_md(review.assignment_considerations)}")
@@ -91,14 +110,22 @@ def format_candidate(
 def format_help() -> str:
     """List all available bot commands."""
     lines = [
-        "*IBKR Options Bot \\— Commands*",
+        "*IBKR Options Bot — Commands*",
         "",
-        "/scan \\— Run full pipeline scan \\(CC/CSP/buy opportunities\\)",
-        "/status \\— Account \\+ short options \\+ pending approvals",
-        "/positions \\— Full portfolio positions with P&L",
-        "/account \\— Account balances \\(buying power, net liq, margin\\)",
-        "/health \\— System health \\(connections, DB, last scan, open orders\\)",
-        "/help \\— Show this message",
+        "*Scans & trading*",
+        "/scan — Run full pipeline scan \\(CC/CSP/buy opportunities\\)",
+        "/pending — List pending approvals with expiry times",
+        "/expire — Expire all pending approvals",
+        "",
+        "*Portfolio*",
+        "/status — Account · short options · pending approvals",
+        "/positions — Full portfolio positions with P&L",
+        "/account — Account balances \\(buying power, net liq, margin\\)",
+        "/fills — Recent fills \\(last 7 days\\)",
+        "",
+        "*System*",
+        "/health — Connections, DB, last scan, open orders",
+        "/help — Show this message",
     ]
     return "\n".join(lines)
 
@@ -114,13 +141,13 @@ def format_positions(
         parts += [
             "",
             (
-                f"Net Liq: \\${_md(f'{account.net_liquidation:,.0f}')} \\| "
-                f"BP: \\${_md(f'{account.buying_power:,.0f}')}"
+                f"Net Liq \\${_md(f'{account.net_liquidation:,.0f}')} · "
+                f"BP \\${_md(f'{account.buying_power:,.0f}')}"
             ),
         ]
 
     if not positions:
-        parts += ["", "No open positions\\."]
+        parts += ["", "_No open positions_"]
         return "\n".join(parts)
 
     stocks = [p for p in positions if p.sec_type == "STK"]
@@ -130,10 +157,9 @@ def format_positions(
         parts += ["", "*Stocks*"]
         for p in sorted(stocks, key=lambda x: x.symbol):
             price_s = f" @ \\${_md(f'{p.market_price:.2f}')}" if p.market_price else ""
-            mv_s = f" \\| MV \\${_md(f'{p.market_value:,.0f}')}" if p.market_value else ""
+            mv_s = f" · MV \\${_md(f'{p.market_value:,.0f}')}" if p.market_value else ""
             if p.unrealized_pnl is not None:
-                sign = "+" if p.unrealized_pnl >= 0 else ""
-                pnl_s = f" \\| {_md(f'{sign}{p.unrealized_pnl:,.0f}')}"
+                pnl_s = f" · {_md(_pnl(p.unrealized_pnl))}"
             else:
                 pnl_s = ""
             parts.append(
@@ -151,14 +177,11 @@ def format_positions(
             dte = (p.expiry - date.today()).days if p.expiry else None
             dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
             price_s = f" @ \\${_md(f'{p.market_price:.2f}')}" if p.market_price else ""
-            if p.unrealized_pnl is not None:
-                sign = "+" if p.unrealized_pnl >= 0 else ""
-                pnl_s = f" \\| {_md(f'{sign}{p.unrealized_pnl:.0f}')}"
-            else:
-                pnl_s = ""
+            pnl_s = f" · {_md(_pnl(p.unrealized_pnl))}" if p.unrealized_pnl is not None else ""
             sym = _md(p.underlying or p.symbol.split()[0])
             parts.append(
-                f"  {sym} {side} {qty}x {strike_s}{right_lbl} {exp_s}{dte_s}{price_s}{pnl_s}"
+                f"  {sym} {_md(side)} {_md(str(qty))}× {strike_s}{_md(right_lbl)}"
+                f" {exp_s}{dte_s}{price_s}{pnl_s}"
             )
 
     text = "\n".join(parts)
@@ -168,18 +191,18 @@ def format_positions(
 
 
 def format_account(account: AccountSnapshot) -> str:
-    """Format account summary for Telegram."""
-    ts = _md(account.captured_at.strftime("%Y-%m-%d %H:%M UTC"))
+    """Format account balances for Telegram."""
+    ts = _md(account.captured_at.strftime("%b %d %H:%M UTC"))
     parts = [
         "*Account Summary*",
         "",
-        f"Net Liquidation:  \\${_md(f'{account.net_liquidation:,.2f}')}",
-        f"Total Cash:       \\${_md(f'{account.total_cash:,.2f}')}",
-        f"Buying Power:     \\${_md(f'{account.buying_power:,.2f}')}",
-        f"Maint\\. Margin:   \\${_md(f'{account.maintenance_margin:,.2f}')}",
-        f"Excess Liquidity: \\${_md(f'{account.excess_liquidity:,.2f}')}",
+        f"💼 Net Liq      \\${_md(f'{account.net_liquidation:,.0f}')}",
+        f"💵 Cash          \\${_md(f'{account.total_cash:,.0f}')}",
+        f"⚡ Buying Power  \\${_md(f'{account.buying_power:,.0f}')}",
+        f"🔒 Maint\\. Margin \\${_md(f'{account.maintenance_margin:,.0f}')}",
+        f"✅ Excess Liq\\.  \\${_md(f'{account.excess_liquidity:,.0f}')}",
         "",
-        f"_Snapshot: {ts}_",
+        f"_{ts}_",
     ]
     return "\n".join(parts)
 
@@ -193,10 +216,6 @@ def format_health(
     db_ok: bool,
 ) -> str:
     """Format system health status for Telegram."""
-
-    def icon(ok: bool) -> str:
-        return "OK" if ok else "FAIL"
-
     since_str = "never"
     if last_scan_at is not None:
         aware = last_scan_at.replace(tzinfo=UTC) if last_scan_at.tzinfo is None else last_scan_at
@@ -206,12 +225,13 @@ def format_health(
     parts = [
         "*System Health*",
         "",
-        f"IBKR Exec \\(clientId 14\\):  {_md(icon(ib_exec_ok))}",
-        f"IBKR Scan \\(clientId 15\\):  {_md(icon(ib_scan_ok))}",
-        f"Database:                    {_md(icon(db_ok))}",
-        f"Last scan:                   {_md(since_str)}",
-        f"Pending approvals:           {_md(str(pending_approvals))}",
-        f"Open orders:                 {_md(str(open_orders))}",
+        f"{_icon(ib_exec_ok)} IBKR Exec \\(clientId 14\\)",
+        f"{_icon(ib_scan_ok)} IBKR Scan \\(clientId 15\\)",
+        f"{_icon(db_ok)} Database",
+        "",
+        f"Last scan:  {_md(since_str)}",
+        f"Pending:    {_md(str(pending_approvals))} approval{'s' if pending_approvals != 1 else ''}",
+        f"Orders:     {_md(str(open_orders))} open",
     ]
     return "\n".join(parts)
 
@@ -223,16 +243,17 @@ def format_status(
     open_orders: int,
 ) -> str:
     """Compact status overview: account + short options + pending approvals."""
-    parts: list[str] = ["*System Status*"]
+    parts: list[str] = ["*Status Overview*"]
 
     if account:
         total_unr = sum(p.unrealized_pnl or 0.0 for p in positions)
-        sign = "+" if total_unr >= 0 else ""
         parts += [
             "",
-            f"Net Liq:   \\${_md(f'{account.net_liquidation:,.0f}')}",
-            f"BP:        \\${_md(f'{account.buying_power:,.0f}')}",
-            f"Unr\\. P&L: {_md(f'{sign}{total_unr:,.0f}')}",
+            (
+                f"💼 \\${_md(f'{account.net_liquidation:,.0f}')} net liq · "
+                f"\\${_md(f'{account.buying_power:,.0f}')} BP"
+            ),
+            f"Unr\\. P&L: {_md(_pnl(total_unr))}",
         ]
 
     stocks = [p for p in positions if p.sec_type == "STK"]
@@ -242,14 +263,14 @@ def format_status(
     parts += [
         "",
         (
-            f"Positions: {_md(str(len(stocks)))} stocks, "
-            f"{_md(str(len(options)))} options "
-            f"\\({_md(str(len(short_opts)))} short\\)"
+            f"{_md(str(len(stocks)))} stock{'s' if len(stocks) != 1 else ''} · "
+            f"{_md(str(len(options)))} option{'s' if len(options) != 1 else ''}"
+            f" \\({_md(str(len(short_opts)))} short\\)"
         ),
     ]
 
     if short_opts:
-        parts += ["", "*Active Short Options*"]
+        parts += ["", "*Short Options*"]
         for p in sorted(short_opts, key=lambda x: x.expiry or date.max):
             right_lbl = ("C" if p.right == OptionRight.CALL else "P") if p.right else ""
             strike_s = f"\\${_md(f'{p.strike:.0f}')}" if p.strike else ""
@@ -257,17 +278,12 @@ def format_status(
             dte_s = f" {_md(str(dte))}d" if dte is not None else ""
             qty = abs(int(p.position))
             sym = _md(p.underlying or p.symbol.split()[0])
-            if p.unrealized_pnl is not None:
-                sign = "+" if p.unrealized_pnl >= 0 else ""
-                pnl_s = f" {_md(f'{sign}{p.unrealized_pnl:.0f}')}"
-            else:
-                pnl_s = ""
-            parts.append(f"  {sym} {strike_s}{right_lbl}{dte_s} x{qty}{pnl_s}")
+            pnl_s = f" {_md(_pnl(p.unrealized_pnl))}" if p.unrealized_pnl is not None else ""
+            parts.append(f"  {sym} {strike_s}{_md(right_lbl)}{dte_s} ×{_md(str(qty))}{pnl_s}")
 
     parts += [
         "",
-        f"Pending approvals: {_md(str(pending_approvals))}",
-        f"Open orders:       {_md(str(open_orders))}",
+        f"⏳ {_md(str(pending_approvals))} pending · {_md(str(open_orders))} open orders",
     ]
 
     text = "\n".join(parts)
@@ -284,41 +300,35 @@ def format_startup(
     services: list[str],
 ) -> str:
     """Format system startup notification for Telegram."""
-
-    def icon(ok: bool) -> str:
-        return "OK" if ok else "FAIL"
-
-    service_lines = "\n".join(f"  {_md(s)}" for s in services)
+    mode_icon = "🔴" if mode == "LIVE" else "📄"
+    service_lines = "\n".join(f"  • {_md(s)}" for s in services)
     parts = [
-        f"*IBKR Options System Started \\— {_md(mode)} MODE*",
+        f"*IBKR Bot Started — {_md(mode)} MODE* {mode_icon}",
         "",
-        f"IBKR Exec connection:  {_md(icon(ib_exec_ok))}",
-        f"IBKR Scan connection:  {_md(icon(ib_scan_ok))}",
-        f"Database:              {_md(icon(db_ok))}",
+        f"{_icon(ib_exec_ok)} IBKR Exec",
+        f"{_icon(ib_scan_ok)} IBKR Scan",
+        f"{_icon(db_ok)} Database",
         "",
-        "*Active services*",
+        "*Services*",
         service_lines,
     ]
     return "\n".join(parts)
 
 
-def _eod_sign(v: float) -> str:
-    return f"+${v:.2f}" if v >= 0 else f"-${abs(v):.2f}"
-
-
 def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
-    """Build the informational-only Telegram MarkdownV2 EOD message (no approval keyboard)."""
+    """Build the EOD report Telegram MarkdownV2 message."""
+    date_str = _md(summary.date.strftime("%b %d, %Y"))
     parts: list[str] = [
-        f"*EOD Report \\— {_md(str(summary.date))}*",
+        f"*EOD Report — {date_str}*",
         "",
-        f"Realized: {_md(_eod_sign(summary.realized_pnl))}",
+        f"💰 Realized:    {_md(_pnl2(summary.realized_pnl))}",
         (
-            f"Unrealized: {_md(_eod_sign(summary.unrealized_pnl))} "
-            f"\\(Δ {_md(_eod_sign(summary.unrealized_pnl_delta))}\\)"
+            f"📊 Unrealized:  {_md(_pnl2(summary.unrealized_pnl))}"
+            f"  \\(Δ {_md(_pnl2(summary.unrealized_pnl_delta))}\\)"
         ),
         (
-            f"Open positions: {_md(str(summary.open_positions))} \\| "
-            f"Net delta: {_md(f'{summary.net_delta_exposure:.2f}')}"
+            f"📋 Positions:   {_md(str(summary.open_positions))}"
+            f" · Net Δ {_md(f'{summary.net_delta_exposure:.2f}')}"
         ),
     ]
 
@@ -326,15 +336,209 @@ def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
         parts += ["", f"Fills today: {_md(str(summary.fills_today))}"]
 
     if summary.top_movers:
-        movers_str = ", ".join(_md(s) for s in summary.top_movers)
-        parts.append(f"Top movers: {movers_str}")
+        movers_str = " · ".join(_md(s) for s in summary.top_movers)
+        parts.append(f"Movers: {movers_str}")
 
     if narrative:
-        parts += ["", f"_Journal:_ {_md(narrative)}"]
+        parts += ["", f"_{_md(narrative)}_"]
 
     if summary.tomorrow_watchlist:
-        wl_str = ", ".join(_md(s) for s in summary.tomorrow_watchlist)
-        parts += ["", f"Tomorrow's watchlist: {wl_str}"]
+        wl_str = " · ".join(_md(s) for s in summary.tomorrow_watchlist)
+        parts += ["", f"Tomorrow: {wl_str}"]
+
+    text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def format_fill_confirm(
+    underlying: str,
+    strategy: str,
+    strike: float,
+    right: str,
+    expiry: date,
+    filled_qty: float,
+    avg_price: float,
+) -> str:
+    """Format an order fill confirmation for Telegram MarkdownV2."""
+    strategy_label = strategy.replace("_", " ").title()
+    right_label = "Call" if right == "C" else "Put"
+    contract_total = avg_price * filled_qty * 100
+    qty_str = f"{filled_qty:.0f}"
+
+    parts = [
+        f"✅ *Filled — {_md(underlying)} {_md(strategy_label)}*",
+        (f"\\${_md(f'{strike:.0f}')} {_md(right_label)} · {_md(str(expiry))}"),
+        (
+            f"{_md(qty_str)} contract{'s' if filled_qty != 1 else ''}"
+            f" @ \\${_md(f'{avg_price:.2f}')}/sh"
+            f"  \\(\\${_md(f'{contract_total:.0f}')} total\\)"
+        ),
+    ]
+    return "\n".join(parts)
+
+
+def format_live_confirm_request(
+    underlying: str,
+    strike: float,
+    right: str,
+    expiry: date,
+    contracts: int,
+) -> str:
+    """Format the live order confirmation request for Telegram MarkdownV2."""
+    right_label = "Call" if right == "C" else "Put"
+    parts = [
+        "⚠️ *LIVE Order — Confirmation Required*",
+        "",
+        (f"{_md(underlying)} \\${_md(f'{strike:.0f}')} {_md(right_label)} · {_md(str(expiry))}"),
+        f"{_md(str(contracts))} contract{'s' if contracts != 1 else ''}",
+        "",
+        "Tap *CONFIRM LIVE* or let it expire to cancel\\.",
+    ]
+    return "\n".join(parts)
+
+
+def format_roll_alert(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    alerts: list[RollAlert],
+    review: RollReview | None,
+) -> str:
+    """Format a roll alert for Telegram MarkdownV2."""
+    right_label = pos.right.value if pos.right else "?"
+    strategy = "CC" if right_label == "C" else "CSP"
+    strike_str = f"{pos.strike:.0f}" if pos.strike else "?"
+    sym = pos.underlying or pos.symbol
+    triggers_str = " \\+ ".join(_md(a.trigger) for a in alerts)
+
+    parts: list[str] = [
+        f"⚠️ *Roll Alert — {_md(sym)} {_md(strategy)} \\${_md(strike_str)}*",
+        f"Triggers: {triggers_str}",
+        "",
+    ]
+
+    for alert in alerts:
+        parts.append(f"• {_md(alert.detail)}")
+
+    meta: list[str] = []
+    if quote.delta is not None:
+        meta.append(f"Δ {_md(f'{quote.delta:.2f}')}")
+    if quote.dte:
+        meta.append(f"DTE {_md(str(quote.dte))}")
+    if quote.iv is not None:
+        meta.append(f"IV {_md(f'{quote.iv:.1%}')}")
+    if meta:
+        parts += ["", " · ".join(meta)]
+
+    if review:
+        roll_info = review.roll_target or review.rationale
+        parts += [
+            "",
+            "*── Claude ──*",
+            f"*{_md(review.recommendation.upper())}*",
+        ]
+        if roll_info:
+            parts.append(f"→ {_md(roll_info)}")
+        if review.risks:
+            parts.append(f"Risk: {_md(review.risks)}")
+    else:
+        parts += ["", "_Claude review unavailable — manual evaluation required_"]
+
+    text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def format_pending_approvals(pending: list[dict]) -> str:
+    """Format a list of pending approvals for Telegram MarkdownV2.
+
+    Each dict should have: underlying, strategy, right, strike, expiry,
+    blended_score, expires_at (datetime | None).
+    """
+    count = len(pending)
+    if count == 0:
+        return "*Pending Approvals*\n\n_No pending approvals\\._"
+
+    parts = [f"*Pending Approvals \\({_md(str(count))}\\)*", ""]
+
+    now = datetime.now(UTC)
+    for i, item in enumerate(pending, 1):
+        underlying = item.get("underlying", "?")
+        strategy = item.get("strategy", "?")
+        right = item.get("right", "?")
+        strike = item.get("strike", 0.0)
+        expiry = item.get("expiry")
+        score = item.get("blended_score", 0.0)
+        expires_at = item.get("expires_at")
+
+        strategy_label = strategy.replace("_", " ").title() if strategy else "?"
+        right_label = "Call" if right == "C" else "Put"
+        expiry_str = f" · {expiry}" if expiry else ""
+
+        expires_str = ""
+        if expires_at is not None:
+            aware = expires_at.replace(tzinfo=UTC) if expires_at.tzinfo is None else expires_at
+            mins_left = int((aware - now).total_seconds() / 60)
+            if mins_left > 0:
+                expires_str = f"expires in {mins_left}m"
+            else:
+                expires_str = "expired"
+
+        parts.append(
+            f"*{_md(str(i))}\\.* {_md(underlying)} {_md(strategy_label)}"
+            f" \\${_md(f'{strike:.0f}')} {_md(right_label)}{_md(expiry_str)}"
+        )
+        meta_parts = [f"Score {_md(f'{score:.1f}')}"]
+        if expires_str:
+            meta_parts.append(_md(expires_str))
+        parts.append(f"   _{' · '.join(meta_parts)}_")
+
+    text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def format_fills_history(fills: list[dict]) -> str:
+    """Format recent fills for Telegram MarkdownV2.
+
+    Each dict should have: filled_at, underlying, strategy, right, strike,
+    expiry, filled_qty, avg_price, action ('SELL'|'BUY'), is_live (bool).
+    """
+    if not fills:
+        return "*Recent Fills*\n\n_No fills in the last 7 days\\._"
+
+    parts = [f"*Recent Fills \\({_md(str(len(fills)))}\\)*", ""]
+
+    for item in fills:
+        filled_at: datetime = item.get("filled_at", datetime.now(UTC))
+        underlying = item.get("underlying", "?")
+        strategy = item.get("strategy", "?")
+        right = item.get("right", "?")
+        strike = item.get("strike", 0.0)
+        filled_qty = item.get("filled_qty", 0.0)
+        avg_price = item.get("avg_price", 0.0)
+        action = item.get("action", "SELL")
+        is_live = item.get("is_live", False)
+
+        right_label = "C" if right == "C" else "P"
+        date_str = filled_at.strftime("%b %d")
+        total = avg_price * filled_qty * 100
+        credit_str = _pnl(total) if action == "SELL" else f"-${total:,.0f}"
+        live_tag = " 🔴" if is_live else ""
+
+        strategy_short = (
+            "CC" if "covered" in strategy else "CSP" if "put" in strategy else strategy[:4].upper()
+        )
+
+        parts.append(
+            f"{_md(date_str)}  *{_md(underlying)}* {_md(strategy_short)}"
+            f" \\${_md(f'{strike:.0f}')}{_md(right_label)}"
+            f"  {_md(str(int(filled_qty)))}× @ \\${_md(f'{avg_price:.2f}')}"
+            f"  _{_md(credit_str)}{_md(live_tag)}_"
+        )
 
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:

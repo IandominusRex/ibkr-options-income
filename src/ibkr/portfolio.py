@@ -8,6 +8,7 @@ and an account snapshot for the healthcheck.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import date
 
 from ib_async import IB
@@ -119,13 +120,10 @@ def get_positions(ib: IB) -> list[PositionSnapshot]:
     return out
 
 
-def get_account_snapshot(ib: IB, account: str) -> AccountSnapshot:
-    """Pull key account values into a typed snapshot."""
-    rows = {row.tag: row.value for row in ib.accountSummary(account)}
-
+def _build_account_snapshot(account: str, rows: Mapping[str, object]) -> AccountSnapshot:
     def f(tag: str) -> float:
         try:
-            return float(rows.get(tag, 0.0) or 0.0)
+            return float(str(rows.get(tag) or 0.0))
         except (TypeError, ValueError):
             return 0.0
 
@@ -147,3 +145,15 @@ def get_account_snapshot(ib: IB, account: str) -> AccountSnapshot:
         snap.excess_liquidity,
     )
     return snap
+
+
+async def get_account_snapshot_async(ib: IB, account: str) -> AccountSnapshot:
+    """Pull key account values into a typed snapshot (async — use inside an event loop)."""
+    rows = {row.tag: row.value for row in await ib.accountSummaryAsync(account)}
+    return _build_account_snapshot(account, rows)
+
+
+def get_account_snapshot(ib: IB, account: str) -> AccountSnapshot:
+    """Pull key account values into a typed snapshot (sync — only for standalone scripts)."""
+    rows = {row.tag: row.value for row in ib.accountSummary(account)}
+    return _build_account_snapshot(account, rows)

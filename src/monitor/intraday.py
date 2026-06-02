@@ -142,49 +142,6 @@ def _persist_alert(alert: RollAlert, review: RollReview | None) -> None:
         session.add(row)
 
 
-def _build_alert_text(
-    pos: PositionSnapshot,
-    quote: OptionQuote,
-    alerts: list[RollAlert],
-    review: RollReview | None,
-) -> str:
-    """Format the Telegram alert message."""
-    right_label = pos.right.value if pos.right else "?"
-    strategy = "CC" if right_label == "C" else "CSP"
-    triggers_str = " + ".join(a.trigger for a in alerts)
-    strike_str = f"${pos.strike:.0f}" if pos.strike else "?"
-
-    header = f"Roll Alert: {pos.underlying} {strategy} {strike_str} — {triggers_str}"
-    detail_lines = [a.detail for a in alerts]
-
-    parts = [header, ""]
-    for detail in detail_lines:
-        parts.append(detail)
-
-    meta = []
-    if quote.delta is not None:
-        meta.append(f"Delta: {quote.delta:.2f}")
-    if quote.dte:
-        meta.append(f"DTE: {quote.dte}")
-    if quote.iv is not None:
-        meta.append(f"IV: {quote.iv:.1%}")
-    if meta:
-        parts.append(" | ".join(meta))
-
-    if review:
-        parts.append("")
-        parts.append(
-            f"Claude: [{review.recommendation.upper()}] {review.roll_target or review.rationale}"
-        )
-        if review.risks:
-            parts.append(f"Risk: {review.risks}")
-    else:
-        parts.append("")
-        parts.append("(Claude review unavailable — manual evaluation required)")
-
-    return "\n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # Core alert-firing logic (async, testable)
 # ---------------------------------------------------------------------------
@@ -223,9 +180,11 @@ async def fire_alerts(
         except Exception:
             log.exception("Claude roll review failed for %s", pos.symbol)
 
-    text = _build_alert_text(pos, quote, fresh, review)
+    from src.notify.formatters import format_roll_alert
+
+    text = format_roll_alert(pos, quote, fresh, review)
     try:
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
         log.info(
             "Roll alert sent: %s triggers=%s recommendation=%s",
             pos.symbol,

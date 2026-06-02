@@ -509,6 +509,9 @@ async def test_process_queued_orders_expires_ttl(monkeypatch, tmp_path):
     mock_ib = MagicMock()
     mock_ib.managedAccounts.return_value = ["DU123456"]
     mock_bot = AsyncMock()
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=_make_account())
+    )
 
     await process_queued_orders(mock_ib, mock_bot, "99999")
 
@@ -565,7 +568,7 @@ async def test_process_queued_orders_cancels_if_candidate_not_found(monkeypatch,
 
     account_snap = _make_account()
     monkeypatch.setattr(
-        "src.execution.approval.get_account_snapshot", lambda ib, acct: account_snap
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
     )
     monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
 
@@ -601,7 +604,7 @@ async def test_process_queued_orders_cancels_if_revalidation_fails(monkeypatch, 
 
     account_snap = _make_account()
     monkeypatch.setattr(
-        "src.execution.approval.get_account_snapshot", lambda ib, acct: account_snap
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
     )
     monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
 
@@ -650,7 +653,7 @@ async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, 
 
     account_snap = _make_account()
     monkeypatch.setattr(
-        "src.execution.approval.get_account_snapshot", lambda ib, acct: account_snap
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
     )
     monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
 
@@ -711,7 +714,7 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
         excess_liquidity=90_000.0,
     )
     monkeypatch.setattr(
-        "src.execution.approval.get_account_snapshot", lambda ib, acct: account_snap
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
     )
     monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
 
@@ -844,7 +847,7 @@ async def test_process_button_concurrent_calls_produce_one_order(monkeypatch, tm
     # First call — should succeed and create an OrderRow.
     found1, text1, _ = _process_button(approval_id, "approve")
     assert found1 is True
-    assert "QUEUED" in text1
+    assert "queued" in text1.lower()
 
     # Second call — approval is now APPROVED, must be idempotent.
     found2, text2, _ = _process_button(approval_id, "approve")

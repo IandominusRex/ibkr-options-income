@@ -93,8 +93,8 @@ async def _send_with_session(
             keyboard = InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton("Approve", callback_data=f"approve:{approval.id}"),
-                        InlineKeyboardButton("Reject", callback_data=f"reject:{approval.id}"),
+                        InlineKeyboardButton("✅ Approve", callback_data=f"approve:{approval.id}"),
+                        InlineKeyboardButton("❌ Reject", callback_data=f"reject:{approval.id}"),
                     ]
                 ]
             )

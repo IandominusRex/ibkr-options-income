@@ -30,7 +30,7 @@ from src.common.schemas import AccountSnapshot, EODSummary, PositionSnapshot
 from src.ibkr.connection import IBKRConnection
 from src.ibkr.portfolio import (
     enrich_positions_with_greeks_async,
-    get_account_snapshot,
+    get_account_snapshot_async,
     get_positions,
 )
 from src.notify.formatters import format_eod_summary
@@ -188,7 +188,7 @@ async def run() -> None:
     #    Enrich option positions with live greeks so net-delta exposure is real, not 0.
     async with IBKRConnection("engine") as ib:
         positions = get_positions(ib)
-        account = get_account_snapshot(ib, cfg.secrets.ibkr_account)
+        account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
         try:
             await enrich_positions_with_greeks_async(ib, positions)
         except Exception:
@@ -229,6 +229,7 @@ async def run() -> None:
 
 def main() -> None:
     from src.common.logging import setup_logging
+
     setup_logging()
     asyncio.run(run())
 

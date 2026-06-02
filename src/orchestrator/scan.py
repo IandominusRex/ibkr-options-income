@@ -44,7 +44,7 @@ from src.engine.decision_engine import select_top_candidates
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
 from src.ibkr.market_data import get_option_chain_quotes_async
-from src.ibkr.portfolio import get_account_snapshot, get_positions
+from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
@@ -240,7 +240,7 @@ async def run_scan(
     try:
         managed = ib.managedAccounts()
         acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
-        account: AccountSnapshot = get_account_snapshot(ib, acct)
+        account: AccountSnapshot = await get_account_snapshot_async(ib, acct)
         positions: list[PositionSnapshot] = get_positions(ib)
     except Exception:
         log.exception("scan: failed to fetch account/positions — aborting")

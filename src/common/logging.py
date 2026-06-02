@@ -16,13 +16,13 @@ _CONFIGURED = False
 
 # ── ANSI colour codes ────────────────────────────────────────────────────────
 _RESET = "\033[0m"
-_DIM   = "\033[2m"
+_DIM = "\033[2m"
 
 _LEVEL_STYLES: dict[int, str] = {
-    logging.DEBUG:    "\033[36m",    # cyan
-    logging.INFO:     "\033[32m",    # green
-    logging.WARNING:  "\033[33m",    # yellow
-    logging.ERROR:    "\033[31m",    # red
+    logging.DEBUG: "\033[36m",  # cyan
+    logging.INFO: "\033[32m",  # green
+    logging.WARNING: "\033[33m",  # yellow
+    logging.ERROR: "\033[31m",  # red
     logging.CRITICAL: "\033[1;31m",  # bold red
 }
 

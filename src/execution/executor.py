@@ -193,16 +193,21 @@ async def execute_candidate(
             # then fetch a FRESH quote immediately before placing the order.
             # This prevents a stale limit price computed before the confirm wait.
             confirm_event = register_live_confirm(order_id)
-            confirm_text = (
-                f"⚠️ [CONFIRM LIVE] About to place LIVE order:\n"
-                f"{candidate.underlying} ${candidate.strike:.0f} {candidate.right.value} "
-                f"expiry {candidate.expiry} — {candidate.contracts} contract(s)\n"
-                f"Tap to confirm or let it time out to cancel."
+            from src.notify.formatters import format_live_confirm_request
+
+            confirm_text = format_live_confirm_request(
+                underlying=candidate.underlying,
+                strike=candidate.strike,
+                right=candidate.right.value,
+                expiry=candidate.expiry,
+                contracts=candidate.contracts,
             )
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("CONFIRM LIVE", callback_data=f"confirm_live:{order_id}")]]
             )
-            await bot.send_message(chat_id=chat_id, text=confirm_text, reply_markup=keyboard)
+            await bot.send_message(
+                chat_id=chat_id, text=confirm_text, parse_mode="MarkdownV2", reply_markup=keyboard
+            )
             try:
                 await asyncio.wait_for(confirm_event.wait(), timeout=fill_timeout)
             except TimeoutError:
@@ -329,12 +334,18 @@ async def execute_candidate(
                 avg_price,
                 new_state,
             )
-            strategy_label = candidate.strategy.value.replace("_", " ").title()
-            msg = (
-                f"Filled: {candidate.underlying} {strategy_label} "
-                f"${candidate.strike:.0f} — {filled_qty:.0f} contract(s) @ ${avg_price:.2f}"
+            from src.notify.formatters import format_fill_confirm
+
+            msg = format_fill_confirm(
+                underlying=candidate.underlying,
+                strategy=candidate.strategy.value,
+                strike=candidate.strike,
+                right=candidate.right.value,
+                expiry=candidate.expiry,
+                filled_qty=filled_qty,
+                avg_price=avg_price,
             )
-            await bot.send_message(chat_id=chat_id, text=msg)
+            await bot.send_message(chat_id=chat_id, text=msg, parse_mode="MarkdownV2")
 
         elif ib_status in ("Inactive", "ApiCancelled", "Error"):
             with session_scope() as session:

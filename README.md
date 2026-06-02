@@ -25,10 +25,13 @@ phone via Telegram — where **you approve every trade** before anything touches
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — same pipeline as the morning cron |
+| `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |
 | `/account` | Account balances: net liquidation, buying power, margin, excess liquidity |
+| `/pending` | List all pending approvals with score and time-to-expiry |
+| `/fills` | Recent fills from the last 7 days with quantity, price, and credit received |
+| `/expire` | Expire all pending approvals (clears the queue without executing) |
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
-| `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/help` | List all commands |
 
 ## Prerequisites

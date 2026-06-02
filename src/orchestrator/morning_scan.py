@@ -75,6 +75,7 @@ async def _run(dry_run: bool = False) -> None:
 
 def main(dry_run: bool = False) -> None:
     from src.common.logging import setup_logging
+
     setup_logging()
     asyncio.run(_run(dry_run=dry_run))
 
