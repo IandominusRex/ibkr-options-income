@@ -61,7 +61,7 @@ These YAML files control how the system behaves. **You change behavior here, not
 |---|---|
 | `settings.yaml` | IBKR connection (host, ports, client IDs), scan timing, execution timeouts, logging |
 | `risk_limits.yaml` | Per-ticker concentration limits, delta ranges, DTE windows, earnings blackout, minimum return |
-| `universe.yaml` | Your watchlist (tickers to scan for CCs) and `would_own` list (stocks OK to be assigned via CSPs) |
+| `universe.yaml` | Your watchlist (tickers to scan for CCs) and `would_own` list (stocks OK to be assigned via CSPs). Tickers are organised into three tiers: Tier 1 core (SPY/QQQ/AAPL/MSFT/NVDA/JPM/GLD), Tier 2 active (AMD/META/AMZN/PLTR/SOFI/HOOD/HIMS/BABA), Tier 3 speculative/high-IV (SOXL/LABU/TSLL/DPST/MARA/RGTI/CRCL). Leveraged ETFs are in `indexes` only — never `would_own`. |
 | `scoring_weights.yaml` | How much weight IV rank, technicals, fundamentals, and liquidity each get when ranking candidates |
 
 **Rule:** Secrets (passwords, tokens) never go in these files. They go in `.env`.
@@ -130,7 +130,7 @@ Invokes Claude to add plain-English reasoning to the top candidates.
 | `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response |
 | `parser.py` | Validates and parses Claude's JSON response into a structured `ClaudeReview` object. On any failure, returns an empty result — the pipeline always continues. |
 | `memory.py` | The learning-loop outcome recorder. Back-fills each `claude_memory` row with what actually happened — `filled` (executor), `user_rejected` (Telegram reject), `risk_rejected` (re-validation), `expired` (TTL) — so later scans inject real outcomes (not just rejections) into the strategist prompt. |
-| `prompts/` | Prompt templates for different scenarios (morning review, roll alerts, EOD journal) |
+| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe, so the headless Claude subprocess knows the research context), `roll.py` (roll alerts), `eod.py` (EOD journal) |
 
 **Important:** Claude is enrichment only. If it is unavailable or returns bad output, the system
 sends the Rules-Engine-approved list to Telegram without Claude commentary. Claude never places,

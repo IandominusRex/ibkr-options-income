@@ -60,6 +60,7 @@ python -m pytest               # all tests pass without TWS
 | **[SETUP.md](SETUP.md)** | Complete setup from scratch to first live trade |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | What every folder does, how the system fits together, the process/clientId model, and operational risk handling |
 | **[STATUS.md](STATUS.md)** | What's built, what's deliberately not built, tech stack, known limitations, and the live-cutover gate |
+| **[UNIVERSE_RESEARCH.md](UNIVERSE_RESEARCH.md)** | Deep-research findings for every ticker in the universe: tier classification, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF rules, and data-quality notes. Injected into Claude trade reviews. |
 | **[CLAUDE.md](CLAUDE.md)** | Contributor and AI-assistant guidance |
 | **[ib_async_documentation.md](ib_async_documentation.md)** | IBKR API reference (ib_async library) |
 

@@ -23,6 +23,7 @@ read both before making structural changes.
 | **`SETUP.md`** | New users | Complete step-by-step guide from fresh machine to first live trade |
 | **`ARCHITECTURE.md`** | Non-technical users and new contributors | Plain-English walkthrough of every folder, how modules interact, the pipeline, the process/clientId model, data-flow schemas, key invariants, and operational risk handling |
 | **`STATUS.md`** | Claude and developers | What's built vs. deliberately not built, tech stack, unenforced config, items needing live verification, the live-cutover gate |
+| **`UNIVERSE_RESEARCH.md`** | Claude Code + headless `claude -p` | Deep-research reference for every ticker: tier, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF assignment rules, IV rank methodology, data-quality warnings. A compact version is injected into every trade-review prompt via `src/claude/prompts/strategist.py`. |
 | **`CLAUDE.md`** | Claude Code | Invariants, conventions, safety rules, change workflow — read before any structural change |
 | **`ib_async_documentation.md`** | Claude and developers | Authoritative IBKR API reference — consult before guessing any ib_async signature |
 
@@ -47,6 +48,7 @@ row that matches:
 | **New storage model** (ORM class) added to `models.py` | `ARCHITECTURE.md` src/storage/ section |
 | Feature built / deferred, or a limitation changes | `STATUS.md` (what's built / not built / known limitations) |
 | Bug fix that changes behaviour users would notice | `SETUP.md` troubleshooting table if relevant |
+| **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.

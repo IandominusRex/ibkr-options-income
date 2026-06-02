@@ -1,46 +1,128 @@
 # The scan universe and the CSP "would-own" allowlist.
 # The system will ONLY recommend cash-secured puts on names in `would_own`.
+#
+# Tiers (for reference — all tiers scan for CCs):
+#   Tier 1 — Core income: liquid, stable, fund-manager grade (SPY/QQQ/AAPL/MSFT/GOOGL/NVDA/JPM/GLD)
+#   Tier 2 — Active income: elevated IV, real fundamentals (AMZN/AMD/META/PLTR/SOFI/HOOD/HIMS/BABA)
+#   Tier 3 — Speculative / High-IV: premium income only, assignment is a risk event
+#             Leveraged ETFs (SOXL/LABU/TSLL/DPST) — NEVER in would_own (daily-reset decay)
+#             Individual speculative names (MARA/RGTI/CRCL) — CSP only with hard position limits
 
-# Indexes / ETFs to scan for CC opportunities (and CSP if also listed in `would_own`).
+# ── ETFs ──────────────────────────────────────────────────────────────────────
+
+# Tier 1 — core ETF backbone
 indexes:
-  - QQQ
-  - SPY
-  - IWM
-  - SOXL
-  - LABU
-  - SMH
+  - SPY          # S&P 500; 0.8–2.5%/mo at 0.30Δ; most liquid
+  - QQQ          # Nasdaq-100; slightly higher IV than SPY
+  - IWM          # Russell 2000; better premiums, higher vol
+  - SMH          # Semiconductor sector proxy; good OI
+  - GLD          # Gold; decorrelates from equity drawdowns
 
-# Individual stocks on your watchlist to scan.
+  # Tier 3 — CC-only leveraged ETFs; NEVER add to would_own
+  - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily NAV decay
+  - LABU         # 3× Biotech; binary FDA gap risk on top of leverage decay
+  - TSLL         # 2× TSLA; affordable entry; high IV
+  - DPST         # 3× Regional Banks; interest-rate sensitive; good CC premiums
+
+# ── Individual stocks ─────────────────────────────────────────────────────────
+
 watchlist:
-  - NVDA
-  - AAPL
-  - MSFT
-  - AMD
-  - GOOGL
-  - AMZN
+  # Tier 1 — mega-cap, fund-manager grade
+  - NVDA         # AI leader; IV 40–65; highest-premium Tier 1 name
+  - AAPL         # Most liquid single-stock options; IV 22–35
+  - MSFT         # Solid fundamentals; consistent premium; IV 22–32
+  - GOOGL        # Liquid chains; search + AI moat; IV 25–38
+  - AMZN         # Strong FCF; ~$205/sh; IV 28–42
+  - JPM          # Best-in-class bank; financials diversifier; IV 22–35
+
+  # Tier 2 — elevated IV, real fundamentals, assignment acceptable
+  - AMD          # Semiconductor peer; popular wheel stock; IV 40–60
+  - META         # Exceptional premiums since 2023 recovery; IV 30–50
+  - PLTR         # AI/defense; real revenue; IV rank ~47; ~$158/sh
+  - SOFI         # Fintech turnaround; up 32% in 2026; ~$18/sh; IV 55–80
+  - HOOD         # Retail brokerage; active options; ~$90/sh; IV 50–80
+  - HIMS         # Telehealth growth; ±16% implied earnings move; IV 60–90
+  - BABA         # Alibaba ADR; IV 40–55; NOTE: ADR delisting risk — size conservatively
+
+  # Tier 3 — speculative / high-IV; position size controlled by risk engine limits
+  - MARA         # Bitcoin miner proxy; IV 90–130; BTC correlation = gap risk
+  - RGTI         # Quantum computing; speculative; IV mean ~86; early stage
+  - CRCL         # Circle/stablecoin IPO; IV ~170; down 57% from ATH; thin option liquidity
+
+# ── CSP allowlist ─────────────────────────────────────────────────────────────
 
 # Stocks/ETFs you are genuinely comfortable being assigned (owning long term).
 # CSP candidates are filtered to this set. Keep it honest.
+# Leveraged ETFs are intentionally excluded — assignment = owning a decaying 3× product.
 would_own:
-  - QQQ
+  # Tier 1 ETFs
   - SPY
+  - QQQ
+  - IWM
   - SMH
+  - GLD
+
+  # Tier 1 stocks
   - NVDA
   - AAPL
   - MSFT
   - GOOGL
+  - AMZN
+  - JPM
 
-# Rough sector tags used for concentration limits. Extend as needed.
+  # Tier 2 stocks
+  - AMD
+  - META
+  - PLTR
+  - SOFI
+  - HOOD
+  - HIMS
+
+  # Tier 2 — conditional; ADR risk; keep position small via max_pct_per_ticker
+  - BABA
+
+  # Tier 3 — speculative CSPs; the risk engine's max_contracts + max_pct_per_ticker
+  # caps ensure these stay small. Remove if assignment feels uncomfortable.
+  - MARA
+  - RGTI
+
+# ── Sector tags (for concentration limits in risk_engine.py) ─────────────────
+
+# max_pct_per_sector: 25% of net liq (set in risk_limits.yaml)
+# Note: "tech" will likely hit the cap first — that is intentional; let the
+# risk engine enforce the cap rather than pruning names here.
 sectors:
-  QQQ: index
+  # Indexes
   SPY: index
+  QQQ: index
   IWM: index
   SMH: semis
+  GLD: commodities
+
+  # Leveraged ETFs
   SOXL: semis
   LABU: biotech
+  TSLL: tech
+  DPST: financials
+
+  # Tier 1 stocks
   NVDA: semis
-  AMD: semis
   AAPL: tech
   MSFT: tech
   GOOGL: tech
   AMZN: tech
+  JPM: financials
+
+  # Tier 2 stocks
+  AMD: semis
+  META: tech
+  PLTR: tech
+  SOFI: financials
+  HOOD: financials
+  HIMS: healthcare
+  BABA: tech
+
+  # Tier 3 speculative
+  MARA: crypto
+  RGTI: tech
+  CRCL: crypto
