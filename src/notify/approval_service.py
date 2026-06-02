@@ -248,20 +248,32 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     context.bot_data["scan_running"] = True
 
-    await update.message.reply_text(
+    prog_msg = await update.message.reply_text(
         "🔍 *Scan started*\nFetching market data and running analytics\\. Results arrive in \\~1\\-2 minutes\\.",
         parse_mode="MarkdownV2",
     )
 
     chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
+    prog_msg_id = prog_msg.message_id
     _cfg = get_config()
     thread_id = int(_cfg.secrets.telegram_thread_id) if _cfg.secrets.telegram_thread_id else None
+
+    async def _update_progress(text: str) -> None:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=prog_msg_id,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            pass
 
     async def _run_and_notify() -> None:
         from src.orchestrator.scan import run_scan
 
         try:
-            await run_scan(ib_scan, context.bot, chat_id)
+            await run_scan(ib_scan, context.bot, chat_id, progress_callback=_update_progress)
         except Exception:
             logger.exception("Scan failed")
             try:

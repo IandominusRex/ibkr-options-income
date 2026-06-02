@@ -233,7 +233,7 @@ Once the approval service is running, you can interact with the system from your
 
 | Command | What you get |
 |---|---|
-| `/scan` | Triggers a full pipeline scan — same as the morning cron. Results arrive as ✅ Approve / ❌ Reject messages with Claude's full reasoning. |
+| `/scan` | Triggers a full pipeline scan — same as the morning cron. The initial reply becomes a live progress message (Account → Market data → Scoring → Claude review → Sending results) that updates as each stage completes; final trade candidates arrive as ✅ Approve / ❌ Reject messages with Claude's full reasoning. |
 | `/status` | Compact overview: account totals, all active short options sorted by days-to-expiry, and pending approval / open order counts. Good morning check. |
 | `/positions` | Live snapshot of all open positions (stocks and options), with market value and unrealized P&L per position. |
 | `/account` | Account balances: net liquidation, total cash, buying power, maintenance margin, excess liquidity. |

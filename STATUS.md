@@ -33,7 +33,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
 - **Monitor** (`src/monitor/`) — event-driven intraday watch; all four triggers (delta drift, DTE,
   IV spike, ex-div) wired end-to-end.
-- **Orchestrators** (`src/orchestrator/`) — morning scan, EOD report, shared `/scan` pipeline.
+- **Orchestrators** (`src/orchestrator/`) — morning scan, EOD report, shared `/scan` pipeline with
+  live in-chat progress updates (stage-by-stage message edits via `_Tracker`).
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
 - **Dashboard** (`dashboard/`) — read-only Streamlit views (optional `[dashboard]` extra).
 

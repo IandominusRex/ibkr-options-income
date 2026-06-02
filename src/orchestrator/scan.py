@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -55,6 +56,65 @@ from src.strategies.covered_call import generate_cc_candidates
 log = logging.getLogger(__name__)
 
 _MEMORY_LOOKBACK_DAYS = 30
+
+# ---------------------------------------------------------------------------
+# Telegram progress tracker
+# ---------------------------------------------------------------------------
+
+_ProgressCB = Callable[[str], Awaitable[None]]
+
+_STAGE_ORDER = ["account", "market_data", "scoring", "claude", "notify"]
+_STAGE_LABELS = {
+    "account": "Account & positions",
+    "market_data": "Market data",
+    "scoring": "Scoring & risk gate",
+    "claude": "Claude review",
+    "notify": "Sending results",
+}
+
+
+def _md2(s: str) -> str:
+    """Escape a string for Telegram MarkdownV2."""
+    for c in r"\_*[]()~`>#+-=|{}.!":
+        s = s.replace(c, f"\\{c}")
+    return s
+
+
+class _Tracker:
+    """Maintains stage state and fires an async callback with an updated progress message."""
+
+    def __init__(self, cb: _ProgressCB | None) -> None:
+        self._cb = cb
+        # (icon, detail) — detail is already md2-escaped
+        self._states: dict[str, tuple[str, str]] = {k: ("⬜", "") for k in _STAGE_ORDER}
+
+    def _render(self, header: str = "🔍 *Scan in progress\\.\\.\\.*") -> str:
+        lines = [header, ""]
+        for key in _STAGE_ORDER:
+            icon, detail = self._states[key]
+            label = _md2(_STAGE_LABELS[key])
+            lines.append(f"{icon} {label}" + (f" — {detail}" if detail else ""))
+        return "\n".join(lines)
+
+    async def tick(self, stage: str, icon: str, detail: str = "") -> None:
+        self._states[stage] = (icon, _md2(detail) if detail else "")
+        if self._cb is not None:
+            try:
+                await self._cb(self._render())
+            except Exception:
+                log.debug("Progress callback failed", exc_info=True)
+
+    async def complete(self, cc: int, csp: int, buy: int) -> None:
+        header = "🔍 *Scan complete*"
+        self._states["notify"] = (
+            "✅",
+            _md2(f"{cc} CC · {csp} CSP · {buy} buy"),
+        )
+        if self._cb is not None:
+            try:
+                await self._cb(self._render(header))
+            except Exception:
+                log.debug("Progress complete callback failed", exc_info=True)
 
 
 @dataclass
@@ -225,6 +285,7 @@ async def run_scan(
     ib: IB,
     bot: object,
     chat_id: str,
+    progress_callback: _ProgressCB | None = None,
 ) -> ScanResult:
     """Run the full pipeline. Returns ScanResult even on partial failures.
 
@@ -232,11 +293,15 @@ async def run_scan(
         ib: A live, connected IB instance dedicated to market data for this scan.
         bot: telegram.Bot instance for sending results.
         chat_id: Telegram chat id to send results to.
+        progress_callback: Optional async callable that receives a MarkdownV2 string and
+            edits the in-chat progress message. Called at each stage transition.
     """
     cfg = get_config()
     result = ScanResult()
+    tracker = _Tracker(progress_callback)
 
     # --- 1. Account + positions ---
+    await tracker.tick("account", "⏳")
     try:
         managed = ib.managedAccounts()
         acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
@@ -244,7 +309,9 @@ async def run_scan(
         positions: list[PositionSnapshot] = get_positions(ib)
     except Exception:
         log.exception("scan: failed to fetch account/positions — aborting")
+        await tracker.tick("account", "❌", "failed")
         return result
+    await tracker.tick("account", "✅")
 
     # --- 2. Symbol universe ---
     would_own: list[str] = cfg.universe.get("would_own", [])
@@ -252,9 +319,10 @@ async def run_scan(
         p.underlying or p.symbol for p in positions if p.sec_type == "STK" and p.position > 0
     }
     all_symbols: list[str] = sorted(set(would_own) | holdings_symbols)
+    n = len(all_symbols)
     log.info(
         "scan: %d symbols to scan (%d holdings, %d universe)",
-        len(all_symbols),
+        n,
         len(holdings_symbols),
         len(would_own),
     )
@@ -271,8 +339,10 @@ async def run_scan(
     csp_candidates: list[TradeCandidate] = []
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {}
 
-    for symbol in all_symbols:
+    await tracker.tick("market_data", "⏳", f"0/{n} symbols")
+    for i, symbol in enumerate(all_symbols):
         log.info("scan: processing %s", symbol)
+        await tracker.tick("market_data", "⏳", f"{i + 1}/{n} — {symbol}")
 
         loop = asyncio.get_running_loop()
 
@@ -326,12 +396,15 @@ async def run_scan(
                 c.scores.sentiment_score = sentiment_score
             csp_candidates.extend(new_csp)
 
+    await tracker.tick("market_data", "✅", f"{n}/{n} symbols")
+
     # --- 5. Buy-to-own recommendations ---
     result.buy_candidates = generate_buy_candidates(would_own, holdings_symbols, analytics_map)
 
     # --- 6. Scoring THEN risk gate ---
     # Score first so the risk engine consumes its cumulative budgets (per-ticker /
     # per-sector / total-CSP / buying-power) greedily in priority order.
+    await tracker.tick("scoring", "⏳")
     all_option_candidates = cc_candidates + csp_candidates
     if all_option_candidates:
         scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
@@ -350,17 +423,21 @@ async def run_scan(
         top = select_top_candidates(passed)
     else:
         top = []
+        passed = []
 
     result.cc_candidates = [c for c in top if c.strategy.value == "covered_call"]
     result.csp_candidates = [c for c in top if c.strategy.value == "cash_secured_put"]
+    await tracker.tick("scoring", "✅", f"{len(top)}/{len(all_option_candidates)} passed")
 
     # --- 7. Load prior Claude memory for history injection ---
     memory = _load_memory(all_symbols)
 
     # --- 8. Claude review ---
+    await tracker.tick("claude", "⏳")
     if top:
         result.reviews = review_candidates(top, account, history=memory)
     log.info("scan: %d Claude reviews", len(result.reviews))
+    await tracker.tick("claude", "✅", f"{len(result.reviews)} reviews")
 
     # --- 9. Persist ---
     _persist_candidates(top, result.reviews, result.run_id)
@@ -369,11 +446,18 @@ async def run_scan(
     # --- 10. Send to Telegram ---
     # send_candidates manages its own short DB transactions (no session held across the
     # Telegram network sends — that would block other processes writing the same SQLite DB).
+    await tracker.tick("notify", "⏳")
     try:
         await send_candidates(result.cc_candidates + result.csp_candidates, result.reviews)
         await send_buy_list(result.buy_candidates, bot, chat_id)
     except Exception:
         log.exception("scan: failed to send Telegram messages")
+
+    await tracker.complete(
+        len(result.cc_candidates),
+        len(result.csp_candidates),
+        len(result.buy_candidates),
+    )
 
     log.info(
         "scan complete — run_id=%s CC=%d CSP=%d buy=%d reviews=%d",
