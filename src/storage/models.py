@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -33,6 +34,7 @@ class Base(DeclarativeBase):
 
 class CandidateRow(Base):
     __tablename__ = "candidates"
+    __table_args__ = (UniqueConstraint("candidate_id", name="uq_candidates_candidate_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -83,6 +85,7 @@ class ApprovalRow(Base):
 
 class OrderRow(Base):
     __tablename__ = "orders"
+    __table_args__ = (UniqueConstraint("approval_id", name="uq_orders_approval_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -102,6 +105,7 @@ class IVHistoryRow(Base):
     """Daily implied-vol observations powering IV Rank/Percentile."""
 
     __tablename__ = "iv_history"
+    __table_args__ = (UniqueConstraint("symbol", "obs_date", name="uq_iv_history_symbol_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
@@ -131,6 +135,9 @@ class FillRow(Base):
     order_id: Mapped[int] = mapped_column(Integer, index=True)
     candidate_id: Mapped[str] = mapped_column(String(64), index=True)
     ib_exec_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Order side: "SELL" (premium credit) or "BUY" (debit, e.g. a buy-to-close).
+    # Used to sign the EOD option premium cashflow correctly.
+    action: Mapped[str] = mapped_column(String(4), default="SELL")
     filled_qty: Mapped[float] = mapped_column(Float)
     avg_price: Mapped[float] = mapped_column(Float)
     commission: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -166,12 +173,16 @@ class ClaudeMemoryRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     scan_date: Mapped[date] = mapped_column(Date, index=True)
     underlying: Mapped[str] = mapped_column(String(16), index=True)
-    strategy_type: Mapped[str] = mapped_column(String(20))  # covered_call | cash_secured_put | buy_to_own
+    strategy_type: Mapped[str] = mapped_column(
+        String(20)
+    )  # covered_call | cash_secured_put | buy_to_own
     recommendation: Mapped[str] = mapped_column(String(20))  # sell | skip | buy | wait
     priority: Mapped[int] = mapped_column(Integer, default=0)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     rationale: Mapped[str] = mapped_column(Text, default="")
-    outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)  # filled | user_rejected | risk_rejected | expired | None
+    outcome: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # filled | user_rejected | risk_rejected | expired | None
     outcome_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     candidate_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -181,6 +192,7 @@ class JournalRow(Base):
     """End-of-day narrative + metrics, written by the EOD orchestrator."""
 
     __tablename__ = "journal"
+    __table_args__ = (UniqueConstraint("entry_date", name="uq_journal_entry_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     entry_date: Mapped[date] = mapped_column(Date, index=True)

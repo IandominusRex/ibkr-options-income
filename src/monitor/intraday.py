@@ -37,6 +37,7 @@ from src.common.schemas import (
     RollAlert,
     RollReview,
 )
+from src.ibkr.connection import AutoReconnect
 from src.ibkr.contracts import build_option
 from src.ibkr.portfolio import get_positions
 from src.monitor.triggers import check_all
@@ -262,8 +263,11 @@ class IntradayMonitor:
         self._chat_id = chat_id
         self._cfg = cfg
         self._executor = executor
-        # Maps OCC symbol (localSymbol) → PositionSnapshot
-        self._subscriptions: dict[str, PositionSnapshot] = {}
+        # Maps OCC symbol (localSymbol) → (PositionSnapshot, subscribed Contract).
+        # Storing the Contract object used in reqMktData is required for cancelMktData
+        # to actually cancel the right subscription (ib_async matches by reqId, not
+        # by contract equality — a freshly-built unqualified Contract silently no-ops).
+        self._subscriptions: dict[str, tuple[PositionSnapshot, Any]] = {}
         # OCC symbol → IV at entry (IV-spike baseline); underlying → fundamentals (ex-div).
         self._entry_iv: dict[str, float | None] = {}
         self._fund_stats: dict[str, FundamentalStats] = {}
@@ -273,6 +277,19 @@ class IntradayMonitor:
     # IB calls (positions, reqMktData, cancelMktData) are non-blocking and stay on
     # the loop; only the blocking yfinance fundamentals fetch is offloaded to a thread.
     # ------------------------------------------------------------------
+
+    async def _on_reconnect(self) -> None:
+        """Clear all subscription state then re-subscribe after a TWS reconnect.
+
+        Without this clear, _refresh_subscriptions would find all symbols already in
+        self._subscriptions (in-memory) and skip reqMktData — but ib.tickers() is
+        empty on a fresh connection, so the check `not any(...)` would see all tickers
+        missing and call reqMktData again, doubling every subscription.
+        Clearing first makes the refresh behave identically to a cold start.
+        """
+        self._subscriptions.clear()
+        self._entry_iv.clear()
+        await self._refresh_subscriptions()
 
     async def _refresh_subscriptions(self) -> None:
         """Load positions; subscribe to new short options, unsubscribe from closed ones."""
@@ -294,7 +311,6 @@ class IntradayMonitor:
             active_symbols.add(pos.symbol)
 
             already_subscribed = pos.symbol in self._subscriptions
-            self._subscriptions[pos.symbol] = pos  # always update position snapshot
 
             # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
             if pos.symbol not in self._entry_iv:
@@ -310,16 +326,19 @@ class IntradayMonitor:
                 except Exception:
                     log.exception("Failed to fetch fundamentals for %s", underlying)
 
-            if not already_subscribed or not any(
-                t.contract
-                and (t.contract.localSymbol == pos.symbol or t.contract.symbol == pos.underlying)
-                for t in self._ib.tickers()
-            ):
+            if already_subscribed:
+                # Update the position snapshot in-place, keeping the stored Contract.
+                old_pos, old_contract = self._subscriptions[pos.symbol]
+                self._subscriptions[pos.symbol] = (pos, old_contract)
+            else:
+                # New position — subscribe and store the Contract object used so that
+                # cancelMktData can use the same object (ib_async matches by reqId).
                 try:
                     contract = build_option(
                         pos.underlying or pos.symbol, pos.expiry, pos.strike, pos.right.value
                     )
                     self._ib.reqMktData(contract, "101", False, False)
+                    self._subscriptions[pos.symbol] = (pos, contract)
                     log.info("Subscribed market data: %s", pos.symbol)
                 except Exception:
                     log.exception("reqMktData failed for %s", pos.symbol)
@@ -327,16 +346,10 @@ class IntradayMonitor:
         # Unsubscribe from positions that are no longer held
         for sym in list(self._subscriptions):
             if sym not in active_symbols:
-                old_pos = self._subscriptions.pop(sym)
+                old_pos, contract = self._subscriptions.pop(sym)
                 self._entry_iv.pop(sym, None)
-                if old_pos.expiry and old_pos.strike and old_pos.right:
+                if contract is not None:
                     try:
-                        contract = build_option(
-                            old_pos.underlying or old_pos.symbol,
-                            old_pos.expiry,
-                            old_pos.strike,
-                            old_pos.right.value,
-                        )
                         self._ib.cancelMktData(contract)
                         log.info("Unsubscribed market data: %s", sym)
                     except Exception:
@@ -352,9 +365,10 @@ class IntradayMonitor:
             if ticker.contract is None:
                 continue
             local_sym = (ticker.contract.localSymbol or "").strip()
-            pos = self._subscriptions.get(local_sym)
-            if pos is None:
+            entry = self._subscriptions.get(local_sym)
+            if entry is None:
                 continue
+            pos, _ = entry
             quote = _ticker_to_quote(ticker, pos)
             limits = {
                 "delta_ceiling": self._cfg.monitor.delta_ceiling,
@@ -364,9 +378,7 @@ class IntradayMonitor:
             }
             entry_iv = self._entry_iv.get(local_sym)
             fund_stats = self._fund_stats.get(pos.underlying or pos.symbol)
-            alerts = check_all(
-                pos, quote, entry_iv=entry_iv, fund_stats=fund_stats, limits=limits
-            )
+            alerts = check_all(pos, quote, entry_iv=entry_iv, fund_stats=fund_stats, limits=limits)
             if alerts:
                 await fire_alerts(
                     alerts, pos, quote, self._bot, self._chat_id, self._cfg, self._executor
@@ -450,8 +462,20 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
     async with Bot(token=token) as bot:
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="monitor") as executor:
             monitor = IntradayMonitor(ib, bot, chat_id, cfg, executor)
+            # Keep the long-lived connection alive across TWS drops; on reconnect, re-subscribe
+            # market data so the monitor doesn't go silently blind.
+            reconnect = AutoReconnect(
+                ib,
+                cfg.ibkr.host,
+                cfg.ibkr_port,
+                cfg.ibkr.client_ids.get("monitor", 12),
+                market_data_type=cfg.ibkr.market_data_type,
+                on_reconnect=monitor._on_reconnect,
+                label="monitor",
+            )
             try:
                 await monitor.start(stop_event)
             finally:
+                reconnect.stop()
                 ib.disconnect()
                 log.info("IBKR monitor connection closed")

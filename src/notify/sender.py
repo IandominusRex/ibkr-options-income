@@ -16,6 +16,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from src.common.config import get_config
 from src.common.schemas import ApprovalStatus, BuyCandidate, ClaudeReview, TradeCandidate
 from src.notify.formatters import format_candidate
+from src.storage.db import session_scope
 from src.storage.models import ApprovalRow
 
 logger = logging.getLogger(__name__)
@@ -24,12 +25,16 @@ logger = logging.getLogger(__name__)
 async def send_candidates(
     candidates: list[TradeCandidate],
     reviews: list[ClaudeReview],
-    session: Session,
+    session: Session | None = None,
 ) -> None:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
     Safe to call with an empty list — no API calls are made.
     If Telegram credentials are missing, logs a warning and returns early.
+
+    When `session` is None (the production path), the function manages its own short
+    DB transactions so a write transaction is never held open across the Telegram network
+    sends. When a session is supplied (tests), it is used directly.
     """
     if not candidates:
         return
@@ -42,45 +47,77 @@ async def send_candidates(
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping send")
         return
 
+    thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+
+    if session is not None:
+        await _send_with_session(session, candidates, reviews, cfg, token, str(chat_id), thread_id)
+        return
+
+    with session_scope() as own_session:
+        await _send_with_session(
+            own_session, candidates, reviews, cfg, token, str(chat_id), thread_id
+        )
+
+
+async def _send_with_session(
+    session: Session,
+    candidates: list[TradeCandidate],
+    reviews: list[ClaudeReview],
+    cfg: object,
+    token: str,
+    chat_id: str,
+    thread_id: int | None = None,
+) -> None:
     review_map = {r.candidate_id: r for r in reviews}
-    ttl = cfg.approval.ttl_minutes
-    expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
+    ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
 
-    for candidate in candidates:
-        # Insert approval row first to get the integer ID for callback_data.
-        approval = ApprovalRow(
-            candidate_id=candidate.candidate_id,
-            status=ApprovalStatus.PENDING,
-            chat_id=str(chat_id),
-            expires_at=expires_at,
-        )
-        session.add(approval)
-        session.flush()  # populate approval.id
+    # One Bot for the whole batch (avoids opening/closing an HTTP session per candidate).
+    async with Bot(token=token) as bot:
+        for candidate in candidates:
+            # Compute TTL per candidate so a slow multi-candidate review session
+            # doesn't leave the last candidate with only a few minutes of runway.
+            expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
 
-        review = review_map.get(candidate.candidate_id)
-        text = format_candidate(candidate, review)
-        keyboard = InlineKeyboardMarkup(
-            [
+            # Insert approval row first to get the integer ID for callback_data.
+            approval = ApprovalRow(
+                candidate_id=candidate.candidate_id,
+                status=ApprovalStatus.PENDING,
+                chat_id=chat_id,
+                expires_at=expires_at,
+            )
+            session.add(approval)
+            session.flush()  # populate approval.id
+
+            review = review_map.get(candidate.candidate_id)
+            text = format_candidate(candidate, review)
+            keyboard = InlineKeyboardMarkup(
                 [
-                    InlineKeyboardButton("Approve", callback_data=f"approve:{approval.id}"),
-                    InlineKeyboardButton("Reject", callback_data=f"reject:{approval.id}"),
+                    [
+                        InlineKeyboardButton("Approve", callback_data=f"approve:{approval.id}"),
+                        InlineKeyboardButton("Reject", callback_data=f"reject:{approval.id}"),
+                    ]
                 ]
-            ]
-        )
+            )
 
-        try:
-            async with Bot(token=token) as bot:
+            try:
                 msg = await bot.send_message(
                     chat_id=chat_id,
+                    message_thread_id=thread_id,
                     text=text,
                     parse_mode="MarkdownV2",
                     reply_markup=keyboard,
                 )
-            approval.telegram_message_id = msg.message_id
-            session.flush()
-            logger.info("Sent candidate %s (message_id=%s)", candidate.candidate_id, msg.message_id)
-        except Exception:
-            logger.exception("Failed to send Telegram message for %s", candidate.candidate_id)
+                approval.telegram_message_id = msg.message_id
+                session.flush()
+                logger.info(
+                    "Sent candidate %s (message_id=%s)", candidate.candidate_id, msg.message_id
+                )
+            except Exception:
+                # The approval row is already in the session. Mark it EXPIRED so it
+                # doesn't sit as a phantom PENDING that will never be executed.
+                logger.exception("Failed to send Telegram message for %s", candidate.candidate_id)
+                approval.status = ApprovalStatus.EXPIRED
+                session.flush()
 
 
 async def send_buy_list(
@@ -116,8 +153,15 @@ async def send_buy_list(
 
     try:
         from telegram import Bot as TelegramBot
+
+        thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
         async with TelegramBot(token=token) as tbot:
-            await tbot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
+            await tbot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
         logger.info("Sent buy list (%d candidates)", len(candidates))
     except Exception:
         logger.exception("Failed to send buy list to Telegram")

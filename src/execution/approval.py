@@ -37,7 +37,7 @@ def _is_rth() -> bool:
     now = datetime.now(_ET)
     if now.weekday() >= 5:
         return False
-    return dtime(9, 30) <= now.time() <= dtime(16, 0)
+    return dtime(9, 30) <= now.time() < dtime(16, 0)
 
 
 def _load_candidate(session: Session, candidate_id: str) -> TradeCandidate | None:
@@ -58,9 +58,32 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
     now = datetime.now(UTC)
 
     # ------------------------------------------------------------------ #
+    # Fast check: any QUEUED orders at all?                                #
+    # ------------------------------------------------------------------ #
+    with session_scope() as _s:
+        count = _s.query(OrderRow).filter(OrderRow.state == OrderState.QUEUED).count()
+    if not count:
+        return
+
+    # ------------------------------------------------------------------ #
+    # Fetch IBKR data BEFORE opening the write session so we never hold   #
+    # the SQLite write lock across a slow TWS network call (~30 s max).   #
+    # ------------------------------------------------------------------ #
+    try:
+        managed = ib.managedAccounts()
+        acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
+        account_snap = get_account_snapshot(ib, acct)
+        positions = get_positions(ib)
+    except Exception:
+        log.exception("Could not fetch account data from IB — skipping execution pass")
+        return
+
+    # ------------------------------------------------------------------ #
     # Phase 1: synchronous classification                                  #
     # ------------------------------------------------------------------ #
     to_execute: list[tuple[int, TradeCandidate]] = []
+    # Notifications to send in Phase 2 (can't await inside the session block).
+    notify_msgs: list[str] = []
 
     with session_scope() as session:
         queued = session.query(OrderRow).filter(OrderRow.state == OrderState.QUEUED).all()
@@ -69,25 +92,35 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
 
         log.info("Processing %d QUEUED order(s)", len(queued))
 
-        # Fetch account snapshot + positions once for all re-validations.
-        try:
-            managed = ib.managedAccounts()
-            acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
-            account_snap = get_account_snapshot(ib, acct)
-            positions = get_positions(ib)
-        except Exception:
-            log.exception("Could not fetch account data from IB — skipping execution pass")
-            return
+        # SQLite strips tzinfo on read-back; treat stored datetimes as UTC.
+        def _aware(dt: datetime) -> datetime:
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
+        # First pass: expire/defer/load. Survivors go to a batch re-validation so the
+        # cumulative budgets (per-ticker / sector / CSP collateral / buying power) are
+        # enforced ACROSS all pending orders, not one-at-a-time (which is cumulative-blind:
+        # N same-ticker orders would each pass against current positions alone).
+        pending: list[tuple[OrderRow, TradeCandidate]] = []
         for order_row in queued:
             approval = session.get(ApprovalRow, order_row.approval_id)
 
-            # --- TTL check ---
-            # SQLite strips tzinfo on read-back; treat stored datetimes as UTC.
-            def _aware(dt: datetime) -> datetime:
-                return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+            # Missing expires_at is treated as expired — an approval with no TTL
+            # could persist indefinitely and execute a stale order days later.
+            if approval is None or not approval.expires_at:
+                log.error(
+                    "Approval %s has no expires_at — cancelling order_id=%s",
+                    order_row.approval_id,
+                    order_row.id,
+                )
+                order_row.state = OrderState.CANCELLED
+                order_row.detail = "Approval missing TTL"
+                notify_msgs.append(
+                    f"Order CANCELLED: approval for {order_row.candidate_id[:12]} is missing "
+                    f"TTL (order_id={order_row.id}). Please re-scan."
+                )
+                continue
 
-            if approval and approval.expires_at and _aware(approval.expires_at) < now:
+            if _aware(approval.expires_at) < now:
                 log.info(
                     "Expiring stale approval=%s candidate=%s",
                     order_row.approval_id,
@@ -99,12 +132,10 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 record_outcome(order_row.candidate_id, EXPIRED)
                 continue
 
-            # --- RTH gate ---
             if cfg.execution.transmit_only_in_rth and not _is_rth():
                 log.debug("Outside RTH — deferring order_id=%s", order_row.id)
                 continue
 
-            # --- Load candidate ---
             candidate = _load_candidate(session, order_row.candidate_id)
             if candidate is None:
                 log.error(
@@ -116,10 +147,25 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 order_row.detail = "Candidate not found"
                 continue
 
-            # --- Second Rules Engine pass ---
-            verdicts = validate_candidates([candidate], account_snap, positions)
-            if not verdicts or verdicts[0].verdict != Verdict.PASS:
-                reasons = verdicts[0].reasons if verdicts else ["unknown"]
+            # Recompute DTE from the stored expiry so a Friday-scanned trade
+            # processed Monday has an accurate DTE at re-validation time.
+            today = datetime.now(_ET).date()
+            fresh_dte = (candidate.expiry - today).days
+            candidate = candidate.model_copy(update={"dte": fresh_dte})
+
+            pending.append((order_row, candidate))
+
+        # --- Second Rules Engine pass (batched, cumulative-aware) ---
+        # Sort by blended_score desc so the greedy cumulative budgets are consumed in
+        # priority order, matching how the decision-time gate ran.
+        ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
+        verdicts = validate_candidates([c for _, c in ordered], account_snap, positions)
+        verdict_map = {v.candidate_id: v for v in verdicts}
+
+        for order_row, candidate in ordered:
+            verdict = verdict_map.get(candidate.candidate_id)
+            if verdict is None or verdict.verdict != Verdict.PASS:
+                reasons = verdict.reasons if verdict else ["unknown"]
                 log.warning(
                     "Re-validation REJECT for candidate=%s reasons=%s",
                     order_row.candidate_id,
@@ -130,11 +176,22 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 record_outcome(order_row.candidate_id, RISK_REJECTED)
                 continue
 
+            # Mark as SUBMITTED inside Phase 1 so the next poll cycle (which fires
+            # every poll_interval_seconds) does not pick up the same order again.
+            # If execution fails, the except block in Phase 2 sets it to REJECTED.
+            order_row.state = OrderState.SUBMITTED
+            order_row.detail = "Queued for async execution"
             to_execute.append((order_row.id, candidate))
 
     # ------------------------------------------------------------------ #
     # Phase 2: async execution (session already committed and closed)      #
     # ------------------------------------------------------------------ #
+    for msg in notify_msgs:
+        try:
+            await bot.send_message(chat_id=chat_id, text=msg)
+        except Exception:
+            log.exception("Failed to send TTL-null cancel notification")
+
     for order_id, candidate in to_execute:
         try:
             await execute_candidate(ib, bot, chat_id, order_id, candidate)

@@ -202,7 +202,9 @@ async def test_dry_run_does_not_call_send_candidates(monkeypatch, tmp_path):
     async def mock_connect(*args, **kwargs) -> None:
         connect_calls.append(args)
 
-    monkeypatch.setattr("src.orchestrator.morning_scan.IB", lambda: MagicMock(connectAsync=mock_connect))
+    monkeypatch.setattr(
+        "src.orchestrator.morning_scan.IB", lambda: MagicMock(connectAsync=mock_connect)
+    )
 
     mock_cfg = MagicMock()
     mock_cfg.is_live = False

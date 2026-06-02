@@ -79,7 +79,7 @@ def generate_cc_candidates(
         # name that has run up this understates yield-on-market-value, which is the conservative
         # choice for an income screen (you don't want the run-up to inflate the apparent yield).
         roc_pct = (mid / position.avg_cost) * 100
-        annualized_yield_pct = roc_pct * (365 / dte)
+        annualized_yield_pct = roc_pct * (365 / dte) if dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
             continue
@@ -122,7 +122,9 @@ def generate_cc_candidates(
 
     if not candidates:
         call_quotes = sum(1 for q in quotes if q.right == OptionRight.CALL)
-        log.warning("No CC candidates passed filters for %s (%d call quotes evaluated)", symbol, call_quotes)
+        log.warning(
+            "No CC candidates passed filters for %s (%d call quotes evaluated)", symbol, call_quotes
+        )
 
     candidates.sort(key=lambda c: c.roc_pct, reverse=True)
     return candidates

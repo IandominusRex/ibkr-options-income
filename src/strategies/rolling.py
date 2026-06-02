@@ -84,12 +84,24 @@ def generate_roll_candidates(
         if not passes_liquidity_gates(quote):
             continue
 
+        if current_mid is None:
+            continue
         roll_credit = new_mid - current_mid
         if roll_credit <= 0:
             continue
 
-        collateral = position.avg_cost * 100
-        roc_pct = (roll_credit / (collateral / 100)) * 100 if collateral > 0 else 0.0
+        # Collateral = strike price × 100 × contracts (the cash actually at risk,
+        # not the entry premium received which is ~100× smaller and produces
+        # fictitious 60%+ ROC figures).
+        if position.right == OptionRight.PUT:
+            collateral = quote.strike * contracts * 100
+            roc_basis = quote.strike  # put: ROC = credit / strike (% of collateral at risk)
+        else:
+            # For covered call rolls, the basis is the underlying cost, which is
+            # not available in this function — use strike as a conservative proxy.
+            collateral = quote.strike * contracts * 100
+            roc_basis = quote.strike
+        roc_pct = (roll_credit / roc_basis) * 100 if roc_basis > 0 else 0.0
         annualized_yield_pct = roc_pct * (365 / new_dte) if new_dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
@@ -140,8 +152,13 @@ def generate_roll_candidates(
     return candidates
 
 
-def _infer_current_mid(position: PositionSnapshot, quotes: list[OptionQuote]) -> float:
-    """Find the current mid of the existing short by matching its contract in the chain."""
+def _infer_current_mid(position: PositionSnapshot, quotes: list[OptionQuote]) -> float | None:
+    """Find the current mid of the existing short by matching its contract in the chain.
+
+    Returns None when no live quote is found — the caller must skip the candidate
+    rather than use the stale entry cost, which would produce a misleadingly high
+    roll credit on a challenged position.
+    """
     for q in quotes:
         if (
             q.right == position.right
@@ -151,4 +168,4 @@ def _infer_current_mid(position: PositionSnapshot, quotes: list[OptionQuote]) ->
             m = q.mid
             if m is not None:
                 return m
-    return position.avg_cost
+    return None

@@ -79,12 +79,24 @@ def check_iv_spike(
     return None
 
 
+# Below this |delta| a short call is far enough OTM that early assignment to capture the
+# dividend is economically irrational (remaining extrinsic value exceeds the dividend), so
+# the ex-div alert is just noise. Only applied when a live delta is available.
+_EX_DIV_MIN_DELTA = 0.50
+
+
 def check_ex_div(
     pos: PositionSnapshot,
     fund_stats: FundamentalStats,
     days_ahead: int,
+    quote: OptionQuote | None = None,
 ) -> RollAlert | None:
-    """Fire when ex-div date is within days_ahead for a short call (assignment risk)."""
+    """Fire when ex-div date is within days_ahead for an *ITM-ish* short call.
+
+    Real early-assignment risk requires the call to be in/near the money (the dividend must
+    exceed remaining extrinsic). When the live quote carries a delta, OTM calls (|delta| <
+    threshold) are suppressed; without a delta we keep the conservative original behaviour.
+    """
     if pos.position >= 0:
         return None
     from src.common.schemas import OptionRight
@@ -93,6 +105,8 @@ def check_ex_div(
         return None
     if fund_stats.ex_dividend_date is None:
         return None
+    if quote is not None and quote.delta is not None and abs(quote.delta) < _EX_DIV_MIN_DELTA:
+        return None  # OTM short call — no real assignment risk into the dividend
     days_to_ex = (fund_stats.ex_dividend_date - date.today()).days
     if 0 <= days_to_ex <= days_ahead:
         dte = (pos.expiry - date.today()).days if pos.expiry else None
@@ -134,7 +148,7 @@ def check_all(
             alerts.append(alert)
 
     if fund_stats is not None:
-        alert = check_ex_div(pos, fund_stats, limits.get("ex_div_days_ahead", 5))
+        alert = check_ex_div(pos, fund_stats, limits.get("ex_div_days_ahead", 5), quote=quote)
         if alert:
             alerts.append(alert)
 

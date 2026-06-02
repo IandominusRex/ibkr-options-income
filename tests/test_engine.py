@@ -358,11 +358,15 @@ class TestValidateCandidates:
         verdicts = validate_candidates(cands, _account(net_liquidation=100_000.0), [])
         passed = [v for v in verdicts if v.verdict == Verdict.PASS]
         assert len(passed) == 1
-        assert all("concentration_limit" in v.reasons for v in verdicts if v.verdict == Verdict.REJECT)
+        assert all(
+            "concentration_limit" in v.reasons for v in verdicts if v.verdict == Verdict.REJECT
+        )
 
     def test_cumulative_buying_power_buffer(self) -> None:
         # bp=20k, required buffer=15% of 100k=15k → only 5k of NEW collateral fits.
-        acc = _account(net_liquidation=100_000.0, buying_power=20_000.0, maintenance_margin=10_000.0)
+        acc = _account(
+            net_liquidation=100_000.0, buying_power=20_000.0, maintenance_margin=10_000.0
+        )
         # Use distinct tickers so per-ticker concentration doesn't mask the BP check.
         cands = [
             _candidate(candidate_id="a", underlying="AAPL", collateral=4_000.0),
@@ -412,8 +416,12 @@ class TestValidateCandidates:
         # Existing short put ties up 57k of the 60k CSP budget (strike 570 * 100 * 1).
         # A new 4k CSP on an unmapped ticker tips total CSP collateral to 61k > 60k.
         existing_put = PositionSnapshot(
-            symbol="SPYPUT", sec_type="OPT", position=-1.0, avg_cost=5.0,
-            right=OptionRight.PUT, strike=570.0,
+            symbol="SPYPUT",
+            sec_type="OPT",
+            position=-1.0,
+            avg_cost=5.0,
+            right=OptionRight.PUT,
+            strike=570.0,
         )
         cand = _candidate(
             underlying="ZZTOP", strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20
@@ -457,6 +465,49 @@ class TestValidateCandidates:
         verdicts = validate_candidates([cand], _account(), [])
         assert "earnings_blackout" not in verdicts[0].reasons
 
+    # --- Covered calls are exempt from concentration / BP (write against owned shares) ---
+
+    def test_covered_call_on_large_holding_not_concentration_rejected(self) -> None:
+        # A holding worth 20% of net-liq already exceeds the 5% ticker cap, but writing a
+        # call against it adds NO new exposure and consumes NO buying power — it must PASS.
+        pos = PositionSnapshot(
+            symbol="AAPL", sec_type="STK", position=100.0, avg_cost=200.0, market_value=20_000.0
+        )
+        cc = _candidate(
+            strategy=Strategy.COVERED_CALL,
+            right=OptionRight.CALL,
+            delta=0.28,  # within CC 0.20–0.35
+            collateral=20_000.0,
+            underlying="AAPL",
+        )
+        verdicts = validate_candidates([cc], _account(net_liquidation=100_000.0), [pos])
+        assert "concentration_limit" not in verdicts[0].reasons
+        assert "buying_power_buffer" not in verdicts[0].reasons
+        assert verdicts[0].verdict == Verdict.PASS
+
+    def test_covered_call_does_not_consume_ticker_budget_for_following_csp(self) -> None:
+        # The CC must not eat the per-ticker budget: a CSP on the same name still sees the
+        # full 5% headroom. (If the CC wrongly consumed it, the CSP would be rejected.)
+        cc = _candidate(
+            candidate_id="cc",
+            strategy=Strategy.COVERED_CALL,
+            right=OptionRight.CALL,
+            delta=0.28,
+            collateral=20_000.0,
+            underlying="AAPL",
+        )
+        csp = _candidate(
+            candidate_id="csp",
+            strategy=Strategy.CASH_SECURED_PUT,
+            delta=-0.20,
+            collateral=4_000.0,  # < 5% of 100k
+            underlying="AAPL",
+        )
+        verdicts = validate_candidates([cc, csp], _account(net_liquidation=100_000.0), [])
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["cc"].verdict == Verdict.PASS
+        assert "concentration_limit" not in vm["csp"].reasons
+
 
 # ---------------------------------------------------------------------------
 # risk_engine.py — validate_live_quote (send-time second gate, S4)
@@ -493,3 +544,60 @@ class TestValidateLiveQuote:
         # Missing live greeks degrade to the decision-time gate, not a block.
         v = validate_live_quote(_candidate(), self._quote(delta=None))
         assert v.verdict == Verdict.PASS
+
+    def test_rejects_negative_bid_sentinel(self) -> None:
+        # IBKR uses -1.0 as a sentinel for "no bid data" — a negative bid must reject
+        # because mid = (-1 + 2) / 2 = 0.50 would be wildly wrong.
+        v = validate_live_quote(_candidate(), self._quote(bid=-1.0, ask=2.0))
+        assert v.verdict == Verdict.REJECT
+        assert "negative_bid_sentinel" in v.reasons
+
+
+class TestValidateCandidatesDeltaSign:
+    """P1-05: delta sign validation prevents wrong-sign data from passing abs() checks."""
+
+    def test_put_with_negative_delta_passes(self) -> None:
+        cand = _candidate(delta=-0.20, right=OptionRight.PUT)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "delta_sign_mismatch" not in verdicts[0].reasons
+
+    def test_put_with_positive_delta_rejects(self) -> None:
+        cand = _candidate(delta=0.20, right=OptionRight.PUT)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "delta_sign_mismatch" in verdicts[0].reasons
+        assert verdicts[0].verdict == Verdict.REJECT
+
+    def test_call_with_positive_delta_passes(self) -> None:
+        cand = _candidate(
+            delta=0.28,
+            right=OptionRight.CALL,
+            strategy=Strategy.COVERED_CALL,
+        )
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "delta_sign_mismatch" not in verdicts[0].reasons
+
+    def test_call_with_negative_delta_rejects(self) -> None:
+        cand = _candidate(
+            delta=-0.28,
+            right=OptionRight.CALL,
+            strategy=Strategy.COVERED_CALL,
+        )
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "delta_sign_mismatch" in verdicts[0].reasons
+
+
+class TestValidateCandidatesMaxContracts:
+    """P1-06: max_contracts config key is enforced."""
+
+    def test_within_max_contracts_passes(self) -> None:
+        # max_contracts=10 per config; 1 contract is well within limit.
+        cand = _candidate(contracts=1)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "contracts_exceeds_max" not in verdicts[0].reasons
+
+    def test_exceeds_max_contracts_rejects(self) -> None:
+        # max_contracts=10; 15 contracts must be rejected.
+        cand = _candidate(contracts=15, collateral=15_000.0)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "contracts_exceeds_max" in verdicts[0].reasons
+        assert verdicts[0].verdict == Verdict.REJECT

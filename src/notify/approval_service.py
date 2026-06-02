@@ -27,6 +27,7 @@ import signal
 from datetime import UTC, datetime
 
 from ib_async import IB
+from sqlalchemy.exc import IntegrityError
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -35,6 +36,7 @@ from src.common.config import get_config
 from src.common.schemas import ApprovalStatus, OrderState
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
+from src.ibkr.connection import AutoReconnect
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, OrderRow
 
@@ -44,6 +46,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Auth helper
 # ---------------------------------------------------------------------------
+
 
 def _is_authorized(update: Update) -> bool:
     """Return True iff the update is from the configured chat."""
@@ -59,6 +62,7 @@ def _is_authorized(update: Update) -> bool:
 # Approve / Reject button handlers
 # ---------------------------------------------------------------------------
 
+
 def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
     """Synchronous DB work: update approval status, optionally enqueue an order.
 
@@ -68,32 +72,49 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
     decision_text = ""
     candidate_short = ""
 
-    with session_scope() as session:
-        approval = session.get(ApprovalRow, approval_id)
-        if approval is None:
-            return False, "", ""
+    try:
+        with session_scope() as session:
+            approval = session.get(ApprovalRow, approval_id)
+            if approval is None:
+                return False, "", ""
 
-        found = True
-        candidate_short = (
-            approval.candidate_id[:16] + "..."
-            if len(approval.candidate_id) > 16
-            else approval.candidate_id
-        )
-        approval.decided_at = datetime.now(UTC)
-
-        if action == "approve":
-            approval.status = ApprovalStatus.APPROVED
-            order = OrderRow(
-                candidate_id=approval.candidate_id,
-                approval_id=approval_id,
-                state=OrderState.QUEUED,
+            found = True
+            candidate_short = (
+                approval.candidate_id[:16] + "..."
+                if len(approval.candidate_id) > 16
+                else approval.candidate_id
             )
-            session.add(order)
-            decision_text = f"Approved — QUEUED for execution\n({candidate_short})"
-        else:
-            approval.status = ApprovalStatus.REJECTED
-            decision_text = f"Rejected\n({candidate_short})"
-            record_outcome(approval.candidate_id, USER_REJECTED)
+
+            # Idempotency guard: Telegram retries the same callback if our ack is slow.
+            # Without this check, two concurrent deliveries both see status==PENDING and
+            # both enqueue an OrderRow, causing two identical orders to reach the broker.
+            if approval.status != ApprovalStatus.PENDING:
+                return found, f"Already {approval.status}\n({candidate_short})", candidate_short
+
+            approval.decided_at = datetime.now(UTC)
+
+            if action == "approve":
+                approval.status = ApprovalStatus.APPROVED
+                order = OrderRow(
+                    candidate_id=approval.candidate_id,
+                    approval_id=approval_id,
+                    state=OrderState.QUEUED,
+                )
+                session.add(order)
+                decision_text = f"Approved — QUEUED for execution\n({candidate_short})"
+            else:
+                approval.status = ApprovalStatus.REJECTED
+                decision_text = f"Rejected\n({candidate_short})"
+                record_outcome(approval.candidate_id, USER_REJECTED)
+
+    except IntegrityError:
+        # UniqueConstraint on OrderRow.approval_id fired — a concurrent Telegram
+        # callback already created the OrderRow for this approval. Safe to ignore.
+        logger.warning(
+            "Duplicate OrderRow for approval_id=%s — concurrent callback dropped",
+            approval_id,
+        )
+        return found, f"Already processing\n({candidate_short})", candidate_short
 
     return found, decision_text, candidate_short
 
@@ -106,7 +127,10 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await query.answer()
 
     if not _is_authorized(update):
-        logger.warning("Ignoring button from unauthorized chat %s", update.effective_chat and update.effective_chat.id)
+        logger.warning(
+            "Ignoring button from unauthorized chat %s",
+            update.effective_chat and update.effective_chat.id,
+        )
         return
 
     data = query.data or ""
@@ -140,7 +164,10 @@ async def handle_live_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if not _is_authorized(update):
-        logger.warning("Ignoring live confirm from unauthorized chat %s", update.effective_chat and update.effective_chat.id)
+        logger.warning(
+            "Ignoring live confirm from unauthorized chat %s",
+            update.effective_chat and update.effective_chat.id,
+        )
         return
 
     data = query.data or ""
@@ -167,11 +194,13 @@ async def handle_live_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
 # Command handlers
 # ---------------------------------------------------------------------------
 
+
 async def handle_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show all available commands."""
     if not _is_authorized(update) or update.message is None:
         return
     from src.notify.formatters import format_help
+
     await update.message.reply_text(format_help(), parse_mode="MarkdownV2")
 
 
@@ -187,25 +216,39 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("IBKR market data connection unavailable — scan aborted.")
         return
 
+    # Single-flight: a scan drives reqMktData on the shared scan connection; two overlapping
+    # scans would interleave requests and blow the market-data line cap. Reject re-entry.
+    if context.bot_data.get("scan_running"):
+        await update.message.reply_text("A scan is already running — please wait for it to finish.")
+        return
+    context.bot_data["scan_running"] = True
+
     await update.message.reply_text(
         "Scan started — fetching market data and running analytics. "
-        "This takes 30–60 seconds. Results will arrive shortly."
+        "This takes up to a couple of minutes. Results will arrive shortly."
     )
 
     chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
+    _cfg = get_config()
+    thread_id = int(_cfg.secrets.telegram_thread_id) if _cfg.secrets.telegram_thread_id else None
 
     async def _run_and_notify() -> None:
         from src.orchestrator.scan import run_scan
+
         try:
             await run_scan(ib_scan, context.bot, chat_id)
         except Exception:
             logger.exception("Scan failed")
             try:
                 await context.bot.send_message(
-                    chat_id=chat_id, text="Scan encountered an error — check logs."
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text="Scan encountered an error — check logs.",
                 )
             except Exception:
                 pass
+        finally:
+            context.bot_data["scan_running"] = False
 
     asyncio.create_task(_run_and_notify())
 
@@ -229,9 +272,7 @@ async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT
 
         positions = get_positions(ib)
         account = (
-            get_account_snapshot(ib, cfg.secrets.ibkr_account)
-            if cfg.secrets.ibkr_account
-            else None
+            get_account_snapshot(ib, cfg.secrets.ibkr_account) if cfg.secrets.ibkr_account else None
         )
         text = format_positions(positions, account)
         await update.message.reply_text(text, parse_mode="MarkdownV2")
@@ -290,28 +331,28 @@ async def handle_health_command(update: Update, context: ContextTypes.DEFAULT_TY
         with session_scope() as sess:
             db_ok = True
             last_scan_at = sess.execute(
-                select(CandidateRow.created_at)
-                .order_by(CandidateRow.created_at.desc())
-                .limit(1)
+                select(CandidateRow.created_at).order_by(CandidateRow.created_at.desc()).limit(1)
             ).scalar_one_or_none()
 
             pending_approvals = sess.execute(
-                select(func.count()).select_from(ApprovalRow).where(
-                    ApprovalRow.status == ApprovalStatus.PENDING
-                )
+                select(func.count())
+                .select_from(ApprovalRow)
+                .where(ApprovalRow.status == ApprovalStatus.PENDING)
             ).scalar_one()
 
             open_orders = sess.execute(
-                select(func.count()).select_from(OrderRow).where(
-                    OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED])
-                )
+                select(func.count())
+                .select_from(OrderRow)
+                .where(OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED]))
             ).scalar_one()
     except Exception:
         logger.exception("/health DB query failed")
 
     from src.notify.formatters import format_health
 
-    text = format_health(ib_exec_ok, ib_scan_ok, last_scan_at, pending_approvals, open_orders, db_ok)
+    text = format_health(
+        ib_exec_ok, ib_scan_ok, last_scan_at, pending_approvals, open_orders, db_ok
+    )
     await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
@@ -346,14 +387,14 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
         with session_scope() as sess:
             pending_approvals = sess.execute(
-                select(func.count()).select_from(ApprovalRow).where(
-                    ApprovalRow.status == ApprovalStatus.PENDING
-                )
+                select(func.count())
+                .select_from(ApprovalRow)
+                .where(ApprovalRow.status == ApprovalStatus.PENDING)
             ).scalar_one()
             open_orders = sess.execute(
-                select(func.count()).select_from(OrderRow).where(
-                    OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED])
-                )
+                select(func.count())
+                .select_from(OrderRow)
+                .where(OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED]))
             ).scalar_one()
     except Exception:
         logger.exception("/status DB query failed")
@@ -367,6 +408,7 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 # ---------------------------------------------------------------------------
 # Background order poll loop
 # ---------------------------------------------------------------------------
+
 
 async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> None:
     """Background task: process QUEUED orders on a fixed interval."""
@@ -382,26 +424,57 @@ async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> 
 # Service bootstrap
 # ---------------------------------------------------------------------------
 
+
+def _recover_orphan_orders() -> None:
+    """On startup, reset any SUBMITTED orders with no IB order ID back to QUEUED.
+
+    These are orders that were claimed (SUBMITTED) by a previous process run but
+    crashed before `ib.placeOrder` was called. Without recovery they stay stuck
+    forever since the poll loop never revisits SUBMITTED rows.
+    """
+    with session_scope() as s:
+        orphans = (
+            s.query(OrderRow)
+            .filter(OrderRow.state == OrderState.SUBMITTED, OrderRow.ib_order_id.is_(None))
+            .all()
+        )
+        for o in orphans:
+            o.state = OrderState.QUEUED
+            logger.warning("Recovered orphan order id=%s to QUEUED", o.id)
+
+
 async def _run_service(token: str, chat_id: str) -> None:
     cfg = get_config()
+    reconnectors: list[AutoReconnect] = []
 
     # Exec connection: holds the order placement TWS session.
     ib: IB | None = None
+    exec_id = cfg.ibkr.client_ids["exec"]
     try:
         ib_inst = IB()
         await ib_inst.connectAsync(
             cfg.ibkr.host,
             cfg.ibkr_port,
-            clientId=cfg.ibkr.client_ids["exec"],
+            clientId=exec_id,
             timeout=cfg.ibkr.connect_timeout_seconds,
         )
         ib = ib_inst
+        reconnectors.append(
+            AutoReconnect(
+                ib,
+                cfg.ibkr.host,
+                cfg.ibkr_port,
+                exec_id,
+                market_data_type=cfg.ibkr.market_data_type,
+                label="exec",
+            )
+        )
         mode = "LIVE" if cfg.is_live else "PAPER"
         logger.warning(
             "=" * 60 + "\n  IBKR MODE: %s  |  port=%s  |  clientId=%s\n" + "=" * 60,
             mode,
             cfg.ibkr_port,
-            cfg.ibkr.client_ids["exec"],
+            exec_id,
         )
     except Exception:
         logger.warning(
@@ -412,16 +485,27 @@ async def _run_service(token: str, chat_id: str) -> None:
 
     # Scan connection: used for /scan, /positions, /account, /status commands.
     ib_scan: IB | None = None
+    scan_id = cfg.ibkr.client_ids.get("scan", 15)
     try:
         ib_scan_inst = IB()
         await ib_scan_inst.connectAsync(
             cfg.ibkr.host,
             cfg.ibkr_port,
-            clientId=cfg.ibkr.client_ids.get("scan", 15),
+            clientId=scan_id,
             timeout=cfg.ibkr.connect_timeout_seconds,
         )
         ib_scan = ib_scan_inst
-        logger.info("IBKR scan connection ready (clientId=%s)", cfg.ibkr.client_ids.get("scan", 15))
+        reconnectors.append(
+            AutoReconnect(
+                ib_scan,
+                cfg.ibkr.host,
+                cfg.ibkr_port,
+                scan_id,
+                market_data_type=cfg.ibkr.market_data_type,
+                label="scan",
+            )
+        )
+        logger.info("IBKR scan connection ready (clientId=%s)", scan_id)
     except Exception:
         logger.warning(
             "Could not connect IBKR scan connection — "
@@ -446,7 +530,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("status", handle_status_command))
 
     stop_event = asyncio.Event()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
@@ -475,6 +559,10 @@ async def _run_service(token: str, chat_id: str) -> None:
         try:
             await stop_event.wait()
         finally:
+            # Disable auto-reconnect before tearing connections down so shutdown doesn't
+            # trigger a reconnect storm.
+            for rc in reconnectors:
+                rc.stop()
             if poll_task is not None:
                 poll_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -505,6 +593,7 @@ def main() -> None:
         raise RuntimeError("TELEGRAM_CHAT_ID is not set in .env")
 
     logger.info("Approval service starting")
+    _recover_orphan_orders()
     try:
         asyncio.run(_run_service(token, chat_id))
     except KeyboardInterrupt:

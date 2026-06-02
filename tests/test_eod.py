@@ -161,15 +161,15 @@ def test_build_eod_summary_net_delta() -> None:
     assert summary.net_delta_exposure == pytest.approx(-8.0)
 
 
-def test_build_eod_summary_stock_excluded_from_delta() -> None:
+def test_build_eod_summary_stock_included_in_delta() -> None:
     from src.orchestrator.eod_report import _build_eod_summary
 
-    # Stock position has no delta field → should not contribute to net_delta_exposure
+    # Stock position (100 shares, delta=1.0 per share) + short option (delta=0.30).
+    # Net delta = stock + option = 100 + (0.30 * -1 * 100) = 100 - 30 = 70
     positions = [_make_stock_pos(), _make_option_pos(position=-1.0, delta=0.30)]
     account = _make_account()
     summary = _build_eod_summary(positions, account, 0.0, 0, 0.0, [])
-    # Only the option contributes: 0.30 * (-1) * 100 = -30
-    assert summary.net_delta_exposure == pytest.approx(-30.0)
+    assert summary.net_delta_exposure == pytest.approx(70.0)
 
 
 def test_build_eod_summary_top_movers_deduped() -> None:
@@ -253,6 +253,43 @@ def test_compute_realized_pnl_sums_fills(isolated_db) -> None:
     assert len(fill_ids) == 2
 
 
+def test_compute_realized_pnl_signs_buy_as_debit(isolated_db) -> None:
+    """A buy-to-close fill is a debit (−), not added as if it were premium collected."""
+    from src.orchestrator.eod_report import _compute_realized_pnl
+    from src.storage.models import FillRow
+
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    Session = isolated_db
+    with Session() as session:
+        # SELL 2 @ $1.50 (credit) and BUY 1 @ $0.80 (debit, e.g. a roll's close leg).
+        session.add(
+            FillRow(
+                order_id=1,
+                candidate_id="c1",
+                action="SELL",
+                filled_qty=2.0,
+                avg_price=1.50,
+                filled_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            FillRow(
+                order_id=2,
+                candidate_id="c2",
+                action="BUY",
+                filled_qty=1.0,
+                avg_price=0.80,
+                filled_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    realized, count, _ = _compute_realized_pnl(today)
+    # 2 * 1.50 * 100  −  1 * 0.80 * 100 = 300 − 80 = 220
+    assert realized == pytest.approx(220.0)
+    assert count == 2
+
+
 def test_compute_realized_pnl_excludes_yesterday(isolated_db) -> None:
     from src.orchestrator.eod_report import _compute_realized_pnl
     from src.storage.models import FillRow
@@ -271,9 +308,7 @@ def test_compute_realized_pnl_excludes_yesterday(isolated_db) -> None:
         )
         session.commit()
 
-    realized, count, _ = _compute_realized_pnl(
-        datetime.now(ZoneInfo("America/New_York")).date()
-    )
+    realized, count, _ = _compute_realized_pnl(datetime.now(ZoneInfo("America/New_York")).date())
     assert realized == pytest.approx(0.0)
     assert count == 0
 

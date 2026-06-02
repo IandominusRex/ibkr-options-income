@@ -37,12 +37,17 @@ def generate_csp_candidates(
 
     csp_cfg = cfg.risk["cash_secured_put"]
     income_cfg = cfg.risk["income"]
+    portfolio_cfg = cfg.risk.get("portfolio", {})
 
     delta_min: float = csp_cfg["delta_min"]
     delta_max: float = csp_cfg["delta_max"]
     dte_min: int = csp_cfg["dte_min"]
     dte_max: int = csp_cfg["dte_max"]
     max_contracts: int = csp_cfg.get("max_contracts", 10)
+    # Total CSP collateral budget (% of net liq). Sizing a single CSP to this ceiling keeps
+    # it from blowing the whole cap by itself — which would make the cumulative risk gate
+    # reject it outright (the gate rejects, it does not trim) and yield zero fills.
+    max_csp_pct: float = portfolio_cfg.get("max_csp_allocation_pct", 60.0)
 
     candidates: list[TradeCandidate] = []
 
@@ -63,13 +68,24 @@ def generate_csp_candidates(
         if not passes_liquidity_gates(quote):
             continue
 
-        # Size off real CASH, not margin buying power — a cash-secured put must be cash
-        # secured. The cumulative max_csp_allocation_pct cap (risk engine) bounds the total
-        # across all CSPs; max_contracts bounds any single one.
-        contracts = max(1, min(max_contracts, int(account.total_cash // (quote.strike * 100))))
+        # Size off ExcessLiquidity (the post-margin-requirement cushion) rather than
+        # TotalCashValue, which can overstate available capacity for margin accounts
+        # because it includes premium received on existing short puts without deducting
+        # the reserved collateral. Also bound a single CSP to the total-CSP budget so
+        # it cannot, on its own, exceed the cumulative cap (which the risk engine would
+        # then reject rather than trim).
+        per_contract = quote.strike * 100
+        if per_contract <= 0:
+            continue
+        cash_n = int(account.excess_liquidity // per_contract)
+        csp_budget_n = int((account.net_liquidation * max_csp_pct / 100) // per_contract)
+        contracts = min(max_contracts, cash_n, csp_budget_n)
+        if contracts < 1:
+            # Not enough cash/budget to secure even one contract — skip rather than fake a 1-lot.
+            continue
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100
-        annualized_yield_pct = roc_pct * (365 / dte)
+        annualized_yield_pct = roc_pct * (365 / dte) if dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
             continue

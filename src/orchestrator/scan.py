@@ -76,6 +76,7 @@ def _load_memory(symbols: list[str]) -> list[ClaudeMemoryRow]:
     from datetime import timedelta
 
     from sqlalchemy import select
+
     cutoff = date.today() - timedelta(days=_MEMORY_LOOKBACK_DAYS)
     try:
         with session_scope() as sess:
@@ -154,10 +155,25 @@ def _persist_candidates(
     reviews: list[ClaudeReview],
     run_id: str,
 ) -> None:
-    """Persist CandidateRow + ClaudeReviewRow to DB."""
+    """Persist CandidateRow + ClaudeReviewRow to DB.
+
+    Uses upsert semantics for CandidateRow: if a row with the same candidate_id
+    already exists (e.g. from a re-scan), the fresh data overwrites the stale one
+    so _load_candidate() always returns the most recent scan's payload.
+    """
     review_map = {r.candidate_id: r for r in reviews}
     with session_scope() as sess:
         for cand in candidates:
+            # Delete any stale row with the same candidate_id before inserting fresh data.
+            existing = (
+                sess.query(CandidateRow)
+                .filter(CandidateRow.candidate_id == cand.candidate_id)
+                .first()
+            )
+            if existing is not None:
+                sess.delete(existing)
+                sess.flush()
+
             sess.add(
                 CandidateRow(
                     candidate_id=cand.candidate_id,
@@ -233,12 +249,15 @@ async def run_scan(
     # --- 2. Symbol universe ---
     would_own: list[str] = cfg.universe.get("would_own", [])
     holdings_symbols: set[str] = {
-        p.underlying or p.symbol
-        for p in positions
-        if p.sec_type == "STK" and p.position > 0
+        p.underlying or p.symbol for p in positions if p.sec_type == "STK" and p.position > 0
     }
     all_symbols: list[str] = sorted(set(would_own) | holdings_symbols)
-    log.info("scan: %d symbols to scan (%d holdings, %d universe)", len(all_symbols), len(holdings_symbols), len(would_own))
+    log.info(
+        "scan: %d symbols to scan (%d holdings, %d universe)",
+        len(all_symbols),
+        len(holdings_symbols),
+        len(would_own),
+    )
 
     # --- 3. Sentiment scorer ---
     sentiment = SentimentScorer(
@@ -282,11 +301,17 @@ async def run_scan(
 
         # CC candidates for held stock positions
         stock_pos = next(
-            (p for p in positions if (p.underlying or p.symbol) == symbol and p.sec_type == "STK" and p.position > 0),
+            (
+                p
+                for p in positions
+                if (p.underlying or p.symbol) == symbol and p.sec_type == "STK" and p.position > 0
+            ),
             None,
         )
         if stock_pos and quotes:
-            new_cc = generate_cc_candidates(symbol, quotes, stock_pos, iv_stats, tech_stats, fund_stats)
+            new_cc = generate_cc_candidates(
+                symbol, quotes, stock_pos, iv_stats, tech_stats, fund_stats
+            )
             # Inject sentiment score into ScoreCard
             for c in new_cc:
                 c.scores.sentiment_score = sentiment_score
@@ -294,7 +319,9 @@ async def run_scan(
 
         # CSP candidates for would_own symbols
         if symbol in would_own and quotes:
-            new_csp = generate_csp_candidates(symbol, quotes, account, iv_stats, tech_stats, fund_stats)
+            new_csp = generate_csp_candidates(
+                symbol, quotes, account, iv_stats, tech_stats, fund_stats
+            )
             for c in new_csp:
                 c.scores.sentiment_score = sentiment_score
             csp_candidates.extend(new_csp)
@@ -340,9 +367,10 @@ async def run_scan(
     _persist_memory(top, result.buy_candidates, result.reviews)
 
     # --- 10. Send to Telegram ---
+    # send_candidates manages its own short DB transactions (no session held across the
+    # Telegram network sends — that would block other processes writing the same SQLite DB).
     try:
-        with session_scope() as sess:
-            await send_candidates(result.cc_candidates + result.csp_candidates, result.reviews, sess)
+        await send_candidates(result.cc_candidates + result.csp_candidates, result.reviews)
         await send_buy_list(result.buy_candidates, bot, chat_id)
     except Exception:
         log.exception("scan: failed to send Telegram messages")

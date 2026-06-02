@@ -31,17 +31,27 @@ def get_iv_stats(symbol: str, quotes: list[OptionQuote] | None = None) -> IVStat
     if not history:
         return IVStats(symbol=symbol)
 
-    current_iv = history[0]
+    # Prefer the LIVE ATM IV (from the chain) over the last stored daily observation so the
+    # rank reflects current conditions intraday, not yesterday's close. Falls back to the
+    # stored value when no chain is supplied (e.g. analytics-only callers).
+    live_iv = _live_atm_iv(quotes) if quotes else None
+    current_iv = live_iv if live_iv is not None else history[0]
+
     sorted_hist = sorted(history)
     min_iv = sorted_hist[0]
     max_iv = sorted_hist[-1]
 
     iv_rank: float | None = None
     if max_iv != min_iv:
-        iv_rank = round((current_iv - min_iv) / (max_iv - min_iv) * 100, 2)
+        # Clamp: a live IV can punch through the trailing-year range (rank would exceed 100).
+        raw_rank = (current_iv - min_iv) / (max_iv - min_iv) * 100
+        iv_rank = round(max(0.0, min(100.0, raw_rank)), 2)
 
-    below = sum(1 for h in history[1:] if h < current_iv)
-    iv_percentile = round(below / max(len(history) - 1, 1) * 100, 2) if len(history) > 1 else None
+    below = sum(1 for h in history if h < current_iv)
+    # Require at least 30 observations for a meaningful percentile rank.
+    # With fewer points, percentile moves in large steps (e.g. 20-point jumps
+    # with 5 observations) and is not actionable.
+    iv_percentile = round(below / len(history) * 100, 2) if len(history) >= 30 else None
 
     hv_30 = _compute_hv30(symbol)
     term_slope, skew = _chain_stats(symbol, quotes) if quotes else (None, None)
@@ -88,7 +98,9 @@ def _compute_hv30(symbol: str) -> float | None:
         if df.empty or len(df) < 31:
             log.debug("hv30: insufficient history for %s (%d rows)", symbol, len(df))
             return None
-        pct = df["Close"].pct_change().dropna()
+        # Log returns are standard for volatility (log-normal assumption matches
+        # IBKR's IV model); simple returns overstate HV for high-move names.
+        pct = (df["Close"] / df["Close"].shift(1)).apply(math.log).dropna()
         hv = pct.rolling(30).std().iloc[-1] * math.sqrt(252) * 100
         return round(float(hv), 4)
     except Exception as exc:
@@ -141,6 +153,26 @@ def _infer_spot(quotes: list[OptionQuote]) -> float | None:
     if not candidates:
         return None
     return min(candidates, key=lambda q: q.spread_pct or 999).strike
+
+
+def _live_atm_iv(quotes: list[OptionQuote]) -> float | None:
+    """Live at-the-money IV from the chain: mean IV of the strikes nearest spot in the
+    nearest expiry. Used as the current point for IV rank/percentile. None if uncomputable."""
+    if not quotes:
+        return None
+    spot = _infer_spot(quotes)
+    if spot is None:
+        return None
+    near_dte = min((q.dte for q in quotes if q.dte > 0), default=None)
+    if near_dte is None:
+        return None
+    candidates = [q for q in quotes if q.dte == near_dte and q.iv is not None and q.iv > 0]
+    if not candidates:
+        return None
+    # Take the strikes closest to spot (within the ATM band), average their IVs.
+    candidates.sort(key=lambda q: abs(q.strike - spot))
+    nearest = candidates[: min(4, len(candidates))]
+    return sum(q.iv for q in nearest) / len(nearest)  # type: ignore[misc]
 
 
 def _term_structure_slope(quotes: list[OptionQuote], spot: float) -> float | None:

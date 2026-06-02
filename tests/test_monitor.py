@@ -253,6 +253,32 @@ def test_ex_div_no_fire_for_long_positions() -> None:
     assert check_ex_div(pos, fund, days_ahead=5) is None
 
 
+def test_ex_div_suppressed_for_otm_call() -> None:
+    # With a live quote showing an OTM call (low delta), early-assignment risk is negligible
+    # → suppress the ex-div alert (it was pure noise before).
+    pos = _make_short_call()
+    fund = _make_fund_stats(ex_div_date=date.today() + timedelta(days=3))
+    otm = _make_quote(delta=0.20)
+    assert check_ex_div(pos, fund, days_ahead=5, quote=otm) is None
+
+
+def test_ex_div_fires_for_itm_call() -> None:
+    # An ITM-ish call (high delta) near ex-div carries real assignment risk → fire.
+    pos = _make_short_call()
+    fund = _make_fund_stats(ex_div_date=date.today() + timedelta(days=3))
+    itm = _make_quote(delta=0.70)
+    alert = check_ex_div(pos, fund, days_ahead=5, quote=itm)
+    assert alert is not None
+    assert alert.trigger == "ex_div"
+
+
+def test_ex_div_fires_without_quote_backward_compatible() -> None:
+    # No live quote → keep the conservative original behaviour (fire on the date alone).
+    pos = _make_short_call()
+    fund = _make_fund_stats(ex_div_date=date.today() + timedelta(days=3))
+    assert check_ex_div(pos, fund, days_ahead=5) is not None
+
+
 # ---------------------------------------------------------------------------
 # check_all
 # ---------------------------------------------------------------------------
@@ -522,21 +548,36 @@ def test_load_entry_iv_matches_position(tmp_path: Path, monkeypatch: pytest.Monk
     with session_scope() as s:
         s.add(
             CandidateRow(
-                candidate_id="cand-iv", run_id="r1", strategy="covered_call",
-                underlying="AAPL", right="C", strike=185.0, expiry=expiry,
-                blended_score=70.0, payload={},
+                candidate_id="cand-iv",
+                run_id="r1",
+                strategy="covered_call",
+                underlying="AAPL",
+                right="C",
+                strike=185.0,
+                expiry=expiry,
+                blended_score=70.0,
+                payload={},
             )
         )
         s.add(
             FillRow(
-                order_id=1, candidate_id="cand-iv", filled_qty=1.0,
-                avg_price=1.50, entry_iv=0.32,
+                order_id=1,
+                candidate_id="cand-iv",
+                filled_qty=1.0,
+                avg_price=1.50,
+                entry_iv=0.32,
             )
         )
 
     pos = PositionSnapshot(
-        symbol="AAPL  260117C00185000", sec_type="OPT", position=-1.0, avg_cost=1.50,
-        right=OptionRight.CALL, strike=185.0, expiry=expiry, underlying="AAPL",
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=expiry,
+        underlying="AAPL",
     )
     assert _load_entry_iv(pos) == pytest.approx(0.32)
 
@@ -546,8 +587,13 @@ def test_load_entry_iv_none_when_no_fill(tmp_path: Path, monkeypatch: pytest.Mon
 
     _isolated_db(tmp_path, monkeypatch)
     pos = PositionSnapshot(
-        symbol="AAPL  260117C00185000", sec_type="OPT", position=-1.0, avg_cost=1.50,
-        right=OptionRight.CALL, strike=185.0, expiry=date.today() + timedelta(days=30),
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
         underlying="AAPL",
     )
     assert _load_entry_iv(pos) is None
@@ -560,3 +606,128 @@ def test_iv_spike_fires_end_to_end_with_loaded_entry_iv() -> None:
     limits = {"delta_ceiling": 0.45, "dte_threshold": 7, "iv_spike_pct": 40.0}
     alerts = check_all(pos, quote, entry_iv=0.32, fund_stats=None, limits=limits)
     assert any(a.trigger == "iv_spike" for a in alerts)
+
+
+# ---------------------------------------------------------------------------
+# IntradayMonitor: double-subscribe prevention (P0-05 / P0-06)
+# ---------------------------------------------------------------------------
+
+
+def _make_monitor() -> tuple:
+    """Return (monitor, mock_ib) with a minimal config."""
+    mock_ib = MagicMock()
+    mock_ib.tickers.return_value = []
+    mock_ib.portfolio.return_value = []
+    mock_cfg = MagicMock()
+    mock_cfg.monitor.delta_ceiling = 0.45
+    mock_cfg.monitor.dte_threshold = 7
+    mock_cfg.monitor.iv_spike_pct = 40.0
+    mock_cfg.monitor.ex_div_days_ahead = 5
+    mock_cfg.monitor.alert_cooldown_minutes = 60
+    mock_cfg.scheduler.intraday_poll_seconds = 60
+    mock_cfg.claude.enabled = False
+
+    from src.monitor.intraday import IntradayMonitor
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    monitor = IntradayMonitor(mock_ib, AsyncMock(), "99999", mock_cfg, executor)
+    return monitor, mock_ib
+
+
+async def test_on_reconnect_clears_subscriptions_before_refresh() -> None:
+    """P0-05: _on_reconnect must clear _subscriptions so _refresh_subscriptions
+    doesn't find symbols already present and skip resubscription.
+
+    After _on_reconnect, _subscriptions must be empty (cleared) before any
+    new positions are re-subscribed.
+    """
+    from src.common.schemas import OptionRight, PositionSnapshot
+
+    monitor, mock_ib = _make_monitor()
+
+    # Pre-populate subscriptions as if already subscribed.
+    dummy_contract = MagicMock()
+    old_pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
+    monitor._subscriptions["AAPL  260117C00185000"] = (old_pos, dummy_contract)
+    monitor._entry_iv["AAPL  260117C00185000"] = 0.32
+
+    # After reconnect with no positions (empty portfolio), subscriptions should be cleared.
+    mock_ib.portfolio.return_value = []
+    with patch("src.monitor.intraday.get_positions", return_value=[]):
+        await monitor._on_reconnect()
+
+    assert monitor._subscriptions == {}
+    assert monitor._entry_iv == {}
+
+
+async def test_double_subscribe_prevention_on_repeated_refresh() -> None:
+    """P0-06: calling _refresh_subscriptions twice for the same position must call
+    reqMktData exactly once — the second call sees the position already subscribed and
+    updates the snapshot without adding a new subscription.
+    """
+    from src.common.schemas import OptionRight, PositionSnapshot
+
+    monitor, mock_ib = _make_monitor()
+
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
+
+    with (
+        patch("src.monitor.intraday.get_positions", return_value=[pos]),
+        patch("src.monitor.intraday._load_entry_iv", return_value=None),
+        patch("src.monitor.intraday.get_fundamental_stats", return_value=MagicMock()),
+        patch("src.monitor.intraday.build_option", return_value=MagicMock()),
+    ):
+        await monitor._refresh_subscriptions()
+        await monitor._refresh_subscriptions()  # second call — should not add new subscription
+
+    # reqMktData called exactly once despite two refresh calls.
+    assert mock_ib.reqMktData.call_count == 1
+
+
+async def test_cancel_uses_stored_contract() -> None:
+    """P0-06: when a position is closed, cancelMktData must be called with the same
+    Contract object that was used in reqMktData, not a freshly-built unqualified one.
+    """
+    from src.common.schemas import OptionRight, PositionSnapshot
+
+    monitor, mock_ib = _make_monitor()
+
+    stored_contract = MagicMock()
+    stored_contract.conId = 99999
+
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
+    # Pre-populate with the stored contract.
+    monitor._subscriptions["AAPL  260117C00185000"] = (pos, stored_contract)
+
+    # Refresh with empty positions — triggers cancellation of the closed position.
+    with patch("src.monitor.intraday.get_positions", return_value=[]):
+        await monitor._refresh_subscriptions()
+
+    mock_ib.cancelMktData.assert_called_once_with(stored_contract)

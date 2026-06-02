@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.common.config import get_config
@@ -18,6 +21,17 @@ from src.storage.models import Base
 _engine = None
 _SessionLocal: sessionmaker[Session] | None = None
 
+# New columns added after the original schema. SQLAlchemy's create_all() never ALTERs an
+# existing table, so a DB created before these columns existed would be missing them. We
+# add them in-place on init (cheap, idempotent) rather than requiring Alembic for v1.
+# table -> {column: "<SQL column definition>"}
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "fills": {
+        "action": "VARCHAR(4) DEFAULT 'SELL'",
+        "entry_iv": "FLOAT",
+    },
+}
+
 
 def _init() -> None:
     global _engine, _SessionLocal
@@ -25,16 +39,61 @@ def _init() -> None:
         return
     cfg = get_config()
     url = cfg.db_url_abs()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    # Ensure the data directory exists so SQLite can create the file on first run.
+    if url.startswith("sqlite"):
+        db_path = Path(url.replace("sqlite:///", "", 1))
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    connect_args = {"check_same_thread": False, "timeout": 30} if url.startswith("sqlite") else {}
     _engine = create_engine(url, connect_args=connect_args, future=True)
+    if url.startswith("sqlite"):
+        _enable_sqlite_concurrency(_engine)
     _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
 
+def _enable_sqlite_concurrency(engine: Engine) -> None:
+    """WAL mode + a busy timeout so concurrent processes (morning_scan, approval_service,
+    monitor, eod) don't immediately hit 'database is locked'. WAL lets readers proceed
+    during a write; busy_timeout makes a writer wait instead of failing."""
+
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn: Any, _rec: object) -> None:
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.close()
+
+
+def _ensure_added_columns(engine: Engine) -> None:
+    """Add any post-schema columns missing from an existing DB (lightweight migration).
+
+    Each ALTER is executed in its own transaction so a duplicate-column error from a
+    concurrent startup doesn't abort the entire migration run.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table, cols in _ADDED_COLUMNS.items():
+        if table not in existing_tables:
+            continue  # create_all will have built it with all columns
+        present = {c["name"] for c in inspector.get_columns(table)}
+        for col, ddl in cols.items():
+            if col not in present:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+                except Exception as exc:
+                    if "duplicate column" in str(exc).lower():
+                        pass  # another process beat us to it — idempotent
+                    else:
+                        raise
+
+
 def init_db() -> None:
-    """Create all tables. Safe to call repeatedly."""
+    """Create all tables, then patch in any newly-added columns. Safe to call repeatedly."""
     _init()
     assert _engine is not None
     Base.metadata.create_all(_engine)
+    _ensure_added_columns(_engine)
 
 
 @contextmanager

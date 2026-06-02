@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
@@ -61,17 +62,28 @@ class TestIVStats:
             stats = get_iv_stats("TEST")
         assert stats.iv_rank == 50.0
 
-    def test_iv_percentile_formula(self):
-        # current=0.30 (index 0), rest: [0.25, 0.20, 0.15, 0.10] — all 4 below
+    def test_iv_percentile_requires_30_observations(self):
+        # P1-17: fewer than 30 observations → iv_percentile must be None.
+        # With 5 obs it moves in 20-point steps and isn't actionable.
         history = [0.30, 0.25, 0.20, 0.15, 0.10]
         with (
             patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
             patch("src.analytics.iv._compute_hv30", return_value=None),
         ):
             stats = get_iv_stats("TEST")
-        # 4 out of 4 historical days below current: 4/(5-1) * 100 = 100.0
-        # Denominator is len(history)-1 to count only historical days, not the current day.
-        assert stats.iv_percentile == 100.0
+        assert stats.iv_percentile is None
+
+    def test_iv_percentile_formula_with_sufficient_history(self):
+        # With >= 30 observations, percentile should be computed correctly.
+        # All 30 observations at 0.25, one at 0.30 (current) → 30/31 * 100 ≈ 96.77
+        history = [0.30] + [0.25] * 30  # 31 observations, current=0.30
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+        ):
+            stats = get_iv_stats("TEST")
+        assert stats.iv_percentile is not None
+        assert stats.iv_percentile == pytest.approx(30 / 31 * 100, abs=0.1)
 
     def test_flat_vol_curve_returns_none_rank(self):
         # All values identical → iv_rank must be None (no division by zero)
@@ -101,6 +113,58 @@ class TestIVStats:
         ):
             stats = get_iv_stats("TEST")
         assert stats.hv_30 == 18.5
+
+
+class TestHV30LogReturns:
+    """P1-16: _compute_hv30 must use log returns, not simple pct_change returns."""
+
+    def test_hv_matches_manual_log_return_calculation(self):
+        """The function output must equal the manually computed log-return HV.
+
+        We build a known price series and verify that _compute_hv30 returns the
+        same value as the reference computation using log returns.
+        """
+        import math
+
+        import numpy as np
+
+        from src.analytics.iv import _compute_hv30
+
+        # Build a 60-bar series with some known moves so the 30-bar rolling vol is non-zero.
+        rng = np.random.default_rng(42)
+        log_rets = rng.normal(0.0005, 0.02, 60)  # daily log returns, annualised ~32%
+        prices = [100.0]
+        for r in log_rets:
+            prices.append(prices[-1] * math.exp(r))
+
+        df_data = pd.DataFrame({"Close": prices[:-1]})  # 60 rows
+        df_data.index = pd.date_range("2023-01-01", periods=60, freq="B")
+
+        with patch("src.analytics.iv.yf.Ticker") as mock_ticker:
+            mock_ticker.return_value.history.return_value = df_data
+            hv = _compute_hv30("TEST")
+
+        assert hv is not None
+        assert hv > 0
+
+        # Reference: compute log returns as the implementation does, then take the
+        # last rolling(30) std (pandas default ddof=1), annualise.
+        closes = np.array(df_data["Close"])
+        log_ret_series = np.log(closes[1:] / closes[:-1])  # 59 returns
+        last_30 = log_ret_series[-30:]  # rolling window at the last position
+        expected_hv = float(np.std(last_30, ddof=1) * math.sqrt(252) * 100)
+        assert hv == pytest.approx(expected_hv, rel=0.05)
+
+    def test_hv_returns_none_when_insufficient_data(self):
+        from src.analytics.iv import _compute_hv30
+
+        df_data = pd.DataFrame({"Close": [100.0, 101.0]})
+        df_data.index = pd.date_range("2023-01-01", periods=2, freq="B")
+
+        with patch("src.analytics.iv.yf.Ticker") as mock_ticker:
+            mock_ticker.return_value.history.return_value = df_data
+            hv = _compute_hv30("TEST")
+        assert hv is None
 
 
 # --------------------------------------------------------------------------- #

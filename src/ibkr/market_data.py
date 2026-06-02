@@ -64,7 +64,21 @@ def _get_spot(ib: IB, stock: Any) -> float:
     price = ticker.marketPrice()
     ib.cancelMktData(stock)
     p = _safe(price)
-    if p is None:
+    if p is None or math.isnan(p) or p <= 0:
+        # Snapshot can return a stale cached tick (or NaN pre-market).
+        # Fall back to the last daily close bar for a reliable price.
+        bars = ib.reqHistoricalData(
+            stock,
+            endDateTime="",
+            durationStr="1 D",
+            barSizeSetting="1 day",
+            whatToShow="TRADES",
+            useRTH=True,
+            keepUpToDate=False,
+        )
+        if bars:
+            p = _safe(bars[-1].close)
+    if p is None or p <= 0:
         raise ValueError(f"Could not get spot price for {stock.symbol!r}")
     return p
 
@@ -76,7 +90,21 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
     price = ticker.marketPrice()
     ib.cancelMktData(stock)
     p = _safe(price)
-    if p is None:
+    if p is None or math.isnan(p) or p <= 0:
+        # Snapshot can return a stale cached tick (or NaN pre-market).
+        # Fall back to the last daily close bar for a reliable price.
+        bars = await ib.reqHistoricalDataAsync(
+            stock,
+            endDateTime="",
+            durationStr="1 D",
+            barSizeSetting="1 day",
+            whatToShow="TRADES",
+            useRTH=True,
+            keepUpToDate=False,
+        )
+        if bars:
+            p = _safe(bars[-1].close)
+    if p is None or p <= 0:
         raise ValueError(f"Could not get spot price for {stock.symbol!r}")
     return p
 
@@ -107,6 +135,13 @@ def _filter_strikes(strikes: Iterable[float], spot: float, band_pct: float = 0.1
 # ---------------------------------------------------------------------------
 
 
+def _clean_bid(raw: Any) -> float | None:
+    """Sanitise raw bid tick. IBKR uses -1.0 as a sentinel for 'no bid data'.
+    A bid of -1.0 with a real ask would produce a wildly wrong mid-price."""
+    v = _safe(raw)
+    return None if (v is not None and v < 0) else v
+
+
 def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
     """Map a (contract, ticker) pair to an OptionQuote. Pure — shared by sync + async."""
     exp_str = c.lastTradeDateOrContractMonth
@@ -119,7 +154,7 @@ def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
         right=right,
         strike=float(c.strike),
         expiry=exp_date,
-        bid=_safe(ticker.bid),
+        bid=_clean_bid(ticker.bid),
         ask=_safe(ticker.ask),
         last=_safe(ticker.last),
         volume=_safe_int(ticker.volume),
@@ -155,13 +190,16 @@ def _batch_quotes(
             ib.reqMktData(c, genericTickList="101", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
-        ib.sleep(wait)
+        try:
+            ib.sleep(wait)
 
-        for c, ticker in zip(batch, tickers, strict=True):
-            quotes.append(_ticker_to_quote(c, ticker))
-
-        for c in batch:
-            ib.cancelMktData(c)
+            for c, ticker in zip(batch, tickers, strict=True):
+                quotes.append(_ticker_to_quote(c, ticker))
+        finally:
+            # Always cancel subscriptions — an exception mid-batch must not leak lines
+            # against the ~100-line cap, which would break every subsequent scan.
+            for c in batch:
+                ib.cancelMktData(c)
 
         log.debug(
             "chain batch %d-%d complete (%d quotes accumulated)",
@@ -194,11 +232,13 @@ async def _batch_quotes_async(
             ib.reqMktData(c, genericTickList="101", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
-        await asyncio.sleep(wait)
-        for c, ticker in zip(batch, tickers, strict=True):
-            quotes.append(_ticker_to_quote(c, ticker))
-        for c in batch:
-            ib.cancelMktData(c)
+        try:
+            await asyncio.sleep(wait)
+            for c, ticker in zip(batch, tickers, strict=True):
+                quotes.append(_ticker_to_quote(c, ticker))
+        finally:
+            for c in batch:
+                ib.cancelMktData(c)
         log.debug(
             "chain batch %d-%d complete (%d quotes accumulated)",
             i,
@@ -269,7 +309,7 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     """Async sibling of get_option_chain_quotes — runs every IB call on the loop thread.
 
     This is what the orchestrator uses: calling the sync version from a thread-pool
-    executor cross-threads the ib_async event loop (the bug PLAN.md warns against).
+    executor cross-threads the ib_async event loop (the cross-thread bug ARCHITECTURE.md warns about).
     Same scope/filters as the sync version; only the await/qualify mechanics differ.
     """
     cfg = get_config()
@@ -307,7 +347,9 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
         log.warning("No qualified option contracts for %s", symbol)
         return []
 
-    quotes = await _batch_quotes_async(ib, qualified, md.chain_batch_size, md.request_throttle_seconds)
+    quotes = await _batch_quotes_async(
+        ib, qualified, md.chain_batch_size, md.request_throttle_seconds
+    )
     log.info("get_option_chain_quotes_async: %d quotes for %s", len(quotes), symbol)
     return quotes
 

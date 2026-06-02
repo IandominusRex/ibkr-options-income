@@ -118,5 +118,9 @@ def generate_buy_candidates(
         )
 
     candidates.sort(key=lambda c: c.score, reverse=True)
-    log.info("buy_candidates: %d candidates from %d universe symbols", len(candidates), len(universe_symbols))
+    log.info(
+        "buy_candidates: %d candidates from %d universe symbols",
+        len(candidates),
+        len(universe_symbols),
+    )
     return candidates

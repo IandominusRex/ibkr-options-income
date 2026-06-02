@@ -9,8 +9,12 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from enum import StrEnum
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
+
+_ET = ZoneInfo("America/New_York")
 
 
 def _utcnow() -> datetime:
@@ -112,10 +116,7 @@ class OptionQuote(BaseModel):
 
     @property
     def mid(self) -> float | None:
-        if (
-            self.bid is not None and self.bid > 0
-            and self.ask is not None and self.ask > 0
-        ):
+        if self.bid is not None and self.bid > 0 and self.ask is not None and self.ask > 0:
             return round((self.bid + self.ask) / 2, 4)
         return self.last
 
@@ -128,7 +129,9 @@ class OptionQuote(BaseModel):
 
     @property
     def dte(self) -> int:
-        return (self.expiry - date.today()).days
+        # Use ET (the exchange timezone) so DTE is correct regardless of server timezone.
+        # A UTC server at 11 PM would otherwise return tomorrow's date, off by one day.
+        return (self.expiry - datetime.now(_ET).date()).days
 
 
 class IVStats(BaseModel):
@@ -180,7 +183,9 @@ class ScoreCard(BaseModel):
     technical_score: float = 0.0
     fundamental_score: float = 0.0
     liquidity_score: float = 0.0
-    assignment_safety_score: float = 0.0  # 0-100; higher = SAFER (less assignment risk, e.g. lower delta)
+    assignment_safety_score: float = (
+        0.0  # 0-100; higher = SAFER (less assignment risk, e.g. lower delta)
+    )
     sentiment_score: float | None = None  # 0-100, 50=neutral; None = not fetched
 
 
@@ -204,7 +209,9 @@ class TradeCandidate(BaseModel):
     delta: float | None = None
     iv_rank: float | None = None
     dte: int
-    next_earnings: date | None = None  # earnings date within the option's life → blackout (risk engine)
+    next_earnings: date | None = (
+        None  # earnings date within the option's life → blackout (risk engine)
+    )
     # Provenance
     scores: ScoreCard
     blended_score: float = 0.0  # weighted 0-100
@@ -223,7 +230,7 @@ class ClaudeReview(BaseModel):
 
     candidate_id: str
     priority: int  # 1 = highest
-    recommendation: str  # short verdict, e.g. "sell" / "skip" / "wait"
+    recommendation: Literal["sell", "wait", "skip"]
     why_attractive: str
     risks: str
     tradeoffs: str

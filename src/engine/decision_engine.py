@@ -26,9 +26,21 @@ def select_top_candidates(
     """Return the top-N candidates (by blended_score) with rationale_tags filled in.
 
     Expects candidates already sorted DESC by blended_score (output of score_candidates).
+    Deduplicates to the single best strike per (underlying, strategy) first, so the slate
+    isn't filled with many strikes of one name at the expense of breadth.
     """
     if n is None:
         cfg = get_config()
         n = cfg.risk["portfolio"]["max_new_positions_per_run"]
-    top = candidates[:n]
+
+    seen: set[tuple[str, str]] = set()
+    deduped: list[TradeCandidate] = []
+    for c in candidates:  # already sorted desc → first seen per key is the best
+        key = (c.underlying, c.strategy.value)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+
+    top = deduped[:n]
     return [c.model_copy(update={"rationale_tags": _build_tags(c)}) for c in top]

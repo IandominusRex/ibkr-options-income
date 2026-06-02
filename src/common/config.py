@@ -36,6 +36,7 @@ class Secrets(BaseSettings):
     ibkr_account: str = Field(default="", alias="IBKR_ACCOUNT")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    telegram_thread_id: str = Field(default="", alias="TELEGRAM_THREAD_ID")
     live_trading: bool = Field(default=False, alias="LIVE_TRADING")
     reddit_client_id: str = Field(default="", alias="REDDIT_CLIENT_ID")
     reddit_client_secret: str = Field(default="", alias="REDDIT_CLIENT_SECRET")

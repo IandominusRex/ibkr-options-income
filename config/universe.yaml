@@ -1,7 +1,7 @@
 # The scan universe and the CSP "would-own" allowlist.
 # The system will ONLY recommend cash-secured puts on names in `would_own`.
 
-# Indexes / ETFs to scan for both CC and CSP opportunities.
+# Indexes / ETFs to scan for CC opportunities (and CSP if also listed in `would_own`).
 indexes:
   - QQQ
   - SPY

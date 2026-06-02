@@ -52,9 +52,15 @@ def score_liquidity(quote: OptionQuote) -> float:
     oi = quote.open_interest
     # Log-scale so high-liquidity options (OI 50k+) score distinctly better than barely-passing ones.
     # log10(1 + oi/10) normalized so OI=1000 ≈ 70, OI=10000 ≈ 85, OI=100000 ≈ 100.
-    oi_score = min(100.0, math.log10(1 + (oi or 0) / 10) / math.log10(1001) * 100.0) if oi is not None else 0.0
+    oi_score = (
+        min(100.0, math.log10(1 + (oi or 0) / 10) / math.log10(1001) * 100.0)
+        if oi is not None
+        else 0.0
+    )
 
     vol = quote.volume
-    vol_score = min(100.0, math.log10(1 + (vol or 0)) / math.log10(101) * 100.0) if vol is not None else 0.0
+    vol_score = (
+        min(100.0, math.log10(1 + (vol or 0)) / math.log10(101) * 100.0) if vol is not None else 0.0
+    )
 
     return round((spread_score + oi_score + vol_score) / 3.0, 2)

@@ -74,9 +74,9 @@ Handles everything that talks directly to Interactive Brokers via the `ib_async`
 
 | File | What it does |
 |---|---|
-| `connection.py` | Opens and manages the connection to TWS/Gateway; auto-reconnects on drops; enforces one connection per process |
+| `connection.py` | Opens and manages the connection to TWS/Gateway; enforces one connection per process. Provides a sync (`connect`) and async (`connect_async` / `async with`) connect with backoff, plus `AutoReconnect` — attached to the long-running daemons (approval service, monitor) it listens on `disconnectedEvent` and reconnects with capped backoff (re-subscribing market data on the monitor) so a TWS drop doesn't silently kill them. |
 | `market_data.py` | Fetches live quotes, option chains, Greeks (delta/theta/IV), and historical IV data. Provides both a sync API and an `async` chain fetcher (`get_option_chain_quotes_async`) — the orchestrator uses the async one so every IBKR call runs on the `ib_async` event-loop thread (never a worker thread), respecting the line-limit batching. |
-| `portfolio.py` | Reads your current positions, account balance, buying power, and margin |
+| `portfolio.py` | Reads your current positions, account balance, buying power, and margin. `enrich_positions_with_greeks_async` populates option-position deltas from live model greeks (used by the EOD net-delta-exposure metric, which would otherwise read 0). |
 | `contracts.py` | Builds valid IBKR contract objects for stocks and options; runs `qualifyContracts` to validate them |
 
 ---
@@ -91,7 +91,7 @@ Computes signals that determine whether a trade is worth taking.
 | `technicals.py` | RSI, MACD, moving averages, ATR (volatility), support/resistance levels, and a market regime classifier (trending up/down/sideways) |
 | `fundamentals.py` | Free cash flow, debt levels, dividend safety, earnings quality, and next earnings date (via yfinance) |
 | `liquidity.py` | Bid/ask spread quality, open interest, and volume — filters out options that are too thinly traded to sell |
-| `sentiment.py` | Optional Reddit/social-media sentiment score (Phase 11 feature) |
+| `sentiment.py` | Reddit/social-media sentiment scorer; returns a neutral score (50) when Reddit API credentials are absent in `.env`; integrated into the scan pipeline with a 5% weight in `scoring_weights.yaml`. |
 
 ---
 
@@ -103,8 +103,9 @@ Each module takes the analytics data and generates specific trades you could pla
 |---|---|
 | `covered_call.py` | Covered call candidates: for each stock you own, finds the best call strike to sell (target delta, expiry, annualized yield) |
 | `cash_secured_put.py` | Cash-secured put candidates: for `would_own` stocks, finds put strikes that offer good yield without excessive assignment risk. Contract count is sized off **available cash** (`total_cash`), not margin buying power — a cash-secured put must be cash-secured; the Rules Engine then caps the *total* across all CSPs. |
-| `rolling.py` | Roll candidates: for existing short options approaching expiry or breaching delta limits, suggests the best roll-forward trade |
+| `rolling.py` | Roll candidates: for existing short options approaching expiry or breaching delta limits, suggests the best roll-forward trade. Roll credit uses a **live quote** for the current contract; if no live quote is found the candidate is skipped. |
 | `buy_candidates.py` | Buy-to-own candidates: stocks from the watchlist worth buying specifically so you can sell covered calls against them |
+| `_scoring.py` | Shared scoring helpers (`technical_score`, `fundamental_score`, `make_candidate_id`) used by all strategy modules |
 
 ---
 
@@ -167,6 +168,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | `/health` | System health check: IBKR connection status, DB, last scan time, open orders |
 | `/status` | Compact overview: account + active short options + pending approvals |
 | `/help` | List all available commands |
+| `[CONFIRM LIVE]` inline button | Second-confirmation tap required for each order when `LIVE_TRADING=true`. Appears as an inline keyboard button on the pre-execution message; times out after `fill_timeout_minutes` if not tapped. |
 
 ---
 
@@ -177,7 +179,7 @@ Watches your open positions during market hours and fires alerts when action may
 | File | What it does |
 |---|---|
 | `intraday.py` | Subscribes to live IBKR price feeds for each open position; runs checks every tick. On subscribe it loads each position's **entry IV** (from the originating fill's `FillRow.entry_iv`, matched by contract) as the IV-spike baseline, and caches the underlying's **fundamentals** (ex-dividend date) — so all four triggers can actually fire. |
-| `triggers.py` | Defines trigger conditions: delta too high (roll needed), DTE too short, IV spike (vs. entry IV), ex-dividend risk. Each trigger calls Claude for a roll recommendation and sends a Telegram alert. |
+| `triggers.py` | Defines stateless trigger-check functions: delta drift, DTE threshold, IV spike, ex-dividend risk. These are pure functions — they do **not** call Claude or Telegram. Claude review and Telegram delivery are handled by `intraday.py::fire_alerts` after triggers fire. |
 
 ---
 
@@ -199,8 +201,8 @@ All data is stored in a SQLite database at `data/income_system.db`.
 
 | File | What it does |
 |---|---|
-| `db.py` | Database connection and session management via SQLAlchemy |
-| `models.py` | Defines the database tables: `candidates`, `approvals`, `orders`, `fills`, `iv_history`, `journal`, `claude_memory` |
+| `db.py` | Database connection and session management via SQLAlchemy. For SQLite it enables WAL mode + a 30 s busy-timeout (so the concurrent processes don't hit "database is locked") and applies a lightweight ALTER-in for columns added after the original schema. |
+| `models.py` | Defines the database tables: `candidates`, `risk_verdicts`, `claude_reviews`, `approvals`, `orders`, `fills`, `iv_history`, `option_quotes`, `roll_alerts`, `claude_memory`, `journal`. The `fills` row records `action` (SELL credit / BUY debit, used to sign the EOD premium cashflow) and `entry_iv` (the IV at fill, the monitor's IV-spike baseline). `iv_history` has a `(symbol, obs_date)` unique constraint to prevent duplicate IV observations from corrupting IV Rank. `option_quotes` is a write-only audit table — the scan writes a chain snapshot there every run but no production code reads from it; it is not used for execution decisions (see `STATUS.md`). `candidates`, `orders`, and `journal` carry unique constraints to prevent duplicate rows from re-scans or concurrent writes. |
 
 Every stage of the pipeline writes its results here. This means:
 - If a scan crashes halfway through, the next run can pick up where it left off.
@@ -264,18 +266,24 @@ Run with: `python -m pytest`
 
 ## Process architecture (what runs where)
 
-The system splits into separate processes, each with its own IBKR connection ID, to avoid
-conflicts:
+The system splits into separate processes, each with its own IBKR client ID, to avoid conflicts.
+The full registry lives in `config/settings.yaml → ibkr.client_ids`; **never reuse an id across two
+processes that run at the same time.**
 
 | Process | When it runs | Client ID | What it owns |
 |---|---|---|---|
-| `morning_scan` | One-shot at 9:45 AM (cron) | 11 | Full pipeline → Claude → Telegram send |
-| `eod_report` | One-shot at 4:15 PM (cron) | 11 | P&L + journal → Telegram |
-| `approval_service` | Always-on daemon | 14 | Telegram button callbacks + order execution |
-| `intraday_monitor` | Always-on during market hours | 12 | Live position watching + roll alerts |
-| `backfill_iv` | One-time manual | 13 | Historical IV data seeding |
+| `morning_scan` | One-shot at 9:45 AM (cron) | 11 (`engine`) | Full pipeline → Claude → Telegram send |
+| `eod_report` | One-shot at 4:15 PM (cron) | 16 (`eod`)\* | P&L + journal → Telegram |
+| `intraday_monitor` | Always-on during market hours | 12 (`monitor`) | Live position watching + roll alerts |
+| `backfill_iv` | One-time manual | 13 (`backfill`) | Historical IV data seeding |
+| `approval_service` | Always-on daemon | **14 (`exec`) + 15 (`scan`)** | Telegram callbacks + order execution (14) and a second connection for `/scan`, `/positions`, `/account`, `/status` (15) |
+| `healthcheck` | Manual | 19 | Connection check / account print |
+| `trading_skills` MCP | Inside `claude -p` (opt-in) | 20 | Ad-hoc Claude lookups (see `STATUS.md`) |
+| dashboard | Optional Streamlit | 21 | Read-only views (reads SQLite; rarely hits TWS) |
 
-One-shots connect to IBKR, do their work, and disconnect. The daemons run continuously.
+\* `eod_report` uses clientId 16 to avoid conflicts if `morning_scan` (id 11) runs late or is
+re-run manually. One-shots connect, work, and disconnect; the daemons run continuously and
+self-heal on a dropped socket via `AutoReconnect`.
 
 ---
 
@@ -285,12 +293,19 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 
 | Schema | What it represents |
 |---|---|
-| `PositionSnapshot` | A current open position (symbol, quantity, cost basis, Greeks) |
-| `MarketContext` | The full market context for a scan (positions, quotes, IV history) |
-| `ScoreCard` | All analytics scores for a symbol (IV rank, RSI, fundamentals, liquidity) |
+| `PositionSnapshot` | A current open position (symbol, quantity, cost basis, and `delta` when enriched) |
+| `AccountSnapshot` | Account totals: net liquidation, cash, buying power, margin, excess liquidity |
+| `OptionQuote` | A single option contract's live snapshot (bid/ask/last, Greeks, IV). Computed fields: `mid` (bid+ask)/2, falling back to `last`; `spread_pct` as a percentage of mid; `dte` as days-to-expiry in ET timezone. |
+| `IVStats` / `TechnicalStats` / `FundamentalStats` | Per-symbol analytics outputs |
+| `ScoreCard` | All analytics scores for a symbol (IV rank, technicals, fundamentals, liquidity, assignment safety) |
 | `TradeCandidate` | A specific trade proposal (symbol, strategy, strike, expiry, premium, scores, and `next_earnings` for the earnings-blackout gate) |
+| `BuyCandidate` | A buy-to-own stock recommendation. The `rationale` field is currently always an empty string — Claude enrichment for buy candidates is not yet implemented (see `STATUS.md`). |
 | `RiskVerdict` | The Rules Engine's decision: PASS or REJECT, with reasons |
-| `ClaudeReview` | Claude's structured review of a candidate (recommendation, rationale, risks) |
+| `ClaudeReview` / `RollReview` | Claude's structured review of a candidate / a live position roll |
+| `RollAlert` | A fired intraday trigger (delta drift, DTE, IV spike, ex-div) |
+| `EODSummary` | End-of-day metrics handed to Claude and stored in the journal |
+
+(The complete, authoritative list is the set of classes in `src/common/schemas.py`.)
 
 ---
 
@@ -302,3 +317,26 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 4. **Secrets live only in `.env`.** Never in code, logs, or YAML.
 5. **All option orders use LimitOrder at mid-price.** Never market orders.
 6. **`qualifyContracts` runs before every order submission.**
+
+---
+
+## Operational risks & how they're handled
+
+The hard parts of this system are operational, not algorithmic. The main failure modes and their
+mitigations:
+
+| Risk | Mitigation |
+|---|---|
+| **TWS/Gateway disconnects mid-session** | `AutoReconnect` on the daemons (backoff + re-subscribe); the monitor self-heals on the next poll; one-shots simply abort and retry next cron. |
+| **Market-data line limit (~100)** | Option chains are requested in batches and cancelled between batches; only one symbol's chain is fetched at a time. |
+| **clientId conflicts** | Central registry in `settings.yaml`; one id per concurrent process (see the process table above). |
+| **Claude unavailable / unparseable** | Strict JSON validation + graceful fallback — the Rules-Engine-approved list still ships to Telegram. Claude never blocks the pipeline. |
+| **Approval→execution timing gap** | Orders queue in the DB; the executor re-validates against a fresh live quote + the Rules Engine at send time; off-hours orders wait for RTH; stale approvals expire (TTL). |
+| **Order rejects / partial fills / wrong contract** | `qualifyContracts` before every order; LimitOrder at mid (never market); fill monitoring with timeout/cancel; rejects alert back to Telegram. |
+| **Early assignment (dividends/ITM)** | The monitor flags ITM-ish short calls near ex-dividend and short options breaching delta/DTE, prompting a roll alert. |
+| **Risk-limit bypass / runaway** | The deterministic Rules Engine runs twice (decision time + send time); a buying-power buffer is always reserved; live trading is triple-gated. |
+| **Secrets leakage** | `.env` is gitignored and never logged; a Telegram chat-id allowlist means only you can approve. |
+| **Paper↔live confusion** | Live execution requires `LIVE_TRADING=true` **and** the live port; a loud startup banner states the active mode and account; each live order needs a second `[CONFIRM LIVE]` tap. |
+
+Database concurrency (multiple processes on one SQLite file) is handled with WAL mode + a 30 s busy
+timeout, and no process holds a write transaction open across network I/O.

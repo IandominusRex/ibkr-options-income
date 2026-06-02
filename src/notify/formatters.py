@@ -199,9 +199,7 @@ def format_health(
 
     since_str = "never"
     if last_scan_at is not None:
-        aware = (
-            last_scan_at.replace(tzinfo=UTC) if last_scan_at.tzinfo is None else last_scan_at
-        )
+        aware = last_scan_at.replace(tzinfo=UTC) if last_scan_at.tzinfo is None else last_scan_at
         mins = int((datetime.now(UTC) - aware).total_seconds() / 60)
         since_str = f"{mins}m ago"
 

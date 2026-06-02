@@ -11,7 +11,9 @@ scoring, monitoring, execution). Claude is the **reasoning/strategy layer**, inv
 API** via the Claude Code CLI in headless mode (`claude -p`, JSON in/out) under the user's
 subscription.
 
-The authoritative build plan is **`PLAN.md`** (root). Read it before making structural changes.
+The build is feature-complete (paper-trading v1). **`ARCHITECTURE.md`** (how it's built) and
+**`STATUS.md`** (what's built, what's deferred, known limitations) are the authoritative references —
+read both before making structural changes.
 
 ## Documentation files — what they are and when to update them
 
@@ -19,10 +21,9 @@ The authoritative build plan is **`PLAN.md`** (root). Read it before making stru
 |---|---|---|
 | **`README.md`** | Anyone | One-page overview: what the system does, quick start, layout table, safety summary |
 | **`SETUP.md`** | New users | Complete step-by-step guide from fresh machine to first live trade |
-| **`ARCHITECTURE.md`** | Non-technical users and new contributors | Plain-English walkthrough of every folder, how modules interact, the pipeline, and key invariants |
-| **`PLAN.md`** | Claude and developers | Full technical build plan, phase history, architecture diagram, risk register |
-| **`CLAUDE.md`** | Claude Code | Invariants, conventions, safety rules, phase workflow — read before any structural change |
-| **`Improvements.md`** | Claude and developers | Known bugs, code audit findings, and improvement notes |
+| **`ARCHITECTURE.md`** | Non-technical users and new contributors | Plain-English walkthrough of every folder, how modules interact, the pipeline, the process/clientId model, data-flow schemas, key invariants, and operational risk handling |
+| **`STATUS.md`** | Claude and developers | What's built vs. deliberately not built, tech stack, unenforced config, items needing live verification, the live-cutover gate |
+| **`CLAUDE.md`** | Claude Code | Invariants, conventions, safety rules, change workflow — read before any structural change |
 | **`ib_async_documentation.md`** | Claude and developers | Authoritative IBKR API reference — consult before guessing any ib_async signature |
 
 ### Mandatory doc-update rule
@@ -36,16 +37,16 @@ row that matches:
 
 | What changed | Files to update |
 |---|---|
-| New file or module added | `README.md` layout table · `ARCHITECTURE.md` folder guide · relevant section of `PLAN.md` |
-| Existing module renamed, moved, or deleted | All three above |
+| New file or module added | `README.md` layout table · `ARCHITECTURE.md` folder guide |
+| Existing module renamed, moved, or deleted | Both above |
 | New config key added to any YAML | `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
 | New script entrypoint added | `SETUP.md` scripts table · `README.md` layout table |
 | **New Telegram command registered** in `approval_service.py` | `ARCHITECTURE.md` commands table (src/notify/ section) · `SETUP.md` "Using the Telegram bot" commands table · `README.md` Telegram commands table |
 | **New formatter function added** to `formatters.py` | `ARCHITECTURE.md` src/notify/ table description |
-| **New Pydantic schema** added to `schemas.py` | `ARCHITECTURE.md` src/common/ section |
+| **New Pydantic schema** added to `schemas.py` | `ARCHITECTURE.md` src/common/ + data-flow sections |
 | **New storage model** (ORM class) added to `models.py` | `ARCHITECTURE.md` src/storage/ section |
-| Phase completed | Phase completion workflow below (mark `PLAN.md`, write handoff) |
-| Bug fix that changes behaviour users would notice | `SETUP.md` troubleshooting table if relevant · note in `Improvements.md` |
+| Feature built / deferred, or a limitation changes | `STATUS.md` (what's built / not built / known limitations) |
+| Bug fix that changes behaviour users would notice | `SETUP.md` troubleshooting table if relevant |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -67,7 +68,7 @@ a fresh quote.
 - The library is `ib_async` (the maintained successor to `ib_insync`). Import as
   `from ib_async import ...`. Do **not** add the legacy `ib_insync` package.
 
-## Architecture (see PLAN.md for the full diagram)
+## Architecture (see ARCHITECTURE.md for the full walkthrough)
 
 ```
 orchestrator → market data (ibkr/) → analytics → strategies → decision engine
@@ -104,7 +105,7 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
 ## Commands
 
 ```bash
-python -m scripts.healthcheck        # Phase 0 acceptance: connect + read account/positions
+python -m scripts.healthcheck        # connect + read account/positions
 python -m pytest                     # tests (IBKR is mocked; no TWS needed)
 ruff check . && ruff format .        # lint + format
 mypy src                             # type check
@@ -113,33 +114,20 @@ mypy src                             # type check
 Requires TWS or IB Gateway running with the API enabled (paper port 7497 by default) for anything
 that touches IBKR. Tests do not require it.
 
-## Phase completion workflow
+## Change workflow
 
-**This workflow is mandatory after every phase.** Do not mark a phase done without completing
-all three steps.
+The build is feature-complete; there are no remaining phases. For any change:
 
 1. **Verify** — run the full quality gate before declaring completion:
    ```bash
-   python -m pytest -q    # all tests must pass
+   python -m pytest -q    # all tests must pass (the 6 streamlit dashboard tests skip without that optional dep)
    ruff check .           # no lint issues
    mypy src               # no type errors
    ```
-
-2. **Mark PLAN.md** — prefix the completed phase bullet with `✅`.
-
-3. **Write `docs/PHASE<N+1>_HANDOFF.md`** — this file MUST be created for every completed phase.
-   It is the primary context document for the next implementation session. Model it on
-   `docs/PHASE1_HANDOFF.md` and include all of these sections:
-   - *Where things stand* — what files/functions/tables now exist that Phase N+1 can reuse
-   - *Phase N+1 goal + acceptance criterion* — one concrete, testable "done when" statement
-   - *Files to create* — exact paths
-   - *Implementation notes* — the parts that bite: gotchas, API quirks, ordering constraints,
-     async/sync boundaries, config keys to read, schema fields to populate
-   - *Testing approach* — how to unit-test without live TWS/network
-   - *Open decisions* — choices that must be made before or during implementation
-
-   Be specific: name exact functions, config keys, schema fields, and known failure modes so
-   the next session can start coding immediately without re-deriving context.
+2. **Add/adjust tests** for the behaviour you changed — the suite is the safety net, since the system
+   is paper-only and IBKR is mocked.
+3. **Update docs** per the mandatory doc-update table above. If you build, defer, or change the status
+   of a feature/limitation, reflect it in **`STATUS.md`**.
 
 ## How Claude is invoked in production (not the API)
 

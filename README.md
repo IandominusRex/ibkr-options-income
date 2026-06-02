@@ -58,10 +58,9 @@ python -m pytest               # all tests pass without TWS
 | File | What it covers |
 |---|---|
 | **[SETUP.md](SETUP.md)** | Complete setup from scratch to first live trade |
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | What every folder does and how the system fits together |
-| **[PLAN.md](PLAN.md)** | Full technical build plan and phase history |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | What every folder does, how the system fits together, the process/clientId model, and operational risk handling |
+| **[STATUS.md](STATUS.md)** | What's built, what's deliberately not built, tech stack, known limitations, and the live-cutover gate |
 | **[CLAUDE.md](CLAUDE.md)** | Contributor and AI-assistant guidance |
-| **[Improvements.md](Improvements.md)** | Known issues, fixes, and code audit findings |
 | **[ib_async_documentation.md](ib_async_documentation.md)** | IBKR API reference (ib_async library) |
 
 ## Safety
@@ -71,7 +70,7 @@ python -m pytest               # all tests pass without TWS
 - The **Rules Engine** (`src/engine/risk_engine.py`) is the only path to order execution. It runs
   twice — once when ranking candidates, once again at the moment of execution against a fresh live
   quote. It contains no AI and cannot be bypassed.
-- All secrets (`TELEGRAM_BOT_TOKEN`, `IBKR_ACCOUNT`) live only in `.env`, which is gitignored.
+- All secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`, `IBKR_ACCOUNT`) live only in `.env`, which is gitignored.
 
 ## Layout
 

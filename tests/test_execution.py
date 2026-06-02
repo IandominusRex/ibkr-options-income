@@ -25,6 +25,8 @@ from src.common.schemas import (
 from src.execution.order_builder import build_limit_order
 from src.storage.models import ApprovalRow, FillRow, OrderRow
 
+_TODAY = date.today()
+
 # --------------------------------------------------------------------------- #
 # Shared helpers
 # --------------------------------------------------------------------------- #
@@ -39,7 +41,7 @@ def _make_candidate(
     annualized_yield_pct: float = 22.0,
     contracts: int = 1,
     collateral: float = 3_800.0,
-    delta: float = 0.25,
+    delta: float = -0.25,  # negative for PUT (IBKR convention)
     dte: int = 30,
 ) -> TradeCandidate:
     scores = ScoreCard(
@@ -56,7 +58,7 @@ def _make_candidate(
         underlying=underlying,
         right=OptionRight.PUT,
         strike=185.0,
-        expiry=date(2026, 7, 18),
+        expiry=_TODAY + timedelta(days=dte),  # keep expiry consistent with dte at run time
         contracts=contracts,
         premium=premium,
         collateral=collateral,
@@ -77,7 +79,7 @@ def _make_quote(bid: float | None = 1.50, ask: float | None = 1.60) -> OptionQuo
         underlying="AAPL",
         right=OptionRight.PUT,
         strike=185.0,
-        expiry=date(2026, 7, 18),
+        expiry=_TODAY + timedelta(days=30),
         bid=bid,
         ask=ask,
     )
@@ -170,9 +172,13 @@ def _make_mock_ib(filled: bool = True, fill_qty: float = 1.0, avg_price: float =
     ticker = MagicMock()
     ticker.bid = 1.44
     ticker.ask = 1.60
-    # No live greeks in the mock → send-time re-gate degrades to the decision-time gate
-    # (delta is only enforced live when greeks are actually present).
-    ticker.modelGreeks = None
+    # Live greeks present by default: delta in the CSP range so the send-time re-gate passes,
+    # IV available so entry_iv is captured (and the executor's greeks-wait exits immediately).
+    # The degradation test overrides modelGreeks=None with a short quote_timeout.
+    greeks = MagicMock()
+    greeks.delta = -0.20
+    greeks.impliedVol = 0.40
+    ticker.modelGreeks = greeks
     mock_ib.reqMktData.return_value = ticker
     mock_ib.cancelMktData = MagicMock()
 
@@ -679,3 +685,178 @@ async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, 
     assert len(executed) == 1
     assert executed[0][0] == order_id
     assert executed[0][1] == candidate.candidate_id
+
+
+async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatch, tmp_path):
+    """Two same-ticker QUEUED orders are re-validated as a BATCH: the first fits the per-ticker
+    cap, the second breaches it cumulatively and is cancelled (cumulative-aware send-time gate)."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval._is_rth", lambda: True)
+
+    # net-liq 100k → 5% ticker cap = 5000. Two AAPL CSPs @ 4000 collateral each: first fits,
+    # together (8000) they breach the cap. Use the REAL risk engine (not a monkeypatched stub).
+    account_snap = AccountSnapshot(
+        account="DU1",
+        net_liquidation=100_000.0,
+        total_cash=100_000.0,
+        buying_power=90_000.0,
+        maintenance_margin=0.0,
+        excess_liquidity=90_000.0,
+    )
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot", lambda ib, acct: account_snap
+    )
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    c1 = _make_candidate("c1", underlying="AAPL", collateral=4_000.0).model_copy(
+        update={"blended_score": 90.0}
+    )
+    c2 = _make_candidate("c2", underlying="AAPL", collateral=4_000.0).model_copy(
+        update={"blended_score": 80.0}
+    )
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, c1)
+        _insert_candidate_row(session, c2)
+        _, oid1 = _insert_queued_order(session, "c1")
+        _, oid2 = _insert_queued_order(session, "c2")
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU1"]
+    mock_bot = AsyncMock()
+
+    await process_queued_orders(mock_ib, mock_bot, "99999")
+
+    # Highest-score order executes; the second is cancelled for the cumulative breach.
+    assert executed == [oid1]
+    with dbmod.session_scope() as s:
+        assert s.get(OrderRow, oid2).state == OrderState.CANCELLED
+        assert "Re-validation failed" in (s.get(OrderRow, oid2).detail or "")
+
+
+async def test_execute_candidate_no_greeks_entry_iv_none(monkeypatch, tmp_path):
+    """When model greeks never stream in, the order still fills (degradation) and entry_iv
+    is recorded as None rather than blocking."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.execution.quote_timeout_seconds = 0.2  # short greeks wait → fast degradation
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    from src.execution.executor import execute_candidate
+
+    mock_ib = _make_mock_ib(filled=True)
+    mock_ib.reqMktData.return_value.modelGreeks = None  # greeks never arrive
+    mock_bot = _make_mock_bot()
+
+    await execute_candidate(mock_ib, mock_bot, "99999", order_id, _make_candidate())
+
+    with dbmod.session_scope() as s:
+        fill = s.execute(select(FillRow).where(FillRow.order_id == order_id)).scalars().one()
+    assert fill.entry_iv is None
+    assert fill.action == "SELL"
+
+
+# --------------------------------------------------------------------------- #
+# order_builder — bid=0 / ask>0 (P1-04)
+# --------------------------------------------------------------------------- #
+
+
+def test_build_limit_order_bid_zero_ask_positive():
+    """bid=0.00 on a far-OTM option is valid; mid should be computed as ask/2."""
+    from src.execution.order_builder import build_limit_order
+
+    quote = _make_quote(bid=0.0, ask=0.10)
+    order = build_limit_order(_make_candidate(), quote)
+    # mid = (0.0 + 0.10) / 2 = 0.05, tick-rounded to 0.05
+    assert order.lmtPrice == pytest.approx(0.05)
+    assert order.action == "SELL"
+
+
+def test_build_limit_order_none_bid_still_works():
+    """bid=None with a valid ask should use 0 as the effective bid."""
+    from src.execution.order_builder import build_limit_order
+
+    quote = _make_quote(bid=None, ask=0.20)
+    order = build_limit_order(_make_candidate(), quote)
+    assert order.lmtPrice == pytest.approx(0.10)
+
+
+# --------------------------------------------------------------------------- #
+# approval — concurrent double-execution prevention (P0-11)
+# --------------------------------------------------------------------------- #
+
+
+async def test_process_button_concurrent_calls_produce_one_order(monkeypatch, tmp_path):
+    """Two concurrent _process_button calls for the same PENDING approval must result in
+    exactly one OrderRow — not two. This is the TOCTOU double-execution bug (P0-01).
+
+    We simulate the race by calling _process_button twice in sequence (SQLite won't let two
+    true concurrent writers in a unit test), but the UniqueConstraint on OrderRow.approval_id
+    prevents the second insert from succeeding even when both reads see PENDING.
+    """
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.storage.models import ApprovalRow
+
+    # Insert a PENDING approval.
+    with dbmod.session_scope() as session:
+        approval = ApprovalRow(
+            candidate_id="double-exec",
+            status=ApprovalStatus.PENDING,
+            chat_id="99999",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(approval)
+        session.flush()
+        approval_id = approval.id
+
+    from src.notify.approval_service import _process_button
+
+    # First call — should succeed and create an OrderRow.
+    found1, text1, _ = _process_button(approval_id, "approve")
+    assert found1 is True
+    assert "QUEUED" in text1
+
+    # Second call — approval is now APPROVED, must be idempotent.
+    found2, text2, _ = _process_button(approval_id, "approve")
+    assert found2 is True
+    assert "Already" in text2
+
+    # Exactly one OrderRow must exist for this approval.
+    with dbmod.session_scope() as s:
+        from sqlalchemy import select
+
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalars().all()
+        )
+    assert len(orders) == 1
+    assert orders[0].state == OrderState.QUEUED

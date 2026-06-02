@@ -50,12 +50,15 @@ def review_candidates(
 
     prompt = build_prompt(candidates, account, history=history)
 
-    cmd = [cfg.cli_command, "-p", prompt, "--output-format", cfg.output_format]
+    # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
+    # when the candidate list + history grows large.
+    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
 
     for attempt in range(cfg.max_retries + 1):
         try:
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=cfg.timeout_seconds,
@@ -108,12 +111,13 @@ def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> 
         return None
 
     prompt = build_roll_prompt(alert, pos, quote)
-    cmd = [cfg.cli_command, "-p", prompt, "--output-format", cfg.output_format]
+    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
 
     for attempt in range(cfg.max_retries + 1):
         try:
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=cfg.timeout_seconds,
@@ -155,12 +159,13 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
         return None
 
     prompt = build_eod_prompt(summary)
-    cmd = [cfg.cli_command, "-p", prompt, "--output-format", cfg.output_format]
+    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
 
     for attempt in range(cfg.max_retries + 1):
         try:
             result = subprocess.run(
                 cmd,
+                input=prompt,
                 capture_output=True,
                 text=True,
                 timeout=cfg.timeout_seconds,

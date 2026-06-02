@@ -16,6 +16,9 @@ cash_secured_put:
   delta_max: 0.30
   dte_min: 21
   dte_max: 45
+  # Hard cap on contracts per single CSP candidate (prevents a single trade from
+  # consuming the full CSP budget). The cumulative risk gate enforces the overall cap.
+  max_contracts: 10
 
 # --- Income quality gates ---
 income:
@@ -44,7 +47,7 @@ events:
 portfolio:
   max_pct_per_ticker: 5.0        # of net liquidation (enforced, cumulative)
   max_pct_per_sector: 25.0       # of net liquidation; uses universe.yaml `sectors:` map (enforced, cumulative)
-  max_correlated_exposure_pct: 35.0  # NOT YET ENFORCED — needs a price-correlation engine (see IMPROVEMENTS_PLAN.md, deferred)
+  max_correlated_exposure_pct: 35.0  # NOT YET ENFORCED — needs a price-correlation engine (see STATUS.md, deferred)
   max_margin_usage_pct: 50.0
   max_csp_allocation_pct: 60.0   # total CASH collateral tied up across all CSPs, as % of net liq (enforced cumulatively)
   # Always keep this much buying power free as a buffer.
@@ -52,7 +55,6 @@ portfolio:
   # Max NEW positions a single morning scan may propose.
   max_new_positions_per_run: 10
 
-# --- Approval lifecycle ---
-approval:
-  ttl_minutes: 720               # approvals older than this auto-expire
-  transmit_only_in_rth: true     # queue orders placed outside regular hours
+# NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
+# (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate
+# `approval:` block used to sit in this file but was never read by the config loader.

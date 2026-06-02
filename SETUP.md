@@ -9,7 +9,8 @@ Everything you need to get the system running, from a fresh machine to your firs
 Before you start, make sure you have:
 
 - **Interactive Brokers account** with Trader Workstation (TWS) or IB Gateway installed.
-  Download from [ibkr.com](https://www.interactivebrokers.com/en/trading/tws.php).
+  Download from [ibkr.com]
+  (https://www.interactivebrokers.com/en/trading/tws.php) or (https://www.interactivebrokers.com/en/trading/ibgateway-latest.php).
 - **Python 3.12 or newer.** Check with `python3 --version`.
 - **The Claude Code CLI** installed and signed in. Check with `claude --version`.
   If not installed, follow the Claude Code setup instructions at [claude.ai/code](https://claude.ai/code).
@@ -26,7 +27,7 @@ cd "IBKR Investments"
 # Create a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate          # macOS/Linux
-# .venv\Scripts\activate           # Windows
+# .venv\Scripts\activate  | .venv\Scripts\activate.bat       # Windows
 
 # Install all dependencies
 pip install -e ".[dev]"
@@ -54,7 +55,8 @@ Now open `.env` in any text editor and fill in three values:
 ```
 IBKR_ACCOUNT=U1234567          # Your IBKR account ID (optional — uses first account if blank)
 TELEGRAM_BOT_TOKEN=123456:ABC…  # From @BotFather on Telegram
-TELEGRAM_CHAT_ID=987654321      # Your personal chat ID (see step 4)
+TELEGRAM_CHAT_ID=-1003902780355 # Group chat ID (negative for groups/supergroups)
+TELEGRAM_THREAD_ID=2            # Topic/thread ID within the group (omit for DMs or non-forum groups)
 LIVE_TRADING=false              # Keep false until you are ready to go live
 ```
 
@@ -62,9 +64,11 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
 
 1. Open Telegram, search for **@BotFather**, and start a chat.
 2. Send `/newbot`, choose a name (e.g. "MyIBKRBot"), and copy the token it gives you.
-3. Send any message to your new bot, then visit
+3. Add the bot to your group and send any message in the target topic/thread, then visit
    `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser.
-4. Find `"chat":{"id":...}` in the response — that number is your `TELEGRAM_CHAT_ID`.
+4. Find `"chat":{"id":...}` in the response — that negative number is your `TELEGRAM_CHAT_ID`.
+5. If using a forum-type supergroup with topics, find `"message_thread_id":...` in the same
+   response — that number is your `TELEGRAM_THREAD_ID`. Leave it unset for DMs or plain groups.
 
 ---
 
@@ -102,20 +106,40 @@ text editor:
 
 Add the tickers you want the system to scan for covered calls and cash-secured puts.
 The `would_own` list is the set of stocks you are genuinely happy to be assigned (i.e. own at the
-strike price if the put is exercised).
+strike price if the put is exercised). The `indexes:` list is scanned for CC opportunities; CSPs
+are only generated for symbols that also appear in `would_own`.
+
+**Adding a new ticker:** After adding a symbol to `universe.yaml`, run the IV backfill to seed
+one year of IV history for it — otherwise IV Rank will be unavailable and the IV score will be
+suppressed:
+```bash
+python -m scripts.backfill_iv
+```
+Also add the symbol to the `sectors:` map so concentration limits work correctly.
 
 ### `config/risk_limits.yaml`
 
 Conservative defaults are pre-configured. Key settings to review:
 
-| Setting | Default | What it means |
+| Setting (YAML path) | Default | What it means |
 |---|---|---|
-| `max_position_pct` | 5% | Max % of portfolio in one ticker |
-| `delta_min` / `delta_max` (CC) | 0.20 / 0.35 | Delta range for covered-call strikes |
-| `delta_min` / `delta_max` (CSP) | 0.15 / 0.30 | Delta range for cash-secured-put strikes |
-| `min_dte` / `max_dte` | 14 / 45 | Days-to-expiry range for new positions |
-| `earnings_blackout_days` | 14 | Reject candidates expiring within N days of earnings |
-| `min_roc` | 1.0% | Minimum return-on-collateral to consider a trade |
+| `portfolio.max_pct_per_ticker` | 5.0 | Max % of net liquidation in one ticker |
+| `portfolio.max_pct_per_sector` | 25.0 | Max % per sector (uses the `sectors:` map in `universe.yaml`) |
+| `portfolio.max_csp_allocation_pct` | 60.0 | Max total cash collateral tied up across all CSPs (% of net liq). **New live users should start at 30–40%** and increase after validating the pipeline. |
+| `portfolio.max_new_positions_per_run` | 10 | Max new positions a single morning scan may propose. New live users should start at 1–3. |
+| `covered_call.delta_min` / `delta_max` | 0.20 / 0.35 | Delta range for covered-call strikes |
+| `covered_call.min_strike_vs_basis` | 1.00 | Reject CC if strike is below cost basis (prevents locking in a loss on the shares) |
+| `cash_secured_put.delta_min` / `delta_max` | 0.15 / 0.30 | Delta range for cash-secured-put strikes |
+| `cash_secured_put.max_contracts` | 10 | Hard cap on contracts per single CSP candidate |
+| `<strategy>.dte_min` / `dte_max` | 21 / 45 | Days-to-expiry range for new positions |
+| `events.earnings_blackout_days` | 14 | Reject candidates that live through / open within N days of earnings |
+| `income.min_roc_pct` | 1.0 | Minimum return-on-collateral (%) to consider a trade |
+| `income.min_annualized_yield_pct` | 12.0 | Minimum annualized yield to surface a candidate. In low-IV environments this filter is the most common reason zero candidates are returned; lower to 8–10% if needed. |
+| `liquidity.min_option_volume` | 10 | Minimum daily option volume. Consider increasing to 50 for multi-contract positions. |
+| `iv.min_iv_rank` | 30 | Only sell premium when IV rank is at least this (when known) |
+
+> Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
+> engine — see `STATUS.md`). The per-ticker and per-sector caps are the active concentration gates.
 
 ### `config/scoring_weights.yaml`
 
@@ -138,8 +162,49 @@ Start it in a terminal window or as a background service:
 python -m scripts.run_approval_service
 ```
 
-Keep this running at all times during market hours. On macOS you can use `launchd`; on Linux use
-`systemd` or `screen`/`tmux`.
+Keep this running at all times during market hours. **A terminal that closes kills the daemon** —
+no Telegram responses, no order fills. Use a supervisor to restart it automatically on crash:
+
+**Quick restart wrapper (any platform):**
+```bash
+while true; do python -m scripts.run_approval_service; sleep 5; done
+```
+
+**macOS launchd** — create `~/Library/LaunchAgents/com.ibkr.approval.plist`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ibkr.approval</string>
+  <key>ProgramArguments</key><array>
+    <string>/path/to/IBKR Investments/.venv/bin/python</string>
+    <string>-m</string><string>scripts.run_approval_service</string>
+  </array>
+  <key>WorkingDirectory</key><string>/path/to/IBKR Investments</string>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/ibkr_approval.log</string>
+  <key>StandardErrorPath</key><string>/tmp/ibkr_approval.log</string>
+</dict></plist>
+```
+Load with `launchctl load ~/Library/LaunchAgents/com.ibkr.approval.plist`.
+
+**Linux systemd** — create `/etc/systemd/system/ibkr-approval.service`:
+```ini
+[Unit]
+Description=IBKR Approval Service
+After=network.target
+
+[Service]
+WorkingDirectory=/path/to/IBKR Investments
+ExecStart=/path/to/IBKR Investments/.venv/bin/python -m scripts.run_approval_service
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+Enable with `systemctl enable --now ibkr-approval`.
 
 ### Using the Telegram bot
 
@@ -173,18 +238,22 @@ IV spikes, DTE drops below the threshold, or an ex-dividend date approaches.
 
 ## 8. Set up the daily cron jobs
 
-The morning scan and EOD report run on a schedule. Add these to your crontab with `crontab -e`
-(times are in ET, adjust for your timezone):
+The morning scan and EOD report run on a schedule. Add these to your crontab with `crontab -e`.
+
+> **Timezone note:** cron uses the system's local timezone — not necessarily ET. A UTC server
+> fires `45 9 * * 1-5` at 9:45 UTC = 5:45 AM ET. The `TZ=` prefix sets the timezone for
+> the entire crontab so times are interpreted as ET regardless of server timezone.
 
 ```
+TZ=America/New_York
 # Morning scan — 9:45 AM ET Monday-Friday
-45 9 * * 1-5 cd /path/to/IBKR\ Investments && .venv/bin/python -m scripts.run_morning >> logs/morning.log 2>&1
+45 9 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_morning >> logs/morning.log 2>&1
 
 # EOD report — 4:15 PM ET Monday-Friday
-15 16 * * 1-5 cd /path/to/IBKR\ Investments && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
+15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
 ```
 
-Replace `/path/to/IBKR\ Investments` with the actual absolute path to your project folder.
+Replace `/path/to/IBKR Investments` with the actual absolute path to your project folder.
 
 ---
 
@@ -255,7 +324,8 @@ When you are ready:
 |---|---|---|
 | `ConnectionRefusedError` on healthcheck | TWS/Gateway not running or API not enabled | Start TWS and check API settings (Step 4) |
 | `clientId already in use` | Another process using the same IBKR client ID | Check `config/settings.yaml` for the `client_ids` map; each process needs a unique ID |
-| No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` | Re-check `.env`; test with `python -c "from src.notify.sender import send_message; import asyncio; asyncio.run(send_message('test'))"` |
+| No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or `TELEGRAM_THREAD_ID` | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
+| Messages arrive in wrong topic | `TELEGRAM_THREAD_ID` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic. |
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
 | Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |

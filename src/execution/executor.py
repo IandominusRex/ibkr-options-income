@@ -42,10 +42,26 @@ def _safe_float(val: object) -> float | None:
         return None
     return None if f != f else f  # NaN check
 
+
+def _as_float(val: object, default: float) -> float:
+    """Return val as a float, falling back to default for None/non-numeric (e.g. a
+    MagicMock config attribute in tests). Keeps the quote-wait deadlines real so the
+    greeks loop can never spin against a non-numeric deadline."""
+    if isinstance(val, bool) or not isinstance(val, int | float):
+        return default
+    return float(val)
+
+
 # Seconds to wait for a live bid/ask tick before giving up on the quote.
 # Configurable via execution.quote_timeout_seconds in settings.yaml.
 def _quote_timeout() -> float:
-    return get_config().execution.quote_timeout_seconds
+    return _as_float(get_config().execution.quote_timeout_seconds, 10.0)
+
+
+# Fraction of the quote timeout we additionally spend waiting for modelGreeks to stream
+# in after bid/ask have arrived. Greeks (delta/IV) populate a beat later than the quote;
+# without this wait, entry_iv is stored as None and the live delta re-gate is a no-op.
+_GREEKS_WAIT_FRACTION = 0.6
 
 # Pending live-order confirmation events keyed by order_id.
 # Populated by execute_candidate; resolved by the Telegram callback handler.
@@ -89,23 +105,41 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
     qualified = cast(Contract, qualified_list[0])
 
     timeout = _quote_timeout()
+    loop = asyncio.get_running_loop()
     # "101" requests open interest; model greeks (delta/IV) stream by default for options
     # and are used for the send-time re-gate and for storing entry IV at fill.
-    ticker = ib.reqMktData(qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False)
-    deadline = asyncio.get_running_loop().time() + timeout
-    while (
-        ticker.bid is None or ticker.bid <= 0 or ticker.ask is None or ticker.ask <= 0
-    ) and asyncio.get_running_loop().time() < deadline:
+    ticker = ib.reqMktData(
+        qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
+    )
+
+    def _has_quote() -> bool:
+        # A valid two-sided market requires a non-None ask > 0. Bid may legitimately
+        # be $0.00 on far-OTM options; requiring bid > 0 wrongly times out those orders.
+        return ticker.bid is not None and ticker.ask is not None and ticker.ask > 0
+
+    def _has_greeks() -> bool:
+        g = getattr(ticker, "modelGreeks", None)
+        return g is not None and _safe_float(getattr(g, "impliedVol", None)) is not None
+
+    # Phase 1: wait for a usable bid/ask.
+    deadline = loop.time() + timeout
+    while not _has_quote() and loop.time() < deadline:
         await asyncio.sleep(0.1)
+
+    # Phase 2: bid/ask are in — give modelGreeks a bounded extra window to stream so the
+    # live delta re-gate has a delta and entry_iv is captured. Degrade gracefully if they
+    # never arrive (entry_iv stays None; the re-gate falls back to the decision-time gate).
+    greeks_deadline = loop.time() + timeout * _GREEKS_WAIT_FRACTION
+    while _has_quote() and not _has_greeks() and loop.time() < greeks_deadline:
+        await asyncio.sleep(0.1)
+
     ib.cancelMktData(qualified)
 
-    bid = ticker.bid if (ticker.bid is not None and ticker.bid > 0) else None
+    bid = ticker.bid if ticker.bid is not None else None
     ask = ticker.ask if (ticker.ask is not None and ticker.ask > 0) else None
 
-    if bid is None and ask is None:
-        raise ValueError(
-            f"No live bid/ask received for {candidate.candidate_id} within {timeout}s"
-        )
+    if ask is None:
+        raise ValueError(f"No live ask received for {candidate.candidate_id} within {timeout}s")
 
     greeks = getattr(ticker, "modelGreeks", None)
     quote = OptionQuote(
@@ -154,39 +188,15 @@ async def execute_candidate(
         return
 
     try:
-        quote, qualified = await _fetch_quote(ib, candidate)
-
-        # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
-        live_verdict = validate_live_quote(candidate, quote)
-        if live_verdict.verdict != Verdict.PASS:
-            log.warning(
-                "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s",
-                order_id,
-                candidate.candidate_id,
-                live_verdict.reasons,
-            )
-            with session_scope() as session:
-                row = session.get(OrderRow, order_id)
-                if row:
-                    row.state = OrderState.REJECTED
-                    row.detail = f"Live re-validation failed: {live_verdict.reasons}"
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"Order NOT placed — {candidate.underlying} failed live re-validation "
-                    f"({', '.join(live_verdict.reasons)})."
-                ),
-            )
-            return
-
-        order = build_limit_order(candidate, quote)
-
         if cfg.is_live:
+            # Live mode: send a pre-quote notice, wait for human confirmation,
+            # then fetch a FRESH quote immediately before placing the order.
+            # This prevents a stale limit price computed before the confirm wait.
             confirm_event = register_live_confirm(order_id)
             confirm_text = (
                 f"⚠️ [CONFIRM LIVE] About to place LIVE order:\n"
                 f"{candidate.underlying} ${candidate.strike:.0f} {candidate.right.value} "
-                f"— {candidate.contracts} contract(s) @ ~${order.lmtPrice:.2f}\n"
+                f"expiry {candidate.expiry} — {candidate.contracts} contract(s)\n"
                 f"Tap to confirm or let it time out to cancel."
             )
             keyboard = InlineKeyboardMarkup(
@@ -215,6 +225,35 @@ async def execute_candidate(
                         row.state = OrderState.CANCELLED
                         row.detail = "Live confirmation timeout"
                 return
+
+        # Fetch a fresh quote now — after confirmation for live mode, immediately
+        # for paper mode. This is the price that will be sent to the broker.
+        quote, qualified = await _fetch_quote(ib, candidate)
+
+        # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
+        live_verdict = validate_live_quote(candidate, quote)
+        if live_verdict.verdict != Verdict.PASS:
+            log.warning(
+                "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s",
+                order_id,
+                candidate.candidate_id,
+                live_verdict.reasons,
+            )
+            with session_scope() as session:
+                row = session.get(OrderRow, order_id)
+                if row:
+                    row.state = OrderState.REJECTED
+                    row.detail = f"Live re-validation failed: {live_verdict.reasons}"
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"Order NOT placed — {candidate.underlying} failed live re-validation "
+                    f"({', '.join(live_verdict.reasons)})."
+                ),
+            )
+            return
+
+        order = build_limit_order(candidate, quote)
 
         trade = ib.placeOrder(qualified, order)
         log.info(
@@ -267,10 +306,11 @@ async def execute_candidate(
                 fill_row = FillRow(
                     order_id=order_id,
                     candidate_id=candidate.candidate_id,
-                    ib_exec_id=exec_id,
+                    action=order.action,  # "SELL" credit / "BUY" debit → signs EOD cashflow
                     filled_qty=filled_qty,
                     avg_price=avg_price,
                     commission=commission,
+                    ib_exec_id=exec_id,
                     entry_iv=quote.iv,  # IV at execution → monitor's IV-spike baseline
                     is_live=cfg.is_live,
                 )

@@ -307,14 +307,16 @@ class TestCashSecuredPut:
         expected_contracts = result[0].contracts
         assert result[0].collateral == pytest.approx(strike * expected_contracts * 100)
 
-    def test_contracts_sized_by_cash(self):
-        # CSPs size off CASH (not margin buying power): total_cash=50_000, strike=170
-        # → contracts = floor(50000 / (170*100)) = 2.
+    def test_contracts_sized_by_excess_liquidity(self):
+        # CSPs size off ExcessLiquidity (post-margin cushion): excess_liquidity=70_000, strike=170
+        # → cash_n = floor(70000 / (170*100)) = 4
+        # → csp_budget_n = floor((100_000 * 0.60) / (170*100)) = 3
+        # → contracts = min(10, 4, 3) = 3
         result = generate_csp_candidates(
             "AAPL", [_put_quote()], _account(), _iv(), _tech(), _fund()
         )
         assert len(result) == 1
-        assert result[0].contracts == 2
+        assert result[0].contracts == 3
 
     def test_filters_call_quotes(self):
         result = generate_csp_candidates(
@@ -405,10 +407,34 @@ def _short_put_position(
     )
 
 
-# New-leg quotes for rolling tests: bid=2.00/ask=2.20 → mid=2.10, spread≈9.5%, passes gates.
-# Roll credit = 2.10 - 1.30 (position avg_cost) = 0.80 > 0.
+# Rolling test helpers.
+# _roll_current_quote: the existing short contract (at EXPIRY_NEAR, mid=0.10).
+# _roll_new_quote:     the proposed new leg (at EXPIRY_FAR, mid=3.50).
+#
+# With the P1-01 ROC fix (credit/strike, not credit/entry_premium):
+#   roll_credit = 3.50 - 0.10 = 3.40
+#   strike = 200  →  ROC = (3.40/200)*100 = 1.70%  (passes min_roc_pct=1.0%)
+#   annualized = 1.70 * (365/42+) ≈ 14.8%+  (passes min_ann=12.0% with ample margin)
+#
+# _infer_current_mid requires a live quote for the current contract — tests must
+# include both quotes so the function can find the existing contract's market price.
+def _roll_current_quote(
+    strike: float = 200.0,
+    expiry: date = _EXPIRY_NEAR,
+    **kwargs,
+) -> OptionQuote:
+    return _call_quote(expiry=expiry, strike=strike, delta=0.55, bid=0.05, ask=0.15, **kwargs)
+
+
 def _roll_new_quote(**kwargs) -> OptionQuote:
-    return _call_quote(expiry=_EXPIRY_FAR, delta=0.28, bid=2.00, ask=2.20, **kwargs)
+    # Higher premium gives ample margin above the min_annualized_yield_pct=12% gate
+    # across the range of actual DTE values (42-51 days depending on when tests run).
+    return _call_quote(expiry=_EXPIRY_FAR, delta=0.28, bid=3.40, ask=3.60, **kwargs)
+
+
+def _roll_quotes(strike: float = 200.0, current_expiry: date = _EXPIRY_NEAR, **kwargs) -> list:
+    """Both the current-contract quote and the new-leg quote for a standard roll test."""
+    return [_roll_current_quote(strike=strike, expiry=current_expiry), _roll_new_quote(**kwargs)]
 
 
 class TestRolling:
@@ -423,7 +449,7 @@ class TestRolling:
             expiry=_EXPIRY_NEAR,
             underlying="AAPL",
         )
-        result = generate_roll_candidates(long_pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(long_pos, _roll_quotes(), _iv(), _tech())
         assert result == []
 
     def test_missing_expiry_returns_empty(self):
@@ -437,38 +463,45 @@ class TestRolling:
             expiry=None,
             underlying="AAPL",
         )
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert result == []
 
     def test_no_roll_when_dte_far_and_delta_safe(self):
         # _EXPIRY is 34 DTE (>21), delta=0.30 (<0.40) → should_roll=False
         pos = _short_call_position(expiry=_EXPIRY, delta=0.30)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert result == []
 
     def test_rolls_when_dte_lte_21(self):
         # _EXPIRY_NEAR is 10 DTE (<=21) → triggers roll
         pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert len(result) >= 1
 
     def test_rolls_when_delta_drifted(self):
-        # delta=0.45 > 0.40 triggers roll even with DTE=34
+        # delta=0.45 > 0.40 triggers roll even with DTE=34; current contract is at _EXPIRY
         pos = _short_call_position(expiry=_EXPIRY, delta=0.45)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(current_expiry=_EXPIRY), _iv(), _tech())
         assert len(result) >= 1
 
     def test_roll_candidate_dte_exceeds_position_dte(self):
         pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert len(result) >= 1
         pos_dte = (_EXPIRY_NEAR - date.today()).days
         for c in result:
             assert c.dte > pos_dte
 
     def test_no_roll_credit_filters_candidate(self):
-        # avg_cost=2.50 → current_mid fallback=2.50; new mid=2.10 → roll_credit=-0.40 < 0
-        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, avg_cost=2.50)
+        # current_mid=3.10, new_mid=2.90 → roll_credit=-0.20 ≤ 0 → no candidate
+        current = _call_quote(expiry=_EXPIRY_NEAR, strike=200.0, bid=3.00, ask=3.20, delta=0.55)
+        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, avg_cost=3.10)
+        result = generate_roll_candidates(pos, [current, _roll_new_quote()], _iv(), _tech())
+        assert result == []
+
+    def test_no_current_quote_returns_empty(self):
+        # When the current contract is not in the quote list, roll is skipped
+        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30)
         result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
         assert result == []
 
@@ -479,7 +512,7 @@ class TestRolling:
 
     def test_contracts_matches_position_size(self):
         pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, contracts=3)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert len(result) >= 1
         assert result[0].contracts == 3
 
@@ -487,6 +520,42 @@ class TestRolling:
         from src.common.schemas import Strategy
 
         pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30)
-        result = generate_roll_candidates(pos, [_roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert len(result) >= 1
         assert result[0].strategy == Strategy.ROLL
+
+    def test_roll_collateral_uses_strike_not_entry_premium(self):
+        # With the P1-02 fix, collateral = strike * contracts * 100, not avg_cost * contracts * 100.
+        # _roll_new_quote has strike=200. _short_call_position has 2 contracts, avg_cost=1.30.
+        # Wrong (old): collateral = 1.30 * 2 * 100 = 260.
+        # Correct:      collateral = 200 * 2 * 100 = 40,000.
+        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, contracts=2, avg_cost=1.30)
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
+        assert len(result) >= 1
+        new_strike = result[0].strike
+        expected_collateral = new_strike * 2 * 100
+        assert result[0].collateral == pytest.approx(expected_collateral)
+
+    def test_roll_roc_uses_strike_denominator(self):
+        # With the P1-01 fix, ROC = roll_credit / strike (not / avg_cost).
+        # roll_credit = new_mid - current_mid = 3.50 - 0.10 = 3.40
+        # new_strike = 200.0 → expected ROC = (3.40 / 200.0) * 100 = 1.70%
+        # Old formula gave: (3.40 / 1.30) * 100 ≈ 261% — completely fictitious.
+        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, avg_cost=1.30)
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
+        assert len(result) >= 1
+        roll_credit = 3.50 - 0.10  # new_mid - current_mid (bid=3.40, ask=3.60)
+        expected_roc = (roll_credit / result[0].strike) * 100
+        assert result[0].roc_pct == pytest.approx(expected_roc, abs=1e-3)
+
+    def test_roll_put_collateral(self):
+        # PUT roll: collateral = new_strike * contracts * 100.
+        # roll_credit = 4.90 - 0.10 = 4.80, strike=165
+        # ROC = (4.80/165)*100 = 2.91% ≥ 1.0%, ann = 2.91*(365/50) ≈ 21.2% ≥ 12.0%
+        pos = _short_put_position(expiry=_EXPIRY_NEAR, delta=-0.25, contracts=2)
+        put_new = _put_quote(strike=165.0, delta=-0.22, bid=4.80, ask=5.00, expiry=_EXPIRY_FAR)
+        put_current = _put_quote(strike=170.0, delta=-0.55, bid=0.05, ask=0.15, expiry=_EXPIRY_NEAR)
+        result = generate_roll_candidates(pos, [put_current, put_new], _iv(), _tech())
+        assert len(result) >= 1
+        expected_collateral = result[0].strike * 2 * 100
+        assert result[0].collateral == pytest.approx(expected_collateral)

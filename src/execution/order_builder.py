@@ -26,15 +26,19 @@ def _round_to_tick(price: float) -> float:
 def build_limit_order(candidate: TradeCandidate, quote: OptionQuote) -> LimitOrder:
     """Return a mid-price DAY LimitOrder (SELL) for the given candidate.
 
-    Raises ValueError if there is no mid price on the quote.
+    Uses the true bid/ask midpoint only — never the `last` print that `OptionQuote.mid`
+    falls back to (a stale trade can sit far from the live market and misprice the order).
+    Raises ValueError when a genuine two-sided market is unavailable.
     """
-    mid = quote.mid
-    if mid is None:
+    if quote.ask is None or quote.ask <= 0:
         raise ValueError(
-            f"No mid price available for {candidate.candidate_id} "
+            f"No mid price (no ask) for {candidate.candidate_id} "
             f"({candidate.underlying} {candidate.right} {candidate.strike} "
             f"{candidate.expiry}) — bid={quote.bid} ask={quote.ask}"
         )
+    # bid=0.00 is valid for far-OTM options (no buyers); use ask/2 as the mid.
+    effective_bid = quote.bid if (quote.bid is not None and quote.bid >= 0) else 0.0
+    mid = (effective_bid + quote.ask) / 2
     price = _round_to_tick(mid)
     return LimitOrder(
         action="SELL",

@@ -28,7 +28,11 @@ from src.claude.runner import write_journal_narrative
 from src.common.config import get_config
 from src.common.schemas import AccountSnapshot, EODSummary, PositionSnapshot
 from src.ibkr.connection import IBKRConnection
-from src.ibkr.portfolio import get_account_snapshot, get_positions
+from src.ibkr.portfolio import (
+    enrich_positions_with_greeks_async,
+    get_account_snapshot,
+    get_positions,
+)
 from src.notify.formatters import format_eod_summary
 from src.storage.db import init_db, session_scope
 from src.storage.models import FillRow, JournalRow
@@ -39,7 +43,13 @@ _ET = ZoneInfo("America/New_York")
 
 
 def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
-    """Return (realized_pnl, fill_count, fill_ids) for the option fills on the *ET* trading day.
+    """Return (premium_cashflow, fill_count, fill_ids) for the option fills on the *ET* trading day.
+
+    This is the net option premium **cashflow** for the day — credits from sells minus
+    debits from buys (e.g. a buy-to-close) — NOT a full realized-P&L that pairs opens with
+    closes. For an income desk that only opens short premium it equals premium collected;
+    signing by `action` keeps it correct the moment a closing buy is recorded so a roll's
+    debit no longer reads as a gain.
 
     `today` is interpreted as a market-timezone (ET) calendar date. The day window is built
     at ET midnight and converted to UTC so it lines up with how fills are stored (UTC).
@@ -48,14 +58,23 @@ def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
     """
     next_day = today + timedelta(days=1)
     today_start = datetime(today.year, today.month, today.day, tzinfo=_ET).astimezone(UTC)
-    tomorrow_start = datetime(next_day.year, next_day.month, next_day.day, tzinfo=_ET).astimezone(UTC)
+    tomorrow_start = datetime(next_day.year, next_day.month, next_day.day, tzinfo=_ET).astimezone(
+        UTC
+    )
     with session_scope() as session:
         fills = (
             session.query(FillRow)
             .filter(FillRow.filled_at >= today_start, FillRow.filled_at < tomorrow_start)
             .all()
         )
-        realized = sum(f.avg_price * f.filled_qty * 100 for f in fills)
+        # SELL = credit (+), BUY = debit (−). Legacy/unset rows default to SELL.
+        realized = sum(
+            (-1.0 if (f.action or "SELL").upper() == "BUY" else 1.0)
+            * f.avg_price
+            * f.filled_qty
+            * 100
+            for f in fills
+        )
         fill_ids = [f.id for f in fills]
     return realized, len(fill_ids), fill_ids
 
@@ -82,10 +101,11 @@ def _build_eod_summary(
     unrealized_pnl = sum(p.unrealized_pnl or 0.0 for p in positions)
     unrealized_delta = unrealized_pnl - yesterday_unrealized
 
-    # Net delta exposure: sum of delta * position * 100 for option positions.
-    # delta is stored as the model-Greek value (e.g. 0.25 for long call).
-    # Short positions have negative `position`, so the sign is automatic.
+    # Net delta exposure across the full portfolio:
+    #   Options: delta * contracts * 100 (position is contract count; negative = short)
+    #   Stocks:  1.0 * shares (each share = 1 delta; negative = short stock)
     net_delta = sum((p.delta or 0.0) * p.position * 100 for p in positions if p.sec_type == "OPT")
+    net_delta += sum(p.position for p in positions if p.sec_type == "STK")
 
     # Top movers: option positions sorted by abs(unrealized_pnl), take top 3.
     opt_positions = [p for p in positions if p.sec_type == "OPT" and p.unrealized_pnl is not None]
@@ -164,10 +184,15 @@ async def run() -> None:
         cfg.is_live,
     )
 
-    # 1. Connect to IBKR and fetch portfolio data.
-    with IBKRConnection("engine") as ib:
+    # 1. Connect to IBKR (async — we're already inside asyncio.run) and fetch portfolio data.
+    #    Enrich option positions with live greeks so net-delta exposure is real, not 0.
+    async with IBKRConnection("engine") as ib:
         positions = get_positions(ib)
         account = get_account_snapshot(ib, cfg.secrets.ibkr_account)
+        try:
+            await enrich_positions_with_greeks_async(ib, positions)
+        except Exception:
+            logger.exception("EOD: greeks enrichment failed — net delta may read 0")
     logger.info("Disconnected from IBKR")
 
     # 2. Compute realized P&L from DB fills (anchored to the ET trading day).

@@ -21,9 +21,9 @@ def technical_score(quote: OptionQuote, tech: TechnicalStats) -> float:
         score += 10.0 if quote.right == OptionRight.CALL else -5.0
     elif tech.regime == Regime.BEARISH:
         score += 10.0 if quote.right == OptionRight.PUT else -5.0
-    if tech.atr_14 is not None and tech.price > 0:
-        atr_pct = tech.atr_14 / tech.price
-        score += max(0.0, 10.0 * (0.02 - atr_pct) / 0.02)
+    # ATR contribution removed: penalising high-ATR stocks is backwards for an income
+    # strategy — high ATR means richer IV and better premium. ATR-based regime
+    # classification in buy_candidates.py already handles this correctly.
     return max(0.0, min(100.0, score))
 
 

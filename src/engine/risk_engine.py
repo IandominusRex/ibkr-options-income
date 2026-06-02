@@ -91,9 +91,7 @@ def validate_candidates(
 
     net_liq = account.net_liquidation
     # Account-level flags — computed once, applied to every candidate.
-    margin_usage_pct = (
-        account.maintenance_margin / net_liq * 100 if net_liq > 0 else 0.0
-    )
+    margin_usage_pct = account.maintenance_margin / net_liq * 100 if net_liq > 0 else 0.0
     margin_exceeded = margin_usage_pct > portfolio.get("max_margin_usage_pct", 50.0)
     required_bp = net_liq * portfolio.get("min_buying_power_buffer_pct", 15.0) / 100
 
@@ -113,6 +111,15 @@ def validate_candidates(
     for cand in candidates:
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
+
+        # Covered calls are written against shares the account ALREADY owns. Selling a
+        # call adds no new ticker/sector exposure (those shares are already counted in
+        # `positions`) and consumes no buying power — it generates premium. Charging CC
+        # collateral against the concentration limits and BP buffer double-counts the
+        # shares and falsely rejects calls on exactly the large holdings you most want to
+        # write against. Only strategies that create NEW exposure (CSPs, via assignment)
+        # consume these cumulative budgets.
+        adds_new_exposure = cand.strategy != Strategy.COVERED_CALL
 
         # --- Income quality gates ---
         if cand.roc_pct < income.get("min_roc_pct", 1.0):
@@ -134,10 +141,23 @@ def validate_candidates(
         if cand.strategy in _INCOME_STRATEGIES:
             if cand.delta is None:
                 reasons.append("delta_missing")
-            elif limits and not (
-                limits.get("delta_min", 0.0) <= abs(cand.delta) <= limits.get("delta_max", 1.0)
-            ):
-                reasons.append("delta_out_of_range")
+            else:
+                # Sign check: IBKR returns negative deltas for puts.
+                # A wrong-sign value (e.g. delta=+0.25 on a PUT) passes abs() checks
+                # but indicates a data error — reject rather than silently accept.
+                if cand.right == OptionRight.PUT and cand.delta > 0:
+                    reasons.append("delta_sign_mismatch")
+                elif cand.right == OptionRight.CALL and cand.delta < 0:
+                    reasons.append("delta_sign_mismatch")
+                elif limits and not (
+                    limits.get("delta_min", 0.0) <= abs(cand.delta) <= limits.get("delta_max", 1.0)
+                ):
+                    reasons.append("delta_out_of_range")
+
+        # --- Max contracts per position ---
+        max_contracts = limits.get("max_contracts") if limits else None
+        if max_contracts is not None and cand.contracts > max_contracts:
+            reasons.append("contracts_exceeds_max")
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings ---
         if cand.next_earnings is not None:
@@ -149,39 +169,43 @@ def validate_candidates(
         if cand.contracts < 1:
             reasons.append("no_contracts")
 
-        # --- Cumulative per-ticker concentration ---
-        proj_ticker = ticker_exposure.get(cand.underlying, 0.0) + cand.collateral
-        if proj_ticker > max_ticker_value:
-            reasons.append("concentration_limit")
-
-        # --- Cumulative per-sector concentration (only for mapped symbols) ---
+        # --- Cumulative per-ticker concentration (new-exposure strategies only) ---
         sector = _sector_of(cand.underlying)
+        proj_ticker = None
         proj_sector = None
-        if sector and max_sector_pct:
-            max_sector_value = net_liq * max_sector_pct / 100
-            proj_sector = sector_exposure.get(sector, 0.0) + cand.collateral
-            if proj_sector > max_sector_value:
-                reasons.append("sector_limit")
-
-        # --- Cumulative total-CSP collateral cap ---
         proj_csp = None
-        if cand.strategy == Strategy.CASH_SECURED_PUT and max_csp_pct:
-            max_csp_value = net_liq * max_csp_pct / 100
-            proj_csp = csp_collateral + cand.collateral
-            if proj_csp > max_csp_value:
-                reasons.append("csp_allocation_limit")
+        if adds_new_exposure:
+            proj_ticker = ticker_exposure.get(cand.underlying, 0.0) + cand.collateral
+            if proj_ticker > max_ticker_value:
+                reasons.append("concentration_limit")
 
-        # --- Account-level margin + cumulative buying-power buffer ---
+            # --- Cumulative per-sector concentration (only for mapped symbols) ---
+            if sector and max_sector_pct:
+                max_sector_value = net_liq * max_sector_pct / 100
+                proj_sector = sector_exposure.get(sector, 0.0) + cand.collateral
+                if proj_sector > max_sector_value:
+                    reasons.append("sector_limit")
+
+            # --- Cumulative total-CSP collateral cap ---
+            if cand.strategy == Strategy.CASH_SECURED_PUT and max_csp_pct:
+                max_csp_value = net_liq * max_csp_pct / 100
+                proj_csp = csp_collateral + cand.collateral
+                if proj_csp > max_csp_value:
+                    reasons.append("csp_allocation_limit")
+
+        # --- Account-level margin (applies to all) + cumulative BP buffer (new exposure only) ---
         if margin_exceeded:
             reasons.append("margin_limit")
-        if account.buying_power - bp_used - cand.collateral < required_bp:
+        if adds_new_exposure and account.buying_power - bp_used - cand.collateral < required_bp:
             reasons.append("buying_power_buffer")
 
         verdict = Verdict.PASS if not reasons else Verdict.REJECT
 
-        # Consume budget only for accepted candidates so later ones see reduced headroom.
-        if verdict == Verdict.PASS:
-            ticker_exposure[cand.underlying] = proj_ticker
+        # Consume budget only for accepted, new-exposure candidates so later ones see
+        # reduced headroom. Covered calls touch none of these tallies.
+        if verdict == Verdict.PASS and adds_new_exposure:
+            if proj_ticker is not None:
+                ticker_exposure[cand.underlying] = proj_ticker
             if sector and proj_sector is not None:
                 sector_exposure[sector] = proj_sector
             if proj_csp is not None:
@@ -206,8 +230,17 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
     """
     reasons: list[str] = []
 
-    if quote.mid is None or quote.mid <= 0:
+    # Require a real two-sided market: bid and ask both present, ask > 0.
+    # Checking quote.mid alone is unsafe — it falls back to quote.last, which can
+    # be a stale prior-session print that bears no relation to the current market.
+    if quote.ask is None or quote.ask <= 0:
         reasons.append("live_no_mid")
+    elif quote.bid is None:
+        reasons.append("live_no_mid")
+    elif quote.bid < 0:
+        # IBKR uses -1.0 as a sentinel for "no bid data". A negative bid would
+        # produce a wildly wrong mid-price (e.g. mid = (-1 + 2) / 2 = $0.50).
+        reasons.append("negative_bid_sentinel")
 
     if quote.delta is not None and candidate.strategy in _INCOME_STRATEGIES:
         limits = _strategy_limits(candidate.strategy)
