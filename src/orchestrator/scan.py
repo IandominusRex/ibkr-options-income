@@ -85,10 +85,13 @@ class _Tracker:
 
     def __init__(self, cb: _ProgressCB | None) -> None:
         self._cb = cb
+        self._failed = False
         # (icon, detail) — detail is already md2-escaped
         self._states: dict[str, tuple[str, str]] = {k: ("⬜", "") for k in _STAGE_ORDER}
 
-    def _render(self, header: str = "🔍 *Scan in progress\\.\\.\\.*") -> str:
+    def _render(self, header: str | None = None) -> str:
+        if header is None:
+            header = "🔍 *Scan failed*" if self._failed else "🔍 *Scan in progress\\.\\.\\.*"
         lines = [header, ""]
         for key in _STAGE_ORDER:
             icon, detail = self._states[key]
@@ -104,15 +107,24 @@ class _Tracker:
             except Exception:
                 log.debug("Progress callback failed", exc_info=True)
 
+    async def error(self, stage: str, detail: str = "") -> None:
+        """Mark stage as failed and update the header to 'Scan failed'."""
+        self._failed = True
+        self._states[stage] = ("❌", _md2(detail) if detail else "")
+        if self._cb is not None:
+            try:
+                await self._cb(self._render())
+            except Exception:
+                log.debug("Progress error callback failed", exc_info=True)
+
     async def complete(self, cc: int, csp: int, buy: int) -> None:
-        header = "🔍 *Scan complete*"
         self._states["notify"] = (
             "✅",
             _md2(f"{cc} CC · {csp} CSP · {buy} buy"),
         )
         if self._cb is not None:
             try:
-                await self._cb(self._render(header))
+                await self._cb(self._render("🔍 *Scan complete*"))
             except Exception:
                 log.debug("Progress complete callback failed", exc_info=True)
 
@@ -309,7 +321,7 @@ async def run_scan(
         positions: list[PositionSnapshot] = get_positions(ib)
     except Exception:
         log.exception("scan: failed to fetch account/positions — aborting")
-        await tracker.tick("account", "❌", "failed")
+        await tracker.error("account", "fetch failed — aborting")
         return result
     await tracker.tick("account", "✅")
 
@@ -406,24 +418,31 @@ async def run_scan(
     # per-sector / total-CSP / buying-power) greedily in priority order.
     await tracker.tick("scoring", "⏳")
     all_option_candidates = cc_candidates + csp_candidates
-    if all_option_candidates:
-        scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
-        verdicts = validate_candidates(scored, account, positions)
-        verdict_map = {v.candidate_id: v for v in verdicts}
-        passed = [
-            c
-            for c in scored
-            if verdict_map.get(c.candidate_id)
-            and verdict_map[c.candidate_id].verdict.value == "pass"
-        ]
-        log.info("scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates))
-        # Score floor: only surface candidates above the configured quality bar.
-        min_score = cfg.weights.get("min_candidate_score", 0)
-        passed = [c for c in passed if c.blended_score >= min_score]
-        top = select_top_candidates(passed)
-    else:
-        top = []
-        passed = []
+    try:
+        if all_option_candidates:
+            scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
+            verdicts = validate_candidates(scored, account, positions)
+            verdict_map = {v.candidate_id: v for v in verdicts}
+            passed = [
+                c
+                for c in scored
+                if verdict_map.get(c.candidate_id)
+                and verdict_map[c.candidate_id].verdict.value == "pass"
+            ]
+            log.info(
+                "scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates)
+            )
+            # Score floor: only surface candidates above the configured quality bar.
+            min_score = cfg.weights.get("min_candidate_score", 0)
+            passed = [c for c in passed if c.blended_score >= min_score]
+            top = select_top_candidates(passed)
+        else:
+            top = []
+            passed = []
+    except Exception:
+        log.exception("scan: scoring/risk-gate failed — aborting")
+        await tracker.error("scoring", "failed — aborting")
+        return result
 
     result.cc_candidates = [c for c in top if c.strategy.value == "covered_call"]
     result.csp_candidates = [c for c in top if c.strategy.value == "cash_secured_put"]
@@ -432,12 +451,17 @@ async def run_scan(
     # --- 7. Load prior Claude memory for history injection ---
     memory = _load_memory(all_symbols)
 
-    # --- 8. Claude review ---
+    # --- 8. Claude review (enrichment only — failure does not abort) ---
     await tracker.tick("claude", "⏳")
-    if top:
-        result.reviews = review_candidates(top, account, history=memory)
-    log.info("scan: %d Claude reviews", len(result.reviews))
-    await tracker.tick("claude", "✅", f"{len(result.reviews)} reviews")
+    try:
+        if top:
+            result.reviews = review_candidates(top, account, history=memory)
+        log.info("scan: %d Claude reviews", len(result.reviews))
+    except Exception:
+        log.exception("scan: Claude review failed — continuing without reviews")
+        await tracker.error("claude", "failed")
+    else:
+        await tracker.tick("claude", "✅", f"{len(result.reviews)} reviews")
 
     # --- 9. Persist ---
     _persist_candidates(top, result.reviews, result.run_id)
@@ -452,12 +476,13 @@ async def run_scan(
         await send_buy_list(result.buy_candidates, bot, chat_id)
     except Exception:
         log.exception("scan: failed to send Telegram messages")
-
-    await tracker.complete(
-        len(result.cc_candidates),
-        len(result.csp_candidates),
-        len(result.buy_candidates),
-    )
+        await tracker.error("notify", "send failed")
+    else:
+        await tracker.complete(
+            len(result.cc_candidates),
+            len(result.csp_candidates),
+            len(result.buy_candidates),
+        )
 
     log.info(
         "scan complete — run_id=%s CC=%d CSP=%d buy=%d reviews=%d",

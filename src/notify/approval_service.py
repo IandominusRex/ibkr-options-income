@@ -255,8 +255,6 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
     prog_msg_id = prog_msg.message_id
-    _cfg = get_config()
-    thread_id = int(_cfg.secrets.telegram_thread_id) if _cfg.secrets.telegram_thread_id else None
 
     async def _update_progress(text: str) -> None:
         try:
@@ -277,10 +275,10 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             logger.exception("Scan failed")
             try:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=chat_id,
-                    message_thread_id=thread_id,
-                    text="⚠️ Scan encountered an error — check logs\\.",
+                    message_id=prog_msg_id,
+                    text="🔍 *Scan failed*\n\n⚠️ Unexpected error — check logs\\.",
                     parse_mode="MarkdownV2",
                 )
             except Exception:

@@ -512,20 +512,56 @@ Open `http://localhost:8501` in your browser. The dashboard reads from the SQLit
 
 ---
 
-## 11. Going live
+## 11. Market data subscriptions
+
+The scan pipeline requires option Greeks (`delta`, `iv`, `modelGreeks`) to score and filter
+candidates. These come from IBKR's live market data feed — **delayed data (15-min) does not include
+Greeks**, so running the scan without a subscription will produce zero CC/CSP candidates even though
+the scan completes without errors.
+
+### Paper trading
+
+Your IBKR paper account **inherits subscriptions from a linked live account**. This means:
+
+- If you have a live IBKR account with US Options data subscriptions → paper trading works fully
+  with real Greeks.
+- If you have no live account or no subscription → option quotes return `delta=None` and all
+  CC/CSP candidates are filtered out. The scan runs, completes, and sends nothing.
+
+To check your current subscriptions: TWS → Account Management → Market Data Subscriptions.
+
+### Going live — required subscription
+
+Before going live, subscribe to the **US Equity and Options Add-On Streaming Bundle** via
+IBKR Account Management (search for "US Equity and Options"). This provides:
+
+- Real-time US stock + option streaming quotes via the API
+- `modelGreeks` (delta, gamma, theta, vega, IV) needed for candidate scoring
+
+The bundle costs ~$4.50/month and is **fully rebated** if you pay ≥$5 in commissions that month
+(which any single trade will exceed). Activate in TWS → Account Management → Market Data
+Subscriptions.
+
+> `config/settings.yaml → ibkr.market_data_type: 1` (live) is the correct setting for both paper
+> (with subscriptions) and live. Do not change it to `3` (delayed) — delayed data has no Greeks and
+> the scan will produce no candidates.
+
+## 12. Going live
 
 **Do not rush this step.** The system must have run successfully in paper mode for several weeks
-before switching to live.
+before switching to live, and you must have active market data subscriptions (see Step 11).
 
 When you are ready:
 
-1. Verify at least 10–20 successful paper trades have filled and confirmed back to Telegram.
-2. Open `.env` and change `LIVE_TRADING=false` to `LIVE_TRADING=true`.
-3. In `config/settings.yaml`, confirm `ibkr.live_port` matches the port your live TWS uses (default: 7496).
-4. Restart all processes (approval service, monitor, cron).
-5. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
+1. Confirm you have the US Equity and Options Add-On Streaming Bundle active on your live account
+   and that paper scans are producing real CC/CSP candidates with valid delta values.
+2. Verify at least 10–20 successful paper trades have filled and confirmed back to Telegram.
+3. Open `.env` and change `LIVE_TRADING=false` to `LIVE_TRADING=true`.
+4. In `config/settings.yaml`, confirm `ibkr.live_port` matches the port your live TWS uses (default: 7496).
+5. Restart all processes (approval service, monitor, cron).
+6. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
    which account it is connected to. Verify this before approving any trade.
-6. Start with a single small position to validate the full end-to-end flow.
+7. Start with a single small position to validate the full end-to-end flow.
 
 ---
 
@@ -539,5 +575,10 @@ When you are ready:
 | Messages arrive in wrong topic | `TELEGRAM_THREAD_ID` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic. |
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
 | Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
+| `/scan` progress message shows "Scan failed" with a ❌ stage | A critical stage (account fetch or scoring) threw an unexpected exception | Check the approval service logs for the full traceback; restart TWS/Gateway if the account stage fails |
+| IBKR errors 354 / 10091 flood the log during `/scan` and zero CC/CSP candidates are generated | No active US Options data subscription — delayed data has no Greeks, so every option is skipped at the delta filter | Subscribe to the **US Equity and Options Add-On Streaming Bundle** via TWS → Account Management → Market Data Subscriptions (see Step 11). Paper accounts inherit subscriptions from a linked live account. |
+| IBKR error 10197 "No market data during competing live session" | A live TWS session is open at the same time as the paper session | Close the live TWS window while running the paper bot, or ensure each session uses a distinct clientId and market data subscription. |
+| IBKR error 300 "Can't find EId with tickerId" floods the log | Benign cleanup: ib_async tries to cancel a market data subscription that already timed out | Safe to ignore — these fire after each option chain batch and do not affect scan results. |
+| "Unknown contract" warnings for half-dollar strikes (e.g. JPM 292.5) | IBKR doesn't list those non-standard strikes for that expiry | Normal — the strike grid for some underlyings uses $5 or $10 increments; half-dollar strikes are skipped automatically. |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
 | `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |
