@@ -19,7 +19,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Market data** (`src/ibkr/`) — connection manager with backoff + `AutoReconnect`, batched option
   chains within the line limit, live Greeks/IV, historical IV backfill, portfolio/account snapshots.
 - **Analytics** (`src/analytics/`) — IV rank/percentile (from `iv_history`), term structure & skew,
-  technicals + regime, fundamentals (yfinance), liquidity gates, optional Reddit sentiment.
+  technicals + regime, fundamentals (yfinance), liquidity gates, optional Reddit sentiment,
+  Black-Scholes delta fallback (`black_scholes.py`) for quotes missing IBKR model Greeks.
 - **Strategies** (`src/strategies/`) — covered call, cash-secured put (would-own allowlist), rolling,
   buy-to-own.
 - **Decision + safety** (`src/engine/`) — score normalization, weighted ranking, and the
@@ -45,7 +46,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Layer | Choice | Notes |
 |---|---|---|
 | Broker / data | **`ib_async`** | Maintained successor to `ib_insync`. Real-time + historical. Import as `from ib_async import ...` — never add the legacy `ib_insync`. |
-| Numerics | `pandas`, `numpy`, `scipy` | Scoring and stats. (No Black-Scholes module — see "Not built".) |
+| Numerics | `pandas`, `numpy`, `scipy` | Scoring and stats. Black-Scholes delta via `scipy.stats.norm` (`src/analytics/black_scholes.py`). |
 | Fundamentals | `yfinance` | FCF, debt, earnings/ex-div dates (supplemental only). |
 | Schemas | `pydantic` v2 | Typed contracts between modules (`src/common/schemas.py`). |
 | Storage | **SQLite + SQLAlchemy** | Postgres is a config change away; not migrated. |
@@ -71,7 +72,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 | Item | Status & reason |
 |---|---|
-| **Black-Scholes Greeks fallback** | Planned (`analytics/greeks.py`) but never built. The system trusts IBKR live `modelGreeks`; if they're absent, the affected quote degrades (candidate dropped / `entry_iv` left `None`). The `OptionQuote.greeks_source = "black_scholes"` branch is therefore currently unreachable. |
+| **Black-Scholes Greeks fallback** | **Built** (`src/analytics/black_scholes.py` + `_enrich_greeks_yf` in `market_data.py`). After each IBKR chain fetch, quotes with `delta=None` are enriched from yfinance IV via Black-Scholes. Enables paper-account scans without a live market-data subscription. Sets `greeks_source="black_scholes"` on enriched quotes. |
 | **Multi-leg / roll execution** | Rolls are **alert-only**. The order builder is single-leg SELL; the executor refuses `ROLL` candidates. Acting on a roll is manual. |
 | **Live limit-order repricing** | The executor places one mid-price limit and cancels on timeout — it does not chase an unfilled order. Adding an unverified `placeOrder` modification to the broker path was deferred until it can be validated on a live paper session. |
 | **`max_correlated_exposure_pct`** | Configured in `risk_limits.yaml` but **not enforced** — needs a price-correlation engine. The per-ticker and per-sector caps *are* enforced. |

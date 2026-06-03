@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.common.schemas import OptionRight
+from src.common.schemas import OptionQuote, OptionRight
 from src.ibkr.contracts import (
     build_option,
     build_stock,
@@ -25,6 +25,7 @@ from src.ibkr.contracts import (
 )
 from src.ibkr.market_data import (
     _batch_quotes,
+    _enrich_greeks_yf,
     _filter_expirations,
     _filter_strikes,
     _safe,
@@ -347,3 +348,138 @@ def test_qualify_options_empty_input():
     result = qualify_options(ib, [])
     assert result == []
     ib.qualifyContracts.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _enrich_greeks_yf: Black-Scholes fallback for delayed-data paper accounts
+# ---------------------------------------------------------------------------
+
+
+def _make_quote_no_greeks(
+    right: str = "C",
+    strike: float = 200.0,
+    expiry_offset: int = 34,
+) -> OptionQuote:
+    exp = date.today() + timedelta(days=expiry_offset)
+    return OptionQuote(
+        underlying="AAPL",
+        right=OptionRight.CALL if right == "C" else OptionRight.PUT,
+        strike=strike,
+        expiry=exp,
+        bid=1.80,
+        ask=2.20,
+        delta=None,
+        iv=None,
+        greeks_source="ibkr",
+    )
+
+
+class TestEnrichGreeksYf:
+    def _make_chain_df(self, strikes: list[float], iv: float):
+        import pandas as pd
+
+        return pd.DataFrame({"strike": strikes, "impliedVolatility": [iv] * len(strikes)})
+
+    def test_skips_when_all_deltas_present(self, monkeypatch):
+        quote = OptionQuote(
+            underlying="AAPL",
+            right=OptionRight.CALL,
+            strike=200.0,
+            expiry=date.today() + timedelta(days=30),
+            delta=0.30,
+            greeks_source="ibkr",
+        )
+        # yfinance must NOT be called
+        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: (_ for _ in ()).throw(AssertionError("yf called")))
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+        assert quote.greeks_source == "ibkr"
+
+    def test_fills_delta_and_sets_source(self, monkeypatch):
+        from types import SimpleNamespace
+
+        quote = _make_quote_no_greeks(right="C", strike=200.0, expiry_offset=34)
+        exp_str = quote.expiry.strftime("%Y-%m-%d")
+
+        chain = SimpleNamespace(
+            calls=self._make_chain_df([200.0], 0.30),
+            puts=self._make_chain_df([], 0.30),
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.options = [exp_str]
+        mock_ticker.option_chain.return_value = chain
+        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: mock_ticker)
+
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+
+        assert quote.delta is not None
+        assert 0.0 < quote.delta < 1.0
+        assert quote.greeks_source == "black_scholes"
+        assert quote.iv == pytest.approx(0.30, abs=1e-5)
+
+    def test_put_delta_is_negative(self, monkeypatch):
+        from types import SimpleNamespace
+
+        quote = _make_quote_no_greeks(right="P", strike=190.0, expiry_offset=34)
+        exp_str = quote.expiry.strftime("%Y-%m-%d")
+
+        chain = SimpleNamespace(
+            calls=self._make_chain_df([], 0.25),
+            puts=self._make_chain_df([190.0], 0.25),
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.options = [exp_str]
+        mock_ticker.option_chain.return_value = chain
+        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: mock_ticker)
+
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+
+        assert quote.delta is not None
+        assert quote.delta < 0.0
+
+    def test_skips_expiry_not_in_yfinance(self, monkeypatch):
+        quote = _make_quote_no_greeks(expiry_offset=34)
+        mock_ticker = MagicMock()
+        mock_ticker.options = []  # no matching expiry
+        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: mock_ticker)
+
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+
+        assert quote.delta is None
+        assert quote.greeks_source == "ibkr"
+
+    def test_does_not_overwrite_existing_iv(self, monkeypatch):
+        from types import SimpleNamespace
+
+        exp = date.today() + timedelta(days=34)
+        quote = OptionQuote(
+            underlying="AAPL",
+            right=OptionRight.CALL,
+            strike=200.0,
+            expiry=exp,
+            iv=0.99,  # existing IV — must not be overwritten
+            delta=None,
+            greeks_source="ibkr",
+        )
+        exp_str = exp.strftime("%Y-%m-%d")
+        chain = SimpleNamespace(
+            calls=self._make_chain_df([200.0], 0.30),
+            puts=self._make_chain_df([], 0.30),
+        )
+        mock_ticker = MagicMock()
+        mock_ticker.options = [exp_str]
+        mock_ticker.option_chain.return_value = chain
+        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: mock_ticker)
+
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+
+        assert quote.iv == pytest.approx(0.99, abs=1e-5)
+
+    def test_swallows_yfinance_exception(self, monkeypatch):
+        quote = _make_quote_no_greeks()
+        monkeypatch.setattr(
+            "src.ibkr.market_data.yf.Ticker",
+            lambda _: (_ for _ in ()).throw(RuntimeError("network error")),
+        )
+        # Must not raise
+        _enrich_greeks_yf("AAPL", 195.0, [quote])
+        assert quote.delta is None

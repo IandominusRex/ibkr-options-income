@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import date
 from typing import Any
 
+import yfinance as yf
 from ib_async import IB, Option
 
+from src.analytics.black_scholes import bs_delta
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import OptionQuote, OptionRight
@@ -31,6 +34,78 @@ from src.storage.db import session_scope
 from src.storage.models import OptionQuoteRow
 
 log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Black-Scholes fallback — fills delta when IBKR returns no modelGreeks.
+# ---------------------------------------------------------------------------
+
+
+def _enrich_greeks_yf(symbol: str, spot: float, quotes: list[OptionQuote]) -> None:
+    """Back-fill delta (and IV) on quotes where IBKR returned no modelGreeks.
+
+    Uses yfinance option chain implied-volatility + Black-Scholes delta.
+    Mutates quotes in-place; sets greeks_source="black_scholes" on each enriched quote.
+    Never raises — logs a warning on total failure and returns silently on partial failure.
+    This is needed on paper accounts without a market-data subscription: delayed data
+    (errors 354/10091) produces no modelGreeks, causing delta=None and zero candidates.
+    """
+    missing = [q for q in quotes if q.delta is None]
+    if not missing:
+        return
+
+    try:
+        ticker = yf.Ticker(symbol)
+        available: set[str] = set(ticker.options)
+
+        by_expiry: dict[date, list[OptionQuote]] = defaultdict(list)
+        for q in missing:
+            by_expiry[q.expiry].append(q)
+
+        enriched = 0
+        for exp_date, exp_quotes in by_expiry.items():
+            exp_str = exp_date.strftime("%Y-%m-%d")
+            if exp_str not in available:
+                log.debug("greeks_fallback: %s expiry %s not in yfinance chain", symbol, exp_str)
+                continue
+
+            chain = ticker.option_chain(exp_str)
+            iv_map: dict[tuple[str, float], float] = {}
+            for row in chain.calls.itertuples(index=False):
+                iv_map[("C", float(row.strike))] = float(row.impliedVolatility)
+            for row in chain.puts.itertuples(index=False):
+                iv_map[("P", float(row.strike))] = float(row.impliedVolatility)
+
+            for q in exp_quotes:
+                right_key = "C" if q.right == OptionRight.CALL else "P"
+                iv = iv_map.get((right_key, q.strike))
+                if iv is None or iv <= 0 or math.isnan(iv):
+                    continue
+                delta = bs_delta(spot, q.strike, q.dte, iv, right_key)
+                if delta is None:
+                    continue
+                q.delta = round(delta, 4)
+                if q.iv is None:
+                    q.iv = round(iv, 6)
+                q.greeks_source = "black_scholes"
+                enriched += 1
+
+        if enriched:
+            log.info(
+                "greeks_fallback: enriched %d/%d quotes for %s via Black-Scholes",
+                enriched,
+                len(missing),
+                symbol,
+            )
+        else:
+            log.warning(
+                "greeks_fallback: %d quotes for %s have no delta after yfinance fallback"
+                " — candidates will be empty (check market-data subscription or IV=0 entries)",
+                len(missing),
+                symbol,
+            )
+    except Exception:
+        log.exception("greeks_fallback: yfinance lookup failed for %s — skipping BS enrichment", symbol)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +376,7 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
         return []
 
     quotes = _batch_quotes(ib, qualified, md.chain_batch_size, md.request_throttle_seconds)
+    _enrich_greeks_yf(symbol, spot, quotes)
     log.info("get_option_chain_quotes: %d quotes for %s", len(quotes), symbol)
     return quotes
 
@@ -350,6 +426,9 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     quotes = await _batch_quotes_async(
         ib, qualified, md.chain_batch_size, md.request_throttle_seconds
     )
+    # yfinance is blocking — run off the event loop so it doesn't stall ib_async.
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _enrich_greeks_yf, symbol, spot, quotes)
     log.info("get_option_chain_quotes_async: %d quotes for %s", len(quotes), symbol)
     return quotes
 

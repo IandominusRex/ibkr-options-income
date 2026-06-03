@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.analytics.black_scholes import bs_delta
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
@@ -415,3 +416,50 @@ class TestLiquidity:
         good = _quote(spread_pct=5.0, open_interest=500, volume=50)
         bad = _quote(spread_pct=5.0, open_interest=None, volume=50)
         assert score_liquidity(good) > score_liquidity(bad)
+
+
+# --------------------------------------------------------------------------- #
+# black_scholes.py — bs_delta tests
+# --------------------------------------------------------------------------- #
+
+
+class TestBsDelta:
+    def test_atm_call_near_half(self):
+        # ATM call (spot == strike) should have delta close to 0.5
+        d = bs_delta(spot=100.0, strike=100.0, dte=30, iv=0.30, right="C")
+        assert d is not None
+        assert 0.45 <= d <= 0.60
+
+    def test_atm_put_near_neg_half(self):
+        d = bs_delta(spot=100.0, strike=100.0, dte=30, iv=0.30, right="P")
+        assert d is not None
+        assert -0.60 <= d <= -0.40
+
+    def test_deep_itm_call_near_one(self):
+        d = bs_delta(spot=150.0, strike=100.0, dte=30, iv=0.30, right="C")
+        assert d is not None
+        assert d > 0.90
+
+    def test_deep_otm_put_near_zero(self):
+        d = bs_delta(spot=150.0, strike=100.0, dte=30, iv=0.30, right="P")
+        assert d is not None
+        assert -0.10 <= d <= 0.0
+
+    def test_call_put_delta_sum_is_one(self):
+        # For European options: call_delta - put_delta = 1 (put-call parity on delta)
+        c = bs_delta(spot=100.0, strike=105.0, dte=45, iv=0.25, right="C")
+        p = bs_delta(spot=100.0, strike=105.0, dte=45, iv=0.25, right="P")
+        assert c is not None and p is not None
+        assert abs((c - p) - 1.0) < 1e-6
+
+    def test_degenerate_zero_spot_returns_none(self):
+        assert bs_delta(spot=0.0, strike=100.0, dte=30, iv=0.30, right="C") is None
+
+    def test_degenerate_zero_dte_returns_none(self):
+        assert bs_delta(spot=100.0, strike=100.0, dte=0, iv=0.30, right="C") is None
+
+    def test_degenerate_zero_iv_returns_none(self):
+        assert bs_delta(spot=100.0, strike=100.0, dte=30, iv=0.0, right="C") is None
+
+    def test_degenerate_negative_strike_returns_none(self):
+        assert bs_delta(spot=100.0, strike=-1.0, dte=30, iv=0.30, right="C") is None

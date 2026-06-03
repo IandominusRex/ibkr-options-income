@@ -92,6 +92,7 @@ Computes signals that determine whether a trade is worth taking.
 | `fundamentals.py` | Free cash flow, debt levels, dividend safety, earnings quality, and next earnings date (via yfinance) |
 | `liquidity.py` | Bid/ask spread quality, open interest, and volume — filters out options that are too thinly traded to sell |
 | `sentiment.py` | Reddit/social-media sentiment scorer; returns a neutral score (50) when Reddit API credentials are absent in `.env`; integrated into the scan pipeline with a 5% weight in `scoring_weights.yaml`. |
+| `black_scholes.py` | Black-Scholes delta computation (`bs_delta`). Pure math — no IBKR connection. Used as a fallback by `src/ibkr/market_data.py` when IBKR returns no `modelGreeks` (delayed-data paper accounts). |
 
 ---
 
