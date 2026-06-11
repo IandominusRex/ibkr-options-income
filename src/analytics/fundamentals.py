@@ -10,14 +10,20 @@ from datetime import date, datetime
 
 import yfinance as yf
 
+from src.common.cache import daily_cached
 from src.common.schemas import FundamentalStats
 
 _PAYOUT_RATIO_SAFE = 0.60
 _MAX_DEBT_TO_EQUITY = 150.0
 
 
+@daily_cached
 def get_fundamental_stats(symbol: str) -> FundamentalStats:
-    """Return FundamentalStats for *symbol*. Never raises — always returns a valid object."""
+    """Return FundamentalStats for *symbol*. Never raises — always returns a valid object.
+
+    Cached per calendar day (fundamentals/earnings change at most daily), so the 15-min
+    intraday loop doesn't re-hit yfinance for the whole universe every cycle.
+    """
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info or {}

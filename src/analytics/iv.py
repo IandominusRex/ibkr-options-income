@@ -13,6 +13,7 @@ import math
 import yfinance as yf
 from sqlalchemy import select
 
+from src.common.cache import daily_cached
 from src.common.schemas import IVStats, OptionQuote, OptionRight
 from src.storage.db import session_scope
 from src.storage.models import IVHistoryRow
@@ -56,12 +57,16 @@ def get_iv_stats(symbol: str, quotes: list[OptionQuote] | None = None) -> IVStat
     hv_30 = _compute_hv30(symbol)
     term_slope, skew = _chain_stats(symbol, quotes) if quotes else (None, None)
 
+    current_iv_pct = round(current_iv * 100, 4)
+    vrp = round(current_iv_pct - hv_30, 4) if hv_30 is not None else None
+
     return IVStats(
         symbol=symbol,
-        current_iv=round(current_iv * 100, 4),  # store as percentage
+        current_iv=current_iv_pct,
         iv_rank=iv_rank,
         iv_percentile=iv_percentile,
         hv_30=hv_30,
+        vrp=vrp,
         term_structure_slope=term_slope,
         put_call_skew=skew,
     )
@@ -91,8 +96,13 @@ def _load_iv_history(symbol: str) -> list[float]:
         return []
 
 
+@daily_cached
 def _compute_hv30(symbol: str) -> float | None:
-    """30-day historical volatility (annualised %) from yfinance closes."""
+    """30-day historical volatility (annualised %) from yfinance closes.
+
+    Cached per calendar day — HV30 only moves on a new daily close, so the intraday
+    loop reuses the day's value instead of re-pulling 3 months of history each cycle.
+    """
     try:
         df = yf.Ticker(symbol).history(period="3mo")
         if df.empty or len(df) < 31:

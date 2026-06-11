@@ -63,6 +63,8 @@ class SchedulerCfg(BaseModel):
     morning_scan: str = "09:45"
     eod_report: str = "16:15"
     intraday_poll_seconds: int = 60
+    intraday_loop_minutes: int = 15  # how often the intraday scan+profit-take loop fires
+    profit_take_pct: float = 50.0   # close a short position once this % of premium is captured
 
 
 class MarketDataCfg(BaseModel):

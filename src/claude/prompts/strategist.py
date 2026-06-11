@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.common.schemas import AccountSnapshot, TradeCandidate
+from src.common.schemas import AccountSnapshot, MarketConditions, TradeCandidate
 
 if TYPE_CHECKING:
     from src.storage.models import ClaudeMemoryRow
@@ -77,19 +77,38 @@ def _format_history(memory: list[ClaudeMemoryRow]) -> list[str]:
     return lines
 
 
+def _vix_context(vix: float | None) -> str:
+    """One-line macro-vol regime hint derived from the VIX level."""
+    if vix is None:
+        return "VIX: unavailable"
+    if vix < 15:
+        regime = "calm — premiums thin; be selective, favour higher IV-rank names"
+    elif vix < 20:
+        regime = "normal"
+    elif vix < 30:
+        regime = "elevated — richer premium but wider moves; mind assignment risk"
+    else:
+        regime = "stressed — premium is rich but tail risk is high; size down"
+    return f"VIX: {vix:.1f} ({regime})"
+
+
 def build_prompt(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
     history: list[ClaudeMemoryRow] | None = None,
+    market_conditions: MarketConditions | None = None,
 ) -> str:
     """Build the full prompt string sent to claude -p.
 
     Returns an empty string if there are no candidates (caller skips subprocess).
     history: optional list of ClaudeMemoryRow from prior scans for learning injection.
+    market_conditions: optional macro snapshot (VIX) so the reasoning layer can weigh the
+        vol regime. Enrichment only — it never changes the deterministic gates.
     """
     if not candidates:
         return ""
 
+    vix = market_conditions.vix if market_conditions else None
     lines: list[str] = [
         "You are a disciplined options income strategist reviewing proposed covered call (CC) "
         "and cash-secured put (CSP) trades for an Interactive Brokers account.",
@@ -100,6 +119,9 @@ def build_prompt(
         "You cannot place, size, or block orders.",
         "",
         _UNIVERSE_CONTEXT,
+        "",
+        "=== MARKET CONTEXT ===",
+        _vix_context(vix),
         "",
         "=== PORTFOLIO SUMMARY ===",
         f"Net Liquidation: ${account.net_liquidation:,.0f}",
@@ -128,6 +150,8 @@ def build_prompt(
             lines.append(f"Delta:            {c.delta:.3f}")
         if c.iv_rank is not None:
             lines.append(f"IV Rank:          {c.iv_rank:.1f}/100")
+        if c.vrp is not None:
+            lines.append(f"VRP (IV−HV30):    {c.vrp:+.1f}%  (positive = options rich vs realised)")
         if c.prob_profit is not None:
             lines.append(f"Prob. Profit:     {c.prob_profit:.1%}")
         lines.append(f"Blended Score:    {c.blended_score:.1f}/100")

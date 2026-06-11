@@ -26,6 +26,7 @@ from ib_async import IB
 
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
+from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import get_technical_stats
 from src.claude.runner import review_candidates
@@ -36,7 +37,9 @@ from src.common.schemas import (
     ClaudeReview,
     FundamentalStats,
     IVStats,
+    MarketConditions,
     OptionQuote,
+    OptionRight,
     PositionSnapshot,
     TechnicalStats,
     TradeCandidate,
@@ -117,10 +120,11 @@ class _Tracker:
             except Exception:
                 log.debug("Progress error callback failed", exc_info=True)
 
-    async def complete(self, cc: int, csp: int, buy: int) -> None:
+    async def complete(self, cc: int, csp: int, buy: int, vix: float | None = None) -> None:
+        vix_str = f" · VIX {vix:.1f}" if vix is not None else ""
         self._states["notify"] = (
             "✅",
-            _md2(f"{cc} CC · {csp} CSP · {buy} buy"),
+            _md2(f"{cc} CC · {csp} CSP · {buy} buy{vix_str}"),
         )
         if self._cb is not None:
             try:
@@ -135,6 +139,7 @@ class ScanResult:
     csp_candidates: list[TradeCandidate] = field(default_factory=list)
     buy_candidates: list[BuyCandidate] = field(default_factory=list)
     reviews: list[ClaudeReview] = field(default_factory=list)
+    market_conditions: MarketConditions = field(default_factory=MarketConditions)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
 
@@ -312,6 +317,15 @@ async def run_scan(
     result = ScanResult()
     tracker = _Tracker(progress_callback)
 
+    # --- 0. Market conditions (VIX) — fetched once, off-thread ---
+    loop = asyncio.get_running_loop()
+    try:
+        result.market_conditions = await loop.run_in_executor(None, get_market_conditions)
+        if result.market_conditions.vix is not None:
+            log.info("scan: VIX=%.2f", result.market_conditions.vix)
+    except Exception:
+        log.warning("scan: failed to fetch market conditions")
+
     # --- 1. Account + positions ---
     await tracker.tick("account", "⏳")
     try:
@@ -356,8 +370,6 @@ async def run_scan(
         log.info("scan: processing %s", symbol)
         await tracker.tick("market_data", "⏳", f"{i + 1}/{n} — {symbol}")
 
-        loop = asyncio.get_running_loop()
-
         # Option chain — IB calls run on the loop thread (async), NOT in a worker thread.
         # Chain fetches stay sequential per symbol to respect the ~100 market-data line cap.
         try:
@@ -391,8 +403,24 @@ async def run_scan(
             None,
         )
         if stock_pos and quotes:
+            # Calls already written against this underlying — netted out of CC sizing so
+            # a re-scan never proposes calls on top of already-covered shares.
+            existing_short_calls = sum(
+                int(abs(p.position))
+                for p in positions
+                if (p.underlying or p.symbol) == symbol
+                and p.sec_type == "OPT"
+                and p.right == OptionRight.CALL
+                and p.position < 0
+            )
             new_cc = generate_cc_candidates(
-                symbol, quotes, stock_pos, iv_stats, tech_stats, fund_stats
+                symbol,
+                quotes,
+                stock_pos,
+                iv_stats,
+                tech_stats,
+                fund_stats,
+                existing_short_calls=existing_short_calls,
             )
             # Inject sentiment score into ScoreCard
             for c in new_cc:
@@ -455,7 +483,9 @@ async def run_scan(
     await tracker.tick("claude", "⏳")
     try:
         if top:
-            result.reviews = review_candidates(top, account, history=memory)
+            result.reviews = review_candidates(
+                top, account, history=memory, market_conditions=result.market_conditions
+            )
         log.info("scan: %d Claude reviews", len(result.reviews))
     except Exception:
         log.exception("scan: Claude review failed — continuing without reviews")
@@ -482,6 +512,7 @@ async def run_scan(
             len(result.cc_candidates),
             len(result.csp_candidates),
             len(result.buy_candidates),
+            vix=result.market_conditions.vix,
         )
 
     log.info(

@@ -10,14 +10,23 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.common.config import get_config
-from src.common.schemas import ApprovalStatus, BuyCandidate, ClaudeReview, TradeCandidate
-from src.notify.formatters import format_candidate
+from src.common.schemas import (
+    ApprovalStatus,
+    BuyCandidate,
+    ClaudeReview,
+    OrderState,
+    TradeCandidate,
+)
+from src.notify.formatters import format_auto_trade_notification, format_candidate
 from src.storage.db import session_scope
-from src.storage.models import ApprovalRow
+from src.storage.models import ApprovalRow, OrderRow
+from src.storage.orders import has_active_order
+from src.storage.system_settings import is_automated_mode
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +38,14 @@ async def send_candidates(
 ) -> None:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
-    Safe to call with an empty list — no API calls are made.
-    If Telegram credentials are missing, logs a warning and returns early.
+    In AUTOMATED mode: skips approval buttons, directly creates APPROVED ApprovalRows
+    and QUEUED OrderRows, then sends a single summary notification. The existing
+    _order_poll_loop picks up the QUEUED orders and executes them normally (including
+    the second live-quote re-validation gate).
 
-    When `session` is None (the production path), the function manages its own short
-    DB transactions so a write transaction is never held open across the Telegram network
-    sends. When a session is supplied (tests), it is used directly.
+    In MANUAL mode (default): sends one Approve/Reject message per candidate.
+
+    Safe to call with an empty list — no API calls are made.
     """
     if not candidates:
         return
@@ -49,6 +60,10 @@ async def send_candidates(
 
     thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
 
+    if is_automated_mode():
+        await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
+        return
+
     if session is not None:
         await _send_with_session(session, candidates, reviews, cfg, token, str(chat_id), thread_id)
         return
@@ -57,6 +72,77 @@ async def send_candidates(
         await _send_with_session(
             own_session, candidates, reviews, cfg, token, str(chat_id), thread_id
         )
+
+
+async def _auto_queue_candidates(
+    candidates: list[TradeCandidate],
+    cfg: object,
+    token: str,
+    chat_id: str,
+    thread_id: int | None,
+) -> None:
+    """Automated mode: persist APPROVED approvals + QUEUED orders, send summary notification."""
+    ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
+    queued: list[TradeCandidate] = []
+
+    with session_scope() as s:
+        for candidate in candidates:
+            # Idempotency: the deterministic candidate_id means the 15-min loop
+            # regenerates this exact candidate every cycle. Skip if an order is
+            # already working or filled for it — otherwise we stack duplicate
+            # positions (naked calls for CCs, which bypass the exposure gates).
+            if has_active_order(s, candidate.candidate_id):
+                logger.info(
+                    "Auto-queue skip — active order already exists for %s",
+                    candidate.candidate_id,
+                )
+                continue
+            expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
+            # Per-candidate SAVEPOINT so a race (the partial unique index firing because a
+            # concurrent writer queued the same candidate) rolls back only this candidate,
+            # not the whole batch.
+            try:
+                with s.begin_nested():
+                    approval = ApprovalRow(
+                        candidate_id=candidate.candidate_id,
+                        status=ApprovalStatus.APPROVED,
+                        chat_id=chat_id,
+                        decided_at=datetime.now(UTC),
+                        expires_at=expires_at,
+                    )
+                    s.add(approval)
+                    s.flush()
+                    order = OrderRow(
+                        candidate_id=candidate.candidate_id,
+                        approval_id=approval.id,
+                        state=OrderState.QUEUED,
+                    )
+                    s.add(order)
+            except IntegrityError:
+                logger.info(
+                    "Auto-queue race — active order appeared for %s; skipping",
+                    candidate.candidate_id,
+                )
+                continue
+            queued.append(candidate)
+            logger.info(
+                "Auto-queued candidate %s (approval_id=%s)", candidate.candidate_id, approval.id
+            )
+
+    if not queued:
+        return
+
+    text = format_auto_trade_notification(queued)
+    try:
+        async with Bot(token=token) as bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
+    except Exception:
+        logger.exception("Failed to send auto-queue notification")
 
 
 async def _send_with_session(

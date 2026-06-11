@@ -30,15 +30,24 @@ def generate_cc_candidates(
     iv_stats: IVStats,
     tech_stats: TechnicalStats,
     fund_stats: FundamentalStats,
+    existing_short_calls: int = 0,
 ) -> list[TradeCandidate]:
     """Return ranked CC candidates for *symbol* given the existing long stock *position*.
 
-    Returns [] when position is short/zero, contracts < 1, or no quotes pass filters.
+    *existing_short_calls* is the number of call contracts already written against this
+    underlying (sum of |position| over short OPT/CALL legs). Sizing nets these out so we
+    only ever propose calls covered by *uncovered* shares — without this, a re-scan (and
+    especially the 15-min automated loop) would regenerate the full-share-count CC every
+    cycle and stack writes on top of already-written calls, ending in naked short calls.
+
+    Returns [] when position is short/zero, all shares are already covered, or no quotes
+    pass filters.
     """
     if position.position <= 0:
         return []
 
-    contracts = math.floor(abs(position.position) / 100)
+    owned_contracts = math.floor(abs(position.position) / 100)
+    contracts = owned_contracts - max(0, existing_short_calls)
     if contracts < 1:
         return []
 
@@ -114,6 +123,7 @@ def generate_cc_candidates(
                 prob_profit=round(1 - delta, 4),
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
+                vrp=iv_stats.vrp,
                 dte=dte,
                 next_earnings=fund_stats.next_earnings,
                 scores=scores,

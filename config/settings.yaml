@@ -31,6 +31,10 @@ scheduler:
   morning_scan: "09:45"   # after the open settles
   eod_report: "16:15"     # after the close
   intraday_poll_seconds: 60
+  # How often the intraday loop runs a fresh scan + profit-take check during RTH.
+  intraday_loop_minutes: 15
+  # Close a short option position when this fraction of max profit has been captured.
+  profit_take_pct: 50
 
 market_data:
   # Stay under the retail concurrent-line limit (~100). Chains are requested in

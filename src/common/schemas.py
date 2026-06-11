@@ -140,8 +140,16 @@ class IVStats(BaseModel):
     iv_rank: float | None = None  # 0-100, where current sits in 52w range
     iv_percentile: float | None = None  # 0-100, % of days below current
     hv_30: float | None = None
+    vrp: float | None = None  # Volatility Risk Premium = current_iv% − hv_30% (positive → options rich)
     term_structure_slope: float | None = None  # near vs far IV
     put_call_skew: float | None = None
+
+
+class MarketConditions(BaseModel):
+    """Market-level signals fetched once per scan (not per-symbol)."""
+
+    vix: float | None = None
+    captured_at: datetime = Field(default_factory=_utcnow)
 
 
 class TechnicalStats(BaseModel):
@@ -208,6 +216,7 @@ class TradeCandidate(BaseModel):
     prob_profit: float | None = None
     delta: float | None = None
     iv_rank: float | None = None
+    vrp: float | None = None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
     dte: int
     next_earnings: date | None = (
         None  # earnings date within the option's life → blackout (risk engine)

@@ -232,6 +232,30 @@ def test_build_prompt_multiple_candidates():
     prompt = build_prompt([c1, c2], account)
     assert "id-001" in prompt
     assert "id-002" in prompt
+
+
+def test_build_prompt_includes_vix_regime():
+    from src.common.schemas import MarketConditions
+
+    account = _make_account()
+    prompt = build_prompt(
+        [_make_candidate()], account, market_conditions=MarketConditions(vix=25.0)
+    )
+    assert "VIX: 25.0" in prompt
+    assert "elevated" in prompt
+
+
+def test_build_prompt_vix_unavailable_when_none():
+    account = _make_account()
+    prompt = build_prompt([_make_candidate()], account)  # no market_conditions
+    assert "VIX: unavailable" in prompt
+
+
+def test_build_prompt_includes_vrp_line():
+    account = _make_account()
+    cand = _make_candidate().model_copy(update={"vrp": 4.2})
+    prompt = build_prompt([cand], account)
+    assert "VRP" in prompt and "+4.2%" in prompt
     assert "AAPL" in prompt
     assert "MSFT" in prompt
 

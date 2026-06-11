@@ -32,6 +32,18 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     },
 }
 
+# Partial/conditional indexes that SQLAlchemy's model metadata can't express portably.
+# Applied idempotently on init. Supported by both SQLite and Postgres.
+_PARTIAL_INDEXES: list[str] = [
+    # At most one *working* order per candidate. This is the hard DB-level backstop for
+    # the application guard in storage.orders.has_active_order: it closes the race where
+    # two concurrent callbacks for two different approvals of the same candidate both
+    # create a QUEUED order. FILLED/PARTIAL are intentionally excluded so a strike/expiry
+    # can be legitimately re-sold after a buy-to-close.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_active_candidate "
+    "ON orders (candidate_id) WHERE state IN ('queued', 'submitted')",
+]
+
 
 def _init() -> None:
     global _engine, _SessionLocal
@@ -88,12 +100,29 @@ def _ensure_added_columns(engine: Engine) -> None:
                         raise
 
 
+def _ensure_indexes(engine: Engine) -> None:
+    """Create partial/conditional indexes not expressible in the model metadata.
+
+    Each runs in its own transaction with IF NOT EXISTS so repeated startups and
+    concurrent processes are harmless.
+    """
+    for ddl in _PARTIAL_INDEXES:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+        except Exception as exc:
+            if "already exists" in str(exc).lower():
+                continue
+            raise
+
+
 def init_db() -> None:
     """Create all tables, then patch in any newly-added columns. Safe to call repeatedly."""
     _init()
     assert _engine is not None
     Base.metadata.create_all(_engine)
     _ensure_added_columns(_engine)
+    _ensure_indexes(_engine)
 
 
 @contextmanager

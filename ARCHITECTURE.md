@@ -87,7 +87,8 @@ Computes signals that determine whether a trade is worth taking.
 
 | File | What it calculates |
 |---|---|
-| `iv.py` | **IV Rank** (how high is current implied volatility vs. the past year?) and **IV Percentile**; also term structure slope and put/call skew |
+| `iv.py` | **IV Rank** (how high is current implied volatility vs. the past year?), **IV Percentile**, term structure slope, put/call skew, and **VRP** (Volatility Risk Premium = current IV% − HV30%; positive means options are pricing in more vol than realized, which is the premium seller's edge) |
+| `market_conditions.py` | Fetches market-level signals once per scan (not per symbol). Currently provides **VIX** via yfinance `^VIX`. Returned as a `MarketConditions` schema and attached to `ScanResult`. VIX is shown in the scan completion message. |
 | `technicals.py` | RSI, MACD, moving averages, ATR (volatility), support/resistance levels, and a market regime classifier (trending up/down/sideways) |
 | `fundamentals.py` | Free cash flow, debt levels, dividend safety, earnings quality, and next earnings date (via yfinance) |
 | `liquidity.py` | Bid/ask spread quality, open interest, and volume — filters out options that are too thinly traded to sell |
@@ -128,10 +129,10 @@ Invokes Claude to add plain-English reasoning to the top candidates.
 
 | File | What it does |
 |---|---|
-| `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response |
+| `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response. `review_candidates` also forwards the scan's `MarketConditions` (VIX) so the prompt carries the macro-vol regime — enrichment only, never a deterministic gate. |
 | `parser.py` | Validates and parses Claude's JSON response into a structured `ClaudeReview` object. On any failure, returns an empty result — the pipeline always continues. |
 | `memory.py` | The learning-loop outcome recorder. Back-fills each `claude_memory` row with what actually happened — `filled` (executor), `user_rejected` (Telegram reject), `risk_rejected` (re-validation), `expired` (TTL) — so later scans inject real outcomes (not just rejections) into the strategist prompt. |
-| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe, so the headless Claude subprocess knows the research context), `roll.py` (roll alerts), `eod.py` (EOD journal) |
+| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe; also renders a VIX regime line and each candidate's VRP so the reasoning layer can weigh whether premium is cheap or rich), `roll.py` (roll alerts), `eod.py` (EOD journal) |
 
 **Important:** Claude is enrichment only. If it is unavailable or returns bad output, the system
 sends the Rules-Engine-approved list to Telegram without Claude commentary. Claude never places,
@@ -156,14 +157,15 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | File | What it does |
 |---|---|
 | `sender.py` | One-shot message sender: sends text and formatted messages to your Telegram (used by morning scan and EOD report) |
-| `approval_service.py` | The long-running daemon: runs the Telegram polling loop, handles Approve/Reject callbacks, drives order execution, and serves all interactive query commands (see table below) |
-| `formatters.py` | Converts all data types into MarkdownV2 messages with emoji visual hierarchy. Covers: trade candidates, positions, account, health, status, startup, EOD report, fill confirmations (`format_fill_confirm`), live-order confirmation requests (`format_live_confirm_request`), roll alerts (`format_roll_alert`), pending approvals list (`format_pending_approvals`), fills history (`format_fills_history`) |
+| `approval_service.py` | The long-running daemon: runs the Telegram polling loop, handles Approve/Reject callbacks, drives order execution, serves all interactive commands, and runs the 15-minute intraday scan + profit-take loop during RTH |
+| `formatters.py` | Converts all data types into MarkdownV2 messages. Covers: trade candidates (with VRP displayed), positions, account, health, status, startup, EOD report, fill confirmations (`format_fill_confirm`), live-order confirmation requests (`format_live_confirm_request`), roll alerts (`format_roll_alert`), pending approvals list (`format_pending_approvals`), fills history (`format_fills_history`), trading mode status (`format_mode_status`), auto-trade summary (`format_auto_trade_notification`), profit alerts (`format_profit_alert`), auto-close results (`format_auto_close_result`) |
 
 **Telegram commands served by `approval_service.py`:**
 
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) |
+| `/mode` | Show current trading mode (👤 MANUAL / 🤖 AUTOMATED) and toggle. Confirmation prompt appears before enabling AUTOMATED. Mode persists across restarts in SQLite. |
 | `/status` | Compact overview: account + active short options + pending approvals |
 | `/positions` | Show live portfolio positions (stocks + options) with P&L |
 | `/account` | Show account balances: net liquidation, buying power, margin, excess liquidity |
@@ -172,7 +174,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | `/expire` | Expire all pending approvals (clears the queue without acting on them) |
 | `/health` | System health check: IBKR connection status, DB, last scan time, open orders |
 | `/help` | List all available commands |
-| `✅ Approve` / `❌ Reject` inline buttons | Tap to approve or reject each trade candidate; approval enqueues the order for execution |
+| `✅ Approve` / `❌ Reject` inline buttons | Tap to approve or reject each trade candidate (MANUAL mode only; AUTOMATED mode skips these) |
 | `[CONFIRM LIVE]` inline button | Second-confirmation tap required for each order when `LIVE_TRADING=true`. Appears as an inline keyboard button on the pre-execution message; times out after `fill_timeout_minutes` if not tapped. |
 
 ---
@@ -206,8 +208,11 @@ All data is stored in a SQLite database at `data/income_system.db`.
 
 | File | What it does |
 |---|---|
-| `db.py` | Database connection and session management via SQLAlchemy. For SQLite it enables WAL mode + a 30 s busy-timeout (so the concurrent processes don't hit "database is locked") and applies a lightweight ALTER-in for columns added after the original schema. |
-| `models.py` | Defines the database tables: `candidates`, `risk_verdicts`, `claude_reviews`, `approvals`, `orders`, `fills`, `iv_history`, `option_quotes`, `roll_alerts`, `claude_memory`, `journal`. The `fills` row records `action` (SELL credit / BUY debit, used to sign the EOD premium cashflow) and `entry_iv` (the IV at fill, the monitor's IV-spike baseline). `iv_history` has a `(symbol, obs_date)` unique constraint to prevent duplicate IV observations from corrupting IV Rank. `option_quotes` is a write-only audit table — the scan writes a chain snapshot there every run but no production code reads from it; it is not used for execution decisions (see `STATUS.md`). `candidates`, `orders`, and `journal` carry unique constraints to prevent duplicate rows from re-scans or concurrent writes. |
+| `db.py` | Database connection and session management via SQLAlchemy. For SQLite it enables WAL mode + a 30 s busy-timeout (so the concurrent processes don't hit "database is locked"), applies a lightweight ALTER-in for columns added after the original schema, and creates partial indexes that the model metadata can't express portably (e.g. `uq_orders_active_candidate` — one working order per candidate). |
+| `models.py` | Defines the database tables: `candidates`, `risk_verdicts`, `claude_reviews`, `approvals`, `orders`, `fills`, `iv_history`, `option_quotes`, `roll_alerts`, `claude_memory`, `journal`, `system_settings`. The `fills` row records `action` (SELL credit / BUY debit) and `entry_iv`. `system_settings` is a key-value table for runtime toggles (currently stores `automated_mode`). `candidates`, `orders`, and `journal` carry unique constraints to prevent duplicate rows. |
+| `system_settings.py` | Helper functions for the `system_settings` table: `is_automated_mode()`, `set_automated_mode()`, `get_setting()`, `set_setting()`. Mode persists across restarts. |
+| `orders.py` | Order-creation idempotency: `has_active_order(session, candidate_id)`. Because `candidate_id` is a deterministic hash, a re-scan (especially the 15-min automated loop) regenerates the same candidate; both order-creation paths (`sender._auto_queue_candidates`, `approval_service._process_button`) consult this guard so a candidate with an order already QUEUED/SUBMITTED/FILLED/PARTIAL is not re-queued — preventing stacked duplicate positions (naked short calls for CCs, which bypass the cumulative exposure gates). A partial unique index `uq_orders_active_candidate` (created in `db.py`) is the DB-level backstop: at most one order in a *working* state (queued/submitted) per candidate. |
+| `maintenance.py` | Periodic DB pruning. `purge_old_option_quotes(retention_days=14)` deletes stale rows from the write-only `option_quotes` audit table; called from the EOD run so SQLite stays bounded under the 15-min loop's write volume. |
 
 Every stage of the pipeline writes its results here. This means:
 - If a scan crashes halfway through, the next run can pick up where it left off.
@@ -223,6 +228,8 @@ Every stage of the pipeline writes its results here. This means:
 | `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.) |
 | `config.py` | Loads and validates `config/*.yaml` and `.env` |
 | `logging.py` | Structured logging setup — colourised console output (green INFO, yellow WARNING, red ERROR) and a plain rotating file log; `setup_logging()` is the single call-site used by all entry points |
+| `market_hours.py` | Self-contained US equity-market calendar + RTH gate (`is_rth`, `session_close`, `is_market_holiday`, `is_early_close`). Computes NYSE full-day holidays and the 13:00 ET early-close sessions for any year — no external calendar dependency. The single source of truth for "is the market open"; both the execution bridge and the intraday loop call it instead of keeping their own weekday-only check. |
+| `cache.py` | `@daily_cached` — a thread-safe, process-local memoizer keyed by `(args, today)`. Wraps the yfinance hot paths (`get_fundamental_stats`, `_compute_hv30`) so the 15-min intraday loop fetches each symbol at most once per calendar day. `clear_all()` is called by the test harness between cases. |
 
 **Rule:** Modules never pass raw IBKR objects to each other — they always convert to these shared
 schemas first. This keeps modules independent and testable.
@@ -302,7 +309,8 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 | `PositionSnapshot` | A current open position (symbol, quantity, cost basis, and `delta` when enriched) |
 | `AccountSnapshot` | Account totals: net liquidation, cash, buying power, margin, excess liquidity |
 | `OptionQuote` | A single option contract's live snapshot (bid/ask/last, Greeks, IV). Computed fields: `mid` (bid+ask)/2, falling back to `last`; `spread_pct` as a percentage of mid; `dte` as days-to-expiry in ET timezone. |
-| `IVStats` / `TechnicalStats` / `FundamentalStats` | Per-symbol analytics outputs |
+| `IVStats` / `TechnicalStats` / `FundamentalStats` | Per-symbol analytics outputs. `IVStats` now includes `vrp` (IV% − HV30%) computed in `iv.py`. |
+| `MarketConditions` | Market-level signals fetched once per scan: `vix` (CBOE VIX from yfinance). Attached to `ScanResult`. |
 | `ScoreCard` | All analytics scores for a symbol (IV rank, technicals, fundamentals, liquidity, assignment safety) |
 | `TradeCandidate` | A specific trade proposal (symbol, strategy, strike, expiry, premium, scores, and `next_earnings` for the earnings-blackout gate) |
 | `BuyCandidate` | A buy-to-own stock recommendation. The `rationale` field is currently always an empty string — Claude enrichment for buy candidates is not yet implemented (see `STATUS.md`). |

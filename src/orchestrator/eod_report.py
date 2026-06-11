@@ -224,6 +224,11 @@ async def run() -> None:
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
 
+    # 8. Prune the write-only option_quotes audit table so SQLite stays bounded.
+    from src.storage.maintenance import purge_old_option_quotes
+
+    purge_old_option_quotes()
+
     logger.info("EOD report complete")
 
 

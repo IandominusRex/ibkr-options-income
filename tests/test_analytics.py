@@ -463,3 +463,27 @@ class TestBsDelta:
 
     def test_degenerate_negative_strike_returns_none(self):
         assert bs_delta(spot=100.0, strike=-1.0, dte=30, iv=0.30, right="C") is None
+
+
+class TestDailyCaching:
+    def test_fundamentals_cached_per_day(self):
+        ticker = MagicMock()
+        ticker.info = {"quoteType": "ETF"}
+        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker) as mk:
+            get_fundamental_stats("ZZZ")
+            get_fundamental_stats("ZZZ")
+        # Second call served from the daily cache — yfinance hit only once.
+        assert mk.call_count == 1
+
+    def test_hv30_cached_per_day(self):
+        from src.analytics.iv import _compute_hv30
+
+        idx = pd.date_range("2026-01-01", periods=60, freq="D")
+        prices = pd.Series(np.linspace(100, 110, 60), index=idx)
+        df = pd.DataFrame({"Close": prices})
+        ticker = MagicMock()
+        ticker.history.return_value = df
+        with patch("src.analytics.iv.yf.Ticker", return_value=ticker) as mk:
+            _compute_hv30("ZZZ")
+            _compute_hv30("ZZZ")
+        assert mk.call_count == 1

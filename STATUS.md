@@ -19,8 +19,13 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Market data** (`src/ibkr/`) — connection manager with backoff + `AutoReconnect`, batched option
   chains within the line limit, live Greeks/IV, historical IV backfill, portfolio/account snapshots.
 - **Analytics** (`src/analytics/`) — IV rank/percentile (from `iv_history`), term structure & skew,
+  **VRP** (IV% − HV30%, computed in `iv.py`, displayed on every candidate), **VIX** (fetched from
+  yfinance `^VIX` once per scan via `market_conditions.py`, shown in scan completion summary),
   technicals + regime, fundamentals (yfinance), liquidity gates, optional Reddit sentiment,
   Black-Scholes delta fallback (`black_scholes.py`) for quotes missing IBKR model Greeks.
+  VIX (and each candidate's VRP) is also injected into the Claude review prompt as a macro-vol
+  regime hint — enrichment only, never a deterministic gate. Fundamentals/HV are day-cached
+  (`src/common/cache.py`) so the 15-min loop doesn't re-hit yfinance every cycle.
 - **Strategies** (`src/strategies/`) — covered call, cash-secured put (would-own allowlist), rolling,
   buy-to-own.
 - **Decision + safety** (`src/engine/`) — score normalization, weighted ranking, and the
@@ -35,7 +40,20 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Monitor** (`src/monitor/`) — event-driven intraday watch; all four triggers (delta drift, DTE,
   IV spike, ex-div) wired end-to-end.
 - **Orchestrators** (`src/orchestrator/`) — morning scan, EOD report, shared `/scan` pipeline with
-  live in-chat progress updates (stage-by-stage message edits via `_Tracker`).
+  live in-chat progress updates (stage-by-stage message edits via `_Tracker`). VIX is fetched at
+  scan start and shown in the completion message.
+- **15-minute intraday loop** — runs inside the approval_service daemon every 15 minutes during
+  RTH. Each cycle: (1) checks short option positions for 50% profit-take threshold, (2) runs a
+  full scan. Behaviour depends on mode (see below). RTH is now determined by the shared,
+  **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth for both the
+  intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00 ET early
+  closes are respected, not just weekday + clock.
+- **MANUAL / AUTOMATED mode toggle** (`/mode` Telegram command) — persisted in the `system_settings`
+  SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
+  get Approve/Reject buttons; profit takes send alerts only. In **AUTOMATED** mode: candidates are
+  directly queued for execution (no human tap), profit-take targets trigger BUY-to-close orders
+  automatically. The deterministic risk gate still re-validates every order before execution in
+  both modes.
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
 - **Dashboard** (`dashboard/`) — read-only Streamlit views (optional `[dashboard]` extra).
 
@@ -76,9 +94,9 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Multi-leg / roll execution** | Rolls are **alert-only**. The order builder is single-leg SELL; the executor refuses `ROLL` candidates. Acting on a roll is manual. |
 | **Live limit-order repricing** | The executor places one mid-price limit and cancels on timeout — it does not chase an unfilled order. Adding an unverified `placeOrder` modification to the broker path was deferred until it can be validated on a live paper session. |
 | **`max_correlated_exposure_pct`** | Configured in `risk_limits.yaml` but **not enforced** — needs a price-correlation engine. The per-ticker and per-sector caps *are* enforced. |
-| **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only and will grow unboundedly. Schedule periodic cleanup if disk space is a concern. |
+| **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only. The EOD run now prunes rows older than 14 days via `storage.maintenance.purge_old_option_quotes`, so it no longer grows unboundedly. |
 | **`BuyCandidate.rationale`** | Always an empty string. Claude enrichment for buy-to-own recommendations is not yet implemented. |
-| **yfinance caching** | Fundamentals/HV are re-fetched every scan (failures are logged, not cached). |
+| **yfinance caching** | **Built.** `get_fundamental_stats` and `_compute_hv30` are wrapped with `@daily_cached` (`src/common/cache.py`) — memoized per calendar day in-process, so the 15-min intraday loop fetches each symbol's fundamentals/HV at most once a day instead of every cycle. One-shot cron scripts get no benefit (process exits) and no harm. VIX is still fetched once per scan (it moves intraday and is cheap). |
 | **Backtesting engine, ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. |
 
 ---
@@ -130,14 +148,31 @@ All P0 and P1 bugs from the 2026-06-02 audit have been fixed:
   will not re-check if earnings were announced over the weekend. Mitigate: reduce `approval.ttl_minutes`.
 - **Share ownership at execution:** CC candidates do not re-verify underlying share ownership at
   execution time. If shares are sold between scan and approval, a naked call could result. Mitigate:
-  reconcile positions manually before going live.
+  reconcile positions manually before going live. (Scan-time sizing *does* now net out calls already
+  written against the underlying — see "Order idempotency" below — but the execution-time re-verify
+  against a fresh position snapshot is still not implemented.)
+- **Order idempotency (fixed):** `candidate_id` is a deterministic hash, so a re-scan — especially the
+  15-min automated loop — regenerates the identical candidate. Both order-creation paths
+  (`sender._auto_queue_candidates`, `approval_service._process_button`) now consult
+  `storage.orders.has_active_order` and refuse to create a second order when one is already
+  QUEUED/SUBMITTED/FILLED/PARTIAL for that candidate. Combined with covered-call sizing that nets out
+  existing short calls (`generate_cc_candidates(existing_short_calls=…)`), this closes the path where
+  the automated loop stacked duplicate writes into naked short calls. Residual: the
+  `has_active_order` check is application-level, not atomic — two concurrent callbacks for two
+  *different* approvals of the same candidate could still race. A partial unique index on
+  `orders.candidate_id` (active states) would close it fully.
 - **Unqualified contracts in monitor/greeks enrichment:** The intraday monitor and
   `enrich_positions_with_greeks_async` subscribe market data with unqualified contracts. `cancelMktData`
   may not match the subscription, leaking lines against the ~100-line cap over extended sessions.
   Needs a live session to verify actual impact.
-- **Post-reconnect fill recovery:** If IBKR disconnects between `placeOrder` and fill, the fill event
-  is lost. No startup reconciliation against `ib.reqExecutions()` exists. Monitor order status via
-  `/status` and IBKR's own app after any TWS restart during an active order.
+- **Post-reconnect fill recovery (mostly addressed):** On service startup,
+  `approval_service._reconcile_orphan_fills` queries `ib.reqExecutionsAsync()` and recovers any
+  SUBMITTED order whose fill event was lost during a disconnect — matching by broker order id, then
+  by contract — writing the missing FillRow, marking the order FILLED/PARTIAL, and notifying Telegram.
+  It is strictly additive (only records proven fills; never cancels or resubmits), so it cannot cause
+  a double trade. Residual gap: recovery runs only at **startup**, not continuously, and a fill that
+  lands during a mid-session reconnect is recovered on the next restart rather than immediately —
+  still monitor `/status` after a TWS restart during an active order.
 - **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
 

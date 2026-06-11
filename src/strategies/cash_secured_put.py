@@ -120,6 +120,7 @@ def generate_csp_candidates(
                 prob_profit=round(1 - delta_abs, 4),
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
+                vrp=iv_stats.vrp,
                 dte=dte,
                 next_earnings=fund_stats.next_earnings,
                 scores=scores,

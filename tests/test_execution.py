@@ -533,7 +533,7 @@ async def test_process_queued_orders_defers_outside_rth(monkeypatch, tmp_path):
     mock_cfg.secrets.ibkr_account = ""
     mock_cfg.execution.transmit_only_in_rth = True
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
-    monkeypatch.setattr("src.execution.approval._is_rth", lambda: False)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: False)
 
     with dbmod.session_scope() as session:
         _, order_id = _insert_queued_order(session, "cand-rth")
@@ -564,7 +564,7 @@ async def test_process_queued_orders_cancels_if_candidate_not_found(monkeypatch,
     mock_cfg.secrets.ibkr_account = ""
     mock_cfg.execution.transmit_only_in_rth = False
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
-    monkeypatch.setattr("src.execution.approval._is_rth", lambda: True)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
     account_snap = _make_account()
     monkeypatch.setattr(
@@ -600,7 +600,7 @@ async def test_process_queued_orders_cancels_if_revalidation_fails(monkeypatch, 
     mock_cfg.secrets.ibkr_account = ""
     mock_cfg.execution.transmit_only_in_rth = False
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
-    monkeypatch.setattr("src.execution.approval._is_rth", lambda: True)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
     account_snap = _make_account()
     monkeypatch.setattr(
@@ -649,7 +649,7 @@ async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, 
     mock_cfg.secrets.ibkr_account = ""
     mock_cfg.execution.transmit_only_in_rth = False
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
-    monkeypatch.setattr("src.execution.approval._is_rth", lambda: True)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
     account_snap = _make_account()
     monkeypatch.setattr(
@@ -701,7 +701,7 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
     mock_cfg.secrets.ibkr_account = ""
     mock_cfg.execution.transmit_only_in_rth = False
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
-    monkeypatch.setattr("src.execution.approval._is_rth", lambda: True)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
     # net-liq 100k → 5% ticker cap = 5000. Two AAPL CSPs @ 4000 collateral each: first fits,
     # together (8000) they breach the cap. Use the REAL risk engine (not a monkeypatched stub).

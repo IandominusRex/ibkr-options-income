@@ -1,12 +1,14 @@
 # IBKR Options Income System
 
 A semi-autonomous options-income trading system for an Interactive Brokers account. It scans your
-holdings and a watchlist every morning, scores and ranks covered-call and cash-secured-put
-opportunities, gets a plain-English review from Claude, and sends the top candidates to your
-phone via Telegram — where **you approve every trade** before anything touches the broker.
+holdings and a watchlist every morning (and every 15 minutes during market hours), scores and ranks
+covered-call and cash-secured-put opportunities, gets a plain-English review from Claude, and sends
+the top candidates to your phone via Telegram.
 
-> **You are always in control.** No order is ever placed without your explicit Telegram approval,
-> and every approved order is re-validated by a deterministic safety engine before it executes.
+> **Two operating modes.** In **MANUAL** mode (default) every trade requires your explicit Telegram
+> approval before touching the broker. In **AUTOMATED** mode the system executes trades
+> autonomously during RTH and auto-closes positions at 50% profit — toggle with `/mode`.
+> Every order is re-validated by the deterministic risk engine before it executes regardless of mode.
 
 ---
 
@@ -15,7 +17,8 @@ phone via Telegram — where **you approve every trade** before anything touches
 | Time | What happens |
 |---|---|
 | **9:45 AM ET (auto)** | Morning scan: fetches live data, scores candidates, Claude reviews the top picks (full reasoning included), sends a Telegram summary |
-| **During market hours** | Intraday monitor watches open positions for delta drift, IV spikes, and early-assignment risk; alerts you to roll when needed |
+| **Every 15 min (RTH)** | Intraday loop: checks profit-take targets (50% rule), runs a fresh scan; in AUTOMATED mode executes autonomously, in MANUAL mode sends approval requests |
+| **During market hours** | Event-driven monitor watches open positions for delta drift, IV spikes, and early-assignment risk; alerts you to roll when needed |
 | **4:15 PM ET (auto)** | End-of-day report: P&L summary, journal entry, tomorrow's watchlist |
 | **Any time** | Telegram bot commands (see below) — query the system interactively from your phone |
 | **When you approve** | Execution engine re-validates, builds a limit order at mid-price, places it, and confirms the fill back to Telegram |
@@ -25,6 +28,7 @@ phone via Telegram — where **you approve every trade** before anything touches
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — same pipeline as the morning cron |
+| `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |
 | `/account` | Account balances: net liquidation, buying power, margin, excess liquidity |
@@ -90,7 +94,7 @@ python -m pytest               # all tests pass without TWS
 | `src/notify/` | Telegram messaging and approval service |
 | `src/monitor/` | Event-driven intraday position monitoring |
 | `src/orchestrator/` | Morning scan, EOD report, and on-demand scan pipeline |
-| `src/storage/` | SQLite database models and session management |
+| `src/storage/` | SQLite database models, session management, and order-creation idempotency |
 | `dashboard/` | Streamlit read-only dashboard (portfolio, candidates, IV) |
 | `scripts/` | Command-line entrypoints |
 | `tests/` | pytest suite (IBKR mocked; no TWS needed) |

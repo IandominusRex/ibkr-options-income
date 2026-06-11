@@ -479,3 +479,224 @@ async def test_callback_malformed_data_is_ignored(monkeypatch, tmp_path):
         update = _make_update(chat_id=99999, callback_data=bad_data)
         await handle_button(update, MagicMock())
         update.callback_query.edit_message_text.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# Order-creation idempotency — has_active_order + dedup guards
+# --------------------------------------------------------------------------- #
+
+
+def test_has_active_order_true_for_open_and_filled(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    import src.storage.db as dbmod
+    from src.storage.orders import has_active_order
+
+    for state in ("queued", "submitted", "filled", "partial"):
+        with dbmod.session_scope() as s:
+            s.add(OrderRow(candidate_id=f"cand-{state}", approval_id=None, state=state))
+        with dbmod.session_scope() as s:
+            assert has_active_order(s, f"cand-{state}") is True
+
+
+def test_has_active_order_false_for_terminal_failures(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    import src.storage.db as dbmod
+    from src.storage.orders import has_active_order
+
+    for state in ("cancelled", "rejected"):
+        with dbmod.session_scope() as s:
+            s.add(OrderRow(candidate_id=f"cand-{state}", approval_id=None, state=state))
+        with dbmod.session_scope() as s:
+            # A TTL-cancelled / re-gate-rejected candidate may be re-proposed later.
+            assert has_active_order(s, f"cand-{state}") is False
+
+
+def test_has_active_order_false_when_absent(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    import src.storage.db as dbmod
+    from src.storage.orders import has_active_order
+
+    with dbmod.session_scope() as s:
+        assert has_active_order(s, "never-seen") is False
+
+
+async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monkeypatch, tmp_path):
+    """Automated mode: the deterministic candidate_id must not stack duplicate orders
+    when the 15-min loop re-surfaces the same candidate."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    monkeypatch.setattr("src.notify.sender.is_automated_mode", lambda: True)
+    mock_cls, _ = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    candidate = _make_candidate("dup-001")
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates([candidate], [])  # first scan
+        await send_candidates([candidate], [])  # 15 min later — same candidate_id
+
+    with dbmod.session_scope() as s:
+        orders = s.execute(
+            select(OrderRow).where(OrderRow.candidate_id == "dup-001")
+        ).scalars().all()
+        approvals = s.execute(
+            select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-001")
+        ).scalars().all()
+
+    assert len(orders) == 1  # exactly one order despite two scans
+    assert orders[0].state == "queued"
+    assert len(approvals) == 1
+
+
+async def test_manual_approve_skips_duplicate_when_active_order_exists(monkeypatch, tmp_path):
+    """A candidate surfaced by two scans (two approvals) must not create two orders."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import handle_button
+
+    # Two pending approvals for the SAME candidate (e.g. surfaced by two scans).
+    ids = []
+    with dbmod.session_scope() as session:
+        for _ in range(2):
+            approval = ApprovalRow(
+                candidate_id="dup-approve",
+                status="pending",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            session.add(approval)
+            session.flush()
+            ids.append(approval.id)
+
+    for approval_id in ids:
+        update = _make_update(chat_id=99999, callback_data=f"approve:{approval_id}")
+        await handle_button(update, MagicMock())
+
+    with dbmod.session_scope() as s:
+        orders = s.execute(
+            select(OrderRow).where(OrderRow.candidate_id == "dup-approve")
+        ).scalars().all()
+        approvals = s.execute(
+            select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-approve")
+        ).scalars().all()
+
+    assert len(orders) == 1  # second approve did not create a duplicate order
+    # Both approvals are marked approved (decision recorded), only one order queued.
+    assert all(a.status == "approved" for a in approvals)
+
+
+def test_partial_index_blocks_two_working_orders(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    from sqlalchemy.exc import IntegrityError
+
+    import src.storage.db as dbmod
+
+    with dbmod.session_scope() as s:
+        s.add(OrderRow(candidate_id="idx-1", approval_id=1, state="queued"))
+
+    raised = False
+    try:
+        with dbmod.session_scope() as s:
+            s.add(OrderRow(candidate_id="idx-1", approval_id=2, state="submitted"))
+    except IntegrityError:
+        raised = True
+    assert raised  # the partial unique index rejects a second working order
+
+
+def test_partial_index_allows_new_order_after_terminal(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    from sqlalchemy import func, select
+
+    import src.storage.db as dbmod
+
+    with dbmod.session_scope() as s:
+        s.add(OrderRow(candidate_id="idx-2", approval_id=1, state="cancelled"))
+    # A cancelled order does not occupy the slot — a fresh working order is allowed.
+    with dbmod.session_scope() as s:
+        s.add(OrderRow(candidate_id="idx-2", approval_id=2, state="queued"))
+
+    with dbmod.session_scope() as s:
+        n = s.execute(
+            select(func.count()).select_from(OrderRow).where(OrderRow.candidate_id == "idx-2")
+        ).scalar_one()
+    assert n == 2
+
+
+async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
+    """A SUBMITTED order whose fill event was lost is recovered from reqExecutions."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import _reconcile_orphan_fills
+    from src.storage.models import CandidateRow, FillRow
+
+    with dbmod.session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="recon-1",
+                run_id="r",
+                strategy="covered_call",
+                underlying="AAPL",
+                right="C",
+                strike=200.0,
+                expiry=_date(2026, 7, 17),
+                blended_score=70.0,
+                payload={"contracts": 2},
+            )
+        )
+        s.add(OrderRow(candidate_id="recon-1", approval_id=1, state="submitted", ib_order_id=555))
+
+    fill = SimpleNamespace(
+        execution=SimpleNamespace(orderId=555, shares=2.0, price=2.50, side="SLD", execId="e1"),
+        contract=SimpleNamespace(
+            symbol="AAPL", right="C", strike=200.0, lastTradeDateOrContractMonth="20260717"
+        ),
+        commissionReport=SimpleNamespace(commission=1.30),
+    )
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[fill])
+    bot = AsyncMock()
+
+    await _reconcile_orphan_fills(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        order = s.query(OrderRow).filter_by(candidate_id="recon-1").one()
+        fills = s.query(FillRow).filter_by(candidate_id="recon-1").all()
+    assert order.state == "filled"
+    assert len(fills) == 1
+    assert fills[0].avg_price == 2.50
+    bot.send_message.assert_awaited()  # operator was notified
+
+
+async def test_reconcile_no_executions_leaves_order_submitted(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import _reconcile_orphan_fills
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        s.add(OrderRow(candidate_id="recon-2", approval_id=1, state="submitted", ib_order_id=999))
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[])  # no matching execution
+    bot = AsyncMock()
+
+    await _reconcile_orphan_fills(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        order = s.query(OrderRow).filter_by(candidate_id="recon-2").one()
+        fills = s.query(FillRow).filter_by(candidate_id="recon-2").all()
+    assert order.state == "submitted"  # untouched — never fabricates a fill
+    assert len(fills) == 0

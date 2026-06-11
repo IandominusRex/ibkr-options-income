@@ -188,6 +188,18 @@ class ClaudeMemoryRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class SystemSettingRow(Base):
+    """Persistent key-value store for runtime system settings (e.g. automated_mode toggle)."""
+
+    __tablename__ = "system_settings"
+    __table_args__ = (UniqueConstraint("key", name="uq_system_settings_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), index=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class JournalRow(Base):
     """End-of-day narrative + metrics, written by the EOD orchestrator."""
 

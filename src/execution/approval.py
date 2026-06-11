@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from datetime import time as dtime
 from zoneinfo import ZoneInfo
 
 from ib_async import IB
@@ -20,6 +19,7 @@ from telegram import Bot
 
 from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
 from src.common.config import get_config
+from src.common.market_hours import is_rth
 from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
 from src.execution.executor import execute_candidate
@@ -30,14 +30,6 @@ from src.storage.models import ApprovalRow, CandidateRow, OrderRow
 log = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
-
-
-def _is_rth() -> bool:
-    """True when current time is within Regular Trading Hours (09:30–16:00 ET, weekdays)."""
-    now = datetime.now(_ET)
-    if now.weekday() >= 5:
-        return False
-    return dtime(9, 30) <= now.time() < dtime(16, 0)
 
 
 def _load_candidate(session: Session, candidate_id: str) -> TradeCandidate | None:
@@ -132,7 +124,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 record_outcome(order_row.candidate_id, EXPIRED)
                 continue
 
-            if cfg.execution.transmit_only_in_rth and not _is_rth():
+            if cfg.execution.transmit_only_in_rth and not is_rth():
                 log.debug("Outside RTH — deferring order_id=%s", order_row.id)
                 continue
 

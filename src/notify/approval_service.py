@@ -28,20 +28,27 @@ import contextlib
 import logging
 import signal
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
-from ib_async import IB
+from ib_async import IB, LimitOrder
+from ib_async import Contract as IBContract
+from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
-from telegram import Update
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
-from src.common.schemas import ApprovalStatus, OrderState
+from src.common.market_hours import is_rth
+from src.common.schemas import ApprovalStatus, OrderState, PositionSnapshot
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
 from src.ibkr.connection import AutoReconnect
+from src.ibkr.contracts import build_option
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
+from src.storage.orders import has_active_order
+from src.storage.system_settings import is_automated_mode, set_automated_mode
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +121,16 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
 
             if action == "approve":
                 approval.status = ApprovalStatus.APPROVED
+                # Idempotency: the same candidate can be surfaced by more than one scan
+                # (each with its own approval). If an order is already working or filled
+                # for this candidate, mark this approval approved but do NOT create a
+                # second order — that would double the position.
+                if has_active_order(session, approval.candidate_id):
+                    logger.info(
+                        "Approve skip — active order already exists for %s",
+                        approval.candidate_id,
+                    )
+                    return found, f"✅ Already queued\n{candidate_display}", candidate_short
                 order = OrderRow(
                     candidate_id=approval.candidate_id,
                     approval_id=approval_id,
@@ -543,6 +560,78 @@ async def handle_fills_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+async def handle_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current trading mode (MANUAL/AUTOMATED) and offer a toggle button."""
+    if not _is_authorized(update) or update.message is None:
+        return
+    from src.notify.formatters import format_mode_status
+
+    auto = is_automated_mode()
+    text = format_mode_status(auto)
+    toggle_label = "🤖 Switch to AUTOMATED" if not auto else "👤 Switch to MANUAL"
+    toggle_data = "mode:auto_request" if not auto else "mode:manual"
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(toggle_label, callback_data=toggle_data)]]
+    )
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def handle_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle mode:auto_request / mode:auto_confirm / mode:manual / mode:cancel callbacks."""
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+
+    if not _is_authorized(update):
+        return
+
+    data = query.data or ""
+
+    if data == "mode:auto_request":
+        warning = (
+            "⚠️ *Automated mode will:*\n"
+            "• Execute trades *without your approval*\n"
+            "• Auto\\-close positions at 50% profit\n"
+            "• Run scans every 15 minutes during RTH\n\n"
+            "_Are you sure you want to enable AUTOMATED mode?_"
+        )
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("✅ Yes, enable AUTO", callback_data="mode:auto_confirm"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="mode:cancel"),
+                ]
+            ]
+        )
+        await query.edit_message_text(warning, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+    elif data == "mode:auto_confirm":
+        set_automated_mode(True)
+        await query.edit_message_text(
+            "🤖 *AUTOMATED mode enabled*\n\n"
+            "Trades will execute autonomously during RTH\\.\n"
+            "Use /mode to switch back to MANUAL at any time\\.",
+            parse_mode="MarkdownV2",
+        )
+        logger.warning("Trading mode changed to AUTOMATED by user")
+
+    elif data == "mode:manual":
+        set_automated_mode(False)
+        await query.edit_message_text(
+            "👤 *MANUAL mode enabled*\n\nAll trades require your approval\\.",
+            parse_mode="MarkdownV2",
+        )
+        logger.warning("Trading mode changed to MANUAL by user")
+
+    elif data == "mode:cancel":
+        auto = is_automated_mode()
+        mode_str = "AUTOMATED 🤖" if auto else "MANUAL 👤"
+        await query.edit_message_text(
+            f"Mode unchanged: *{mode_str}*", parse_mode="MarkdownV2"
+        )
+
+
 async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Expire all pending approvals (clears the approval queue without acting on them)."""
     if not _is_authorized(update) or update.message is None:
@@ -593,6 +682,251 @@ async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> 
 
 
 # ---------------------------------------------------------------------------
+# Intraday loop helpers
+# ---------------------------------------------------------------------------
+
+
+async def _send_profit_alert(
+    pos: PositionSnapshot,
+    entry_price: float,
+    current_mid: float,
+    profit_pct: float,
+    bot: Bot,
+    chat_id: str,
+) -> None:
+    from src.notify.formatters import format_profit_alert
+
+    text = format_profit_alert(
+        symbol=pos.symbol,
+        underlying=pos.underlying or pos.symbol,
+        entry_price=entry_price,
+        current_mid=current_mid,
+        profit_pct=profit_pct,
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("Failed to send profit alert for %s", pos.symbol)
+
+
+async def _auto_close_position(
+    ib_exec: IB,
+    pos: PositionSnapshot,
+    bid: float,
+    ask: float,
+    bot: Bot,
+    chat_id: str,
+) -> None:
+    """Place a BUY-to-close LimitOrder at mid for a short option that hit its profit target."""
+    from src.notify.formatters import format_auto_close_result
+
+    assert pos.expiry is not None and pos.strike is not None and pos.right is not None
+
+    mid = (bid + ask) / 2 if bid > 0 else ask
+    tick = 0.01 if mid < 3.0 else 0.05
+    limit_price = round(round(mid / tick) * tick, 2)
+    qty = int(abs(pos.position))
+
+    try:
+        contract = build_option(
+            pos.underlying or pos.symbol,
+            pos.expiry,
+            pos.strike,
+            pos.right.value,
+        )
+        qualified_list = await ib_exec.qualifyContractsAsync(contract)
+        if not qualified_list:
+            logger.warning("auto-close: could not qualify contract for %s", pos.symbol)
+            return
+        qualified = cast(IBContract, qualified_list[0])
+
+        order = LimitOrder("BUY", qty, limit_price, tif="DAY")
+        trade = ib_exec.placeOrder(qualified, order)
+        logger.info("Auto-close placed: %s qty=%d @ %.2f", pos.symbol, qty, limit_price)
+
+        cfg = get_config()
+        deadline = asyncio.get_running_loop().time() + cfg.execution.fill_timeout_minutes * 60
+        while not trade.isDone() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(1)
+
+        filled_qty = float(getattr(trade.orderStatus, "filled", 0.0) or 0.0)
+        avg_price = float(getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0)
+
+        text = format_auto_close_result(pos.symbol, qty, limit_price, filled_qty, avg_price)
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("Auto-close failed for %s", pos.symbol)
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Auto\\-close error for {pos.symbol} — check IBKR manually\\.",
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            pass
+
+
+async def _check_profit_takes(
+    ib_scan: IB,
+    ib_exec: IB | None,
+    bot: Bot,
+    chat_id: str,
+) -> None:
+    """Detect short option positions that have reached the profit-take threshold.
+
+    Uses ib_scan for market-data quotes and ib_exec for placing BUY-to-close orders
+    in automated mode. Sends a Telegram alert in manual mode.
+    """
+    cfg = get_config()
+    threshold = cfg.scheduler.profit_take_pct / 100.0
+
+    from src.ibkr.portfolio import get_positions
+
+    try:
+        positions = get_positions(ib_scan)
+    except Exception:
+        logger.exception("profit-take: failed to load positions")
+        return
+
+    short_opts = [
+        p
+        for p in positions
+        if p.sec_type == "OPT"
+        and p.position < 0
+        and p.expiry is not None
+        and p.strike is not None
+        and p.right is not None
+    ]
+
+    for pos in short_opts:
+        # All three are non-None by the short_opts filter above.
+        assert pos.expiry is not None and pos.strike is not None and pos.right is not None
+        right_value = pos.right.value
+
+        # Look up the most recent SELL fill for this contract to get the entry price.
+        with session_scope() as s:
+            fill_row = s.execute(
+                select(FillRow)
+                .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+                .where(
+                    CandidateRow.underlying == (pos.underlying or pos.symbol),
+                    CandidateRow.strike == pos.strike,
+                    CandidateRow.expiry == pos.expiry,
+                    CandidateRow.right == right_value,
+                    FillRow.action == "SELL",
+                )
+                .order_by(desc(FillRow.filled_at))
+                .limit(1)
+            ).scalar_one_or_none()
+
+        if fill_row is None or fill_row.avg_price <= 0:
+            continue
+
+        entry_price: float = fill_row.avg_price
+
+        # Fetch a live quote to measure the cost-to-close.
+        try:
+            contract = build_option(
+                pos.underlying or pos.symbol,
+                pos.expiry,
+                pos.strike,
+                right_value,
+            )
+            qualified_list = await ib_scan.qualifyContractsAsync(contract)
+            if not qualified_list:
+                continue
+            qualified = cast(IBContract, qualified_list[0])
+            ticker = ib_scan.reqMktData(qualified, "101", False, False)
+            await asyncio.sleep(float(cfg.execution.quote_timeout_seconds))
+            ib_scan.cancelMktData(qualified)
+
+            raw_bid = ticker.bid
+            raw_ask = ticker.ask
+            bid = float(raw_bid) if raw_bid is not None and float(raw_bid) > 0 else 0.0
+            ask = float(raw_ask) if raw_ask is not None and float(raw_ask) > 0 else None
+        except Exception:
+            logger.exception("profit-take: quote fetch failed for %s", pos.symbol)
+            continue
+
+        if ask is None:
+            continue
+
+        mid = (bid + ask) / 2 if bid > 0 else ask
+        profit_pct = 1.0 - (mid / entry_price)
+
+        if profit_pct < threshold:
+            continue
+
+        logger.info(
+            "Profit target reached: %s — entry=%.2f mid=%.2f profit=%.0f%%",
+            pos.symbol,
+            entry_price,
+            mid,
+            profit_pct * 100,
+        )
+
+        if is_automated_mode() and ib_exec is not None:
+            await _auto_close_position(ib_exec, pos, bid, ask, bot, chat_id)
+        else:
+            await _send_profit_alert(pos, entry_price, mid, profit_pct, bot, chat_id)
+
+
+async def _intraday_scan_loop(
+    app: Application,
+    ib_scan: IB,
+    ib_exec: IB | None,
+    chat_id: str,
+) -> None:
+    """Background task: every intraday_loop_minutes during RTH, check profit takes + scan."""
+    cfg = get_config()
+    interval = cfg.scheduler.intraday_loop_minutes * 60
+    bot = app.bot
+    bot_data = app.bot_data
+
+    while True:
+        await asyncio.sleep(interval)
+
+        if not is_rth():
+            logger.debug("Intraday loop: outside RTH or market holiday — skipping")
+            continue
+
+        logger.info("Intraday loop: RTH cycle starting")
+
+        # 1. Profit-take check (uses ib_scan for quotes, ib_exec for auto-closes)
+        if ib_scan.isConnected():
+            try:
+                await _check_profit_takes(ib_scan, ib_exec, bot, chat_id)
+            except Exception:
+                logger.exception("Intraday loop: profit-take check failed")
+
+        # 2. Fresh scan — send_candidates() respects is_automated_mode() internally
+        if not ib_scan.isConnected():
+            logger.warning("Intraday loop: ib_scan disconnected — skipping scan")
+            continue
+
+        if bot_data.get("scan_running"):
+            logger.info("Intraday loop: scan already running — deferring to next cycle")
+            continue
+
+        bot_data["scan_running"] = True
+        try:
+            from src.orchestrator.scan import run_scan
+
+            result = await run_scan(ib_scan, bot, chat_id)
+            logger.info(
+                "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
+                len(result.cc_candidates),
+                len(result.csp_candidates),
+                len(result.buy_candidates),
+                "AUTO" if is_automated_mode() else "MANUAL",
+            )
+        except Exception:
+            logger.exception("Intraday loop: scan failed")
+        finally:
+            bot_data["scan_running"] = False
+
+
+# ---------------------------------------------------------------------------
 # Service bootstrap
 # ---------------------------------------------------------------------------
 
@@ -613,6 +947,165 @@ def _recover_orphan_orders() -> None:
         for o in orphans:
             o.state = OrderState.QUEUED
             logger.warning("Recovered orphan order id=%s to QUEUED", o.id)
+
+
+def _expiry_to_date(yyyymmdd: str) -> object | None:
+    from datetime import date as _date
+
+    if not yyyymmdd or len(yyyymmdd) < 8:
+        return None
+    try:
+        return _date(int(yyyymmdd[0:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:8]))
+    except (ValueError, TypeError):
+        return None
+
+
+def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: int | None) -> bool:
+    """True if an IBKR Fill corresponds to the order for *candidate*.
+
+    Primary match is the broker order id (stable within a clientId session); falls back
+    to a contract match (symbol / right / strike / expiry) so a fill is still recovered
+    after an id churn across a full restart.
+    """
+    execution = getattr(fill, "execution", None)
+    contract = getattr(fill, "contract", None)
+    if execution is None or contract is None:
+        return False
+
+    if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:
+        return True
+
+    if getattr(contract, "symbol", None) != candidate.underlying:
+        return False
+    right = str(getattr(contract, "right", "") or "")[:1].upper()
+    if right and candidate.right and right != candidate.right[:1].upper():
+        return False
+    if candidate.strike and abs(float(getattr(contract, "strike", 0.0)) - candidate.strike) > 1e-3:
+        return False
+    exp = _expiry_to_date(str(getattr(contract, "lastTradeDateOrContractMonth", "")))
+    if candidate.expiry and exp is not None and exp != candidate.expiry:
+        return False
+    # Opening income trades are sells; ignore buy-side executions (e.g. a buy-to-close).
+    side = str(getattr(execution, "side", "") or "").upper()
+    return side in ("", "SLD")
+
+
+async def _reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
+    """Recover fills that landed while the service was disconnected.
+
+    If IBKR fills an order during a socket drop between placeOrder and the fill event,
+    the OrderRow stays SUBMITTED forever (it has an ib_order_id, so _recover_orphan_orders
+    skips it) and no FillRow is ever written. On startup we ask IBKR for recent executions
+    and, for any SUBMITTED order with a matching execution and no FillRow, record the fill.
+
+    Strictly additive against the broker — it only writes proven fills; it never cancels
+    or resubmits, so it cannot cause a double trade.
+    """
+    from src.claude.memory import FILLED, record_outcome
+
+    # Snapshot the orphan candidates outside any long-held session.
+    with session_scope() as s:
+        rows = (
+            s.query(OrderRow)
+            .filter(OrderRow.state == OrderState.SUBMITTED, OrderRow.ib_order_id.isnot(None))
+            .all()
+        )
+        orphans = [(o.id, o.candidate_id, o.ib_order_id) for o in rows]
+        already_filled = {
+            fid for (fid,) in s.query(FillRow.order_id).filter(
+                FillRow.order_id.in_([o.id for o in rows] or [-1])
+            )
+        }
+    orphans = [o for o in orphans if o[0] not in already_filled]
+    if not orphans:
+        return
+
+    try:
+        fills = await ib.reqExecutionsAsync()
+    except Exception:
+        logger.exception("Fill reconciliation: reqExecutions failed")
+        return
+
+    recovered = 0
+    for order_id, candidate_id, ib_order_id in orphans:
+        with session_scope() as s:
+            cand = s.execute(
+                select(CandidateRow).where(CandidateRow.candidate_id == candidate_id)
+            ).scalar_one_or_none()
+            if cand is None:
+                continue
+            matched = [f for f in fills if _exec_matches_candidate(f, cand, ib_order_id)]
+            if not matched:
+                continue
+
+            total_qty = 0.0
+            notional = 0.0
+            commission = 0.0
+            exec_id = None
+            for f in matched:
+                ex = f.execution
+                shares = float(getattr(ex, "shares", 0.0) or 0.0)
+                price = float(getattr(ex, "price", 0.0) or 0.0)
+                total_qty += shares
+                notional += shares * price
+                exec_id = getattr(ex, "execId", exec_id)
+                cr = getattr(f, "commissionReport", None)
+                c = getattr(cr, "commission", None) if cr is not None else None
+                if c:
+                    commission += float(c)
+            if total_qty <= 0:
+                continue
+            avg_price = notional / total_qty
+
+            order = s.get(OrderRow, order_id)
+            if order is None or order.state != OrderState.SUBMITTED:
+                continue
+            payload = cand.payload or {}
+            contracts = float(payload.get("contracts", total_qty))
+            order.state = (
+                OrderState.FILLED if total_qty >= contracts else OrderState.PARTIAL
+            )
+            order.filled_qty = total_qty
+            order.avg_fill_price = avg_price
+            order.detail = "Recovered from reqExecutions on startup"
+            s.add(
+                FillRow(
+                    order_id=order_id,
+                    candidate_id=candidate_id,
+                    action="SELL",
+                    filled_qty=total_qty,
+                    avg_price=avg_price,
+                    commission=commission or None,
+                    ib_exec_id=exec_id,
+                    is_live=cfg_is_live(),
+                )
+            )
+        record_outcome(candidate_id, FILLED)
+        recovered += 1
+        logger.warning(
+            "Fill reconciliation: recovered fill for order_id=%s candidate=%s qty=%.0f @ %.2f",
+            order_id,
+            candidate_id,
+            total_qty,
+            avg_price,
+        )
+        try:
+            await bot.send_message(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                text=(
+                    f"♻️ Recovered a missed fill on startup: {cand.underlying} "
+                    f"{total_qty:.0f} @ {avg_price:.2f} (order_id={order_id})."
+                ),
+            )
+        except Exception:
+            logger.exception("Fill reconciliation: failed to notify for order_id=%s", order_id)
+
+    if recovered:
+        logger.warning("Fill reconciliation: recovered %d missed fill(s)", recovered)
+
+
+def cfg_is_live() -> bool:
+    return bool(get_config().is_live)
 
 
 async def _run_service(token: str, chat_id: str) -> None:
@@ -691,6 +1184,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     # Button callbacks
     app.add_handler(CallbackQueryHandler(handle_button, pattern="^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(handle_live_confirm, pattern="^confirm_live:"))
+    app.add_handler(CallbackQueryHandler(handle_mode_toggle, pattern="^mode:"))
 
     # Commands
     app.add_handler(CommandHandler("help", handle_help_command))
@@ -702,6 +1196,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("pending", handle_pending_command))
     app.add_handler(CommandHandler("fills", handle_fills_command))
     app.add_handler(CommandHandler("expire", handle_expire_command))
+    app.add_handler(CommandHandler("mode", handle_mode_command))
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -723,6 +1218,7 @@ async def _run_service(token: str, chat_id: str) -> None:
             await app.bot.set_my_commands(
                 [
                     BotCommand("scan", "Run full pipeline scan (CC/CSP/buy candidates)"),
+                    BotCommand("mode", "Show/toggle MANUAL ↔ AUTOMATED trading mode"),
                     BotCommand("status", "Account · shorts · pending approvals"),
                     BotCommand("positions", "Full portfolio positions with P&L"),
                     BotCommand("account", "Account balances (buying power, net liq, margin)"),
@@ -751,12 +1247,16 @@ async def _run_service(token: str, chat_id: str) -> None:
                 pass
 
             mode = "LIVE" if cfg.is_live else "PAPER"
+            current_mode = "AUTOMATED 🤖" if is_automated_mode() else "MANUAL 👤"
             services = [
                 "Telegram bot (polling)",
                 f"IBKR exec (clientId {exec_id})" + (" — connected" if ib else " — OFFLINE"),
                 f"IBKR scan (clientId {scan_id})" + (" — connected" if ib_scan else " — OFFLINE"),
                 "Order execution loop"
                 + (" — active" if ib else " — disabled (no exec connection)"),
+                "Intraday loop (15 min, RTH)"
+                + (" — active" if ib_scan else " — disabled (no scan connection)"),
+                f"Trading mode: {current_mode}",
             ]
             thread_id = (
                 int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
@@ -776,6 +1276,14 @@ async def _run_service(token: str, chat_id: str) -> None:
         except Exception:
             logger.warning("Could not send startup notification to Telegram", exc_info=True)
 
+        # Recover any fills that landed while a previous run was disconnected, before the
+        # poll loop starts processing new orders.
+        if ib is not None:
+            try:
+                await _reconcile_orphan_fills(ib, app.bot, chat_id)
+            except Exception:
+                logger.exception("Startup fill reconciliation failed")
+
         poll_task: asyncio.Task | None = None
         if ib is not None:
             poll_task = asyncio.create_task(
@@ -790,6 +1298,16 @@ async def _run_service(token: str, chat_id: str) -> None:
                 "Order execution loop started (poll every %ss)", cfg.execution.poll_interval_seconds
             )
 
+        intraday_task: asyncio.Task | None = None
+        if ib_scan is not None:
+            intraday_task = asyncio.create_task(
+                _intraday_scan_loop(app, ib_scan, ib, chat_id)
+            )
+            logger.info(
+                "Intraday loop started (every %d min during RTH)",
+                cfg.scheduler.intraday_loop_minutes,
+            )
+
         try:
             await stop_event.wait()
         finally:
@@ -799,6 +1317,10 @@ async def _run_service(token: str, chat_id: str) -> None:
                 poll_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await poll_task
+            if intraday_task is not None:
+                intraday_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await intraday_task
             await app.updater.stop()
             await app.stop()
 

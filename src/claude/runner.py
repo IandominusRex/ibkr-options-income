@@ -18,6 +18,7 @@ from src.common.schemas import (
     AccountSnapshot,
     ClaudeReview,
     EODSummary,
+    MarketConditions,
     OptionQuote,
     PositionSnapshot,
     RollAlert,
@@ -32,11 +33,13 @@ def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
     history: list | None = None,
+    market_conditions: MarketConditions | None = None,
 ) -> list[ClaudeReview]:
     """Shell out to `claude -p`, parse output → list[ClaudeReview]. Returns [] on any failure.
 
     history: optional list of ClaudeMemoryRow objects from prior scans; injected into the prompt
     so Claude can learn from past recommendations and their outcomes.
+    market_conditions: optional macro snapshot (VIX) injected as enrichment context.
     """
     cfg = get_config().claude
 
@@ -48,7 +51,9 @@ def review_candidates(
         log.info("claude: no candidates to review")
         return []
 
-    prompt = build_prompt(candidates, account, history=history)
+    prompt = build_prompt(
+        candidates, account, history=history, market_conditions=market_conditions
+    )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
     # when the candidate list + history grows large.

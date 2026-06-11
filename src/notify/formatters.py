@@ -73,7 +73,12 @@ def format_candidate(
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
-    parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}")
+    vrp_str = (
+        f" · VRP {candidate.vrp:+.1f}%"
+        if candidate.vrp is not None
+        else ""
+    )
+    parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}{_md(vrp_str)}")
 
     score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
     if candidate.rationale_tags:
@@ -123,11 +128,89 @@ def format_help() -> str:
         "/account — Account balances \\(buying power, net liq, margin\\)",
         "/fills — Recent fills \\(last 7 days\\)",
         "",
+        "*Automation*",
+        "/mode — Show current mode \\(MANUAL/AUTOMATED\\) and toggle",
+        "",
         "*System*",
         "/health — Connections, DB, last scan, open orders",
         "/help — Show this message",
     ]
     return "\n".join(lines)
+
+
+def format_mode_status(is_automated: bool) -> str:
+    """Show the current trading mode and a brief description of what it means."""
+    if is_automated:
+        mode = "🤖 *AUTOMATED*"
+        desc = (
+            "_Trades execute autonomously during RTH\\._\n"
+            "_Positions close automatically at 50% profit\\._\n"
+            "_Scans run every 15 minutes \\— no approval required\\._"
+        )
+    else:
+        mode = "👤 *MANUAL*"
+        desc = (
+            "_All trades require your Approve/Reject tap\\._\n"
+            "_Profit targets trigger alerts only \\— no auto\\-close\\._"
+        )
+    return f"*Trading Mode:* {mode}\n\n{desc}"
+
+
+def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
+    """Summary notification sent when trades are auto-queued in AUTOMATED mode."""
+    n = len(candidates)
+    lines = [f"🤖 *Auto\\-queued {_md(str(n))} trade{'s' if n != 1 else ''}*", ""]
+    for c in candidates:
+        right = "Call" if c.right == OptionRight.CALL else "Put"
+        strat = c.strategy.value.replace("_", " ").title()
+        vrp_part = f" VRP{c.vrp:+.1f}%" if c.vrp is not None else ""
+        lines.append(
+            f"• *{_md(c.underlying)}* {_md(strat)} \\${_md(f'{c.strike:.0f}')} {_md(right)}"
+            f" {_md(str(c.expiry))} \\({_md(str(c.dte))}d\\)"
+            f" — score {_md(f'{c.blended_score:.0f}')}/100{_md(vrp_part)}"
+        )
+    lines += ["", "_The risk gate re\\-validates each order before execution\\._"]
+    return "\n".join(lines)[:_MAX_MESSAGE_LEN]
+
+
+def format_profit_alert(
+    symbol: str,
+    underlying: str,
+    entry_price: float,
+    current_mid: float,
+    profit_pct: float,
+) -> str:
+    """Profit-target alert sent in MANUAL mode when 50% threshold is reached."""
+    captured = profit_pct * 100
+    lines = [
+        f"💰 *Profit target reached — {_md(symbol)}*",
+        f"Underlying: {_md(underlying)}",
+        f"Entry \\(sold at\\): \\${_md(f'{entry_price:.2f}')}",
+        f"Current mid \\(cost to close\\): \\${_md(f'{current_mid:.2f}')}",
+        f"Premium captured: *{_md(f'{captured:.0f}')}%*",
+        "",
+        "_Consider buying to close this position to lock in the gain\\._",
+    ]
+    return "\n".join(lines)
+
+
+def format_auto_close_result(
+    symbol: str,
+    qty: int,
+    limit_price: float,
+    filled_qty: float,
+    avg_price: float,
+) -> str:
+    """Notification for an automated buy-to-close order result."""
+    if filled_qty > 0:
+        return (
+            f"🤖 *Auto\\-close filled* — {_md(symbol)}\n"
+            f"Bought {_md(str(qty))} × {_md(symbol)} @ \\${_md(f'{avg_price:.2f}')}"
+        )
+    return (
+        f"⚠️ *Auto\\-close NOT filled* — {_md(symbol)}\n"
+        f"Limit \\${_md(f'{limit_price:.2f}')} placed but did not fill — check IBKR manually\\."
+    )
 
 
 def format_positions(

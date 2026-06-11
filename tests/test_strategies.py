@@ -203,6 +203,33 @@ class TestCoveredCall:
         assert len(result) == 1
         assert result[0].contracts == 3
 
+    def test_existing_short_calls_reduce_contracts(self):
+        # 300 shares = 3 coverable contracts; 2 calls already written → only 1 uncovered.
+        result = generate_cc_candidates(
+            "AAPL",
+            [_call_quote()],
+            _long_stock(shares=300.0),
+            _iv(),
+            _tech(),
+            _fund(),
+            existing_short_calls=2,
+        )
+        assert len(result) == 1
+        assert result[0].contracts == 1
+
+    def test_fully_covered_returns_empty(self):
+        # 200 shares = 2 contracts, both already written → nothing left to sell.
+        result = generate_cc_candidates(
+            "AAPL",
+            [_call_quote()],
+            _long_stock(shares=200.0),
+            _iv(),
+            _tech(),
+            _fund(),
+            existing_short_calls=2,
+        )
+        assert result == []
+
     def test_breakeven_formula(self):
         avg_cost = 175.0
         quote = _call_quote()  # mid=2.20
