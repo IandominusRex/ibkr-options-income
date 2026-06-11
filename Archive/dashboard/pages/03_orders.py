@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/pages/03_orders.py
+# Streamlit orders page. To reinstate: move back to dashboard/pages/03_orders.py.
 """Orders page — approval pipeline: pending → approved → queued → submitted → filled."""
 
 import pandas as pd

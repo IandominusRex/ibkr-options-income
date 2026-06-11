@@ -221,6 +221,16 @@ async def run() -> None:
     # 6. Persist to DB.
     _write_journal(summary, narrative, fill_ids)
 
+    # 6b. Reconcile the verdict outcome ledger (deterministic, DB-only). Attaches realized
+    #     outcomes to closed trades so the enrichment layer accumulates labeled history.
+    #     Assignment is treated as expired-worthless unless flagged explicitly elsewhere.
+    try:
+        from src.claude.eval.reconcile import reconcile
+
+        reconcile()
+    except Exception:
+        logger.exception("EOD: ledger reconciliation failed — continuing")
+
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
 

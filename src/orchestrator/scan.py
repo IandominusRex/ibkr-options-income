@@ -227,6 +227,88 @@ def _persist_memory(
         log.info("Persisted %d ClaudeMemoryRow entries", len(rows))
 
 
+def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
+    """The signal snapshot Claude saw for this candidate — frozen into the outcome ledger."""
+    return {
+        "blended_score": c.blended_score,
+        "iv_rank": c.iv_rank,
+        "delta": c.delta,
+        "vrp": c.vrp,
+        "prob_profit": c.prob_profit,
+        "roc_pct": c.roc_pct,
+        "annualized_yield_pct": c.annualized_yield_pct,
+        "dte": c.dte,
+        "premium": c.premium,
+        "scores": {
+            "iv": c.scores.iv_score,
+            "technical": c.scores.technical_score,
+            "fundamental": c.scores.fundamental_score,
+            "liquidity": c.scores.liquidity_score,
+            "assignment_safety": c.scores.assignment_safety_score,
+            "sentiment": c.scores.sentiment_score,
+        },
+        "rationale_tags": list(c.rationale_tags),
+        "vix": vix,
+    }
+
+
+def _persist_ledger(
+    top: list[TradeCandidate],
+    reviews: list[ClaudeReview],
+    market_conditions: MarketConditions,
+    run_id: str,
+) -> None:
+    """Write the outcome ledger for this scan: one VerdictRecord per surfaced candidate,
+    capturing the signals Claude saw, its verdict, and the deterministic baseline. Outcomes
+    are back-filled later by the reconciler. Enrichment-only — never gates anything.
+    """
+    if not top:
+        return
+    from src.claude.eval.baseline import baseline_decisions
+    from src.claude.eval.ledger import record_verdicts
+    from src.common.schemas import VerdictRecord
+
+    review_map = {r.candidate_id: r for r in reviews}
+    baselines = baseline_decisions(top)
+    vix = market_conditions.vix if market_conditions else None
+    today = date.today()
+    records: list[VerdictRecord] = []
+    for c in top:
+        review = review_map.get(c.candidate_id)
+        base = baselines.get(c.candidate_id)
+        claude_rec = review.recommendation if review else "none"
+        baseline_rec = base.recommendation if base else "skip"
+        # Agreement: did Claude choose to trade where the baseline did (both "sell" or neither)?
+        agreement: bool | None = None
+        if review is not None and base is not None:
+            agreement = (claude_rec == "sell") == (baseline_rec == "sell")
+        records.append(
+            VerdictRecord(
+                candidate_id=c.candidate_id,
+                run_id=run_id,
+                scan_date=today,
+                underlying=c.underlying,
+                strategy=c.strategy,
+                right=c.right,
+                strike=c.strike,
+                expiry=c.expiry,
+                dte=c.dte,
+                signals=_signal_vector(c, vix),
+                claude_recommendation=claude_rec,
+                claude_priority=review.priority if review else None,
+                claude_confidence=review.confidence if review else None,
+                claude_rationale=(
+                    f"{review.why_attractive} | Risks: {review.risks}" if review else ""
+                ),
+                baseline_recommendation=baseline_rec,
+                baseline_rank=base.rank if base else None,
+                baseline_score=base.score if base else c.blended_score,
+                agreement=agreement,
+            )
+        )
+    record_verdicts(records)
+
+
 def _persist_candidates(
     candidates: list[TradeCandidate],
     reviews: list[ClaudeReview],
@@ -496,6 +578,8 @@ async def run_scan(
     # --- 9. Persist ---
     _persist_candidates(top, result.reviews, result.run_id)
     _persist_memory(top, result.buy_candidates, result.reviews)
+    # Outcome ledger: verdict + signals + deterministic baseline (outcomes back-filled later).
+    _persist_ledger(top, result.reviews, result.market_conditions, result.run_id)
 
     # --- 10. Send to Telegram ---
     # send_candidates manages its own short DB transactions (no session held across the

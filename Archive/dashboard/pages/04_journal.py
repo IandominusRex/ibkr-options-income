@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/pages/04_journal.py
+# Streamlit journal page. To reinstate: move back to dashboard/pages/04_journal.py.
 """Journal page — EOD feed with cumulative realized P&L sparkline."""
 
 import pandas as pd

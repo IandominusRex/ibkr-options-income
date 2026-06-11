@@ -188,6 +188,51 @@ class ClaudeMemoryRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class VerdictLedgerRow(Base):
+    """Outcome ledger — one row per Claude-reviewed candidate.
+
+    Captures the full signal vector Claude saw, its verdict, and the deterministic baseline
+    counterfactual at scan time; the realized trade outcome (assigned / expired / closed early,
+    P&L) is back-filled by the reconciler when the position closes. This is the labeled history
+    that powers verdict evaluation and the skill loop. Enrichment-layer only — the risk engine
+    never reads it. Upserted on candidate_id so a re-scan refreshes the pre-outcome fields.
+    """
+
+    __tablename__ = "verdict_ledger"
+    __table_args__ = (UniqueConstraint("candidate_id", name="uq_verdict_ledger_candidate_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(String(64), index=True)
+    run_id: Mapped[str] = mapped_column(String(40), index=True)
+    scan_date: Mapped[date] = mapped_column(Date, index=True)
+    underlying: Mapped[str] = mapped_column(String(16), index=True)
+    strategy: Mapped[str] = mapped_column(String(20))
+    right: Mapped[str] = mapped_column(String(1))
+    strike: Mapped[float] = mapped_column(Float)
+    expiry: Mapped[date] = mapped_column(Date)
+    dte: Mapped[int] = mapped_column(Integer, default=0)
+    signals: Mapped[dict] = mapped_column(JSON, default=dict)  # signal vector Claude saw
+    # Claude verdict
+    claude_recommendation: Mapped[str] = mapped_column(String(10), default="none")
+    claude_priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    claude_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    claude_rationale: Mapped[str] = mapped_column(Text, default="")
+    # Deterministic baseline counterfactual
+    baseline_recommendation: Mapped[str] = mapped_column(String(10), default="skip")
+    baseline_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    baseline_score: Mapped[float] = mapped_column(Float, default=0.0)
+    agreement: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Realized outcome (back-filled on close)
+    outcome: Mapped[str] = mapped_column(String(20), default="still_open", index=True)
+    outcome_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled: Mapped[bool] = mapped_column(Boolean, default=False)
+    entry_premium: Mapped[float | None] = mapped_column(Float, nullable=True)
+    contracts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class SystemSettingRow(Base):
     """Persistent key-value store for runtime system settings (e.g. automated_mode toggle)."""
 

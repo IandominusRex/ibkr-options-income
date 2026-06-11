@@ -59,10 +59,11 @@ These YAML files control how the system behaves. **You change behavior here, not
 
 | File | What it controls |
 |---|---|
-| `settings.yaml` | IBKR connection (host, ports, client IDs), scan timing, execution timeouts, logging |
+| `settings.yaml` | IBKR connection (host, ports, client IDs), scan timing, execution timeouts, logging. The `claude` section also carries `skills_enabled` (default `true`) — whether promoted reasoning skills are injected into review prompts. |
 | `risk_limits.yaml` | Per-ticker concentration limits, delta ranges, DTE windows, earnings blackout, minimum return |
 | `universe.yaml` | Your watchlist (tickers to scan for CCs) and `would_own` list (stocks OK to be assigned via CSPs). Tickers are organised into three tiers: Tier 1 core (SPY/QQQ/AAPL/MSFT/NVDA/JPM/GLD), Tier 2 active (AMD/META/AMZN/PLTR/SOFI/HOOD/HIMS/BABA), Tier 3 speculative/high-IV (SOXL/LABU/TSLL/DPST/MARA/RGTI/CRCL). Leveraged ETFs are in `indexes` only — never `would_own`. |
 | `scoring_weights.yaml` | How much weight IV rank, technicals, fundamentals, and liquidity each get when ranking candidates |
+| `skills/` | Reasoning-skill playbooks: `active/` (injected into review prompts), `proposed/` (Claude-drafted, awaiting human review), `rejected/`. Promotion is a human-gated file move via `scripts.skills`. These shape Claude's verdict + ranking only — never the gates above. |
 
 **Rule:** Secrets (passwords, tokens) never go in these files. They go in `.env`.
 
@@ -132,11 +133,36 @@ Invokes Claude to add plain-English reasoning to the top candidates.
 | `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response. `review_candidates` also forwards the scan's `MarketConditions` (VIX) so the prompt carries the macro-vol regime — enrichment only, never a deterministic gate. |
 | `parser.py` | Validates and parses Claude's JSON response into a structured `ClaudeReview` object. On any failure, returns an empty result — the pipeline always continues. |
 | `memory.py` | The learning-loop outcome recorder. Back-fills each `claude_memory` row with what actually happened — `filled` (executor), `user_rejected` (Telegram reject), `risk_rejected` (re-validation), `expired` (TTL) — so later scans inject real outcomes (not just rejections) into the strategist prompt. |
-| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe; also renders a VIX regime line and each candidate's VRP so the reasoning layer can weigh whether premium is cheap or rich), `roll.py` (roll alerts), `eod.py` (EOD journal) |
+| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe; also renders a VIX regime line, each candidate's VRP, and any **active reasoning skills**), `roll.py` (roll alerts — also injects active skills), `eod.py` (EOD journal) |
 
 **Important:** Claude is enrichment only. If it is unavailable or returns bad output, the system
 sends the Rules-Engine-approved list to Telegram without Claude commentary. Claude never places,
 sizes, or gates orders.
+
+---
+
+### `src/claude/eval/` — The verdict learning loop
+
+Turns Claude's reviews into labeled history and scores them. Read-only with respect to trading:
+nothing here can place, size, or gate an order — it only observes and measures.
+
+| File | What it does |
+|---|---|
+| `ledger.py` | The **outcome ledger**. Maps `VerdictLedgerRow` ↔ `VerdictRecord` so the rest of the loop works in schemas, not ORM. At scan time it stores one row per surfaced candidate: the full signal vector Claude saw, its verdict, and the deterministic baseline. Upserts on `candidate_id` and never clobbers a recorded outcome. |
+| `baseline.py` | The **deterministic counterfactual** — what the engine would do without Claude. Pure Python over the engine's own slate: every surfaced candidate is a `sell` ranked by `blended_score`; anything not surfaced is `skip`. No LLM, no new tunables. |
+| `reconcile.py` | The **close reconciler**. Deterministic, DB-only: joins the ledger against fills/orders/approvals to set the terminal outcome (`expired_worthless` / `closed_early` / `assigned` / `not_filled` / `user_rejected` / `risk_rejected`) and realized P&L. Runs automatically at EOD and via `scripts.reconcile_outcomes`. |
+| `metrics.py` | **Verdict scoring**: calibration (reliability buckets + Brier score) and EV of *following Claude* vs *the baseline*, on a held-out window and per month — so the score reflects skill, not the last trade's luck. |
+
+### `src/claude/skills/` — The skill loop
+
+Claude proposes reasoning playbooks from the labeled ledger; a human promotes them; promoted
+skills are injected into the strategist/roll prompts. Skills shape **verdict and ranking only** —
+never gates, weights, or sizing (see *Key invariants → the fence*).
+
+| File | What it does |
+|---|---|
+| `registry.py` | Loads/saves/promotes/rejects skill files under `config/skills/{active,proposed,rejected}` and renders the active set for prompt injection. `render_active_skills()` is the **single, auditable path** a skill reaches Claude — imported only by the prompt builders. |
+| `proposer.py` | Builds a prompt from the labeled ledger + current evaluation + active skills and shells `claude -p` to draft one new/refined skill into `proposed/`. Fail-soft like the runner. Never auto-promotes. |
 
 ---
 
@@ -209,7 +235,7 @@ All data is stored in a SQLite database at `data/income_system.db`.
 | File | What it does |
 |---|---|
 | `db.py` | Database connection and session management via SQLAlchemy. For SQLite it enables WAL mode + a 30 s busy-timeout (so the concurrent processes don't hit "database is locked"), applies a lightweight ALTER-in for columns added after the original schema, and creates partial indexes that the model metadata can't express portably (e.g. `uq_orders_active_candidate` — one working order per candidate). |
-| `models.py` | Defines the database tables: `candidates`, `risk_verdicts`, `claude_reviews`, `approvals`, `orders`, `fills`, `iv_history`, `option_quotes`, `roll_alerts`, `claude_memory`, `journal`, `system_settings`. The `fills` row records `action` (SELL credit / BUY debit) and `entry_iv`. `system_settings` is a key-value table for runtime toggles (currently stores `automated_mode`). `candidates`, `orders`, and `journal` carry unique constraints to prevent duplicate rows. |
+| `models.py` | Defines the database tables: `candidates`, `risk_verdicts`, `claude_reviews`, `approvals`, `orders`, `fills`, `iv_history`, `option_quotes`, `roll_alerts`, `claude_memory`, `verdict_ledger`, `journal`, `system_settings`. The `fills` row records `action` (SELL credit / BUY debit) and `entry_iv`. `verdict_ledger` (the **outcome ledger**) stores, per Claude-reviewed candidate, the signal vector Claude saw + its verdict + the deterministic baseline, with the realized trade outcome back-filled on close (unique on `candidate_id`, upserted per scan). `system_settings` is a key-value table for runtime toggles (currently stores `automated_mode`). `candidates`, `orders`, and `journal` carry unique constraints to prevent duplicate rows. |
 | `system_settings.py` | Helper functions for the `system_settings` table: `is_automated_mode()`, `set_automated_mode()`, `get_setting()`, `set_setting()`. Mode persists across restarts. |
 | `orders.py` | Order-creation idempotency: `has_active_order(session, candidate_id)`. Because `candidate_id` is a deterministic hash, a re-scan (especially the 15-min automated loop) regenerates the same candidate; both order-creation paths (`sender._auto_queue_candidates`, `approval_service._process_button`) consult this guard so a candidate with an order already QUEUED/SUBMITTED/FILLED/PARTIAL is not re-queued — preventing stacked duplicate positions (naked short calls for CCs, which bypass the cumulative exposure gates). A partial unique index `uq_orders_active_candidate` (created in `db.py`) is the DB-level backstop: at most one order in a *working* state (queued/submitted) per candidate. |
 | `maintenance.py` | Periodic DB pruning. `purge_old_option_quotes(retention_days=14)` deletes stale rows from the write-only `option_quotes` audit table; called from the EOD run so SQLite stays bounded under the 15-min loop's write volume. |
@@ -225,7 +251,7 @@ Every stage of the pipeline writes its results here. This means:
 
 | File | What it does |
 |---|---|
-| `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.) |
+| `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.). The enrichment-evaluation shapes also live here: `VerdictOutcome`, `BaselineDecision`, `VerdictRecord` (one ledger entry), `CalibrationBucket`/`PolicyStats`/`VerdictEvaluation` (verdict scoring), and `SkillProposal`. |
 | `config.py` | Loads and validates `config/*.yaml` and `.env` |
 | `logging.py` | Structured logging setup — colourised console output (green INFO, yellow WARNING, red ERROR) and a plain rotating file log; `setup_logging()` is the single call-site used by all entry points |
 | `market_hours.py` | Self-contained US equity-market calendar + RTH gate (`is_rth`, `session_close`, `is_market_holiday`, `is_early_close`). Computes NYSE full-day holidays and the 13:00 ET early-close sessions for any year — no external calendar dependency. The single source of truth for "is the market open"; both the execution bridge and the intraday loop call it instead of keeping their own weekday-only check. |
@@ -236,10 +262,10 @@ schemas first. This keeps modules independent and testable.
 
 ---
 
-### `dashboard/` — The Streamlit web dashboard
+### `Archive/dashboard/` — The Streamlit web dashboard (archived)
 
-A read-only web interface for monitoring the system. Start it with
-`streamlit run dashboard/app.py` and open `http://localhost:8501`.
+The Streamlit dashboard has been moved to `Archive/dashboard/`. To reinstate it, move the
+folder back to `dashboard/` at the project root and run `streamlit run dashboard/app.py`.
 
 | Page | What it shows |
 |---|---|
@@ -266,6 +292,10 @@ These are the scripts you run directly:
 | `run_approval_service.py` | `python -m scripts.run_approval_service` | Starts the long-running approval + execution daemon |
 | `run_monitor.py` | `python -m scripts.run_monitor` | Starts the intraday position monitor |
 | `backfill_iv.py` | `python -m scripts.backfill_iv` | One-time: seeds one year of IV history for the universe |
+| `reconcile_outcomes.py` | `python -m scripts.reconcile_outcomes` | Reconcile the outcome ledger (deterministic, DB-only). `--assigned <id…>` flags past-expiry shorts that were assigned. Also runs automatically at EOD. |
+| `evaluate_verdicts.py` | `python -m scripts.evaluate_verdicts` | Score Claude's verdicts: calibration + EV vs the baseline, held-out + per month. Read-only. `--since`, `--until`, `--json`. |
+| `propose_skill.py` | `python -m scripts.propose_skill` | Draft a reasoning skill from the labeled ledger via `claude -p` into `config/skills/proposed/`. Not promoted. |
+| `skills.py` | `python -m scripts.skills <list\|show\|promote\|reject\|retire> [name]` | The human gate: review proposed skills and promote them into `active/`. |
 
 ---
 
@@ -292,7 +322,7 @@ processes that run at the same time.**
 | `approval_service` | Always-on daemon | **14 (`exec`) + 15 (`scan`)** | Telegram callbacks + order execution (14) and a second connection for `/scan`, `/positions`, `/account`, `/status` (15) |
 | `healthcheck` | Manual | 19 | Connection check / account print |
 | `trading_skills` MCP | Inside `claude -p` (opt-in) | 20 | Ad-hoc Claude lookups (see `STATUS.md`) |
-| dashboard | Optional Streamlit | 21 | Read-only views (reads SQLite; rarely hits TWS) |
+| dashboard | Optional Streamlit (archived to `Archive/dashboard/`) | 21 | Read-only views (reads SQLite; rarely hits TWS) |
 
 \* `eod_report` uses clientId 16 to avoid conflicts if `morning_scan` (id 11) runs late or is
 re-run manually. One-shots connect, work, and disconnect; the daemons run continuously and
@@ -318,6 +348,9 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 | `ClaudeReview` / `RollReview` | Claude's structured review of a candidate / a live position roll |
 | `RollAlert` | A fired intraday trigger (delta drift, DTE, IV spike, ex-div) |
 | `EODSummary` | End-of-day metrics handed to Claude and stored in the journal |
+| `VerdictRecord` | One outcome-ledger entry: the signals Claude saw + its verdict + the deterministic `BaselineDecision` + the back-filled realized `VerdictOutcome`/P&L |
+| `VerdictEvaluation` | Held-out scoring of verdicts: Brier calibration + `PolicyStats` for follow-Claude vs baseline |
+| `SkillProposal` | A Claude-drafted reasoning skill awaiting human promotion |
 
 (The complete, authoritative list is the set of classes in `src/common/schemas.py`.)
 
@@ -331,6 +364,10 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 4. **Secrets live only in `.env`.** Never in code, logs, or YAML.
 5. **All option orders use LimitOrder at mid-price.** Never market orders.
 6. **`qualifyContracts` runs before every order submission.**
+7. **The fence: skills influence verdict + ranking only.** Promoted reasoning skills reach Claude
+   solely through the strategist/roll prompt builders (`render_active_skills`). The risk engine,
+   scoring, and sizing never import or see them — gates/weights/limits stay human-edited config.
+   Enforced by `tests/test_eval_skills.py::test_skills_never_reach_the_engine`.
 
 ---
 

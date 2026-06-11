@@ -293,3 +293,128 @@ class BuyCandidate(BaseModel):
     quality_flag: bool | None = None
     technical_regime: str | None = None  # from Regime enum value
     rationale: str = ""  # filled by Claude after scan
+
+
+# --------------------------------------------------------------------------- #
+# Enrichment-layer evaluation: outcome ledger + verdict scoring
+#
+# These shapes power the *learning loop* around Claude's reviews. They are read
+# only by analytics/skill-loop code — NEVER by the risk engine, scoring, or
+# sizing. Skills derived from this history influence verdict and ranking only;
+# the deterministic gates remain human-edited config (see CLAUDE.md "the fence").
+# --------------------------------------------------------------------------- #
+class VerdictOutcome(StrEnum):
+    STILL_OPEN = "still_open"  # filled and live; no terminal outcome yet
+    EXPIRED_WORTHLESS = "expired_worthless"  # short option expired OTM → full premium kept
+    ASSIGNED = "assigned"  # expired/exercised ITM → stock leg created/removed
+    CLOSED_EARLY = "closed_early"  # bought to close before expiry (roll/risk-off)
+    NOT_FILLED = "not_filled"  # surfaced + approved path but never executed
+    USER_REJECTED = "user_rejected"  # user declined the approval
+    RISK_REJECTED = "risk_rejected"  # second-pass risk gate blocked at send time
+
+
+class BaselineDecision(BaseModel):
+    """What the deterministic Rules+Scoring layer would do WITHOUT Claude — the counterfactual.
+
+    A candidate is `sell` if the engine surfaced it as tradeable (passed the risk gate and the
+    score floor and was selected into the top-N); otherwise `skip`. `rank` is its 1-based
+    position by blended_score among the surfaced slate. Pure Python — no LLM.
+    """
+
+    candidate_id: str
+    recommendation: Literal["sell", "skip"]
+    rank: int | None = None
+    score: float = 0.0
+
+
+class VerdictRecord(BaseModel):
+    """One immutable ledger entry: the signals Claude saw, its verdict, the deterministic
+    baseline counterfactual, and (back-filled on close) the realized trade outcome.
+
+    Cross-boundary shape for the ledger ↔ reconciler ↔ metrics ↔ skill-loop modules so none
+    of them import the SQLAlchemy ORM directly. Enrichment-layer only.
+    """
+
+    candidate_id: str
+    run_id: str
+    scan_date: date
+    underlying: str
+    strategy: Strategy
+    right: OptionRight
+    strike: float
+    expiry: date
+    dte: int
+    # The full signal vector Claude saw at decision time (blended_score, iv_rank, delta,
+    # vrp, prob_profit, roc_pct, annualized_yield_pct, scorecard components, vix, tags).
+    signals: dict = Field(default_factory=dict)
+    # Claude's verdict (enrichment output)
+    claude_recommendation: str  # "sell" | "wait" | "skip" | "none" (no review returned)
+    claude_priority: int | None = None
+    claude_confidence: float | None = None
+    claude_rationale: str = ""
+    # Deterministic baseline counterfactual
+    baseline_recommendation: str  # "sell" | "skip"
+    baseline_rank: int | None = None
+    baseline_score: float = 0.0
+    agreement: bool | None = None  # did Claude's sell/not-sell match the baseline's?
+    # Realized outcome — back-filled by the reconciler when the position closes
+    outcome: VerdictOutcome = VerdictOutcome.STILL_OPEN
+    outcome_date: date | None = None
+    realized_pnl: float | None = None  # option-leg P&L in account currency (premium − close cost)
+    filled: bool = False
+    entry_premium: float | None = None  # per-share credit actually received
+    contracts: int | None = None
+
+
+class CalibrationBucket(BaseModel):
+    """One confidence band of the reliability curve: how Claude's stated confidence compares
+    to the realized win rate of the trades it expressed that confidence on."""
+
+    lower: float  # band lower bound (e.g. 0.6)
+    upper: float  # band upper bound (e.g. 0.8)
+    n: int
+    mean_confidence: float
+    win_rate: float  # realized fraction of profitable trades in the band
+
+
+class PolicyStats(BaseModel):
+    """Realized performance of one decision policy over the evaluated trades."""
+
+    label: str  # "follow_claude" | "baseline"
+    n_trades: int
+    win_rate: float
+    mean_pnl: float
+    total_pnl: float
+
+
+class VerdictEvaluation(BaseModel):
+    """Held-out scoring of Claude's verdicts: calibration + EV vs the deterministic baseline.
+
+    Computed on *closed* trades only (realized outcomes), optionally restricted to a held-out
+    date window so the score reflects out-of-sample skill, not the last trade's luck.
+    """
+
+    n_closed: int
+    period_start: date | None = None
+    period_end: date | None = None
+    brier_score: float | None = None  # mean squared (confidence − win); lower is better
+    calibration: list[CalibrationBucket] = Field(default_factory=list)
+    follow_claude: PolicyStats
+    baseline: PolicyStats
+    edge_per_trade: float | None = None  # follow_claude.mean_pnl − baseline.mean_pnl
+    agreement_rate: float | None = None  # fraction where Claude and baseline agreed
+    notes: list[str] = Field(default_factory=list)
+
+
+class SkillProposal(BaseModel):
+    """A Claude-drafted reasoning skill, awaiting human review before promotion.
+
+    Skills are playbooks injected into the *strategist/roll* prompts only. They shape verdict
+    and ranking — never gates, weights, or sizing (those stay human-edited config).
+    """
+
+    name: str  # kebab-case slug → filename
+    description: str  # one-line; shown in the prompt's skill index
+    body: str  # the markdown playbook injected into the reasoning prompt
+    rationale: str = ""  # why Claude proposed it (not injected; for the human reviewer)
+    supporting_stats: dict = Field(default_factory=dict)  # ledger evidence behind the proposal

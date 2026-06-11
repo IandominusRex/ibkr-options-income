@@ -33,7 +33,7 @@ source .venv/bin/activate          # macOS/Linux
 pip install -e ".[dev]"
 ```
 
-To also enable the Streamlit dashboard:
+To also enable the Streamlit dashboard (currently archived to `Archive/dashboard/`; restore it to `dashboard/` first):
 
 ```bash
 pip install -e ".[dev,dashboard]"
@@ -499,12 +499,13 @@ mypy src                          # type check
 
 ---
 
-## 10. Start the Streamlit dashboard (optional)
+## 10. Start the Streamlit dashboard (optional, archived)
 
-The dashboard gives you a read-only view of your portfolio, open candidates, IV conditions, and
-trade history:
+The Streamlit dashboard has been moved to `Archive/dashboard/`. To reinstate it, copy
+`Archive/dashboard/` back to `dashboard/` at the project root, then:
 
 ```bash
+pip install -e ".[dev,dashboard]"
 streamlit run dashboard/app.py
 ```
 
@@ -563,6 +564,49 @@ When you are ready:
 6. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
    which account it is connected to. Verify this before approving any trade.
 7. Start with a single small position to validate the full end-to-end flow.
+
+---
+
+## 13. The verdict learning loop (optional)
+
+Once scans have run and trades have closed, the system can score how good Claude's reviews
+actually were and grow a library of human-approved reasoning skills. Nothing here can place,
+size, or gate a trade — it shapes Claude's verdict and ranking only.
+
+**How it accumulates on its own:**
+
+- Every scan writes one **outcome-ledger** row per surfaced candidate (the signals Claude saw, its
+  verdict, and what the deterministic baseline would have done).
+- The EOD run **reconciles** closed trades — attaching `expired_worthless` / `closed_early` /
+  `not_filled` outcomes and realized P&L. You can also run it on demand:
+
+  ```bash
+  python -m scripts.reconcile_outcomes
+  # An option that was actually assigned (not expired worthless):
+  python -m scripts.reconcile_outcomes --assigned <candidate_id>
+  ```
+
+**Score the verdicts** (read-only; calibration + EV vs the baseline, held-out + per month):
+
+```bash
+python -m scripts.evaluate_verdicts
+python -m scripts.evaluate_verdicts --since 2026-05-01   # held-out tail only
+```
+
+**Grow reasoning skills** (human-gated):
+
+```bash
+python -m scripts.propose_skill                 # Claude drafts one skill from labeled history
+python -m scripts.skills list                   # see active + proposed
+python -m scripts.skills show <name>            # read a draft's body, rationale, and stats
+python -m scripts.skills promote <name>         # activate it → injected into future review prompts
+python -m scripts.skills reject <name>          # archive a draft
+python -m scripts.skills retire <name>          # stop injecting an active skill
+```
+
+Only skills in `config/skills/active/` are injected. Promotion is always a manual file move you
+control (visible in git). Set `claude.skills_enabled: false` in `config/settings.yaml` to disable
+injection entirely. See `config/skills/README.md` for the file format and the fence.
 
 ---
 

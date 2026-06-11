@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/pages/05_iv_conditions.py
+# Streamlit IV conditions page. To reinstate: move back to dashboard/pages/05_iv_conditions.py.
 """IV Conditions page — IV Rank/Percentile table and historical IV charts per symbol."""
 
 import pandas as pd

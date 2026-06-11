@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/pages/01_portfolio.py
+# Streamlit portfolio page. To reinstate: move back to dashboard/pages/01_portfolio.py.
 """Portfolio page — account snapshot from the latest EOD journal entry."""
 
 import streamlit as st

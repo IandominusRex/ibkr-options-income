@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/pages/02_candidates.py
+# Streamlit candidates page. To reinstate: move back to dashboard/pages/02_candidates.py.
 """Candidates page — top-scored CC/CSP candidates from the latest scan."""
 
 import pandas as pd

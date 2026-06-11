@@ -1,3 +1,5 @@
+# ARCHIVED — original location: tests/test_dashboard.py
+# Streamlit dashboard tests. To reinstate: move back to tests/test_dashboard.py.
 """Tests for Phase 10: Streamlit dashboard data helpers.
 
 Pure-function tests run without any DB or Streamlit.

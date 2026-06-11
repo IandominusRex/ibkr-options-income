@@ -1,3 +1,5 @@
+# ARCHIVED — original location: dashboard/data.py
+# DB-access helpers for the Streamlit dashboard. To reinstate: move back to dashboard/data.py.
 """Pure DB-access and data-transformation helpers for the dashboard.
 
 No Streamlit imports here — pages layer @st.cache_data on top.

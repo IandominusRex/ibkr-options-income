@@ -1,3 +1,6 @@
+# ARCHIVED — original location: dashboard/app.py
+# Streamlit dashboard entry point. To reinstate: move back to dashboard/app.py and run with:
+#   streamlit run dashboard/app.py
 """IBKR Options Income System — Streamlit dashboard home.
 
 Run with:  streamlit run dashboard/app.py

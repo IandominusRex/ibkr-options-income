@@ -6,8 +6,9 @@ making structural changes.
 
 > **System status: paper-trading v1, feature-complete.** The full pipeline — market data →
 > analytics → strategies → scoring → deterministic risk gate → Claude review → Telegram approval →
-> execution → intraday monitor → EOD reporting → Streamlit dashboard — is implemented and covered by
-> the test suite (IBKR mocked). **Not yet validated on a live account.** Live cutover is gated behind
+> execution → intraday monitor → EOD reporting — is implemented and covered by the test suite
+> (IBKR mocked). The Streamlit dashboard has been archived to `Archive/dashboard/`.
+> **Not yet validated on a live account.** Live cutover is gated behind
 > `LIVE_TRADING=true` + the live port + a per-order second confirmation (see `SETUP.md` §11).
 
 ---
@@ -34,6 +35,17 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   live-quote gate at send time.
 - **Claude** (`src/claude/`) — headless `claude -p` runner, resilient parser, prompt templates, and a
   persistent learning loop (`claude_memory`, all four outcomes recorded).
+- **Verdict learning loop** (`src/claude/eval/`, `src/claude/skills/`) — an **outcome ledger**
+  (`verdict_ledger`) records, per Claude-reviewed candidate, the signal vector Claude saw + its
+  verdict + the deterministic baseline; a **reconciler** back-fills the realized outcome
+  (expired / closed-early / assigned / not-filled, P&L) when the trade closes (runs at EOD +
+  `scripts.reconcile_outcomes`). **Verdict scoring** (`scripts.evaluate_verdicts`) reports
+  calibration (Brier) and EV of following Claude vs the baseline, on held-out windows and per
+  month. A **skill loop** lets Claude draft reasoning playbooks from that labeled history
+  (`scripts.propose_skill`), which a human promotes (`scripts.skills promote`) into
+  `config/skills/active/` for injection into review prompts. **The fence:** skills shape verdict +
+  ranking only — the risk engine, weights, and sizing stay human-edited config (enforced by
+  `tests/test_eval_skills.py`).
 - **Execution** (`src/execution/`) — mid-price limit-order builder (tick-aware), executor with fill
   monitoring + live second confirmation, approval→execution bridge.
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
@@ -55,7 +67,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   automatically. The deterministic risk gate still re-validates every order before execution in
   both modes.
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
-- **Dashboard** (`dashboard/`) — read-only Streamlit views (optional `[dashboard]` extra).
+- **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
 
 ---
 
@@ -73,7 +85,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Claude | **Claude Code CLI (`claude -p`)** | Headless, subscription-based, JSON I/O — not the API. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. |
 | Config | `PyYAML` + `python-dotenv` | YAML for rules/weights, `.env` for secrets. |
-| Dashboard | `Streamlit` | Read-only views off SQLite. |
+| Dashboard | `Streamlit` | Read-only views off SQLite. Archived to `Archive/dashboard/`. |
 | Quality | `pytest`, `ruff`, `mypy` | IBKR mocked in tests. |
 
 ### Optional: the `trading_skills` MCP
@@ -97,6 +109,8 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only. The EOD run now prunes rows older than 14 days via `storage.maintenance.purge_old_option_quotes`, so it no longer grows unboundedly. |
 | **`BuyCandidate.rationale`** | Always an empty string. Claude enrichment for buy-to-own recommendations is not yet implemented. |
 | **yfinance caching** | **Built.** `get_fundamental_stats` and `_compute_hv30` are wrapped with `@daily_cached` (`src/common/cache.py`) — memoized per calendar day in-process, so the 15-min intraday loop fetches each symbol's fundamentals/HV at most once a day instead of every cycle. One-shot cron scripts get no benefit (process exits) and no harm. VIX is still fetched once per scan (it moves intraday and is cheap). |
+| **Ledger assignment detection** | The reconciler classifies every past-expiry short with no closing buy as `expired_worthless` — the common income-desk case. True **assignment** must be flagged explicitly (`scripts.reconcile_outcomes --assigned <id>`), because reliable auto-detection needs position-history diffing that isn't built. The `assigned` realized P&L is the option-leg premium only; stock-leg P&L from assignment is not modelled in the ledger. |
+| **Verdict-EV survivorship** | EV (`evaluate_verdicts`) is conditioned on **executed and settled** trades — candidates that were rejected or never filled have no realized counterfactual, so the comparison measures Claude as a filter/ranker over trades that happened, not over the full slate. Every report states this caveat. |
 | **Backtesting engine, ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. |
 
 ---

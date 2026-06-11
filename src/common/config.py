@@ -80,6 +80,9 @@ class ClaudeCfg(BaseModel):
     max_retries: int = 1
     output_format: str = "json"
     enabled: bool = True
+    # Inject human-promoted reasoning skills into the strategist/roll prompts. Skills shape
+    # verdict + ranking only — never gates, weights, or sizing (see CLAUDE.md "the fence").
+    skills_enabled: bool = True
 
 
 class StorageCfg(BaseModel):

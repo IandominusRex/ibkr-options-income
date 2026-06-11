@@ -61,6 +61,23 @@ place, size, or gate an order. A hallucinated or malformed Claude response must 
 the broker. The risk gate runs twice: once at decision time, once again at order-send time against
 a fresh quote.
 
+## The fence — the enrichment learning loop may not touch the deterministic layer
+
+The verdict learning loop (`src/claude/eval/` + `src/claude/skills/`) closes the feedback cycle
+around Claude's reviews: an **outcome ledger** (`verdict_ledger`) logs every verdict alongside the
+signals it saw and the deterministic baseline; a **reconciler** back-fills the realized outcome on
+close; **verdict scoring** measures calibration + EV against held-out periods; and a **skill loop**
+lets Claude draft reasoning playbooks from that labeled history.
+
+**The fence is absolute:** promoted skills influence **verdict and ranking only**. They reach Claude
+solely through the strategist/roll prompt builders via `render_active_skills()`. The risk engine,
+`scoring_weights.yaml`, `risk_limits.yaml`, and all position sizing remain **human-edited config** —
+nothing in `eval/` or `skills/` is importable from, or reachable by, the engine/execution/sizing
+path. When extending this area: never let a skill, the ledger, or the metrics feed a gate, weight,
+or contract count. The guarantee is enforced by `tests/test_eval_skills.py::test_skills_never_reach_the_engine`
+— keep it green. Skill **promotion is always human-gated** (a `scripts.skills promote` file move);
+the proposer drafts, it never activates.
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this
@@ -122,7 +139,7 @@ The build is feature-complete; there are no remaining phases. For any change:
 
 1. **Verify** — run the full quality gate before declaring completion:
    ```bash
-   python -m pytest -q    # all tests must pass (the 6 streamlit dashboard tests skip without that optional dep)
+   python -m pytest -q    # all tests must pass
    ruff check .           # no lint issues
    mypy src               # no type errors
    ```
