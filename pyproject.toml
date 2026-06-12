@@ -34,6 +34,8 @@ packages = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Archive/ holds the deprecated Streamlit dashboard (not packaged, not tested).
+extend-exclude = ["Archive"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
