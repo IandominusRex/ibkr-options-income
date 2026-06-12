@@ -73,7 +73,7 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
 
 **Gate after Phase 3:** 498 tests pass, ruff clean, mypy clean.
 
-### Phase 4 — deliberate roadmap  🟡 IN PROGRESS
+### Phase 4 — deliberate roadmap  ✅ DONE (2026-06-12)
 - [x] **Assignment auto-detection via position diffing** (2026-06-12): `position_snapshots` table + `src/storage/positions.py` (daily snapshot) + `src/claude/eval/assignment.py` (`detect_assignments` pure diff, `assigned_candidate_ids` orchestration). EOD now diffs prior snapshot vs current positions and feeds `reconcile(assigned_candidate_ids=…)`, replacing the manual `--assigned` flag. Residuals: option-leg-only realized P&L; CC assignment needs a prior snapshot (not detectable on the first-ever EOD). **Gate: 511 tests, ruff + mypy clean.**
 - [x] **Roll execution as a two-leg combo order** (2026-06-12): `src/execution/roll_executor.py::execute_roll`
       sends a roll as one atomic BAG combo (BUY-to-close old short + SELL-to-open new short — no legging
@@ -94,7 +94,17 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
       `execution.reprice_*` in `settings.yaml`, **default OFF** (unverified broker-path behaviour; on the
       STATUS.md live-verification list). Applies to the single-leg entry path; buy-to-close and roll combos
       reuse `reprice_limit` when wired later. **Gate: 527 tests, ruff + mypy clean.**
-- [ ] Backtest harness.
+- [x] **Backtest harness** (2026-06-12): `src/backtest/` — a deterministic, offline CC/CSP income
+      simulator. Because the system has no historical option-chain source, it synthesises premiums with
+      Black-Scholes (`analytics.black_scholes.bs_price`, added) from the underlying's historical price path
+      and its trailing 30-day realised vol (IV proxy), picks the strike by target delta, and settles
+      non-overlapping cycles (cash-settled at expiry) reporting premium, net P&L, win/assignment rate,
+      return on capital, annualized, vs. buy-&-hold, and max drawdown. `engine.simulate` is pure/unit-tested;
+      `data.py` wraps yfinance; `scripts/backtest.py` is the CLI. Fully separate from the live broker/risk
+      path (imports nothing from `engine/` or `execution/`). **Gate: 537 tests, ruff + mypy clean.**
+
+**Phase 4 complete.** All four roadmap items done (assignment auto-detection · roll combo execution ·
+limit-order repricing · backtest harness).
 
 ---
 

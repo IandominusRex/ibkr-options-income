@@ -223,6 +223,26 @@ Watches your open positions during market hours and fires alerts when action may
 
 ---
 
+### `src/backtest/` — Offline income backtest
+
+A standalone, deterministic simulator for the CC/CSP income strategies. It is **fully isolated
+from the live path** — it imports nothing from `engine/` or `execution/` and is never imported by
+them — so it can never influence a real order. Because the system has no historical option-chain
+data source, it *synthesises* premiums with Black-Scholes from the underlying's historical price
+path and trailing realised vol (the IV proxy). Use it to compare parameter choices, not as a
+tick-accurate truth.
+
+| File | What it does |
+|---|---|
+| `engine.py` | The pure core. `simulate(symbol, prices, params)` walks a daily-close series, writes non-overlapping short-premium cycles (strike chosen by target delta, premium = `bs_price` from trailing 30-day HV), settles each cash-style at expiry, and returns a `BacktestResult` (premium, net P&L, win/assignment rate, return on capital, annualized, buy-&-hold benchmark, max drawdown). Stated assumptions live in the module docstring. Takes an in-memory series → unit-testable offline. |
+| `data.py` | yfinance loader (`load_price_series`) producing the `(date, close)` series; kept out of `engine.py` so the core needs no network. |
+| `report.py` | `format_report` — plain-text rendering of a `BacktestResult` for the CLI. |
+
+Driven by `scripts/backtest.py`. The Black-Scholes price (`analytics.black_scholes.bs_price`) was
+added for this harness; `analytics.black_scholes.bs_delta` is reused to delta-target strikes.
+
+---
+
 ### `src/orchestrator/` — Daily workflows
 
 Ties everything together into the daily automated routines.

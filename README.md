@@ -96,6 +96,7 @@ python -m pytest               # all tests pass without TWS
 | `src/execution/` | Order building and execution via IBKR |
 | `src/notify/` | Telegram messaging and approval service |
 | `src/monitor/` | Event-driven intraday position monitoring |
+| `src/backtest/` | Offline CC/CSP income backtest (Black-Scholes-synthesised premiums over historical prices) |
 | `src/orchestrator/` | Morning scan, EOD report, and on-demand scan pipeline |
 | `src/storage/` | SQLite database models, session management, and order-creation idempotency |
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |

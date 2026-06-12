@@ -644,6 +644,27 @@ injection entirely. See `config/skills/README.md` for the file format and the fe
 
 ---
 
+## Backtesting a strategy (optional)
+
+Deterministic, offline-ish sizing tool — no IBKR connection, no DB writes. It pulls historical
+daily closes from yfinance and simulates CC/CSP income, synthesising premiums with Black-Scholes
+from trailing realised volatility (the system has no historical option chains, so this is an
+approximation — see `STATUS.md`).
+
+```bash
+# Cash-secured puts on AAPL over the last 2 years, ~0.30 delta, 30-DTE cycles:
+python -m scripts.backtest --symbol AAPL --strategy cash_secured_put --delta 0.30 --dte 30
+
+# Covered calls over an explicit window:
+python -m scripts.backtest --symbol MSFT --strategy covered_call --start 2023-01-01 --end 2024-01-01
+```
+
+It prints premium collected, net P&L, win/assignment rate, return on capital, annualized return,
+the buy-&-hold benchmark, and max drawdown. The covered-call P&L is the *option overlay* only
+(premium minus call-away intrinsic); the underlying's own appreciation is the buy-&-hold line.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
