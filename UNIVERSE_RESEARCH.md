@@ -241,11 +241,53 @@ Typical monthly premium yields at the 0.30 delta:
 
 ---
 
-## TSLA — Tesla (not in current universe, for reference)
+## TSLA — Tesla (Tier 2, added 2026-06-12)
 
-- **Price (June 2026):** ~$415–436  
-- **IV rank (verified June 2026):** **~22; IV percentile ~14.68% ("Low")** — TSLA is in a LOW IV environment  
-- **Notes:** Frequently cited as a high-IV wheel stock but currently in a compressed-IV regime. Premium selling on TSLA is unattractive right now. The system's `min_iv_rank: 30` would correctly filter it. If TSLA is added to the universe, only trade when IVR > 40.
+- **Price (June 2026):** ~$395–436  
+- **IV:** structurally high absolute IV (40–70%), but IV *rank* was compressed (~22) in mid-2026 — high premium in dollar terms, low relative to TSLA's own history.  
+- **CC:** ✅ — deepest single-stock options liquidity after AAPL; rich premium.  
+- **CSP:** ✅ — in `would_own`; high beta, size with the per-ticker cap.  
+- **Notes:** A core income staple (the glaring prior omission — TSLL the 2× ETF was listed but not the underlying). When IV rank is compressed the `min_iv_rank: 30` gate filters it automatically, so no manual gating needed. Watch the earnings/delivery-number calendar.
+
+---
+
+## Additions — 2026-06-12 (diversification batch)
+
+Concise entries for names added to broaden the book away from its tech/crypto tilt. Prices are
+spot-checked June 2026; IV descriptors are qualitative (verify IV **rank** on Barchart before
+selling — see Data quality warning).
+
+**Diversifier sector ETFs (all in `would_own`; liquid; defensives are LOW-IV → few signals):**
+
+| Ticker | Price | Sector | IV character | CC | CSP | Notes |
+|---|---|---|---|---|---|---|
+| XLF | ~$52 | financials | moderate | ✅ | ✅ | broad financials; good liquidity |
+| XLK | ~$255 | tech | moderate | ✅ | ✅ | adds to the (already large) tech cap |
+| XLE | ~$90 | energy | moderate–high | ✅ | ✅ | commodity-linked decorrelation |
+| XLV | ~$154 | healthcare | low | ✅ | ✅ | defensive; thin premium |
+| XLP | ~$85 | consumer | very low | ✅ | ✅ | staples; often below `min_iv_rank` |
+| XLU | ~$44 | utilities | low | ✅ | ✅ | rate-sensitive defensive |
+| XLI | ~$176 | industrials | low–moderate | ✅ | ✅ | cyclical diversifier |
+| TLT | ~$86 | bonds | very low | ✅ | ✅ | rates hedge sleeve; rarely signals |
+| SLV | ~$60 | commodities | moderate | ✅ | ✅ | silver; higher IV than GLD |
+
+**Quality stocks added to `would_own`:**
+
+- **V (~$324) / MA (~$488)** — payments-network moats; LOW IV (~12–28), large collateral; CC+CSP but expect modest yield.
+- **WMT (~$120) / HD (~$327)** — defensive consumer; liquid chains; moderate IV.
+- **COIN (~$162)** — liquid crypto-equity; high IV (60–100%); the cleanest crypto expression (far better liquidity than small miners). Crypto-correlated gap risk — treat as part of the crypto bucket.
+
+**Watchlist-only (CC-focused or CC-only):**
+
+- **COST (~$975) / LLY (~$1,150)** — top-quality compounders but **CC-focused**: one CSP contract locks ~$97k / ~$115k collateral, so they're impractical for CSP below a multi-million-dollar account. LLY also carries pharma trial-result binary risk. Kept in `watchlist`, **removed from `would_own`**.
+- **MSTR (~$125)** — leveraged-BTC proxy; very high IV (80–130%). **CC-only, not in `would_own`** (assignment = holding a leveraged-BTC vehicle).
+- **NBIS, CRM, NET, CRWD, SNOW, TTD, DDOG, TEM, ASTS, IONQ** — high-IV software/AI/space/quantum names for CC (and CSP where in `would_own`). Note overlaps: NET/CRWD/HACK (cybersecurity), SNOW/DDOG/IGV (cloud software), IONQ/RGTI (quantum) are correlated theses.
+
+**Removed 2026-06-12:**
+
+- **BRK.B** — class-share symbol does not resolve on both data sources (yfinance `BRK-B` vs IBKR `BRK B`); empirically returned zero yfinance rows. Low-IV, illiquid options anyway. Dropped.
+- **HUT, CLSK** — pure BTC miners, redundant with MARA + BITO; dropped to avoid quadrupling one correlated bet.
+- **DIA** — low-IV "SPY-lite"; redundant with SPY and rarely clears the IV gate.
 
 ---
 
@@ -273,6 +315,10 @@ not reflect today's market." Do not rely on these sites for live IV rank data. U
 - **FlashAlpha** — ATM IV, GEX, HV
 - **Volradar / projectoption.com** — IV rank cross-check
 
+**Symbol format:** one ticker string feeds BOTH yfinance and IBKR. Class shares whose two data
+sources disagree on the separator (e.g. Berkshire-B: yfinance `BRK-B` vs IBKR `BRK B`) do not
+resolve on both and must NOT be added — they silently return no data and never produce candidates.
+
 ---
 
 ## Sector concentration reference
@@ -284,12 +330,21 @@ The risk engine caps sector exposure at 25% of net liquidation. Sector assignmen
 |---|---|
 | `index` | SPY, QQQ, IWM |
 | `semis` | NVDA, AMD, SMH, SOXL |
-| `tech` | AAPL, MSFT, GOOGL, AMZN, META, PLTR, RGTI, BABA, TSLL |
-| `financials` | JPM, SOFI, HOOD, DPST |
-| `healthcare` | HIMS |
-| `commodities` | GLD |
-| `crypto` | MARA, CRCL |
+| `tech` | AAPL, MSFT, GOOGL, AMZN, META, PLTR, RGTI, BABA, NBIS, CRM, NET, CRWD, SNOW, TTD, DDOG, IONQ, XLK, HACK, IGV, ARKK |
+| `financials` | JPM, SOFI, HOOD, DPST, V, MA, XLF |
+| `consumer` | TSLA, TSLL, WMT, HD, COST, UBER, XLP |
+| `healthcare` | HIMS, TEM, LLY, XLV |
+| `commodities` | GLD, SLV |
+| `crypto` | MARA, CRCL, COIN, MSTR, BITO |
+| `energy` | XLE |
+| `utilities` | XLU |
+| `industrials` | XLI |
+| `bonds` | TLT |
+| `biotech` | LABU |
+| `aerospace` | RKLB |
+| `telecom` | ASTS |
 
-**Watch:** The `tech` bucket is large (9 tickers). In a morning where NVDA, AAPL, MSFT, and
-GOOGL all score well, the 25% cap will reject the 3rd/4th tech candidate. This is correct
-behaviour — the system is working as designed.
+**Watch:** `tech` is still the largest bucket (~20 tickers) and will hit the 25% cap first on a
+strong tech morning — correct behaviour. The 2026-06-12 diversification batch deliberately grew
+the non-tech buckets (consumer, financials, healthcare, plus new utilities/industrials/bonds/
+energy) so the engine has genuinely decorrelated names to fall back on once the tech cap binds.

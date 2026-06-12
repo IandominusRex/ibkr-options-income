@@ -7,6 +7,10 @@
 #   Tier 3 — Speculative / High-IV: premium income only, assignment is a risk event
 #             Leveraged ETFs (SOXL/LABU/TSLL/DPST) — NEVER in would_own (daily-reset decay)
 #             Individual speculative names (MARA/RGTI/CRCL) — CSP only with hard position limits
+#
+# Symbol rule: one ticker string feeds BOTH yfinance and IBKR, so only names with a single
+# clean symbol belong here. Class shares like Berkshire-B (yfinance "BRK-B" vs IBKR "BRK B")
+# do not resolve on both and are intentionally excluded.
 
 # ── ETFs ──────────────────────────────────────────────────────────────────────
 
@@ -17,6 +21,25 @@ indexes:
   - IWM          # Russell 2000; better premiums, higher vol
   - SMH          # Semiconductor sector proxy; good OI
   - GLD          # Gold; decorrelates from equity drawdowns
+
+  # Tier 1 — sector / diversifier ETFs (broaden away from the tech/growth/crypto tilt)
+  - XLF          # Financials sector; strong options liquidity
+  - XLK          # Technology sector
+  - XLE          # Energy sector; commodity-linked, decorrelates from growth
+  - XLV          # Healthcare sector; defensive
+  - XLP          # Consumer staples; low-beta defensive
+  - XLU          # Utilities; rate-sensitive defensive, decorrelates from tech
+  - XLI          # Industrials; cyclical diversifier
+  - TLT          # Long-duration Treasuries; rates/bond diversification (low IV — few signals)
+  - SLV          # Silver; higher IV than GLD, commodity diversifier
+
+  # Tier 2 — sector/thematic ETFs
+  - HACK         # Cybersecurity ETF
+  - IGV          # Software ETF
+
+  # Tier 3 — elevated-IV thematic ETFs (CC-only — NOT in would_own)
+  - ARKK         # Innovation basket; elevated IV
+  - BITO         # Bitcoin futures ETF; high premiums; futures-roll decay → CC-only
 
   # Tier 3 — CC-only leveraged ETFs; NEVER add to would_own
   - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily NAV decay
@@ -34,8 +57,15 @@ watchlist:
   - GOOGL        # Liquid chains; search + AI moat; IV 25–38
   - AMZN         # Strong FCF; ~$205/sh; IV 28–42
   - JPM          # Best-in-class bank; financials diversifier; IV 22–35
+  - V            # Visa; payments network moat; liquid options; lower IV (~20–28)
+  - MA           # Mastercard; payments network moat; lower IV (~20–28)
+  - WMT          # Walmart; defensive consumer staple; ~$120/sh; liquid options
+  - HD           # Home Depot; quality retail; ~$327/sh; liquid options
+  - COST         # Costco; defensive compounder — CC-focused (~$975/sh, large collateral)
+  - LLY          # Eli Lilly; pharma leader — CC-focused (~$1,150/sh, large collateral)
 
   # Tier 2 — elevated IV, real fundamentals, assignment acceptable
+  - TSLA         # Top single-stock income name; deepest liquidity after AAPL; IV 40–70
   - AMD          # Semiconductor peer; popular wheel stock; IV 40–60
   - META         # Exceptional premiums since 2023 recovery; IV 30–50
   - PLTR         # AI/defense; real revenue; IV rank ~47; ~$158/sh
@@ -43,11 +73,25 @@ watchlist:
   - HOOD         # Retail brokerage; active options; ~$90/sh; IV 50–80
   - HIMS         # Telehealth growth; ±16% implied earnings move; IV 60–90
   - BABA         # Alibaba ADR; IV 40–55; NOTE: ADR delisting risk — size conservatively
+  - NBIS         # Nebius Group; AI infrastructure/cloud; elevated IV
+  - CRM          # Salesforce; enterprise software leader
+  - UBER         # Mobility + delivery platform; liquid options
+  - NET          # Cloudflare; cybersecurity and edge computing
+  - CRWD         # CrowdStrike; cybersecurity leader
+  - SNOW         # Snowflake; cloud data platform
+  - TTD          # Trade Desk; digital advertising platform
+  - DDOG         # Datadog; cloud monitoring and observability
+  - TEM          # Tempus AI; healthcare AI platform
 
   # Tier 3 — speculative / high-IV; position size controlled by risk engine limits
   - MARA         # Bitcoin miner proxy; IV 90–130; BTC correlation = gap risk
   - RGTI         # Quantum computing; speculative; IV mean ~86; early stage
   - CRCL         # Circle/stablecoin IPO; IV ~170; down 57% from ATH; thin option liquidity
+  - COIN         # Coinbase; liquid crypto-equity; high IV (cleaner expression than miners)
+  - MSTR         # Strategy (MicroStrategy); leveraged-BTC proxy; very high IV — CC-only
+  - RKLB         # Rocket Lab; space launch and satellite systems
+  - ASTS         # AST SpaceMobile; satellite communications
+  - IONQ         # Quantum computing
 
 # ── CSP allowlist ─────────────────────────────────────────────────────────────
 
@@ -61,6 +105,17 @@ would_own:
   - IWM
   - SMH
   - GLD
+  - XLF
+  - XLK
+  - XLE
+  - XLV
+  - XLP
+  - XLU
+  - XLI
+  - TLT
+  - SLV
+  - HACK
+  - IGV
 
   # Tier 1 stocks
   - NVDA
@@ -69,14 +124,28 @@ would_own:
   - GOOGL
   - AMZN
   - JPM
+  - V
+  - MA
+  - WMT
+  - HD
 
   # Tier 2 stocks
+  - TSLA
   - AMD
   - META
   - PLTR
   - SOFI
   - HOOD
   - HIMS
+  - NBIS
+  - CRM
+  - UBER
+  - NET
+  - CRWD
+  - SNOW
+  - TTD
+  - DDOG
+  - COIN
 
   # Tier 2 — conditional; ADR risk; keep position small via max_pct_per_ticker
   - BABA
@@ -85,6 +154,7 @@ would_own:
   # caps ensure these stay small. Remove if assignment feels uncomfortable.
   - MARA
   - RGTI
+  - RKLB
 
 # ── Sector tags (for concentration limits in risk_engine.py) ─────────────────
 
@@ -99,10 +169,25 @@ sectors:
   SMH: semis
   GLD: commodities
 
+  # Sector / diversifier ETFs
+  XLF: financials
+  XLK: tech
+  XLE: energy
+  XLV: healthcare
+  XLP: consumer
+  XLU: utilities
+  XLI: industrials
+  TLT: bonds
+  SLV: commodities
+  HACK: tech
+  IGV: tech
+  ARKK: tech
+  BITO: crypto
+
   # Leveraged ETFs
   SOXL: semis
   LABU: biotech
-  TSLL: tech
+  TSLL: consumer
   DPST: financials
 
   # Tier 1 stocks
@@ -112,8 +197,15 @@ sectors:
   GOOGL: tech
   AMZN: tech
   JPM: financials
+  V: financials
+  MA: financials
+  WMT: consumer
+  HD: consumer
+  COST: consumer
+  LLY: healthcare
 
   # Tier 2 stocks
+  TSLA: consumer
   AMD: semis
   META: tech
   PLTR: tech
@@ -121,8 +213,22 @@ sectors:
   HOOD: financials
   HIMS: healthcare
   BABA: tech
+  NBIS: tech
+  CRM: tech
+  UBER: consumer
+  NET: tech
+  CRWD: tech
+  SNOW: tech
+  TTD: tech
+  DDOG: tech
+  TEM: healthcare
 
   # Tier 3 speculative
   MARA: crypto
   RGTI: tech
   CRCL: crypto
+  COIN: crypto
+  MSTR: crypto
+  RKLB: aerospace
+  ASTS: telecom
+  IONQ: tech
