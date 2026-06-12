@@ -46,7 +46,11 @@ from src.common.market_hours import is_new_entry_window, is_rth
 from src.common.schemas import ApprovalStatus, OrderState, PositionSnapshot
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
-from src.execution.reconciliation import reconcile_orphan_fills, recover_orphan_orders
+from src.execution.reconciliation import (
+    reconcile_external_closes,
+    reconcile_orphan_fills,
+    recover_orphan_orders,
+)
 from src.ibkr.connection import AutoReconnect
 from src.ibkr.contracts import build_option
 from src.storage.db import init_db, session_scope
@@ -980,11 +984,12 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: profit-take check failed")
 
-            # 1b. Periodic fill reconciliation (SYSTEM_REVIEW F7): recover fills that landed
-            #     during a mid-session reconnect, not only at the next startup.
+            # 1b. Periodic reconciliation (SYSTEM_REVIEW F7): recover entry fills missed during a
+            #     mid-session reconnect, and record manual buy-to-closes done in TWS.
             if ib_exec is not None and ib_exec.isConnected():
                 try:
                     await reconcile_orphan_fills(ib_exec, bot, chat_id)
+                    await reconcile_external_closes(ib_exec, bot, chat_id)
                 except Exception:
                     logger.exception("Intraday loop: periodic fill reconciliation failed")
 
@@ -1211,6 +1216,7 @@ async def _run_service(token: str, chat_id: str) -> None:
         if ib is not None:
             try:
                 await reconcile_orphan_fills(ib, app.bot, chat_id)
+                await reconcile_external_closes(ib, app.bot, chat_id)
             except Exception:
                 logger.exception("Startup fill reconciliation failed")
 

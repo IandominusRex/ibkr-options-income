@@ -757,3 +757,155 @@ async def test_reconcile_no_executions_leaves_order_submitted(monkeypatch, tmp_p
         fills = s.query(FillRow).filter_by(candidate_id="recon-2").all()
     assert order.state == "submitted"  # untouched — never fabricates a fill
     assert len(fills) == 0
+
+
+# --------------------------------------------------------------------------- #
+# F7: external (manual TWS) buy-to-close reconciliation
+# --------------------------------------------------------------------------- #
+
+from datetime import date as _date  # noqa: E402
+
+
+def _open_short(s, *, candidate_id="cc-1", underlying="AAPL", right="C", strike=200.0,
+                expiry=_date(2026, 7, 17), sell_qty=2.0, order_id=1):
+    """Seed a candidate + its SELL entry fill (an open short position)."""
+    from src.storage.models import CandidateRow, FillRow, OrderRow
+
+    s.add(
+        CandidateRow(
+            candidate_id=candidate_id, run_id="r", strategy="covered_call",
+            underlying=underlying, right=right, strike=strike, expiry=expiry,
+            blended_score=70.0, payload={"contracts": int(sell_qty)},
+        )
+    )
+    s.add(OrderRow(id=order_id, candidate_id=candidate_id, approval_id=order_id, state="filled"))
+    s.add(
+        FillRow(order_id=order_id, candidate_id=candidate_id, action="SELL",
+                filled_qty=sell_qty, avg_price=2.50)
+    )
+
+
+def _buy_exec(*, exec_id, symbol="AAPL", right="C", strike=200.0, expiry="20260717",
+              qty=2.0, price=0.80, side="BOT", sec_type="OPT", commission=1.30):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        execution=SimpleNamespace(execId=exec_id, shares=qty, price=price, side=side),
+        contract=SimpleNamespace(
+            symbol=symbol, right=right, strike=strike,
+            lastTradeDateOrContractMonth=expiry, secType=sec_type,
+        ),
+        commissionReport=SimpleNamespace(commission=commission),
+    )
+
+
+async def test_external_close_records_buy_fill_under_original_candidate(tmp_path, monkeypatch):
+    """A manual buy-to-close in TWS is recorded as a BUY fill under the original short (F7)."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1")
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="x1", qty=2.0, price=0.80)])
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        buys = s.query(FillRow).filter_by(candidate_id="cc-1", action="BUY").all()
+    assert len(buys) == 1
+    assert buys[0].avg_price == 0.80 and buys[0].filled_qty == 2.0
+    assert buys[0].ib_exec_id == "x1"
+    bot.send_message.assert_awaited()
+
+
+async def test_external_close_is_idempotent_on_exec_id(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1", sell_qty=2.0)
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="x1", qty=2.0)])
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+    await reconcile_external_closes(ib, bot, "99999")  # second sweep sees the same execId
+
+    with dbmod.session_scope() as s:
+        buys = s.query(FillRow).filter_by(candidate_id="cc-1", action="BUY").all()
+    assert len(buys) == 1  # not double-recorded
+
+
+async def test_external_close_skips_contract_we_never_sold(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1", strike=200.0)
+
+    ib = MagicMock()
+    # BUY on a different strike we never sold → not one of our shorts.
+    ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="x9", strike=999.0)])
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        assert s.query(FillRow).filter_by(action="BUY").count() == 0
+
+
+async def test_external_close_skips_already_closed_position(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1", sell_qty=2.0)
+        # Already bought back the full 2 contracts (recorded under a prior execId).
+        s.add(FillRow(order_id=1, candidate_id="cc-1", action="BUY", filled_qty=2.0,
+                      avg_price=0.50, ib_exec_id="prior"))
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="x2", qty=2.0)])
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        buys = s.query(FillRow).filter_by(candidate_id="cc-1", action="BUY").all()
+    assert len(buys) == 1  # the new exec is ignored — position was already flat
+
+
+async def test_external_close_ignores_sell_side_executions(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1")
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="s1", side="SLD")])
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        assert s.query(FillRow).filter_by(action="BUY").count() == 0

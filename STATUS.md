@@ -248,13 +248,15 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
 - **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
 
-**Partially-addressed / remaining SYSTEM_REVIEW.md findings (see `IMPROVEMENT_PLAN.md`):**
-- **F7 (partially fixed):** `reconcile_orphan_fills` (now in `src/execution/reconciliation.py`) runs
-  **periodically** from the intraday loop, not only at startup — so a SELL fill that lands during a
-  mid-session reconnect is recovered on the next cycle. **Still open:** a *manual buy-to-close in TWS*
-  writes no FillRow (the reconciler only recovers SELL-side executions tied to a SUBMITTED order), so
-  the ledger can still mislabel a position closed outside the system. Extending the sweep to BUY-side
-  executions matched against open ledger positions needs careful P&L attribution and is deferred.
+**Addressed SYSTEM_REVIEW.md findings (see `IMPROVEMENT_PLAN.md`):**
+- **F7 (fixed):** `src/execution/reconciliation.py` runs **periodically** from the intraday loop (not
+  only at startup). `reconcile_orphan_fills` recovers SELL entry fills missed during a mid-session
+  reconnect; `reconcile_external_closes` records a *manual buy-to-close in TWS* as a BUY FillRow
+  attributed to the original short's `candidate_id` (idempotent on IBKR `execId`), so the verdict
+  ledger labels it `closed_early` rather than `expired_worthless` and EOD cashflow includes the debit.
+  (Note: a *system AUTOMATED auto-close* still records its BUY fill under the synthetic `close:`
+  candidate id for contract-level idempotency — its EOD cashflow is correct, but its ledger row is not
+  re-attributed; this is a narrower, separate item from the manual-close gap F7 raised.)
 - **F8 (fixed):** `_check_profit_takes` now derives the entry credit from `_net_entry_credit_per_share`
   — the qty-weighted average of *all* SELL fills for the contract, net of entry commission — instead of
   the last single fill.

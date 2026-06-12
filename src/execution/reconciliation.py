@@ -11,6 +11,12 @@ resubmit, so they cannot cause a double trade):
   was lost during a socket drop get their FillRow back-filled from ``reqExecutions``. Run at
   startup **and** periodically from the intraday loop (SYSTEM_REVIEW F7) so a fill that lands
   during a mid-session reconnect is recovered on the next cycle, not only on the next restart.
+* :func:`reconcile_external_closes` — a *manual* buy-to-close in TWS (which the roll alerts
+  explicitly invite, since rolls are alert-only) writes no FillRow, so the verdict-ledger
+  reconciler would mislabel the position ``expired_worthless`` with the full premium as P&L,
+  and EOD cashflow would omit the debit. This records such BUY executions as a BUY FillRow
+  attributed to the **original short's** ``candidate_id`` (so the ledger sees a close and labels
+  it ``closed_early``), keyed by IBKR ``execId`` for idempotency (SYSTEM_REVIEW F7).
 """
 
 from __future__ import annotations
@@ -187,3 +193,148 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
 
     if recovered:
         log.warning("Fill reconciliation: recovered %d missed fill(s)", recovered)
+
+
+def _net_short_qty(session, candidate_id: str) -> float:
+    """Σ SELL qty − Σ BUY qty for a candidate. > 0 means the short is still (partly) open."""
+    rows = session.execute(
+        select(FillRow.action, FillRow.filled_qty).where(FillRow.candidate_id == candidate_id)
+    ).all()
+    sold = sum(q for a, q in rows if (a or "SELL").upper() == "SELL")
+    bought = sum(q for a, q in rows if (a or "SELL").upper() == "BUY")
+    return float(sold - bought)
+
+
+def _buy_option_executions(fills: list) -> list:
+    """IBKR Fill objects that are option buy-to-close executions (secType OPT, side BOT)."""
+    out = []
+    for f in fills:
+        ex = getattr(f, "execution", None)
+        contract = getattr(f, "contract", None)
+        if ex is None or contract is None:
+            continue
+        if str(getattr(contract, "secType", "") or "").upper() != "OPT":
+            continue
+        if str(getattr(ex, "side", "") or "").upper() != "BOT":
+            continue
+        out.append(f)
+    return out
+
+
+async def reconcile_external_closes(ib: IB, bot: object, chat_id: str) -> None:
+    """Record manual buy-to-close executions (done outside the system) as BUY FillRows.
+
+    For each option BUY execution not already recorded (idempotent on IBKR ``execId``), find the
+    original short position — a candidate with a SELL fill on the same contract that is still net
+    short — and write a BUY FillRow under *that* candidate_id. This flips the ledger outcome from
+    ``expired_worthless`` to ``closed_early`` and makes EOD cashflow include the debit (F7).
+
+    Strictly additive: it only records proven broker executions; it never places or cancels.
+    """
+    try:
+        fills = await ib.reqExecutionsAsync()
+    except Exception:
+        log.exception("External-close reconciliation: reqExecutions failed")
+        return
+
+    buys = _buy_option_executions(fills)
+    if not buys:
+        return
+
+    is_live = bool(get_config().is_live)
+    recovered: list[tuple[str, float, float]] = []  # (symbol, qty, price) for notification
+
+    with session_scope() as s:
+        recorded_exec_ids = {
+            e for (e,) in s.query(FillRow.ib_exec_id).filter(FillRow.ib_exec_id.isnot(None))
+        }
+        for f in buys:
+            ex = f.execution
+            exec_id = getattr(ex, "execId", None)
+            if not exec_id or exec_id in recorded_exec_ids:
+                continue  # already recorded (incl. system auto-closes) → never double-count
+
+            contract = f.contract
+            symbol = getattr(contract, "symbol", None)
+            right = str(getattr(contract, "right", "") or "")[:1].upper()
+            strike = float(getattr(contract, "strike", 0.0) or 0.0)
+            expiry = _expiry_to_date(str(getattr(contract, "lastTradeDateOrContractMonth", "")))
+            shares = float(getattr(ex, "shares", 0.0) or 0.0)
+            price = float(getattr(ex, "price", 0.0) or 0.0)
+            if not symbol or right not in ("C", "P") or strike <= 0 or expiry is None or shares <= 0:
+                continue
+
+            # Match to a candidate we actually sold on this exact contract.
+            candidates = (
+                s.execute(
+                    select(CandidateRow)
+                    .join(FillRow, FillRow.candidate_id == CandidateRow.candidate_id)
+                    .where(
+                        CandidateRow.underlying == symbol,
+                        CandidateRow.right == right,
+                        CandidateRow.expiry == expiry,
+                        FillRow.action == "SELL",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            cand = next(
+                (c for c in candidates if abs((c.strike or 0.0) - strike) < 1e-3),
+                None,
+            )
+            if cand is None:
+                continue  # we never sold this contract → not a close of one of our shorts
+            if _net_short_qty(s, cand.candidate_id) <= 0:
+                continue  # already fully bought back
+
+            cr = getattr(f, "commissionReport", None)
+            commission = float(getattr(cr, "commission", 0.0) or 0.0) if cr is not None else 0.0
+            entry_order = (
+                s.execute(
+                    select(OrderRow)
+                    .where(OrderRow.candidate_id == cand.candidate_id)
+                    .order_by(OrderRow.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            s.add(
+                FillRow(
+                    order_id=entry_order.id if entry_order is not None else 0,
+                    candidate_id=cand.candidate_id,
+                    action="BUY",
+                    filled_qty=shares,
+                    avg_price=price,
+                    commission=commission or None,
+                    ib_exec_id=exec_id,
+                    is_live=is_live,
+                )
+            )
+            recorded_exec_ids.add(exec_id)
+            recovered.append((symbol, shares, price))
+            log.warning(
+                "External-close reconciliation: recorded manual buy-to-close %s %s %.0f @ %.2f "
+                "(candidate=%s execId=%s)",
+                symbol,
+                right,
+                shares,
+                price,
+                cand.candidate_id,
+                exec_id,
+            )
+
+    for symbol, qty, price in recovered:
+        try:
+            await bot.send_message(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                text=(
+                    f"♻️ Recorded a manual close detected at the broker: {symbol} "
+                    f"bought {qty:.0f} @ {price:.2f}. Ledger + EOD cashflow updated."
+                ),
+            )
+        except Exception:
+            log.exception("External-close reconciliation: failed to notify for %s", symbol)
+
+    if recovered:
+        log.warning("External-close reconciliation: recorded %d manual close(s)", len(recovered))

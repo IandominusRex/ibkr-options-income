@@ -183,6 +183,59 @@ def test_reconcile_closed_early(tmp_path, monkeypatch) -> None:
     assert row.realized_pnl == pytest.approx(300 - 100 - 2)
 
 
+async def test_external_close_flips_expired_to_closed_early(tmp_path, monkeypatch) -> None:
+    """F7 end-to-end: a manual TWS close recorded by reconcile_external_closes makes the ledger
+    label a past-expiry short CLOSED_EARLY instead of EXPIRED_WORTHLESS with full premium."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    _db_setup(tmp_path, monkeypatch)
+    from src.claude.eval.ledger import load_records, record_verdicts
+    from src.claude.eval.reconcile import reconcile
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.db import session_scope
+    from src.storage.models import CandidateRow, FillRow
+
+    expiry = date.today() - timedelta(days=3)  # already expired
+    record_verdicts([_record("a", expiry_days=-3)])
+    with session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="a", run_id="run1", strategy="covered_call", underlying="AAPL",
+                right="C", strike=185.0, expiry=expiry, blended_score=80.0, payload={"contracts": 2},
+            )
+        )
+        s.add(FillRow(order_id=1, candidate_id="a", action="SELL", filled_qty=2, avg_price=2.0))
+
+    # Without a recorded close, the position would be EXPIRED_WORTHLESS. Record the manual close:
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(
+        return_value=[
+            type(
+                "F",
+                (),
+                {
+                    "execution": type("E", (), {"execId": "tws1", "shares": 2.0, "price": 0.40, "side": "BOT"})(),
+                    "contract": type(
+                        "C",
+                        (),
+                        {"symbol": "AAPL", "right": "C", "strike": 185.0,
+                         "lastTradeDateOrContractMonth": expiry.strftime("%Y%m%d"), "secType": "OPT"},
+                    )(),
+                    "commissionReport": type("R", (), {"commission": 1.0})(),
+                },
+            )()
+        ]
+    )
+    await reconcile_external_closes(ib, AsyncMock(), "99999")
+
+    counts = reconcile()
+    assert counts.get("closed_early") == 1
+    row = load_records()[0]
+    assert row.outcome == VerdictOutcome.CLOSED_EARLY
+    # credit 2.0*2*100=400 − debit 0.40*2*100=80 − commission 1 = 319
+    assert row.realized_pnl == pytest.approx(400 - 80 - 1)
+
+
 def test_reconcile_assigned_when_flagged(tmp_path, monkeypatch) -> None:
     _db_setup(tmp_path, monkeypatch)
     from src.claude.eval.ledger import load_records, record_verdicts

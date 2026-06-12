@@ -37,7 +37,7 @@ None of the F-findings were addressed at review time. Confirmed open against cur
 | **F4** entry-cutoff feature untested | — | ✅ fixed | tests in test_market_hours / test_foundation / test_position_manager |
 | **F5** concurrent cross-process scans | P2 | ✅ fixed | persisted scan lease wraps `run_scan` |
 | **F6** live trades on yfinance greeks | P1 | ✅ fixed | `live_greeks_required` gate in LIVE mode |
-| **F7** out-of-system closes invisible | P2 | 🟡 partial | reconciler now periodic (mid-session reconnect covered); BUY-side manual-close ledger matching deferred |
+| **F7** out-of-system closes invisible | P2 | ✅ fixed | periodic reconciler + `reconcile_external_closes` records manual TWS buy-to-closes under the original `candidate_id` |
 | **F8** fragile profit-take entry price | P3 | ✅ fixed | qty-weighted SELL credit net of commission (`_net_entry_credit_per_share`) |
 
 ---
@@ -66,13 +66,12 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
 
 ### Phase 3 — hygiene (any time)  🟡 PARTIAL (2026-06-12)
 - [x] **God-module split (partial):** broker reconciliation extracted to `src/execution/reconciliation.py`; close mechanics already in `position_manager` (Phase 1). Profit-take/auto-close *orchestration* deliberately kept in `approval_service` (it drives Telegram notification; moving it would invert layering / need a callback redesign).
-- [x] **F7 (partial):** `reconcile_orphan_fills` now runs periodically from the intraday loop (not only startup) → recovers SELL fills missed during a mid-session reconnect. **Remaining:** BUY-side / manual-TWS-close detection matched against open ledger positions (needs careful P&L attribution — deferred).
+- [x] **F7 (full):** `reconcile_orphan_fills` runs periodically (recovers SELL fills missed during a mid-session reconnect) **and** `reconcile_external_closes` records manual buy-to-closes done in TWS as BUY FillRows under the original short's `candidate_id` (idempotent on IBKR `execId`) → ledger labels `closed_early` not `expired_worthless`, EOD cashflow includes the debit. End-to-end test in `test_eval.py`.
 - [x] **F8:** qty-weighted entry credit net of commission (`_net_entry_credit_per_share`) replaces the last-single-fill entry price.
 - [x] **Unenforced-config-key guard:** `tests/test_config_keys.py` fails if any `risk_limits.yaml` key is read by no source file (allowlist: `max_correlated_exposure_pct`, `ex_dividend_assignment_guard`).
 - [ ] **Deferred:** consolidate sync/async market-data twins — the sync `_batch_quotes` is what the line-cap/cancel-discipline tests exercise, so collapsing it risks weakening that coverage without a live session to re-validate. Low value, pure hygiene.
-- [ ] **Deferred:** full F7 BUY-side ledger reconciliation (manual TWS closes).
 
-**Gate after Phase 3:** 492 tests pass, ruff clean, mypy clean.
+**Gate after Phase 3:** 498 tests pass, ruff clean, mypy clean.
 
 ### Phase 4 — deliberate roadmap (already correctly deferred)
 - [ ] Roll execution as a two-leg combo order.
@@ -92,5 +91,5 @@ mypy src                # no type errors
 ## Do-not-go-live until
 Phase 1 (F1) and Phase 2 are complete — both now ✅ done. The SETUP.md §12 live-cutover checklist
 carries the Phase 2 knobs (premium floor, live greeks, circuit breakers, kill switch, backups).
-Remaining before/independent of live: Phase 3 hygiene (F7, F8, god-module split, sync/async dedup)
-and the ≥10–20 paper-cycle validation gate.
+Remaining: only the sync/async market-data twin consolidation (deferred, pure hygiene) and the
+≥10–20 paper-cycle validation gate. All F1–F8 findings are now resolved.
