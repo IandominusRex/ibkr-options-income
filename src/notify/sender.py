@@ -26,7 +26,7 @@ from src.notify.formatters import format_auto_trade_notification, format_candida
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow
 from src.storage.orders import has_active_order
-from src.storage.system_settings import is_automated_mode
+from src.storage.system_settings import is_automated_mode, is_halted
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,12 @@ async def _auto_queue_candidates(
     thread_id: int | None,
 ) -> None:
     """Automated mode: persist APPROVED approvals + QUEUED orders, send summary notification."""
+    # Kill switch: never auto-open new positions while halted (SYSTEM_REVIEW Phase 2).
+    # The daily trade-count cap is enforced at the execution chokepoint (process_queued_orders).
+    if is_halted():
+        logger.warning("Auto-queue skipped — execution halted (kill switch engaged)")
+        return
+
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
     queued: list[TradeCandidate] = []
 

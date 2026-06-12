@@ -242,12 +242,42 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
         # produce a wildly wrong mid-price (e.g. mid = (-1 + 2) / 2 = $0.50).
         reasons.append("negative_bid_sentinel")
 
-    if quote.delta is not None and candidate.strategy in _INCOME_STRATEGIES:
+    cfg = get_config()
+    live_cfg = cfg.risk.get("live_execution", {}) or {}
+    is_income = candidate.strategy in _INCOME_STRATEGIES
+
+    # F6: in LIVE mode, refuse to fill an income trade unless the live quote carries
+    # IBKR-sourced greeks. The delta gate below silently degrades when greeks are absent
+    # (correct for paper); for real money we require trustworthy live greeks rather than
+    # leaning on the scan-time (possibly yfinance-derived) delta.
+    if (
+        is_income
+        and cfg.is_live
+        and live_cfg.get("require_ibkr_greeks_when_live", True)
+        and (quote.delta is None or quote.greeks_source != "ibkr")
+    ):
+        reasons.append("live_greeks_required")
+
+    if quote.delta is not None and is_income:
         limits = _strategy_limits(candidate.strategy)
         if limits and not (
             limits.get("delta_min", 0.0) <= abs(quote.delta) <= limits.get("delta_max", 1.0)
         ):
             reasons.append("live_delta_out_of_range")
+
+    # F2: reject when the live mid has collapsed below a floor relative to the approved
+    # premium (e.g. an intraday IV crush between approval and execution). We sell income
+    # premium at the mid, so a much lower live mid means collecting far less than approved.
+    min_ratio = live_cfg.get("min_live_premium_ratio")
+    if (
+        is_income
+        and min_ratio
+        and candidate.premium > 0
+        and quote.mid is not None
+        and quote.mid > 0
+        and quote.mid < float(min_ratio) * candidate.premium
+    ):
+        reasons.append("live_premium_collapse")
 
     return RiskVerdict(
         candidate_id=candidate.candidate_id,

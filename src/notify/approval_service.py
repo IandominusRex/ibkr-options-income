@@ -16,6 +16,8 @@ Responsibilities:
       /pending   — list pending approvals
       /fills     — recent fills (last 7 days)
       /expire    — expire all pending approvals
+      /halt      — kill switch: stop all order transmission
+      /resume    — release the kill switch
       /help      — command list
 
 Only the configured TELEGRAM_CHAT_ID can trigger any command or approval.
@@ -48,7 +50,13 @@ from src.ibkr.contracts import build_option
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
-from src.storage.system_settings import is_automated_mode, set_automated_mode
+from src.storage.system_settings import (
+    get_halt_reason,
+    is_automated_mode,
+    is_halted,
+    set_automated_mode,
+    set_halted,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +296,14 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         from src.orchestrator.scan import run_scan
 
         try:
-            await run_scan(ib_scan, context.bot, chat_id, progress_callback=_update_progress)
+            result = await run_scan(ib_scan, context.bot, chat_id, progress_callback=_update_progress)
+            if result.lease_skipped:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=prog_msg_id,
+                    text="🔍 *Scan skipped*\n\nAnother scan is already running — try again shortly\\.",
+                    parse_mode="MarkdownV2",
+                )
         except Exception:
             logger.exception("Scan failed")
             try:
@@ -463,7 +478,18 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
     from src.notify.formatters import format_status
 
     text = format_status(positions, account, pending_approvals, open_orders)
+    if is_halted():
+        banner = _md_escape_halt(get_halt_reason())
+        text = f"🛑 *EXECUTION HALTED* — {banner}\n\n{text}"
     await update.message.reply_text(text, parse_mode="MarkdownV2")
+
+
+def _md_escape_halt(reason: str) -> str:
+    """Minimal MarkdownV2 escape for the halt reason shown in /status."""
+    out = reason or "manual"
+    for ch in r"_*[]()~`>#+-=|{}.!":
+        out = out.replace(ch, f"\\{ch}")
+    return out
 
 
 async def handle_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -574,6 +600,40 @@ async def handle_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         [[InlineKeyboardButton(toggle_label, callback_data=toggle_data)]]
     )
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def handle_halt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Engage the master kill switch: stop all order transmission immediately.
+
+    Closing risk (profit-take auto-closes) still runs — only NEW positions are blocked.
+    The halt is persisted, so it survives a daemon restart and must be lifted with /resume.
+    """
+    if not _is_authorized(update) or update.message is None:
+        return
+    reason = " ".join(context.args) if context.args else "manual /halt"
+    set_halted(True, reason)
+    logger.warning("Kill switch ENGAGED via /halt — %s", reason)
+    await update.message.reply_text(
+        f"🛑 Execution HALTED — {reason}.\n"
+        "No new orders will be queued or transmitted (profit-take closes still run). "
+        "Send /resume to re-enable."
+    )
+
+
+async def handle_resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Release the master kill switch so order transmission resumes."""
+    if not _is_authorized(update) or update.message is None:
+        return
+    if not is_halted():
+        await update.message.reply_text("Execution is not halted — nothing to resume.")
+        return
+    prior = get_halt_reason()
+    set_halted(False)
+    logger.warning("Kill switch RELEASED via /resume (was: %s)", prior or "—")
+    await update.message.reply_text(
+        f"✅ Execution RESUMED (was halted: {prior or 'manual'}). "
+        "QUEUED orders will be processed on the next poll cycle."
+    )
 
 
 async def handle_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -890,7 +950,12 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: profit-take check failed")
 
-            # 2. Fresh scan — skipped after entry_cutoff (profit-takes above still run)
+            # 2. Fresh scan — skipped while halted or after entry_cutoff (profit-takes
+            #    above still run; closing risk is always allowed). (SYSTEM_REVIEW Phase 2)
+            if is_halted():
+                logger.info("Intraday loop: execution halted — skipping new-entry scan")
+                continue
+
             if not is_new_entry_window(entry_cutoff=cfg.scheduler.entry_cutoff):
                 logger.info(
                     "Intraday loop: past entry cutoff (%s ET) — skipping new-entry scan",
@@ -1197,6 +1262,8 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("fills", handle_fills_command))
     app.add_handler(CommandHandler("expire", handle_expire_command))
     app.add_handler(CommandHandler("mode", handle_mode_command))
+    app.add_handler(CommandHandler("halt", handle_halt_command))
+    app.add_handler(CommandHandler("resume", handle_resume_command))
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -1219,6 +1286,8 @@ async def _run_service(token: str, chat_id: str) -> None:
                 [
                     BotCommand("scan", "Run full pipeline scan (CC/CSP/buy candidates)"),
                     BotCommand("mode", "Show/toggle MANUAL ↔ AUTOMATED trading mode"),
+                    BotCommand("halt", "🛑 Kill switch: stop all order transmission now"),
+                    BotCommand("resume", "Release the kill switch and resume execution"),
                     BotCommand("status", "Account · shorts · pending approvals"),
                     BotCommand("positions", "Full portfolio positions with P&L"),
                     BotCommand("account", "Account balances (buying power, net liq, margin)"),

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.common.config import (
     ApprovalCfg,
+    AutomationCfg,
     ClaudeCfg,
     Config,
     ExecutionCfg,
@@ -56,6 +57,7 @@ def _make_config(live: bool) -> Config:
         approval=ApprovalCfg(),
         execution=ExecutionCfg(),
         monitor=MonitorCfg(),
+        automation=AutomationCfg(),
         risk={},
         universe={},
         weights={},

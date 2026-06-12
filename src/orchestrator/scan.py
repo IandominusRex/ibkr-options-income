@@ -52,6 +52,7 @@ from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
+from src.storage.system_settings import acquire_scan_lease, release_scan_lease
 from src.strategies.buy_candidates import generate_buy_candidates
 from src.strategies.cash_secured_put import generate_csp_candidates
 from src.strategies.covered_call import generate_cc_candidates
@@ -141,6 +142,8 @@ class ScanResult:
     reviews: list[ClaudeReview] = field(default_factory=list)
     market_conditions: MarketConditions = field(default_factory=MarketConditions)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # True when this scan was skipped because another process held the scan lease (F5).
+    lease_skipped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +384,30 @@ def _fetch_analytics(
 
 
 async def run_scan(
+    ib: IB,
+    bot: object,
+    chat_id: str,
+    progress_callback: _ProgressCB | None = None,
+) -> ScanResult:
+    """Run the full pipeline under a cross-process scan lease (SYSTEM_REVIEW F5).
+
+    A full chain scan consumes most of the account-level ~100 market-data line cap, so two
+    concurrent scans (e.g. the morning cron and the 15-min daemon loop, in separate
+    processes) would poison each other. The lease serialises them; a scan that can't acquire
+    it returns an empty result with ``lease_skipped=True`` rather than competing for lines.
+    """
+    if not acquire_scan_lease():
+        log.warning("scan: another scan holds the lease — skipping this run (F5)")
+        result = ScanResult()
+        result.lease_skipped = True
+        return result
+    try:
+        return await _run_scan_body(ib, bot, chat_id, progress_callback)
+    finally:
+        release_scan_lease()
+
+
+async def _run_scan_body(
     ib: IB,
     bot: object,
     chat_id: str,

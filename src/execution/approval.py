@@ -22,10 +22,12 @@ from src.common.config import get_config
 from src.common.market_hours import is_rth
 from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
+from src.execution.circuit_breakers import daily_loss_breached, remaining_entry_allowance
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
+from src.storage.system_settings import is_halted, set_halted
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +52,14 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
     now = datetime.now(UTC)
 
     # ------------------------------------------------------------------ #
+    # Kill switch: when halted, transmit nothing. Orders stay QUEUED and  #
+    # resume when /resume is sent (or TTL-expire). (SYSTEM_REVIEW Phase 2) #
+    # ------------------------------------------------------------------ #
+    if is_halted():
+        log.warning("Execution halted (kill switch engaged) — skipping order processing")
+        return
+
+    # ------------------------------------------------------------------ #
     # Fast check: any QUEUED orders at all?                                #
     # ------------------------------------------------------------------ #
     with session_scope() as _s:
@@ -68,6 +78,26 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         positions = get_positions(ib)
     except Exception:
         log.exception("Could not fetch account data from IB — skipping execution pass")
+        return
+
+    # ------------------------------------------------------------------ #
+    # Circuit breaker: auto-trip the kill switch on a daily realized-loss  #
+    # breach, then stop. (SYSTEM_REVIEW Phase 2)                           #
+    # ------------------------------------------------------------------ #
+    with session_scope() as _s:
+        loss = daily_loss_breached(_s, account_snap.net_liquidation)
+        cap_remaining = remaining_entry_allowance(_s)
+    if loss is not None:
+        reason = f"daily realized loss ${loss:,.0f} exceeded the configured loss limit"
+        set_halted(True, reason)
+        log.critical("Circuit breaker tripped — %s. Execution halted.", reason)
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🛑 Circuit breaker: execution HALTED — {reason}. Send /resume to re-enable.",
+            )
+        except Exception:
+            log.exception("Failed to send circuit-breaker halt notification")
         return
 
     # ------------------------------------------------------------------ #
@@ -168,12 +198,30 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 record_outcome(order_row.candidate_id, RISK_REJECTED)
                 continue
 
+            # Daily trade-count circuit breaker: once today's entry cap is reached,
+            # cancel further entry orders rather than transmit them. (SYSTEM_REVIEW Phase 2)
+            if cap_remaining is not None and cap_remaining <= 0:
+                log.warning(
+                    "Daily trade cap reached — cancelling order_id=%s candidate=%s",
+                    order_row.id,
+                    order_row.candidate_id,
+                )
+                order_row.state = OrderState.CANCELLED
+                order_row.detail = "Daily trade cap reached"
+                notify_msgs.append(
+                    f"Order CANCELLED: daily trade cap reached for "
+                    f"{order_row.candidate_id[:12]}."
+                )
+                continue
+
             # Mark as SUBMITTED inside Phase 1 so the next poll cycle (which fires
             # every poll_interval_seconds) does not pick up the same order again.
             # If execution fails, the except block in Phase 2 sets it to REJECTED.
             order_row.state = OrderState.SUBMITTED
             order_row.detail = "Queued for async execution"
             to_execute.append((order_row.id, candidate))
+            if cap_remaining is not None:
+                cap_remaining -= 1
 
     # ------------------------------------------------------------------ #
     # Phase 2: async execution (session already committed and closed)      #

@@ -130,6 +130,8 @@ def format_help() -> str:
         "",
         "*Automation*",
         "/mode — Show current mode \\(MANUAL/AUTOMATED\\) and toggle",
+        "/halt — 🛑 Kill switch: stop all order transmission now",
+        "/resume — Release the kill switch and resume execution",
         "",
         "*System*",
         "/health — Connections, DB, last scan, open orders",

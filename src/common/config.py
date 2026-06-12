@@ -136,6 +136,23 @@ class MonitorCfg(BaseModel):
     alert_cooldown_minutes: int = 30
 
 
+class AutomationCfg(BaseModel):
+    """Circuit breakers for AUTOMATED mode (SYSTEM_REVIEW Phase 2).
+
+    These bound *activity* and *losses* — the cumulative risk gate only bounds exposure.
+    The `/halt` Telegram kill switch is a separate, persisted toggle in system_settings.
+    """
+
+    # Max NEW-exposure entry orders the system may open per ET trading day (auto or manual).
+    # 0 disables the cap.
+    max_auto_trades_per_day: int = 10
+    # Auto-trip the kill switch when today's net realized cashflow is a loss exceeding this
+    # fraction of net liquidation. 0 disables. NOTE: for an income desk this is a conservative
+    # proxy — it sums signed FillRows (credits − debits) for the day, so it trips on net debit
+    # days (large buy-to-close losses), not full mark-to-market P&L.
+    daily_loss_halt_pct: float = 5.0
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -148,6 +165,7 @@ class Config(BaseModel):
     approval: ApprovalCfg
     execution: ExecutionCfg
     monitor: MonitorCfg
+    automation: AutomationCfg
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -196,6 +214,7 @@ def get_config() -> Config:
         approval=ApprovalCfg(**settings.get("approval", {})),
         execution=ExecutionCfg(**settings.get("execution", {})),
         monitor=MonitorCfg(**settings.get("monitor", {})),
+        automation=AutomationCfg(**settings.get("automation", {})),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),

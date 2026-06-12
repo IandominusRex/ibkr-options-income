@@ -137,9 +137,18 @@ Conservative defaults are pre-configured. Key settings to review:
 | `income.min_annualized_yield_pct` | 12.0 | Minimum annualized yield to surface a candidate. In low-IV environments this filter is the most common reason zero candidates are returned; lower to 8–10% if needed. |
 | `liquidity.min_option_volume` | 10 | Minimum daily option volume. Consider increasing to 50 for multi-contract positions. |
 | `iv.min_iv_rank` | 30 | Only sell premium when IV rank is at least this (when known) |
+| `live_execution.min_live_premium_ratio` | 0.80 | Send-time floor: reject a fill if the live mid drops below this fraction of the approved premium (IV-crush guard). 0 disables. |
+| `live_execution.require_ibkr_greeks_when_live` | true | In LIVE mode, the delta re-gate requires IBKR-sourced greeks (never the paper yfinance fallback). |
 
 > Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
 > engine — see `STATUS.md`). The per-ticker and per-sector caps are the active concentration gates.
+
+The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation`:
+
+| Setting (YAML path) | Default | What it means |
+|---|---|---|
+| `automation.max_auto_trades_per_day` | 10 | Max new-exposure entry orders opened per ET trading day (auto or manual). 0 disables. |
+| `automation.daily_loss_halt_pct` | 5.0 | Auto-engage the `/halt` kill switch when today's net realized loss exceeds this % of net liquidation. 0 disables. |
 
 ### `config/scoring_weights.yaml`
 
@@ -235,7 +244,9 @@ Once the approval service is running, you can interact with the system from your
 |---|---|
 | `/scan` | Triggers a full pipeline scan — same as the morning cron. The initial reply becomes a live progress message (Account → Market data → Scoring → Claude review → Sending results) that updates as each stage completes; final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED). |
 | `/mode` | Shows the current trading mode (👤 MANUAL or 🤖 AUTOMATED) with a toggle button. AUTOMATED mode executes trades without approval and auto-closes positions at 50% profit. A confirmation prompt appears before enabling AUTO. |
-| `/status` | Compact overview: account totals, all active short options sorted by days-to-expiry, and pending approval / open order counts. Good morning check. |
+| `/halt` | 🛑 **Kill switch.** Immediately stops all order queuing/transmission (profit-take *closes* still run — closing risk is always allowed). The halt is saved, so it persists across restarts until you `/resume`. You can add a reason, e.g. `/halt market looks ugly`. Also auto-engages on a daily realized-loss breach. |
+| `/resume` | Releases the kill switch; QUEUED orders resume on the next poll cycle. |
+| `/status` | Compact overview: account totals, all active short options sorted by days-to-expiry, and pending approval / open order counts. Shows a 🛑 HALTED banner when the kill switch is engaged. Good morning check. |
 | `/positions` | Live snapshot of all open positions (stocks and options), with market value and unrealized P&L per position. |
 | `/account` | Account balances: net liquidation, total cash, buying power, maintenance margin, excess liquidity. |
 | `/pending` | Lists all pending approvals by score and time-to-expiry. Useful if you want to review what's waiting before deciding. |
@@ -257,6 +268,12 @@ EOD report (4:15 PM ET Mon–Fri). Choose the instructions for your operating sy
 > sends Approve/Reject messages to Telegram. `run_eod` fetches positions and P&L and sends an
 > end-of-day summary to Telegram. Both are short-lived (they exit when done); the always-on
 > daemons (`scripts.start`) are separate and must already be running.
+
+> **Morning scan is optional (SYSTEM_REVIEW F5):** the always-on daemon already runs a full scan
+> every 15 minutes during RTH, so `run_morning` is largely redundant. If you run both, that's safe —
+> a cross-process **scan lease** now serialises scans so the cron and the daemon loop can't compete
+> for the ~100 market-data line cap. You can omit the `run_morning` line entirely if you prefer to
+> rely solely on the daemon loop. The `run_eod` job is still needed (the daemon doesn't run EOD).
 
 ---
 
@@ -564,6 +581,23 @@ When you are ready:
 6. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
    which account it is connected to. Verify this before approving any trade.
 7. Start with a single small position to validate the full end-to-end flow.
+
+### Live-cutover safety checklist (SYSTEM_REVIEW Phase 2)
+
+These are wired into the code but **review the defaults before you flip the flag**:
+
+- [ ] **Premium-collapse floor (F2):** `risk_limits.yaml → live_execution.min_live_premium_ratio`
+      (default 0.80) — a fill is rejected if the live mid drops below this fraction of the approved
+      premium. Lower it only if you understand the IV-crush exposure.
+- [ ] **Live greeks required (F6):** `risk_limits.yaml → live_execution.require_ibkr_greeks_when_live`
+      (default `true`) — in LIVE mode the delta gate requires IBKR-sourced greeks, never the paper
+      yfinance fallback. Keep this `true` for live trading.
+- [ ] **Circuit breakers:** `settings.yaml → automation.max_auto_trades_per_day` (default 10) and
+      `automation.daily_loss_halt_pct` (default 5.0). The loss breaker auto-engages `/halt`.
+- [ ] **Kill switch:** know that `/halt` stops everything instantly and `/resume` re-enables it; the
+      halt persists across restarts.
+- [ ] **DB backups:** the EOD run writes a rotated snapshot to `data/backups/` — confirm it is being
+      created after your first EOD cycle.
 
 ---
 

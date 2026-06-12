@@ -1,0 +1,107 @@
+"""Circuit breakers for AUTOMATED mode (SYSTEM_REVIEW Phase 2).
+
+The cumulative risk gate bounds *exposure*; these bound *activity* and *losses* — the
+standard kit for any auto-trading loop. They are deterministic and read-only except for
+auto-tripping the persisted kill switch (`system_settings.set_halted`).
+
+Two breakers, both configured under `automation:` in settings.yaml:
+  * ``max_auto_trades_per_day`` — refuse to open more than N new-exposure entry orders
+    per ET trading day (auto or manual). Buy-to-close orders (`close:` candidate ids)
+    don't count — closing risk is always allowed.
+  * ``daily_loss_halt_pct`` — auto-engage the kill switch when today's net realized
+    cashflow is a loss exceeding N% of net liquidation.
+
+Nothing here feeds the risk engine, scoring, or sizing — it only gates whether the
+order machinery runs, so it stays clear of "the fence" around the deterministic layer.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from src.common.config import get_config
+from src.common.schemas import OrderState
+from src.storage.models import FillRow, OrderRow
+
+log = logging.getLogger(__name__)
+
+_ET = ZoneInfo("America/New_York")
+
+# Order states that represent a real attempt to open a position (working or done).
+_OPENED_STATES = (
+    OrderState.SUBMITTED,
+    OrderState.FILLED,
+    OrderState.PARTIAL,
+)
+
+
+def _et_day_window_utc(today: date | None = None) -> tuple[datetime, datetime]:
+    """[start, end) of the ET trading day, as UTC datetimes (fills are stored UTC)."""
+    today = today or datetime.now(_ET).date()
+    nxt = today + timedelta(days=1)
+    start = datetime(today.year, today.month, today.day, tzinfo=_ET).astimezone(UTC)
+    end = datetime(nxt.year, nxt.month, nxt.day, tzinfo=_ET).astimezone(UTC)
+    return start, end
+
+
+def entry_orders_today(session: Session) -> int:
+    """Count new-exposure entry orders opened today (excludes `close:` buy-to-close orders)."""
+    start, end = _et_day_window_utc()
+    return int(
+        session.execute(
+            select(func.count())
+            .select_from(OrderRow)
+            .where(
+                OrderRow.created_at >= start,
+                OrderRow.created_at < end,
+                OrderRow.state.in_(_OPENED_STATES),
+                OrderRow.candidate_id.notlike("close:%"),
+            )
+        ).scalar_one()
+    )
+
+
+def realized_cashflow_today(session: Session) -> float:
+    """Net signed option cashflow today: SELL credits (+) minus BUY debits (−), ×100."""
+    start, end = _et_day_window_utc()
+    fills = session.execute(
+        select(FillRow).where(FillRow.filled_at >= start, FillRow.filled_at < end)
+    ).scalars()
+    return sum(
+        (-1.0 if (f.action or "SELL").upper() == "BUY" else 1.0) * f.avg_price * f.filled_qty * 100
+        for f in fills
+    )
+
+
+def remaining_entry_allowance(session: Session) -> int | None:
+    """Entry orders still permitted today under ``max_auto_trades_per_day``.
+
+    Returns ``None`` when the cap is disabled (0), else ``max(cap - opened_today, 0)``.
+    Reads the cap from the live config so the daemon and tests share one source of truth.
+    """
+    cap = get_config().automation.max_auto_trades_per_day
+    if not cap:  # 0 disables
+        return None
+    return max(cap - entry_orders_today(session), 0)
+
+
+def daily_loss_breached(session: Session, net_liquidation: float) -> float | None:
+    """Return the loss amount (positive number) if today's realized loss breaches the cap.
+
+    Returns ``None`` when the breaker is disabled, net liq is unknown, or no breach.
+    """
+    pct = get_config().automation.daily_loss_halt_pct
+    if not pct or net_liquidation <= 0:
+        return None
+    cashflow = realized_cashflow_today(session)
+    if cashflow >= 0:
+        return None
+    loss = -cashflow
+    if loss >= (pct / 100.0) * net_liquidation:
+        return loss
+    return None

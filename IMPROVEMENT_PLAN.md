@@ -31,12 +31,12 @@ None of the F-findings were addressed at review time. Confirmed open against cur
 
 | Finding | Severity | Status | Evidence |
 |---|---|---|---|
-| **F1** auto-close bypasses order infra | P0 *if AUTOMATED* | ❌ open | `_auto_close_position` calls `ib_exec.placeOrder` directly (approval_service.py:744); no OrderRow/FillRow; no cancel-on-timeout |
-| **F2** no premium-collapse re-gate | P1 | ❌ open | no `min_live_premium_ratio` anywhere; `validate_live_quote` checks delta only |
-| **F3** malformed `entry_cutoff` kills loop | P2 | ❌ open | `is_new_entry_window` at approval_service.py:903 sits outside any try; `SchedulerCfg.entry_cutoff` is a bare `str` |
-| **F4** entry-cutoff feature untested | — | ❌ open | `grep is_new_entry_window tests/` empty |
-| **F5** concurrent cross-process scans | P2 | ❌ open | `scan_running` lives in in-process `bot_data` only |
-| **F6** live trades on yfinance greeks | P1 | ❌ open | no downstream `greeks_source == "ibkr"` gate |
+| **F1** auto-close bypasses order infra | P0 *if AUTOMATED* | ✅ fixed | routed through `position_manager.close_short_position` (OrderRow/FillRow + cancel-on-timeout + idempotency) |
+| **F2** no premium-collapse re-gate | P1 | ✅ fixed | `live_premium_collapse` gate using `min_live_premium_ratio` |
+| **F3** malformed `entry_cutoff` kills loop | P2 | ✅ fixed | `SchedulerCfg` HH:MM validator + intraday-loop catch-all |
+| **F4** entry-cutoff feature untested | — | ✅ fixed | tests in test_market_hours / test_foundation / test_position_manager |
+| **F5** concurrent cross-process scans | P2 | ✅ fixed | persisted scan lease wraps `run_scan` |
+| **F6** live trades on yfinance greeks | P1 | ✅ fixed | `live_greeks_required` gate in LIVE mode |
 | **F7** out-of-system closes invisible | P2 | ❌ open | `_reconcile_orphan_fills` is startup-only + SUBMITTED/SELL scope |
 | **F8** fragile profit-take entry price | P3 | ❌ open | uses latest single SELL fill; ignores commission/multi-fill |
 
@@ -55,12 +55,14 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
 
 **Gate after Phase 1:** 467 tests pass, ruff clean, mypy clean. (Also excluded the deprecated `Archive/` Streamlit dashboard from ruff — it is neither packaged nor tested.)
 
-### Phase 2 — before live cutover (fold into SETUP.md §11 gate)
-- [ ] **F2** Premium-floor in `validate_live_quote`: reject when live mid < `min_live_premium_ratio` × approved premium (new key in `risk_limits.yaml`), or recompute ROC/yield from live mid.
-- [ ] **F6** Live mode requires `greeks_source == "ibkr"` for gating greeks (risk engine or strategy layer).
-- [ ] **Circuit breakers:** `max_auto_trades_per_day`, `daily_loss_halt_pct`, and a `/halt` command flipping a `system_settings` kill switch checked by both the order-poll loop and the intraday loop.
-- [ ] **Nightly DB backup** (`sqlite3 .backup` + 7-day rotation) in the EOD run.
-- [ ] **F5** Retire the morning cron (preferred) or add a cross-process scan lease in `system_settings`.
+### Phase 2 — before live cutover  ✅ DONE (2026-06-12)
+- [x] **F2** Premium-floor in `validate_live_quote`: rejects (`live_premium_collapse`) when live mid < `min_live_premium_ratio` × approved premium (`risk_limits.yaml → live_execution`).
+- [x] **F6** LIVE mode requires IBKR-sourced greeks (`live_greeks_required`) for the income delta gate; `require_ibkr_greeks_when_live` knob; paper degrade preserved.
+- [x] **Circuit breakers:** `src/execution/circuit_breakers.py` — `max_auto_trades_per_day` (enforced in `process_queued_orders`) + `daily_loss_halt_pct` (auto-trips kill switch). `/halt` + `/resume` flip a persisted `execution_halted` switch checked by the order-poll loop, auto-queue, and intraday loop; closes still run while halted.
+- [x] **Nightly DB backup:** `maintenance.backup_database()` (SQLite online backup + 7-snapshot rotation) in the EOD run.
+- [x] **F5** Cross-process scan lease (`system_settings.acquire/release_scan_lease`) wraps `run_scan`; morning cron documented as optional/redundant.
+
+**Gate after Phase 2:** 488 tests pass, ruff clean, mypy clean. SETUP.md §12 now carries the live-cutover safety checklist.
 
 ### Phase 3 — hygiene (any time)
 - [ ] Split `approval_service.py` (1,363 lines): extract `position_manager` (started in Phase 1) + fill reconciliation.
@@ -85,4 +87,7 @@ mypy src                # no type errors
 ```
 
 ## Do-not-go-live until
-F1 fixed (no more AUTOMATED runs before then) and all of Phase 2 complete and checked into the SETUP.md §11 live-cutover gate.
+Phase 1 (F1) and Phase 2 are complete — both now ✅ done. The SETUP.md §12 live-cutover checklist
+carries the Phase 2 knobs (premium floor, live greeks, circuit breakers, kill switch, backups).
+Remaining before/independent of live: Phase 3 hygiene (F7, F8, god-module split, sync/async dedup)
+and the ≥10–20 paper-cycle validation gate.

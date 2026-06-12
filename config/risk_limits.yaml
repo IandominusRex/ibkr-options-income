@@ -38,6 +38,17 @@ iv:
   # Only sell premium when it's relatively expensive.
   min_iv_rank: 30
 
+# --- Live execution re-gate (send-time, validate_live_quote) ---
+live_execution:
+  # Reject a fill when the live mid has collapsed below this fraction of the approved
+  # premium (e.g. an intraday IV crush between approval and execution). 0.80 allows up to
+  # a 20% drop before refusing. Set to 0 (or null) to disable. (SYSTEM_REVIEW F2)
+  min_live_premium_ratio: 0.80
+  # In LIVE mode, require IBKR-sourced live greeks (delta present, greeks_source == "ibkr")
+  # for the income delta gate — never fill a live trade vetted only by the delayed
+  # Black-Scholes/yfinance fallback used for paper accounts. (SYSTEM_REVIEW F6)
+  require_ibkr_greeks_when_live: true
+
 # --- Event blackouts ---
 events:
   earnings_blackout_days: 14     # no new short premium within N days of earnings

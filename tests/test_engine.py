@@ -515,7 +515,9 @@ class TestValidateCandidates:
 
 
 class TestValidateLiveQuote:
-    def _quote(self, *, bid=2.0, ask=2.2, delta=-0.20) -> OptionQuote:
+    def _quote(self, *, bid=2.95, ask=3.05, delta=-0.20, greeks_source="ibkr") -> OptionQuote:
+        # Default mid 3.0 matches _candidate() premium 3.0 so the F2 premium-collapse
+        # floor doesn't trip on the delta-focused cases below.
         return OptionQuote(
             underlying="AAPL",
             right=OptionRight.PUT,
@@ -524,6 +526,7 @@ class TestValidateLiveQuote:
             bid=bid,
             ask=ask,
             delta=delta,
+            greeks_source=greeks_source,
         )
 
     def test_passes_when_delta_in_range(self) -> None:
@@ -551,6 +554,41 @@ class TestValidateLiveQuote:
         v = validate_live_quote(_candidate(), self._quote(bid=-1.0, ask=2.0))
         assert v.verdict == Verdict.REJECT
         assert "negative_bid_sentinel" in v.reasons
+
+    # --- F2: premium-collapse re-gate ---
+    def test_rejects_on_premium_collapse(self) -> None:
+        # Approved at premium 3.0; live mid 1.1 (≈63% drop) is below the 0.80 floor.
+        v = validate_live_quote(_candidate(), self._quote(bid=1.0, ask=1.2, delta=-0.20))
+        assert v.verdict == Verdict.REJECT
+        assert "live_premium_collapse" in v.reasons
+
+    def test_passes_when_premium_within_floor(self) -> None:
+        # Live mid 2.5 vs premium 3.0 ≈ 83% — above the 0.80 floor, so no collapse flag.
+        v = validate_live_quote(_candidate(), self._quote(bid=2.45, ask=2.55, delta=-0.20))
+        assert "live_premium_collapse" not in v.reasons
+
+    # --- F6: live mode requires IBKR-sourced greeks ---
+    def test_live_mode_rejects_non_ibkr_greeks(self, monkeypatch) -> None:
+        from src.common.config import get_config
+
+        monkeypatch.setattr(get_config().secrets, "live_trading", True)
+        q = self._quote(delta=-0.20, greeks_source="black_scholes")
+        v = validate_live_quote(_candidate(), q)
+        assert v.verdict == Verdict.REJECT
+        assert "live_greeks_required" in v.reasons
+
+    def test_live_mode_rejects_missing_live_greeks(self, monkeypatch) -> None:
+        from src.common.config import get_config
+
+        monkeypatch.setattr(get_config().secrets, "live_trading", True)
+        v = validate_live_quote(_candidate(), self._quote(delta=None))
+        assert "live_greeks_required" in v.reasons
+
+    def test_paper_mode_allows_fallback_greeks(self) -> None:
+        # In paper mode (is_live False) the fallback degrade is preserved — no F6 block.
+        q = self._quote(delta=-0.20, greeks_source="black_scholes")
+        v = validate_live_quote(_candidate(), q)
+        assert "live_greeks_required" not in v.reasons
 
 
 class TestValidateCandidatesDeltaSign:

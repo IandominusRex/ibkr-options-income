@@ -70,6 +70,11 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   `OrderRow`/`FillRow`, cancels on timeout, and is idempotent at the contract level (SYSTEM_REVIEW
   F1). The deterministic risk gate still re-validates every new-exposure order before execution in
   both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
+- **AUTOMATED-mode circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
+  and `daily_loss_halt_pct` bound activity and losses (the risk gate only bounds exposure). A persisted
+  `/halt` kill switch (auto-engaged on a daily-loss breach) stops all transmission while still allowing
+  profit-take closes. A cross-process scan lease prevents concurrent scans from breaching the
+  market-data line cap. Nightly `data/backups/` snapshots protect the system of record.
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
 - **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
 
@@ -181,6 +186,31 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
 - **F4 entry-cutoff feature untested:** added `is_new_entry_window` boundary tests (15:00 exact,
   early-close day, holiday, custom cutoff, malformed string) and `SchedulerCfg` time-validation tests.
 
+## Bugs fixed (2026-06-12 system review — SYSTEM_REVIEW.md Phase 2, pre-live cutover)
+
+- **F2 No premium-collapse re-gate:** `validate_live_quote` now rejects a fill (`live_premium_collapse`)
+  when the live mid drops below `risk_limits.yaml → live_execution.min_live_premium_ratio` (default
+  0.80) of the approved premium — closing the IV-crush gap (approved at $2.50, filled at $0.60) the TTL
+  only bounded.
+- **F6 yfinance greeks could gate live trades:** in LIVE mode, `validate_live_quote` now requires
+  IBKR-sourced live greeks (`live_greeks_required`) for income candidates — the paper Black-Scholes/
+  yfinance delta fallback can no longer vet a real-money fill. Gated by
+  `live_execution.require_ibkr_greeks_when_live` (default `true`). Paper mode keeps the degrade-on-
+  missing-greeks behaviour.
+- **AUTOMATED-mode circuit breakers + kill switch:** new `src/execution/circuit_breakers.py` enforces
+  `automation.max_auto_trades_per_day` (cap on new-exposure entry orders per ET day, enforced in
+  `process_queued_orders`) and `automation.daily_loss_halt_pct` (auto-engages the kill switch on a
+  daily realized-loss breach). The `/halt` and `/resume` Telegram commands flip a persisted
+  `execution_halted` switch checked by the order-poll loop, the auto-queue path, and the intraday loop;
+  profit-take closes still run while halted (closing risk is always allowed).
+- **F5 Cross-process concurrent scans:** a persisted scan lease (`system_settings.acquire_scan_lease`/
+  `release_scan_lease`, wrapped around `run_scan`) serialises full scans across processes, so the
+  morning cron and the 15-min daemon loop can no longer compete for the ~100 market-data line cap. The
+  morning cron is now optional (the loop makes it redundant) — documented in SETUP.md.
+- **No DB backup story:** the EOD run now calls `maintenance.backup_database()` — a consistent online
+  SQLite snapshot into `data/backups/`, rotated to the last 7. The system of record (orders, fills,
+  learning history) is no longer a single point of failure.
+
 ---
 
 ## Remaining known issues (not fixed — require live validation or design decision)
@@ -219,17 +249,6 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
 
 **Open SYSTEM_REVIEW.md findings (deferred — see `IMPROVEMENT_PLAN.md` for sequencing):**
-- **F2 No premium-collapse re-gate (Phase 2, before live):** `validate_live_quote` checks delta drift
-  and a sane two-sided market, but the order is placed at the live mid whatever it is — a candidate
-  approved at $2.50 can fill at $0.60 on an intraday IV crush. The TTL bounds but does not close this.
-  Fix planned: a `min_live_premium_ratio` floor (or live-ROC recompute) in the live re-gate.
-- **F5 Cross-process concurrent scans (Phase 2):** the `scan_running` single-flight flag lives in the
-  daemon's in-process `bot_data`. The morning cron (clientId 11) and the 15-min daemon loop
-  (clientId 15) can scan simultaneously against the account-level ~100 line cap. Fix planned: retire
-  the morning cron (the loop makes it redundant) or add a DB-level scan lease.
-- **F6 yfinance greeks can gate live trades (Phase 2):** the Black-Scholes/yfinance delta fallback for
-  paper accounts is not restricted in live mode. Fix planned: require `greeks_source == "ibkr"` for
-  gating greeks when live.
 - **F7 Out-of-system closes invisible (Phase 3):** a manual buy-to-close in TWS (which roll alerts
   explicitly invite) writes no FillRow, so the ledger mislabels the position and EOD cashflow drifts.
   Fix planned: make `_reconcile_orphan_fills` a periodic sweep extended to BUY-side executions matched

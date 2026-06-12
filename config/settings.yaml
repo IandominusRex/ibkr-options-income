@@ -78,6 +78,15 @@ execution:
   # Seconds to wait for a live bid/ask tick before giving up on the pre-execution quote.
   quote_timeout_seconds: 10.0
 
+automation:
+  # Circuit breakers for AUTOMATED mode (the cumulative risk gate bounds exposure;
+  # these bound activity + losses). The /halt Telegram command is a separate kill switch.
+  # Max NEW-exposure entry orders opened per ET trading day (auto or manual). 0 disables.
+  max_auto_trades_per_day: 10
+  # Auto-trip the kill switch when today's net realized cashflow is a loss exceeding this
+  # % of net liquidation. 0 disables. (Conservative proxy — see config.py AutomationCfg.)
+  daily_loss_halt_pct: 5.0
+
 monitor:
   # Short option delta drift: roll if |delta| exceeds this ceiling.
   delta_ceiling: 0.45
