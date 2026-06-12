@@ -113,7 +113,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 |---|---|
 | **Black-Scholes Greeks fallback** | **Built** (`src/analytics/black_scholes.py` + `_enrich_greeks_yf` in `market_data.py`). After each IBKR chain fetch, quotes with `delta=None` are enriched from yfinance IV via Black-Scholes. Enables paper-account scans without a live market-data subscription. Sets `greeks_source="black_scholes"` on enriched quotes. |
 | **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). Roll candidates still surface as alerts; queuing one for execution is the remaining wiring. |
-| **Live limit-order repricing** | The executor places one mid-price limit and cancels on timeout — it does not chase an unfilled order. Adding an unverified `placeOrder` modification to the broker path was deferred until it can be validated on a live paper session. |
+| **Live limit-order repricing** | **Built (Phase 4), default OFF.** `order_builder.reprice_limit` + a chase loop in `executor.execute_candidate`: an unfilled SELL is repriced toward the bid every `reprice_interval_seconds` for up to `max_reprices` steps (never below `min_live_premium_ratio × approved premium`), then cancels on timeout. Gated by `execution.reprice_enabled` (false by default) because the `placeOrder` amend is unverified on a live account — see the live-verification list below. Only the single-leg entry path chases today; buy-to-close and roll combos reuse `reprice_limit` when wired later. |
 | **`max_correlated_exposure_pct`** | Configured in `risk_limits.yaml` but **not enforced** — needs a price-correlation engine. The per-ticker and per-sector caps *are* enforced. |
 | **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only. The EOD run now prunes rows older than 14 days via `storage.maintenance.purge_old_option_quotes`, so it no longer grows unboundedly. |
 | **`BuyCandidate.rationale`** | Always an empty string. Claude enrichment for buy-to-own recommendations is not yet implemented. |
@@ -288,6 +288,10 @@ not been exercised against a live TWS/Gateway:
   is sent as a single combo BUYing the bag at a *negative* net-debit limit (`lmtPrice = -net_credit`).
   This sign convention and atomic two-leg fill must be confirmed on a live paper session — fill one
   small roll and verify both legs execute and the net credit lands as expected — before any real-money roll.
+- **Limit-order repricing (chase)** in `executor.execute_candidate`: amending a resting order's limit via
+  `ib.placeOrder` with the same `orderId` must be confirmed to actually modify (not duplicate) the order
+  on a live session, and that an amended order fills at the new price. Enable `execution.reprice_enabled`
+  on paper and watch one order step toward the bid and fill before trusting it with real money.
 
 ---
 

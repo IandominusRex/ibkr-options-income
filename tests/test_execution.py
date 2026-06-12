@@ -158,6 +158,54 @@ def test_build_limit_order_uses_candidate_contracts():
 
 
 # --------------------------------------------------------------------------- #
+# order_builder — reprice_limit (chase logic)
+# --------------------------------------------------------------------------- #
+
+
+def test_reprice_sell_steps_toward_bid():
+    from src.execution.order_builder import reprice_limit
+
+    # mid 1.52, bid 1.44 → step 0.34 of (1.52-1.44) → 1.52-0.0272=1.4928 → 1.49
+    assert reprice_limit("SELL", 1.52, bid=1.44, ask=1.60, step_pct=0.34) == 1.49
+
+
+def test_reprice_sell_honors_premium_floor():
+    from src.execution.order_builder import reprice_limit
+
+    # A floor at 1.50 clamps the down-step (which would otherwise land at 1.49).
+    assert reprice_limit("SELL", 1.52, bid=1.44, ask=1.60, step_pct=0.34, floor=1.50) == 1.50
+
+
+def test_reprice_sell_none_when_already_at_floor():
+    from src.execution.order_builder import reprice_limit
+
+    # Current limit already at the floor → no improving move.
+    assert reprice_limit("SELL", 1.50, bid=1.44, ask=1.60, step_pct=0.34, floor=1.50) is None
+
+
+def test_reprice_sell_none_when_bid_not_below_limit():
+    from src.execution.order_builder import reprice_limit
+
+    assert reprice_limit("SELL", 1.50, bid=1.50, ask=1.60, step_pct=0.34) is None
+    assert reprice_limit("SELL", 1.50, bid=None, ask=1.60, step_pct=0.34) is None
+
+
+def test_reprice_buy_steps_toward_ask_with_ceiling():
+    from src.execution.order_builder import reprice_limit
+
+    # 1.00 toward ask 1.20, step 0.5 → 1.10; ceiling 1.05 clamps to 1.05.
+    assert reprice_limit("BUY", 1.00, bid=0.90, ask=1.20, step_pct=0.5) == 1.10
+    assert reprice_limit("BUY", 1.00, bid=0.90, ask=1.20, step_pct=0.5, ceiling=1.05) == 1.05
+
+
+def test_reprice_rejects_bad_step_pct():
+    from src.execution.order_builder import reprice_limit
+
+    assert reprice_limit("SELL", 1.52, bid=1.44, ask=1.60, step_pct=0.0) is None
+    assert reprice_limit("SELL", 1.52, bid=1.44, ask=1.60, step_pct=1.5) is None
+
+
+# --------------------------------------------------------------------------- #
 # executor — execute_candidate
 # --------------------------------------------------------------------------- #
 
@@ -243,6 +291,54 @@ async def test_execute_candidate_writes_fill_row(monkeypatch, tmp_path):
     assert fills[0].is_live is False
     assert order_row.state == OrderState.FILLED
     assert order_row.filled_qty == 1.0
+
+
+async def test_execute_candidate_chases_fill_by_repricing(monkeypatch, tmp_path):
+    """With chase enabled, an unfilled order is repriced toward the bid then fills."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.execution.executor as ex_mod
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.is_live = False
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.execution.reprice_enabled = True
+    mock_cfg.execution.reprice_interval_seconds = 0.0  # reprice on the first poll
+    mock_cfg.execution.max_reprices = 1
+    mock_cfg.execution.reprice_step_pct = 0.34
+    mock_cfg.execution.quote_timeout_seconds = 10.0
+    mock_cfg.risk = {"live_execution": {"min_live_premium_ratio": 0.80}}
+    monkeypatch.setattr(ex_mod, "get_config", lambda: mock_cfg)
+    monkeypatch.setattr(ex_mod.asyncio, "sleep", AsyncMock())
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    mock_ib = _make_mock_ib(filled=True, fill_qty=1.0, avg_price=1.49)
+    # Not done for the first two isDone() checks (while-guard + reprice-guard), done after.
+    calls = {"n": 0}
+
+    def _isdone() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3
+
+    mock_ib.placeOrder.return_value.isDone.side_effect = _isdone
+    mock_bot = _make_mock_bot()
+
+    from src.execution.executor import execute_candidate
+
+    await execute_candidate(mock_ib, mock_bot, "99999", order_id, _make_candidate())
+
+    # Two placeOrder calls: the initial mid-price order + one reprice toward the bid.
+    assert mock_ib.placeOrder.call_count == 2
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        assert row.state == OrderState.FILLED
+        assert row.limit_price == 1.49  # mid 1.52 stepped down toward bid 1.44
 
 
 def test_record_outcome_sets_and_does_not_clobber(monkeypatch, tmp_path):

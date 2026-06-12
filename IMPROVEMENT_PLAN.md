@@ -86,7 +86,14 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
       New formatter `format_roll_fill_confirm`. **Gate: 520 tests, ruff + mypy clean.** Residual: the IBKR
       combo limit-price sign convention is unit-tested against mocked IBKR but **needs live-paper
       verification before any real-money roll** (logged in STATUS.md).
-- [ ] Limit-order repricing (chase logic).
+- [x] **Limit-order repricing (chase logic)** (2026-06-12): `order_builder.reprice_limit` (pure: steps a
+      limit a fraction of the remaining distance toward the bid/ask, tick-rounded, guarded by a
+      floor/ceiling). `executor.execute_candidate`'s fill-wait loop now optionally chases an unfilled SELL
+      down toward the bid every `reprice_interval_seconds` for up to `max_reprices` steps — never below
+      `min_live_premium_ratio × approved premium` — then cancels on timeout as before. Config-gated under
+      `execution.reprice_*` in `settings.yaml`, **default OFF** (unverified broker-path behaviour; on the
+      STATUS.md live-verification list). Applies to the single-leg entry path; buy-to-close and roll combos
+      reuse `reprice_limit` when wired later. **Gate: 527 tests, ruff + mypy clean.**
 - [ ] Backtest harness.
 
 ---

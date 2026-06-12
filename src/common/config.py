@@ -126,6 +126,14 @@ class ExecutionCfg(BaseModel):
     fill_timeout_minutes: int = 5
     poll_interval_seconds: int = 30
     quote_timeout_seconds: float = 10.0  # max wait for live bid/ask before order
+    # --- Limit-order repricing (chase logic) ---
+    # When an order has not filled, step its limit toward the far quote side to chase a fill
+    # rather than only waiting out fill_timeout_minutes then cancelling. Default OFF — it is an
+    # unverified broker-path behaviour pending live-paper validation (see STATUS.md).
+    reprice_enabled: bool = False
+    reprice_interval_seconds: float = 45.0  # wait between reprice steps
+    max_reprices: int = 2  # number of reprice steps before giving up (then cancel on timeout)
+    reprice_step_pct: float = 0.34  # fraction of the remaining distance to the bid/ask per step
 
 
 class MonitorCfg(BaseModel):

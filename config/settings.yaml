@@ -77,6 +77,16 @@ execution:
   poll_interval_seconds: 30
   # Seconds to wait for a live bid/ask tick before giving up on the pre-execution quote.
   quote_timeout_seconds: 10.0
+  # --- Limit-order repricing (chase logic) ---
+  # When an order has not filled, step its limit toward the far quote side to chase a fill
+  # instead of only waiting out fill_timeout_minutes then cancelling. A SELL chases down toward
+  # the bid (never below min_live_premium_ratio × approved premium); reprices stop after
+  # max_reprices, then the order cancels on timeout as before. Default OFF — unverified on a
+  # live account (see STATUS.md "verify on a live paper session").
+  reprice_enabled: false
+  reprice_interval_seconds: 45.0   # wait between reprice steps
+  max_reprices: 2                  # reprice steps before giving up
+  reprice_step_pct: 0.34           # fraction of the remaining distance to the bid per step
 
 automation:
   # Circuit breakers for AUTOMATED mode (the cumulative risk gate bounds exposure;

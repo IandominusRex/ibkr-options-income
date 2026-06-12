@@ -48,6 +48,47 @@ def build_limit_order(candidate: TradeCandidate, quote: OptionQuote) -> LimitOrd
     )
 
 
+def reprice_limit(
+    action: str,
+    current_limit: float,
+    bid: float | None,
+    ask: float | None,
+    step_pct: float,
+    floor: float | None = None,
+    ceiling: float | None = None,
+) -> float | None:
+    """Compute the next, more-aggressive limit price for an unfilled order (chase logic).
+
+    A SELL chases DOWN toward the bid (give up a little credit to get filled); a BUY chases
+    UP toward the ask. Each call moves ``step_pct`` (0–1] of the *remaining* distance to that
+    side, so successive calls approach but never overshoot it. The price is tick-rounded.
+
+    Guards: a SELL never reprices below ``floor`` (e.g. ``min_live_premium_ratio`` × approved
+    premium); a BUY never above ``ceiling``. Returns ``None`` when no improving move is
+    possible — already at/through the target side, the guard is already binding, or
+    ``step_pct`` is out of range — so the caller leaves the resting order unchanged.
+    """
+    if not 0 < step_pct <= 1:
+        return None
+    if action == "SELL":
+        if bid is None or bid <= 0 or bid >= current_limit:
+            return None
+        target = current_limit - step_pct * (current_limit - bid)
+        if floor is not None:
+            target = max(target, floor)
+        new = _round_to_tick(target)
+        return new if new < current_limit else None
+    if action == "BUY":
+        if ask is None or ask <= current_limit:
+            return None
+        target = current_limit + step_pct * (ask - current_limit)
+        if ceiling is not None:
+            target = min(target, ceiling)
+        new = _round_to_tick(target)
+        return new if new > current_limit else None
+    return None
+
+
 def _round_combo_tick(price: float) -> float:
     """Round a net combo price to a penny.
 

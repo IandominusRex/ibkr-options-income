@@ -24,7 +24,7 @@ from src.claude.memory import FILLED, record_outcome
 from src.common.config import get_config
 from src.common.schemas import OptionQuote, OrderState, Strategy, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_live_quote
-from src.execution.order_builder import build_limit_order
+from src.execution.order_builder import build_limit_order, reprice_limit
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
 from src.storage.models import FillRow, OrderRow
@@ -264,15 +264,64 @@ async def execute_candidate(
                 row.ib_order_id = trade.order.orderId
                 row.limit_price = float(order.lmtPrice) if order.lmtPrice is not None else None
 
-        # Wait for terminal state or timeout.
-        deadline = asyncio.get_running_loop().time() + fill_timeout
+        # Wait for terminal state or timeout — optionally chasing the fill by repricing the
+        # limit toward the bid (config-gated; default off). The premium floor prevents the
+        # chase from ever selling below min_live_premium_ratio × approved premium.
+        exec_cfg = cfg.execution
+        # `is True` (not bool()) so a MagicMock config attribute in tests reads as disabled.
+        reprice_enabled = getattr(exec_cfg, "reprice_enabled", False) is True
+        reprice_interval = _as_float(getattr(exec_cfg, "reprice_interval_seconds", 45.0), 45.0)
+        max_reprices = int(_as_float(getattr(exec_cfg, "max_reprices", 0), 0.0))
+        step_pct = _as_float(getattr(exec_cfg, "reprice_step_pct", 0.34), 0.34)
+        risk_cfg = getattr(cfg, "risk", {})
+        min_ratio = (
+            (risk_cfg.get("live_execution", {}) or {}).get("min_live_premium_ratio")
+            if isinstance(risk_cfg, dict)
+            else None
+        )
+        min_ratio_f = _as_float(min_ratio, 0.0) if min_ratio is not None else 0.0
+        floor = min_ratio_f * candidate.premium if (min_ratio_f > 0 and candidate.premium > 0) else None
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + fill_timeout
+        next_reprice_at = loop.time() + reprice_interval
+        reprices_done = 0
         while not trade.isDone():
             await asyncio.sleep(1)
-            if asyncio.get_running_loop().time() > deadline:
+            now = loop.time()
+            if now > deadline:
                 log.warning("Fill timeout for order_id=%s — cancelling", order_id)
                 ib.cancelOrder(trade.order)
                 await asyncio.sleep(2)
                 break
+            if (
+                reprice_enabled
+                and reprices_done < max_reprices
+                and now >= next_reprice_at
+                and not trade.isDone()
+            ):
+                next_reprice_at = now + reprice_interval
+                cur_limit = _safe_float(order.lmtPrice)
+                new_price = (
+                    reprice_limit("SELL", cur_limit, quote.bid, quote.ask, step_pct, floor=floor)
+                    if cur_limit is not None
+                    else None
+                )
+                if new_price is not None:
+                    order.lmtPrice = new_price  # modify in place (same orderId → IB amends)
+                    ib.placeOrder(qualified, order)
+                    reprices_done += 1
+                    log.info(
+                        "Reprice %d/%d order_id=%s -> %.2f",
+                        reprices_done,
+                        max_reprices,
+                        order_id,
+                        new_price,
+                    )
+                    with session_scope() as session:
+                        row = session.get(OrderRow, order_id)
+                        if row:
+                            row.limit_price = new_price
 
         filled_qty: float = getattr(trade.orderStatus, "filled", 0.0) or 0.0
         avg_price: float = getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0
