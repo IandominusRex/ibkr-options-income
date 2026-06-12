@@ -248,14 +248,25 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
 - **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
 
-**Open SYSTEM_REVIEW.md findings (deferred — see `IMPROVEMENT_PLAN.md` for sequencing):**
-- **F7 Out-of-system closes invisible (Phase 3):** a manual buy-to-close in TWS (which roll alerts
-  explicitly invite) writes no FillRow, so the ledger mislabels the position and EOD cashflow drifts.
-  Fix planned: make `_reconcile_orphan_fills` a periodic sweep extended to BUY-side executions matched
-  against open ledger positions.
-- **F8 Fragile profit-take entry price (Phase 3):** `_check_profit_takes` uses the latest single SELL
-  fill as the entry price (ignores multi-fill entries and commissions). Acceptable for v1; fix planned:
-  qty-weighted average + commission haircut.
+**Partially-addressed / remaining SYSTEM_REVIEW.md findings (see `IMPROVEMENT_PLAN.md`):**
+- **F7 (partially fixed):** `reconcile_orphan_fills` (now in `src/execution/reconciliation.py`) runs
+  **periodically** from the intraday loop, not only at startup — so a SELL fill that lands during a
+  mid-session reconnect is recovered on the next cycle. **Still open:** a *manual buy-to-close in TWS*
+  writes no FillRow (the reconciler only recovers SELL-side executions tied to a SUBMITTED order), so
+  the ledger can still mislabel a position closed outside the system. Extending the sweep to BUY-side
+  executions matched against open ledger positions needs careful P&L attribution and is deferred.
+- **F8 (fixed):** `_check_profit_takes` now derives the entry credit from `_net_entry_credit_per_share`
+  — the qty-weighted average of *all* SELL fills for the contract, net of entry commission — instead of
+  the last single fill.
+
+**Deferred structural items (hygiene — see `IMPROVEMENT_PLAN.md` Phase 3):**
+- The profit-take/auto-close *orchestration* (`_check_profit_takes`, `_auto_close_position`) stays in
+  `approval_service` because it drives Telegram notification; the reusable *close mechanics* are already
+  factored into `execution/position_manager.close_short_position`, and broker reconciliation now lives
+  in `execution/reconciliation.py`.
+- Sync/async market-data twins (`_batch_quotes`/`_batch_quotes_async`, etc.) are **not** consolidated:
+  the sync `_batch_quotes` is the version the line-cap/cancel-discipline tests exercise, so collapsing
+  it risks weakening that coverage without a live session to re-validate. Deferred deliberately.
 
 ---
 

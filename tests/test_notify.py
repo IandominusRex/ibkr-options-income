@@ -637,7 +637,7 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     import src.storage.db as dbmod
-    from src.notify.approval_service import _reconcile_orphan_fills
+    from src.execution.reconciliation import reconcile_orphan_fills
     from src.storage.models import CandidateRow, FillRow
 
     with dbmod.session_scope() as s:
@@ -667,7 +667,7 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     ib.reqExecutionsAsync = AsyncMock(return_value=[fill])
     bot = AsyncMock()
 
-    await _reconcile_orphan_fills(ib, bot, "99999")
+    await reconcile_orphan_fills(ib, bot, "99999")
 
     with dbmod.session_scope() as s:
         order = s.query(OrderRow).filter_by(candidate_id="recon-1").one()
@@ -678,12 +678,69 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     bot.send_message.assert_awaited()  # operator was notified
 
 
+def test_net_entry_credit_qty_weighted_and_commission_haircut(tmp_path, monkeypatch):
+    """F8: entry credit is the qty-weighted SELL average, net of entry commission."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from datetime import date as _date
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import _net_entry_credit_per_share
+    from src.storage.models import CandidateRow, FillRow
+
+    exp = _date(2026, 7, 17)
+    with dbmod.session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="c8",
+                run_id="r",
+                strategy="cash_secured_put",
+                underlying="AAPL",
+                right="P",
+                strike=180.0,
+                expiry=exp,
+                blended_score=70.0,
+                payload={},
+            )
+        )
+        # Two SELL fills: 1 @ $2.00, 3 @ $1.00 → gross qty-weighted = $500 / 400 sh = $1.25/sh.
+        # Commission $1.00 + $3.00 = $4.00 → net = ($500 − $4) / 400 = $1.24/sh.
+        s.add(
+            FillRow(order_id=1, candidate_id="c8", action="SELL", filled_qty=1, avg_price=2.00, commission=1.00)
+        )
+        s.add(
+            FillRow(order_id=2, candidate_id="c8", action="SELL", filled_qty=3, avg_price=1.00, commission=3.00)
+        )
+        # A BUY fill must be ignored (it's a close, not part of the entry credit).
+        s.add(
+            FillRow(order_id=3, candidate_id="c8", action="BUY", filled_qty=4, avg_price=0.50, commission=2.00)
+        )
+
+    with dbmod.session_scope() as s:
+        net = _net_entry_credit_per_share(s, "AAPL", 180.0, exp, "P")
+    assert net is not None and abs(net - 1.24) < 1e-9
+
+
+def test_net_entry_credit_none_when_no_sell_fills(tmp_path, monkeypatch):
+    """Position opened outside the system (no SELL fill) → None, so profit-take skips it safely."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from datetime import date as _date
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import _net_entry_credit_per_share
+
+    with dbmod.session_scope() as s:
+        net = _net_entry_credit_per_share(s, "AAPL", 180.0, _date(2026, 7, 17), "P")
+    assert net is None
+
+
 async def test_reconcile_no_executions_leaves_order_submitted(monkeypatch, tmp_path):
     _db_setup(tmp_path, monkeypatch)
     _mock_svc_cfg(monkeypatch, chat_id="99999")
 
     import src.storage.db as dbmod
-    from src.notify.approval_service import _reconcile_orphan_fills
+    from src.execution.reconciliation import reconcile_orphan_fills
     from src.storage.models import FillRow
 
     with dbmod.session_scope() as s:
@@ -693,7 +750,7 @@ async def test_reconcile_no_executions_leaves_order_submitted(monkeypatch, tmp_p
     ib.reqExecutionsAsync = AsyncMock(return_value=[])  # no matching execution
     bot = AsyncMock()
 
-    await _reconcile_orphan_fills(ib, bot, "99999")
+    await reconcile_orphan_fills(ib, bot, "99999")
 
     with dbmod.session_scope() as s:
         order = s.query(OrderRow).filter_by(candidate_id="recon-2").one()

@@ -34,8 +34,9 @@ from typing import cast
 
 from ib_async import IB
 from ib_async import Contract as IBContract
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -45,6 +46,7 @@ from src.common.market_hours import is_new_entry_window, is_rth
 from src.common.schemas import ApprovalStatus, OrderState, PositionSnapshot
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
+from src.execution.reconciliation import reconcile_orphan_fills, recover_orphan_orders
 from src.ibkr.connection import AutoReconnect
 from src.ibkr.contracts import build_option
 from src.storage.db import init_db, session_scope
@@ -813,6 +815,43 @@ async def _auto_close_position(
         logger.exception("Failed to send auto-close result for %s", pos.symbol)
 
 
+def _net_entry_credit_per_share(
+    session: Session,
+    underlying: str,
+    strike: float,
+    expiry: object,
+    right: str,
+) -> float | None:
+    """Qty-weighted average SELL credit for a contract, net of entry commission (F8).
+
+    Returns None when no SELL fills exist (position opened outside the system) or the net
+    credit is non-positive. Commission (a total $ figure per fill) is spread per share so the
+    profit-take threshold reflects the round-trip cost rather than the raw premium.
+    """
+    rows = (
+        session.execute(
+            select(FillRow)
+            .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+            .where(
+                CandidateRow.underlying == underlying,
+                CandidateRow.strike == strike,
+                CandidateRow.expiry == expiry,
+                CandidateRow.right == right,
+                FillRow.action == "SELL",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    total_qty = sum(r.filled_qty for r in rows)
+    if total_qty <= 0:
+        return None
+    gross_dollars = sum(r.avg_price * r.filled_qty * 100 for r in rows)
+    commission = sum(r.commission or 0.0 for r in rows)
+    net_per_share = (gross_dollars - commission) / (total_qty * 100)
+    return net_per_share if net_per_share > 0 else None
+
+
 async def _check_profit_takes(
     ib_scan: IB,
     ib_exec: IB | None,
@@ -850,26 +889,17 @@ async def _check_profit_takes(
         assert pos.expiry is not None and pos.strike is not None and pos.right is not None
         right_value = pos.right.value
 
-        # Look up the most recent SELL fill for this contract to get the entry price.
+        # Entry credit = qty-weighted average of ALL SELL fills for this contract, net of
+        # the entry commission (SYSTEM_REVIEW F8) — not just the last fill's price. A
+        # multi-fill entry is averaged, and the commission haircut makes the profit-take
+        # threshold trigger only once the round-trip cost is genuinely covered.
         with session_scope() as s:
-            fill_row = s.execute(
-                select(FillRow)
-                .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
-                .where(
-                    CandidateRow.underlying == (pos.underlying or pos.symbol),
-                    CandidateRow.strike == pos.strike,
-                    CandidateRow.expiry == pos.expiry,
-                    CandidateRow.right == right_value,
-                    FillRow.action == "SELL",
-                )
-                .order_by(desc(FillRow.filled_at))
-                .limit(1)
-            ).scalar_one_or_none()
+            entry_price = _net_entry_credit_per_share(
+                s, pos.underlying or pos.symbol, pos.strike, pos.expiry, right_value
+            )
 
-        if fill_row is None or fill_row.avg_price <= 0:
+        if entry_price is None or entry_price <= 0:
             continue
-
-        entry_price: float = fill_row.avg_price
 
         # Fetch a live quote to measure the cost-to-close.
         try:
@@ -950,6 +980,14 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: profit-take check failed")
 
+            # 1b. Periodic fill reconciliation (SYSTEM_REVIEW F7): recover fills that landed
+            #     during a mid-session reconnect, not only at the next startup.
+            if ib_exec is not None and ib_exec.isConnected():
+                try:
+                    await reconcile_orphan_fills(ib_exec, bot, chat_id)
+                except Exception:
+                    logger.exception("Intraday loop: periodic fill reconciliation failed")
+
             # 2. Fresh scan — skipped while halted or after entry_cutoff (profit-takes
             #    above still run; closing risk is always allowed). (SYSTEM_REVIEW Phase 2)
             if is_halted():
@@ -994,183 +1032,6 @@ async def _intraday_scan_loop(
 # ---------------------------------------------------------------------------
 # Service bootstrap
 # ---------------------------------------------------------------------------
-
-
-def _recover_orphan_orders() -> None:
-    """On startup, reset any SUBMITTED orders with no IB order ID back to QUEUED.
-
-    These are orders that were claimed (SUBMITTED) by a previous process run but
-    crashed before `ib.placeOrder` was called. Without recovery they stay stuck
-    forever since the poll loop never revisits SUBMITTED rows.
-    """
-    with session_scope() as s:
-        orphans = (
-            s.query(OrderRow)
-            .filter(OrderRow.state == OrderState.SUBMITTED, OrderRow.ib_order_id.is_(None))
-            .all()
-        )
-        for o in orphans:
-            o.state = OrderState.QUEUED
-            logger.warning("Recovered orphan order id=%s to QUEUED", o.id)
-
-
-def _expiry_to_date(yyyymmdd: str) -> object | None:
-    from datetime import date as _date
-
-    if not yyyymmdd or len(yyyymmdd) < 8:
-        return None
-    try:
-        return _date(int(yyyymmdd[0:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:8]))
-    except (ValueError, TypeError):
-        return None
-
-
-def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: int | None) -> bool:
-    """True if an IBKR Fill corresponds to the order for *candidate*.
-
-    Primary match is the broker order id (stable within a clientId session); falls back
-    to a contract match (symbol / right / strike / expiry) so a fill is still recovered
-    after an id churn across a full restart.
-    """
-    execution = getattr(fill, "execution", None)
-    contract = getattr(fill, "contract", None)
-    if execution is None or contract is None:
-        return False
-
-    if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:
-        return True
-
-    if getattr(contract, "symbol", None) != candidate.underlying:
-        return False
-    right = str(getattr(contract, "right", "") or "")[:1].upper()
-    if right and candidate.right and right != candidate.right[:1].upper():
-        return False
-    if candidate.strike and abs(float(getattr(contract, "strike", 0.0)) - candidate.strike) > 1e-3:
-        return False
-    exp = _expiry_to_date(str(getattr(contract, "lastTradeDateOrContractMonth", "")))
-    if candidate.expiry and exp is not None and exp != candidate.expiry:
-        return False
-    # Opening income trades are sells; ignore buy-side executions (e.g. a buy-to-close).
-    side = str(getattr(execution, "side", "") or "").upper()
-    return side in ("", "SLD")
-
-
-async def _reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
-    """Recover fills that landed while the service was disconnected.
-
-    If IBKR fills an order during a socket drop between placeOrder and the fill event,
-    the OrderRow stays SUBMITTED forever (it has an ib_order_id, so _recover_orphan_orders
-    skips it) and no FillRow is ever written. On startup we ask IBKR for recent executions
-    and, for any SUBMITTED order with a matching execution and no FillRow, record the fill.
-
-    Strictly additive against the broker — it only writes proven fills; it never cancels
-    or resubmits, so it cannot cause a double trade.
-    """
-    from src.claude.memory import FILLED, record_outcome
-
-    # Snapshot the orphan candidates outside any long-held session.
-    with session_scope() as s:
-        rows = (
-            s.query(OrderRow)
-            .filter(OrderRow.state == OrderState.SUBMITTED, OrderRow.ib_order_id.isnot(None))
-            .all()
-        )
-        orphans = [(o.id, o.candidate_id, o.ib_order_id) for o in rows]
-        already_filled = {
-            fid for (fid,) in s.query(FillRow.order_id).filter(
-                FillRow.order_id.in_([o.id for o in rows] or [-1])
-            )
-        }
-    orphans = [o for o in orphans if o[0] not in already_filled]
-    if not orphans:
-        return
-
-    try:
-        fills = await ib.reqExecutionsAsync()
-    except Exception:
-        logger.exception("Fill reconciliation: reqExecutions failed")
-        return
-
-    recovered = 0
-    for order_id, candidate_id, ib_order_id in orphans:
-        with session_scope() as s:
-            cand = s.execute(
-                select(CandidateRow).where(CandidateRow.candidate_id == candidate_id)
-            ).scalar_one_or_none()
-            if cand is None:
-                continue
-            matched = [f for f in fills if _exec_matches_candidate(f, cand, ib_order_id)]
-            if not matched:
-                continue
-
-            total_qty = 0.0
-            notional = 0.0
-            commission = 0.0
-            exec_id = None
-            for f in matched:
-                ex = f.execution
-                shares = float(getattr(ex, "shares", 0.0) or 0.0)
-                price = float(getattr(ex, "price", 0.0) or 0.0)
-                total_qty += shares
-                notional += shares * price
-                exec_id = getattr(ex, "execId", exec_id)
-                cr = getattr(f, "commissionReport", None)
-                c = getattr(cr, "commission", None) if cr is not None else None
-                if c:
-                    commission += float(c)
-            if total_qty <= 0:
-                continue
-            avg_price = notional / total_qty
-
-            order = s.get(OrderRow, order_id)
-            if order is None or order.state != OrderState.SUBMITTED:
-                continue
-            payload = cand.payload or {}
-            contracts = float(payload.get("contracts", total_qty))
-            order.state = (
-                OrderState.FILLED if total_qty >= contracts else OrderState.PARTIAL
-            )
-            order.filled_qty = total_qty
-            order.avg_fill_price = avg_price
-            order.detail = "Recovered from reqExecutions on startup"
-            s.add(
-                FillRow(
-                    order_id=order_id,
-                    candidate_id=candidate_id,
-                    action="SELL",
-                    filled_qty=total_qty,
-                    avg_price=avg_price,
-                    commission=commission or None,
-                    ib_exec_id=exec_id,
-                    is_live=cfg_is_live(),
-                )
-            )
-        record_outcome(candidate_id, FILLED)
-        recovered += 1
-        logger.warning(
-            "Fill reconciliation: recovered fill for order_id=%s candidate=%s qty=%.0f @ %.2f",
-            order_id,
-            candidate_id,
-            total_qty,
-            avg_price,
-        )
-        try:
-            await bot.send_message(  # type: ignore[attr-defined]
-                chat_id=chat_id,
-                text=(
-                    f"♻️ Recovered a missed fill on startup: {cand.underlying} "
-                    f"{total_qty:.0f} @ {avg_price:.2f} (order_id={order_id})."
-                ),
-            )
-        except Exception:
-            logger.exception("Fill reconciliation: failed to notify for order_id=%s", order_id)
-
-    if recovered:
-        logger.warning("Fill reconciliation: recovered %d missed fill(s)", recovered)
-
-
-def cfg_is_live() -> bool:
-    return bool(get_config().is_live)
 
 
 async def _run_service(token: str, chat_id: str) -> None:
@@ -1349,7 +1210,7 @@ async def _run_service(token: str, chat_id: str) -> None:
         # poll loop starts processing new orders.
         if ib is not None:
             try:
-                await _reconcile_orphan_fills(ib, app.bot, chat_id)
+                await reconcile_orphan_fills(ib, app.bot, chat_id)
             except Exception:
                 logger.exception("Startup fill reconciliation failed")
 
@@ -1418,7 +1279,7 @@ def main() -> None:
         raise RuntimeError("TELEGRAM_CHAT_ID is not set in .env")
 
     logger.info("Approval service starting")
-    _recover_orphan_orders()
+    recover_orphan_orders()
     try:
         asyncio.run(_run_service(token, chat_id))
     except KeyboardInterrupt:
