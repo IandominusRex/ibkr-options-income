@@ -282,7 +282,11 @@ def test_record_outcome_sets_and_does_not_clobber(monkeypatch, tmp_path):
 
 
 async def test_execute_candidate_rejects_roll(monkeypatch, tmp_path):
-    """A ROLL candidate must be refused outright — the single-leg executor can't place it."""
+    """A ROLL delegates to the combo executor, never the single-leg (naked SELL) path.
+
+    With no resolvable short to buy back (mock IB returns 0 positions), the roll is refused
+    and nothing is transmitted — the key safety property: a ROLL is never sent as a naked SELL.
+    """
     _db_setup(tmp_path, monkeypatch)
 
     import src.storage.db as dbmod
@@ -311,7 +315,7 @@ async def test_execute_candidate_rejects_roll(monkeypatch, tmp_path):
         row = s.get(OrderRow, order_id)
     assert row.state == OrderState.REJECTED
     mock_ib.placeOrder.assert_not_called()
-    assert "ROLL" in mock_bot.send_message.call_args.kwargs["text"]
+    assert "Roll NOT placed" in mock_bot.send_message.call_args.kwargs["text"]
 
 
 async def test_execute_candidate_stores_entry_iv(monkeypatch, tmp_path):

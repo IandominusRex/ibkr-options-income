@@ -166,25 +166,14 @@ async def execute_candidate(
     cfg = get_config()
     fill_timeout = cfg.execution.fill_timeout_minutes * 60.0
 
-    # ROLL is a two-leg combo (buy-to-close + sell-to-open); this single-leg executor
-    # would mis-send it as a naked SELL. Rolls are alert-only — refuse outright.
+    # ROLL is a two-leg combo (buy-to-close + sell-to-open); the single-leg path below would
+    # mis-send it as a naked SELL. Delegate to the dedicated combo executor, which qualifies
+    # both legs, re-gates the new short, and places one atomic BAG order. (Imported lazily to
+    # avoid a circular import — roll_executor reuses helpers from this module.)
     if candidate.strategy == Strategy.ROLL:
-        log.error(
-            "ROLL candidate %s reached the executor — rolls are alert-only; rejecting",
-            candidate.candidate_id,
-        )
-        with session_scope() as session:
-            row = session.get(OrderRow, order_id)
-            if row:
-                row.state = OrderState.REJECTED
-                row.detail = "ROLL is not executable via the single-leg order builder"
-        await bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"Order NOT placed — {candidate.underlying} is a ROLL. "
-                f"Rolls are alert-only and cannot be auto-executed."
-            ),
-        )
+        from src.execution.roll_executor import execute_roll
+
+        await execute_roll(ib, bot, chat_id, order_id, candidate)
         return
 
     try:

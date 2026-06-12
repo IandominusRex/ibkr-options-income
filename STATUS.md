@@ -112,7 +112,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | Item | Status & reason |
 |---|---|
 | **Black-Scholes Greeks fallback** | **Built** (`src/analytics/black_scholes.py` + `_enrich_greeks_yf` in `market_data.py`). After each IBKR chain fetch, quotes with `delta=None` are enriched from yfinance IV via Black-Scholes. Enables paper-account scans without a live market-data subscription. Sets `greeks_source="black_scholes"` on enriched quotes. |
-| **Multi-leg / roll execution** | Rolls are **alert-only**. The order builder is single-leg SELL; the executor refuses `ROLL` candidates. Acting on a roll is manual. |
+| **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). Roll candidates still surface as alerts; queuing one for execution is the remaining wiring. |
 | **Live limit-order repricing** | The executor places one mid-price limit and cancels on timeout — it does not chase an unfilled order. Adding an unverified `placeOrder` modification to the broker path was deferred until it can be validated on a live paper session. |
 | **`max_correlated_exposure_pct`** | Configured in `risk_limits.yaml` but **not enforced** — needs a price-correlation engine. The per-ticker and per-sector caps *are* enforced. |
 | **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only. The EOD run now prunes rows older than 14 days via `storage.maintenance.purge_old_option_quotes`, so it no longer grows unboundedly. |
@@ -284,6 +284,10 @@ not been exercised against a live TWS/Gateway:
 - A full **approve → fill → confirm** cycle on paper, including the new cumulative send-time re-gate
   and the CSP-budget sizing actually producing fills (tighten `max_csp_allocation_pct` to confirm a
   rejection fires).
+- The **roll combo (BAG) pricing convention** in `order_builder.build_combo_roll_order`: a credit roll
+  is sent as a single combo BUYing the bag at a *negative* net-debit limit (`lmtPrice = -net_credit`).
+  This sign convention and atomic two-leg fill must be confirmed on a live paper session — fill one
+  small roll and verify both legs execute and the net credit lands as expected — before any real-money roll.
 
 ---
 

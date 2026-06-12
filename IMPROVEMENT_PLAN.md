@@ -75,7 +75,17 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
 
 ### Phase 4 — deliberate roadmap  🟡 IN PROGRESS
 - [x] **Assignment auto-detection via position diffing** (2026-06-12): `position_snapshots` table + `src/storage/positions.py` (daily snapshot) + `src/claude/eval/assignment.py` (`detect_assignments` pure diff, `assigned_candidate_ids` orchestration). EOD now diffs prior snapshot vs current positions and feeds `reconcile(assigned_candidate_ids=…)`, replacing the manual `--assigned` flag. Residuals: option-leg-only realized P&L; CC assignment needs a prior snapshot (not detectable on the first-ever EOD). **Gate: 511 tests, ruff + mypy clean.**
-- [ ] Roll execution as a two-leg combo order. *(highest value, highest risk — places real combo orders)*
+- [x] **Roll execution as a two-leg combo order** (2026-06-12): `src/execution/roll_executor.py::execute_roll`
+      sends a roll as one atomic BAG combo (BUY-to-close old short + SELL-to-open new short — no legging
+      risk). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative
+      net-debit limit). `executor.execute_candidate` now delegates `Strategy.ROLL` here instead of
+      rejecting it. Safety rails mirror the entry/close paths: the new leg is re-gated via
+      `validate_live_quote` (delta + live-greeks-in-LIVE) plus a net-credit floor (`min_live_premium_ratio`
+      / no debit rolls), LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and two FillRows (BUY under the
+      original short's id → ledger `closed_early` + EOD debit; SELL under the new id → monitor tracks it).
+      New formatter `format_roll_fill_confirm`. **Gate: 520 tests, ruff + mypy clean.** Residual: the IBKR
+      combo limit-price sign convention is unit-tested against mocked IBKR but **needs live-paper
+      verification before any real-money roll** (logged in STATUS.md).
 - [ ] Limit-order repricing (chase logic).
 - [ ] Backtest harness.
 

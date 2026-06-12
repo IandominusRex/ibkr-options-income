@@ -73,11 +73,7 @@ def format_candidate(
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
-    vrp_str = (
-        f" · VRP {candidate.vrp:+.1f}%"
-        if candidate.vrp is not None
-        else ""
-    )
+    vrp_str = f" · VRP {candidate.vrp:+.1f}%" if candidate.vrp is not None else ""
     parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}{_md(vrp_str)}")
 
     score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
@@ -459,6 +455,35 @@ def format_fill_confirm(
             f"{_md(qty_str)} contract{'s' if filled_qty != 1 else ''}"
             f" @ \\${_md(f'{avg_price:.2f}')}/sh"
             f"  \\(\\${_md(f'{contract_total:.0f}')} total\\)"
+        ),
+    ]
+    return "\n".join(parts)
+
+
+def format_roll_fill_confirm(
+    underlying: str,
+    old_strike: float,
+    old_expiry: date,
+    new_strike: float,
+    new_expiry: date,
+    right: str,
+    contracts: int,
+    net_credit: float,
+) -> str:
+    """Format a two-leg roll combo fill confirmation for Telegram MarkdownV2."""
+    right_label = "Call" if right == "C" else "Put"
+    net_total = net_credit * contracts * 100
+    qty_str = f"{contracts:.0f}"
+    parts = [
+        f"🔄 *Rolled — {_md(underlying)} {_md(right_label)}*",
+        (
+            f"\\${_md(f'{old_strike:.0f}')} {_md(str(old_expiry))}"
+            f" → \\${_md(f'{new_strike:.0f}')} {_md(str(new_expiry))}"
+        ),
+        (
+            f"{_md(qty_str)} contract{'s' if contracts != 1 else ''}"
+            f" · net credit \\${_md(f'{net_credit:.2f}')}/sh"
+            f"  \\(\\${_md(f'{net_total:.0f}')} total\\)"
         ),
     ]
     return "\n".join(parts)
