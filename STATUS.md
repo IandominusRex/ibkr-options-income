@@ -56,7 +56,9 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   scan start and shown in the completion message.
 - **15-minute intraday loop** — runs inside the approval_service daemon every 15 minutes during
   RTH. Each cycle: (1) checks short option positions for 50% profit-take threshold, (2) runs a
-  full scan. Behaviour depends on mode (see below). RTH is now determined by the shared,
+  full scan — but new-entry scans stop after `scheduler.entry_cutoff` (default 15:00 ET); profit-take
+  checks still run until the close. The whole cycle body is wrapped in a catch-all so one bad cycle
+  cannot kill the loop. Behaviour depends on mode (see below). RTH is now determined by the shared,
   **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth for both the
   intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00 ET early
   closes are respected, not just weekday + clock.
@@ -64,8 +66,10 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
   get Approve/Reject buttons; profit takes send alerts only. In **AUTOMATED** mode: candidates are
   directly queued for execution (no human tap), profit-take targets trigger BUY-to-close orders
-  automatically. The deterministic risk gate still re-validates every order before execution in
-  both modes.
+  automatically via `execution/position_manager.close_short_position` — which records an
+  `OrderRow`/`FillRow`, cancels on timeout, and is idempotent at the contract level (SYSTEM_REVIEW
+  F1). The deterministic risk gate still re-validates every new-exposure order before execution in
+  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
 - **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
 
@@ -153,6 +157,30 @@ All P0 and P1 bugs from the 2026-06-02 audit have been fixed:
 **Previously fixed (2026-06-01 audit):**
 - Double-execution poll loop, rolling collateral 10× undercount, DTE zero-division, live re-gate stale quotes, `expires_at=None` bypass, market-data line leak, AutoReconnect silent failure, IV percentile off-by-one, EOD net delta, DTE timezone, RTH boundary, migration concurrency, IV history uniqueness, ClaudeReview recommendation validation, bid=0 `_fetch_quote` acceptance, config drift.
 
+## Bugs fixed (2026-06-12 system review — SYSTEM_REVIEW.md Phase 1)
+
+The independent review in `SYSTEM_REVIEW.md` found 8 new findings (F1–F8) not covered by
+the 2026-06-02 remediation. Phase 1 (the AUTOMATED-mode safety gate) is fixed; the remaining
+findings are sequenced in `IMPROVEMENT_PLAN.md`.
+
+- **F1 Auto-close bypassed the order infrastructure (P0 the moment AUTOMATED mode runs):** the
+  profit-take auto-close called `ib.placeOrder` directly — no `OrderRow`/`FillRow`, no
+  cancel-on-timeout, no idempotency. A working DAY close that didn't fill in time stayed open while
+  the next intraday cycle placed a *second* buy-to-close (risking a net-long position); EOD cashflow
+  omitted the BUY debit; and the verdict-ledger reconciler mislabeled the close as
+  `expired_worthless`, corrupting learning-loop labels. **Fixed:** new
+  `src/execution/position_manager.py::close_short_position` routes the close through the same
+  `OrderRow`/`FillRow` lifecycle + cancel-on-timeout as entries, and is idempotent at the contract
+  level (deterministic `close:` candidate id + `has_active_order`). `_auto_close_position` is now a
+  thin Telegram-notification wrapper. Buy-to-close still skips the income Rules Engine gate (it is
+  risk-reducing) but always records the order/fill.
+- **F3 Malformed `entry_cutoff` silently killed the intraday loop:** `SchedulerCfg.morning_scan`,
+  `eod_report`, and `entry_cutoff` now have a Pydantic `HH:MM` validator (fail loud at config load),
+  and the intraday-loop body is wrapped in a catch-all so a single bad cycle can never propagate out
+  of `while True` and kill profit-takes/scans without an alert.
+- **F4 entry-cutoff feature untested:** added `is_new_entry_window` boundary tests (15:00 exact,
+  early-close day, holiday, custom cutoff, malformed string) and `SchedulerCfg` time-validation tests.
+
 ---
 
 ## Remaining known issues (not fixed — require live validation or design decision)
@@ -189,6 +217,26 @@ All P0 and P1 bugs from the 2026-06-02 audit have been fixed:
   still monitor `/status` after a TWS restart during an active order.
 - **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
+
+**Open SYSTEM_REVIEW.md findings (deferred — see `IMPROVEMENT_PLAN.md` for sequencing):**
+- **F2 No premium-collapse re-gate (Phase 2, before live):** `validate_live_quote` checks delta drift
+  and a sane two-sided market, but the order is placed at the live mid whatever it is — a candidate
+  approved at $2.50 can fill at $0.60 on an intraday IV crush. The TTL bounds but does not close this.
+  Fix planned: a `min_live_premium_ratio` floor (or live-ROC recompute) in the live re-gate.
+- **F5 Cross-process concurrent scans (Phase 2):** the `scan_running` single-flight flag lives in the
+  daemon's in-process `bot_data`. The morning cron (clientId 11) and the 15-min daemon loop
+  (clientId 15) can scan simultaneously against the account-level ~100 line cap. Fix planned: retire
+  the morning cron (the loop makes it redundant) or add a DB-level scan lease.
+- **F6 yfinance greeks can gate live trades (Phase 2):** the Black-Scholes/yfinance delta fallback for
+  paper accounts is not restricted in live mode. Fix planned: require `greeks_source == "ibkr"` for
+  gating greeks when live.
+- **F7 Out-of-system closes invisible (Phase 3):** a manual buy-to-close in TWS (which roll alerts
+  explicitly invite) writes no FillRow, so the ledger mislabels the position and EOD cashflow drifts.
+  Fix planned: make `_reconcile_orphan_fills` a periodic sweep extended to BUY-side executions matched
+  against open ledger positions.
+- **F8 Fragile profit-take entry price (Phase 3):** `_check_profit_takes` uses the latest single SELL
+  fill as the entry price (ignores multi-fill entries and commissions). Acceptable for v1; fix planned:
+  qty-weighted average + commission haircut.
 
 ---
 

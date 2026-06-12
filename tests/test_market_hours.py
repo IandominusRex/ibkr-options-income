@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from src.common.market_hours import (
     is_early_close,
     is_market_holiday,
+    is_new_entry_window,
     is_rth,
     session_close,
 )
@@ -84,3 +87,47 @@ class TestIsRth:
 
     def test_naive_datetime_treated_as_eastern(self):
         assert is_rth(datetime(2026, 6, 11, 12, 0))
+
+
+class TestIsNewEntryWindow:
+    def test_before_cutoff_during_rth_is_true(self):
+        assert is_new_entry_window(datetime(2026, 6, 11, 12, 0, tzinfo=_ET))
+
+    def test_at_cutoff_is_false(self):
+        # Exactly 15:00 is not before the cutoff — no new entries.
+        assert not is_new_entry_window(datetime(2026, 6, 11, 15, 0, tzinfo=_ET))
+
+    def test_just_before_cutoff_is_true(self):
+        assert is_new_entry_window(datetime(2026, 6, 11, 14, 59, tzinfo=_ET))
+
+    def test_after_cutoff_but_before_close_is_false(self):
+        assert not is_new_entry_window(datetime(2026, 6, 11, 15, 30, tzinfo=_ET))
+
+    def test_outside_rth_is_false(self):
+        assert not is_new_entry_window(datetime(2026, 6, 11, 9, 0, tzinfo=_ET))
+
+    def test_holiday_is_false(self):
+        assert not is_new_entry_window(datetime(2026, 12, 25, 12, 0, tzinfo=_ET))
+
+    def test_early_close_day_cutoff_before_13_is_respected(self):
+        # On a 13:00 early-close day, a 12:30 cutoff still gates correctly.
+        assert is_new_entry_window(datetime(2026, 11, 27, 11, 0, tzinfo=_ET), entry_cutoff="12:30")
+        assert not is_new_entry_window(
+            datetime(2026, 11, 27, 12, 45, tzinfo=_ET), entry_cutoff="12:30"
+        )
+
+    def test_custom_cutoff(self):
+        assert is_new_entry_window(datetime(2026, 6, 11, 10, 0, tzinfo=_ET), entry_cutoff="11:00")
+        assert not is_new_entry_window(
+            datetime(2026, 6, 11, 11, 30, tzinfo=_ET), entry_cutoff="11:00"
+        )
+
+    def test_naive_datetime_treated_as_eastern(self):
+        assert is_new_entry_window(datetime(2026, 6, 11, 12, 0))
+
+    def test_malformed_cutoff_raises(self):
+        # A malformed cutoff string raises rather than silently passing — the config
+        # validator (test_config) is the real guard, but is_new_entry_window itself
+        # must not silently treat "3pm" as valid.
+        with pytest.raises(ValueError):
+            is_new_entry_window(datetime(2026, 6, 11, 12, 0, tzinfo=_ET), entry_cutoff="3pm")

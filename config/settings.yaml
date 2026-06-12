@@ -35,6 +35,8 @@ scheduler:
   intraday_loop_minutes: 15
   # Close a short option position when this fraction of max profit has been captured.
   profit_take_pct: 50
+  # No new-entry scans after this ET time — profit-take checks still run until close.
+  entry_cutoff: "15:00"
 
 market_data:
   # Stay under the retail concurrent-line limit (~100). Chains are requested in

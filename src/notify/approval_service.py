@@ -30,7 +30,7 @@ import signal
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from ib_async import IB, LimitOrder
+from ib_async import IB
 from ib_async import Contract as IBContract
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
@@ -39,7 +39,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
-from src.common.market_hours import is_rth
+from src.common.market_hours import is_new_entry_window, is_rth
 from src.common.schemas import ApprovalStatus, OrderState, PositionSnapshot
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
@@ -717,45 +717,23 @@ async def _auto_close_position(
     bot: Bot,
     chat_id: str,
 ) -> None:
-    """Place a BUY-to-close LimitOrder at mid for a short option that hit its profit target."""
+    """Buy-to-close a short option that hit its profit target, then notify Telegram.
+
+    Trading logic + the OrderRow/FillRow lifecycle + cancel-on-timeout + idempotency
+    live in ``position_manager.close_short_position`` (SYSTEM_REVIEW F1). This function
+    is now just the notify layer: delegate, then format the result for Telegram.
+    """
+    from src.execution.position_manager import close_short_position
     from src.notify.formatters import format_auto_close_result
 
-    assert pos.expiry is not None and pos.strike is not None and pos.right is not None
+    result = await close_short_position(ib_exec, pos, bid, ask)
 
-    mid = (bid + ask) / 2 if bid > 0 else ask
-    tick = 0.01 if mid < 3.0 else 0.05
-    limit_price = round(round(mid / tick) * tick, 2)
-    qty = int(abs(pos.position))
+    if result.status == "skipped":
+        # A close is already working for this contract — no duplicate, no extra message.
+        logger.info("Auto-close skipped for %s (%s)", pos.symbol, result.detail)
+        return
 
-    try:
-        contract = build_option(
-            pos.underlying or pos.symbol,
-            pos.expiry,
-            pos.strike,
-            pos.right.value,
-        )
-        qualified_list = await ib_exec.qualifyContractsAsync(contract)
-        if not qualified_list:
-            logger.warning("auto-close: could not qualify contract for %s", pos.symbol)
-            return
-        qualified = cast(IBContract, qualified_list[0])
-
-        order = LimitOrder("BUY", qty, limit_price, tif="DAY")
-        trade = ib_exec.placeOrder(qualified, order)
-        logger.info("Auto-close placed: %s qty=%d @ %.2f", pos.symbol, qty, limit_price)
-
-        cfg = get_config()
-        deadline = asyncio.get_running_loop().time() + cfg.execution.fill_timeout_minutes * 60
-        while not trade.isDone() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(1)
-
-        filled_qty = float(getattr(trade.orderStatus, "filled", 0.0) or 0.0)
-        avg_price = float(getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0)
-
-        text = format_auto_close_result(pos.symbol, qty, limit_price, filled_qty, avg_price)
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
-    except Exception:
-        logger.exception("Auto-close failed for %s", pos.symbol)
+    if result.status == "error":
         try:
             await bot.send_message(
                 chat_id=chat_id,
@@ -763,7 +741,16 @@ async def _auto_close_position(
                 parse_mode="MarkdownV2",
             )
         except Exception:
-            pass
+            logger.exception("Failed to send auto-close error for %s", pos.symbol)
+        return
+
+    text = format_auto_close_result(
+        result.symbol, result.qty, result.limit_price, result.filled_qty, result.avg_price
+    )
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("Failed to send auto-close result for %s", pos.symbol)
 
 
 async def _check_profit_takes(
@@ -886,44 +873,57 @@ async def _intraday_scan_loop(
     while True:
         await asyncio.sleep(interval)
 
-        if not is_rth():
-            logger.debug("Intraday loop: outside RTH or market holiday — skipping")
-            continue
-
-        logger.info("Intraday loop: RTH cycle starting")
-
-        # 1. Profit-take check (uses ib_scan for quotes, ib_exec for auto-closes)
-        if ib_scan.isConnected():
-            try:
-                await _check_profit_takes(ib_scan, ib_exec, bot, chat_id)
-            except Exception:
-                logger.exception("Intraday loop: profit-take check failed")
-
-        # 2. Fresh scan — send_candidates() respects is_automated_mode() internally
-        if not ib_scan.isConnected():
-            logger.warning("Intraday loop: ib_scan disconnected — skipping scan")
-            continue
-
-        if bot_data.get("scan_running"):
-            logger.info("Intraday loop: scan already running — deferring to next cycle")
-            continue
-
-        bot_data["scan_running"] = True
+        # Catch-all around the whole cycle: a single bad cycle (config typo, transient
+        # IBKR error, etc.) must never propagate out of `while True` and silently kill
+        # the task — that would stop profit-takes and scans with no alert (SYSTEM_REVIEW F3).
         try:
-            from src.orchestrator.scan import run_scan
+            if not is_rth():
+                logger.debug("Intraday loop: outside RTH or market holiday — skipping")
+                continue
 
-            result = await run_scan(ib_scan, bot, chat_id)
-            logger.info(
-                "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
-                len(result.cc_candidates),
-                len(result.csp_candidates),
-                len(result.buy_candidates),
-                "AUTO" if is_automated_mode() else "MANUAL",
-            )
+            logger.info("Intraday loop: RTH cycle starting")
+
+            # 1. Profit-take check (uses ib_scan for quotes, ib_exec for auto-closes)
+            if ib_scan.isConnected():
+                try:
+                    await _check_profit_takes(ib_scan, ib_exec, bot, chat_id)
+                except Exception:
+                    logger.exception("Intraday loop: profit-take check failed")
+
+            # 2. Fresh scan — skipped after entry_cutoff (profit-takes above still run)
+            if not is_new_entry_window(entry_cutoff=cfg.scheduler.entry_cutoff):
+                logger.info(
+                    "Intraday loop: past entry cutoff (%s ET) — skipping new-entry scan",
+                    cfg.scheduler.entry_cutoff,
+                )
+                continue
+
+            if not ib_scan.isConnected():
+                logger.warning("Intraday loop: ib_scan disconnected — skipping scan")
+                continue
+
+            if bot_data.get("scan_running"):
+                logger.info("Intraday loop: scan already running — deferring to next cycle")
+                continue
+
+            bot_data["scan_running"] = True
+            try:
+                from src.orchestrator.scan import run_scan
+
+                result = await run_scan(ib_scan, bot, chat_id)
+                logger.info(
+                    "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
+                    len(result.cc_candidates),
+                    len(result.csp_candidates),
+                    len(result.buy_candidates),
+                    "AUTO" if is_automated_mode() else "MANUAL",
+                )
+            except Exception:
+                logger.exception("Intraday loop: scan failed")
+            finally:
+                bot_data["scan_running"] = False
         except Exception:
-            logger.exception("Intraday loop: scan failed")
-        finally:
-            bot_data["scan_running"] = False
+            logger.exception("Intraday loop: unexpected error — continuing to next cycle")
 
 
 # ---------------------------------------------------------------------------

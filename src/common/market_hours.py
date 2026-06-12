@@ -131,6 +131,29 @@ def session_close(d: date) -> dtime | None:
     return _EARLY_CLOSE if is_early_close(d) else _REGULAR_CLOSE
 
 
+def is_new_entry_window(now: datetime | None = None, entry_cutoff: str = "15:00") -> bool:
+    """True when it is RTH *and* before the new-entry cutoff time (ET).
+
+    After the cutoff the intraday loop still runs profit-take checks, but should
+    not surface or queue new short positions (last-hour gamma risk + wide spreads).
+
+    *entry_cutoff* is an "HH:MM" string in ET, defaulting to "15:00".
+    """
+    if now is None:
+        now = datetime.now(_ET)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_ET)
+    else:
+        now = now.astimezone(_ET)
+
+    if not is_rth(now):
+        return False
+
+    h, m = (int(p) for p in entry_cutoff.split(":"))
+    cutoff = dtime(h, m)
+    return now.timetz().replace(tzinfo=None) < cutoff
+
+
 def is_rth(now: datetime | None = None) -> bool:
     """True during Regular Trading Hours in ET (weekday, not a holiday, before the close).
 

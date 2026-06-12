@@ -59,7 +59,7 @@ These YAML files control how the system behaves. **You change behavior here, not
 
 | File | What it controls |
 |---|---|
-| `settings.yaml` | IBKR connection (host, ports, client IDs), scan timing, execution timeouts, logging. The `claude` section also carries `skills_enabled` (default `true`) — whether promoted reasoning skills are injected into review prompts. |
+| `settings.yaml` | IBKR connection (host, ports, client IDs), scan timing, execution timeouts, logging. The `claude` section also carries `skills_enabled` (default `true`) — whether promoted reasoning skills are injected into review prompts. The `scheduler.entry_cutoff` key (default `"15:00"`) sets the ET time after which the intraday loop stops surfacing new entries (profit-take checks still run until the close). |
 | `risk_limits.yaml` | Per-ticker concentration limits, delta ranges, DTE windows, earnings blackout, minimum return |
 | `universe.yaml` | Your watchlist (tickers to scan for CCs) and `would_own` list (stocks OK to be assigned via CSPs). Tickers are organised into three tiers: Tier 1 core (SPY/QQQ/AAPL/MSFT/NVDA/JPM/GLD), Tier 2 active (AMD/META/AMZN/PLTR/SOFI/HOOD/HIMS/BABA), Tier 3 speculative/high-IV (SOXL/LABU/TSLL/DPST/MARA/RGTI/CRCL). Leveraged ETFs are in `indexes` only — never `would_own`. |
 | `scoring_weights.yaml` | How much weight IV rank, technicals, fundamentals, and liquidity each get when ranking candidates |
@@ -175,6 +175,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | `order_builder.py` | Builds a mid-price limit order for an approved candidate (never market orders), rounded to the correct tick size ($0.01 below $3.00, $0.05 at/above — penny-pilot rule) |
 | `executor.py` | Places the order via IBKR, monitors for a fill, handles timeouts and cancellations, records the fill (with entry IV) and the `filled` learning-loop outcome. Refuses `ROLL` candidates (alert-only; the single-leg builder can't place a two-leg roll). |
 | `approval.py` | Maps a Telegram approval event → re-validates against the Rules Engine with a fresh live quote → hands off to executor |
+| `position_manager.py` | Buy-to-close execution for short option positions (profit-take auto-closes). Routes the close through the same `OrderRow`/`FillRow` lifecycle and cancel-on-timeout discipline as entries, and is idempotent at the contract level (a deterministic `close:` candidate id + `has_active_order`) so the next intraday cycle can't stack a second buy-to-close. Buy-to-close is risk-reducing, so it deliberately skips the income Rules Engine gate but still records the order/fill. `_auto_close_position` in `notify/` is now just the Telegram-notification wrapper around `close_short_position`. |
 
 ---
 
@@ -254,7 +255,7 @@ Every stage of the pipeline writes its results here. This means:
 | `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.). The enrichment-evaluation shapes also live here: `VerdictOutcome`, `BaselineDecision`, `VerdictRecord` (one ledger entry), `CalibrationBucket`/`PolicyStats`/`VerdictEvaluation` (verdict scoring), and `SkillProposal`. |
 | `config.py` | Loads and validates `config/*.yaml` and `.env` |
 | `logging.py` | Structured logging setup — colourised console output (green INFO, yellow WARNING, red ERROR) and a plain rotating file log; `setup_logging()` is the single call-site used by all entry points |
-| `market_hours.py` | Self-contained US equity-market calendar + RTH gate (`is_rth`, `session_close`, `is_market_holiday`, `is_early_close`). Computes NYSE full-day holidays and the 13:00 ET early-close sessions for any year — no external calendar dependency. The single source of truth for "is the market open"; both the execution bridge and the intraday loop call it instead of keeping their own weekday-only check. |
+| `market_hours.py` | Self-contained US equity-market calendar + RTH gate (`is_rth`, `is_new_entry_window`, `session_close`, `is_market_holiday`, `is_early_close`). Computes NYSE full-day holidays and the 13:00 ET early-close sessions for any year — no external calendar dependency. The single source of truth for "is the market open"; both the execution bridge and the intraday loop call it instead of keeping their own weekday-only check. `is_new_entry_window` additionally enforces the configurable `entry_cutoff` time (default 15:00 ET) so no new positions are surfaced in the last hour. |
 | `cache.py` | `@daily_cached` — a thread-safe, process-local memoizer keyed by `(args, today)`. Wraps the yfinance hot paths (`get_fundamental_stats`, `_compute_hv30`) so the 15-min intraday loop fetches each symbol at most once per calendar day. `clear_all()` is called by the test harness between cases. |
 
 **Rule:** Modules never pass raw IBKR objects to each other — they always convert to these shared

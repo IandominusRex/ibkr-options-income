@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project root = two levels up from this file (src/common/config.py -> root).
@@ -65,6 +65,28 @@ class SchedulerCfg(BaseModel):
     intraday_poll_seconds: int = 60
     intraday_loop_minutes: int = 15  # how often the intraday scan+profit-take loop fires
     profit_take_pct: float = 50.0   # close a short position once this % of premium is captured
+    entry_cutoff: str = "15:00"     # no new entries surfaced/queued after this ET time
+
+    @field_validator("morning_scan", "eod_report", "entry_cutoff")
+    @classmethod
+    def _valid_hhmm(cls, v: str) -> str:
+        """Fail loud at config load on a malformed HH:MM time.
+
+        Without this, a typo like ``entry_cutoff: "3pm"`` raises ValueError deep inside
+        the intraday loop's ``is_new_entry_window`` call and silently kills the task
+        (SYSTEM_REVIEW F3). Catching it here turns a silent runtime death into a clear
+        startup error.
+        """
+        parts = v.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"time must be 'HH:MM', got {v!r}")
+        try:
+            h, m = int(parts[0]), int(parts[1])
+        except ValueError as exc:
+            raise ValueError(f"time must be 'HH:MM' with integer fields, got {v!r}") from exc
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError(f"time out of range (00:00–23:59), got {v!r}")
+        return v
 
 
 class MarketDataCfg(BaseModel):
