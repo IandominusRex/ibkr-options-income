@@ -126,6 +126,24 @@ class OptionQuoteRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class PositionSnapshotRow(Base):
+    """Daily portfolio snapshot for assignment auto-detection (position diffing).
+
+    One row per ET trading day, written by the EOD run. Assignment detection diffs the most
+    recent prior snapshot against current positions: a short option that vanished plus a stock
+    position that moved by ~100×contracts in the assignment direction is an assignment, not an
+    expiry. (SYSTEM_REVIEW Phase 4 — assignment auto-detection.)
+    """
+
+    __tablename__ = "position_snapshots"
+    __table_args__ = (UniqueConstraint("snapshot_date", name="uq_position_snapshots_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    payload: Mapped[list] = mapped_column(JSON)  # list[PositionSnapshot.model_dump(mode="json")]
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class FillRow(Base):
     """One row per execution fill; order may have multiple (partial fills)."""
 

@@ -223,11 +223,17 @@ async def run() -> None:
 
     # 6b. Reconcile the verdict outcome ledger (deterministic, DB-only). Attaches realized
     #     outcomes to closed trades so the enrichment layer accumulates labeled history.
-    #     Assignment is treated as expired-worthless unless flagged explicitly elsewhere.
+    #     Assignment is auto-detected by diffing the prior position snapshot against today's
+    #     positions (Phase 4) — a vanished short whose underlying stock moved ~100×contracts is
+    #     assigned, not expired-worthless. Today's snapshot is then saved as tomorrow's baseline.
     try:
+        from src.claude.eval.assignment import assigned_candidate_ids
         from src.claude.eval.reconcile import reconcile
+        from src.storage.positions import save_position_snapshot
 
-        reconcile()
+        assigned = assigned_candidate_ids(positions, today)
+        reconcile(assigned_candidate_ids=assigned)
+        save_position_snapshot(today, positions)
     except Exception:
         logger.exception("EOD: ledger reconciliation failed — continuing")
 

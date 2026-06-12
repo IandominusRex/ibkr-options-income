@@ -73,10 +73,10 @@ Sequencing mirrors `SYSTEM_REVIEW.md`'s own phases. Each task lists the finding 
 
 **Gate after Phase 3:** 498 tests pass, ruff clean, mypy clean.
 
-### Phase 4 — deliberate roadmap (already correctly deferred)
-- [ ] Roll execution as a two-leg combo order.
+### Phase 4 — deliberate roadmap  🟡 IN PROGRESS
+- [x] **Assignment auto-detection via position diffing** (2026-06-12): `position_snapshots` table + `src/storage/positions.py` (daily snapshot) + `src/claude/eval/assignment.py` (`detect_assignments` pure diff, `assigned_candidate_ids` orchestration). EOD now diffs prior snapshot vs current positions and feeds `reconcile(assigned_candidate_ids=…)`, replacing the manual `--assigned` flag. Residuals: option-leg-only realized P&L; CC assignment needs a prior snapshot (not detectable on the first-ever EOD). **Gate: 511 tests, ruff + mypy clean.**
+- [ ] Roll execution as a two-leg combo order. *(highest value, highest risk — places real combo orders)*
 - [ ] Limit-order repricing (chase logic).
-- [ ] Assignment auto-detection via position diffing.
 - [ ] Backtest harness.
 
 ---
