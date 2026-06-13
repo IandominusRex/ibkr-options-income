@@ -286,6 +286,9 @@ class EODSummary(BaseModel):
     """End-of-day metrics passed to Claude + stored in JournalRow.payload."""
 
     date: date
+    # Net OPTION PREMIUM CASHFLOW for the ET day (SELL credits − BUY debits), NOT a paired
+    # realized P&L — assignment stock-leg P&L is not captured here. Surfaced to the user as
+    # "premium cashflow" (N13). The field name is retained for JournalRow/back-compat.
     realized_pnl: float
     unrealized_pnl: float
     unrealized_pnl_delta: float  # vs yesterday's journal entry

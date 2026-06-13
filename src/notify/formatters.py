@@ -419,7 +419,7 @@ def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
     parts: list[str] = [
         f"*EOD Report — {date_str}*",
         "",
-        f"💰 Realized:    {_md(_pnl2(summary.realized_pnl))}",
+        f"💰 Premium cashflow: {_md(_pnl2(summary.realized_pnl))}",
         (
             f"📊 Unrealized:  {_md(_pnl2(summary.unrealized_pnl))}"
             f"  \\(Δ {_md(_pnl2(summary.unrealized_pnl_delta))}\\)"
@@ -429,6 +429,10 @@ def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
             f" · Net Δ {_md(f'{summary.net_delta_exposure:.2f}')}"
         ),
     ]
+
+    # Clarify the figure: it is option premium cashflow (credits − debits), not a paired
+    # realized P&L — assignment stock-leg P&L is not included (N13).
+    parts.append(_md("(premium cashflow = option credits − debits; excludes assignment P&L)"))
 
     if summary.fills_today > 0:
         parts += ["", f"Fills today: {_md(str(summary.fills_today))}"]

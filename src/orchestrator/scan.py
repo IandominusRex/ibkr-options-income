@@ -52,7 +52,11 @@ from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
-from src.storage.system_settings import acquire_scan_lease, release_scan_lease
+from src.storage.system_settings import (
+    acquire_scan_lease,
+    release_scan_lease,
+    renew_scan_lease,
+)
 from src.strategies.buy_candidates import generate_buy_candidates
 from src.strategies.cash_secured_put import generate_csp_candidates
 from src.strategies.covered_call import generate_cc_candidates
@@ -463,15 +467,18 @@ async def run_scan(
     processes) would poison each other. The lease serialises them; a scan that can't acquire
     it returns an empty result with ``lease_skipped=True`` rather than competing for lines.
     """
-    if not acquire_scan_lease():
+    lease_token = acquire_scan_lease()
+    if lease_token is None:
         log.warning("scan: another scan holds the lease — skipping this run (F5)")
         result = ScanResult()
         result.lease_skipped = True
         return result
     try:
-        return await _run_scan_body(ib, bot, chat_id, progress_callback)
+        return await _run_scan_body(ib, bot, chat_id, progress_callback, lease_token=lease_token)
     finally:
-        release_scan_lease()
+        # Compare-and-swap release: only clears the lease if we still hold it, so a scan that
+        # overran its TTL (and was re-claimed) can't zero out the new holder's lease (N7).
+        release_scan_lease(lease_token)
 
 
 async def _run_scan_body(
@@ -479,6 +486,7 @@ async def _run_scan_body(
     bot: object,
     chat_id: str,
     progress_callback: _ProgressCB | None = None,
+    lease_token: str | None = None,
 ) -> ScanResult:
     """Run the full pipeline. Returns ScanResult even on partial failures.
 
@@ -545,6 +553,11 @@ async def _run_scan_body(
     for i, symbol in enumerate(all_symbols):
         log.info("scan: processing %s", symbol)
         await tracker.tick("market_data", "⏳", f"{i + 1}/{n} — {symbol}")
+
+        # Heartbeat: extend the scan lease each iteration so a full ~60-symbol scan can't
+        # outlive the TTL and let a second scan start mid-run (N7). CAS — if we've lost the
+        # lease there's nothing to renew (we keep going; release will no-op safely).
+        renew_scan_lease(lease_token)
 
         # Option chain — IB calls run on the loop thread (async), NOT in a worker thread.
         # Chain fetches stay sequential per symbol to respect the ~100 market-data line cap.

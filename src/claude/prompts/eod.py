@@ -22,7 +22,8 @@ def build_eod_prompt(summary: EODSummary) -> str:
         "",
         "=== EOD JOURNAL REQUEST ===",
         f"Date:                  {summary.date}",
-        f"Realized P&L today:    {_sign(summary.realized_pnl)}",
+        f"Premium cashflow today:{_sign(summary.realized_pnl)} (option credits − debits; "
+        "NOT a paired realized P&L — assignment stock-leg P&L is excluded)",
         f"Unrealized P&L:        {_sign(summary.unrealized_pnl)} ({_delta_sign(summary.unrealized_pnl_delta)} vs yesterday)",
         f"Fills today:           {summary.fills_today}",
         f"Open positions:        {summary.open_positions}",

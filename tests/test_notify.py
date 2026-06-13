@@ -678,6 +678,62 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     bot.send_message.assert_awaited()  # operator was notified
 
 
+async def test_reconcile_recovers_fill_for_rejected_order_with_order_id(monkeypatch, tmp_path):
+    """N8: a REJECTED order (executor except path) whose SELL actually filled at the broker is
+    still recovered, because it carries an ib_order_id. A pre-placement cancel (no ib_order_id)
+    must be left alone."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_orphan_fills
+    from src.storage.models import CandidateRow, FillRow
+
+    with dbmod.session_scope() as s:
+        for cid in ("recon-rej", "recon-ttl"):
+            s.add(
+                CandidateRow(
+                    candidate_id=cid,
+                    run_id="r",
+                    strategy="cash_secured_put",
+                    underlying="AAPL",
+                    right="P",
+                    strike=180.0,
+                    expiry=_date(2026, 7, 17),
+                    blended_score=70.0,
+                    payload={"contracts": 1},
+                )
+            )
+        # Placed then the monitor loop threw → REJECTED, but it carries an ib_order_id.
+        s.add(OrderRow(candidate_id="recon-rej", approval_id=1, state="rejected", ib_order_id=777))
+        # Pre-placement cancel (TTL/re-validation) → no ib_order_id → must NOT be touched.
+        s.add(OrderRow(candidate_id="recon-ttl", approval_id=2, state="cancelled"))
+
+    fill = SimpleNamespace(
+        execution=SimpleNamespace(orderId=777, shares=1.0, price=1.50, side="SLD", execId="e9"),
+        contract=SimpleNamespace(
+            symbol="AAPL", right="P", strike=180.0, lastTradeDateOrContractMonth="20260717"
+        ),
+        commissionReport=SimpleNamespace(commission=0.65),
+    )
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[fill])
+    bot = AsyncMock()
+
+    await reconcile_orphan_fills(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        rej = s.query(OrderRow).filter_by(candidate_id="recon-rej").one()
+        ttl = s.query(OrderRow).filter_by(candidate_id="recon-ttl").one()
+        fills = s.query(FillRow).filter_by(candidate_id="recon-rej").all()
+    assert rej.state == "filled"  # the real fill was recovered
+    assert len(fills) == 1 and fills[0].avg_price == 1.50
+    assert ttl.state == "cancelled"  # pre-placement cancel left untouched
+
+
 def test_net_entry_credit_qty_weighted_and_commission_haircut(tmp_path, monkeypatch):
     """F8: entry credit is the qty-weighted SELL average, net of entry commission."""
     _db_setup(tmp_path, monkeypatch)

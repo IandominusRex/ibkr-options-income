@@ -155,6 +155,34 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
     return quote, qualified
 
 
+async def _refetch_bid_ask(ib: IB, qualified: Contract) -> tuple[float | None, float | None]:
+    """Fresh bid/ask for an already-qualified contract — used by the chase loop (N11).
+
+    The reprice loop runs 45–90 s after the order was placed, so the bid/ask captured at
+    placement is stale by the time we chase. This pulls the *current* two-sided market (no
+    re-qualify, no greeks wait — the chase only needs bid/ask) so each step moves toward the
+    live bid, not a price that may no longer exist. Returns (bid, ask); ask is None unless a
+    real positive ask arrived within the quote timeout.
+    """
+    timeout = _quote_timeout()
+    loop = asyncio.get_running_loop()
+    ticker = ib.reqMktData(
+        qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
+    )
+
+    def _has_quote() -> bool:
+        return ticker.bid is not None and ticker.ask is not None and ticker.ask > 0
+
+    deadline = loop.time() + timeout
+    while not _has_quote() and loop.time() < deadline:
+        await asyncio.sleep(0.1)
+    ib.cancelMktData(qualified)
+
+    bid = _safe_float(ticker.bid)
+    ask = _safe_float(ticker.ask)
+    return bid, (ask if ask is not None and ask > 0 else None)
+
+
 async def execute_candidate(
     ib: IB,
     bot: Bot,
@@ -302,9 +330,11 @@ async def execute_candidate(
             ):
                 next_reprice_at = now + reprice_interval
                 cur_limit = _safe_float(order.lmtPrice)
+                # N11: chase the CURRENT market, not the bid captured before placement.
+                fresh_bid, fresh_ask = await _refetch_bid_ask(ib, qualified)
                 new_price = (
-                    reprice_limit("SELL", cur_limit, quote.bid, quote.ask, step_pct, floor=floor)
-                    if cur_limit is not None
+                    reprice_limit("SELL", cur_limit, fresh_bid, fresh_ask, step_pct, floor=floor)
+                    if cur_limit is not None and fresh_bid is not None
                     else None
                 )
                 if new_price is not None:

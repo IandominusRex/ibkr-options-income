@@ -39,18 +39,46 @@ def test_scan_lease_serialises(tmp_path, monkeypatch) -> None:
         release_scan_lease,
     )
 
-    assert acquire_scan_lease() is True
-    assert acquire_scan_lease() is False  # already held by the (unexpired) first lease
-    release_scan_lease()
-    assert acquire_scan_lease() is True  # freed → re-acquirable
+    token = acquire_scan_lease()
+    assert token is not None
+    assert acquire_scan_lease() is None  # already held by the (unexpired) first lease
+    release_scan_lease(token)
+    assert acquire_scan_lease() is not None  # freed → re-acquirable
 
 
 def test_scan_lease_reacquired_after_expiry(tmp_path, monkeypatch) -> None:
     _db_setup(tmp_path, monkeypatch)
     from src.storage.system_settings import acquire_scan_lease
 
-    assert acquire_scan_lease(ttl_seconds=0) is True  # expires immediately
-    assert acquire_scan_lease() is True  # prior lease already expired → acquirable
+    assert acquire_scan_lease(ttl_seconds=0) is not None  # expires immediately
+    assert acquire_scan_lease() is not None  # prior lease already expired → acquirable
+
+
+def test_scan_lease_release_is_compare_and_swap(tmp_path, monkeypatch) -> None:
+    """N7: a stale holder's release must not clear a lease another process has re-claimed."""
+    _db_setup(tmp_path, monkeypatch)
+    from src.storage.system_settings import acquire_scan_lease, release_scan_lease
+
+    stale = acquire_scan_lease(ttl_seconds=0)  # acquired but already expired
+    assert stale is not None
+    fresh = acquire_scan_lease()  # second process claims the now-free lease
+    assert fresh is not None
+    release_scan_lease(stale)  # stale holder finishes — must NOT free the fresh lease
+    assert acquire_scan_lease() is None  # fresh lease still held
+    release_scan_lease(fresh)
+    assert acquire_scan_lease() is not None  # real holder's release frees it
+
+
+def test_scan_lease_renew_extends_and_is_owner_scoped(tmp_path, monkeypatch) -> None:
+    """N7: renew extends the holder's lease; a non-owner renew is rejected."""
+    _db_setup(tmp_path, monkeypatch)
+    from src.storage.system_settings import acquire_scan_lease, renew_scan_lease
+
+    token = acquire_scan_lease(ttl_seconds=0)  # immediately expired
+    assert token is not None
+    assert renew_scan_lease(token) is True  # owner renews → lease now in the future
+    assert acquire_scan_lease() is None  # renewed lease is held, not free
+    assert renew_scan_lease("not-the-owner") is False
 
 
 def test_halt_round_trip(tmp_path, monkeypatch) -> None:

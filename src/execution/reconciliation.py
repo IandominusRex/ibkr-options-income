@@ -7,10 +7,16 @@ resubmit, so they cannot cause a double trade):
 
 * :func:`recover_orphan_orders` — SUBMITTED rows with no ``ib_order_id`` (claimed by a prior
   process that crashed before ``placeOrder``) are reset to QUEUED so the poll loop retries.
-* :func:`reconcile_orphan_fills` — SUBMITTED rows *with* an ``ib_order_id`` whose fill event
-  was lost during a socket drop get their FillRow back-filled from ``reqExecutions``. Run at
-  startup **and** periodically from the intraday loop (SYSTEM_REVIEW F7) so a fill that lands
-  during a mid-session reconnect is recovered on the next cycle, not only on the next restart.
+* :func:`reconcile_orphan_fills` — orders *with* an ``ib_order_id`` whose fill event was lost
+  get their FillRow back-filled from ``reqExecutions``. Covers SUBMITTED rows (fill lost in a
+  socket drop) **and** REJECTED/CANCELLED rows that still carry an ``ib_order_id`` (N8): the
+  executor's except path marks an order REJECTED when its monitor loop throws — e.g. a
+  ``cancelOrder`` on a dropped socket — but the SELL may already have filled at the broker, so
+  that fill must still be recovered (otherwise: a live short with no FillRow, invisible to
+  profit-take, with no entry IV and a mislabelled ledger). Pre-placement cancels (TTL expiry,
+  re-validation REJECT) carry no ``ib_order_id`` and are correctly ignored. Run at startup
+  **and** periodically from the intraday loop (SYSTEM_REVIEW F7) so a fill that lands during a
+  mid-session reconnect is recovered on the next cycle, not only on the next restart.
 * :func:`reconcile_external_closes` — a *manual* buy-to-close in TWS (which the roll alerts
   explicitly invite, since rolls are alert-only) writes no FillRow, so the verdict-ledger
   reconciler would mislabel the position ``expired_worthless`` with the full premium as P&L,
@@ -88,17 +94,26 @@ def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: 
     return side in ("", "SLD")
 
 
-async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
-    """Recover SELL fills that landed while the service was disconnected.
+# Order states eligible for fill recovery: a placed order (has ib_order_id) that may have
+# filled at the broker before the local row reached a terminal-fill state. REJECTED/CANCELLED
+# are included for N8 (executor except path); FILLED/PARTIAL are excluded (already recorded).
+_RECOVERABLE_STATES = (OrderState.SUBMITTED, OrderState.REJECTED, OrderState.CANCELLED)
 
-    For any SUBMITTED order with a matching execution and no FillRow, record the fill, mark
-    the order FILLED/PARTIAL, and notify. Idempotent (skips orders that already have a
-    FillRow), so it is safe to run repeatedly — at startup and on the intraday cadence.
+
+async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
+    """Recover SELL fills that landed while the service was disconnected or after a failure.
+
+    For any recoverable order (SUBMITTED, or REJECTED/CANCELLED with an ``ib_order_id`` — N8)
+    with a matching execution and no FillRow, record the fill, mark the order FILLED/PARTIAL,
+    and notify. Idempotent (skips orders that already have a FillRow), so it is safe to run
+    repeatedly — at startup and on the intraday cadence.
     """
     with session_scope() as s:
         rows = (
             s.query(OrderRow)
-            .filter(OrderRow.state == OrderState.SUBMITTED, OrderRow.ib_order_id.isnot(None))
+            .filter(
+                OrderRow.state.in_(_RECOVERABLE_STATES), OrderRow.ib_order_id.isnot(None)
+            )
             .all()
         )
         orphans = [(o.id, o.candidate_id, o.ib_order_id) for o in rows]
@@ -151,7 +166,7 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
             avg_price = notional / total_qty
 
             order = s.get(OrderRow, order_id)
-            if order is None or order.state != OrderState.SUBMITTED:
+            if order is None or order.state not in _RECOVERABLE_STATES:
                 continue
             payload = cand.payload or {}
             contracts = float(payload.get("contracts", total_qty))

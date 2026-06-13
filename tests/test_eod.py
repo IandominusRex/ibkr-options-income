@@ -497,6 +497,15 @@ def test_format_eod_summary_contains_realized_pnl() -> None:
     assert "142" in text
 
 
+def test_format_eod_summary_labels_figure_as_premium_cashflow() -> None:
+    # N13: the figure is option premium cashflow, not a paired realized P&L.
+    from src.notify.formatters import format_eod_summary
+
+    text = format_eod_summary(_make_eod_summary(realized_pnl=142.50), None)
+    assert "Premium cashflow" in text
+    assert "excludes assignment" in text.lower()
+
+
 def test_format_eod_summary_contains_narrative() -> None:
     from src.notify.formatters import format_eod_summary
 

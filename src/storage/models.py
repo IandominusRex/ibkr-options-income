@@ -280,6 +280,9 @@ class JournalRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     entry_date: Mapped[date] = mapped_column(Date, index=True)
+    # Net option PREMIUM CASHFLOW for the day (credits − debits), not a paired realized P&L —
+    # assignment stock-leg P&L is excluded. Column name kept for back-compat; surfaced to the
+    # user as "premium cashflow" (N13).
     realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     unrealized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
