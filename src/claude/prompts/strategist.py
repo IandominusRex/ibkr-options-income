@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 _UNIVERSE_CONTEXT = """
 === UNIVERSE CONTEXT (ticker knowledge — use when writing risks/tradeoffs) ===
 
+⚠ PRICES & IV RANKS BELOW WERE RESEARCHED Jun-2026 AND ARE STALE. They are coarse anchors for
+qualitative judgement (tier, liquidity, CC-vs-CSP suitability, structural risks) ONLY. For any
+current price level, use the SCAN-TIME SPOT PRICES block — never quote these figures as live.
+
 TIER 1 — Core income (fund-manager grade, stable assignment):
   SPY  ~$540  IVR 15-35  CC+CSP  0.8-2.5%/mo   index; ETF, no earnings risk
   QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy
@@ -121,6 +125,34 @@ def _active_skills_block() -> str:
         return ""
 
 
+def _spot_prices_block(
+    candidates: list[TradeCandidate], spot_prices: dict[str, float] | None
+) -> list[str]:
+    """Render scan-time spot prices for the candidates' underlyings (N17).
+
+    These are the *current* levels; the static universe block's prices are stale Jun-2026
+    anchors. Only symbols actually under review are listed, deduped, in candidate order.
+    """
+    if not spot_prices:
+        return []
+    seen: set[str] = set()
+    rows: list[str] = []
+    for c in candidates:
+        if c.underlying in seen:
+            continue
+        seen.add(c.underlying)
+        price = spot_prices.get(c.underlying)
+        if price is not None:
+            rows.append(f"  {c.underlying:<6} ${price:,.2f}")
+    if not rows:
+        return []
+    return [
+        "=== SCAN-TIME SPOT PRICES (authoritative — use these, NOT the stale figures above) ===",
+        *rows,
+        "",
+    ]
+
+
 def _vix_context(vix: float | None) -> str:
     """One-line macro-vol regime hint derived from the VIX level."""
     if vix is None:
@@ -141,6 +173,7 @@ def build_prompt(
     account: AccountSnapshot,
     history: list[ClaudeMemoryRow] | None = None,
     market_conditions: MarketConditions | None = None,
+    spot_prices: dict[str, float] | None = None,
 ) -> str:
     """Build the full prompt string sent to claude -p.
 
@@ -148,6 +181,8 @@ def build_prompt(
     history: optional list of ClaudeMemoryRow from prior scans for learning injection.
     market_conditions: optional macro snapshot (VIX) so the reasoning layer can weigh the
         vol regime. Enrichment only — it never changes the deterministic gates.
+    spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels
+        rather than the stale Jun-2026 anchors baked into the static universe block (N17).
     """
     if not candidates:
         return ""
@@ -165,6 +200,9 @@ def build_prompt(
         _UNIVERSE_CONTEXT,
         "",
     ]
+
+    # Scan-time spot prices override the stale static anchors (N17).
+    lines += _spot_prices_block(candidates, spot_prices)
 
     # Human-promoted reasoning skills (verdict + ranking only — never gates). Enrichment, and
     # the only path a skill reaches Claude; the engine never sees this text.

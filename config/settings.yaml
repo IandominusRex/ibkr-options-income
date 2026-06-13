@@ -54,6 +54,12 @@ claude:
   # If false, the pipeline ships the deterministic Rules-Engine list without
   # Claude enrichment (used when the CLI is unavailable).
   enabled: true
+  # N3 — headless-subprocess hardening. The CLI runs unattended ~26+×/day; constrain it so a
+  # runaway/injection can't drive tools or the filesystem. The fence already isolates Claude's
+  # output from execution; this isolates the subprocess itself.
+  max_turns: 1                      # single agentic turn — no tool loops (0 disables the flag)
+  model: "claude-sonnet-4-6"        # pin the enrichment model (reproducible + cost-bounded)
+  disallowed_tools: "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
 
 storage:
   # SQLAlchemy URL. SQLite for v1; swap for postgresql://... later.

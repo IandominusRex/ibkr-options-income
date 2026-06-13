@@ -105,6 +105,13 @@ class ClaudeCfg(BaseModel):
     # Inject human-promoted reasoning skills into the strategist/roll prompts. Skills shape
     # verdict + ranking only — never gates, weights, or sizing (see CLAUDE.md "the fence").
     skills_enabled: bool = True
+    # N3 — headless-subprocess hardening. The CLI runs unattended ~26+×/day on the trading
+    # machine; the fence isolates Claude's *output* from execution, but the subprocess itself
+    # must be unable to use tools or touch the filesystem. These flags constrain it.
+    max_turns: int = 1  # single agentic turn — no tool-use loops (0 = don't pass the flag)
+    model: str = ""  # pin a model id (e.g. "claude-sonnet-4-6"); empty = CLI default
+    # Space-separated tool denylist passed to --disallowedTools. Empty = don't pass the flag.
+    disallowed_tools: str = "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
 
 
 class StorageCfg(BaseModel):

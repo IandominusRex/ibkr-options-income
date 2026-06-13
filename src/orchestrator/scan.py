@@ -60,6 +60,11 @@ from src.strategies.covered_call import generate_cc_candidates
 log = logging.getLogger(__name__)
 
 _MEMORY_LOOKBACK_DAYS = 30
+# N9 — bound the memory injected into each prompt. Without a cap, 30 days × every 15-min
+# scan's surfaced candidates balloons into thousands of history lines per prompt (cost,
+# latency, and an echo chamber of Claude's own prior prose). Keep only the most useful few
+# rows per symbol, outcomes first.
+_MEMORY_ROWS_PER_SYMBOL = 3
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
@@ -170,10 +175,21 @@ def _load_memory(symbols: list[str]) -> list[ClaudeMemoryRow]:
                 .scalars()
                 .all()
             )
-            return list(rows)
     except Exception as exc:
         log.warning("Failed to load Claude memory: %s", exc)
         return []
+
+    # Cap per symbol (N9): rows arrive most-recent-first; a stable sort that floats rows with
+    # a recorded outcome to the top means we keep the few most informative ("what actually
+    # happened") observations rather than a wall of repeated open recommendations.
+    by_symbol: dict[str, list[ClaudeMemoryRow]] = {}
+    for r in rows:
+        by_symbol.setdefault(r.underlying, []).append(r)
+    capped: list[ClaudeMemoryRow] = []
+    for sym_rows in by_symbol.values():
+        sym_rows.sort(key=lambda r: r.outcome is None)  # outcomes (not None) first; stable
+        capped.extend(sym_rows[:_MEMORY_ROWS_PER_SYMBOL])
+    return capped
 
 
 def _persist_memory(
@@ -181,53 +197,104 @@ def _persist_memory(
     buy_cands: list[BuyCandidate],
     reviews: list[ClaudeReview],
 ) -> None:
-    """Write ClaudeMemoryRow entries for this scan. Outcomes start as None."""
+    """Upsert one ClaudeMemoryRow per (symbol, strategy, day). Outcomes start as None.
+
+    Deduped per (underlying, strategy_type, scan_date) (N9): the 15-min loop re-surfaces the
+    same names ~26×/day, so a naive insert wrote hundreds of near-identical rows daily. Keeping
+    one row per symbol+strategy+day — refreshed with the best (highest-ranked) candidate's
+    verdict — collapses that volume while preserving the day's view. A recorded `outcome` is
+    never clobbered (it's back-filled by candidate_id in claude/memory.py).
+    """
     review_map = {r.candidate_id: r for r in reviews}
     today = date.today()
-    rows: list[ClaudeMemoryRow] = []
+    written = 0
 
-    for cand in candidates:
-        review = review_map.get(cand.candidate_id)
-        rationale = ""
-        recommendation = "skip"
-        priority = 99
-        confidence = None
-        if review:
-            rationale = f"{review.why_attractive} | Risks: {review.risks}"
-            recommendation = review.recommendation
-            priority = review.priority
-            confidence = review.confidence
-        rows.append(
-            ClaudeMemoryRow(
-                scan_date=today,
-                underlying=cand.underlying,
-                strategy_type=cand.strategy.value,
-                recommendation=recommendation,
-                priority=priority,
-                confidence=confidence,
-                rationale=rationale,
-                candidate_id=cand.candidate_id,
+    with session_scope() as sess:
+
+        def _upsert(
+            underlying: str,
+            strategy_type: str,
+            recommendation: str,
+            priority: int,
+            confidence: float | None,
+            rationale: str,
+            candidate_id: str | None,
+        ) -> None:
+            nonlocal written
+            existing = (
+                sess.query(ClaudeMemoryRow)
+                .filter(
+                    ClaudeMemoryRow.scan_date == today,
+                    ClaudeMemoryRow.underlying == underlying,
+                    ClaudeMemoryRow.strategy_type == strategy_type,
+                )
+                .first()
             )
-        )
-
-    for buy in buy_cands:
-        rows.append(
-            ClaudeMemoryRow(
-                scan_date=today,
-                underlying=buy.symbol,
-                strategy_type="buy_to_own",
-                recommendation="buy",
-                priority=99,
-                confidence=None,
-                rationale=buy.rationale or f"Score {buy.score:.0f}; IV rank {buy.iv_rank}",
-                candidate_id=None,
+            if existing is not None:
+                existing.recommendation = recommendation
+                existing.priority = priority
+                existing.confidence = confidence
+                existing.rationale = rationale
+                existing.candidate_id = candidate_id  # link the latest scan's best candidate
+                return
+            sess.add(
+                ClaudeMemoryRow(
+                    scan_date=today,
+                    underlying=underlying,
+                    strategy_type=strategy_type,
+                    recommendation=recommendation,
+                    priority=priority,
+                    confidence=confidence,
+                    rationale=rationale,
+                    candidate_id=candidate_id,
+                )
             )
-        )
+            written += 1
 
-    if rows:
-        with session_scope() as sess:
-            sess.add_all(rows)
-        log.info("Persisted %d ClaudeMemoryRow entries", len(rows))
+        # `candidates` is score-sorted desc; keep the first (best) per key this scan so a later,
+        # lower-ranked strike for the same symbol+strategy doesn't overwrite it.
+        seen: set[tuple[str, str]] = set()
+        for cand in candidates:
+            key = (cand.underlying, cand.strategy.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            review = review_map.get(cand.candidate_id)
+            rationale = ""
+            recommendation = "skip"
+            priority = 99
+            confidence = None
+            if review:
+                rationale = f"{review.why_attractive} | Risks: {review.risks}"
+                recommendation = review.recommendation
+                priority = review.priority
+                confidence = review.confidence
+            _upsert(
+                cand.underlying,
+                cand.strategy.value,
+                recommendation,
+                priority,
+                confidence,
+                rationale,
+                cand.candidate_id,
+            )
+
+        for buy in buy_cands:
+            key = (buy.symbol, "buy_to_own")
+            if key in seen:
+                continue
+            seen.add(key)
+            _upsert(
+                buy.symbol,
+                "buy_to_own",
+                "buy",
+                99,
+                None,
+                buy.rationale or f"Score {buy.score:.0f}; IV rank {buy.iv_rank}",
+                None,
+            )
+
+    log.info("Persisted/updated ClaudeMemoryRow entries (%d new) for %s", written, today)
 
 
 def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
@@ -592,8 +659,19 @@ async def _run_scan_body(
     await tracker.tick("claude", "⏳")
     try:
         if top:
+            # Scan-time spot per symbol (N17) so Claude reasons from current levels, not the
+            # stale static universe anchors. Sourced from the technicals computed this scan.
+            spot_prices = {
+                sym: tech.price
+                for sym, (_iv, tech, _fund) in analytics_map.items()
+                if tech.price  # drop missing/zero spot
+            }
             result.reviews = review_candidates(
-                top, account, history=memory, market_conditions=result.market_conditions
+                top,
+                account,
+                history=memory,
+                market_conditions=result.market_conditions,
+                spot_prices=spot_prices,
             )
         log.info("scan: %d Claude reviews", len(result.reviews))
     except Exception:

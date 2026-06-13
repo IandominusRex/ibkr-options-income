@@ -225,6 +225,23 @@ def test_build_prompt_empty_candidates():
     assert build_prompt([], _make_account()) == ""
 
 
+def test_build_prompt_injects_scan_time_spot_prices():
+    """N17: scan-time spot prices are injected and flagged authoritative; static block warns stale."""
+    account = _make_account()
+    candidates = [_make_candidate()]  # underlying AAPL
+    prompt = build_prompt(candidates, account, spot_prices={"AAPL": 211.42})
+
+    assert "SCAN-TIME SPOT PRICES" in prompt
+    assert "211.42" in prompt
+    assert "STALE" in prompt  # the static universe block now carries the staleness banner
+
+
+def test_build_prompt_without_spot_prices_has_no_block():
+    prompt = build_prompt([_make_candidate()], _make_account())
+    # The static banner references the block by name, but the actual block header is absent.
+    assert "authoritative — use these" not in prompt
+
+
 def test_build_prompt_multiple_candidates():
     account = _make_account()
     c1 = _make_candidate("id-001", underlying="AAPL")
@@ -337,6 +354,57 @@ def test_review_candidates_empty_list_no_subprocess():
         mock_run.assert_not_called()
 
     assert reviews == []
+
+
+# --------------------------------------------------------------------------- #
+# N3 — headless-subprocess hardening
+# --------------------------------------------------------------------------- #
+
+
+def test_build_cmd_includes_hardening_flags():
+    from types import SimpleNamespace
+
+    from src.claude.runner import _build_cmd
+
+    cfg = SimpleNamespace(
+        cli_command="claude",
+        output_format="json",
+        max_turns=1,
+        model="claude-sonnet-4-6",
+        disallowed_tools="Bash Edit Write",
+    )
+    cmd = _build_cmd(cfg)
+    assert cmd[:3] == ["claude", "--output-format", "json"]
+    assert cmd[cmd.index("--max-turns") + 1] == "1"
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-4-6"
+    assert cmd[cmd.index("--disallowedTools") + 1] == "Bash Edit Write"
+
+
+def test_build_cmd_omits_disabled_flags():
+    from types import SimpleNamespace
+
+    from src.claude.runner import _build_cmd
+
+    cfg = SimpleNamespace(
+        cli_command="claude", output_format="json", max_turns=0, model="", disallowed_tools=""
+    )
+    assert _build_cmd(cfg) == ["claude", "--output-format", "json"]
+
+
+def test_review_candidates_passes_hardened_cmd():
+    """The live review path must invoke the CLI with the hardening flags, not bare."""
+    account = _make_account()
+    candidates = [_make_candidate()]
+    envelope = _make_valid_envelope([_review_dict()])
+
+    with patch(
+        "src.claude.runner.subprocess.run", return_value=_completed_process(envelope)
+    ) as mock_run:
+        review_candidates(candidates, account)
+
+    cmd = mock_run.call_args.args[0]
+    assert "--max-turns" in cmd
+    assert "--disallowedTools" in cmd
 
 
 def test_review_candidates_cli_not_found():

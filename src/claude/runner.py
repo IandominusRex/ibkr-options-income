@@ -29,17 +29,39 @@ from src.common.schemas import (
 log = logging.getLogger(__name__)
 
 
+def _build_cmd(cfg: object) -> list[str]:
+    """Assemble the hardened `claude` headless command (N3).
+
+    Beyond `--output-format`, this constrains the unattended subprocess so a prompt-injection
+    or runaway can't drive tools or the filesystem: a single agentic turn, an explicit tool
+    denylist, and an optional pinned model. All three are config-tunable (see ClaudeCfg); a
+    falsy value omits the corresponding flag. The flags don't change the JSON envelope, so the
+    parser path is unaffected.
+    """
+    cmd = [cfg.cli_command, "--output-format", cfg.output_format]  # type: ignore[attr-defined]
+    if cfg.max_turns:  # type: ignore[attr-defined]
+        cmd += ["--max-turns", str(cfg.max_turns)]  # type: ignore[attr-defined]
+    if cfg.model:  # type: ignore[attr-defined]
+        cmd += ["--model", cfg.model]  # type: ignore[attr-defined]
+    if cfg.disallowed_tools:  # type: ignore[attr-defined]
+        cmd += ["--disallowedTools", cfg.disallowed_tools]  # type: ignore[attr-defined]
+    return cmd
+
+
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
     history: list | None = None,
     market_conditions: MarketConditions | None = None,
+    spot_prices: dict[str, float] | None = None,
 ) -> list[ClaudeReview]:
     """Shell out to `claude -p`, parse output → list[ClaudeReview]. Returns [] on any failure.
 
     history: optional list of ClaudeMemoryRow objects from prior scans; injected into the prompt
     so Claude can learn from past recommendations and their outcomes.
     market_conditions: optional macro snapshot (VIX) injected as enrichment context.
+    spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels rather
+    than the stale static universe anchors (N17).
     """
     cfg = get_config().claude
 
@@ -52,12 +74,16 @@ def review_candidates(
         return []
 
     prompt = build_prompt(
-        candidates, account, history=history, market_conditions=market_conditions
+        candidates,
+        account,
+        history=history,
+        market_conditions=market_conditions,
+        spot_prices=spot_prices,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
     # when the candidate list + history grows large.
-    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
+    cmd = _build_cmd(cfg)
 
     for attempt in range(cfg.max_retries + 1):
         try:
@@ -116,7 +142,7 @@ def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> 
         return None
 
     prompt = build_roll_prompt(alert, pos, quote)
-    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
+    cmd = _build_cmd(cfg)
 
     for attempt in range(cfg.max_retries + 1):
         try:
@@ -164,7 +190,7 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
         return None
 
     prompt = build_eod_prompt(summary)
-    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
+    cmd = _build_cmd(cfg)
 
     for attempt in range(cfg.max_retries + 1):
         try:

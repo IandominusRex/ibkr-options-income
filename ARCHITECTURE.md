@@ -130,10 +130,10 @@ Invokes Claude to add plain-English reasoning to the top candidates.
 
 | File | What it does |
 |---|---|
-| `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response. `review_candidates` also forwards the scan's `MarketConditions` (VIX) so the prompt carries the macro-vol regime — enrichment only, never a deterministic gate. |
+| `runner.py` | Shells out to `claude -p` (the CLI), passes candidate data as JSON, and captures the response. `_build_cmd` assembles the **hardened** command (N3): `--max-turns 1`, `--disallowedTools <denylist>`, optional `--model` pin — so the unattended subprocess (~26+×/day) can't use tools or touch the filesystem. `review_candidates` also forwards the scan's `MarketConditions` (VIX) and scan-time `spot_prices` (N17) so the prompt carries the macro-vol regime and *current* price levels — enrichment only, never a deterministic gate. |
 | `parser.py` | Validates and parses Claude's JSON response into a structured `ClaudeReview` object. On any failure, returns an empty result — the pipeline always continues. |
 | `memory.py` | The learning-loop outcome recorder. Back-fills each `claude_memory` row with what actually happened — `filled` (executor), `user_rejected` (Telegram reject), `risk_rejected` (re-validation), `expired` (TTL) — so later scans inject real outcomes (not just rejections) into the strategist prompt. |
-| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe; also renders a VIX regime line, each candidate's VRP, and any **active reasoning skills**), `roll.py` (roll alerts — also injects active skills), `eod.py` (EOD journal) |
+| `prompts/` | Prompt templates: `strategist.py` (morning review — injects `_UNIVERSE_CONTEXT`, a compact tier/IV/assignment reference for every ticker in the universe, now banner-flagged as **stale Jun-2026 anchors**; injects a **scan-time spot-price block** (N17) marked authoritative so Claude reasons from current levels; also renders a VIX regime line, each candidate's VRP, and any **active reasoning skills**), `roll.py` (roll alerts — also injects active skills), `eod.py` (EOD journal) |
 
 **Important:** Claude is enrichment only. If it is unavailable or returns bad output, the system
 sends the Rules-Engine-approved list to Telegram without Claude commentary. Claude never places,

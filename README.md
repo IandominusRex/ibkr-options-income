@@ -9,6 +9,9 @@ the top candidates to your phone via Telegram.
 > approval before touching the broker. In **AUTOMATED** mode the system executes trades
 > autonomously during RTH and auto-closes positions at 50% profit — toggle with `/mode`.
 > Every order is re-validated by the deterministic risk engine before it executes regardless of mode.
+> In AUTOMATED mode the system trades the **deterministic, gate-passing slate**; Claude's review is
+> shown for the record but never filters or gates what executes (the fence). To raise the AUTO bar,
+> raise `weights.min_candidate_score` — not via Claude.
 
 ---
 
