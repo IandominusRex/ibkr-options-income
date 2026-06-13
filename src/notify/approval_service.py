@@ -66,6 +66,11 @@ from src.storage.system_settings import (
 
 logger = logging.getLogger(__name__)
 
+# /health flags a symbol's IV history as stale when its newest observation is older than this
+# many days. The EOD job appends daily, so a healthy symbol sits at 0–1 day (3 over a weekend);
+# >5 means the appender or backfill has stopped running (N4).
+_IV_STALE_DAYS = 5
+
 
 # ---------------------------------------------------------------------------
 # Auth helper
@@ -434,10 +439,25 @@ async def handle_health_command(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception:
         logger.exception("/health DB query failed")
 
+    # IV-history staleness (N4): IV rank is the largest score weight and a hard gate, so a stale
+    # window silently degrades every scan. Warn when a universe symbol's latest obs is too old.
+    iv_stale: list[tuple[str, int | None]] = []
+    try:
+        from src.common.config import get_config
+        from src.storage.iv_history import stale_symbols
+
+        u = get_config().universe
+        symbols = sorted(
+            set(u.get("indexes", [])) | set(u.get("watchlist", [])) | set(u.get("would_own", []))
+        )
+        iv_stale = stale_symbols(symbols, _IV_STALE_DAYS)
+    except Exception:
+        logger.exception("/health IV-staleness check failed")
+
     from src.notify.formatters import format_health
 
     text = format_health(
-        ib_exec_ok, ib_scan_ok, last_scan_at, pending_approvals, open_orders, db_ok
+        ib_exec_ok, ib_scan_ok, last_scan_at, pending_approvals, open_orders, db_ok, iv_stale
     )
     await update.message.reply_text(text, parse_mode="MarkdownV2")
 

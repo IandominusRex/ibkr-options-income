@@ -62,10 +62,11 @@ def generate_csp_candidates(
         dte = quote.dte
         if not (dte_min <= dte <= dte_max):
             continue
-        mid = quote.mid
+        # Require a genuine two-sided market (N10): never price a candidate off a stale `last`.
+        mid = quote.strict_mid
         if mid is None or mid <= 0:
             continue
-        if not passes_liquidity_gates(quote):
+        if not passes_liquidity_gates(quote, enforce_volume=enforce_volume):
             continue
 
         # Size off ExcessLiquidity (the post-margin-requirement cushion) rather than

@@ -430,6 +430,26 @@ class TestValidateCandidates:
         assert "csp_allocation_limit" in verdicts[0].reasons
         assert "concentration_limit" not in verdicts[0].reasons
 
+    def test_existing_short_put_charged_at_strike_for_concentration(self) -> None:
+        # N5: an existing short put must count toward per-ticker concentration at strike
+        # collateral (strike*100*contracts = 60k), not its tiny |market value| (~500). With the
+        # old |MV| seeding this ticker looked nearly unexposed and a new CSP slipped past the cap.
+        existing_put = PositionSnapshot(
+            symbol="NVDA",
+            sec_type="OPT",
+            position=-1.0,
+            avg_cost=5.0,
+            right=OptionRight.PUT,
+            strike=600.0,
+            market_value=-500.0,
+        )
+        cand = _candidate(
+            underlying="NVDA", strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20
+        )
+        # 5%/ticker cap = 5k of 100k net liq; 60k existing already blows it.
+        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing_put])
+        assert "concentration_limit" in verdicts[0].reasons
+
     # --- IV rank gate (S1) ---
 
     def test_iv_rank_below_minimum_rejected(self) -> None:

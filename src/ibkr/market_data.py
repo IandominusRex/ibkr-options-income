@@ -205,6 +205,31 @@ def _filter_strikes(strikes: Iterable[float], spot: float, band_pct: float = 0.1
     return sorted(s for s in strikes if lo <= s <= hi)
 
 
+def _strike_band_pct(symbol: str, dte_days: int) -> float:
+    """IV-scaled strike band for *symbol* (N6).
+
+    Returns ``max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365))`` using the symbol's
+    most recent stored IV, so a high-IV name widens enough to include its ~0.25-delta strike.
+    A per-symbol override in ``universe.yaml → strike_bands`` wins (never below the floor); when
+    no IV is stored yet the fixed floor applies. ``dte_days`` is the longest in-scope expiry so
+    the band covers every expiration being scanned.
+    """
+    cfg = get_config()
+    md = cfg.market_data
+    floor = md.strike_band_pct
+
+    override = cfg.universe.get("strike_bands", {}).get(symbol)
+    if override is not None:
+        return max(floor, float(override))
+
+    from src.storage.iv_history import latest_iv
+
+    iv = latest_iv(symbol)  # annualised vol as a fraction
+    if iv and iv > 0 and dte_days > 0:
+        return max(floor, md.strike_band_iv_mult * iv * math.sqrt(dte_days / 365.0))
+    return floor
+
+
 # ---------------------------------------------------------------------------
 # Batched quote fetcher — the heart of Phase 1
 # ---------------------------------------------------------------------------
@@ -355,12 +380,14 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
         return []
 
     expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
-    strikes = _filter_strikes(smart.strikes, spot)
+    band_pct = _strike_band_pct(symbol, dte_max)
+    strikes = _filter_strikes(smart.strikes, spot, band_pct)
     log.info(
-        "symbol=%s expirations=%s strikes=%d",
+        "symbol=%s expirations=%s strikes=%d band=%.0f%%",
         symbol,
         expirations,
         len(strikes),
+        band_pct * 100,
     )
 
     raw: list[Option] = [
@@ -408,8 +435,15 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
         return []
 
     expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
-    strikes = _filter_strikes(smart.strikes, spot)
-    log.info("symbol=%s expirations=%s strikes=%d", symbol, expirations, len(strikes))
+    band_pct = _strike_band_pct(symbol, dte_max)
+    strikes = _filter_strikes(smart.strikes, spot, band_pct)
+    log.info(
+        "symbol=%s expirations=%s strikes=%d band=%.0f%%",
+        symbol,
+        expirations,
+        len(strikes),
+        band_pct * 100,
+    )
 
     raw: list[Option] = [
         build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)

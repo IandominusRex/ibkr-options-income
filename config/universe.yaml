@@ -232,3 +232,22 @@ sectors:
   RKLB: aerospace
   ASTS: telecom
   IONQ: tech
+
+# ---------------------------------------------------------------------------
+# Per-symbol strike-band overrides (N6). Optional. The chain scanner picks strikes
+# within ±band of spot; by default band scales with the symbol's stored IV
+# (settings.yaml → market_data.strike_band_*). These overrides win (clamped to the floor),
+# guaranteeing the ~0.25-delta strike is in scope for extreme-IV leveraged ETFs even before
+# their iv_history is backfilled. Express as a fraction (0.45 = ±45%).
+# ---------------------------------------------------------------------------
+strike_bands:
+  SOXL: 0.45
+  LABU: 0.50
+  TSLL: 0.45
+  DPST: 0.40
+  MARA: 0.45
+  CRCL: 0.50
+  MSTR: 0.45
+  RGTI: 0.45
+  IONQ: 0.45
+  ASTS: 0.45

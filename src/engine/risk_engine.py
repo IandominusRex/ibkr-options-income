@@ -49,21 +49,34 @@ def _seed_exposures(
     positions: list[PositionSnapshot],
 ) -> tuple[dict[str, float], dict[str, float], float]:
     """Seed per-ticker exposure, per-sector exposure, and existing CSP collateral from
-    current positions. Exposures use absolute market value (short stock has negative MV)."""
+    current positions.
+
+    Exposure measures the capital a position represents toward the concentration caps. For a
+    short put that is the assignment liability — strike × 100 × |contracts| — NOT the option's
+    tiny |market value| (~1% of notional). Charging it at |MV| (N5) let a ticker with several
+    working short puts read as nearly unexposed and slip past the 5%-per-ticker cap. Counting it
+    at strike collateral matches exactly how a *new* CSP candidate is charged (cand.collateral),
+    so existing and proposed CSPs share one consistent budget. Everything else (long/short stock,
+    short calls) is measured at |MV|; short stock has negative MV, hence abs()."""
     ticker_exposure: dict[str, float] = {}
     sector_exposure: dict[str, float] = {}
     csp_collateral = 0.0
 
     for p in positions:
         key = _ticker_key(p)
-        mv = abs(p.market_value or 0.0)
-        ticker_exposure[key] = ticker_exposure.get(key, 0.0) + mv
+        is_short_put = (
+            p.sec_type == "OPT" and p.right == OptionRight.PUT and p.position < 0 and p.strike
+        )
+        if is_short_put:
+            # strike is truthy here (guarded above); mypy-safe via `or 0.0`.
+            exposure = (p.strike or 0.0) * 100.0 * abs(p.position)
+            csp_collateral += exposure
+        else:
+            exposure = abs(p.market_value or 0.0)
+        ticker_exposure[key] = ticker_exposure.get(key, 0.0) + exposure
         sector = _sector_of(key)
         if sector:
-            sector_exposure[sector] = sector_exposure.get(sector, 0.0) + mv
-        # Existing short puts tie up cash collateral = strike * 100 * |contracts|.
-        if p.sec_type == "OPT" and p.right == OptionRight.PUT and p.position < 0 and p.strike:
-            csp_collateral += p.strike * 100.0 * abs(p.position)
+            sector_exposure[sector] = sector_exposure.get(sector, 0.0) + exposure
 
     return ticker_exposure, sector_exposure, csp_collateral
 

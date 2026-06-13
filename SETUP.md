@@ -115,7 +115,9 @@ suppressed:
 ```bash
 python -m scripts.backfill_iv
 ```
-Also add the symbol to the `sectors:` map so concentration limits work correctly.
+Also add the symbol to the `sectors:` map so concentration limits work correctly. For an
+extreme-IV leveraged ETF, optionally add a `strike_bands:` override so its ~0.25-delta strike is in
+scope immediately (otherwise the IV-scaled band fills in once the backfill/EOD has stored its IV).
 
 ### `config/risk_limits.yaml`
 
@@ -495,7 +497,10 @@ python -m scripts.backfill_iv
 ```
 
 This fetches one year of historical IV for every symbol in your universe. It takes a few minutes.
-Future scans will update the history incrementally.
+After the bootstrap, the **EOD run appends one fresh IV observation per symbol each day** (N4), so
+the IV-rank window stays current without re-running the backfill. `/health` shows an "IV history"
+line and warns if any symbol's latest observation is older than 5 days (i.e. the EOD appender or
+backfill has stopped) — re-run `python -m scripts.backfill_iv` to recover.
 
 ---
 

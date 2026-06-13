@@ -178,6 +178,33 @@ class TestScoringHelpers:
         assert 0.0 <= score <= 100.0
 
 
+class TestStrictMid:
+    """N10: the strategy generators price premium off strict_mid (no `last` fallback)."""
+
+    def _q(self, **kw) -> OptionQuote:
+        base = dict(underlying="AAPL", right=OptionRight.CALL, strike=200.0, expiry=_EXPIRY)
+        base.update(kw)
+        return OptionQuote(**base)
+
+    def test_strict_mid_two_sided(self):
+        assert self._q(bid=2.10, ask=2.30).strict_mid == pytest.approx(2.20)
+
+    def test_strict_mid_none_when_only_last(self):
+        q = self._q(bid=None, ask=None, last=2.20)
+        assert q.mid == pytest.approx(2.20)  # lenient property falls back to last
+        assert q.strict_mid is None  # strict one refuses
+
+    def test_strict_mid_accepts_zero_bid(self):
+        assert self._q(bid=0.0, ask=0.10).strict_mid == pytest.approx(0.05)
+
+    def test_cc_generator_rejects_last_only_quote(self):
+        # A quote with no live two-sided market (only a stale `last`) must yield no candidate.
+        q = _call_quote()
+        q = q.model_copy(update={"bid": None, "ask": None, "last": 2.20})
+        result = generate_cc_candidates("AAPL", [q], _long_stock(), _iv(), _tech(), _fund())
+        assert result == []
+
+
 # --------------------------------------------------------------------------- #
 # Covered call tests
 # --------------------------------------------------------------------------- #

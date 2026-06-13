@@ -79,6 +79,50 @@ def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
     return realized, len(fill_ids), fill_ids
 
 
+def _universe_symbols(cfg) -> list[str]:
+    """Indexes ∪ watchlist ∪ would_own — the symbols whose IV history we keep fresh."""
+    u = cfg.universe
+    return sorted(
+        set(u.get("indexes", [])) | set(u.get("watchlist", [])) | set(u.get("would_own", []))
+    )
+
+
+async def _append_daily_iv(ib, symbols: list[str]) -> None:
+    """Append today's ATM IV observation per symbol so the IV-rank window stays current (N4).
+
+    Without this the only writer to `iv_history` is the one-shot bootstrap backfill, so the
+    trailing-year window ages silently — and IV rank is both the largest score weight and a hard
+    gate. Reuses the backfill's `OPTION_IMPLIED_VOLATILITY` daily bar; `append_observation` skips
+    a date already present, so a re-run (or a second EOD) is idempotent. Best-effort per symbol.
+    """
+    from src.ibkr.contracts import qualify_stock_async
+    from src.storage.iv_history import append_observation
+
+    inserted = 0
+    for sym in symbols:
+        try:
+            stock = await qualify_stock_async(ib, sym)
+            bars = await ib.reqHistoricalDataAsync(
+                stock,
+                endDateTime="",
+                durationStr="2 D",
+                barSizeSetting="1 day",
+                whatToShow="OPTION_IMPLIED_VOLATILITY",
+                useRTH=True,
+                keepUpToDate=False,
+            )
+            if not bars:
+                continue
+            last = bars[-1]
+            bar_date = last.date if isinstance(last.date, date) else last.date.date()
+            if append_observation(sym, bar_date, float(last.close)):
+                inserted += 1
+        except Exception:
+            logger.debug("EOD IV append failed for %s", sym, exc_info=True)
+        await asyncio.sleep(0.2)  # pace reqHistoricalData calls
+    logger.info("EOD: appended %d new IV observation(s) across %d symbols", inserted, len(symbols))
+
+
 def _load_yesterday_unrealized(today: date) -> float:
     """Return the unrealized_pnl from yesterday's JournalRow, or 0.0 if none."""
     yesterday = today - timedelta(days=1)
@@ -193,6 +237,11 @@ async def run() -> None:
             await enrich_positions_with_greeks_async(ib, positions)
         except Exception:
             logger.exception("EOD: greeks enrichment failed — net delta may read 0")
+        # Keep the IV-rank window current (N4) while the connection is open.
+        try:
+            await _append_daily_iv(ib, _universe_symbols(cfg))
+        except Exception:
+            logger.exception("EOD: daily IV append failed — iv_history may age")
     logger.info("Disconnected from IBKR")
 
     # 2. Compute realized P&L from DB fills (anchored to the ET trading day).

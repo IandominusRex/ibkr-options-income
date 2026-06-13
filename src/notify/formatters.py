@@ -295,25 +295,42 @@ def format_health(
     pending_approvals: int,
     open_orders: int,
     db_ok: bool,
+    iv_stale: list[tuple[str, int | None]] | None = None,
 ) -> str:
-    """Format system health status for Telegram."""
+    """Format system health status for Telegram.
+
+    *iv_stale* (N4): (symbol, age_days|None) for symbols whose iv_history is stale or missing —
+    rendered as a warning line since IV rank is both the largest score weight and a hard gate.
+    """
     since_str = "never"
     if last_scan_at is not None:
         aware = last_scan_at.replace(tzinfo=UTC) if last_scan_at.tzinfo is None else last_scan_at
         mins = int((datetime.now(UTC) - aware).total_seconds() / 60)
         since_str = f"{mins}m ago"
 
+    iv_ok = not iv_stale
     parts = [
         "*System Health*",
         "",
         f"{_icon(ib_exec_ok)} IBKR Exec \\(clientId 14\\)",
         f"{_icon(ib_scan_ok)} IBKR Scan \\(clientId 15\\)",
         f"{_icon(db_ok)} Database",
+        f"{_icon(iv_ok)} IV history",
         "",
         f"Last scan:  {_md(since_str)}",
         f"Pending:    {_md(str(pending_approvals))} approval{'s' if pending_approvals != 1 else ''}",
         f"Orders:     {_md(str(open_orders))} open",
     ]
+    if iv_stale:
+        shown = ", ".join(
+            f"{sym} ({'none' if age is None else f'{age}d'})" for sym, age in iv_stale[:8]
+        )
+        more = f" \\+{len(iv_stale) - 8} more" if len(iv_stale) > 8 else ""
+        parts += [
+            "",
+            f"⚠️ Stale IV history: {_md(shown)}{more}",
+            _md("→ run scripts.backfill_iv or check the EOD job"),
+        ]
     return "\n".join(parts)
 
 

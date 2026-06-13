@@ -190,6 +190,37 @@ def test_filter_strikes_returns_sorted():
 
 
 # ---------------------------------------------------------------------------
+# _strike_band_pct (N6) — IV-scaled band with per-symbol override
+# ---------------------------------------------------------------------------
+
+
+def test_strike_band_uses_per_symbol_override():
+    from src.ibkr.market_data import _strike_band_pct
+
+    # SOXL carries a 0.45 override in universe.yaml; it wins over the floor without touching IV.
+    assert _strike_band_pct("SOXL", 30) == pytest.approx(0.45)
+
+
+def test_strike_band_scales_with_iv(monkeypatch):
+    import math
+
+    from src.ibkr.market_data import _strike_band_pct
+
+    # AAPL has no override → band scales with the stored IV (patched to 100%).
+    monkeypatch.setattr("src.storage.iv_history.latest_iv", lambda _s: 1.0)
+    band = _strike_band_pct("AAPL", 30)
+    assert band == pytest.approx(max(0.15, 1.5 * 1.0 * math.sqrt(30 / 365)))
+    assert band > 0.15  # high IV genuinely widens the band past the floor
+
+
+def test_strike_band_falls_back_to_floor_without_iv(monkeypatch):
+    from src.ibkr.market_data import _strike_band_pct
+
+    monkeypatch.setattr("src.storage.iv_history.latest_iv", lambda _s: None)
+    assert _strike_band_pct("AAPL", 30) == pytest.approx(0.15)
+
+
+# ---------------------------------------------------------------------------
 # _batch_quotes: batching, cancel discipline, field mapping
 # ---------------------------------------------------------------------------
 

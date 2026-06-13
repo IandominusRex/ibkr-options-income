@@ -121,6 +121,19 @@ class OptionQuote(BaseModel):
         return self.last
 
     @property
+    def strict_mid(self) -> float | None:
+        """Mid from a genuine two-sided market — never falls back to `last` (N10).
+
+        The strategy generators price a candidate's premium/ROC/yield/score off this so they
+        can't be computed from a stale prior-session `last` print when the snapshot has no live
+        market. Accepts bid=0 with a positive ask (a thin far-OTM market, matching how the order
+        builder prices it); requires the ask to be a real positive quote. Returns None otherwise.
+        """
+        if self.bid is not None and self.bid >= 0 and self.ask is not None and self.ask > 0:
+            return round((self.bid + self.ask) / 2, 4)
+        return None
+
+    @property
     def spread_pct(self) -> float | None:
         m = self.mid
         if m and self.bid is not None and self.ask is not None and m > 0:
