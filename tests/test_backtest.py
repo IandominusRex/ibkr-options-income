@@ -130,3 +130,59 @@ def test_report_handles_zero_cycles():
     res = simulate("X", _series(10, 100.0, 0.0), BacktestParams(strategy="cash_secured_put"))
     text = format_report(res)
     assert "no cycles" in text
+
+
+# --------------------------------------------------------------------------- #
+# v2 (N21): stored-IV pricing, profit-take, IV-rank gating
+# --------------------------------------------------------------------------- #
+
+
+def test_stored_iv_pricing_captures_vrp_on_flat_underlying():
+    """Selling rich IV (0.80) on a ~flat underlying should bank a positive variance-risk
+    premium — the edge a fair-value (HV) backtest can't see by construction."""
+    prices = _series(150, 100.0, 0.0, wobble=0.01)  # ~flat → low realised HV
+    iv = [0.80] * len(prices)
+    params = BacktestParams(strategy="cash_secured_put", dte=30)
+
+    res = simulate("FLAT", prices, params, iv_series=iv)
+    assert res.iv_source == "stored_iv"
+    assert res.num_cycles > 0
+    assert res.mean_vrp_pct > 0  # entry IV (0.80) far exceeds the realised HV
+    assert res.total_pnl > 0  # the seller keeps the premium when price barely moves
+
+    # Same path priced at trailing HV (the old fair-value engine) has no VRP edge to report.
+    fair = simulate("FLAT", prices, params)
+    assert fair.iv_source == "trailing_hv"
+    assert fair.mean_vrp_pct == 0.0
+
+
+def test_profit_take_closes_cycles_early():
+    prices = _series(150, 100.0, 0.0, wobble=0.01)
+    iv = [0.80] * len(prices)
+    res = simulate(
+        "FLAT",
+        prices,
+        BacktestParams(strategy="cash_secured_put", dte=30, profit_take_pct=0.50),
+        iv_series=iv,
+    )
+    assert res.num_cycles > 0
+    assert res.profit_take_rate > 0  # theta decay on a flat name trips the 50% rule
+    assert any(t.closed_early for t in res.trades)
+
+
+def test_iv_rank_gating_reduces_cycle_count():
+    # Alternating high/low IV blocks so the backtest IV rank actually varies.
+    prices = _series(220, 100.0, 0.0, wobble=0.01)
+    iv = [0.80 if (i // 20) % 2 == 0 else 0.30 for i in range(len(prices))]
+
+    ungated = simulate(
+        "OSC", prices, BacktestParams(strategy="cash_secured_put", dte=30), iv_series=iv
+    )
+    gated = simulate(
+        "OSC",
+        prices,
+        BacktestParams(strategy="cash_secured_put", dte=30, min_iv_rank=50.0),
+        iv_series=iv,
+    )
+    assert ungated.num_cycles > 0
+    assert gated.num_cycles < ungated.num_cycles  # low-IV-rank windows are skipped

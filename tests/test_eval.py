@@ -358,3 +358,54 @@ def test_metrics_by_period_groups_by_month() -> None:
     r2.outcome_date = date(2026, 5, 20)
     periods = dict(evaluate_by_period([r1, r2]))
     assert set(periods) == {"2026-04", "2026-05"}
+
+
+# --------------------------------------------------------------------------- #
+# Score-vs-outcome (N22)
+# --------------------------------------------------------------------------- #
+def _scored(cid: str, *, blended: float, iv: float, pnl: float) -> VerdictRecord:
+    r = _record(cid, expiry_days=-1)
+    r.filled = True
+    r.realized_pnl = pnl
+    r.outcome = VerdictOutcome.EXPIRED_WORTHLESS if pnl > 0 else VerdictOutcome.CLOSED_EARLY
+    r.outcome_date = date.today()
+    r.signals = {
+        "blended_score": blended,
+        "iv_rank": iv,
+        "scores": {"iv": iv, "technical": 50.0, "liquidity": 80.0},
+    }
+    return r
+
+
+def test_score_outcome_report_buckets_and_correlates() -> None:
+    from src.claude.eval.score_metrics import score_outcome_report
+
+    # High blended scores win, low ones lose → positive blended↔P&L correlation, and the
+    # top band must out-earn the bottom band.
+    records = [
+        _scored("h1", blended=92.0, iv=70.0, pnl=180.0),
+        _scored("h2", blended=85.0, iv=60.0, pnl=120.0),
+        _scored("l1", blended=58.0, iv=20.0, pnl=-150.0),
+        _scored("l2", blended=64.0, iv=30.0, pnl=-40.0),
+    ]
+    rep = score_outcome_report(records)
+
+    assert rep.n_closed == 4
+    by_label = {b.label: b for b in rep.blended_score_buckets}
+    # 90-100 band is all winners; 0-60 band is the loser.
+    assert by_label["90-100"].win_rate == 1.0
+    assert by_label["90-100"].mean_pnl > by_label["0-60"].mean_pnl
+
+    corr = {c.signal: c for c in rep.signal_correlations}
+    assert corr["blended_score"].pearson_r is not None
+    assert corr["blended_score"].pearson_r > 0
+    assert corr["blended_score"].high_half_mean_pnl > corr["blended_score"].low_half_mean_pnl
+
+
+def test_score_outcome_report_empty_is_safe() -> None:
+    from src.claude.eval.score_metrics import score_outcome_report
+
+    rep = score_outcome_report([])
+    assert rep.n_closed == 0
+    assert rep.blended_score_buckets == []
+    assert any("no closed" in n.lower() for n in rep.notes)

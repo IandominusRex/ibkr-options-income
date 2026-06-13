@@ -632,6 +632,14 @@ python -m scripts.evaluate_verdicts
 python -m scripts.evaluate_verdicts --since 2026-05-01   # held-out tail only
 ```
 
+**Score-vs-outcome** (read-only; does `blended_score` actually predict realized P&L? — use it to
+decide, by hand, whether `config/scoring_weights.yaml` should change):
+
+```bash
+python -m scripts.evaluate_scores
+python -m scripts.evaluate_scores --since 2026-05-01 --json
+```
+
 **Grow reasoning skills** (human-gated):
 
 ```bash
@@ -647,26 +655,37 @@ Only skills in `config/skills/active/` are injected. Promotion is always a manua
 control (visible in git). Set `claude.skills_enabled: false` in `config/settings.yaml` to disable
 injection entirely. See `config/skills/README.md` for the file format and the fence.
 
+**Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
+unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
+`disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), and `model` (pins the
+enrichment model, default `claude-sonnet-4-6`). Set `max_turns: 0` / `disallowed_tools: ""` /
+`model: ""` to omit the corresponding flag. These bound the subprocess itself; the fence already
+keeps Claude's output out of the execution path.
+
 ---
 
 ## Backtesting a strategy (optional)
 
 Deterministic, offline-ish sizing tool — no IBKR connection, no DB writes. It pulls historical
-daily closes from yfinance and simulates CC/CSP income, synthesising premiums with Black-Scholes
-from trailing realised volatility (the system has no historical option chains, so this is an
-approximation — see `STATUS.md`).
+daily closes from yfinance and simulates CC/CSP income (the system has no historical option chains,
+so this is an approximation — see `STATUS.md`).
 
 ```bash
-# Cash-secured puts on AAPL over the last 2 years, ~0.30 delta, 30-DTE cycles:
+# v1 (fair-value, HV-priced — validates plumbing, not the edge):
 python -m scripts.backtest --symbol AAPL --strategy cash_secured_put --delta 0.30 --dte 30
 
-# Covered calls over an explicit window:
-python -m scripts.backtest --symbol MSFT --strategy covered_call --start 2023-01-01 --end 2024-01-01
+# v2 — price entries from stored IV (measures the variance-risk premium), with the 50% take
+# and an IV-rank gate (needs scripts.backfill_iv / the EOD appender to have populated iv_history):
+python -m scripts.backtest --symbol AAPL --strategy cash_secured_put \
+    --use-stored-iv --profit-take 0.50 --min-iv-rank 30
 ```
 
-It prints premium collected, net P&L, win/assignment rate, return on capital, annualized return,
-the buy-&-hold benchmark, and max drawdown. The covered-call P&L is the *option overlay* only
-(premium minus call-away intrinsic); the underlying's own appreciation is the buy-&-hold line.
+v1 prices premiums with Black-Scholes from trailing realised vol — fair value by construction, so
+the expected edge is ≈ 0. v2 (`--use-stored-iv`) prices entries from the symbol's stored daily IV,
+so the report's **Mean VRP** (IV − HV) and net P&L reflect the actual variance-risk-premium edge;
+`--profit-take` and `--min-iv-rank` test the management rules with/without IV-rank gating. The
+covered-call P&L is the *option overlay* only (premium minus call-away intrinsic); the underlying's
+own appreciation is the buy-&-hold line.
 
 ---
 

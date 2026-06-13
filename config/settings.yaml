@@ -120,3 +120,7 @@ monitor:
   ex_div_days_ahead: 5
   # Suppress re-alerts for the same (position, trigger) within this window.
   alert_cooldown_minutes: 30
+  # N20: when true, a roll trigger sends an approvable roll candidate (Approve → QUEUED ROLL →
+  # execute_roll) instead of an alert-only message. Default false until the BAG combo sign
+  # convention is verified on a live paper account.
+  roll_execution_enabled: false

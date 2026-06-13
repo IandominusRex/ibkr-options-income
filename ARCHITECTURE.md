@@ -148,11 +148,12 @@ nothing here can place, size, or gate an order — it only observes and measures
 
 | File | What it does |
 |---|---|
-| `ledger.py` | The **outcome ledger**. Maps `VerdictLedgerRow` ↔ `VerdictRecord` so the rest of the loop works in schemas, not ORM. At scan time it stores one row per surfaced candidate: the full signal vector Claude saw, its verdict, and the deterministic baseline. Upserts on `candidate_id` and never clobbers a recorded outcome. |
+| `ledger.py` | The **outcome ledger**. Maps `VerdictLedgerRow` ↔ `VerdictRecord` so the rest of the loop works in schemas, not ORM. At scan time it stores one row per surfaced candidate: the full signal vector Claude saw, its verdict, and the deterministic baseline. Upserts on `candidate_id` and never clobbers a recorded outcome. **Once an order exists for the candidate** (`_candidate_is_committed`), the pre-outcome signal vector is frozen too (N2b), so the row that receives the realized outcome carries the signals of the scan that produced the fill — not a later re-scan's. |
 | `baseline.py` | The **deterministic counterfactual** — what the engine would do without Claude. Pure Python over the engine's own slate: every surfaced candidate is a `sell` ranked by `blended_score`; anything not surfaced is `skip`. No LLM, no new tunables. |
 | `reconcile.py` | The **close reconciler**. Deterministic, DB-only: joins the ledger against fills/orders/approvals to set the terminal outcome (`expired_worthless` / `closed_early` / `assigned` / `not_filled` / `user_rejected` / `risk_rejected`) and realized P&L. Runs automatically at EOD and via `scripts.reconcile_outcomes`. |
 | `assignment.py` | **Assignment auto-detection** (Phase 4): `detect_assignments` is a pure function that diffs the prior day's position snapshot against current positions — a vanished short whose underlying stock moved ~100×contracts in the assignment direction (puts → shares appear, calls → shares called away) is `assigned`, not `expired_worthless`. `assigned_candidate_ids` is the DB-backed orchestration the EOD run feeds into `reconcile(assigned_candidate_ids=…)`, replacing the manual `--assigned` flag. Enrichment-input only — never touches the engine or sizing. |
 | `metrics.py` | **Verdict scoring**: calibration (reliability buckets + Brier score) and EV of *following Claude* vs *the baseline*, on a held-out window and per month — so the score reflects skill, not the last trade's luck. |
+| `score_metrics.py` | **Score-vs-outcome analysis** (N22): over closed ledger rows, buckets `blended_score` (and each scorecard component) by realized win rate / mean P&L, plus a per-signal Pearson correlation. Read-only evidence for whether the *human-edited* `scoring_weights.yaml` is earning its keep — it never feeds the engine (the fence). Driven by `scripts/evaluate_scores.py`. |
 
 ### `src/claude/skills/` — The skill loop
 
@@ -218,7 +219,7 @@ Watches your open positions during market hours and fires alerts when action may
 
 | File | What it does |
 |---|---|
-| `intraday.py` | Subscribes to live IBKR price feeds for each open position; runs checks every tick. On subscribe it loads each position's **entry IV** (from the originating fill's `FillRow.entry_iv`, matched by contract) as the IV-spike baseline, and caches the underlying's **fundamentals** (ex-dividend date) — so all four triggers can actually fire. |
+| `intraday.py` | Subscribes to live IBKR price feeds for each open position; runs checks every tick. On subscribe it loads each position's **entry IV** (from the originating fill's `FillRow.entry_iv`, matched by contract) as the IV-spike baseline, and caches the underlying's **fundamentals** (ex-dividend date) — so all four triggers can actually fire. `fire_alerts` sends the roll alert; when `monitor.roll_execution_enabled` is set it first fetches the chain and queues an **approvable** roll candidate (N20, via `execution.roll_pipeline`) so the message carries Approve/Reject buttons instead of being alert-only. |
 | `triggers.py` | Defines stateless trigger-check functions: delta drift, DTE threshold, IV spike, ex-dividend risk. These are pure functions — they do **not** call Claude or Telegram. Claude review and Telegram delivery are handled by `intraday.py::fire_alerts` after triggers fire. |
 
 ---
@@ -227,19 +228,21 @@ Watches your open positions during market hours and fires alerts when action may
 
 A standalone, deterministic simulator for the CC/CSP income strategies. It is **fully isolated
 from the live path** — it imports nothing from `engine/` or `execution/` and is never imported by
-them — so it can never influence a real order. Because the system has no historical option-chain
-data source, it *synthesises* premiums with Black-Scholes from the underlying's historical price
-path and trailing realised vol (the IV proxy). Use it to compare parameter choices, not as a
-tick-accurate truth.
+them — so it can never influence a real order. **v1** synthesises premiums with Black-Scholes from
+trailing realised vol (a fair-value IV proxy → expected edge ≈ 0 by construction). **v2 (N21)**
+prices the entry premium from the symbol's *stored* daily IV (`iv_history`), so the result actually
+measures the variance-risk premium (IV−HV); it also simulates the 50% profit-take and IV-rank
+gating. Use it to compare parameter choices, not as tick-accurate truth.
 
 | File | What it does |
 |---|---|
-| `engine.py` | The pure core. `simulate(symbol, prices, params)` walks a daily-close series, writes non-overlapping short-premium cycles (strike chosen by target delta, premium = `bs_price` from trailing 30-day HV), settles each cash-style at expiry, and returns a `BacktestResult` (premium, net P&L, win/assignment rate, return on capital, annualized, buy-&-hold benchmark, max drawdown). Stated assumptions live in the module docstring. Takes an in-memory series → unit-testable offline. |
-| `data.py` | yfinance loader (`load_price_series`) producing the `(date, close)` series; kept out of `engine.py` so the core needs no network. |
-| `report.py` | `format_report` — plain-text rendering of a `BacktestResult` for the CLI. |
+| `engine.py` | The pure core. `simulate(symbol, prices, params, *, iv_series=None)` walks a daily-close series, writes non-overlapping short-premium cycles, settles each cash-style at expiry, and returns a `BacktestResult`. With `iv_series` it prices entries at the stored IV (measuring VRP) and reports `mean_vrp_pct` + `iv_source`; `params.profit_take_pct` closes a cycle early when its daily mark decays to the take level (`profit_take_rate`); `params.min_iv_rank` only opens cycles whose backtest IV rank clears the bar. Takes in-memory series → unit-testable offline. |
+| `data.py` | yfinance loader (`load_price_series`) plus `load_iv_series` — the forward-filled `iv_history` IV aligned to the price dates (the v2 entry-IV source). Kept out of `engine.py` so the core needs no network/DB. |
+| `report.py` | `format_report` — plain-text rendering of a `BacktestResult` for the CLI (now incl. pricing-IV source, mean VRP, and profit-take rate). |
 
-Driven by `scripts/backtest.py`. The Black-Scholes price (`analytics.black_scholes.bs_price`) was
-added for this harness; `analytics.black_scholes.bs_delta` is reused to delta-target strikes.
+Driven by `scripts/backtest.py` (`--use-stored-iv`, `--profit-take`, `--min-iv-rank` enable v2). The
+Black-Scholes price (`analytics.black_scholes.bs_price`) was added for this harness;
+`analytics.black_scholes.bs_delta` is reused to delta-target strikes.
 
 ---
 
@@ -280,7 +283,7 @@ Every stage of the pipeline writes its results here. This means:
 
 | File | What it does |
 |---|---|
-| `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.). The enrichment-evaluation shapes also live here: `VerdictOutcome`, `BaselineDecision`, `VerdictRecord` (one ledger entry), `CalibrationBucket`/`PolicyStats`/`VerdictEvaluation` (verdict scoring), and `SkillProposal`. |
+| `schemas.py` | Pydantic data models that all modules use to pass data between each other (`TradeCandidate`, `PositionSnapshot`, `ScoreCard`, `RiskVerdict`, `ClaudeReview`, etc.). The enrichment-evaluation shapes also live here: `VerdictOutcome`, `BaselineDecision`, `VerdictRecord` (one ledger entry), `CalibrationBucket`/`PolicyStats`/`VerdictEvaluation` (verdict scoring), `ScoreBucket`/`SignalCorrelation`/`ScoreOutcomeReport` (score-vs-outcome analysis, N22), and `SkillProposal`. |
 | `config.py` | Loads and validates `config/*.yaml` and `.env` |
 | `logging.py` | Structured logging setup — colourised console output (green INFO, yellow WARNING, red ERROR) and a plain rotating file log; `setup_logging()` is the single call-site used by all entry points |
 | `market_hours.py` | Self-contained US equity-market calendar + RTH gate (`is_rth`, `is_new_entry_window`, `session_close`, `is_market_holiday`, `is_early_close`). Computes NYSE full-day holidays and the 13:00 ET early-close sessions for any year — no external calendar dependency. The single source of truth for "is the market open"; both the execution bridge and the intraday loop call it instead of keeping their own weekday-only check. `is_new_entry_window` additionally enforces the configurable `entry_cutoff` time (default 15:00 ET) so no new positions are surfaced in the last hour. |
@@ -323,6 +326,7 @@ These are the scripts you run directly:
 | `backfill_iv.py` | `python -m scripts.backfill_iv` | One-time: seeds one year of IV history for the universe |
 | `reconcile_outcomes.py` | `python -m scripts.reconcile_outcomes` | Reconcile the outcome ledger (deterministic, DB-only). `--assigned <id…>` flags past-expiry shorts that were assigned. Also runs automatically at EOD. |
 | `evaluate_verdicts.py` | `python -m scripts.evaluate_verdicts` | Score Claude's verdicts: calibration + EV vs the baseline, held-out + per month. Read-only. `--since`, `--until`, `--json`. |
+| `evaluate_scores.py` | `python -m scripts.evaluate_scores` | Score-vs-outcome report (N22): `blended_score` + per-component bands vs realized win rate / mean P&L, plus per-signal correlation, over closed ledger rows. Read-only; informs hand-tuning of `scoring_weights.yaml`. `--since`, `--until`, `--json`. |
 | `propose_skill.py` | `python -m scripts.propose_skill` | Draft a reasoning skill from the labeled ledger via `claude -p` into `config/skills/proposed/`. Not promoted. |
 | `skills.py` | `python -m scripts.skills <list\|show\|promote\|reject\|retire> [name]` | The human gate: review proposed skills and promote them into `active/`. |
 
@@ -379,6 +383,7 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 | `EODSummary` | End-of-day metrics handed to Claude and stored in the journal |
 | `VerdictRecord` | One outcome-ledger entry: the signals Claude saw + its verdict + the deterministic `BaselineDecision` + the back-filled realized `VerdictOutcome`/P&L |
 | `VerdictEvaluation` | Held-out scoring of verdicts: Brier calibration + `PolicyStats` for follow-Claude vs baseline |
+| `ScoreBucket` / `SignalCorrelation` / `ScoreOutcomeReport` | Score-vs-outcome evidence (N22): per-band realized win rate / mean P&L and per-signal correlation against realized P&L, over closed ledger rows |
 | `SkillProposal` | A Claude-drafted reasoning skill awaiting human promotion |
 
 (The complete, authoritative list is the set of classes in `src/common/schemas.py`.)

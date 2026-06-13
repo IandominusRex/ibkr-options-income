@@ -130,9 +130,11 @@ def validate_candidates(
         # `positions`) and consumes no buying power — it generates premium. Charging CC
         # collateral against the concentration limits and BP buffer double-counts the
         # shares and falsely rejects calls on exactly the large holdings you most want to
-        # write against. Only strategies that create NEW exposure (CSPs, via assignment)
-        # consume these cumulative budgets.
-        adds_new_exposure = cand.strategy != Strategy.COVERED_CALL
+        # write against. A ROLL likewise replaces an existing short (the old leg is already
+        # counted in `positions`); it is net exposure-neutral, so charging the new leg as
+        # fresh exposure would double-count and falsely reject defensive rolls (N20). Only
+        # strategies that create NEW exposure (CSPs, via assignment) consume these budgets.
+        adds_new_exposure = cand.strategy not in (Strategy.COVERED_CALL, Strategy.ROLL)
 
         # --- Income quality gates ---
         if cand.roc_pct < income.get("min_roc_pct", 1.0):

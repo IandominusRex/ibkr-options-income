@@ -38,3 +38,43 @@ def load_price_series(
     except Exception as exc:
         log.warning("backtest: price load failed for %s: %s", symbol, exc)
         return []
+
+
+def load_iv_series(symbol: str, dates: list[date]) -> list[float | None]:
+    """Stored daily IV (fraction) aligned to ``dates`` — the v2 backtest's entry-IV source (N21).
+
+    Forward-fills the most recent `iv_history` observation on/before each price date (markets
+    close on weekends but the option's IV anchor is the last known reading). Returns a list the
+    same length as ``dates`` with None where no observation exists yet. Never raises.
+    """
+    if not dates:
+        return []
+    try:
+        from sqlalchemy import select
+
+        from src.storage.db import session_scope
+        from src.storage.models import IVHistoryRow
+
+        with session_scope() as sess:
+            rows = sess.execute(
+                select(IVHistoryRow.obs_date, IVHistoryRow.iv)
+                .where(IVHistoryRow.symbol == symbol)
+                .order_by(IVHistoryRow.obs_date)
+            ).all()
+    except Exception as exc:
+        log.warning("backtest: iv_history load failed for %s: %s", symbol, exc)
+        return [None] * len(dates)
+
+    obs = [(d, float(v)) for d, v in rows if v is not None]
+    if not obs:
+        return [None] * len(dates)
+
+    out: list[float | None] = []
+    i = 0  # pointer into obs (ascending)
+    last: float | None = None
+    for d in dates:
+        while i < len(obs) and obs[i][0] <= d:
+            last = obs[i][1]
+            i += 1
+        out.append(last)
+    return out

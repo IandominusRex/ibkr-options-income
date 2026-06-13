@@ -422,6 +422,50 @@ class VerdictEvaluation(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class ScoreBucket(BaseModel):
+    """Realized performance of the closed trades whose signal value fell in one band.
+
+    Used by the score-vs-outcome report (N22) to check whether a higher `blended_score` — or a
+    higher per-component score — actually corresponds to better realized P&L / win rate. If it
+    doesn't, the scoring weights are not earning their keep and should be re-derived from this
+    evidence (human-edited config, per the fence)."""
+
+    label: str  # e.g. "70-80" or "iv≥50"
+    n: int
+    win_rate: float
+    mean_pnl: float
+    total_pnl: float
+
+
+class SignalCorrelation(BaseModel):
+    """How one signal relates to realized P&L over closed trades.
+
+    `pearson_r` is the linear correlation of the signal with realized P&L; the low/high split
+    contrasts mean P&L for the bottom vs top half of the signal's range — a coarse, robust
+    read that doesn't assume linearity."""
+
+    signal: str
+    n: int
+    pearson_r: float | None = None
+    low_half_mean_pnl: float | None = None
+    high_half_mean_pnl: float | None = None
+
+
+class ScoreOutcomeReport(BaseModel):
+    """Score-vs-outcome evidence (N22): does the blended score / its components predict P&L?
+
+    Closed trades only (executed + settled). Read-only analysis that informs whether
+    `scoring_weights.yaml` should change — it never feeds the engine."""
+
+    n_closed: int
+    period_start: date | None = None
+    period_end: date | None = None
+    blended_score_buckets: list[ScoreBucket] = Field(default_factory=list)
+    component_buckets: list[ScoreBucket] = Field(default_factory=list)
+    signal_correlations: list[SignalCorrelation] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class SkillProposal(BaseModel):
     """A Claude-drafted reasoning skill, awaiting human review before promotion.
 

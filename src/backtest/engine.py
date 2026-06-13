@@ -46,6 +46,13 @@ class BacktestParams:
     contracts: int = 1
     risk_free_rate: float = 0.05
     commission_per_contract: float = 0.65  # charged per contract on entry only (short premium)
+    # --- v2 (N21): measure the actual edge, not fair value ---
+    # When an `iv_series` is supplied to simulate(), the entry premium is priced at the *stored*
+    # implied vol rather than trailing realised vol. That is what lets a backtest capture the
+    # variance-risk premium: selling at IV and settling at the realised close earns IV−HV.
+    profit_take_pct: float | None = None  # close early when mark ≤ (1−this)×premium (e.g. 0.50)
+    min_iv_rank: float | None = None  # only open a cycle whose entry IV rank ≥ this (gating)
+    iv_rank_window: int = 252  # trailing observations for the backtest IV rank
 
     @property
     def right(self) -> str:
@@ -66,6 +73,9 @@ class BacktestTrade:
     intrinsic_cost: float  # per share paid to the long at expiry (max(0, …))
     pnl: float  # dollars for the whole position (contracts × 100), net of commission
     assigned: bool
+    entry_iv: float = 0.0  # IV used to price the entry premium (stored obs, or HV proxy)
+    entry_hv: float | None = None  # trailing realised vol at entry → VRP = entry_iv − entry_hv
+    closed_early: bool = False  # True when the 50% profit-take fired before expiry
 
 
 @dataclass
@@ -88,6 +98,10 @@ class BacktestResult:
     annualized_return_pct: float = 0.0
     buy_hold_return_pct: float = 0.0
     max_drawdown_pct: float = 0.0
+    # v2 (N21)
+    iv_source: str = "trailing_hv"  # "stored_iv" when premiums were priced from iv_history
+    mean_vrp_pct: float = 0.0  # mean(entry_iv − entry_hv) × 100 across cycles
+    profit_take_rate: float = 0.0  # fraction of cycles closed early by the profit-take rule
 
 
 def _trailing_hv(closes: list[float], end_idx: int) -> float | None:
@@ -126,13 +140,37 @@ def _strike_for_delta(spot: float, dte: int, iv: float, right: str, target_delta
     return best
 
 
+def _iv_rank_at(iv_series: list[float | None], idx: int, window: int) -> float | None:
+    """Backtest IV rank: min-max position of iv[idx] within the trailing ``window`` of stored IV.
+
+    Matches the live `analytics.iv` min-max method, computed purely from the supplied series so
+    the engine stays offline. None when there is too little history or no spread.
+    """
+    cur = iv_series[idx] if idx < len(iv_series) else None
+    if cur is None or cur <= 0:
+        return None
+    hist = [v for v in iv_series[max(0, idx - window + 1) : idx + 1] if v is not None and v > 0]
+    if len(hist) < 2:
+        return None
+    lo, hi = min(hist), max(hist)
+    if hi <= lo:
+        return None
+    return max(0.0, min(100.0, (cur - lo) / (hi - lo) * 100))
+
+
 def simulate(
     symbol: str,
     prices: list[tuple[date, float]],
     params: BacktestParams,
+    *,
+    iv_series: list[float | None] | None = None,
 ) -> BacktestResult:
     """Run the income simulation over ``prices`` (ascending by date) and return the aggregate.
 
+    With ``iv_series`` (stored daily IV aligned to ``prices``, e.g. from `iv_history`), entry
+    premiums are priced at the observed IV instead of trailing HV — so the result actually
+    measures the variance-risk premium (IV−HV), not a fair-value tautology (N21). The 50%
+    profit-take and IV-rank gating in ``params`` are likewise only active in this v2 path.
     Never raises on ordinary data shortfalls — an empty/short series yields a zero-cycle result.
     """
     result = BacktestResult(
@@ -141,6 +179,7 @@ def simulate(
         start=prices[0][0] if prices else date.today(),
         end=prices[-1][0] if prices else date.today(),
         params=params,
+        iv_source="stored_iv" if iv_series is not None else "trailing_hv",
     )
     if len(prices) < _HV_WINDOW + 2:
         return result
@@ -148,6 +187,15 @@ def simulate(
     dates = [d for d, _ in prices]
     closes = [c for _, c in prices]
     mult = OPTION_MULTIPLIER * params.contracts
+    r = params.risk_free_rate
+
+    def _entry_iv(idx: int, hv: float | None) -> float | None:
+        """Stored IV at idx when available (measures VRP), else the trailing-HV proxy."""
+        if iv_series is not None and idx < len(iv_series):
+            v = iv_series[idx]
+            if v is not None and v > 0:
+                return v
+        return hv
 
     entry_idx = _HV_WINDOW  # first index with enough trailing history
     while entry_idx < len(prices):
@@ -156,38 +204,80 @@ def simulate(
             break  # not enough data left for a full cycle
 
         spot = closes[entry_idx]
-        iv = _trailing_hv(closes, entry_idx)
+        hv = _trailing_hv(closes, entry_idx)
+        entry_iv = _entry_iv(entry_idx, hv)
         dte_actual = (dates[expiry_idx] - dates[entry_idx]).days
-        if iv is not None and dte_actual > 0:
-            strike = _strike_for_delta(spot, dte_actual, iv, params.right, params.target_delta, params.risk_free_rate)
-            premium = (
-                bs_price(spot, strike, dte_actual, iv, params.right, params.risk_free_rate)
-                if strike is not None
-                else None
+        if entry_iv is None or entry_iv <= 0 or dte_actual <= 0:
+            entry_idx = expiry_idx
+            continue
+
+        # IV-rank gating (v2): only sell premium when it's relatively rich. On a gated day we
+        # wait a day and re-check rather than burning the whole cycle.
+        if params.min_iv_rank is not None and iv_series is not None:
+            rank = _iv_rank_at(iv_series, entry_idx, params.iv_rank_window)
+            if rank is None or rank < params.min_iv_rank:
+                entry_idx += 1
+                continue
+
+        strike = _strike_for_delta(spot, dte_actual, entry_iv, params.right, params.target_delta, r)
+        premium = (
+            bs_price(spot, strike, dte_actual, entry_iv, params.right, r)
+            if strike is not None
+            else None
+        )
+        if strike is None or premium is None or premium <= 0:
+            entry_idx = expiry_idx
+            continue
+
+        commission = params.commission_per_contract * params.contracts
+        settle_idx = expiry_idx
+        closed_early = False
+        take_mark: float | None = None
+
+        # 50% profit-take walk (v2): mark the short each day; if it decays to the take level,
+        # buy it back there. Daily marks use the stored IV for that day (or trailing HV).
+        if params.profit_take_pct is not None and 0.0 < params.profit_take_pct < 1.0:
+            floor_value = (1.0 - params.profit_take_pct) * premium
+            for j in range(entry_idx + 1, expiry_idx):
+                rem_dte = (dates[expiry_idx] - dates[j]).days
+                if rem_dte <= 0:
+                    break
+                iv_j = _entry_iv(j, _trailing_hv(closes, j))
+                if iv_j is None or iv_j <= 0:
+                    continue
+                mark = bs_price(closes[j], strike, rem_dte, iv_j, params.right, r)
+                if mark is not None and mark <= floor_value:
+                    settle_idx, closed_early, take_mark = j, True, mark
+                    break
+
+        s_t = closes[settle_idx]
+        if closed_early and take_mark is not None:
+            intrinsic = 0.0  # bought back before expiry → no assignment
+            pnl = (premium - take_mark) * mult - commission
+        else:
+            intrinsic = (
+                max(0.0, s_t - strike) if params.right == "C" else max(0.0, strike - s_t)
             )
-            if strike is not None and premium is not None and premium > 0:
-                s_t = closes[expiry_idx]
-                if params.right == "C":
-                    intrinsic = max(0.0, s_t - strike)
-                else:
-                    intrinsic = max(0.0, strike - s_t)
-                commission = params.commission_per_contract * params.contracts
-                pnl = (premium - intrinsic) * mult - commission
-                result.trades.append(
-                    BacktestTrade(
-                        entry_date=dates[entry_idx],
-                        expiry_date=dates[expiry_idx],
-                        right=params.right,
-                        spot_at_entry=spot,
-                        strike=strike,
-                        premium=round(premium, 4),
-                        spot_at_expiry=s_t,
-                        intrinsic_cost=round(intrinsic, 4),
-                        pnl=round(pnl, 2),
-                        assigned=intrinsic > 0,
-                    )
-                )
-        entry_idx = expiry_idx  # next cycle opens when this one expires
+            pnl = (premium - intrinsic) * mult - commission
+
+        result.trades.append(
+            BacktestTrade(
+                entry_date=dates[entry_idx],
+                expiry_date=dates[settle_idx],
+                right=params.right,
+                spot_at_entry=spot,
+                strike=strike,
+                premium=round(premium, 4),
+                spot_at_expiry=s_t,
+                intrinsic_cost=round(intrinsic, 4),
+                pnl=round(pnl, 2),
+                assigned=intrinsic > 0,
+                entry_iv=round(entry_iv, 6),
+                entry_hv=round(hv, 6) if hv is not None else None,
+                closed_early=closed_early,
+            )
+        )
+        entry_idx = settle_idx if closed_early else expiry_idx
 
     _finalize(result, closes, dates, mult)
     return result
@@ -214,6 +304,9 @@ def _finalize(result: BacktestResult, closes: list[float], dates: list[date], mu
     assigned = sum(1 for t in trades if t.assigned)
     result.win_rate = round(wins / len(trades), 4)
     result.assignment_rate = round(assigned / len(trades), 4)
+    result.profit_take_rate = round(sum(1 for t in trades if t.closed_early) / len(trades), 4)
+    vrps = [t.entry_iv - t.entry_hv for t in trades if t.entry_hv is not None]
+    result.mean_vrp_pct = round(sum(vrps) / len(vrps) * 100, 4) if vrps else 0.0
 
     first = trades[0]
     if first.right == "P":

@@ -149,6 +149,11 @@ class MonitorCfg(BaseModel):
     iv_spike_pct: float = 40.0
     ex_div_days_ahead: int = 5
     alert_cooldown_minutes: int = 30
+    # N20 — when True, a roll trigger generates a roll candidate and sends it with Approve/Reject
+    # buttons (tap → QUEUED ROLL OrderRow → execute_roll), instead of an alert-only message.
+    # Default False: the two-leg BAG sign convention is unverified on a live account, so rolls
+    # stay alert-only until that is confirmed on paper (see STATUS.md live-verification list).
+    roll_execution_enabled: bool = False
 
 
 class AutomationCfg(BaseModel):

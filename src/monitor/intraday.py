@@ -147,6 +147,39 @@ def _persist_alert(alert: RollAlert, review: RollReview | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _try_queue_roll(
+    ib: IB,
+    pos: PositionSnapshot,
+    chat_id: str,
+    cfg: Config,
+) -> int | None:
+    """Fetch the chain, generate the best roll candidate, and raise a PENDING approval (N20).
+
+    Returns the approval id (so the caller can attach Approve/Reject buttons), or None when no
+    roll qualifies or anything fails — in which case the caller falls back to an alert-only send.
+    """
+    underlying = pos.underlying or pos.symbol
+    try:
+        from src.analytics.iv import get_iv_stats
+        from src.analytics.technicals import get_technical_stats
+        from src.execution.roll_pipeline import queue_roll_for_approval
+        from src.ibkr.market_data import get_option_chain_quotes_async
+
+        quotes = await get_option_chain_quotes_async(ib, underlying)
+        if not quotes:
+            return None
+        loop = asyncio.get_running_loop()
+        iv_stats = await loop.run_in_executor(None, get_iv_stats, underlying, quotes)
+        tech_stats = await loop.run_in_executor(None, get_technical_stats, underlying)
+        queued = queue_roll_for_approval(
+            pos, quotes, iv_stats, tech_stats, chat_id=chat_id, ttl_minutes=cfg.approval.ttl_minutes
+        )
+        return queued[0] if queued is not None else None
+    except Exception:
+        log.exception("roll: chain/candidate generation failed for %s", underlying)
+        return None
+
+
 async def fire_alerts(
     alerts: list[RollAlert],
     pos: PositionSnapshot,
@@ -155,11 +188,15 @@ async def fire_alerts(
     chat_id: str,
     cfg: Config,
     executor: ThreadPoolExecutor,
+    ib: IB | None = None,
 ) -> None:
     """De-dup, call Claude, send Telegram, persist. No-op if all alerts are recent.
 
     This function is the testable heart of the monitor — the IB event subscription
-    code in IntradayMonitor calls into here.
+    code in IntradayMonitor calls into here. When ``cfg.monitor.roll_execution_enabled`` is set
+    and an ``ib`` is supplied, the alert is sent as an **approvable roll candidate** (N20):
+    tapping Approve queues a ROLL order that ``execute_roll`` executes. Otherwise it is the
+    historical alert-only message.
     """
     fresh = [a for a in alerts if not _is_recent_alert(a, cfg.monitor.alert_cooldown_minutes)]
     if not fresh:
@@ -180,16 +217,37 @@ async def fire_alerts(
         except Exception:
             log.exception("Claude roll review failed for %s", pos.symbol)
 
+    # Optionally turn the alert into an approvable roll candidate (gated; default OFF).
+    reply_markup = None
+    if getattr(cfg.monitor, "roll_execution_enabled", False) is True and ib is not None:
+        approval_id = await _try_queue_roll(ib, pos, chat_id, cfg)
+        if approval_id is not None:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            reply_markup = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ Approve roll", callback_data=f"approve:{approval_id}"
+                        ),
+                        InlineKeyboardButton("❌ Reject", callback_data=f"reject:{approval_id}"),
+                    ]
+                ]
+            )
+
     from src.notify.formatters import format_roll_alert
 
     text = format_roll_alert(pos, quote, fresh, review)
     try:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
+        await bot.send_message(
+            chat_id=chat_id, text=text, parse_mode="MarkdownV2", reply_markup=reply_markup
+        )
         log.info(
-            "Roll alert sent: %s triggers=%s recommendation=%s",
+            "Roll alert sent: %s triggers=%s recommendation=%s approvable=%s",
             pos.symbol,
             [a.trigger for a in fresh],
             review.recommendation if review else "n/a",
+            reply_markup is not None,
         )
     except Exception:
         log.exception("Telegram send failed for roll alert %s", pos.symbol)
@@ -340,7 +398,14 @@ class IntradayMonitor:
             alerts = check_all(pos, quote, entry_iv=entry_iv, fund_stats=fund_stats, limits=limits)
             if alerts:
                 await fire_alerts(
-                    alerts, pos, quote, self._bot, self._chat_id, self._cfg, self._executor
+                    alerts,
+                    pos,
+                    quote,
+                    self._bot,
+                    self._chat_id,
+                    self._cfg,
+                    self._executor,
+                    ib=self._ib,
                 )
 
     # ------------------------------------------------------------------
