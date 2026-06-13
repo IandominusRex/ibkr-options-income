@@ -108,6 +108,10 @@ async def _auto_queue_candidates(
             # concurrent writer queued the same candidate) rolls back only this candidate,
             # not the whole batch.
             try:
+                # Freeze the exact payload being approved (N2a): execution consumes this
+                # snapshot, so a later re-scan that mutates contracts/premium can't change
+                # the size this auto-approval committed to.
+                snapshot = candidate.model_dump(mode="json")
                 with s.begin_nested():
                     approval = ApprovalRow(
                         candidate_id=candidate.candidate_id,
@@ -115,6 +119,7 @@ async def _auto_queue_candidates(
                         chat_id=chat_id,
                         decided_at=datetime.now(UTC),
                         expires_at=expires_at,
+                        snapshot=snapshot,
                     )
                     s.add(approval)
                     s.flush()
@@ -122,6 +127,7 @@ async def _auto_queue_candidates(
                         candidate_id=candidate.candidate_id,
                         approval_id=approval.id,
                         state=OrderState.QUEUED,
+                        snapshot=snapshot,
                     )
                     s.add(order)
             except IntegrityError:
@@ -171,11 +177,14 @@ async def _send_with_session(
             expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
 
             # Insert approval row first to get the integer ID for callback_data.
+            # Freeze the candidate payload the human is about to see (N2a) — copied onto the
+            # OrderRow at approval time so execution runs exactly what was displayed.
             approval = ApprovalRow(
                 candidate_id=candidate.candidate_id,
                 status=ApprovalStatus.PENDING,
                 chat_id=chat_id,
                 expires_at=expires_at,
+                snapshot=candidate.model_dump(mode="json"),
             )
             session.add(approval)
             session.flush()  # populate approval.id

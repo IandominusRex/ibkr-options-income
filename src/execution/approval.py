@@ -34,8 +34,21 @@ log = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
 
-def _load_candidate(session: Session, candidate_id: str) -> TradeCandidate | None:
-    row = session.query(CandidateRow).filter(CandidateRow.candidate_id == candidate_id).first()
+def _load_candidate(session: Session, order_row: OrderRow) -> TradeCandidate | None:
+    """Load the candidate to execute, preferring the frozen approval snapshot (N2a).
+
+    The OrderRow carries the exact payload that was approved. We execute that — never the
+    latest CandidateRow payload, which a 15-min re-scan may have mutated (different contracts
+    or premium) between approval and this execution pass. Legacy orders created before the
+    freeze have no snapshot; those fall back to the CandidateRow.
+    """
+    if order_row.snapshot:
+        return TradeCandidate.model_validate(order_row.snapshot)
+    row = (
+        session.query(CandidateRow)
+        .filter(CandidateRow.candidate_id == order_row.candidate_id)
+        .first()
+    )
     if row is None:
         return None
     return TradeCandidate.model_validate(row.payload)
@@ -158,7 +171,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 log.debug("Outside RTH — deferring order_id=%s", order_row.id)
                 continue
 
-            candidate = _load_candidate(session, order_row.candidate_id)
+            candidate = _load_candidate(session, order_row)
             if candidate is None:
                 log.error(
                     "Candidate %s not found in DB — cancelling order_id=%s",

@@ -1046,3 +1046,97 @@ async def test_process_button_concurrent_calls_produce_one_order(monkeypatch, tm
         )
     assert len(orders) == 1
     assert orders[0].state == OrderState.QUEUED
+
+
+# --------------------------------------------------------------------------- #
+# approval — frozen approved snapshot (N2a)
+# --------------------------------------------------------------------------- #
+
+
+def test_load_candidate_prefers_frozen_snapshot(monkeypatch, tmp_path):
+    """N2a: execution runs the frozen approved snapshot, never a re-scan-mutated CandidateRow.
+
+    A 15-min re-scan overwrites the CandidateRow payload (here: contracts 1 -> 5). The OrderRow
+    carries the snapshot frozen at approval time, so _load_candidate must return the approved
+    size (1), not the drifted re-scan size (5). Legacy orders with no snapshot fall back.
+    """
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.approval import _load_candidate
+    from src.storage.models import CandidateRow, OrderRow
+
+    def _crow(cid: str, payload_contracts: int) -> CandidateRow:
+        drifted = _make_candidate(candidate_id=cid, contracts=payload_contracts)
+        return CandidateRow(
+            candidate_id=cid,
+            run_id="rescan",
+            strategy=drifted.strategy.value,
+            underlying=drifted.underlying,
+            right=drifted.right.value,
+            strike=drifted.strike,
+            expiry=drifted.expiry,
+            blended_score=drifted.blended_score,
+            payload=drifted.model_dump(mode="json"),
+        )
+
+    approved = _make_candidate(candidate_id="freeze-1", contracts=1)
+
+    with dbmod.session_scope() as s:
+        # freeze-1: CandidateRow drifted to 5, order snapshot frozen at 1.
+        s.add(_crow("freeze-1", 5))
+        order = OrderRow(
+            candidate_id="freeze-1",
+            approval_id=1,
+            state=OrderState.QUEUED,
+            snapshot=approved.model_dump(mode="json"),
+        )
+        s.add(order)
+        # freeze-2: legacy order, no snapshot -> falls back to CandidateRow payload (5).
+        s.add(_crow("freeze-2", 5))
+        legacy = OrderRow(candidate_id="freeze-2", approval_id=2, state=OrderState.QUEUED)
+        s.add(legacy)
+        s.flush()
+
+        loaded = _load_candidate(s, order)
+        assert loaded is not None
+        assert loaded.contracts == 1  # frozen approval, not the drifted re-scan size
+
+        fallback = _load_candidate(s, legacy)
+        assert fallback is not None
+        assert fallback.contracts == 5  # legacy fallback to CandidateRow
+
+
+def test_process_button_freezes_approval_snapshot_onto_order(monkeypatch, tmp_path):
+    """N2a: a manual Approve copies the snapshot frozen on the approval onto the new OrderRow."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.notify.approval_service import _process_button
+    from src.storage.models import ApprovalRow, OrderRow
+
+    cand = _make_candidate(candidate_id="frozen-approve", contracts=3)
+    with dbmod.session_scope() as s:
+        approval = ApprovalRow(
+            candidate_id="frozen-approve",
+            status=ApprovalStatus.PENDING,
+            chat_id="1",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            snapshot=cand.model_dump(mode="json"),
+        )
+        s.add(approval)
+        s.flush()
+        approval_id = approval.id
+
+    found, text, _ = _process_button(approval_id, "approve")
+    assert found is True
+    assert "queued" in text.lower()
+
+    with dbmod.session_scope() as s:
+        from sqlalchemy import select
+
+        order = s.execute(
+            select(OrderRow).where(OrderRow.approval_id == approval_id)
+        ).scalar_one()
+        assert order.snapshot is not None
+        assert order.snapshot["contracts"] == 3

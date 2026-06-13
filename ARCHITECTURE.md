@@ -108,7 +108,7 @@ Each module takes the analytics data and generates specific trades you could pla
 | `cash_secured_put.py` | Cash-secured put candidates: for `would_own` stocks, finds put strikes that offer good yield without excessive assignment risk. Contract count is sized off **available cash** (`total_cash`), not margin buying power — a cash-secured put must be cash-secured; the Rules Engine then caps the *total* across all CSPs. |
 | `rolling.py` | Roll candidates: for existing short options approaching expiry or breaching delta limits, suggests the best roll-forward trade. Roll credit uses a **live quote** for the current contract; if no live quote is found the candidate is skipped. |
 | `buy_candidates.py` | Buy-to-own candidates: stocks from the watchlist worth buying specifically so you can sell covered calls against them |
-| `_scoring.py` | Shared scoring helpers (`technical_score`, `fundamental_score`, `make_candidate_id`) used by all strategy modules |
+| `_scoring.py` | Shared scoring helpers used by all strategy modules. `technical_score` aligns regime to **short** premium (we sell): BULLISH favours selling puts (CSP), BEARISH/SIDEWAYS favours selling calls (CC) — the opposite of buy-side alignment. `fundamental_score` is a quality/dividend step function. `make_candidate_id` is a deterministic, **date-free** hash of `strategy\|underlying\|right\|strike\|expiry` (the property that lets the 15-min loop dedupe via `has_active_order`). |
 
 ---
 

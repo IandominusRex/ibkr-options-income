@@ -16,6 +16,7 @@ import logging
 from datetime import UTC, date, datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.common.schemas import (
     OptionRight,
@@ -24,7 +25,7 @@ from src.common.schemas import (
     VerdictRecord,
 )
 from src.storage.db import session_scope
-from src.storage.models import VerdictLedgerRow
+from src.storage.models import OrderRow, VerdictLedgerRow
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +74,11 @@ def record_verdicts(records: list[VerdictRecord]) -> int:
 
     Refreshes the pre-outcome fields for an existing candidate but preserves any outcome
     already attached (so a re-scan of a candidate that has since closed doesn't reset it).
+
+    Once an order exists for the candidate (it has been approved/queued), the signal vector is
+    frozen (N2b): re-scans no longer refresh it, so the row that eventually receives the
+    realized outcome still carries the signals of the scan that produced the fill — not a later
+    scan's. This mirrors the approved-snapshot freeze on the OrderRow (N2a).
     """
     if not records:
         return 0
@@ -86,13 +92,26 @@ def record_verdicts(records: list[VerdictRecord]) -> int:
                 ).scalar_one_or_none()
                 if existing is None:
                     sess.add(_record_to_new_row(rec))
-                else:
+                elif not _candidate_is_committed(sess, rec.candidate_id):
                     _refresh_presoutcome_fields(existing, rec)
+                # else: an order exists — freeze the committed scan's signals (N2b).
         log.info("ledger: recorded %d verdict(s)", len(records))
         return len(records)
     except Exception:
         log.exception("ledger: failed to record verdicts")
         return 0
+
+
+def _candidate_is_committed(sess: Session, candidate_id: str) -> bool:
+    """True once any OrderRow exists for this candidate (approved/queued or beyond).
+
+    The presence of an order means the candidate was committed to execution; from that point
+    its ledger signal vector must not be overwritten by later re-scans (N2b).
+    """
+    return (
+        sess.execute(select(OrderRow.id).where(OrderRow.candidate_id == candidate_id)).first()
+        is not None
+    )
 
 
 def _record_to_new_row(rec: VerdictRecord) -> VerdictLedgerRow:

@@ -145,10 +145,15 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
                         approval.candidate_id,
                     )
                     return found, f"✅ Already queued\n{candidate_display}", candidate_short
+                # Execute exactly the payload the human was shown (N2a): prefer the snapshot
+                # frozen on the approval at send time; fall back to the CandidateRow payload
+                # for legacy approvals created before the freeze existed.
+                snapshot = approval.snapshot or (crow.payload if crow else None)
                 order = OrderRow(
                     candidate_id=approval.candidate_id,
                     approval_id=approval_id,
                     state=OrderState.QUEUED,
+                    snapshot=snapshot,
                 )
                 session.add(order)
                 decision_text = f"✅ Approved — queued for execution\n{candidate_display}"

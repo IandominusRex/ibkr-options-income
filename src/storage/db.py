@@ -30,6 +30,13 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "action": "VARCHAR(4) DEFAULT 'SELL'",
         "entry_iv": "FLOAT",
     },
+    # Frozen approved candidate payload (N2a) — see Approval/Order row docstrings.
+    "approvals": {
+        "snapshot": "JSON",
+    },
+    "orders": {
+        "snapshot": "JSON",
+    },
 }
 
 # Partial/conditional indexes that SQLAlchemy's model metadata can't express portably.

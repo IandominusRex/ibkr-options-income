@@ -129,6 +129,33 @@ def test_ledger_upsert_preserves_terminal_outcome(tmp_path, monkeypatch) -> None
     assert row.claude_recommendation == "wait"  # pre-outcome fields still refresh
 
 
+def test_ledger_freezes_signals_once_order_exists(tmp_path, monkeypatch) -> None:
+    """N2b: once an order exists for the candidate, re-scans no longer refresh its signals,
+    so the row that gets the realized outcome keeps the scan that produced the fill."""
+    _db_setup(tmp_path, monkeypatch)
+    from src.claude.eval.ledger import load_records, record_verdicts
+    from src.common.schemas import OrderState
+    from src.storage.db import session_scope
+    from src.storage.models import OrderRow
+
+    record_verdicts([_record("a", claude="sell")])
+
+    # No order yet → a re-scan still refreshes the pre-outcome fields.
+    record_verdicts([_record("a", claude="wait")])
+    assert load_records()[0].claude_recommendation == "wait"
+
+    # The candidate is approved/queued → an OrderRow now exists.
+    with session_scope() as s:
+        s.add(OrderRow(candidate_id="a", approval_id=1, state=OrderState.QUEUED))
+
+    # A later re-scan must NOT overwrite the committed scan's signal vector.
+    frozen = record_verdicts([_record("a", claude="skip", confidence=0.99)])
+    assert frozen == 1  # still attempts the write
+    row = load_records()[0]
+    assert row.claude_recommendation == "wait"  # frozen, not "skip"
+    assert row.claude_confidence == 0.7
+
+
 # --------------------------------------------------------------------------- #
 # Reconciler
 # --------------------------------------------------------------------------- #

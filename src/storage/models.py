@@ -80,6 +80,10 @@ class ApprovalRow(Base):
     chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Frozen TradeCandidate payload the human was shown when this approval was raised (N2a).
+    # Copied onto the OrderRow at approval time so execution runs the size/premium that was
+    # actually approved, never a payload mutated by a later re-scan.
+    snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
@@ -97,6 +101,11 @@ class OrderRow(Base):
     avg_fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Frozen approved TradeCandidate payload (N2a). process_queued_orders executes THIS, not the
+    # latest CandidateRow payload, so a 15-min re-scan that changes contracts/premium between
+    # approval and execution can never alter the size the human approved. Nullable for rows
+    # created before the freeze was introduced (execution falls back to CandidateRow then).
+    snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

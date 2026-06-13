@@ -148,15 +148,29 @@ class TestScoringHelpers:
     def test_fundamental_score_dividend_safe_bonus(self):
         assert fundamental_score(_fund(quality=True, dividend_safe=True)) == 85.0
 
-    def test_technical_score_bullish_call(self):
-        q = _call_quote()
-        score = technical_score(q, _tech(regime=Regime.BULLISH))
-        assert score == pytest.approx(60.0)  # 50 + 10 for bullish+call
+    # Regime alignment for SHORT premium (N1): we SELL these options, so the favourable
+    # regime works against the long side of the contract we wrote.
+    #   CSP (PUT):  BULLISH +10 · SIDEWAYS 0 · BEARISH -5
+    #   CC  (CALL): BEARISH +10 · SIDEWAYS +10 · BULLISH -5
+    @pytest.mark.parametrize(
+        ("right", "regime", "expected"),
+        [
+            ("P", Regime.BULLISH, 60.0),  # CSP: bullish tailwind — favourable
+            ("P", Regime.SIDEWAYS, 50.0),  # CSP: neutral
+            ("P", Regime.BEARISH, 45.0),  # CSP: bearish headwind — penalised
+            ("C", Regime.BEARISH, 60.0),  # CC: bearish — favourable
+            ("C", Regime.SIDEWAYS, 60.0),  # CC: range-bound — favourable
+            ("C", Regime.BULLISH, 45.0),  # CC: bullish — upside given up, penalised
+        ],
+    )
+    def test_technical_score_regime_matrix(self, right, regime, expected):
+        q = _put_quote() if right == "P" else _call_quote()
+        score = technical_score(q, _tech(regime=regime))
+        assert score == pytest.approx(expected)
 
-    def test_technical_score_bullish_put(self):
-        q = _put_quote()
-        score = technical_score(q, _tech(regime=Regime.BULLISH))
-        assert score == pytest.approx(45.0)  # 50 - 5
+    def test_technical_score_no_regime_is_neutral(self):
+        assert technical_score(_call_quote(), _tech(regime=None)) == pytest.approx(50.0)
+        assert technical_score(_put_quote(), _tech(regime=None)) == pytest.approx(50.0)
 
     def test_technical_score_clamped(self):
         q = _call_quote()
