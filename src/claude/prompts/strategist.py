@@ -243,8 +243,8 @@ def build_prompt(
             lines.append(f"IV Rank:          {c.iv_rank:.1f}/100")
         if c.vrp is not None:
             lines.append(f"VRP (IV−HV30):    {c.vrp:+.1f}%  (positive = options rich vs realised)")
-        if c.prob_profit is not None:
-            lines.append(f"Prob. Profit:     {c.prob_profit:.1%}")
+        if c.prob_otm is not None:
+            lines.append(f"Prob. OTM (≈1−|Δ|): {c.prob_otm:.1%}  (P expire OTM, not P profit)")
         lines.append(f"Blended Score:    {c.blended_score:.1f}/100")
         lines.append(f"Rationale Tags:   {', '.join(c.rationale_tags) or 'none'}")
         lines.append(

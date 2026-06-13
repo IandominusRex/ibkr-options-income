@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project root = two levels up from this file (src/common/config.py -> root).
@@ -94,6 +94,25 @@ class MarketDataCfg(BaseModel):
     chain_batch_size: int = 40
     request_throttle_seconds: float = 0.25
     quote_sleep_seconds: float = 2.0  # wait after reqMktData(snapshot=True)
+    # N6 — strike band. The chain is scanned across strikes within ±band of spot. A fixed 15%
+    # band excludes the ~0.25-delta strike on high-IV names (at IV≈100%/30DTE it sits 20–30%
+    # OTM), so SOXL/LABU/TSLL/MARA etc. never produced candidates. The band now scales with the
+    # symbol's stored IV: band = max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365)).
+    strike_band_pct: float = 0.15  # floor / fallback when IV is unknown
+    strike_band_iv_mult: float = 1.5  # ≈1.5σ at the longest in-scope expiry
+
+    @model_validator(mode="after")
+    def _enforce_line_budget(self) -> MarketDataCfg:
+        """`max_concurrent_lines` is the account's ~100-line market-data cap. A single chain
+        batch holds `chain_batch_size` simultaneous lines, so the batch must not exceed the cap
+        (N15: previously this key was read by nothing — fail loud at config load instead)."""
+        if self.chain_batch_size > self.max_concurrent_lines:
+            raise ValueError(
+                f"market_data.chain_batch_size ({self.chain_batch_size}) exceeds "
+                f"max_concurrent_lines ({self.max_concurrent_lines}) — a batch can't request "
+                "more simultaneous market-data lines than the account cap."
+            )
+        return self
 
 
 class ClaudeCfg(BaseModel):

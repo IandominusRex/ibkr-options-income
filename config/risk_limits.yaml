@@ -8,8 +8,11 @@ covered_call:
   delta_max: 0.35
   dte_min: 21
   dte_max: 45
-  # Reject if selling the call caps upside below this fraction of cost basis.
-  min_strike_vs_basis: 1.00   # strike must be >= cost basis (no locking in a loss)
+  # Reject if the call strike is below this fraction of cost basis (N18, deliberate policy):
+  # at 1.00 an underwater holding generates NO covered calls (writing below basis would lock in
+  # a loss on assignment). Lower it (e.g. 0.95) to allow below-basis writes and keep harvesting
+  # premium on a long-term hold at the cost of capping its recovery.
+  min_strike_vs_basis: 1.00
 
 cash_secured_put:
   delta_min: 0.15
@@ -32,6 +35,10 @@ liquidity:
   max_bid_ask_spread_pct: 10.0   # of mid
   min_open_interest: 100
   min_option_volume: 10
+  # N19: the day's option volume often hasn't printed yet at a 9:45 ET scan, so the volume gate
+  # would wrongly reject liquid chains early in the session. Before this ET time, the volume gate
+  # is skipped and OI + spread (both stable from the open) carry the liquidity check.
+  morning_volume_cutoff_et: "10:30"
 
 # --- IV environment ---
 iv:

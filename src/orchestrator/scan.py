@@ -308,7 +308,7 @@ def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
         "iv_rank": c.iv_rank,
         "delta": c.delta,
         "vrp": c.vrp,
-        "prob_profit": c.prob_profit,
+        "prob_otm": c.prob_otm,
         "roc_pct": c.roc_pct,
         "annualized_yield_pct": c.annualized_yield_pct,
         "dte": c.dte,
@@ -536,6 +536,18 @@ async def _run_scan_body(
         len(holdings_symbols),
         len(would_own),
     )
+
+    # N15: any symbol missing from universe.yaml `sectors:` silently escapes the per-sector
+    # concentration cap (the risk engine can't bucket it). Warn loudly so the gap is visible.
+    sectors_map = cfg.universe.get("sectors", {})
+    unmapped = sorted(s for s in all_symbols if s not in sectors_map)
+    if unmapped:
+        log.warning(
+            "scan: %d symbol(s) missing from universe.yaml `sectors:` — they bypass the "
+            "per-sector concentration cap: %s",
+            len(unmapped),
+            unmapped,
+        )
 
     # --- 3. Sentiment scorer ---
     sentiment = SentimentScorer(

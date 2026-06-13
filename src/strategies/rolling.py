@@ -140,7 +140,7 @@ def generate_roll_candidates(
                 roc_pct=round(roc_pct, 4),
                 annualized_yield_pct=round(annualized_yield_pct, 4),
                 breakeven=round(breakeven, 4),
-                prob_profit=round(1 - delta_abs, 4),
+                prob_otm=round(1 - delta_abs, 4),
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 dte=new_dte,

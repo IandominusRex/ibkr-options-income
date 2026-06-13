@@ -30,29 +30,32 @@ import contextlib
 import logging
 import signal
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 from ib_async import IB
-from ib_async import Contract as IBContract
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.market_hours import is_new_entry_window, is_rth
-from src.common.schemas import ApprovalStatus, OrderState, PositionSnapshot
+from src.common.schemas import ApprovalStatus, OrderState
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
+
+# Profit-take orchestration lives in src/execution/ (N23 — trading control flow is not the notify
+# layer's job). Imported under their historical private names so the intraday loop and existing
+# tests keep working; the Telegram sends go through the passed bot.
+from src.execution.profit_take import check_profit_takes as _check_profit_takes
+from src.execution.profit_take import (
+    net_entry_credit_per_share as _net_entry_credit_per_share,  # noqa: F401  (re-exported for tests)
+)
 from src.execution.reconciliation import (
     reconcile_external_closes,
     reconcile_orphan_fills,
     recover_orphan_orders,
 )
 from src.ibkr.connection import AutoReconnect
-from src.ibkr.contracts import build_option
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order

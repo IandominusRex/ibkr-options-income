@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 import math
 
-from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
+from src.analytics.liquidity import (
+    passes_liquidity_gates,
+    score_liquidity,
+    volume_gate_active,
+)
 from src.common.config import get_config
 from src.common.schemas import (
     FundamentalStats,
@@ -62,6 +66,7 @@ def generate_cc_candidates(
     min_strike_vs_basis: float = cc_cfg.get("min_strike_vs_basis", 1.00)
 
     candidates: list[TradeCandidate] = []
+    enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
 
     for quote in quotes:
         if quote.right != OptionRight.CALL:
@@ -74,11 +79,18 @@ def generate_cc_candidates(
         dte = quote.dte
         if not (dte_min <= dte <= dte_max):
             continue
-        mid = quote.mid
+        # Require a genuine two-sided market (N10): never price a candidate off a stale `last`.
+        mid = quote.strict_mid
         if mid is None or mid <= 0:
             continue
-        if not passes_liquidity_gates(quote):
+        if not passes_liquidity_gates(quote, enforce_volume=enforce_volume):
             continue
+        # Drawdown-CC policy (N18, explicit decision): with the default `min_strike_vs_basis: 1.00`
+        # a strike below cost basis is rejected — so an *underwater* holding generates no covered
+        # calls (writing below basis would lock in a loss if assigned). This is deliberate: it
+        # favours not capping the recovery over squeezing income from a loser. To allow below-basis
+        # writes (e.g. to keep harvesting premium on a long-term hold), lower the knob in
+        # risk_limits.yaml (e.g. 0.95 permits strikes down to 5% below basis).
         if quote.strike < position.avg_cost * min_strike_vs_basis:
             continue
 
@@ -120,7 +132,7 @@ def generate_cc_candidates(
                 roc_pct=round(roc_pct, 4),
                 annualized_yield_pct=round(annualized_yield_pct, 4),
                 breakeven=round(position.avg_cost - mid, 4),
-                prob_profit=round(1 - delta, 4),
+                prob_otm=round(1 - delta, 4),
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 vrp=iv_stats.vrp,

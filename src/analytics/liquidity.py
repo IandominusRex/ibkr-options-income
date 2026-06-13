@@ -1,21 +1,47 @@
 """Liquidity scoring and gate checks for option quotes.
 
-Pure math on OptionQuote objects — no external calls, no DB access.
+Pure math on OptionQuote objects — no external calls, no DB access (beyond reading config).
 Thresholds are read from config/risk_limits.yaml via get_config().
 """
 
 from __future__ import annotations
 
 import math
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from src.common.config import get_config
 from src.common.schemas import OptionQuote
 
+_ET = ZoneInfo("America/New_York")
 
-def passes_liquidity_gates(quote: OptionQuote) -> bool:
-    """Return True iff the quote clears all three liquidity hard gates.
 
-    Any None field fails its gate (conservative default).
+def volume_gate_active(now_et: time | None = None) -> bool:
+    """True when the day-volume liquidity gate should be enforced (N19).
+
+    Option volume often hasn't printed at a 9:45 ET scan, so before the configured
+    `liquidity.morning_volume_cutoff_et` the gate is skipped (OI + spread carry the check). Pass
+    `now_et` for deterministic tests; defaults to the current ET wall-clock. A missing/blank
+    cutoff means "always enforce".
+    """
+    raw = get_config().risk["liquidity"].get("morning_volume_cutoff_et")
+    if not raw:
+        return True
+    try:
+        hh, mm = (int(x) for x in str(raw).split(":", 1))
+        cutoff = time(hh, mm)
+    except (ValueError, TypeError):
+        return True
+    current = now_et if now_et is not None else datetime.now(_ET).time()
+    return current >= cutoff
+
+
+def passes_liquidity_gates(quote: OptionQuote, *, enforce_volume: bool = True) -> bool:
+    """Return True iff the quote clears the liquidity hard gates.
+
+    Any None field fails its gate (conservative default). When `enforce_volume` is False the
+    day-volume gate is skipped (N19 — early-session, before volume has printed); OI and spread
+    still apply. Morning-scan callers pass `enforce_volume=volume_gate_active()`.
     """
     cfg = get_config().risk["liquidity"]
     max_spread = cfg["max_bid_ask_spread_pct"]
@@ -30,9 +56,10 @@ def passes_liquidity_gates(quote: OptionQuote) -> bool:
     if oi is None or oi < min_oi:
         return False
 
-    vol = quote.volume
-    if vol is None or vol < min_vol:
-        return False
+    if enforce_volume:
+        vol = quote.volume
+        if vol is None or vol < min_vol:
+            return False
 
     return True
 

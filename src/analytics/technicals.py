@@ -36,7 +36,7 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
     sma_20 = _sma(close, 20)
     sma_50 = _sma(close, 50)
     sma_200 = _sma(close, 200)
-    trend_strength = _adx_proxy(atr, price)
+    atr_ratio = _atr_ratio(atr, price)
     supports, resistances = _support_resistance(close)
     regime = _classify_regime(price, atr, rsi, sma_50, sma_200)
 
@@ -52,7 +52,7 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
         sma_200=sma_200,
         support_levels=supports,
         resistance_levels=resistances,
-        trend_strength=trend_strength,
+        atr_ratio=atr_ratio,
         regime=regime,
     )
 
@@ -116,8 +116,12 @@ def _sma(close: pd.Series, n: int) -> float | None:
     return round(val, 4) if np.isfinite(val) else None
 
 
-def _adx_proxy(atr: float | None, price: float) -> float | None:
-    """Simplified trend-strength proxy: (ATR / close) * 100. Higher = stronger trend."""
+def _atr_ratio(atr: float | None, price: float) -> float | None:
+    """Normalised volatility: (ATR / close) × 100. Higher = more volatile (NOT trend strength).
+
+    Renamed from `_adx_proxy` (N16): ATR/price measures range/volatility, not directional trend —
+    it was never ADX. Directional regime is classified separately in `_classify_regime`.
+    """
     if atr is None or price <= 0:
         return None
     return round(atr / price * 100, 4)

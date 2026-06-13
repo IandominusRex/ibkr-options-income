@@ -58,7 +58,7 @@ def _make_candidate(
         roc_pct=0.83,
         annualized_yield_pct=18.5,
         breakeven=183.50,
-        prob_profit=0.72,
+        prob_otm=0.72,
         delta=0.28,
         iv_rank=65.0,
         dte=48,

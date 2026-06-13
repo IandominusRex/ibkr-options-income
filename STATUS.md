@@ -212,6 +212,169 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
   SQLite snapshot into `data/backups/`, rotated to the last 7. The system of record (orders, fills,
   learning history) is no longer a single point of failure.
 
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 1: signal & approval integrity)
+
+The independent Fable-5 review (`IMPROVEMENT_PLAN.md`, N1–N23) targeted the signal layer and
+approval integrity. Phase 1 — the two findings that change *what gets traded* — is fixed:
+
+- **N1 Regime scoring was inverted for short premium:** `technical_score` rewarded selling calls
+  into BULLISH regimes and puts into BEARISH — the alignment for *buying* options, backwards for a
+  premium seller (weight ~0.20–0.25 of the blend, so it systematically mis-ranked toward the
+  riskiest regime/right combinations). **Fixed** in `src/strategies/_scoring.py`: a short put (CSP)
+  is favoured in BULLISH (+10) and penalised in BEARISH (−5); a short call (CC) is favoured in
+  BEARISH/SIDEWAYS (+10) and penalised in BULLISH (−5). A full (regime × right) matrix test pins
+  the direction (`tests/test_strategies.py::test_technical_score_regime_matrix`).
+- **N2a Approved order ≠ executed order:** `candidate_id` is a deterministic, date-free hash and
+  `_persist_candidates` delete+reinserts the payload every re-scan, so the 15-min loop could change
+  `contracts`/`premium` between approval and execution — and `_load_candidate` read the *latest*
+  payload, executing a size the human never approved. **Fixed:** `ApprovalRow` and `OrderRow` now
+  carry a frozen `snapshot` (the `TradeCandidate` payload at the moment it was shown/approved).
+  `_send_with_session` and `_auto_queue_candidates` freeze it; `_process_button` copies the
+  approval's snapshot onto the order; `execution/approval.py::_load_candidate` executes the OrderRow
+  snapshot (falling back to `CandidateRow` only for legacy rows). The lightweight migration in
+  `db.py` adds the two columns to existing DBs.
+- **N2b Ledger signal-vector noise:** `record_verdicts` refreshed the verdict-ledger `signals` on
+  every re-scan, so the row that eventually received the realized outcome no longer carried the
+  signal vector of the scan that produced the fill. **Fixed:** once any `OrderRow` exists for the
+  candidate, the pre-outcome fields are frozen (`_candidate_is_committed`), mirroring the N2a
+  snapshot freeze. Recorded outcomes were already preserved.
+- **N2c `candidate_id` composition:** documented in `make_candidate_id` — the id is deliberately
+  **date-free** (the property that lets the 15-min loop dedupe via `has_active_order`); payload
+  drift is handled by the N2a snapshot freeze, not by encoding the date. No stale "+date" docstring
+  remained in `models.py`.
+
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 2: AI-layer hardening)
+
+- **N3 Unsandboxed `claude -p` subprocess:** the headless CLI ran ~26+×/day with only
+  `--output-format json` — no turn cap, no tool restriction, no model pin. The fence isolates
+  Claude's *output* from execution, but the subprocess itself had the user's default tool
+  permissions. **Fixed:** `runner._build_cmd` now assembles every call site with `--max-turns`,
+  `--disallowedTools`, and an optional `--model` pin, all config-driven
+  (`claude.max_turns` / `disallowed_tools` / `model` in `settings.yaml`; shipped defaults:
+  one turn, a full tool denylist, model pinned to `claude-sonnet-4-6`). The flags don't change
+  the JSON envelope, so parsing is unaffected.
+- **N9 Unbounded memory injection:** `_load_memory` had no limit, so 30 days × every scan's
+  surfaced candidates grew into thousands of history lines per prompt (cost, latency, and an
+  echo chamber of Claude's own prose). **Fixed:** `_load_memory` keeps ≤3 rows per symbol
+  (outcomes first); `_persist_memory` upserts one `claude_memory` row per (symbol, strategy,
+  day) — refreshed with the best-ranked candidate's verdict — instead of one row per candidate
+  per 15-min cycle. A recorded outcome is never clobbered.
+- **N12 AUTOMATED-mode semantics documented (design decision):** in AUTOMATED mode the system
+  trades the **deterministic, gate-passing slate**; Claude's review is enrichment shown for the
+  record but does **not** filter, gate, or reorder what executes — a "skip / confidence 0.9"
+  verdict changes nothing. This is required by the fence (Claude must never gate an order). To
+  raise the AUTO bar, raise `weights.min_candidate_score` (applies to both modes) — never route
+  it through Claude's verdict. `_auto_queue_candidates` queues the slate; the execution-time
+  Rules-Engine re-gate and circuit breakers remain the only deterministic guards.
+- **N17 Hardcoded universe prices would rot:** `strategist._UNIVERSE_CONTEXT` carries Jun-2026
+  prices/IV ranks; over months Claude would anchor on wrong levels with high confidence.
+  **Fixed:** the static block now opens with a STALE banner (figures are coarse qualitative
+  anchors only), and the scan injects a **scan-time spot-price block** (from the technicals
+  computed each scan) marked authoritative, so Claude reasons from current levels.
+
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 3: data integrity & risk-engine accuracy)
+
+- **N4 IV history was bootstrap-only:** the only writer to `iv_history` was the one-shot
+  `scripts/backfill_iv.py`, so the IV-rank window aged silently — and IV rank is both the largest
+  score weight (0.30) and a hard gate (`min_iv_rank`). **Fixed:** a new `src/storage/iv_history.py`
+  centralises access; the EOD run appends one IV observation per universe symbol each day
+  (`_append_daily_iv`, idempotent on `(symbol, date)`); and `/health` warns (with a new "IV history"
+  status line) when any universe symbol's latest observation is older than 5 days or missing.
+- **N5 Inconsistent exposure seeding:** `_seed_exposures` counted existing short puts at |option
+  market value| (~1% of notional) for per-ticker/sector concentration but at strike×100 for the
+  CSP-collateral tally, so a ticker with several working short puts looked nearly unexposed to the
+  5%-per-ticker cap. **Fixed:** short puts now contribute strike×100×|contracts| to ticker/sector
+  exposure too, matching exactly how a new CSP candidate is charged.
+- **N6 ±15% strike band excluded the high-IV tier:** at IV≈100%/30 DTE a 0.25-delta strike sits
+  20–30% OTM — outside a fixed ±15% band — so SOXL/LABU/TSLL/MARA/RGTI etc. rarely produced
+  candidates. **Fixed:** `_strike_band_pct` scales the band with the symbol's stored IV
+  (`max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365))`), with optional per-symbol
+  `universe.yaml → strike_bands` overrides for the extreme-IV leveraged ETFs (so they work before
+  their IV history is backfilled). *Live note:* confirm these Tier-3 names actually produce
+  candidates on a real paper scan — the band math is unit-tested, but end-to-end chain coverage
+  needs a live session.
+- **N10 Premium could be priced off a stale `last`:** `OptionQuote.mid` falls back to `last`, so a
+  candidate's premium/ROC/yield/score could be computed from a prior-session print when the snapshot
+  had no two-sided market. **Fixed:** added `OptionQuote.strict_mid` (no `last` fallback; accepts
+  bid=0 with a positive ask) and the CC/CSP generators now price off it. The order builder already
+  refused `last` at send time; the strategy layer now matches.
+
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 4: operational robustness)
+
+- **N7 Scan-lease TTL race:** a full ~60-symbol scan can exceed the 600 s lease TTL, so the lease
+  could expire mid-scan and let a second scan start — the exact line-cap poisoning the lease
+  prevents — and `release_scan_lease` unconditionally zeroed the key, possibly releasing a lease
+  another process had since claimed. **Fixed:** the lease value is now `"<expiry>|<owner-token>"`;
+  `acquire_scan_lease` returns a stable owner token, the scan loop calls `renew_scan_lease(token)`
+  each symbol (heartbeat that extends the TTL), and both `renew` and `release` are compare-and-swap
+  on the owner — a scan that overran and was re-claimed can neither renew nor clobber the new holder.
+- **N8 A REJECTED order could have a real fill:** if the executor's monitor loop throws (e.g.
+  `cancelOrder` on a dropped socket) the except path marks the order REJECTED, but the SELL may
+  already have filled at the broker — leaving a live short with no FillRow (invisible to profit-take,
+  no entry IV, mislabelled ledger). **Fixed:** `reconcile_orphan_fills` now sweeps REJECTED/CANCELLED
+  orders that carry an `ib_order_id` in addition to SUBMITTED ones, so a fill that landed during the
+  failure window is recovered. Pre-placement cancels (TTL/re-validation) have no `ib_order_id` and
+  are correctly ignored.
+- **N11 Chase repriced against a stale quote:** the reprice loop consumed `quote.bid/ask` captured
+  before `placeOrder`, so 45–90 s later it chased a stale bid. **Fixed:** each chase step re-fetches
+  the live bid/ask (`_refetch_bid_ask`) before computing the next limit. (Repricing remains default
+  OFF pending live-paper verification — see the live-verification list.)
+- **N14 Profit-take burned a fixed sleep per position:** `_check_profit_takes` slept the full
+  `quote_timeout_seconds` for every short position each 15-min cycle. **Fixed:** it now polls for the
+  bid/ask in 0.1 s steps and returns as soon as a two-sided market arrives (same pattern as
+  `_fetch_quote`), bounded by the same timeout.
+- **N13 EOD figure mislabelled "realized P&L":** the EOD figure is daily option premium *cashflow*
+  (credits − debits), not a paired realized P&L, yet it flowed into the Telegram summary and Claude's
+  narrative under the wrong name. **Fixed:** both boundaries now label it "premium cashflow" with a
+  note that assignment stock-leg P&L is excluded; the `JournalRow.realized_pnl` column and
+  `EODSummary.realized_pnl` field are retained (with clarifying comments) for back-compat.
+
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 5: validation & strategy evidence)
+
+- **N22 Scoring model was unvalidated:** nothing linked `blended_score` to realized outcomes,
+  even though the verdict ledger stores exactly that. **Added** `src/claude/eval/score_metrics.py`
+  + `scripts/evaluate_scores.py`: over closed ledger rows, it buckets `blended_score` (and each
+  scorecard component) by realized win rate / mean P&L and reports a per-signal Pearson
+  correlation. Read-only evidence to re-derive `scoring_weights.yaml` **by hand** — the fence
+  forbids any automatic feedback into the engine. (This is the analysis tool; an actual
+  weight change still awaits enough closed paper fills.)
+- **N21 Backtest couldn't measure the edge:** v1 priced premiums at trailing HV (fair value ⇒
+  edge ≈ 0). **Added** a v2 path — `simulate(..., iv_series=…)` prices entries from stored daily
+  IV (`iv_history`, via `data.load_iv_series`), so the variance-risk premium is actually measured
+  (`mean_vrp_pct`); `params.profit_take_pct` simulates the 50% take and `params.min_iv_rank` gates
+  by IV rank. v1 behaviour is unchanged when no `iv_series` is supplied.
+- **N20 Roll pipeline not wired:** `generate_roll_candidates` had no production caller and
+  `execute_roll` was unreachable. **Wired** end-to-end: `execution/roll_pipeline.py::
+  queue_roll_for_approval` (monitor `fire_alerts` → chain fetch → candidate → PENDING approval) →
+  Telegram Approve → QUEUED ROLL order → `process_queued_orders` → `execute_roll`. Gated by
+  `monitor.roll_execution_enabled` (default OFF) until the BAG sign convention is verified on live
+  paper. `validate_candidates` now treats ROLL as exposure-neutral so the queue re-gate doesn't
+  double-count the replaced leg.
+
+## Bugs fixed (2026-06-13 — IMPROVEMENT_PLAN.md v2 Phase 6: hygiene / clarity)
+
+- **N15 Silent gaps:** (a) universe symbols missing from `universe.yaml → sectors:` silently
+  escaped the per-sector cap — the scan now warns at start, listing the unmapped symbols; (b)
+  `market_data.max_concurrent_lines` was read by nothing — a `MarketDataCfg` validator now enforces
+  `chain_batch_size ≤ max_concurrent_lines` (fail loud at config load); (c) the unenforced-config-key
+  guard test now also covers `settings.yaml` (every leaf key must be referenced in `src/`).
+- **N16 Mislabelled signals:** `prob_profit` (which is P(expire OTM) ≈ 1−|delta|, not P(profit))
+  renamed to `prob_otm` across the schema, generators, prompt, ledger signal vector, and score
+  report; the prompt line now reads "Prob. OTM (≈1−|Δ|)". `_adx_proxy`/`TechnicalStats.trend_strength`
+  (ATR/price — a volatility measure, never ADX) renamed to `_atr_ratio`/`atr_ratio`.
+- **N18 Drawdown-CC policy (explicit decision):** kept `min_strike_vs_basis: 1.00` — an underwater
+  holding generates no covered calls (writing below basis would lock in a loss on assignment).
+  Documented in code + `risk_limits.yaml`: lower the knob (e.g. 0.95) to allow below-basis writes.
+- **N19 Morning volume gate:** the day-volume liquidity gate is now time-aware — before
+  `liquidity.morning_volume_cutoff_et` (default 10:30 ET) it is skipped so a 9:45 scan doesn't reject
+  liquid chains whose volume hasn't printed yet (OI + spread still apply). `volume_gate_active()` is
+  injectable for deterministic tests.
+- **N23 Trading logic in the notify layer:** the profit-take orchestration
+  (`check_profit_takes` + `net_entry_credit_per_share` + the auto-close/alert glue) moved from
+  `notify/approval_service.py` to `execution/profit_take.py`; the daemon re-exports it and the
+  Telegram sends go through the passed bot. The intraday-loop *driver* stays in the daemon (its
+  lifecycle), but the trading control flow no longer lives in `notify/`.
+
 ---
 
 ## Remaining known issues (not fixed — require live validation or design decision)

@@ -376,6 +376,22 @@ class TestLiquidity:
         q = _quote(spread_pct=5.0, open_interest=500, volume=2)
         assert passes_liquidity_gates(q) is False
 
+    def test_volume_gate_skipped_when_not_enforced(self):
+        # N19: before the morning cutoff the volume gate is skipped; OI + spread still apply.
+        q = _quote(spread_pct=5.0, open_interest=500, volume=2)  # volume below min
+        assert passes_liquidity_gates(q, enforce_volume=False) is True
+        thin = _quote(spread_pct=5.0, open_interest=10, volume=2)  # OI still fails
+        assert passes_liquidity_gates(thin, enforce_volume=False) is False
+
+    def test_volume_gate_active_is_time_aware(self):
+        from datetime import time
+
+        from src.analytics.liquidity import volume_gate_active
+
+        # Default cutoff is 10:30 ET (config); before it the gate is inactive, after it active.
+        assert volume_gate_active(time(9, 45)) is False
+        assert volume_gate_active(time(11, 0)) is True
+
     def test_none_spread_fails_gate(self):
         q = OptionQuote(
             underlying="TEST",

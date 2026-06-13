@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
+from src.analytics.liquidity import (
+    passes_liquidity_gates,
+    score_liquidity,
+    volume_gate_active,
+)
 from src.common.config import get_config
 from src.common.schemas import (
     AccountSnapshot,
@@ -50,6 +54,7 @@ def generate_csp_candidates(
     max_csp_pct: float = portfolio_cfg.get("max_csp_allocation_pct", 60.0)
 
     candidates: list[TradeCandidate] = []
+    enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
 
     for quote in quotes:
         if quote.right != OptionRight.PUT:
@@ -118,7 +123,7 @@ def generate_csp_candidates(
                 roc_pct=round(roc_pct, 4),
                 annualized_yield_pct=round(annualized_yield_pct, 4),
                 breakeven=round(quote.strike - mid, 4),
-                prob_profit=round(1 - delta_abs, 4),
+                prob_otm=round(1 - delta_abs, 4),
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 vrp=iv_stats.vrp,

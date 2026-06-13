@@ -177,7 +177,9 @@ class TechnicalStats(BaseModel):
     sma_200: float | None = None
     support_levels: list[float] = Field(default_factory=list)
     resistance_levels: list[float] = Field(default_factory=list)
-    trend_strength: float | None = None  # e.g. ADX
+    # ATR-to-price ratio (a normalised *volatility* measure), not a directional trend strength.
+    # Named honestly (N16): the old `trend_strength` label implied ADX, which this never was.
+    atr_ratio: float | None = None
     regime: Regime | None = None
 
 
@@ -226,7 +228,9 @@ class TradeCandidate(BaseModel):
     roc_pct: float  # return on capital for the trade
     annualized_yield_pct: float
     breakeven: float
-    prob_profit: float | None = None
+    # P(option expires OTM) ≈ 1 − |delta| — NOT P(profit) (which would credit the premium
+    # cushion and the early-close path). Named honestly per N16.
+    prob_otm: float | None = None
     delta: float | None = None
     iv_rank: float | None = None
     vrp: float | None = None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
@@ -361,7 +365,7 @@ class VerdictRecord(BaseModel):
     expiry: date
     dte: int
     # The full signal vector Claude saw at decision time (blended_score, iv_rank, delta,
-    # vrp, prob_profit, roc_pct, annualized_yield_pct, scorecard components, vix, tags).
+    # vrp, prob_otm, roc_pct, annualized_yield_pct, scorecard components, vix, tags).
     signals: dict = Field(default_factory=dict)
     # Claude's verdict (enrichment output)
     claude_recommendation: str  # "sell" | "wait" | "skip" | "none" (no review returned)

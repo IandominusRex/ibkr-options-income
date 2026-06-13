@@ -9,8 +9,10 @@ new key that nothing reads — or wiring up an allowlisted one — fails this te
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -60,3 +62,29 @@ def test_allowlist_stays_accurate() -> None:
         "These allowlisted keys are now referenced in src/ — remove them from _KNOWN_UNENFORCED: "
         f"{sorted(_KNOWN_UNENFORCED - still_unread)}"
     )
+
+
+# settings.yaml keys map to Pydantic fields (attribute access), not quoted dict lookups, so the
+# detection is a whole-word identifier match. This catches an orphan key — a typo or a key with
+# no schema field that silently does nothing (N15 extends the guard to settings.yaml). The
+# `max_concurrent_lines` enforcement (a MarketDataCfg validator) keeps that key from being dead.
+def test_every_settings_key_is_referenced_in_src() -> None:
+    settings = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
+    keys = _leaf_keys(settings)
+    src = _src_text()
+    unread = sorted(k for k in keys if not re.search(rf"\b{re.escape(k)}\b", src))
+    assert not unread, (
+        f"settings.yaml keys referenced by no source file: {unread}. "
+        "Wire them into the config models/usage or remove them."
+    )
+
+
+def test_market_data_line_budget_enforced() -> None:
+    """N15: `max_concurrent_lines` now constrains `chain_batch_size` (was read by nothing)."""
+    from pydantic import ValidationError
+
+    from src.common.config import MarketDataCfg
+
+    MarketDataCfg(chain_batch_size=40, max_concurrent_lines=90)  # within budget — ok
+    with pytest.raises(ValidationError):
+        MarketDataCfg(chain_batch_size=120, max_concurrent_lines=90)
