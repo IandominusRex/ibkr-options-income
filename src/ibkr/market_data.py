@@ -137,11 +137,16 @@ def _get_spot(ib: IB, stock: Any) -> float:
     ticker = ib.reqMktData(stock, snapshot=True)
     ib.sleep(1)
     price = ticker.marketPrice()
-    ib.cancelMktData(stock)
     p = _safe(price)
     if p is None or math.isnan(p) or p <= 0:
-        # Snapshot can return a stale cached tick (or NaN pre-market).
-        # Fall back to the last daily close bar for a reliable price.
+        # No live/delayed tick (weekend, no subscription) — previous close is part of the
+        # same snapshot and needs no extra round trip.
+        p = _safe(ticker.close)
+    ib.cancelMktData(stock)
+    if p is None or p <= 0:
+        # Last resort: a tightly-bounded historical bar. ib_async's reqHistoricalData
+        # defaults to a 60s timeout — without spot_history_timeout_seconds, a symbol with
+        # no live tick AND no previous close would stall this long.
         bars = ib.reqHistoricalData(
             stock,
             endDateTime="",
@@ -150,6 +155,7 @@ def _get_spot(ib: IB, stock: Any) -> float:
             whatToShow="TRADES",
             useRTH=True,
             keepUpToDate=False,
+            timeout=get_config().market_data.spot_history_timeout_seconds,
         )
         if bars:
             p = _safe(bars[-1].close)
@@ -163,11 +169,17 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
     ticker = ib.reqMktData(stock, snapshot=True)
     await asyncio.sleep(get_config().market_data.quote_sleep_seconds)
     price = ticker.marketPrice()
-    ib.cancelMktData(stock)
     p = _safe(price)
     if p is None or math.isnan(p) or p <= 0:
-        # Snapshot can return a stale cached tick (or NaN pre-market).
-        # Fall back to the last daily close bar for a reliable price.
+        # No live/delayed tick (weekend, no subscription) — previous close is part of the
+        # same snapshot and needs no extra round trip.
+        p = _safe(ticker.close)
+    ib.cancelMktData(stock)
+    if p is None or p <= 0:
+        # Last resort: a tightly-bounded historical bar. ib_async's reqHistoricalDataAsync
+        # defaults to a 60s timeout — without spot_history_timeout_seconds, a symbol with
+        # no live tick AND no previous close would stall this long (this was the dominant
+        # cost of /scan on weekends: ~60s x every symbol).
         bars = await ib.reqHistoricalDataAsync(
             stock,
             endDateTime="",
@@ -176,6 +188,7 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
             whatToShow="TRADES",
             useRTH=True,
             keepUpToDate=False,
+            timeout=get_config().market_data.spot_history_timeout_seconds,
         )
         if bars:
             p = _safe(bars[-1].close)

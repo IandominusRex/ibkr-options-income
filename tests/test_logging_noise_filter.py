@@ -1,0 +1,56 @@
+"""Tests for _NoiseFilter — collapses the IBKR error-callback flood (see scan logs)."""
+
+from __future__ import annotations
+
+import logging
+
+from src.common.logging import _NoiseFilter
+
+
+def _record(name: str, msg: str, levelno: int = logging.ERROR) -> logging.LogRecord:
+    return logging.LogRecord(
+        name=name, level=levelno, pathname="x.py", lineno=1, msg=msg, args=(), exc_info=None
+    )
+
+
+def test_truncates_overly_long_messages():
+    f = _NoiseFilter()
+    rec = _record("ib_async.wrapper", "Error 354" + "&BEST/OPT/Top" * 100)
+    assert f.filter(rec) is True
+    assert len(rec.getMessage()) <= _NoiseFilter._MAX_LEN + 40
+    assert "truncated" in rec.getMessage()
+
+
+def test_suppresses_runs_of_near_identical_messages():
+    f = _NoiseFilter()
+
+    decisions = []
+    for i in range(6):
+        rec = _record("ib_async.wrapper", f"Error 300, reqId 1792{i}: Can't find EId with tickerId:1792{i}")
+        decisions.append(f.filter(rec))
+
+    # First _SUPPRESS_AFTER+1 pass through (identical 120-char prefix), rest suppressed.
+    assert decisions[:3] == [True, True, True]
+    assert all(d is False for d in decisions[3:])
+
+
+def test_repeat_count_resets_on_distinct_message(caplog):
+    f = _NoiseFilter()
+    logger_name = "ib_async.wrapper"
+
+    for i in range(5):
+        f.filter(_record(logger_name, f"Error 300, reqId {i}: Can't find EId with tickerId:{i}"))
+
+    with caplog.at_level(logging.ERROR, logger=logger_name):
+        rec = _record(logger_name, "scan: processing SOFI")
+        assert f.filter(rec) is True
+
+    assert any("suppressed" in r.message for r in caplog.records)
+
+
+def test_same_record_processed_by_multiple_handlers_is_idempotent():
+    f = _NoiseFilter()
+    rec = _record("ib_async.wrapper", "Error 300, reqId 1: Can't find EId with tickerId:1")
+    first = f.filter(rec)
+    second = f.filter(rec)
+    assert first == second is True

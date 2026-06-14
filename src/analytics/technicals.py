@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from src.common.cache import daily_cached
 from src.common.schemas import Regime, TechnicalStats
 
 _HIGH_VOL_ATR_RATIO = 0.025  # ATR/close > this → HIGH_VOL
@@ -23,13 +24,15 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
     """Return TechnicalStats for *symbol* using the last *lookback_days* of OHLCV."""
     df = _fetch(symbol)
     if df.empty:
-        return TechnicalStats(symbol=symbol, price=0.0)
+        return TechnicalStats(symbol=symbol, price=_fetch_last_price(symbol) or 0.0)
 
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
 
-    price = float(close.iloc[-1])
+    # Live quote, fetched fresh every call (unlike the cached 1y history below) — keeps the
+    # scan-time spot price (N17) current even on a cache hit for the historical bars.
+    price = _fetch_last_price(symbol) or float(close.iloc[-1])
     rsi = _rsi14(close)
     atr = _atr14(high, low, close)
     macd_line, signal_line = _macd(close)
@@ -62,12 +65,27 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
 # --------------------------------------------------------------------------- #
 
 
+@daily_cached
 def _fetch(symbol: str) -> pd.DataFrame:
+    """Fetch 1y daily OHLCV. Cached per (symbol, day): the 15-min scan loop calls this
+    ~26x/day per symbol, but yfinance's daily bars don't change meaningfully intraday.
+    """
     try:
         df = yf.Ticker(symbol).history(period="1y")
         return df if not df.empty else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
+
+
+def _fetch_last_price(symbol: str) -> float | None:
+    """Cheap live quote via yfinance's fast_info — NOT cached, so it stays current across
+    every scan regardless of whether ``_fetch``'s 1y history was served from the daily cache.
+    """
+    try:
+        last = yf.Ticker(symbol).fast_info["lastPrice"]
+        return float(last) if last is not None else None
+    except Exception:
+        return None
 
 
 def _rsi14(close: pd.Series) -> float | None:

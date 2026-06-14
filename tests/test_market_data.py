@@ -28,6 +28,8 @@ from src.ibkr.market_data import (
     _enrich_greeks_yf,
     _filter_expirations,
     _filter_strikes,
+    _get_spot,
+    _get_spot_async,
     _safe,
     _safe_int,
 )
@@ -514,3 +516,99 @@ class TestEnrichGreeksYf:
         # Must not raise
         _enrich_greeks_yf("AAPL", 195.0, [quote])
         assert quote.delta is None
+
+
+# ---------------------------------------------------------------------------
+# _get_spot / _get_spot_async: marketPrice -> previous close -> bounded
+# reqHistoricalData fallback chain
+# ---------------------------------------------------------------------------
+
+
+def _make_spot_ticker(market_price: float, close: float = float("nan")) -> SimpleNamespace:
+    t = SimpleNamespace(close=close)
+    t.marketPrice = lambda: market_price
+    return t
+
+
+def _make_bar(close: float) -> SimpleNamespace:
+    return SimpleNamespace(close=close)
+
+
+class TestGetSpot:
+    def test_uses_market_price_when_available(self):
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=123.45)
+        assert _get_spot(ib, MagicMock()) == pytest.approx(123.45)
+        ib.reqHistoricalData.assert_not_called()
+
+    def test_falls_back_to_previous_close_without_extra_request(self):
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"), close=99.0)
+        assert _get_spot(ib, MagicMock()) == pytest.approx(99.0)
+        ib.reqHistoricalData.assert_not_called()
+
+    def test_falls_back_to_bounded_historical_bar(self):
+        from src.common.config import get_config
+
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"))
+        ib.reqHistoricalData.return_value = [_make_bar(50.0)]
+
+        assert _get_spot(ib, MagicMock()) == pytest.approx(50.0)
+
+        _, kwargs = ib.reqHistoricalData.call_args
+        assert kwargs["timeout"] == get_config().market_data.spot_history_timeout_seconds
+
+    def test_raises_when_no_price_available_anywhere(self):
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"))
+        ib.reqHistoricalData.return_value = []
+        stock = MagicMock()
+        stock.symbol = "ZZZ"
+        with pytest.raises(ValueError, match="Could not get spot price"):
+            _get_spot(ib, stock)
+
+
+class TestGetSpotAsync:
+    @pytest.mark.asyncio
+    async def test_uses_market_price_when_available(self, monkeypatch):
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=123.45)
+        ib.reqHistoricalDataAsync = AsyncMock()
+        assert await _get_spot_async(ib, MagicMock()) == pytest.approx(123.45)
+        ib.reqHistoricalDataAsync.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_previous_close_without_extra_request(self, monkeypatch):
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"), close=99.0)
+        ib.reqHistoricalDataAsync = AsyncMock()
+        assert await _get_spot_async(ib, MagicMock()) == pytest.approx(99.0)
+        ib.reqHistoricalDataAsync.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_bounded_historical_bar(self, monkeypatch):
+        from src.common.config import get_config
+
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"))
+        ib.reqHistoricalDataAsync = AsyncMock(return_value=[_make_bar(50.0)])
+
+        assert await _get_spot_async(ib, MagicMock()) == pytest.approx(50.0)
+
+        _, kwargs = ib.reqHistoricalDataAsync.call_args
+        assert kwargs["timeout"] == get_config().market_data.spot_history_timeout_seconds
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_price_available_anywhere(self, monkeypatch):
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=float("nan"))
+        ib.reqHistoricalDataAsync = AsyncMock(return_value=[])
+        stock = MagicMock()
+        stock.symbol = "ZZZ"
+        with pytest.raises(ValueError, match="Could not get spot price"):
+            await _get_spot_async(ib, stock)

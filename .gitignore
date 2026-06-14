@@ -15,9 +15,12 @@ venv/
 
 # Data & logs (local state, never commit)
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/*.parquet
 data/*.sqlite
 logs/*.log
+logs/*.log.*
 *.log
 
 # OS / editor

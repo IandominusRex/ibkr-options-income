@@ -185,14 +185,23 @@ def _make_ohlcv(n: int = 260, seed: int = 42) -> pd.DataFrame:
 
 
 class TestTechnicalStats:
-    def _patched(self, df: pd.DataFrame):
-        return patch("src.analytics.technicals._fetch", return_value=df)
+    def _patched(self, df: pd.DataFrame, last_price: float | None = None):
+        return patch.multiple(
+            "src.analytics.technicals",
+            _fetch=MagicMock(return_value=df),
+            _fetch_last_price=MagicMock(return_value=last_price),
+        )
 
     def test_empty_df_returns_zero_price(self):
         with self._patched(pd.DataFrame()):
             stats = get_technical_stats("EMPTY")
         assert stats.price == 0.0
         assert stats.rsi_14 is None
+
+    def test_empty_df_falls_back_to_live_price(self):
+        with self._patched(pd.DataFrame(), last_price=42.5):
+            stats = get_technical_stats("EMPTY")
+        assert stats.price == 42.5
 
     def test_all_fields_populated_with_good_data(self):
         df = _make_ohlcv(260)
@@ -206,6 +215,33 @@ class TestTechnicalStats:
         assert stats.sma_50 is not None
         assert stats.sma_200 is not None
         assert stats.regime is not None
+
+    def test_live_price_overrides_cached_history_close(self):
+        """price comes from _fetch_last_price even when the 1y history is a (cached) hit."""
+        df = _make_ohlcv(260)
+        with self._patched(df, last_price=999.0):
+            stats = get_technical_stats("TEST")
+        assert stats.price == 999.0
+
+    def test_live_price_fetch_failure_falls_back_to_history_close(self):
+        df = _make_ohlcv(260)
+        with self._patched(df, last_price=None):
+            stats = get_technical_stats("TEST")
+        assert stats.price == float(df["Close"].iloc[-1])
+
+    def test_fetch_last_price_reads_fast_info(self):
+        from src.analytics.technicals import _fetch_last_price
+
+        ticker = MagicMock()
+        ticker.fast_info = {"lastPrice": 123.45}
+        with patch("src.analytics.technicals.yf.Ticker", return_value=ticker):
+            assert _fetch_last_price("AAPL") == 123.45
+
+    def test_fetch_last_price_returns_none_on_error(self):
+        from src.analytics.technicals import _fetch_last_price
+
+        with patch("src.analytics.technicals.yf.Ticker", side_effect=Exception("network")):
+            assert _fetch_last_price("AAPL") is None
 
     def test_regime_high_vol(self):
         """Force ATR ratio > 2.5% to trigger HIGH_VOL."""
@@ -502,4 +538,19 @@ class TestDailyCaching:
         with patch("src.analytics.iv.yf.Ticker", return_value=ticker) as mk:
             _compute_hv30("ZZZ")
             _compute_hv30("ZZZ")
+        assert mk.call_count == 1
+
+    def test_technicals_ohlcv_cached_per_day(self):
+        from src.analytics.technicals import get_technical_stats
+
+        df = _make_ohlcv(260)
+        ticker = MagicMock()
+        ticker.history.return_value = df
+        with (
+            patch("src.analytics.technicals.yf.Ticker", return_value=ticker) as mk,
+            patch("src.analytics.technicals._fetch_last_price", return_value=None),
+        ):
+            get_technical_stats("ZZZ")
+            get_technical_stats("ZZZ")
+        # Second call's history fetch is served from the daily cache — yfinance hit only once.
         assert mk.call_count == 1

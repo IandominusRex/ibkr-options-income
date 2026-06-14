@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -573,11 +574,41 @@ async def _run_scan_body(
 
         # Option chain — IB calls run on the loop thread (async), NOT in a worker thread.
         # Chain fetches stay sequential per symbol to respect the ~100 market-data line cap.
+        # Bounded by symbol_timeout_seconds: an IBKR call that never responds (pacing
+        # violation, competing-session lockout) must not hang the whole scan — skip the
+        # symbol (quotes=[]) and move on so the remaining symbols and the Telegram send
+        # step still run.
+        symbol_start = time.monotonic()
+        quotes: list[OptionQuote]
         try:
-            quotes: list[OptionQuote] = await get_option_chain_quotes_async(ib, symbol)
+            quotes = await asyncio.wait_for(
+                get_option_chain_quotes_async(ib, symbol),
+                timeout=cfg.market_data.symbol_timeout_seconds,
+            )
+        except TimeoutError:
+            elapsed = time.monotonic() - symbol_start
+            log.error(
+                "scan: option chain for %s exceeded symbol_timeout_seconds=%.0f "
+                "(ran %.1fs) — skipping this symbol",
+                symbol,
+                cfg.market_data.symbol_timeout_seconds,
+                elapsed,
+            )
+            quotes = []
         except Exception:
             log.exception("scan: option chain failed for %s", symbol)
             quotes = []
+        else:
+            elapsed = time.monotonic() - symbol_start
+            if elapsed > cfg.market_data.symbol_timeout_seconds / 3:
+                log.warning(
+                    "scan: option chain for %s took %.1fs (%d quotes)",
+                    symbol,
+                    elapsed,
+                    len(quotes),
+                )
+            else:
+                log.debug("scan: option chain for %s took %.1fs (%d quotes)", symbol, elapsed, len(quotes))
 
         # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
         # concurrently in the default executor to cut per-symbol latency.

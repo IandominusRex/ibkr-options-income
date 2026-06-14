@@ -101,6 +101,20 @@ class MarketDataCfg(BaseModel):
     strike_band_pct: float = 0.15  # floor / fallback when IV is unknown
     strike_band_iv_mult: float = 1.5  # ≈1.5σ at the longest in-scope expiry
 
+    # Hard ceiling on a single symbol's option-chain fetch during /scan. Without this, a
+    # qualifyContractsAsync/reqMktData call that never gets a response (IBKR pacing
+    # violation, competing-session lockout, or a hung TWS) stalls the whole scan
+    # indefinitely — the orchestrator never reaches the next symbol or the Telegram send
+    # step. On timeout the symbol is skipped (quotes=[]) and the scan continues.
+    symbol_timeout_seconds: float = 90.0
+
+    # Last-resort fallback for the spot price (only reached when the reqMktData snapshot
+    # has neither a live tick nor a previous close — both NaN). ib_async's
+    # reqHistoricalData defaults to a 60s timeout, which on a weekend/no-subscription
+    # session was the dominant cost of /scan (~60s × every symbol). Bound it tightly here
+    # since by this point we're just hoping for a cached daily bar, not a live quote.
+    spot_history_timeout_seconds: float = 10.0
+
     @model_validator(mode="after")
     def _enforce_line_budget(self) -> MarketDataCfg:
         """`max_concurrent_lines` is the account's ~100-line market-data cap. A single chain

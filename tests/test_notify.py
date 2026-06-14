@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.common.schemas import (
+    BuyCandidate,
     ClaudeReview,
     OptionRight,
     ScoreCard,
@@ -19,7 +20,7 @@ from src.common.schemas import (
     TradeCandidate,
 )
 from src.notify.formatters import _md, format_candidate
-from src.notify.sender import send_candidates
+from src.notify.sender import send_buy_list, send_candidates
 from src.storage.models import ApprovalRow, OrderRow
 
 # --------------------------------------------------------------------------- #
@@ -965,3 +966,41 @@ async def test_external_close_ignores_sell_side_executions(tmp_path, monkeypatch
 
     with dbmod.session_scope() as s:
         assert s.query(FillRow).filter_by(action="BUY").count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# send_buy_list — MarkdownV2 escaping
+# --------------------------------------------------------------------------- #
+
+
+async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_id = None
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    candidates = [
+        BuyCandidate(
+            symbol="AAPL",
+            score=85.0,
+            iv_rank=42.0,
+            quality_flag=True,
+            technical_regime="up_trend",
+            rationale="Strong fundamentals (P/E < 30) | momentum intact.",
+        )
+    ]
+
+    with patch("telegram.Bot", mock_cls):
+        await send_buy_list(candidates, bot=object(), chat_id="99999")
+
+    mock_instance.send_message.assert_called_once()
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    # Every literal '|' must be escaped — Telegram rejects a bare '|' in MarkdownV2.
+    assert "|" not in text.replace("\\|", "")
+    assert "score 85/100" in text
+    assert "AAPL" in text

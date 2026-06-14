@@ -22,7 +22,7 @@ from src.common.schemas import (
     OrderState,
     TradeCandidate,
 )
-from src.notify.formatters import format_auto_trade_notification, format_candidate
+from src.notify.formatters import _md, format_auto_trade_notification, format_candidate
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow
 from src.storage.orders import has_active_order
@@ -245,10 +245,11 @@ async def send_buy_list(
         iv_str = f"{c.iv_rank:.0f}" if c.iv_rank is not None else "?"
         quality = "✓" if c.quality_flag else "?"
         lines.append(
-            f"{i}\\. *{c.symbol}* — score {c.score:.0f}/100 | IV rank {iv_str} | regime {regime} | quality {quality}"
+            f"{i}\\. *{_md(c.symbol)}* — score {_md(f'{c.score:.0f}')}/100 "
+            f"\\| IV rank {_md(iv_str)} \\| regime {_md(regime)} \\| quality {quality}"
         )
         if c.rationale:
-            lines.append(f"   _{c.rationale[:100]}_")
+            lines.append(f"   _{_md(c.rationale[:100])}_")
 
     text = "\n".join(lines)[:4000]
 
