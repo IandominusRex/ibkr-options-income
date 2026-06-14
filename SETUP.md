@@ -109,11 +109,12 @@ The `would_own` list is the set of stocks you are genuinely happy to be assigned
 strike price if the put is exercised). The `indexes:` list is scanned for CC opportunities; CSPs
 are only generated for symbols that also appear in `would_own`.
 
-**Adding a new ticker:** After adding a symbol to `universe.yaml`, run the IV backfill to seed
-one year of IV history for it — otherwise IV Rank will be unavailable and the IV score will be
-suppressed:
+**Adding a new ticker:** After adding a symbol to `universe.yaml`, run the IV and price
+backfills to seed one year of history for it — otherwise IV Rank will be unavailable (IV score
+suppressed) and the first scans will pull full price histories from yfinance on demand:
 ```bash
 python -m scripts.backfill_iv
+python -m scripts.backfill_prices
 ```
 Also add the symbol to the `sectors:` map so concentration limits work correctly. For an
 extreme-IV leveraged ETF, optionally add a `strike_bands:` override so its ~0.25-delta strike is in
@@ -156,6 +157,14 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,
 fundamentals, liquidity, assignment risk). You can leave these at the defaults to start.
+
+Two extra knobs control what gets surfaced:
+- `min_candidate_score` (default 55) — the minimum blended score for an option (CC/CSP) candidate
+  to reach Claude / Telegram.
+- `buy_to_own.min_score` (default 60) and `buy_to_own.max_candidates` (default 8) — the score floor
+  and count cap for the "Buy-to-Own Candidates" list. Without the floor the screen surfaced *every*
+  non-held, non-bearish watchlist name (e.g. 46/46 over a weekend); raise `min_score` to be pickier
+  or `max_candidates` to see more names.
 
 ---
 
@@ -244,7 +253,7 @@ Once the approval service is running, you can interact with the system from your
 
 | Command | What you get |
 |---|---|
-| `/scan` | Triggers a full pipeline scan — same as the morning cron. The initial reply becomes a live progress message (Account → Market data → Scoring → Claude review → Sending results) that updates as each stage completes; final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED). |
+| `/scan` | Triggers a full pipeline scan — same as the morning cron. Two live messages update as it runs: a **checklist** (Account → Market data → Scoring → Claude review → Sending results) and a **dashboard** with a progress bar + ETA, the current activity, and a 🔴 error log of any symbols that were skipped. Final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED); a "Buy-to-Own Candidates" card lists the strongest few stocks to acquire for future covered calls. |
 | `/mode` | Shows the current trading mode (👤 MANUAL or 🤖 AUTOMATED) with a toggle button. AUTOMATED mode executes trades without approval and auto-closes positions at 50% profit. A confirmation prompt appears before enabling AUTO. |
 | `/halt` | 🛑 **Kill switch.** Immediately stops all order queuing/transmission (profit-take *closes* still run — closing risk is always allowed). The halt is saved, so it persists across restarts until you `/resume`. You can add a reason, e.g. `/halt market looks ugly`. Also auto-engages on a daily realized-loss breach. |
 | `/resume` | Releases the kill switch; QUEUED orders resume on the next poll cycle. |
@@ -488,19 +497,24 @@ TZ=America/New_York
 
 ---
 
-## 8. Backfill IV history (one-time)
+## 8. Backfill IV + price history (one-time)
 
-IV Rank requires at least 30 days of historical implied-volatility data. Run this once on setup:
+IV Rank requires at least 30 days of historical implied-volatility data, and the technical
+indicators/HV30 read from a daily OHLCV store. Seed both once on setup:
 
 ```bash
 python -m scripts.backfill_iv
+python -m scripts.backfill_prices
 ```
 
-This fetches one year of historical IV for every symbol in your universe. It takes a few minutes.
-After the bootstrap, the **EOD run appends one fresh IV observation per symbol each day** (N4), so
-the IV-rank window stays current without re-running the backfill. `/health` shows an "IV history"
-line and warns if any symbol's latest observation is older than 5 days (i.e. the EOD appender or
-backfill has stopped) — re-run `python -m scripts.backfill_iv` to recover.
+`backfill_iv` fetches one year of historical IV (via IBKR) for every universe symbol;
+`backfill_prices` fetches ~1y of daily OHLCV (via yfinance) into `price_history`. Both take a few
+minutes and are safe to re-run (existing rows are skipped). After the bootstrap, the **EOD run
+appends one fresh IV observation and one settled daily price bar per symbol each day** (N4), so
+both windows stay current without re-running the backfill — and `/scan` then reads history from
+SQLite, fetching only the missing tail instead of full per-symbol histories. `/health` shows an
+"IV history" line and warns if any symbol's latest observation is older than 5 days (i.e. an
+appender or backfill has stopped) — re-run the backfills to recover.
 
 ---
 

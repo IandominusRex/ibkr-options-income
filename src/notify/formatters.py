@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 
 from src.common.schemas import (
     AccountSnapshot,
+    BuyCandidate,
     ClaudeReview,
     EODSummary,
     OptionQuote,
@@ -103,6 +104,102 @@ def format_candidate(
             parts.append(f"Rolling: {_md(review.rolling_considerations)}")
 
     text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def _pct(frac: float | None, *, signed: bool = False) -> str | None:
+    """Format a fraction as a percent string (0.032 → '3.2%'), or None if missing."""
+    if frac is None:
+        return None
+    sign = "+" if (signed and frac >= 0) else ""
+    return f"{sign}{frac * 100:.1f}%"
+
+
+def _trend_note(c: BuyCandidate) -> str | None:
+    """Where price sits vs its moving averages — the 'is this a healthy uptrend' read."""
+    if c.price is None:
+        return None
+    refs: list[str] = []
+    if c.sma_50 is not None:
+        refs.append("above 50d" if c.price >= c.sma_50 else "below 50d")
+    if c.sma_200 is not None:
+        refs.append("above 200d" if c.price >= c.sma_200 else "below 200d")
+    return ", ".join(refs) if refs else None
+
+
+def format_buy_list(candidates: list[BuyCandidate]) -> str:
+    """Build the Telegram MarkdownV2 message for the buy-to-own screen.
+
+    One compact card per name: price, premium richness (IV rank / IV-vs-HV / VRP), trend
+    context (regime + MA position + RSI), an estimated monthly CC yield, earnings/dividend
+    notes, and the deterministic rationale. Returns a single string (≤ _MAX_MESSAGE_LEN).
+    """
+    if not candidates:
+        return ""
+
+    lines = [
+        "🟢 *Buy\\-to\\-Own Candidates*",
+        "_Stocks worth owning to sell covered calls against_",
+        "",
+    ]
+
+    for i, c in enumerate(candidates, 1):
+        # Header: rank, symbol, score.
+        lines.append(f"*{i}\\. {_md(c.symbol)}* — {_md(f'{c.score:.0f}')}/100")
+
+        # Line A: price + premium richness.
+        a: list[str] = []
+        if c.price is not None:
+            a.append(f"${_md(f'{c.price:,.2f}')}")
+        if c.iv_rank is not None:
+            a.append(f"IV rank {_md(f'{c.iv_rank:.0f}')}")
+        iv_pct, hv_pct = _pct(c.current_iv), _pct(c.hv_30)
+        if iv_pct and hv_pct:
+            vrp_pts = f" \\(VRP {_md(f'{c.vrp * 100:+.0f}')}pts\\)" if c.vrp is not None else ""
+            a.append(f"IV {_md(iv_pct)} vs HV {_md(hv_pct)}{vrp_pts}")
+        elif iv_pct:
+            a.append(f"IV {_md(iv_pct)}")
+        if a:
+            lines.append(" · ".join(a))
+
+        # Line B: trend context.
+        b: list[str] = []
+        if c.technical_regime:
+            b.append(_md(c.technical_regime))
+        trend = _trend_note(c)
+        if trend:
+            b.append(_md(trend))
+        if c.rsi_14 is not None:
+            b.append(f"RSI {_md(f'{c.rsi_14:.0f}')}")
+        if b:
+            lines.append("Trend: " + " · ".join(b))
+
+        # Line C: income/timing context.
+        cc: list[str] = []
+        ccy = _pct(c.est_monthly_cc_yield)
+        if ccy:
+            cc.append(f"est\\. CC ~{_md(ccy)}/mo")
+        if c.next_earnings is not None:
+            days = (c.next_earnings - date.today()).days
+            warn = " ⚠️" if 0 <= days <= 14 else ""
+            cc.append(f"earnings {_md(str(days))}d{warn}")
+        dy = _pct(c.dividend_yield)
+        if dy and c.dividend_yield:
+            cc.append(f"div {_md(dy)}")
+        quality = "✓" if c.quality_flag else ("✗" if c.quality_flag is False else "?")
+        cc.append(f"quality {quality}")
+        if cc:
+            lines.append(" · ".join(cc))
+
+        # Line D: rationale.
+        if c.rationale:
+            lines.append(f"_{_md(c.rationale)}_")
+
+        lines.append("")
+
+    text = "\n".join(lines).rstrip()
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text

@@ -153,7 +153,9 @@ class IVStats(BaseModel):
     iv_rank: float | None = None  # 0-100, where current sits in 52w range
     iv_percentile: float | None = None  # 0-100, % of days below current
     hv_30: float | None = None
-    vrp: float | None = None  # Volatility Risk Premium = current_iv% − hv_30% (positive → options rich)
+    vrp: float | None = (
+        None  # Volatility Risk Premium = current_iv% − hv_30% (positive → options rich)
+    )
     term_structure_slope: float | None = None  # near vs far IV
     put_call_skew: float | None = None
 
@@ -233,7 +235,9 @@ class TradeCandidate(BaseModel):
     prob_otm: float | None = None
     delta: float | None = None
     iv_rank: float | None = None
-    vrp: float | None = None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
+    vrp: float | None = (
+        None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
+    )
     dte: int
     next_earnings: date | None = (
         None  # earnings date within the option's life → blackout (risk engine)
@@ -312,7 +316,23 @@ class BuyCandidate(BaseModel):
     iv_rank: float | None = None  # high IV rank = better future CC premium
     quality_flag: bool | None = None
     technical_regime: str | None = None  # from Regime enum value
-    rationale: str = ""  # filled by Claude after scan
+    rationale: str = ""  # deterministic one-liner from the analytics (see buy_candidates.py)
+
+    # --- Analysis context (populated from the per-symbol analytics, all optional) ---
+    price: float | None = None  # latest spot used for the screen
+    current_iv: float | None = None  # annualised implied vol as a fraction
+    hv_30: float | None = None  # 30-day realised vol as a fraction
+    vrp: float | None = None  # current_iv − hv_30 (positive → options rich)
+    rsi_14: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    next_earnings: date | None = None
+    dividend_yield: float | None = None  # annual yield as a fraction (0.006 = 0.6%)
+    est_monthly_cc_yield: float | None = None  # heuristic ~30-delta 30-DTE CC premium / price
+    # Sub-score transparency (each 0-100): how the blended score was composed.
+    iv_score: float | None = None
+    fundamental_score: float | None = None
+    technical_score: float | None = None
 
 
 # --------------------------------------------------------------------------- #

@@ -22,7 +22,11 @@ from src.common.schemas import (
     OrderState,
     TradeCandidate,
 )
-from src.notify.formatters import _md, format_auto_trade_notification, format_candidate
+from src.notify.formatters import (
+    format_auto_trade_notification,
+    format_buy_list,
+    format_candidate,
+)
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow
 from src.storage.orders import has_active_order
@@ -239,19 +243,9 @@ async def send_buy_list(
         logger.warning("TELEGRAM credentials not set — skipping buy list send")
         return
 
-    lines = ["*Buy\\-to\\-Own Candidates*", "_Stocks worth acquiring for future covered calls_", ""]
-    for i, c in enumerate(candidates[:10], 1):
-        regime = c.technical_regime or "unknown"
-        iv_str = f"{c.iv_rank:.0f}" if c.iv_rank is not None else "?"
-        quality = "✓" if c.quality_flag else "?"
-        lines.append(
-            f"{i}\\. *{_md(c.symbol)}* — score {_md(f'{c.score:.0f}')}/100 "
-            f"\\| IV rank {_md(iv_str)} \\| regime {_md(regime)} \\| quality {quality}"
-        )
-        if c.rationale:
-            lines.append(f"   _{_md(c.rationale[:100])}_")
-
-    text = "\n".join(lines)[:4000]
+    text = format_buy_list(candidates)
+    if not text:
+        return
 
     try:
         from telegram import Bot as TelegramBot

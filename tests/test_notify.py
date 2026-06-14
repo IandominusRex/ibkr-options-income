@@ -540,12 +540,14 @@ async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monke
         await send_candidates([candidate], [])  # 15 min later — same candidate_id
 
     with dbmod.session_scope() as s:
-        orders = s.execute(
-            select(OrderRow).where(OrderRow.candidate_id == "dup-001")
-        ).scalars().all()
-        approvals = s.execute(
-            select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-001")
-        ).scalars().all()
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.candidate_id == "dup-001")).scalars().all()
+        )
+        approvals = (
+            s.execute(select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-001"))
+            .scalars()
+            .all()
+        )
 
     assert len(orders) == 1  # exactly one order despite two scans
     assert orders[0].state == "queued"
@@ -580,12 +582,16 @@ async def test_manual_approve_skips_duplicate_when_active_order_exists(monkeypat
         await handle_button(update, MagicMock())
 
     with dbmod.session_scope() as s:
-        orders = s.execute(
-            select(OrderRow).where(OrderRow.candidate_id == "dup-approve")
-        ).scalars().all()
-        approvals = s.execute(
-            select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-approve")
-        ).scalars().all()
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.candidate_id == "dup-approve"))
+            .scalars()
+            .all()
+        )
+        approvals = (
+            s.execute(select(ApprovalRow).where(ApprovalRow.candidate_id == "dup-approve"))
+            .scalars()
+            .all()
+        )
 
     assert len(orders) == 1  # second approve did not create a duplicate order
     # Both approvals are marked approved (decision recorded), only one order queued.
@@ -763,14 +769,35 @@ def test_net_entry_credit_qty_weighted_and_commission_haircut(tmp_path, monkeypa
         # Two SELL fills: 1 @ $2.00, 3 @ $1.00 → gross qty-weighted = $500 / 400 sh = $1.25/sh.
         # Commission $1.00 + $3.00 = $4.00 → net = ($500 − $4) / 400 = $1.24/sh.
         s.add(
-            FillRow(order_id=1, candidate_id="c8", action="SELL", filled_qty=1, avg_price=2.00, commission=1.00)
+            FillRow(
+                order_id=1,
+                candidate_id="c8",
+                action="SELL",
+                filled_qty=1,
+                avg_price=2.00,
+                commission=1.00,
+            )
         )
         s.add(
-            FillRow(order_id=2, candidate_id="c8", action="SELL", filled_qty=3, avg_price=1.00, commission=3.00)
+            FillRow(
+                order_id=2,
+                candidate_id="c8",
+                action="SELL",
+                filled_qty=3,
+                avg_price=1.00,
+                commission=3.00,
+            )
         )
         # A BUY fill must be ignored (it's a close, not part of the entry credit).
         s.add(
-            FillRow(order_id=3, candidate_id="c8", action="BUY", filled_qty=4, avg_price=0.50, commission=2.00)
+            FillRow(
+                order_id=3,
+                candidate_id="c8",
+                action="BUY",
+                filled_qty=4,
+                avg_price=0.50,
+                commission=2.00,
+            )
         )
 
     with dbmod.session_scope() as s:
@@ -823,34 +850,68 @@ async def test_reconcile_no_executions_leaves_order_submitted(monkeypatch, tmp_p
 from datetime import date as _date  # noqa: E402
 
 
-def _open_short(s, *, candidate_id="cc-1", underlying="AAPL", right="C", strike=200.0,
-                expiry=_date(2026, 7, 17), sell_qty=2.0, order_id=1):
+def _open_short(
+    s,
+    *,
+    candidate_id="cc-1",
+    underlying="AAPL",
+    right="C",
+    strike=200.0,
+    expiry=_date(2026, 7, 17),
+    sell_qty=2.0,
+    order_id=1,
+):
     """Seed a candidate + its SELL entry fill (an open short position)."""
     from src.storage.models import CandidateRow, FillRow, OrderRow
 
     s.add(
         CandidateRow(
-            candidate_id=candidate_id, run_id="r", strategy="covered_call",
-            underlying=underlying, right=right, strike=strike, expiry=expiry,
-            blended_score=70.0, payload={"contracts": int(sell_qty)},
+            candidate_id=candidate_id,
+            run_id="r",
+            strategy="covered_call",
+            underlying=underlying,
+            right=right,
+            strike=strike,
+            expiry=expiry,
+            blended_score=70.0,
+            payload={"contracts": int(sell_qty)},
         )
     )
     s.add(OrderRow(id=order_id, candidate_id=candidate_id, approval_id=order_id, state="filled"))
     s.add(
-        FillRow(order_id=order_id, candidate_id=candidate_id, action="SELL",
-                filled_qty=sell_qty, avg_price=2.50)
+        FillRow(
+            order_id=order_id,
+            candidate_id=candidate_id,
+            action="SELL",
+            filled_qty=sell_qty,
+            avg_price=2.50,
+        )
     )
 
 
-def _buy_exec(*, exec_id, symbol="AAPL", right="C", strike=200.0, expiry="20260717",
-              qty=2.0, price=0.80, side="BOT", sec_type="OPT", commission=1.30):
+def _buy_exec(
+    *,
+    exec_id,
+    symbol="AAPL",
+    right="C",
+    strike=200.0,
+    expiry="20260717",
+    qty=2.0,
+    price=0.80,
+    side="BOT",
+    sec_type="OPT",
+    commission=1.30,
+):
     from types import SimpleNamespace
 
     return SimpleNamespace(
         execution=SimpleNamespace(execId=exec_id, shares=qty, price=price, side=side),
         contract=SimpleNamespace(
-            symbol=symbol, right=right, strike=strike,
-            lastTradeDateOrContractMonth=expiry, secType=sec_type,
+            symbol=symbol,
+            right=right,
+            strike=strike,
+            lastTradeDateOrContractMonth=expiry,
+            secType=sec_type,
         ),
         commissionReport=SimpleNamespace(commission=commission),
     )
@@ -934,8 +995,16 @@ async def test_external_close_skips_already_closed_position(tmp_path, monkeypatc
     with dbmod.session_scope() as s:
         _open_short(s, candidate_id="cc-1", sell_qty=2.0)
         # Already bought back the full 2 contracts (recorded under a prior execId).
-        s.add(FillRow(order_id=1, candidate_id="cc-1", action="BUY", filled_qty=2.0,
-                      avg_price=0.50, ib_exec_id="prior"))
+        s.add(
+            FillRow(
+                order_id=1,
+                candidate_id="cc-1",
+                action="BUY",
+                filled_qty=2.0,
+                avg_price=0.50,
+                ib_exec_id="prior",
+            )
+        )
 
     ib = MagicMock()
     ib.reqExecutionsAsync = AsyncMock(return_value=[_buy_exec(exec_id="x2", qty=2.0)])
@@ -1002,5 +1071,5 @@ async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
     text = mock_instance.send_message.call_args.kwargs["text"]
     # Every literal '|' must be escaped — Telegram rejects a bare '|' in MarkdownV2.
     assert "|" not in text.replace("\\|", "")
-    assert "score 85/100" in text
+    assert "85/100" in text
     assert "AAPL" in text

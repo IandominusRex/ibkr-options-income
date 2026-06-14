@@ -157,7 +157,9 @@ def test_generate_sorted_by_score_desc():
             _fund(quality_flag=True),
         ),
     }
-    result = generate_buy_candidates(["AMD", "NVDA"], set(), analytics)
+    # min_score=0 so the deliberately weak AMD candidate isn't dropped by the score floor —
+    # this test is about ordering, not filtering.
+    result = generate_buy_candidates(["AMD", "NVDA"], set(), analytics, min_score=0)
     assert len(result) == 2
     assert result[0].symbol == "NVDA"
     assert result[0].score > result[1].score
@@ -184,3 +186,48 @@ def test_generate_none_iv_rank_uses_neutral():
     assert len(result) == 1
     # Should not raise and score should be a reasonable number
     assert result[0].score > 0
+
+
+def test_score_floor_drops_low_scorers():
+    """The min_score floor is what stops the screen from returning every universe name."""
+    analytics = {
+        "WEAK": (IVStats(symbol="WEAK", iv_rank=10.0), _tech(Regime.LOW_VOL), _fund(False, None)),
+        "STRONG": (IVStats(symbol="STRONG", iv_rank=90.0), _tech(Regime.BULLISH), _fund()),
+    }
+    result = generate_buy_candidates(["WEAK", "STRONG"], set(), analytics, min_score=60)
+    assert [c.symbol for c in result] == ["STRONG"]
+
+
+def test_max_candidates_caps_output():
+    analytics = {
+        sym: (IVStats(symbol=sym, iv_rank=90.0), _tech(Regime.BULLISH), _fund())
+        for sym in ("A", "B", "C", "D", "E")
+    }
+    result = generate_buy_candidates(list(analytics), set(), analytics, max_candidates=3)
+    assert len(result) == 3
+
+
+def test_candidate_is_enriched_with_analysis():
+    analytics = {
+        "AMD": (
+            IVStats(symbol="AMD", iv_rank=98.0, current_iv=0.52, hv_30=0.38, vrp=0.14),
+            TechnicalStats(
+                symbol="AMD",
+                price=142.5,
+                rsi_14=58.0,
+                sma_50=130.0,
+                sma_200=110.0,
+                regime=Regime.HIGH_VOL,
+            ),
+            _fund(),
+        )
+    }
+    result = generate_buy_candidates(["AMD"], set(), analytics, min_score=0)
+    c = result[0]
+    assert c.price == 142.5
+    assert c.current_iv == 0.52
+    assert c.vrp == 0.14
+    assert c.rsi_14 == 58.0
+    assert c.est_monthly_cc_yield is not None and c.est_monthly_cc_yield > 0
+    assert c.rationale  # deterministic, non-empty
+    assert c.iv_score == 98.0

@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from ib_async import IB
@@ -296,26 +297,45 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🔍 *Scan started*\nFetching market data and running analytics\\. Results arrive in \\~1\\-2 minutes\\.",
         parse_mode="MarkdownV2",
     )
+    # Second message: live progress bar + ETA + current-activity line + red error log.
+    dash_msg = await update.message.reply_text(
+        "🔍 *Scanning…* 0%\n▱▱▱▱▱▱▱▱▱▱\n\n⚙️ Starting scan…",
+        parse_mode="MarkdownV2",
+    )
 
     chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
     prog_msg_id = prog_msg.message_id
+    dash_msg_id = dash_msg.message_id
 
-    async def _update_progress(text: str) -> None:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=prog_msg_id,
-                text=text,
-                parse_mode="MarkdownV2",
-            )
-        except Exception:
-            pass
+    def _make_editor(message_id: int) -> Callable[[str], Awaitable[None]]:
+        async def _edit(text: str) -> None:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                # "message is not modified" and transient edit errors are non-fatal.
+                pass
+
+        return _edit
+
+    _update_progress = _make_editor(prog_msg_id)
+    _update_dashboard = _make_editor(dash_msg_id)
 
     async def _run_and_notify() -> None:
         from src.orchestrator.scan import run_scan
 
         try:
-            result = await run_scan(ib_scan, context.bot, chat_id, progress_callback=_update_progress)
+            result = await run_scan(
+                ib_scan,
+                context.bot,
+                chat_id,
+                progress_callback=_update_progress,
+                dashboard_callback=_update_dashboard,
+            )
             if result.lease_skipped:
                 await context.bot.edit_message_text(
                     chat_id=chat_id,
@@ -721,9 +741,7 @@ async def handle_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif data == "mode:cancel":
         auto = is_automated_mode()
         mode_str = "AUTOMATED 🤖" if auto else "MANUAL 👤"
-        await query.edit_message_text(
-            f"Mode unchanged: *{mode_str}*", parse_mode="MarkdownV2"
-        )
+        await query.edit_message_text(f"Mode unchanged: *{mode_str}*", parse_mode="MarkdownV2")
 
 
 async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1064,9 +1082,7 @@ async def _run_service(token: str, chat_id: str) -> None:
 
         intraday_task: asyncio.Task | None = None
         if ib_scan is not None:
-            intraday_task = asyncio.create_task(
-                _intraday_scan_loop(app, ib_scan, ib, chat_id)
-            )
+            intraday_task = asyncio.create_task(_intraday_scan_loop(app, ib_scan, ib, chat_id))
             logger.info(
                 "Intraday loop started (every %d min during RTH)",
                 cfg.scheduler.intraday_loop_minutes,
