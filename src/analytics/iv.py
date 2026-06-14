@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 import math
 
-import yfinance as yf
 from sqlalchemy import select
 
-from src.common.cache import daily_cached
+from src.analytics.price_data import get_ohlcv
 from src.common.schemas import IVStats, OptionQuote, OptionRight
 from src.storage.db import session_scope
 from src.storage.models import IVHistoryRow
@@ -96,15 +95,15 @@ def _load_iv_history(symbol: str) -> list[float]:
         return []
 
 
-@daily_cached
 def _compute_hv30(symbol: str) -> float | None:
-    """30-day historical volatility (annualised %) from yfinance closes.
+    """30-day historical volatility (annualised %) from the settled-close history.
 
-    Cached per calendar day — HV30 only moves on a new daily close, so the intraday
-    loop reuses the day's value instead of re-pulling 3 months of history each cycle.
+    Reads the shared incremental OHLCV store (`price_data.get_ohlcv`, itself day-cached), so
+    HV30 no longer re-pulls 3 months of yfinance history per symbol per scan — it derives from
+    the same settled bars the technicals use.
     """
     try:
-        df = yf.Ticker(symbol).history(period="3mo")
+        df = get_ohlcv(symbol)
         if df.empty or len(df) < 31:
             log.debug("hv30: insufficient history for %s (%d rows)", symbol, len(df))
             return None

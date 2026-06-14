@@ -79,16 +79,16 @@ def _holidays(year: int) -> frozenset[date]:
     nyd = date(year, 1, 1)
     days.add(nyd + timedelta(days=1) if nyd.weekday() == _SUN else nyd)
 
-    days.add(_nth_weekday(year, 1, _MON, 3))   # MLK Day
-    days.add(_nth_weekday(year, 2, _MON, 3))   # Washington's Birthday / Presidents' Day
+    days.add(_nth_weekday(year, 1, _MON, 3))  # MLK Day
+    days.add(_nth_weekday(year, 2, _MON, 3))  # Washington's Birthday / Presidents' Day
     days.add(_easter(year) - timedelta(days=2))  # Good Friday
-    days.add(_last_weekday(year, 5, _MON))     # Memorial Day
+    days.add(_last_weekday(year, 5, _MON))  # Memorial Day
     if year >= 2022:
         days.add(_observed(date(year, 6, 19)))  # Juneteenth
-    days.add(_observed(date(year, 7, 4)))      # Independence Day
-    days.add(_nth_weekday(year, 9, _MON, 1))   # Labor Day
+    days.add(_observed(date(year, 7, 4)))  # Independence Day
+    days.add(_nth_weekday(year, 9, _MON, 1))  # Labor Day
     days.add(_nth_weekday(year, 11, _THU, 4))  # Thanksgiving
-    days.add(_observed(date(year, 12, 25)))    # Christmas
+    days.add(_observed(date(year, 12, 25)))  # Christmas
 
     return frozenset(days)
 
@@ -122,6 +122,24 @@ def is_market_holiday(d: date) -> bool:
 def is_early_close(d: date) -> bool:
     """True if *d* is a half-day (13:00 ET) trading session."""
     return d in _early_closes(d.year)
+
+
+def is_trading_day(d: date) -> bool:
+    """True if *d* is a regular US-equity trading session (weekday, not a holiday)."""
+    return d.weekday() < _SAT and not is_market_holiday(d)
+
+
+def previous_session(d: date) -> date:
+    """The most recent completed trading session strictly before *d*.
+
+    Walks back over weekends and full-day holidays. Used by the OHLCV loader to decide whether
+    the stored history is current: if the newest stored bar is on/after this date, no fetch is
+    needed (the latest settled session is already persisted).
+    """
+    cur = date.fromordinal(d.toordinal() - 1)
+    while not is_trading_day(cur):
+        cur = date.fromordinal(cur.toordinal() - 1)
+    return cur
 
 
 def session_close(d: date) -> dtime | None:

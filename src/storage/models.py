@@ -123,6 +123,27 @@ class IVHistoryRow(Base):
     source: Mapped[str] = mapped_column(String(16), default="ibkr")
 
 
+class PriceHistoryRow(Base):
+    """Daily OHLCV bars (one settled session per row) backing the technical indicators
+    and HV30. Bootstrapped by scripts/backfill_prices.py and kept fresh by a daily append;
+    scans read from here and only fetch the missing tail from yfinance, instead of pulling a
+    full 1y/3mo history per symbol every run.
+    """
+
+    __tablename__ = "price_history"
+    __table_args__ = (UniqueConstraint("symbol", "obs_date", name="uq_price_history_symbol_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    obs_date: Mapped[date] = mapped_column(Date, index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, default=0.0)
+    source: Mapped[str] = mapped_column(String(16), default="yfinance")
+
+
 class OptionQuoteRow(Base):
     """Option chain snapshot: one row per (run_id, symbol) with all quotes as JSON."""
 

@@ -123,6 +123,32 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
     logger.info("EOD: appended %d new IV observation(s) across %d symbols", inserted, len(symbols))
 
 
+async def _append_daily_prices(symbols: list[str]) -> None:
+    """Append today's settled daily OHLCV bar per symbol so the store stays current.
+
+    The scan loader only persists bars strictly before *today* (the current session is still
+    forming intraday); after the close those bars are final, so the EOD run captures today's
+    settled bar here. yfinance is blocking, so each fetch runs in the default executor.
+    `append_bars` skips dates already stored, so this is idempotent. Best-effort per symbol.
+    """
+    from src.analytics.price_data import _fetch_yf_bars
+    from src.storage.price_history import append_bars
+
+    loop = asyncio.get_running_loop()
+    today = date.today()
+    inserted = 0
+    for sym in symbols:
+        try:
+            bars = await loop.run_in_executor(None, _fetch_yf_bars, sym, "5d")
+            # Include today now that the session has settled; drop any future-dated rows.
+            settled = [b for b in bars if b.obs_date <= today]
+            inserted += await loop.run_in_executor(None, append_bars, sym, settled)
+        except Exception:
+            logger.debug("EOD price append failed for %s", sym, exc_info=True)
+        await asyncio.sleep(0.05)
+    logger.info("EOD: appended %d new daily price bar(s) across %d symbols", inserted, len(symbols))
+
+
 def _load_yesterday_unrealized(today: date) -> float:
     """Return the unrealized_pnl from yesterday's JournalRow, or 0.0 if none."""
     yesterday = today - timedelta(days=1)
@@ -243,6 +269,14 @@ async def run() -> None:
         except Exception:
             logger.exception("EOD: daily IV append failed — iv_history may age")
     logger.info("Disconnected from IBKR")
+
+    # Capture today's settled daily close into price_history so tomorrow's first scan needs no
+    # OHLCV fetch. Uses yfinance (the technical layer's source), not IBKR — runs after the
+    # disconnect. Best-effort: a failure just means the next scan fetches the tail itself.
+    try:
+        await _append_daily_prices(_universe_symbols(cfg))
+    except Exception:
+        logger.exception("EOD: daily price append failed — price_history may age")
 
     # 2. Compute realized P&L from DB fills (anchored to the ET trading day).
     today = datetime.now(_ET).date()

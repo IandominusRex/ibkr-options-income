@@ -141,8 +141,7 @@ class TestHV30LogReturns:
         df_data = pd.DataFrame({"Close": prices[:-1]})  # 60 rows
         df_data.index = pd.date_range("2023-01-01", periods=60, freq="B")
 
-        with patch("src.analytics.iv.yf.Ticker") as mock_ticker:
-            mock_ticker.return_value.history.return_value = df_data
+        with patch("src.analytics.iv.get_ohlcv", return_value=df_data):
             hv = _compute_hv30("TEST")
 
         assert hv is not None
@@ -162,8 +161,7 @@ class TestHV30LogReturns:
         df_data = pd.DataFrame({"Close": [100.0, 101.0]})
         df_data.index = pd.date_range("2023-01-01", periods=2, freq="B")
 
-        with patch("src.analytics.iv.yf.Ticker") as mock_ticker:
-            mock_ticker.return_value.history.return_value = df_data
+        with patch("src.analytics.iv.get_ohlcv", return_value=df_data):
             hv = _compute_hv30("TEST")
         assert hv is None
 
@@ -188,7 +186,7 @@ class TestTechnicalStats:
     def _patched(self, df: pd.DataFrame, last_price: float | None = None):
         return patch.multiple(
             "src.analytics.technicals",
-            _fetch=MagicMock(return_value=df),
+            get_ohlcv=MagicMock(return_value=df),
             _fetch_last_price=MagicMock(return_value=last_price),
         )
 
@@ -527,30 +525,6 @@ class TestDailyCaching:
         # Second call served from the daily cache — yfinance hit only once.
         assert mk.call_count == 1
 
-    def test_hv30_cached_per_day(self):
-        from src.analytics.iv import _compute_hv30
-
-        idx = pd.date_range("2026-01-01", periods=60, freq="D")
-        prices = pd.Series(np.linspace(100, 110, 60), index=idx)
-        df = pd.DataFrame({"Close": prices})
-        ticker = MagicMock()
-        ticker.history.return_value = df
-        with patch("src.analytics.iv.yf.Ticker", return_value=ticker) as mk:
-            _compute_hv30("ZZZ")
-            _compute_hv30("ZZZ")
-        assert mk.call_count == 1
-
-    def test_technicals_ohlcv_cached_per_day(self):
-        from src.analytics.technicals import get_technical_stats
-
-        df = _make_ohlcv(260)
-        ticker = MagicMock()
-        ticker.history.return_value = df
-        with (
-            patch("src.analytics.technicals.yf.Ticker", return_value=ticker) as mk,
-            patch("src.analytics.technicals._fetch_last_price", return_value=None),
-        ):
-            get_technical_stats("ZZZ")
-            get_technical_stats("ZZZ")
-        # Second call's history fetch is served from the daily cache — yfinance hit only once.
-        assert mk.call_count == 1
+    # HV30 and the technical OHLCV history now share the incremental price_data.get_ohlcv
+    # loader (itself @daily_cached and backed by the price_history store). Its caching /
+    # tail-fetch behaviour is covered directly in tests/test_price_data.py.

@@ -5,11 +5,13 @@ All computed from yfinance OHLCV data. No live TWS connection required.
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from src.common.cache import daily_cached
+from src.analytics.price_data import get_ohlcv
 from src.common.schemas import Regime, TechnicalStats
 
 _HIGH_VOL_ATR_RATIO = 0.025  # ATR/close > this → HIGH_VOL
@@ -22,17 +24,21 @@ _SR_LEVELS = 3  # how many support/resistance levels to keep
 
 def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats:
     """Return TechnicalStats for *symbol* using the last *lookback_days* of OHLCV."""
-    df = _fetch(symbol)
+    # Settled bars come from the incremental price_history store (only the missing tail is
+    # fetched); the live price is fetched fresh and overlaid as today's bar so indicators
+    # reflect the current session.
+    live_price = _fetch_last_price(symbol)
+    df = _working_frame(symbol, live_price)
     if df.empty:
-        return TechnicalStats(symbol=symbol, price=_fetch_last_price(symbol) or 0.0)
+        return TechnicalStats(symbol=symbol, price=live_price or 0.0)
 
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
 
-    # Live quote, fetched fresh every call (unlike the cached 1y history below) — keeps the
-    # scan-time spot price (N17) current even on a cache hit for the historical bars.
-    price = _fetch_last_price(symbol) or float(close.iloc[-1])
+    # Live quote already fetched above; the working frame's last bar is today's live overlay,
+    # so close.iloc[-1] is the current price. Either way the scan-time spot (N17) stays current.
+    price = live_price or float(close.iloc[-1])
     rsi = _rsi14(close)
     atr = _atr14(high, low, close)
     macd_line, signal_line = _macd(close)
@@ -65,21 +71,36 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
 # --------------------------------------------------------------------------- #
 
 
-@daily_cached
-def _fetch(symbol: str) -> pd.DataFrame:
-    """Fetch 1y daily OHLCV. Cached per (symbol, day): the 15-min scan loop calls this
-    ~26x/day per symbol, but yfinance's daily bars don't change meaningfully intraday.
+def _working_frame(symbol: str, live_price: float | None) -> pd.DataFrame:
+    """Settled bars (from the incremental store) plus today's live bar overlaid.
+
+    ``get_ohlcv`` returns only settled sessions (and is day-cached, so the store/yfinance is
+    touched at most once per symbol per day). We append a fresh row for the current session
+    built from the live price — without mutating the cached frame — so RSI/SMA/regime reflect
+    the live quote, matching the prior behaviour where the last 1y bar was today's forming bar.
     """
-    try:
-        df = yf.Ticker(symbol).history(period="1y")
-        return df if not df.empty else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
+    settled = get_ohlcv(symbol)
+    if live_price is None or live_price <= 0:
+        return settled
+    today = pd.Timestamp(date.today())
+    if not settled.empty and settled.index[-1].normalize() == today.normalize():
+        return settled  # already have today (unlikely — store excludes the forming bar)
+    today_row = pd.DataFrame(
+        {
+            "Open": live_price,
+            "High": live_price,
+            "Low": live_price,
+            "Close": live_price,
+            "Volume": 0.0,
+        },
+        index=pd.DatetimeIndex([today]),
+    )
+    return settled if settled.empty else pd.concat([settled, today_row])
 
 
 def _fetch_last_price(symbol: str) -> float | None:
-    """Cheap live quote via yfinance's fast_info — NOT cached, so it stays current across
-    every scan regardless of whether ``_fetch``'s 1y history was served from the daily cache.
+    """Cheap live quote via yfinance's fast_info — NOT cached, so it stays current across every
+    scan regardless of whether the settled OHLCV history was served from the day cache / store.
     """
     try:
         last = yf.Ticker(symbol).fast_info["lastPrice"]
