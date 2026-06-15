@@ -100,6 +100,11 @@ class MarketDataCfg(BaseModel):
     # symbol's stored IV: band = max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365)).
     strike_band_pct: float = 0.15  # floor / fallback when IV is unknown
     strike_band_iv_mult: float = 1.5  # ≈1.5σ at the longest in-scope expiry
+    # S8 — ceiling on the *IV-scaled* band. At IV≈0.8/45DTE the formula returns ±42%, which on a
+    # high-IV ETF explodes the qualified-strike count → many more 40-contract batches → more fixed
+    # per-batch waits. Cap the auto-computed band here (an explicit `universe.yaml → strike_bands`
+    # per-symbol override is a deliberate choice and is NOT clamped).
+    strike_band_max_pct: float = 0.40
 
     # Hard ceiling on a single symbol's option-chain fetch during /scan. Without this, a
     # qualifyContractsAsync/reqMktData call that never gets a response (IBKR pacing
@@ -137,6 +142,12 @@ class MarketDataCfg(BaseModel):
                 f"market_data.chain_batch_size ({self.chain_batch_size}) exceeds "
                 f"max_concurrent_lines ({self.max_concurrent_lines}) — a batch can't request "
                 "more simultaneous market-data lines than the account cap."
+            )
+        if self.strike_band_max_pct < self.strike_band_pct:
+            raise ValueError(
+                f"market_data.strike_band_max_pct ({self.strike_band_max_pct}) is below the "
+                f"floor strike_band_pct ({self.strike_band_pct}) — the IV-scaled band cap can't "
+                "be tighter than its floor."
             )
         return self
 

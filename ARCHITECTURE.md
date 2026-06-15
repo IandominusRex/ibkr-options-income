@@ -203,7 +203,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | `/mode` | Show current trading mode (👤 MANUAL / 🤖 AUTOMATED) and toggle. Confirmation prompt appears before enabling AUTOMATED. Mode persists across restarts in SQLite. |
 | `/halt` | 🛑 Master kill switch: immediately stop queuing/transmitting all orders. Profit-take *closes* still run (risk-reducing). Persisted in SQLite, so it survives a restart and must be lifted with `/resume`. Optional free-text reason. |
 | `/resume` | Release the kill switch; QUEUED orders resume on the next poll cycle. |
-| `/status` | Compact overview: account + active short options + pending approvals. Shows a 🛑 HALTED banner when the kill switch is engaged. |
+| `/status` | Compact overview: account + active short options + pending approvals, plus the per-session intraday-scan tally (🔁 N run · ⚠️ M skipped) so intended (~26/session) vs actual scan count is visible (S9). Shows a 🛑 HALTED banner when the kill switch is engaged. |
 | `/positions` | Show live portfolio positions (stocks + options) with P&L |
 | `/account` | Show account balances: net liquidation, buying power, margin, excess liquidity |
 | `/pending` | List all pending approvals with score and time-to-expiry |

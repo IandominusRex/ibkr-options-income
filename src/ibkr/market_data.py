@@ -337,11 +337,12 @@ def _filter_strikes(strikes: Iterable[float], spot: float, band_pct: float = 0.1
 def _strike_band_pct(symbol: str, dte_days: int) -> float:
     """IV-scaled strike band for *symbol* (N6).
 
-    Returns ``max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365))`` using the symbol's
-    most recent stored IV, so a high-IV name widens enough to include its ~0.25-delta strike.
-    A per-symbol override in ``universe.yaml → strike_bands`` wins (never below the floor); when
-    no IV is stored yet the fixed floor applies. ``dte_days`` is the longest in-scope expiry so
-    the band covers every expiration being scanned.
+    Returns ``clamp(strike_band_iv_mult · IV · √(DTE/365), floor, strike_band_max_pct)`` using the
+    symbol's most recent stored IV, so a high-IV name widens enough to include its ~0.25-delta
+    strike but is capped (S8) so it can't explode the qualified-strike/batch count. A per-symbol
+    override in ``universe.yaml → strike_bands`` wins (held to the floor, but **not** the cap — an
+    explicit override is a deliberate choice); when no IV is stored the fixed floor applies.
+    ``dte_days`` is the longest in-scope expiry so the band covers every expiration scanned.
     """
     cfg = get_config()
     md = cfg.market_data
@@ -355,7 +356,8 @@ def _strike_band_pct(symbol: str, dte_days: int) -> float:
 
     iv = latest_iv(symbol)  # annualised vol as a fraction
     if iv and iv > 0 and dte_days > 0:
-        return max(floor, md.strike_band_iv_mult * iv * math.sqrt(dte_days / 365.0))
+        band = md.strike_band_iv_mult * iv * math.sqrt(dte_days / 365.0)
+        return min(md.strike_band_max_pct, max(floor, band))
     return floor
 
 

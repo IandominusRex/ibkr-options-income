@@ -465,8 +465,15 @@ def format_status(
     account: AccountSnapshot | None,
     pending_approvals: int,
     open_orders: int,
+    scans_run: int | None = None,
+    scans_skipped: int | None = None,
 ) -> str:
-    """Compact status overview: account + short options + pending approvals."""
+    """Compact status overview: account + short options + pending approvals.
+
+    ``scans_run``/``scans_skipped`` (S9, from the intraday loop's per-session counters) surface
+    how many 15-min cycles actually ran vs. were lost to an overrun / lease contention, so the
+    operator can see intended (~26) vs actual scan count. Omitted when not tracked yet.
+    """
     parts: list[str] = ["*Status Overview*"]
 
     if account:
@@ -509,6 +516,14 @@ def format_status(
         "",
         f"⏳ {_md(str(pending_approvals))} pending · {_md(str(open_orders))} open orders",
     ]
+
+    if scans_run is not None or scans_skipped is not None:
+        run = scans_run or 0
+        skipped = scans_skipped or 0
+        line = f"🔁 {_md(str(run))} intraday scan{'s' if run != 1 else ''} run"
+        if skipped:
+            line += f" · ⚠️ {_md(str(skipped))} skipped \\(overrun\\)"
+        parts += ["", line]
 
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:

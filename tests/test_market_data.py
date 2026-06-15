@@ -215,11 +215,33 @@ def test_strike_band_scales_with_iv(monkeypatch):
 
     from src.ibkr.market_data import _strike_band_pct
 
-    # AAPL has no override → band scales with the stored IV (patched to 100%).
-    monkeypatch.setattr("src.storage.iv_history.latest_iv", lambda _s: 1.0)
+    # AAPL has no override → band scales with stored IV (0.5), staying below the S8 cap.
+    monkeypatch.setattr("src.storage.iv_history.latest_iv", lambda _s: 0.5)
     band = _strike_band_pct("AAPL", 30)
-    assert band == pytest.approx(max(0.15, 1.5 * 1.0 * math.sqrt(30 / 365)))
+    assert band == pytest.approx(max(0.15, 1.5 * 0.5 * math.sqrt(30 / 365)))
     assert band > 0.15  # high IV genuinely widens the band past the floor
+
+
+def test_strike_band_capped_at_max(monkeypatch):
+    """S8 — a very high IV no longer explodes the band; it's clamped to strike_band_max_pct."""
+    from src.common.config import get_config
+    from src.ibkr.market_data import _strike_band_pct
+
+    monkeypatch.setattr("src.storage.iv_history.latest_iv", lambda _s: 1.0)  # IV=100%
+    # Uncapped this would be ~0.43 at 30 DTE; the cap holds it at strike_band_max_pct.
+    assert _strike_band_pct("AAPL", 30) == pytest.approx(
+        get_config().market_data.strike_band_max_pct
+    )
+
+
+def test_strike_band_override_not_clamped_by_cap():
+    """An explicit per-symbol override is a deliberate choice — not clamped by the S8 cap."""
+    from src.common.config import get_config
+    from src.ibkr.market_data import _strike_band_pct
+
+    # SOXL's 0.45 override exceeds the 0.40 default cap, yet is returned as-is.
+    assert get_config().market_data.strike_band_max_pct < 0.45
+    assert _strike_band_pct("SOXL", 30) == pytest.approx(0.45)
 
 
 def test_strike_band_falls_back_to_floor_without_iv(monkeypatch):

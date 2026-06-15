@@ -531,7 +531,14 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     from src.notify.formatters import format_status
 
-    text = format_status(positions, account, pending_approvals, open_orders)
+    text = format_status(
+        positions,
+        account,
+        pending_approvals,
+        open_orders,
+        scans_run=context.bot_data.get("intraday_scans_run", 0),
+        scans_skipped=context.bot_data.get("intraday_scans_skipped", 0),
+    )
     if is_halted():
         banner = _md_escape_halt(get_halt_reason())
         text = f"🛑 *EXECUTION HALTED* — {banner}\n\n{text}"
@@ -798,6 +805,43 @@ async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> 
 # ---------------------------------------------------------------------------
 
 
+# S9 — throttle the operator-facing overrun warning so a persistently overrunning scan doesn't
+# spam Telegram every cycle; the per-session counters (surfaced in /status) carry the full tally.
+_OVERRUN_WARN_INTERVAL = timedelta(minutes=30)
+
+
+async def _note_intraday_skip(bot_data: dict, bot: object, chat_id: str, reason: str) -> None:
+    """Record an intraday-cycle skip (overrun / lease contention) and warn the operator (S9).
+
+    Increments the per-session ``intraday_scans_skipped`` counter (shown in /status so intended
+    ~26 vs actual scan count is visible) and sends a throttled Telegram warning — at most once per
+    ``_OVERRUN_WARN_INTERVAL`` regardless of how many cycles in a row are lost.
+    """
+    bot_data["intraday_scans_skipped"] = bot_data.get("intraday_scans_skipped", 0) + 1
+    skipped = bot_data["intraday_scans_skipped"]
+    logger.warning(
+        "Intraday loop: cycle skipped — %s (total skipped this session=%d)", reason, skipped
+    )
+
+    now = datetime.now(UTC)
+    last = bot_data.get("_overrun_warn_at")
+    if last is not None and (now - last) < _OVERRUN_WARN_INTERVAL:
+        return
+    bot_data["_overrun_warn_at"] = now
+    try:
+        await bot.send_message(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            text=(
+                f"⚠️ Intraday scan cycle skipped: {reason}. "
+                f"{skipped} cycle(s) skipped this session — scans are running less often than "
+                f"the {get_config().scheduler.intraday_loop_minutes}-min schedule intends. "
+                f"See /status."
+            ),
+        )
+    except Exception:
+        logger.exception("Intraday loop: failed to send overrun warning")
+
+
 async def _intraday_scan_loop(
     app: Application,
     ib_scan: IB,
@@ -857,21 +901,32 @@ async def _intraday_scan_loop(
                 continue
 
             if bot_data.get("scan_running"):
-                logger.info("Intraday loop: scan already running — deferring to next cycle")
+                # S9: the prior cycle's scan is still running (overran the interval) — this cycle
+                # is lost. Count it and warn the operator (throttled) instead of failing silently.
+                await _note_intraday_skip(
+                    bot_data, bot, chat_id, "previous scan still running (overran the interval)"
+                )
                 continue
 
             bot_data["scan_running"] = True
             try:
                 from src.orchestrator.scan import run_scan
 
-                result = await run_scan(ib_scan, bot, chat_id)
-                logger.info(
-                    "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
-                    len(result.cc_candidates),
-                    len(result.csp_candidates),
-                    len(result.buy_candidates),
-                    "AUTO" if is_automated_mode() else "MANUAL",
-                )
+                result = await run_scan(ib_scan, bot, chat_id, intraday=True)
+                if result.lease_skipped:
+                    # S9: another process (e.g. the morning cron) held the scan lease — skipped.
+                    await _note_intraday_skip(
+                        bot_data, bot, chat_id, "another process holds the scan lease"
+                    )
+                else:
+                    bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
+                    logger.info(
+                        "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
+                        len(result.cc_candidates),
+                        len(result.csp_candidates),
+                        len(result.buy_candidates),
+                        "AUTO" if is_automated_mode() else "MANUAL",
+                    )
             except Exception:
                 logger.exception("Intraday loop: scan failed")
             finally:
