@@ -156,6 +156,30 @@ class OptionQuoteRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class ScanStateRow(Base):
+    """Per-symbol intraday-scan materiality state (S1/S10).
+
+    One row per symbol, upserted whenever that symbol's option chain is actually fetched.
+    The 15-min intraday loop reads this to decide which symbols need a fresh (expensive)
+    chain fetch this cycle and which can be skipped: a held name is always material, a name
+    that cleared the score floor last cycle is material, and a ``would_own`` name is material
+    only once its live spot has drifted past ``market_data.intraday_rescan_move_pct`` from
+    ``last_spot`` (the spot at its *last fetch*, not the last check — so slow drift still
+    accumulates to a re-fetch). The morning cron / manual ``/scan`` fetch everything and so
+    seed every row; they never read the gate.
+    """
+
+    __tablename__ = "scan_state"
+    __table_args__ = (UniqueConstraint("symbol", name="uq_scan_state_symbol"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    last_spot: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cleared_floor: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class PositionSnapshotRow(Base):
     """Daily portfolio snapshot for assignment auto-detection (position diffing).
 

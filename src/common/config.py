@@ -64,8 +64,8 @@ class SchedulerCfg(BaseModel):
     eod_report: str = "16:15"
     intraday_poll_seconds: int = 60
     intraday_loop_minutes: int = 15  # how often the intraday scan+profit-take loop fires
-    profit_take_pct: float = 50.0   # close a short position once this % of premium is captured
-    entry_cutoff: str = "15:00"     # no new entries surfaced/queued after this ET time
+    profit_take_pct: float = 50.0  # close a short position once this % of premium is captured
+    entry_cutoff: str = "15:00"  # no new entries surfaced/queued after this ET time
 
     @field_validator("morning_scan", "eod_report", "entry_cutoff")
     @classmethod
@@ -114,6 +114,18 @@ class MarketDataCfg(BaseModel):
     # session was the dominant cost of /scan (~60s × every symbol). Bound it tightly here
     # since by this point we're just hoping for a cached daily bar, not a live quote.
     spot_history_timeout_seconds: float = 10.0
+
+    # S1 — intraday materiality gate. The 15-min loop re-runs the same scan body ~26×/session;
+    # re-fetching the full universe chain (80% of wall-clock) every cycle is wasteful when only
+    # held positions and materially-moved would_own names can change a decision. A would_own
+    # name is re-fetched intraday only once its live spot drifts ≥ this fraction from the spot at
+    # its last fetch; held names and names that cleared the score floor last cycle always fetch.
+    # The morning cron and manual /scan ignore this gate and always sweep the full universe.
+    intraday_rescan_move_pct: float = 0.005  # 0.5%
+    # Safety net: force a full intraday sweep when the oldest fetched symbol hasn't been
+    # refreshed in this many minutes, so a quiet-but-drifting name can't go stale indefinitely.
+    # 0 disables the periodic full sweep (gate purely by move/held/cleared).
+    force_full_scan_minutes: float = 90.0
 
     @model_validator(mode="after")
     def _enforce_line_budget(self) -> MarketDataCfg:

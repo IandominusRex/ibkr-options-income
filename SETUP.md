@@ -177,6 +177,20 @@ Two processes must stay running during market hours:
 | Approval service | 14 (exec) + 15 (scan) | Telegram bot, order execution, interactive commands |
 | Intraday monitor | 12 | Watches open positions for roll alerts |
 
+> The approval service re-runs the scan every `scheduler.intraday_loop_minutes` (default 15) during
+> market hours. To cut cost, that intraday loop only re-fetches an option chain for a `would_own`
+> name once its spot has moved past `market_data.intraday_rescan_move_pct` (default 0.5%) since its
+> last fetch — held positions and names that just cleared the score floor always refresh, and a full
+> sweep is forced every `market_data.force_full_scan_minutes` (default 90). Leave these at the
+> defaults unless you want the loop more or less eager. The morning cron and a manual `/scan` always
+> sweep the full universe regardless. If a scan ever overruns the interval (or loses the scan lease),
+> the loop counts the skipped cycle and sends a throttled warning; `/status` shows the per-session
+> "🔁 N run · ⚠️ M skipped" tally so you can see intended (~26) vs actual scan count.
+>
+> `market_data.strike_band_max_pct` (default `0.40`) caps how wide the *auto* IV-scaled strike band
+> can get, so an extreme-IV leveraged ETF doesn't generate a runaway option-chain fetch. An explicit
+> `universe.yaml → strike_bands` per-symbol override is a deliberate choice and is **not** capped.
+
 ### Option A — single launcher (recommended)
 
 `scripts/start.py` starts **both** daemons together and auto-restarts either if it crashes:

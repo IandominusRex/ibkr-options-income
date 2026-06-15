@@ -29,7 +29,7 @@ from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
 from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sentiment import SentimentScorer
-from src.analytics.technicals import get_technical_stats
+from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
 from src.common.schemas import (
@@ -48,15 +48,18 @@ from src.common.schemas import (
 from src.engine.decision_engine import select_top_candidates
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
-from src.ibkr.market_data import get_option_chain_quotes_async
+from src.ibkr.market_data import get_option_chain_quotes_async, persist_chain_quotes
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
+from src.storage.scan_state import get_scan_state, upsert_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
+    get_setting,
     release_scan_lease,
     renew_scan_lease,
+    set_setting,
 )
 from src.strategies.buy_candidates import generate_buy_candidates
 from src.strategies.cash_secured_put import generate_csp_candidates
@@ -534,6 +537,84 @@ def _persist_candidates(
 # ---------------------------------------------------------------------------
 
 
+async def _compute_material_symbols(
+    all_symbols: list[str],
+    holdings_symbols: set[str],
+    would_own: list[str],
+) -> set[str]:
+    """Decide which symbols need a fresh option-chain fetch this intraday cycle (S1).
+
+    Returns the subset of *all_symbols* that are *material*:
+      (a) every held stock position — CC / profit-take / roll need fresh quotes;
+      (b) every ``would_own`` name whose live spot has drifted ≥
+          ``market_data.intraday_rescan_move_pct`` from the spot at its last fetch;
+      (c) every name that cleared the score floor last cycle.
+    Plus a periodic full sweep when the oldest fetched symbol is older than
+    ``force_full_scan_minutes`` (or when no state exists yet, e.g. the first intraday cycle).
+
+    Only ever *narrows* the set — callers in full-sweep mode (morning cron, manual ``/scan``)
+    must not call this and instead fetch every symbol. Pure read; never raises.
+    """
+    cfg = get_config()
+    states = get_scan_state(all_symbols)
+
+    # No baseline yet (first intraday cycle after a cold start) → sweep everything to seed it.
+    if not states:
+        return set(all_symbols)
+
+    # Periodic safety-net full sweep: if the stalest fetched symbol is too old, refresh all.
+    force_minutes = cfg.market_data.force_full_scan_minutes
+    if force_minutes > 0:
+        stamps = [s.last_scanned_at for s in states.values() if s.last_scanned_at]
+        oldest = min(stamps) if stamps else None
+        if oldest is None or (datetime.now(UTC) - oldest).total_seconds() > force_minutes * 60:
+            return set(all_symbols)
+
+    material: set[str] = set(holdings_symbols)  # (a)
+    material |= {sym for sym, st in states.items() if st.cleared_floor}  # (c)
+
+    # (b) would_own names whose live spot moved past the threshold. fast_info is a cheap
+    # single quote (no option chain); fan out so the materiality probe stays sub-second.
+    move_pct = cfg.market_data.intraday_rescan_move_pct
+    to_probe = [s for s in would_own if s not in material]
+    loop = asyncio.get_running_loop()
+    prices = await asyncio.gather(
+        *(loop.run_in_executor(None, _fetch_last_price, s) for s in to_probe),
+        return_exceptions=True,
+    )
+    for sym, price in zip(to_probe, prices, strict=True):
+        st = states.get(sym)
+        # No baseline, no price, or a non-positive last_spot → fetch to (re)establish one.
+        if (
+            isinstance(price, BaseException)
+            or price is None
+            or st is None
+            or not st.last_spot
+            or st.last_spot <= 0
+        ):
+            material.add(sym)
+            continue
+        if abs(price - st.last_spot) / st.last_spot >= move_pct:
+            material.add(sym)
+
+    return material
+
+
+def _persist_scan_state(
+    fetched_spots: dict[str, float],
+    cleared_floor_symbols: set[str],
+    scanned_at: datetime,
+) -> None:
+    """Write the per-symbol materiality baseline for every fetched symbol (S1/S10). Off-thread."""
+    for symbol, spot in fetched_spots.items():
+        upsert_scan_state(
+            symbol,
+            last_spot=spot,
+            last_scanned_at=scanned_at,
+            cleared_floor=symbol in cleared_floor_symbols,
+        )
+
+
 def _fetch_analytics(
     symbol: str,
     quotes: list[OptionQuote] | None = None,
@@ -557,8 +638,15 @@ async def run_scan(
     chat_id: str,
     progress_callback: _ProgressCB | None = None,
     dashboard_callback: _ProgressCB | None = None,
+    *,
+    intraday: bool = False,
 ) -> ScanResult:
     """Run the full pipeline under a cross-process scan lease (SYSTEM_REVIEW F5).
+
+    ``intraday=True`` (the 15-min loop) enables the S1 materiality gate: only held positions,
+    materially-moved ``would_own`` names, and names that cleared the score floor last cycle get
+    a fresh option-chain fetch; everything else is skipped this cycle. The morning cron and
+    manual ``/scan`` leave it ``False`` and always sweep the full universe.
 
     A full chain scan consumes most of the account-level ~100 market-data line cap, so two
     concurrent scans (e.g. the morning cron and the 15-min daemon loop, in separate
@@ -584,6 +672,7 @@ async def run_scan(
             progress_callback,
             dashboard_callback=dashboard_callback,
             lease_token=lease_token,
+            intraday=intraday,
         )
     finally:
         # Compare-and-swap release: only clears the lease if we still hold it, so a scan that
@@ -598,6 +687,7 @@ async def _run_scan_body(
     progress_callback: _ProgressCB | None = None,
     dashboard_callback: _ProgressCB | None = None,
     lease_token: str | None = None,
+    intraday: bool = False,
 ) -> ScanResult:
     """Run the full pipeline. Returns ScanResult even on partial failures.
 
@@ -667,10 +757,25 @@ async def _run_scan_body(
         user_agent=cfg.secrets.reddit_user_agent,
     )
 
+    # --- 3b. Intraday materiality gate (S1) ---
+    # Full-sweep modes (morning cron, manual /scan) fetch every symbol; the 15-min loop fetches
+    # only material ones and skips the rest, sparing the dominant option-chain cost.
+    if intraday:
+        material_symbols = await _compute_material_symbols(all_symbols, holdings_symbols, would_own)
+        log.info(
+            "scan: intraday materiality gate — %d/%d symbols material: %s",
+            len(material_symbols),
+            n,
+            sorted(material_symbols),
+        )
+    else:
+        material_symbols = set(all_symbols)
+
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []
     csp_candidates: list[TradeCandidate] = []
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {}
+    fetched_spots: dict[str, float] = {}  # symbols whose chain we fetched → scan_state baseline
 
     await tracker.tick("market_data", "⏳", f"0/{n} symbols")
     for i, symbol in enumerate(all_symbols):
@@ -690,39 +795,58 @@ async def _run_scan_body(
         # step still run.
         symbol_start = time.monotonic()
         quotes: list[OptionQuote]
-        try:
-            quotes = await asyncio.wait_for(
-                get_option_chain_quotes_async(ib, symbol),
-                timeout=cfg.market_data.symbol_timeout_seconds,
-            )
-        except TimeoutError:
-            elapsed = time.monotonic() - symbol_start
-            log.error(
-                "scan: option chain for %s exceeded symbol_timeout_seconds=%.0f "
-                "(ran %.1fs) — skipping this symbol",
-                symbol,
-                cfg.market_data.symbol_timeout_seconds,
-                elapsed,
-            )
+        did_fetch = symbol in material_symbols
+        if not did_fetch:
+            # Intraday gate (S1): immaterial this cycle (not held, spot unmoved, didn't clear
+            # the floor last cycle). Skip the dominant option-chain fetch; analytics below still
+            # run (cheap/day-cached) so the buy-to-own list stays complete.
             quotes = []
-            await tracker.add_error(f"{symbol} — option chain timed out, skipped")
-        except Exception:
-            log.exception("scan: option chain failed for %s", symbol)
-            quotes = []
-            await tracker.add_error(f"{symbol} — option chain failed, skipped")
+            log.debug("scan: skipping option chain for %s (immaterial this intraday cycle)", symbol)
         else:
-            elapsed = time.monotonic() - symbol_start
-            if elapsed > cfg.market_data.symbol_timeout_seconds / 3:
-                log.warning(
-                    "scan: option chain for %s took %.1fs (%d quotes)",
+            try:
+                quotes = await asyncio.wait_for(
+                    get_option_chain_quotes_async(ib, symbol),
+                    timeout=cfg.market_data.symbol_timeout_seconds,
+                )
+            except TimeoutError:
+                elapsed = time.monotonic() - symbol_start
+                log.error(
+                    "scan: option chain for %s exceeded symbol_timeout_seconds=%.0f "
+                    "(ran %.1fs) — skipping this symbol",
                     symbol,
+                    cfg.market_data.symbol_timeout_seconds,
                     elapsed,
-                    len(quotes),
                 )
+                quotes = []
+                await tracker.add_error(f"{symbol} — option chain timed out, skipped")
+            except Exception:
+                log.exception("scan: option chain failed for %s", symbol)
+                quotes = []
+                await tracker.add_error(f"{symbol} — option chain failed, skipped")
             else:
-                log.debug(
-                    "scan: option chain for %s took %.1fs (%d quotes)", symbol, elapsed, len(quotes)
-                )
+                elapsed = time.monotonic() - symbol_start
+                if elapsed > cfg.market_data.symbol_timeout_seconds / 3:
+                    log.warning(
+                        "scan: option chain for %s took %.1fs (%d quotes)",
+                        symbol,
+                        elapsed,
+                        len(quotes),
+                    )
+                else:
+                    log.debug(
+                        "scan: option chain for %s took %.1fs (%d quotes)",
+                        symbol,
+                        elapsed,
+                        len(quotes),
+                    )
+                # Persist the snapshot so later cycles have a store to diff against (S10).
+                if quotes:
+                    try:
+                        await loop.run_in_executor(
+                            None, persist_chain_quotes, symbol, quotes, result.run_id
+                        )
+                    except Exception:
+                        log.warning("scan: persist_chain_quotes failed for %s", symbol)
 
         # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
         # concurrently in the default executor to cut per-symbol latency.
@@ -739,6 +863,11 @@ async def _run_scan_body(
         sentiment_score = None if isinstance(sentiment_res, BaseException) else sentiment_res
 
         analytics_map[symbol] = (iv_stats, tech_stats, fund_stats)
+
+        # Record the live spot at this fetch as the next cycle's materiality baseline (S1/S10).
+        # Only fetched symbols update their baseline so slow drift accrues from the last *fetch*.
+        if did_fetch and tech_stats.price:
+            fetched_spots[symbol] = tech_stats.price
 
         # CC candidates for held stock positions
         stock_pos = next(
@@ -823,11 +952,27 @@ async def _run_scan_body(
     result.csp_candidates = [c for c in top if c.strategy.value == "cash_secured_put"]
     await tracker.tick("scoring", "✅", f"{len(top)}/{len(all_option_candidates)} passed")
 
+    # --- 6b. Persist per-symbol materiality state for the next intraday cycle (S1/S10) ---
+    # Only symbols we actually fetched this run get a fresh baseline; `cleared_floor` marks the
+    # names that cleared the score floor so the next cycle always re-checks them. Runs in both
+    # modes so the morning full sweep seeds the gate the first intraday cycle reads.
+    cleared_floor_symbols = {c.underlying for c in passed}
+    if fetched_spots:
+        scanned_at = datetime.now(UTC)
+        await loop.run_in_executor(
+            None,
+            _persist_scan_state,
+            fetched_spots,
+            cleared_floor_symbols,
+            scanned_at,
+        )
+
     # --- 7. Load prior Claude memory for history injection ---
     memory = _load_memory(all_symbols)
 
     # --- 8. Claude review (enrichment only — failure does not abort) ---
     await tracker.tick("claude", "⏳")
+    reused_reviews = False
     try:
         if top:
             # Scan-time spot per symbol (N17) so Claude reasons from current levels, not the
