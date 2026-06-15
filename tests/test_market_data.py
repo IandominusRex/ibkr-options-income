@@ -430,7 +430,10 @@ class TestEnrichGreeksYf:
             greeks_source="ibkr",
         )
         # yfinance must NOT be called
-        monkeypatch.setattr("src.ibkr.market_data.yf.Ticker", lambda _: (_ for _ in ()).throw(AssertionError("yf called")))
+        monkeypatch.setattr(
+            "src.ibkr.market_data.yf.Ticker",
+            lambda _: (_ for _ in ()).throw(AssertionError("yf called")),
+        )
         _enrich_greeks_yf("AAPL", 195.0, [quote])
         assert quote.greeks_source == "ibkr"
 

@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date
 from typing import Any
 
@@ -42,19 +43,57 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _enrich_greeks_yf(symbol: str, spot: float, quotes: list[OptionQuote]) -> None:
-    """Back-fill delta (and IV) on quotes where IBKR returned no modelGreeks.
+def _enrich_greeks_from_ibkr_iv(symbol: str, spot: float, quotes: list[OptionQuote]) -> int:
+    """Black-Scholes-fill delta from the **IBKR-quoted IV** for quotes missing a delta (S2).
 
-    Uses yfinance option chain implied-volatility + Black-Scholes delta.
-    Mutates quotes in-place; sets greeks_source="black_scholes" on each enriched quote.
-    Never raises — logs a warning on total failure and returns silently on partial failure.
-    This is needed on paper accounts without a market-data subscription: delayed data
-    (errors 354/10091) produces no modelGreeks, causing delta=None and zero candidates.
+    Runs *before* the yfinance fallback: whenever a quote already carries an IBKR implied vol
+    (per-contract ``OptionComputation.impliedVol``, captured by ``_ticker_to_quote`` even when
+    the model greeks lagged, or the generic-tick-106 underlying IV), we can compute the delta
+    locally instead of pulling a second full option chain from Yahoo. Per-contract IBKR IV
+    already reflects skew, so this matches the model delta closely when only the *delta* tick
+    was missing.
+
+    ``greeks_source`` becomes ``"black_scholes"`` — a BS-derived delta is not trustworthy live
+    greeks, so the F6 live-execution gate must still treat it as non-IBKR. Returns the count
+    enriched. Pure/cheap; never raises.
+    """
+    enriched = 0
+    for q in quotes:
+        if q.delta is not None or q.iv is None or q.iv <= 0:
+            continue
+        right_key = "C" if q.right == OptionRight.CALL else "P"
+        delta = bs_delta(spot, q.strike, q.dte, q.iv, right_key)
+        if delta is None:
+            continue
+        q.delta = round(delta, 4)
+        q.greeks_source = "black_scholes"
+        enriched += 1
+    if enriched:
+        log.info(
+            "greeks: filled %d/%d delta(s) for %s from IBKR IV — no Yahoo fetch needed (S2)",
+            enriched,
+            sum(1 for q in quotes if q.greeks_source != "ibkr" or q.delta is None) + enriched,
+            symbol,
+        )
+    return enriched
+
+
+def _enrich_greeks_yf(symbol: str, spot: float, quotes: list[OptionQuote]) -> None:
+    """Back-fill delta (and IV) on quotes where IBKR returned no greeks **and** no IV.
+
+    Last-resort fallback (after IBKR per-contract greeks and ``_enrich_greeks_from_ibkr_iv``):
+    pulls the yfinance option chain's implied-volatility + Black-Scholes delta. This is the
+    expensive path — a second full chain download per symbol — so it only fires for quotes that
+    IBKR could not value at all (delayed-data paper accounts without a market-data subscription:
+    errors 354/10091 → no modelGreeks and no IV). Mutates quotes in-place; sets
+    greeks_source="black_scholes". Never raises. Instrumented (S2): logs how many quotes forced
+    a Yahoo fetch and how long it took, so a real paper scan reveals how often this fires.
     """
     missing = [q for q in quotes if q.delta is None]
     if not missing:
         return
 
+    started = time.monotonic()
     try:
         ticker = yf.Ticker(symbol)
         available: set[str] = set(ticker.options)
@@ -91,22 +130,31 @@ def _enrich_greeks_yf(symbol: str, spot: float, quotes: list[OptionQuote]) -> No
                 q.greeks_source = "black_scholes"
                 enriched += 1
 
+        elapsed = time.monotonic() - started
         if enriched:
             log.info(
-                "greeks_fallback: enriched %d/%d quotes for %s via Black-Scholes",
+                "greeks_fallback: Yahoo enriched %d/%d quotes for %s in %.2fs "
+                "(%d expiry-chain download(s))",
                 enriched,
                 len(missing),
                 symbol,
+                elapsed,
+                len(by_expiry),
             )
         else:
             log.warning(
-                "greeks_fallback: %d quotes for %s have no delta after yfinance fallback"
+                "greeks_fallback: %d quotes for %s have no delta after a %.2fs yfinance fallback"
                 " — candidates will be empty (check market-data subscription or IV=0 entries)",
                 len(missing),
                 symbol,
+                elapsed,
             )
     except Exception:
-        log.exception("greeks_fallback: yfinance lookup failed for %s — skipping BS enrichment", symbol)
+        log.exception(
+            "greeks_fallback: yfinance lookup failed for %s after %.2fs — skipping BS enrichment",
+            symbol,
+            time.monotonic() - started,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -323,12 +371,37 @@ def _clean_bid(raw: Any) -> float | None:
     return None if (v is not None and v < 0) else v
 
 
+# Per-contract IBKR option computations, in preference order. The model tick (13) is the
+# standard source, but the bid/ask/last computation ticks (10/11/12) often arrive when the
+# model tick lags — using them as a fallback gets genuine IBKR greeks onto more quotes and
+# spares them the expensive Yahoo download (S2). All stream automatically; no genericTickList
+# entry is needed.
+_GREEK_TICK_FIELDS = ("modelGreeks", "lastGreeks", "askGreeks", "bidGreeks")
+
+
+def _pick_greeks(ticker: Any) -> Any:
+    """Return the first IBKR OptionComputation on *ticker* that carries a usable delta.
+
+    Prefers ``modelGreeks``; falls back through last/ask/bid computations so a momentarily
+    missing model tick doesn't force the Yahoo fallback. None if no computation has a delta.
+    """
+    for name in _GREEK_TICK_FIELDS:
+        g = getattr(ticker, name, None)
+        if g is not None and _safe(getattr(g, "delta", None)) is not None:
+            return g
+    return None
+
+
 def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
     """Map a (contract, ticker) pair to an OptionQuote. Pure — shared by sync + async."""
     exp_str = c.lastTradeDateOrContractMonth
     exp_date = date(int(exp_str[:4]), int(exp_str[4:6]), int(exp_str[6:]))
     right = OptionRight.CALL if c.right == "C" else OptionRight.PUT
-    g = ticker.modelGreeks
+    g = _pick_greeks(ticker)
+    # IV: prefer the per-contract computation's impliedVol; else the generic-tick-106 underlying
+    # IV. Captured even when delta is absent so _enrich_greeks_from_ibkr_iv can BS-fill the delta
+    # locally instead of hitting Yahoo (S2).
+    iv = _safe(g.impliedVol) if g else _safe(getattr(ticker, "impliedVolatility", None))
     oi = _safe_int(ticker.callOpenInterest if c.right == "C" else ticker.putOpenInterest)
     return OptionQuote(
         underlying=c.symbol,
@@ -340,7 +413,7 @@ def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
         last=_safe(ticker.last),
         volume=_safe_int(ticker.volume),
         open_interest=oi,
-        iv=_safe(g.impliedVol) if g else None,
+        iv=iv,
         delta=_safe(g.delta) if g else None,
         gamma=_safe(g.gamma) if g else None,
         theta=_safe(g.theta) if g else None,
@@ -368,7 +441,9 @@ def _batch_quotes(
         batch = contracts[i : i + batch_size]
 
         tickers = [
-            ib.reqMktData(c, genericTickList="101", snapshot=False, regulatorySnapshot=False)
+            # 101 = option open interest; 106 = option implied volatility (S2: lets us BS-fill
+            # delta from an IBKR IV instead of a second Yahoo chain download when greeks lag).
+            ib.reqMktData(c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
         try:
@@ -494,6 +569,8 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
         return []
 
     quotes = _batch_quotes(ib, qualified, md.chain_batch_size, md.request_throttle_seconds)
+    # IBKR IV → Black-Scholes first (no network); Yahoo only for quotes IBKR couldn't value (S2).
+    _enrich_greeks_from_ibkr_iv(symbol, spot, quotes)
     _enrich_greeks_yf(symbol, spot, quotes)
     log.info("get_option_chain_quotes: %d quotes for %s", len(quotes), symbol)
     return quotes
@@ -551,6 +628,9 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     quotes = await _batch_quotes_async(
         ib, qualified, md.chain_batch_size, md.request_throttle_seconds
     )
+    # IBKR IV → Black-Scholes first (pure/cheap, on-loop); only quotes IBKR couldn't value at all
+    # fall through to the expensive Yahoo download (S2).
+    _enrich_greeks_from_ibkr_iv(symbol, spot, quotes)
     # yfinance is blocking — run off the event loop so it doesn't stall ib_async.
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _enrich_greeks_yf, symbol, spot, quotes)

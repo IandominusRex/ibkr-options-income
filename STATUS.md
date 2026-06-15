@@ -470,6 +470,13 @@ not been exercised against a live TWS/Gateway:
   IBKR pacing violation / error 10197 (competing live session) lockout — confirm on paper that a stuck
   symbol is skipped cleanly (no leaked market-data lines) and the next symbol's `reqMktData` calls still
   succeed.
+- **Layered IBKR-first greeks (S2):** the per-contract fallback (`lastGreeks`/`askGreeks`/`bidGreeks`) and
+  the generic-tick-`106` IBKR IV → Black-Scholes path are unit-tested with mocked tickers, but it is
+  **unverified which of these a real paper/delayed account actually populates**. Run one real paper scan
+  and read the new `greeks_fallback: Yahoo enriched … in …s` logs to measure how often the Yahoo download
+  still fires; if IBKR supplies greeks or IV, the cheaper tiers should short-circuit it. Tick `106` on
+  option contracts in particular needs confirmation that it returns a usable IV (it may be ignored for
+  options) — if not, the path is a harmless no-op and Yahoo still covers it.
 
 ---
 
