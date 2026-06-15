@@ -19,7 +19,7 @@ from src.common.schemas import (
     Strategy,
     TradeCandidate,
 )
-from src.notify.formatters import _md, format_candidate
+from src.notify.formatters import _md, format_candidate, format_status
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.models import ApprovalRow, OrderRow
 
@@ -1073,3 +1073,219 @@ async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
     assert "|" not in text.replace("\\|", "")
     assert "85/100" in text
     assert "AAPL" in text
+
+
+# --------------------------------------------------------------------------- #
+# S6 — output-frequency suppression (intraday loop only)
+# --------------------------------------------------------------------------- #
+
+
+async def test_send_candidates_suppresses_unchanged_pending(mock_bot_cls, monkeypatch, tmp_path):
+    """Second intraday cycle with a still-pending same-band card → digest, no new approval row."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    cand = _make_candidate("c-001")
+    with patch("src.notify.sender.Bot", mock_cls):
+        # First cycle: full card sent, one PENDING approval persisted.
+        with dbmod.session_scope() as s:
+            await send_candidates([cand], [], s, suppress_unchanged=True)
+        assert mock_instance.send_message.call_count == 1
+
+        mock_instance.send_message.reset_mock()
+        # Second cycle: unchanged → suppressed to a single digest, still no second approval.
+        with dbmod.session_scope() as s:
+            await send_candidates([cand], [], s, suppress_unchanged=True)
+
+    assert mock_instance.send_message.call_count == 1
+    digest_text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "unchanged" in digest_text.lower()
+    with dbmod.session_scope() as s:
+        rows = s.execute(select(ApprovalRow)).scalars().all()
+    assert len(rows) == 1  # no duplicate approval created for the suppressed cycle
+
+
+async def test_suppress_sends_full_card_without_prior(mock_bot_cls, monkeypatch, tmp_path):
+    """suppress_unchanged=True but no prior pending card → normal full card + approval row."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as s:
+            await send_candidates([_make_candidate("c-xyz")], [], s, suppress_unchanged=True)
+
+    assert mock_instance.send_message.call_count == 1
+    with dbmod.session_scope() as s:
+        assert len(s.execute(select(ApprovalRow)).scalars().all()) == 1
+
+
+async def test_manual_send_ignores_suppression(mock_bot_cls, monkeypatch, tmp_path):
+    """Manual /scan (suppress_unchanged=False) re-sends a full card even with a pending one."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    cand = _make_candidate("c-001")
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as s:
+            await send_candidates([cand], [], s, suppress_unchanged=True)
+        mock_instance.send_message.reset_mock()
+        with dbmod.session_scope() as s:
+            await send_candidates([cand], [], s)  # default suppress_unchanged=False
+
+    assert mock_instance.send_message.call_count == 1
+    with dbmod.session_scope() as s:
+        assert len(s.execute(select(ApprovalRow)).scalars().all()) == 2  # fresh card each time
+
+
+async def test_score_band_change_resends_full_card(mock_bot_cls, monkeypatch, tmp_path):
+    """A materially different blended score (new band) is not suppressed."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as s:
+            await send_candidates(
+                [_make_candidate("c-001", blended_score=74.5)], [], s, suppress_unchanged=True
+            )
+        mock_instance.send_message.reset_mock()
+        with dbmod.session_scope() as s:
+            await send_candidates(
+                [_make_candidate("c-001", blended_score=92.0)], [], s, suppress_unchanged=True
+            )
+
+    # New score band (14 → 18) → fresh full card, not a digest.
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "unchanged" not in text.lower()
+    with dbmod.session_scope() as s:
+        assert len(s.execute(select(ApprovalRow)).scalars().all()) == 2
+
+
+def _buy_cfg(monkeypatch):
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_id = None
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+    return cfg
+
+
+async def test_send_buy_list_digest_when_unchanged(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _buy_cfg(monkeypatch)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    cands = [BuyCandidate(symbol="AAPL", score=85.0), BuyCandidate(symbol="MSFT", score=70.0)]
+
+    with patch("telegram.Bot", mock_cls):
+        # First send: full list, hash stored.
+        await send_buy_list(cands, bot=object(), chat_id="99999", suppress_unchanged=True)
+        first_text = mock_instance.send_message.call_args.kwargs["text"]
+        assert "Buy\\-to\\-Own Candidates" in first_text
+
+        mock_instance.send_message.reset_mock()
+        # Second send, identical → compact digest.
+        await send_buy_list(cands, bot=object(), chat_id="99999", suppress_unchanged=True)
+
+    digest = mock_instance.send_message.call_args.kwargs["text"]
+    assert "unchanged" in digest.lower()
+    assert "Candidates" not in digest  # not the full screen
+
+
+async def test_send_buy_list_full_when_changed(monkeypatch, tmp_path):
+    _db_setup(tmp_path, monkeypatch)
+    _buy_cfg(monkeypatch)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("telegram.Bot", mock_cls):
+        await send_buy_list(
+            [BuyCandidate(symbol="AAPL", score=85.0)], object(), "9", suppress_unchanged=True
+        )
+        mock_instance.send_message.reset_mock()
+        # Different symbol set → full list again, not a digest.
+        await send_buy_list(
+            [BuyCandidate(symbol="NVDA", score=88.0)], object(), "9", suppress_unchanged=True
+        )
+
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "Buy\\-to\\-Own Candidates" in text
+
+
+# --------------------------------------------------------------------------- #
+# S9 — scan-overrun observability (counters in /status + throttled warning)
+# --------------------------------------------------------------------------- #
+
+
+def test_format_status_omits_scan_line_when_not_tracked():
+    text = format_status([], None, 0, 0)
+    assert "intraday scan" not in text
+
+
+def test_format_status_shows_run_count():
+    text = format_status([], None, 0, 0, scans_run=24, scans_skipped=0)
+    assert "24 intraday scans run" in text
+    assert "skipped" not in text
+
+
+def test_format_status_flags_skipped_cycles():
+    text = format_status([], None, 0, 0, scans_run=20, scans_skipped=6)
+    assert "20 intraday scans run" in text
+    assert "6 skipped" in text
+
+
+async def test_note_intraday_skip_counts_and_throttles():
+    from src.notify.approval_service import _note_intraday_skip
+
+    bot = AsyncMock()
+    bot_data: dict = {}
+
+    # First skip: counts to 1 and sends a warning.
+    await _note_intraday_skip(bot_data, bot, "123", "overran")
+    assert bot_data["intraday_scans_skipped"] == 1
+    assert bot.send_message.call_count == 1
+
+    # Second skip immediately after: counts to 2 but warning is throttled (no new send).
+    await _note_intraday_skip(bot_data, bot, "123", "overran")
+    assert bot_data["intraday_scans_skipped"] == 2
+    assert bot.send_message.call_count == 1
+
+
+async def test_note_intraday_skip_warns_again_after_interval():
+    from src.notify.approval_service import _OVERRUN_WARN_INTERVAL, _note_intraday_skip
+
+    bot = AsyncMock()
+    bot_data: dict = {}
+
+    await _note_intraday_skip(bot_data, bot, "123", "overran")
+    assert bot.send_message.call_count == 1
+
+    # Backdate the last-warn time past the throttle interval → next skip warns again.
+    bot_data["_overrun_warn_at"] = datetime.now(UTC) - _OVERRUN_WARN_INTERVAL - timedelta(seconds=1)
+    await _note_intraday_skip(bot_data, bot, "123", "overran")
+    assert bot.send_message.call_count == 2

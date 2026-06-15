@@ -205,6 +205,35 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
     return text
 
 
+def _strat_abbr(strategy_value: str) -> str:
+    return {"covered_call": "CC", "cash_secured_put": "CSP"}.get(strategy_value, strategy_value)
+
+
+def format_unchanged_cards_digest(items: list[tuple[TradeCandidate, str]]) -> str:
+    """Compact MarkdownV2 digest replacing full cards for candidates unchanged since a prior,
+    still-pending cycle (S6). *items* is a list of (candidate, since-HH:MM) — the existing
+    pending approval (with its buttons) is still actionable, so we only nudge, not re-spam.
+    """
+    if not items:
+        return ""
+    lines = [f"⏳ *{len(items)} unchanged* — still pending your approval:"]
+    for c, since in items:
+        label = (
+            f"{c.underlying} {_strat_abbr(c.strategy.value)} "
+            f"${c.strike:g} {c.expiry.strftime('%b%d')}"
+        )
+        lines.append(f"• {_md(label)} — _since {_md(since)}_")
+    return "\n".join(lines)
+
+
+def format_buy_list_digest(count: int, since: str) -> str:
+    """One-line MarkdownV2 digest for an unchanged buy-to-own list (S6)."""
+    return (
+        f"🟢 *Buy\\-to\\-Own* — {count} name\\(s\\) unchanged since {_md(since)} "
+        f"\\(no new screens\\)"
+    )
+
+
 def format_help() -> str:
     """List all available bot commands."""
     lines = [

@@ -7,8 +7,11 @@ service can handle button callbacks.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,20 +28,52 @@ from src.common.schemas import (
 from src.notify.formatters import (
     format_auto_trade_notification,
     format_buy_list,
+    format_buy_list_digest,
     format_candidate,
+    format_unchanged_cards_digest,
 )
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow
 from src.storage.orders import has_active_order
-from src.storage.system_settings import is_automated_mode, is_halted
+from src.storage.system_settings import get_setting, is_automated_mode, is_halted, set_setting
 
 logger = logging.getLogger(__name__)
+
+_ET = ZoneInfo("America/New_York")
+
+# S6 — system_settings keys for buy-list output suppression (intraday loop only).
+_BUY_LIST_HASH_KEY = "last_buy_list_hash"
+_BUY_LIST_TIME_KEY = "last_buy_list_time"
+
+
+def _score_band(score: float | None) -> int:
+    """Bucket a 0-100 blended score into 5-point bands, so a re-send only fires on a
+    materially different score (not float jitter between cycles)."""
+    return int((score or 0.0) // 5)
+
+
+def _et_hhmm(dt: datetime | None = None) -> str:
+    """Current (or *dt*'s) wall-clock time as HH:MM in US/Eastern, for 'since HH:MM' digests."""
+    if dt is None:
+        dt = datetime.now(UTC)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)  # stored DB timestamps are naive-UTC
+    return dt.astimezone(_ET).strftime("%H:%M")
+
+
+def _buy_list_hash(candidates: list[BuyCandidate]) -> str:
+    """Content hash of the buy-to-own list keyed on (symbol, score-band), so an unchanged
+    screen is detected across cycles (S6)."""
+    payload = sorted((c.symbol, _score_band(c.score)) for c in candidates)
+    return hashlib.sha256(json.dumps(payload).encode()).hexdigest()
 
 
 async def send_candidates(
     candidates: list[TradeCandidate],
     reviews: list[ClaudeReview],
     session: Session | None = None,
+    *,
+    suppress_unchanged: bool = False,
 ) -> None:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
@@ -48,6 +83,11 @@ async def send_candidates(
     the second live-quote re-validation gate).
 
     In MANUAL mode (default): sends one Approve/Reject message per candidate.
+
+    ``suppress_unchanged`` (set by the 15-min intraday loop, never by manual /scan or the
+    morning cron) collapses a candidate that still has a live, same-score-band PENDING approval
+    into a compact "unchanged" digest instead of re-spamming a full card every cycle (S6) — the
+    original card's buttons remain actionable, so nothing is lost.
 
     Safe to call with an empty list — no API calls are made.
     """
@@ -69,12 +109,21 @@ async def send_candidates(
         return
 
     if session is not None:
-        await _send_with_session(session, candidates, reviews, cfg, token, str(chat_id), thread_id)
+        await _send_with_session(
+            session, candidates, reviews, cfg, token, str(chat_id), thread_id, suppress_unchanged
+        )
         return
 
     with session_scope() as own_session:
         await _send_with_session(
-            own_session, candidates, reviews, cfg, token, str(chat_id), thread_id
+            own_session,
+            candidates,
+            reviews,
+            cfg,
+            token,
+            str(chat_id),
+            thread_id,
+            suppress_unchanged,
         )
 
 
@@ -161,6 +210,28 @@ async def _auto_queue_candidates(
         logger.exception("Failed to send auto-queue notification")
 
 
+def _live_pending_approval(session: Session, candidate: TradeCandidate) -> ApprovalRow | None:
+    """Return a still-pending, unexpired approval for *candidate* whose displayed score is in the
+    same band — i.e. an actionable card the user has already been shown (S6). None otherwise."""
+    now = datetime.now(UTC)
+    existing = (
+        session.query(ApprovalRow)
+        .filter(
+            ApprovalRow.candidate_id == candidate.candidate_id,
+            ApprovalRow.status == ApprovalStatus.PENDING,
+            ApprovalRow.expires_at > now,
+        )
+        .order_by(ApprovalRow.id.desc())
+        .first()
+    )
+    if existing is None:
+        return None
+    prior_score = (existing.snapshot or {}).get("blended_score")
+    if _score_band(prior_score) != _score_band(candidate.blended_score):
+        return None  # score moved a band → treat as changed, send a fresh card
+    return existing
+
+
 async def _send_with_session(
     session: Session,
     candidates: list[TradeCandidate],
@@ -169,13 +240,27 @@ async def _send_with_session(
     token: str,
     chat_id: str,
     thread_id: int | None = None,
+    suppress_unchanged: bool = False,
 ) -> None:
     review_map = {r.candidate_id: r for r in reviews}
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
 
+    # S6: split off candidates that already have a live, same-band pending card. They keep their
+    # original (actionable) message; we replace the re-send with one compact digest line each.
+    to_send = candidates
+    suppressed: list[tuple[TradeCandidate, str]] = []
+    if suppress_unchanged:
+        to_send = []
+        for candidate in candidates:
+            existing = _live_pending_approval(session, candidate)
+            if existing is not None:
+                suppressed.append((candidate, _et_hhmm(existing.created_at)))
+            else:
+                to_send.append(candidate)
+
     # One Bot for the whole batch (avoids opening/closing an HTTP session per candidate).
     async with Bot(token=token) as bot:
-        for candidate in candidates:
+        for candidate in to_send:
             # Compute TTL per candidate so a slow multi-candidate review session
             # doesn't leave the last candidate with only a few minutes of runway.
             expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
@@ -224,15 +309,35 @@ async def _send_with_session(
                 approval.status = ApprovalStatus.EXPIRED
                 session.flush()
 
+        # S6: one compact digest for everything we held back (no new approval rows created).
+        if suppressed:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_unchanged_cards_digest(suppressed),
+                    parse_mode="MarkdownV2",
+                )
+                logger.info("Sent unchanged-candidate digest (%d suppressed)", len(suppressed))
+            except Exception:
+                logger.exception("Failed to send unchanged-candidate digest")
+
 
 async def send_buy_list(
     candidates: list[BuyCandidate],
     bot: object,
     chat_id: str,
+    *,
+    suppress_unchanged: bool = False,
 ) -> None:
     """Send an informational Telegram message listing buy-to-own recommendations.
 
     No Approve/Reject buttons — these are stock purchase suggestions, not option orders.
+
+    ``suppress_unchanged`` (intraday loop only) replaces the full screen with a one-line
+    "unchanged since HH:MM" digest when the (symbol, score-band) set is identical to the last
+    full send (S6), cutting ~26 near-identical buy-list blasts/day. Manual /scan and the morning
+    cron always send the full list.
     """
     if not candidates:
         return
@@ -243,6 +348,27 @@ async def send_buy_list(
         logger.warning("TELEGRAM credentials not set — skipping buy list send")
         return
 
+    thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+    current_hash = _buy_list_hash(candidates)
+
+    # S6: unchanged since the last full send → compact digest instead of the full screen.
+    if suppress_unchanged and get_setting(_BUY_LIST_HASH_KEY) == current_hash:
+        since = get_setting(_BUY_LIST_TIME_KEY) or "earlier"
+        try:
+            from telegram import Bot as TelegramBot
+
+            async with TelegramBot(token=token) as tbot:
+                await tbot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=format_buy_list_digest(len(candidates), since),
+                    parse_mode="MarkdownV2",
+                )
+            logger.info("Buy list unchanged since %s — sent compact digest (S6)", since)
+        except Exception:
+            logger.exception("Failed to send buy-list digest to Telegram")
+        return
+
     text = format_buy_list(candidates)
     if not text:
         return
@@ -250,7 +376,6 @@ async def send_buy_list(
     try:
         from telegram import Bot as TelegramBot
 
-        thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
         async with TelegramBot(token=token) as tbot:
             await tbot.send_message(
                 chat_id=chat_id,
@@ -259,5 +384,8 @@ async def send_buy_list(
                 parse_mode="MarkdownV2",
             )
         logger.info("Sent buy list (%d candidates)", len(candidates))
+        # Record the content + time so the next cycle can suppress an unchanged repeat (S6).
+        set_setting(_BUY_LIST_HASH_KEY, current_hash)
+        set_setting(_BUY_LIST_TIME_KEY, _et_hhmm())
     except Exception:
         logger.exception("Failed to send buy list to Telegram")

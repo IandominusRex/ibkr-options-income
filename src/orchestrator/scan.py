@@ -16,12 +16,14 @@ Runs:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 
 from ib_async import IB
 
@@ -73,6 +75,11 @@ _MEMORY_LOOKBACK_DAYS = 30
 # latency, and an echo chamber of Claude's own prior prose). Keep only the most useful few
 # rows per symbol, outcomes first.
 _MEMORY_ROWS_PER_SYMBOL = 3
+
+# S5 — system_settings key holding a content hash of the prior cycle's top-candidate signal
+# vectors. When this cycle's hash matches, the intraday loop skips the `claude -p` subprocess
+# and reuses the persisted ClaudeReviews — enrichment-only, never touches gating (the fence).
+_REVIEW_HASH_KEY = "last_review_hash"
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
@@ -424,6 +431,44 @@ def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
         "rationale_tags": list(c.rationale_tags),
         "vix": vix,
     }
+
+
+def _candidates_review_hash(top: list[TradeCandidate], vix: float | None) -> str:
+    """Stable content hash of the top candidates' signal vectors (S5).
+
+    Keyed on each candidate's deterministic ``candidate_id`` + the exact signal snapshot Claude
+    would see. If two consecutive cycles produce the same hash, the LLM review would be identical,
+    so the intraday loop can reuse the prior ``ClaudeReview`` instead of re-invoking ``claude -p``.
+    """
+    payload = sorted(((c.candidate_id, _signal_vector(c, vix)) for c in top), key=lambda x: x[0])
+    blob = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _load_prior_reviews(candidate_ids: list[str]) -> dict[str, ClaudeReview]:
+    """Load the most recent persisted ClaudeReview per candidate_id (S5 reuse path).
+
+    Returns only the ids that have a parseable prior review, so the caller can require a complete
+    set before reusing (a partial set falls back to a fresh review).
+    """
+    out: dict[str, ClaudeReview] = {}
+    try:
+        with session_scope() as s:
+            for cid in candidate_ids:
+                row = (
+                    s.query(ClaudeReviewRow)
+                    .filter_by(candidate_id=cid)
+                    .order_by(ClaudeReviewRow.id.desc())
+                    .first()
+                )
+                if row and row.payload:
+                    try:
+                        out[cid] = ClaudeReview.model_validate(row.payload)
+                    except Exception:
+                        log.debug("S5: prior review for %s unparseable — will re-review", cid)
+    except Exception:
+        log.warning("S5: failed to load prior reviews — running a fresh review", exc_info=True)
+    return out
 
 
 def _persist_ledger(
@@ -982,19 +1027,36 @@ async def _run_scan_body(
                 for sym, (_iv, tech, _fund) in analytics_map.items()
                 if tech.price  # drop missing/zero spot
             }
-            result.reviews = review_candidates(
-                top,
-                account,
-                history=memory,
-                market_conditions=result.market_conditions,
-                spot_prices=spot_prices,
-            )
+            # S5: skip the LLM when the top set + signals are unchanged from the prior cycle
+            # (intraday loop only — manual /scan and the morning cron always review fresh).
+            vix = result.market_conditions.vix if result.market_conditions else None
+            review_hash = _candidates_review_hash(top, vix)
+            if intraday and get_setting(_REVIEW_HASH_KEY) == review_hash:
+                cached = _load_prior_reviews([c.candidate_id for c in top])
+                if len(cached) == len(top):
+                    result.reviews = [cached[c.candidate_id] for c in top]
+                    reused_reviews = True
+                    log.info(
+                        "scan: top candidates unchanged since last cycle — reused %d Claude "
+                        "review(s), skipped the LLM (S5)",
+                        len(result.reviews),
+                    )
+            if not reused_reviews:
+                result.reviews = review_candidates(
+                    top,
+                    account,
+                    history=memory,
+                    market_conditions=result.market_conditions,
+                    spot_prices=spot_prices,
+                )
+            set_setting(_REVIEW_HASH_KEY, review_hash)
         log.info("scan: %d Claude reviews", len(result.reviews))
     except Exception:
         log.exception("scan: Claude review failed — continuing without reviews")
         await tracker.error("claude", "failed")
     else:
-        await tracker.tick("claude", "✅", f"{len(result.reviews)} reviews")
+        detail = f"{len(result.reviews)} reviews" + (" (reused)" if reused_reviews else "")
+        await tracker.tick("claude", "✅", detail)
 
     # --- 9. Persist ---
     _persist_candidates(top, result.reviews, result.run_id)
@@ -1007,8 +1069,12 @@ async def _run_scan_body(
     # Telegram network sends — that would block other processes writing the same SQLite DB).
     await tracker.tick("notify", "⏳")
     try:
-        await send_candidates(result.cc_candidates + result.csp_candidates, result.reviews)
-        await send_buy_list(result.buy_candidates, bot, chat_id)
+        await send_candidates(
+            result.cc_candidates + result.csp_candidates,
+            result.reviews,
+            suppress_unchanged=intraday,
+        )
+        await send_buy_list(result.buy_candidates, bot, chat_id, suppress_unchanged=intraday)
     except Exception:
         log.exception("scan: failed to send Telegram messages")
         await tracker.error("notify", "send failed")
