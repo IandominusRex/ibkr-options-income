@@ -234,6 +234,30 @@ def format_buy_list_digest(count: int, since: str) -> str:
     )
 
 
+def format_quiet_cycle(
+    *,
+    skipped: int,
+    total: int,
+    move_pct: float,
+    vix: float | None,
+    at: str,
+) -> str:
+    """Heartbeat for an intraday cycle that surfaced nothing new (S1/S5/S6).
+
+    The 15-min loop otherwise sends *nothing* when no candidate clears the gate and the buy
+    list is unchanged — indistinguishable from a dead daemon. This compact message confirms the
+    scan ran and explains the silence: most names moved less than the materiality threshold, so
+    their option chains were not re-fetched and Claude was not invoked this cycle.
+    """
+    pct = f"{move_pct * 100:g}"
+    head = "🟰 *Quiet cycle* · " + _md(at)
+    body = _md(f"{skipped}/{total} names moved <{pct}% — chain re-fetch & Claude skipped.")
+    lines = [head, body]
+    if vix is not None:
+        lines.append(_md(f"VIX {vix:.1f}"))
+    return "\n".join(lines)
+
+
 def format_help() -> str:
     """List all available bot commands."""
     lines = [

@@ -74,7 +74,7 @@ async def send_candidates(
     session: Session | None = None,
     *,
     suppress_unchanged: bool = False,
-) -> None:
+) -> bool:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
     In AUTOMATED mode: skips approval buttons, directly creates APPROVED ApprovalRows
@@ -90,9 +90,13 @@ async def send_candidates(
     original card's buttons remain actionable, so nothing is lost.
 
     Safe to call with an empty list — no API calls are made.
+
+    Returns ``True`` if any Telegram message (a card, an auto-queue summary, or an unchanged
+    digest) was sent, ``False`` if nothing went out — the intraday loop uses this to decide
+    whether the cycle was silent enough to warrant a quiet-cycle heartbeat (S6).
     """
     if not candidates:
-        return
+        return False
 
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
@@ -100,22 +104,20 @@ async def send_candidates(
 
     if not token or not chat_id:
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping send")
-        return
+        return False
 
     thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
 
     if is_automated_mode():
-        await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
-        return
+        return await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
 
     if session is not None:
-        await _send_with_session(
+        return await _send_with_session(
             session, candidates, reviews, cfg, token, str(chat_id), thread_id, suppress_unchanged
         )
-        return
 
     with session_scope() as own_session:
-        await _send_with_session(
+        return await _send_with_session(
             own_session,
             candidates,
             reviews,
@@ -133,13 +135,17 @@ async def _auto_queue_candidates(
     token: str,
     chat_id: str,
     thread_id: int | None,
-) -> None:
-    """Automated mode: persist APPROVED approvals + QUEUED orders, send summary notification."""
+) -> bool:
+    """Automated mode: persist APPROVED approvals + QUEUED orders, send summary notification.
+
+    Returns ``True`` if a summary notification was sent (candidates were queued), ``False``
+    otherwise (halted, or nothing new to queue this cycle).
+    """
     # Kill switch: never auto-open new positions while halted (SYSTEM_REVIEW Phase 2).
     # The daily trade-count cap is enforced at the execution chokepoint (process_queued_orders).
     if is_halted():
         logger.warning("Auto-queue skipped — execution halted (kill switch engaged)")
-        return
+        return False
 
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
     queued: list[TradeCandidate] = []
@@ -195,7 +201,7 @@ async def _auto_queue_candidates(
             )
 
     if not queued:
-        return
+        return False
 
     text = format_auto_trade_notification(queued)
     try:
@@ -208,6 +214,7 @@ async def _auto_queue_candidates(
             )
     except Exception:
         logger.exception("Failed to send auto-queue notification")
+    return True
 
 
 def _live_pending_approval(session: Session, candidate: TradeCandidate) -> ApprovalRow | None:
@@ -241,9 +248,10 @@ async def _send_with_session(
     chat_id: str,
     thread_id: int | None = None,
     suppress_unchanged: bool = False,
-) -> None:
+) -> bool:
     review_map = {r.candidate_id: r for r in reviews}
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
+    sent_any = False
 
     # S6: split off candidates that already have a live, same-band pending card. They keep their
     # original (actionable) message; we replace the re-send with one compact digest line each.
@@ -299,6 +307,7 @@ async def _send_with_session(
                 )
                 approval.telegram_message_id = msg.message_id
                 session.flush()
+                sent_any = True
                 logger.info(
                     "Sent candidate %s (message_id=%s)", candidate.candidate_id, msg.message_id
                 )
@@ -318,9 +327,12 @@ async def _send_with_session(
                     text=format_unchanged_cards_digest(suppressed),
                     parse_mode="MarkdownV2",
                 )
+                sent_any = True
                 logger.info("Sent unchanged-candidate digest (%d suppressed)", len(suppressed))
             except Exception:
                 logger.exception("Failed to send unchanged-candidate digest")
+
+    return sent_any
 
 
 async def send_buy_list(
@@ -329,7 +341,7 @@ async def send_buy_list(
     chat_id: str,
     *,
     suppress_unchanged: bool = False,
-) -> None:
+) -> bool:
     """Send an informational Telegram message listing buy-to-own recommendations.
 
     No Approve/Reject buttons — these are stock purchase suggestions, not option orders.
@@ -338,15 +350,18 @@ async def send_buy_list(
     "unchanged since HH:MM" digest when the (symbol, score-band) set is identical to the last
     full send (S6), cutting ~26 near-identical buy-list blasts/day. Manual /scan and the morning
     cron always send the full list.
+
+    Returns ``True`` if any Telegram message (the full screen or the unchanged digest) was sent,
+    ``False`` otherwise — feeds the intraday quiet-cycle heartbeat decision (S6).
     """
     if not candidates:
-        return
+        return False
 
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
     if not token or not chat_id:
         logger.warning("TELEGRAM credentials not set — skipping buy list send")
-        return
+        return False
 
     thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
     current_hash = _buy_list_hash(candidates)
@@ -365,13 +380,14 @@ async def send_buy_list(
                     parse_mode="MarkdownV2",
                 )
             logger.info("Buy list unchanged since %s — sent compact digest (S6)", since)
+            return True
         except Exception:
             logger.exception("Failed to send buy-list digest to Telegram")
-        return
+            return False
 
     text = format_buy_list(candidates)
     if not text:
-        return
+        return False
 
     try:
         from telegram import Bot as TelegramBot
@@ -387,5 +403,7 @@ async def send_buy_list(
         # Record the content + time so the next cycle can suppress an unchanged repeat (S6).
         set_setting(_BUY_LIST_HASH_KEY, current_hash)
         set_setting(_BUY_LIST_TIME_KEY, _et_hhmm())
+        return True
     except Exception:
         logger.exception("Failed to send buy list to Telegram")
+        return False

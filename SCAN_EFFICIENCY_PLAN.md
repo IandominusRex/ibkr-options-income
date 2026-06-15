@@ -171,6 +171,14 @@ src/ibkr greeks-fallback note, STATUS.md fallback row + "items needing live veri
       into one compact `format_unchanged_cards_digest` line (its original buttons stay actionable);
       an unchanged buy-to-own screen (`(symbol, score-band)` set vs. `last_buy_list_hash`) becomes a
       one-line `format_buy_list_digest` "unchanged since HH:MM". Manual `/scan` always sends in full.
+- [x] **S6 (quiet-cycle heartbeat)** `send_candidates`/`send_buy_list` now return a `bool` (did
+      anything go out?). When an intraday cycle surfaces nothing — no candidate clears the gate and
+      the buy list is unchanged/empty, so both sends report "nothing sent" — `run_scan` emits a
+      single `format_quiet_cycle` heartbeat (🟰 Quiet cycle · HH:MM ET — "N/M names moved <0.5%,
+      chain re-fetch & Claude skipped"). This closes the silence gap the operator could otherwise
+      not distinguish from a dead daemon, and matches the "spot didn't move → no Claude → send an
+      update" intent. `tests/test_scan_materiality.py` covers fire-on-quiet + never-on-full-sweep;
+      `tests/test_notify.py` covers the formatter + the send return-value contract.
 
 **Gate after Phase 4:** ✅ tests pass (662) · ✅ ruff · ✅ mypy · ✅ docs updated (ARCHITECTURE.md
 scan.py + sender.py + formatters.py, STATUS.md S5/S6 row)

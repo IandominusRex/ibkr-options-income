@@ -182,6 +182,24 @@ def test_md_escapes_all_special_chars():
     assert "_" not in escaped.replace("\\_", "")
 
 
+def test_format_quiet_cycle_renders_and_escapes():
+    from src.notify.formatters import format_quiet_cycle
+
+    text = format_quiet_cycle(skipped=42, total=50, move_pct=0.005, vix=14.2, at="11:30 ET")
+    assert "Quiet cycle" in text
+    assert "42/50" in text
+    assert "0\\.5%" in text  # 0.5% with the period escaped for MarkdownV2
+    assert "VIX 14\\.2" in text
+
+
+def test_format_quiet_cycle_omits_vix_when_unknown():
+    from src.notify.formatters import format_quiet_cycle
+
+    text = format_quiet_cycle(skipped=1, total=3, move_pct=0.01, vix=None, at="09:50 ET")
+    assert "VIX" not in text
+    assert "1/3" in text
+
+
 # --------------------------------------------------------------------------- #
 # sender — send_candidates
 # --------------------------------------------------------------------------- #
@@ -216,9 +234,10 @@ async def test_send_candidates_empty_list_no_bot_calls(mock_bot_cls, monkeypatch
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([], [], session)
+            sent = await send_candidates([], [], session)
 
     mock_cls.assert_not_called()
+    assert sent is False  # nothing sent → feeds the quiet-cycle heartbeat decision (S6)
 
 
 async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tmp_path):

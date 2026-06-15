@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from ib_async import IB
 
@@ -80,6 +81,13 @@ _MEMORY_ROWS_PER_SYMBOL = 3
 # vectors. When this cycle's hash matches, the intraday loop skips the `claude -p` subprocess
 # and reuses the persisted ClaudeReviews — enrichment-only, never touches gating (the fence).
 _REVIEW_HASH_KEY = "last_review_hash"
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _now_et_hhmm() -> str:
+    """Current wall-clock time as 'HH:MM ET' for the quiet-cycle heartbeat (S6)."""
+    return datetime.now(UTC).astimezone(_ET).strftime("%H:%M ET")
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
@@ -260,6 +268,13 @@ class ScanResult:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     # True when this scan was skipped because another process held the scan lease (F5).
     lease_skipped: bool = False
+    # Intraday telemetry (S1/S5/S6): how many symbols were fetched this cycle vs the universe
+    # size, whether the Claude review was reused, and whether the cycle ended silently and so
+    # emitted a quiet-cycle heartbeat instead of any card/buy-list message.
+    total_symbols: int = 0
+    material_count: int = 0
+    reused_reviews: bool = False
+    quiet_cycle: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -660,6 +675,42 @@ def _persist_scan_state(
         )
 
 
+async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -> None:
+    """Send the intraday quiet-cycle heartbeat (S6). Best-effort; never raises.
+
+    Called only when an ``intraday`` cycle surfaced nothing — no candidate cleared the gate and
+    the buy list was unchanged, so neither ``send_candidates`` nor ``send_buy_list`` emitted a
+    message. Without this the operator sees total silence and can't distinguish a deliberately
+    quiet market from a dead daemon. Reuses the same ``bot``/``chat_id`` as the buy-list send.
+    """
+    if bot is None or not chat_id:
+        return
+    from src.notify.formatters import format_quiet_cycle
+
+    skipped = max(0, result.total_symbols - result.material_count)
+    vix = result.market_conditions.vix if result.market_conditions else None
+    try:
+        await bot.send_message(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            text=format_quiet_cycle(
+                skipped=skipped,
+                total=result.total_symbols,
+                move_pct=get_config().market_data.intraday_rescan_move_pct,
+                vix=vix,
+                at=_now_et_hhmm(),
+            ),
+            parse_mode="MarkdownV2",
+        )
+        result.quiet_cycle = True
+        log.info(
+            "scan: quiet intraday cycle — sent heartbeat (%d/%d names below the move threshold)",
+            skipped,
+            result.total_symbols,
+        )
+    except Exception:
+        log.warning("scan: failed to send quiet-cycle heartbeat", exc_info=True)
+
+
 def _fetch_analytics(
     symbol: str,
     quotes: list[OptionQuote] | None = None,
@@ -776,6 +827,7 @@ async def _run_scan_body(
     }
     all_symbols: list[str] = sorted(set(would_own) | holdings_symbols)
     n = len(all_symbols)
+    result.total_symbols = n
     log.info(
         "scan: %d symbols to scan (%d holdings, %d universe)",
         n,
@@ -815,6 +867,7 @@ async def _run_scan_body(
         )
     else:
         material_symbols = set(all_symbols)
+    result.material_count = len(material_symbols)
 
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []
@@ -1057,6 +1110,7 @@ async def _run_scan_body(
     else:
         detail = f"{len(result.reviews)} reviews" + (" (reused)" if reused_reviews else "")
         await tracker.tick("claude", "✅", detail)
+    result.reused_reviews = reused_reviews
 
     # --- 9. Persist ---
     _persist_candidates(top, result.reviews, result.run_id)
@@ -1069,12 +1123,22 @@ async def _run_scan_body(
     # Telegram network sends — that would block other processes writing the same SQLite DB).
     await tracker.tick("notify", "⏳")
     try:
-        await send_candidates(
+        cand_sent = await send_candidates(
             result.cc_candidates + result.csp_candidates,
             result.reviews,
             suppress_unchanged=intraday,
         )
-        await send_buy_list(result.buy_candidates, bot, chat_id, suppress_unchanged=intraday)
+        buy_sent = await send_buy_list(
+            result.buy_candidates, bot, chat_id, suppress_unchanged=intraday
+        )
+        # S6: an intraday cycle that surfaced nothing (no candidate cleared the gate, buy list
+        # unchanged) would otherwise be silent — the operator can't tell a deliberately quiet
+        # market from a dead daemon. Send one compact heartbeat that confirms the scan ran and
+        # explains the silence (most names moved < the materiality threshold, so chains weren't
+        # re-fetched and Claude wasn't invoked). Manual /scan and the cron never reach this
+        # (intraday=False) and always send in full.
+        if intraday and not cand_sent and not buy_sent:
+            await _send_quiet_heartbeat(bot, chat_id, result)
     except Exception:
         log.exception("scan: failed to send Telegram messages")
         await tracker.error("notify", "send failed")
