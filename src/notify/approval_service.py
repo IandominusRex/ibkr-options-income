@@ -39,7 +39,12 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
-from src.common.market_hours import is_new_entry_window, is_rth
+from src.common.market_hours import (
+    is_new_entry_window,
+    is_rth,
+    now_et_hhmm,
+    seconds_until_next_aligned_mark,
+)
 from src.common.schemas import ApprovalStatus, OrderState
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
@@ -848,14 +853,19 @@ async def _intraday_scan_loop(
     ib_exec: IB | None,
     chat_id: str,
 ) -> None:
-    """Background task: every intraday_loop_minutes during RTH, check profit takes + scan."""
+    """Background task: every intraday_loop_minutes during RTH, check profit takes + scan.
+
+    Cycles are aligned to ET clock marks (e.g. 9:30, 9:45, 10:00, ... for the default
+    15-min interval) rather than process-start-relative, so the schedule is predictable
+    and consistent across restarts.
+    """
     cfg = get_config()
-    interval = cfg.scheduler.intraday_loop_minutes * 60
+    interval_minutes = cfg.scheduler.intraday_loop_minutes
     bot = app.bot
     bot_data = app.bot_data
 
     while True:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(seconds_until_next_aligned_mark(interval_minutes))
 
         # Catch-all around the whole cycle: a single bad cycle (config typo, transient
         # IBKR error, etc.) must never propagate out of `while True` and silently kill
@@ -866,6 +876,10 @@ async def _intraday_scan_loop(
                 continue
 
             logger.info("Intraday loop: RTH cycle starting")
+            try:
+                await bot.send_message(chat_id=chat_id, text=f"\U0001f504 Scan started · {now_et_hhmm()}")
+            except Exception:
+                logger.exception("Intraday loop: failed to send scan-started message")
 
             # 1. Profit-take check (uses ib_scan for quotes, ib_exec for auto-closes)
             if ib_scan.isConnected():

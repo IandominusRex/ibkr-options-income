@@ -60,13 +60,18 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   error log). Per-symbol dashboard edits are throttled to respect Telegram's edit-rate limits. VIX
   is fetched at scan start and shown in the completion message.
 - **15-minute intraday loop** — runs inside the approval_service daemon every 15 minutes during
-  RTH. Each cycle: (1) checks short option positions for 50% profit-take threshold, (2) runs a
-  full scan — but new-entry scans stop after `scheduler.entry_cutoff` (default 15:00 ET); profit-take
-  checks still run until the close. The whole cycle body is wrapped in a catch-all so one bad cycle
-  cannot kill the loop. Behaviour depends on mode (see below). RTH is now determined by the shared,
-  **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth for both the
-  intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00 ET early
-  closes are respected, not just weekday + clock.
+  RTH, **clock-aligned to ET quarter-hour marks** (9:30, 9:45, 10:00, ... via
+  `src/common/market_hours.seconds_until_next_aligned_mark`) rather than process-start-relative,
+  so cycle times are predictable and consistent across restarts. Each cycle starts by sending a
+  short "🔄 Scan started · HH:MM ET" Telegram message (`src/common/market_hours.now_et_hhmm`) so an
+  operator can see the schedule is firing on time even before any candidates/heartbeat are sent.
+  Each cycle then: (1) checks short option positions for 50% profit-take threshold, (2) runs a
+  full scan — but new-entry scans stop after `scheduler.entry_cutoff` (default 15:00 ET);
+  profit-take checks still run until the close. The whole cycle body is wrapped in a catch-all so
+  one bad cycle cannot kill the loop. Behaviour depends on mode (see below). RTH is now determined
+  by the shared, **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth
+  for both the intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00
+  ET early closes are respected, not just weekday + clock.
 - **MANUAL / AUTOMATED mode toggle** (`/mode` Telegram command) — persisted in the `system_settings`
   SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
   get Approve/Reject buttons; profit takes send alerts only. In **AUTOMATED** mode: candidates are

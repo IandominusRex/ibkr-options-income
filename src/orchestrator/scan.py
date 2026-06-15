@@ -24,7 +24,6 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
 from ib_async import IB
 
@@ -35,6 +34,7 @@ from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
+from src.common.market_hours import now_et_hhmm
 from src.common.schemas import (
     AccountSnapshot,
     BuyCandidate,
@@ -82,13 +82,6 @@ _MEMORY_ROWS_PER_SYMBOL = 3
 # vectors. When this cycle's hash matches, the intraday loop skips the `claude -p` subprocess
 # and reuses the persisted ClaudeReviews — enrichment-only, never touches gating (the fence).
 _REVIEW_HASH_KEY = "last_review_hash"
-
-_ET = ZoneInfo("America/New_York")
-
-
-def _now_et_hhmm() -> str:
-    """Current wall-clock time as 'HH:MM ET' for the quiet-cycle heartbeat (S6)."""
-    return datetime.now(UTC).astimezone(_ET).strftime("%H:%M ET")
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
@@ -622,16 +615,22 @@ async def _compute_material_symbols(
     all_symbols: list[str],
     holdings_symbols: set[str],
     would_own: list[str],
-) -> set[str]:
+) -> tuple[set[str], dict[str, float]]:
     """Decide which symbols need a fresh option-chain fetch this intraday cycle (S1).
 
-    Returns the subset of *all_symbols* that are *material*:
-      (a) every held stock position — CC / profit-take / roll need fresh quotes;
-      (b) every ``would_own`` name whose live spot has drifted ≥
-          ``market_data.intraday_rescan_move_pct`` from the spot at its last fetch;
-      (c) every name that cleared the score floor last cycle.
-    Plus a periodic full sweep when the oldest fetched symbol is older than
-    ``force_full_scan_minutes`` (or when no state exists yet, e.g. the first intraday cycle).
+    Returns ``(material, probed_spots)``:
+      - ``material`` is the subset of *all_symbols* that are *material*:
+          (a) every held stock position — CC / profit-take / roll need fresh quotes;
+          (b) every ``would_own`` name whose live spot has drifted ≥
+              ``market_data.intraday_rescan_move_pct`` from the spot at its last fetch;
+          (c) every name that cleared the score floor last cycle.
+        Plus a periodic full sweep when the oldest fetched symbol is older than
+        ``force_full_scan_minutes`` (or when no state exists yet, e.g. the first intraday cycle).
+      - ``probed_spots`` is the live yfinance price fetched while checking (b), keyed by
+        symbol. Immaterial symbols skip the option chain and therefore have no chain-derived
+        spot — the caller reuses this probe price as ``spot_override`` so
+        ``get_technical_stats`` doesn't pay for a second identical ``fast_info`` fetch (S1
+        follow-up).
 
     Only ever *narrows* the set — callers in full-sweep mode (morning cron, manual ``/scan``)
     must not call this and instead fetch every symbol. Pure read; never raises.
@@ -641,15 +640,19 @@ async def _compute_material_symbols(
 
     # No baseline yet (first intraday cycle after a cold start) → sweep everything to seed it.
     if not states:
-        return set(all_symbols)
+        return set(all_symbols), {}
 
     # Periodic safety-net full sweep: if the stalest fetched symbol is too old, refresh all.
     force_minutes = cfg.market_data.force_full_scan_minutes
     if force_minutes > 0:
         stamps = [s.last_scanned_at for s in states.values() if s.last_scanned_at]
         oldest = min(stamps) if stamps else None
+        # SQLite drops tzinfo on round-trip; last_scanned_at was stored as datetime.now(UTC),
+        # so a naive value here is UTC — reattach tzinfo before comparing.
+        if oldest is not None and oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=UTC)
         if oldest is None or (datetime.now(UTC) - oldest).total_seconds() > force_minutes * 60:
-            return set(all_symbols)
+            return set(all_symbols), {}
 
     material: set[str] = set(holdings_symbols)  # (a)
     material |= {sym for sym, st in states.items() if st.cleared_floor}  # (c)
@@ -663,7 +666,10 @@ async def _compute_material_symbols(
         *(loop.run_in_executor(None, _fetch_last_price, s) for s in to_probe),
         return_exceptions=True,
     )
+    probed_spots: dict[str, float] = {}
     for sym, price in zip(to_probe, prices, strict=True):
+        if not isinstance(price, BaseException) and price is not None:
+            probed_spots[sym] = price
         st = states.get(sym)
         # No baseline, no price, or a non-positive last_spot → fetch to (re)establish one.
         if (
@@ -678,7 +684,7 @@ async def _compute_material_symbols(
         if abs(price - st.last_spot) / st.last_spot >= move_pct:
             material.add(sym)
 
-    return material
+    return material, probed_spots
 
 
 def _persist_scan_state(
@@ -718,7 +724,7 @@ async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -
                 total=result.total_symbols,
                 move_pct=get_config().market_data.intraday_rescan_move_pct,
                 vix=vix,
-                at=_now_et_hhmm(),
+                at=now_et_hhmm(),
             ),
             parse_mode="MarkdownV2",
         )
@@ -736,11 +742,14 @@ def _fetch_analytics(
     symbol: str,
     quotes: list[OptionQuote] | None = None,
     spot_override: float | None = None,
+    cached_yf_price: float | None = None,
 ) -> tuple[IVStats, TechnicalStats, FundamentalStats]:
     # Pass the live chain so IV term-structure slope + put/call skew actually compute
     # (they are None without quotes).
     iv_stats = get_iv_stats(symbol, quotes)
-    tech_stats = get_technical_stats(symbol, spot_override=spot_override)
+    tech_stats = get_technical_stats(
+        symbol, spot_override=spot_override, cached_yf_price=cached_yf_price
+    )
     fund_stats = get_fundamental_stats(symbol)
     return iv_stats, tech_stats, fund_stats
 
@@ -881,7 +890,9 @@ async def _run_scan_body(
     # Full-sweep modes (morning cron, manual /scan) fetch every symbol; the 15-min loop fetches
     # only material ones and skips the rest, sparing the dominant option-chain cost.
     if intraday:
-        material_symbols = await _compute_material_symbols(all_symbols, holdings_symbols, would_own)
+        material_symbols, probed_spots = await _compute_material_symbols(
+            all_symbols, holdings_symbols, would_own
+        )
         log.info(
             "scan: intraday materiality gate — %d/%d symbols material: %s",
             len(material_symbols),
@@ -890,6 +901,7 @@ async def _run_scan_body(
         )
     else:
         material_symbols = set(all_symbols)
+        probed_spots = {}
     result.material_count = len(material_symbols)
 
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
@@ -984,11 +996,16 @@ async def _run_scan_body(
         # Spot price (N17 follow-up): prefer the IBKR chain's put-call-parity spot over
         # yfinance fast_info when we just paid for the chain fetch.
         spot_override = infer_spot_from_quotes(quotes) if quotes else None
+        # For symbols that skipped the chain (S1), reuse the materiality probe's fast_info
+        # price instead of letting get_technical_stats fetch it again from scratch.
+        cached_yf_price = probed_spots.get(symbol)
 
         # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
         # concurrently in the default executor to cut per-symbol latency.
         analytics_res, sentiment_res = await asyncio.gather(
-            loop.run_in_executor(None, _fetch_analytics, symbol, quotes, spot_override),
+            loop.run_in_executor(
+                None, _fetch_analytics, symbol, quotes, spot_override, cached_yf_price
+            ),
             loop.run_in_executor(None, sentiment.score, symbol),
             return_exceptions=True,
         )

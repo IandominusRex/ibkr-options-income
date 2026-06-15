@@ -189,3 +189,32 @@ def is_rth(now: datetime | None = None) -> bool:
     if close is None:
         return False
     return _OPEN <= now.timetz().replace(tzinfo=None) < close
+
+
+def seconds_until_next_aligned_mark(interval_minutes: int, now: datetime | None = None) -> float:
+    """Seconds (ET wall-clock) until the next :00/:15/:30/:45-style mark.
+
+    For ``interval_minutes=15`` this lands on :00/:15/:30/:45 past the hour — since the
+    market opens at 9:30 ET, that schedule produces 9:30, 9:45, 10:00, 10:15, ... so the
+    intraday loop's cycles line up with the marks an operator expects.
+
+    *now* may be naive or tz-aware; it is interpreted/converted to US/Eastern. Defaults
+    to the current moment.
+    """
+    if now is None:
+        now = datetime.now(_ET)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_ET)
+    else:
+        now = now.astimezone(_ET)
+
+    minutes_since_midnight = now.hour * 60 + now.minute + now.second / 60 + now.microsecond / 6e7
+    next_mark = (minutes_since_midnight // interval_minutes + 1) * interval_minutes
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    target = midnight + timedelta(minutes=next_mark)
+    return (target - now).total_seconds()
+
+
+def now_et_hhmm() -> str:
+    """Current wall-clock time as 'HH:MM ET', for operator-facing cycle messages."""
+    return datetime.now(_ET).strftime("%H:%M ET")

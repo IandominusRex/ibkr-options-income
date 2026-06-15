@@ -12,6 +12,7 @@ from src.common.market_hours import (
     is_market_holiday,
     is_new_entry_window,
     is_rth,
+    seconds_until_next_aligned_mark,
     session_close,
 )
 
@@ -131,3 +132,29 @@ class TestIsNewEntryWindow:
         # must not silently treat "3pm" as valid.
         with pytest.raises(ValueError):
             is_new_entry_window(datetime(2026, 6, 11, 12, 0, tzinfo=_ET), entry_cutoff="3pm")
+
+
+class TestSecondsUntilNextAlignedMark:
+    def test_lands_on_next_quarter_hour(self):
+        # 9:31:00 -> next mark is 9:45, 14 minutes away.
+        now = datetime(2026, 6, 11, 9, 31, tzinfo=_ET)
+        assert seconds_until_next_aligned_mark(15, now) == pytest.approx(14 * 60)
+
+    def test_exactly_on_a_mark_waits_a_full_interval(self):
+        # Exactly 9:30:00 -> next mark is 9:45, a full interval away (not 0).
+        now = datetime(2026, 6, 11, 9, 30, tzinfo=_ET)
+        assert seconds_until_next_aligned_mark(15, now) == pytest.approx(15 * 60)
+
+    def test_market_open_is_an_aligned_mark(self):
+        # 9:29:30 -> next mark is 9:30, 30 seconds away (the market-open mark itself).
+        now = datetime(2026, 6, 11, 9, 29, 30, tzinfo=_ET)
+        assert seconds_until_next_aligned_mark(15, now) == pytest.approx(30)
+
+    def test_crosses_hour_boundary(self):
+        # 9:50:00 -> next mark is 10:00, 10 minutes away.
+        now = datetime(2026, 6, 11, 9, 50, tzinfo=_ET)
+        assert seconds_until_next_aligned_mark(15, now) == pytest.approx(10 * 60)
+
+    def test_naive_datetime_treated_as_eastern(self):
+        now = datetime(2026, 6, 11, 9, 50)
+        assert seconds_until_next_aligned_mark(15, now) == pytest.approx(10 * 60)
