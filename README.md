@@ -46,7 +46,9 @@ the top candidates to your phone via Telegram.
 - Interactive Brokers account with TWS or IB Gateway installed
 - Python 3.12+
 - A Telegram bot token and your chat ID
-- The Claude Code CLI installed and authenticated (`claude --version`)
+- The Claude Code CLI installed and authenticated (`claude --version`) — **or**, if you don't have
+  `claude -p` access, [Ollama](https://ollama.com) running locally with a model pulled
+  (`claude.backend: "ollama"`, see SETUP.md §14)
 
 See **[SETUP.md](SETUP.md)** for the full step-by-step setup guide.
 
@@ -94,7 +96,7 @@ python -m pytest               # all tests pass without TWS
 | `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate |
-| `src/claude/` | Headless `claude -p` runner, output parser, and learning-loop outcome recorder |
+| `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |
 | `src/claude/eval/` | Outcome ledger, close reconciler, and verdict scoring (calibration + EV vs baseline) |
 | `src/claude/skills/` | Skill loop: propose from labeled history, human-gated promotion, prompt injection |
 | `src/execution/` | Order building and execution via IBKR |

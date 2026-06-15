@@ -13,7 +13,7 @@ import pytest
 
 from src.claude.parser import parse_claude_output
 from src.claude.prompts.strategist import build_prompt
-from src.claude.runner import review_candidates
+from src.claude.runner import _review_candidates_cli as review_candidates
 from src.common.schemas import (
     AccountSnapshot,
     OptionRight,

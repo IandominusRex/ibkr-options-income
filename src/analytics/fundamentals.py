@@ -38,7 +38,9 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
     pe_ratio = _safe_float(info.get("trailingPE"))
     free_cash_flow = _safe_float(info.get("freeCashflow"))
     debt_to_equity = _safe_float(info.get("debtToEquity"))
-    dividend_yield = _safe_float(info.get("dividendYield"))
+    # yfinance returns dividendYield as a percent already (0.93 = 0.93%), not a fraction.
+    raw_dividend_yield = _safe_float(info.get("dividendYield"))
+    dividend_yield = raw_dividend_yield / 100.0 if raw_dividend_yield is not None else None
     ex_div_date = _ex_dividend_date(info)
     dividend_safe = _dividend_safety(info, free_cash_flow)
     quality_flag = _quality_screen(pe_ratio, debt_to_equity, free_cash_flow)

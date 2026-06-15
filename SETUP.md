@@ -14,6 +14,8 @@ Before you start, make sure you have:
 - **Python 3.12 or newer.** Check with `python3 --version`.
 - **The Claude Code CLI** installed and signed in. Check with `claude --version`.
   If not installed, follow the Claude Code setup instructions at [claude.ai/code](https://claude.ai/code).
+  **Or**, if you don't have `claude -p` access, install [Ollama](https://ollama.com) and set
+  `claude.backend: "ollama"` instead — see §14.
 - **A Telegram account.** You will create a bot to receive trade alerts and approve trades.
 
 ---
@@ -717,6 +719,83 @@ own appreciation is the buy-&-hold line.
 
 ---
 
+## 14. Local-LLM (Ollama) backend for Claude review
+
+Since June 15, 2026, `claude -p` (the headless CLI this system shells out to ~26+×/day) draws from
+a separate monthly **Agent SDK credit** pool billed at API rates, with no rollover. If you'd rather
+not depend on that credit — or don't have `claude -p` access at all — you can run the
+strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.com) instead.
+
+**This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
+access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
+against a local `qwen3:14b` model. The one exception is `scripts.propose_skill` (the
+skill-proposal step of the verdict learning loop, §13), which shells out to `claude -p` directly
+regardless of `claude.backend` — without CLI access it fails soft (logs a warning, writes no
+proposal). The rest of the learning loop (ledger, reconciliation, verdict scoring, promotion) is
+unaffected since it doesn't call Claude at all.
+
+**1. Install Ollama and pull a model:**
+
+```bash
+brew install ollama
+ollama serve &                       # or: brew services start ollama
+ollama pull qwen3:14b                # ~9GB; needs ~16-18GB free RAM. Try qwen3:8b for smaller machines.
+```
+
+**2. Choose a backend in `config/settings.yaml → claude`:**
+
+```yaml
+claude:
+  backend: "ollama"           # "cli" | "ollama" (active here) | "cli_then_ollama"
+  ollama_host: "http://localhost:11434"
+  ollama_model: "qwen3:14b"
+  ollama_timeout_seconds: 120
+```
+
+- **`"cli"`** — `claude -p` only. Requires CLI access; not usable in this deployment.
+- **`"ollama"`** (**active here**) — every review (`review_candidates`, `review_roll`,
+  `write_journal_narrative`) runs against the local model only. No `claude -p` calls, no Agent
+  SDK credit usage.
+- **`"cli_then_ollama"`** — tries `claude -p` first; if it's unavailable, times out, or returns
+  unparseable output (including a hit Agent SDK credit limit), falls back to the local model
+  automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
+  Claude to be the primary reviewer again.
+
+**Model choice.** `qwen3:14b` (~9GB, Q4_K_M) is the default — good reasoning quality, and
+`ollama_runner.py` sends `think: false` so its hybrid-reasoning `<think>` traces don't fight the
+`format: "json"` output. Alternatives:
+- **`phi4:14b`** — similar ~9GB footprint, strong structured-output/instruction-following, and
+  (not being a hybrid-reasoning model) has no thinking-mode/JSON interaction to worry about — a
+  simpler, more predictable choice if `qwen3:14b`'s output proves flaky.
+- **`qwen3:8b`** (~5GB) — trades reasoning depth for memory headroom on machines with 16GB or
+  less, or if `qwen3:14b` causes memory pressure alongside TWS/Gateway.
+
+**3. Active reasoning skills and the skill-proposal loop work unchanged.**
+`config/skills/active/*.md` is injected into the prompt text regardless of backend — no extra
+configuration needed. The verdict learning loop (Section 13) is also backend-agnostic: ledger
+rows, reconciliation, verdict scoring, and `scripts.propose_skill` all dispatch on
+`claude.backend` the same way `review_candidates`/`review_roll` do — with `backend: "ollama"`,
+`scripts.propose_skill` drafts its proposal via the local model too (`ollama_runner.propose_skill`,
+same `format: "json"` / `think: false` / `num_ctx: 8192` handling). Promotion (`scripts.skills
+promote`) is always a human-gated file move regardless of which backend drafted the proposal.
+
+Expect skill drafting to be a harder task for a local model than reviewing candidates — it has to
+find patterns across dozens of labeled trade outcomes and write a coherent, falsifiable playbook
+from scratch, rather than synthesize pre-computed signals. A weak or generic draft just gets
+rejected (`scripts.skills reject <name>`) — low risk, but review proposals from `qwen3:14b` more
+critically than you would from `claude -p`.
+
+**Expectations:** a 14B local model is noticeably less reliable at nuanced multi-signal judgment
+than Claude — expect more conservative (`wait`) verdicts and occasional validation failures (which
+fail soft to `[]`/`None`, same as a CLI failure). `format: "json"` constrains Ollama's output to
+valid JSON, but schema-validity (matching `ClaudeReview`/`RollReview`) still depends on the model
+following the prompt's instructions. `ollama_runner.py` also sets `num_ctx: 8192` (vs Ollama's
+4096 default) since the strategist prompt (universe context + history + active skills) can exceed
+4096 tokens. Latency is typically 5–60s per call on Apple Silicon for a 14B model, depending on
+prompt length and memory pressure.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -737,3 +816,5 @@ own appreciation is the buy-&-hold line.
 | "Unknown contract" warnings for half-dollar strikes (e.g. JPM 292.5) | IBKR doesn't list those non-standard strikes for that expiry | Normal — the strike grid for some underlyings uses $5 or $10 increments; half-dollar strikes are skipped automatically. |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
 | `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |
+| `ollama: request to http://localhost:11434/api/generate failed: ... Connection refused` | `claude.backend` is `"ollama"`/`"cli_then_ollama"` but `ollama serve` isn't running | Run `ollama serve` (or `brew services start ollama`); verify with `curl http://localhost:11434` |
+| `ollama: output parsed to empty list` / `ollama roll: unparseable output` | The local model's JSON didn't match the `ClaudeReview`/`RollReview` schema | Fails soft (same as a `claude -p` failure) — the pipeline proceeds with the deterministic list. Try a larger/different `ollama_model` if this happens often. |

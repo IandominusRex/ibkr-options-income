@@ -169,6 +169,17 @@ class ClaudeCfg(BaseModel):
     # Space-separated tool denylist passed to --disallowedTools. Empty = don't pass the flag.
     disallowed_tools: str = "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
 
+    # --- Local-LLM (Ollama) backend ---
+    # "cli": claude -p only (default). "ollama": local model only. "cli_then_ollama": try
+    # claude -p first, fall back to the local Ollama model if the CLI is unavailable, times
+    # out, or returns unparseable output. Same fence applies regardless of backend — Ollama
+    # output goes through the same ClaudeReview/RollReview validation before it can influence
+    # a verdict.
+    backend: str = "cli"
+    ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:14b"
+    ollama_timeout_seconds: float = 120.0
+
 
 class StorageCfg(BaseModel):
     db_url: str = "sqlite:///data/income_system.db"

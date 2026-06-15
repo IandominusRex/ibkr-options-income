@@ -88,7 +88,8 @@ def _est_monthly_cc_yield(iv_stats: IVStats) -> float | None:
     iv = iv_stats.current_iv
     if iv is None or iv <= 0:
         return None
-    return round(_CC_PREMIUM_K * iv * math.sqrt(_CC_DTE / 365.0), 4)
+    # current_iv is in percent (72.1 = 72.1%); convert to a fraction before scaling.
+    return round(_CC_PREMIUM_K * (iv / 100.0) * math.sqrt(_CC_DTE / 365.0), 4)
 
 
 def _days_to_earnings(fund_stats: FundamentalStats) -> int | None:
@@ -120,7 +121,7 @@ def _build_rationale(
             bits.append(f"thin premium (IV rank {rank:.0f})")
 
     if iv_stats.vrp is not None and iv_stats.vrp > 0:
-        bits.append(f"options rich vs realised (VRP +{iv_stats.vrp * 100:.0f}pts)")
+        bits.append(f"options rich vs realised (VRP +{iv_stats.vrp:.1f}pts)")
 
     regime = tech_stats.regime
     if regime == Regime.BULLISH:

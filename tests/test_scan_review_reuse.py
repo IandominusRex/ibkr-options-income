@@ -165,7 +165,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
     monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
 
     async def _all_material(all_syms, holds, wo):
-        return set(all_syms)
+        return set(all_syms), {}
 
     monkeypatch.setattr(scanmod, "_compute_material_symbols", _all_material)
 

@@ -149,12 +149,12 @@ class OptionQuote(BaseModel):
 
 class IVStats(BaseModel):
     symbol: str
-    current_iv: float | None = None
+    current_iv: float | None = None  # annualised implied vol in percent (72.1 = 72.1%)
     iv_rank: float | None = None  # 0-100, where current sits in 52w range
     iv_percentile: float | None = None  # 0-100, % of days below current
-    hv_30: float | None = None
+    hv_30: float | None = None  # 30-day realised vol in percent (89.8 = 89.8%)
     vrp: float | None = (
-        None  # Volatility Risk Premium = current_iv% − hv_30% (positive → options rich)
+        None  # Volatility Risk Premium = current_iv − hv_30, in percentage points (positive → options rich)
     )
     term_structure_slope: float | None = None  # near vs far IV
     put_call_skew: float | None = None
@@ -194,7 +194,7 @@ class FundamentalStats(BaseModel):
     pe_ratio: float | None = None
     free_cash_flow: float | None = None
     debt_to_equity: float | None = None
-    dividend_yield: float | None = None
+    dividend_yield: float | None = None  # annual yield as a fraction (0.006 = 0.6%)
     dividend_safe: bool | None = None
     ex_dividend_date: date | None = None
     quality_flag: bool | None = None  # passes the basic quality screen
@@ -323,9 +323,9 @@ class BuyCandidate(BaseModel):
 
     # --- Analysis context (populated from the per-symbol analytics, all optional) ---
     price: float | None = None  # latest spot used for the screen
-    current_iv: float | None = None  # annualised implied vol as a fraction
-    hv_30: float | None = None  # 30-day realised vol as a fraction
-    vrp: float | None = None  # current_iv − hv_30 (positive → options rich)
+    current_iv: float | None = None  # annualised implied vol in percent (72.1 = 72.1%)
+    hv_30: float | None = None  # 30-day realised vol in percent (89.8 = 89.8%)
+    vrp: float | None = None  # current_iv − hv_30, in percentage points (positive → options rich)
     rsi_14: float | None = None
     sma_50: float | None = None
     sma_200: float | None = None

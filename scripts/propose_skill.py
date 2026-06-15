@@ -1,8 +1,10 @@
-"""Draft a reasoning skill from the labeled verdict ledger via `claude -p`.
+"""Draft a reasoning skill from the labeled verdict ledger via the configured Claude backend.
 
 Writes the draft to config/skills/proposed/ for human review. It is NOT promoted — run
-`python -m scripts.skills promote <name>` after reading it. Requires the claude CLI and at
-least some closed (settled) trades in the ledger.
+`python -m scripts.skills promote <name>` after reading it. Requires at least some closed
+(settled) trades in the ledger, and dispatches on `config/settings.yaml → claude.backend`
+("cli" -> claude CLI, "ollama" -> local model, "cli_then_ollama" -> CLI with local fallback)
+just like `review_candidates`/`review_roll`.
 
 Usage:
     source .venv/bin/activate
@@ -27,8 +29,8 @@ def main() -> None:
     proposal = propose_skill()
     if proposal is None:
         print(
-            "No proposal generated. Need closed trades in the ledger and the claude CLI "
-            "available — see logs."
+            "No proposal generated. Need closed trades in the ledger and the configured "
+            "claude.backend (claude CLI or Ollama) to be available — see logs."
         )
         return
     print(f"Drafted skill '{proposal.name}' → config/skills/proposed/{proposal.name}.md")

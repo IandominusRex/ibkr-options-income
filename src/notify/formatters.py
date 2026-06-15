@@ -147,24 +147,24 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
 
     for i, c in enumerate(candidates, 1):
         # Header: rank, symbol, score.
-        lines.append(f"*{i}\\. {_md(c.symbol)}* — {_md(f'{c.score:.0f}')}/100")
+        lines.append(f"*{i}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*")
 
-        # Line A: price + premium richness.
-        a: list[str] = []
+        # Price + premium richness.
         if c.price is not None:
-            a.append(f"${_md(f'{c.price:,.2f}')}")
-        if c.iv_rank is not None:
-            a.append(f"IV rank {_md(f'{c.iv_rank:.0f}')}")
-        iv_pct, hv_pct = _pct(c.current_iv), _pct(c.hv_30)
-        if iv_pct and hv_pct:
-            vrp_pts = f" \\(VRP {_md(f'{c.vrp * 100:+.0f}')}pts\\)" if c.vrp is not None else ""
-            a.append(f"IV {_md(iv_pct)} vs HV {_md(hv_pct)}{vrp_pts}")
-        elif iv_pct:
-            a.append(f"IV {_md(iv_pct)}")
-        if a:
-            lines.append(" · ".join(a))
+            price_line = f"💵 \\${_md(f'{c.price:,.2f}')}"
+            if c.iv_rank is not None:
+                price_line += f" · IV Rank *{_md(f'{c.iv_rank:.0f}')}*"
+            lines.append(f"• {price_line}")
 
-        # Line B: trend context.
+        if c.current_iv is not None and c.hv_30 is not None:
+            vrp_pts = f" \\(VRP {_md(f'{c.vrp:+.1f}')}pts\\)" if c.vrp is not None else ""
+            lines.append(
+                f"• IV {_md(f'{c.current_iv:.1f}')}% vs HV {_md(f'{c.hv_30:.1f}')}%{vrp_pts}"
+            )
+        elif c.current_iv is not None:
+            lines.append(f"• IV {_md(f'{c.current_iv:.1f}')}%")
+
+        # Trend context.
         b: list[str] = []
         if c.technical_regime:
             b.append(_md(c.technical_regime))
@@ -174,13 +174,13 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
         if c.rsi_14 is not None:
             b.append(f"RSI {_md(f'{c.rsi_14:.0f}')}")
         if b:
-            lines.append("Trend: " + " · ".join(b))
+            lines.append("• Trend: " + " · ".join(b))
 
-        # Line C: income/timing context.
+        # Income/timing context.
         cc: list[str] = []
         ccy = _pct(c.est_monthly_cc_yield)
         if ccy:
-            cc.append(f"est\\. CC ~{_md(ccy)}/mo")
+            cc.append(f"est\\. CC \\~{_md(ccy)}/mo")
         if c.next_earnings is not None:
             days = (c.next_earnings - date.today()).days
             warn = " ⚠️" if 0 <= days <= 14 else ""
@@ -188,12 +188,14 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
         dy = _pct(c.dividend_yield)
         if dy and c.dividend_yield:
             cc.append(f"div {_md(dy)}")
-        quality = "✓" if c.quality_flag else ("✗" if c.quality_flag is False else "?")
-        cc.append(f"quality {quality}")
         if cc:
-            lines.append(" · ".join(cc))
+            lines.append("• " + " · ".join(cc))
 
-        # Line D: rationale.
+        # Quality.
+        quality = "✓" if c.quality_flag else ("✗" if c.quality_flag is False else "?")
+        lines.append(f"• Quality: {quality}")
+
+        # Rationale.
         if c.rationale:
             lines.append(f"_{_md(c.rationale)}_")
 

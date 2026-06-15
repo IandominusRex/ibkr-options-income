@@ -1,11 +1,14 @@
-"""Skill proposer — draft a reasoning skill from labeled history via `claude -p`.
+"""Skill proposer — draft a reasoning skill from labeled history via the configured Claude backend.
 
 Feeds Claude the verdict ledger (what it recommended, what the signals were, what actually
 happened) plus the current evaluation and the already-active skills, and asks for ONE new or
 refined playbook. The draft lands in `config/skills/proposed/` for human review — it is never
 auto-promoted, and it cannot touch gates/weights/sizing.
 
-Shares the runner's fail-soft contract: any CLI/parse failure returns None.
+Shares the runner's fail-soft contract: any CLI/parse failure returns None. Dispatches on
+`config/settings.yaml → claude.backend` like `runner.py`: `"cli"` shells out to `claude -p`,
+`"ollama"` delegates to `ollama_runner.propose_skill`, and `"cli_then_ollama"` tries the CLI
+first and falls back to the local model.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import json
 import logging
 import subprocess
 
+from src.claude import ollama_runner
 from src.claude.eval.ledger import load_records
 from src.claude.eval.metrics import evaluate
 from src.claude.parser import _loads_lenient, _strip_fences
@@ -132,9 +136,11 @@ def _parse_proposal(raw: str) -> SkillProposal | None:
 
 
 def propose_skill(*, save: bool = True) -> SkillProposal | None:
-    """Draft a skill from the full ledger. Returns the proposal (and saves it) or None.
+    """Draft a skill from the full ledger via the configured backend. Returns the proposal
+    (and saves it) or None.
 
-    Fail-soft: disabled config, no labeled data, CLI missing, or unparseable output → None.
+    Fail-soft: disabled config, no labeled data, backend unavailable, or unparseable output
+    → None.
     """
     cfg = get_config().claude
     if not cfg.enabled:
@@ -148,11 +154,33 @@ def propose_skill(*, save: bool = True) -> SkillProposal | None:
 
     evaluation = evaluate(records)
     prompt = build_proposal_prompt(records, evaluation)
-    cmd = [cfg.cli_command, "--output-format", cfg.output_format]
+
+    if cfg.backend == "ollama":
+        proposal = ollama_runner.propose_skill(prompt)
+    else:
+        proposal = _propose_skill_cli(prompt, cfg)
+        if proposal is None and cfg.backend == "cli_then_ollama":
+            log.info("skills: cli backend returned nothing — falling back to ollama")
+            proposal = ollama_runner.propose_skill(prompt)
+
+    if proposal is None:
+        return None
+    if save:
+        save_proposal(proposal)
+    return proposal
+
+
+def _propose_skill_cli(prompt: str, cfg: object) -> SkillProposal | None:
+    """Shell out to `claude -p` for a skill proposal. Returns None on any failure."""
+    cmd = [cfg.cli_command, "--output-format", cfg.output_format]  # type: ignore[attr-defined]
 
     try:
         result = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=cfg.timeout_seconds
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=cfg.timeout_seconds,  # type: ignore[attr-defined]
         )
     except subprocess.TimeoutExpired:
         log.warning("skills: proposer timed out")
@@ -165,9 +193,4 @@ def propose_skill(*, save: bool = True) -> SkillProposal | None:
         log.warning("skills: proposer rc=%d, no stdout", result.returncode)
         return None
 
-    proposal = _parse_proposal(result.stdout)
-    if proposal is None:
-        return None
-    if save:
-        save_proposal(proposal)
-    return proposal
+    return _parse_proposal(result.stdout)

@@ -23,14 +23,22 @@ _SR_LEVELS = 3  # how many support/resistance levels to keep
 
 
 def get_technical_stats(
-    symbol: str, lookback_days: int = 260, spot_override: float | None = None
+    symbol: str,
+    lookback_days: int = 260,
+    spot_override: float | None = None,
+    cached_yf_price: float | None = None,
 ) -> TechnicalStats:
     """Return TechnicalStats for *symbol* using the last *lookback_days* of OHLCV.
 
     ``spot_override`` (N17 follow-up): a live spot already derived from the IBKR option chain
     (put-call parity) for this scan cycle. When provided it takes priority over the yfinance
     fast_info quote — IBKR is the more authoritative live price when we've already paid for the
-    chain fetch. Falls back to yfinance when no chain was fetched or parity couldn't be inferred.
+    chain fetch.
+
+    ``cached_yf_price`` (S1 follow-up): a yfinance ``fast_info`` price already fetched earlier
+    this cycle (e.g. by the intraday materiality probe) for a symbol whose chain was skipped.
+    Used in place of a fresh ``_fetch_last_price`` call to avoid a second identical fetch;
+    still recorded as price_source="yfinance".
     """
     # Settled bars come from the incremental price_history store (only the missing tail is
     # fetched); the live price is fetched fresh and overlaid as today's bar so indicators
@@ -39,6 +47,9 @@ def get_technical_stats(
     if spot_override is not None and spot_override > 0:
         live_price = spot_override
         price_source = "ibkr"
+    elif cached_yf_price is not None and cached_yf_price > 0:
+        live_price = cached_yf_price
+        price_source = "yfinance"
     else:
         live_price = _fetch_last_price(symbol)
         price_source = "yfinance"

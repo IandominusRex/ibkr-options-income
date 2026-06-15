@@ -55,7 +55,7 @@ class TestComputeMaterialSymbols:
         import src.orchestrator.scan as scanmod
 
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {})
-        material = await scanmod._compute_material_symbols(
+        material, _probed = await scanmod._compute_material_symbols(
             ["AAPL", "MSFT"], set(), ["AAPL", "MSFT"]
         )
         assert material == {"AAPL", "MSFT"}
@@ -67,7 +67,7 @@ class TestComputeMaterialSymbols:
         # NVDA held, unmoved; still material because it's a holding.
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {"NVDA": _state("NVDA", 100.0)})
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 100.0)
-        material = await scanmod._compute_material_symbols(["NVDA"], {"NVDA"}, [])
+        material, _probed = await scanmod._compute_material_symbols(["NVDA"], {"NVDA"}, [])
         assert "NVDA" in material
 
     @pytest.mark.asyncio
@@ -77,7 +77,7 @@ class TestComputeMaterialSymbols:
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {"AAPL": _state("AAPL", 200.0)})
         # Move 0.1% — below the 0.5% default threshold.
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 200.2)
-        material = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
+        material, _probed = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
         assert "AAPL" not in material
 
     @pytest.mark.asyncio
@@ -87,7 +87,7 @@ class TestComputeMaterialSymbols:
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {"AAPL": _state("AAPL", 200.0)})
         # Move 2% — well past 0.5%.
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 204.0)
-        material = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
+        material, _probed = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
         assert "AAPL" in material
 
     @pytest.mark.asyncio
@@ -100,7 +100,7 @@ class TestComputeMaterialSymbols:
             lambda syms: {"AAPL": _state("AAPL", 200.0, cleared_floor=True)},
         )
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 200.0)  # unmoved
-        material = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
+        material, _probed = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
         assert "AAPL" in material
 
     @pytest.mark.asyncio
@@ -118,7 +118,7 @@ class TestComputeMaterialSymbols:
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {"AAPL": stale})
         # Even unmoved, the periodic sweep forces it.
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 200.0)
-        material = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
+        material, _probed = await scanmod._compute_material_symbols(["AAPL"], set(), ["AAPL"])
         assert material == {"AAPL"}
 
     @pytest.mark.asyncio
@@ -128,7 +128,7 @@ class TestComputeMaterialSymbols:
         # State exists for another symbol (so not "empty"), but TSLA has no baseline.
         monkeypatch.setattr(scanmod, "get_scan_state", lambda syms: {"AAPL": _state("AAPL", 200.0)})
         monkeypatch.setattr(scanmod, "_fetch_last_price", lambda s: 250.0)
-        material = await scanmod._compute_material_symbols(
+        material, _probed = await scanmod._compute_material_symbols(
             ["AAPL", "TSLA"], set(), ["AAPL", "TSLA"]
         )
         assert "TSLA" in material  # establishes a baseline this cycle

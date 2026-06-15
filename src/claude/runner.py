@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import subprocess
 
+from src.claude import ollama_runner
 from src.claude.parser import parse_claude_output, parse_journal_output, parse_roll_output
 from src.claude.prompts.eod import build_eod_prompt
 from src.claude.prompts.roll import build_roll_prompt
@@ -49,6 +50,37 @@ def _build_cmd(cfg: object) -> list[str]:
 
 
 def review_candidates(
+    candidates: list[TradeCandidate],
+    account: AccountSnapshot,
+    history: list | None = None,
+    market_conditions: MarketConditions | None = None,
+    spot_prices: dict[str, float] | None = None,
+) -> list[ClaudeReview]:
+    """Review candidates via the configured `claude.backend`. Returns [] on any failure.
+
+    "cli" (default): `claude -p` only. "ollama": local model only. "cli_then_ollama": try
+    `claude -p`, fall back to the local model if it returns no reviews.
+    """
+    cfg = get_config().claude
+    kwargs = dict(
+        candidates=candidates,
+        account=account,
+        history=history,
+        market_conditions=market_conditions,
+        spot_prices=spot_prices,
+    )
+
+    if cfg.backend == "ollama":
+        return ollama_runner.review_candidates(**kwargs)  # type: ignore[arg-type]
+
+    reviews = _review_candidates_cli(**kwargs)  # type: ignore[arg-type]
+    if not reviews and cfg.backend == "cli_then_ollama":
+        log.info("claude: cli backend returned no reviews — falling back to ollama")
+        return ollama_runner.review_candidates(**kwargs)  # type: ignore[arg-type]
+    return reviews
+
+
+def _review_candidates_cli(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
     history: list | None = None,
@@ -130,10 +162,29 @@ def review_candidates(
 
 
 def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> RollReview | None:
-    """Shell out to `claude -p` for a focused roll/hold/close recommendation.
+    """Roll/hold/close recommendation via the configured `claude.backend`.
 
     Returns None on any failure — the caller proceeds without Claude's input.
     Intended to be called from a ThreadPoolExecutor so it doesn't block asyncio.
+    """
+    cfg = get_config().claude
+
+    if cfg.backend == "ollama":
+        return ollama_runner.review_roll(alert, pos, quote)
+
+    review = _review_roll_cli(alert, pos, quote)
+    if review is None and cfg.backend == "cli_then_ollama":
+        log.info("claude roll: cli backend returned nothing — falling back to ollama")
+        return ollama_runner.review_roll(alert, pos, quote)
+    return review
+
+
+def _review_roll_cli(
+    alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote
+) -> RollReview | None:
+    """Shell out to `claude -p` for a focused roll/hold/close recommendation.
+
+    Returns None on any failure — the caller proceeds without Claude's input.
     """
     cfg = get_config().claude
 
@@ -178,11 +229,25 @@ def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> 
 
 
 def write_journal_narrative(summary: EODSummary) -> str | None:
-    """Shell out to `claude -p` for an EOD journal narrative.
+    """EOD journal narrative via the configured `claude.backend`.
 
     Returns the narrative string, or None on any failure — the caller writes
     JournalRow without a narrative and sends Telegram without the journal paragraph.
     """
+    cfg = get_config().claude
+
+    if cfg.backend == "ollama":
+        return ollama_runner.write_journal_narrative(summary)
+
+    narrative = _write_journal_narrative_cli(summary)
+    if narrative is None and cfg.backend == "cli_then_ollama":
+        log.info("claude eod: cli backend returned nothing — falling back to ollama")
+        return ollama_runner.write_journal_narrative(summary)
+    return narrative
+
+
+def _write_journal_narrative_cli(summary: EODSummary) -> str | None:
+    """Shell out to `claude -p` for an EOD journal narrative. None on any failure."""
     cfg = get_config().claude
 
     if not cfg.enabled:

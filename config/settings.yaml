@@ -75,6 +75,21 @@ claude:
   max_turns: 1                      # single agentic turn — no tool loops (0 disables the flag)
   model: "claude-sonnet-4-6"        # pin the enrichment model (reproducible + cost-bounded)
   disallowed_tools: "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
+  # Local-LLM (Ollama) backend. "cli" (default) | "ollama" | "cli_then_ollama" (try claude -p,
+  # fall back to the local model on CLI failure/timeout/unparseable output). Requires
+  # `ollama serve` running locally with `ollama_model` pulled — see SETUP.md.
+  backend: "ollama"
+  ollama_host: "http://localhost:11434"
+  # qwen3:14b (~9GB, Q4_K_M) — good reasoning quality for the strategist/roll prompts. Fits an
+  # 18GB Mac but leaves little headroom; ollama_runner disables its "thinking" mode (think=false)
+  # so format=json output stays clean and fast.
+  # Alternative: "phi4:14b" — similar ~9GB footprint, strong structured-output/instruction
+  # following, and (being a non-hybrid-reasoning model) has no thinking-mode/JSON interaction
+  # to worry about — a simpler/more predictable choice if qwen3's output proves flaky.
+  # If 18GB feels tight under load (TWS + this system running together), "qwen3:8b" (~5GB)
+  # trades some reasoning depth for much more memory headroom.
+  ollama_model: "qwen3:14b"
+  ollama_timeout_seconds: 120
 
 storage:
   # SQLAlchemy URL. SQLite for v1; swap for postgresql://... later.

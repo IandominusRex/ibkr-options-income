@@ -15,7 +15,7 @@ import re
 
 from pydantic import ValidationError
 
-from src.common.schemas import ClaudeReview, RollReview  # EODSummary not needed here
+from src.common.schemas import ClaudeReview, RollReview, SkillProposal
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +175,128 @@ def parse_roll_output(raw: str) -> RollReview | None:
         return RollReview.model_validate(payload)
     except (ValidationError, TypeError) as exc:
         log.warning("claude roll: validation failed: %s — payload=%s", exc, payload)
+        return None
+
+
+def _parse_review_payload(text: str) -> list[ClaudeReview]:
+    """Shared inner-payload parsing for review items, given already-unwrapped text."""
+    text = _strip_fences(text)
+    try:
+        payload = _loads_lenient(text)
+    except json.JSONDecodeError as exc:
+        log.warning("ollama: inner JSON parse failed: %s", exc)
+        return []
+
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        log.warning("ollama: inner payload is not a list or dict")
+        return []
+
+    reviews: list[ClaudeReview] = []
+    for item in payload:
+        try:
+            reviews.append(ClaudeReview.model_validate(item))
+        except (ValidationError, TypeError) as exc:
+            log.warning("ollama: item failed validation (skipping): %s — item=%s", exc, item)
+
+    if not reviews and payload:
+        log.warning("ollama: all %d item(s) failed validation", len(payload))
+    return reviews
+
+
+def parse_ollama_review_output(raw: str) -> list[ClaudeReview]:
+    """Parse Ollama's `response` text (already JSON, per `format: "json"`) → list[ClaudeReview].
+
+    Unlike `parse_claude_output`, there is no outer CLI envelope to unwrap — `raw` is the
+    model's response text directly. Returns [] on any failure.
+    """
+    if not raw or not raw.strip():
+        log.warning("ollama: empty output")
+        return []
+    return _parse_review_payload(raw)
+
+
+def parse_ollama_roll_output(raw: str) -> RollReview | None:
+    """Parse Ollama's `response` text → RollReview. Returns None on any failure."""
+    if not raw or not raw.strip():
+        log.warning("ollama roll: empty output")
+        return None
+
+    text = _strip_fences(raw)
+    try:
+        payload = _loads_lenient(text)
+    except json.JSONDecodeError as exc:
+        log.warning("ollama roll: inner JSON parse failed: %s", exc)
+        return None
+
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if not isinstance(payload, dict):
+        log.warning("ollama roll: inner payload is not a dict")
+        return None
+
+    try:
+        return RollReview.model_validate(payload)
+    except (ValidationError, TypeError) as exc:
+        log.warning("ollama roll: validation failed: %s — payload=%s", exc, payload)
+        return None
+
+
+def parse_ollama_journal_output(raw: str) -> str | None:
+    """Parse Ollama's `response` text → narrative string. Returns None on any failure."""
+    if not raw or not raw.strip():
+        log.warning("ollama eod: empty output")
+        return None
+
+    text = _strip_fences(raw)
+    try:
+        payload = _loads_lenient(text)
+    except json.JSONDecodeError as exc:
+        log.warning("ollama eod: inner JSON parse failed: %s", exc)
+        return None
+
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if not isinstance(payload, dict):
+        log.warning("ollama eod: inner payload is not a dict")
+        return None
+
+    narrative = payload.get("narrative")
+    if not narrative or not isinstance(narrative, str):
+        log.warning("ollama eod: missing or non-string 'narrative' field")
+        return None
+
+    return narrative.strip()
+
+
+def parse_ollama_skill_proposal(raw: str) -> SkillProposal | None:
+    """Parse Ollama's `response` text → SkillProposal. Returns None on any failure.
+
+    Unlike the CLI proposer (`_parse_proposal` in `proposer.py`), there is no outer
+    `{"result": "..."}` envelope to unwrap — `raw` is the model's response text directly.
+    """
+    if not raw or not raw.strip():
+        log.warning("ollama skills: empty output")
+        return None
+
+    text = _strip_fences(raw)
+    try:
+        payload = _loads_lenient(text)
+    except json.JSONDecodeError as exc:
+        log.warning("ollama skills: inner JSON parse failed: %s", exc)
+        return None
+
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if not isinstance(payload, dict):
+        log.warning("ollama skills: inner payload is not a dict")
+        return None
+
+    try:
+        return SkillProposal.model_validate(payload)
+    except (ValidationError, TypeError) as exc:
+        log.warning("ollama skills: validation failed: %s — payload=%s", exc, payload)
         return None
 
 
