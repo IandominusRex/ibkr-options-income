@@ -183,6 +183,9 @@ class TechnicalStats(BaseModel):
     # Named honestly (N16): the old `trend_strength` label implied ADX, which this never was.
     atr_ratio: float | None = None
     regime: Regime | None = None
+    # Where `price` came from this scan: "ibkr" (put-call-parity spot inferred from the live
+    # option chain) or "yfinance" (fast_info fallback, used when no chain was fetched/inferrable).
+    price_source: str = "yfinance"
 
 
 class FundamentalStats(BaseModel):

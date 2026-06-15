@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from ib_async import IB
 
 from src.analytics.fundamentals import get_fundamental_stats
-from src.analytics.iv import get_iv_stats
+from src.analytics.iv import get_iv_stats, infer_spot_from_quotes
 from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
@@ -53,6 +53,7 @@ from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
 from src.ibkr.market_data import get_option_chain_quotes_async, persist_chain_quotes
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+from src.notify.formatters import format_data_provenance
 from src.notify.sender import send_buy_list, send_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
@@ -259,6 +260,23 @@ class _Tracker:
 
 
 @dataclass
+class ProvenanceCounts:
+    """Tallies of where this cycle's data actually came from — surfaced in the end-of-scan
+    Telegram summary so an operator can see at a glance which sources were live vs. fell back.
+    """
+
+    chain_ibkr: int = 0  # option chain fetched successfully from IBKR
+    chain_failed: int = 0  # chain fetch attempted but timed out / errored
+    chain_skipped: int = 0  # not material this cycle — chain fetch skipped (intraday gate)
+    spot_ibkr: int = 0  # spot price inferred from the live IBKR chain (put-call parity)
+    spot_yfinance: int = 0  # spot price from yfinance fast_info (no chain / parity unavailable)
+    spot_unavailable: int = 0  # neither source produced a usable price
+    greeks_ibkr: int = 0  # option quotes whose Greeks came from IBKR model Greeks / BS-on-IBKR-IV
+    greeks_yfinance: int = 0  # option quotes whose Greeks fell back to yfinance Black-Scholes
+    vix_available: bool = False
+
+
+@dataclass
 class ScanResult:
     cc_candidates: list[TradeCandidate] = field(default_factory=list)
     csp_candidates: list[TradeCandidate] = field(default_factory=list)
@@ -275,6 +293,9 @@ class ScanResult:
     material_count: int = 0
     reused_reviews: bool = False
     quiet_cycle: bool = False
+    # Data-provenance counters for the end-of-scan summary: where each piece of data this
+    # cycle actually came from, and how many symbols/quotes fell back to a secondary source.
+    provenance: ProvenanceCounts = field(default_factory=lambda: ProvenanceCounts())
 
 
 # ---------------------------------------------------------------------------
@@ -714,11 +735,12 @@ async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -
 def _fetch_analytics(
     symbol: str,
     quotes: list[OptionQuote] | None = None,
+    spot_override: float | None = None,
 ) -> tuple[IVStats, TechnicalStats, FundamentalStats]:
     # Pass the live chain so IV term-structure slope + put/call skew actually compute
     # (they are None without quotes).
     iv_stats = get_iv_stats(symbol, quotes)
-    tech_stats = get_technical_stats(symbol)
+    tech_stats = get_technical_stats(symbol, spot_override=spot_override)
     fund_stats = get_fundamental_stats(symbol)
     return iv_stats, tech_stats, fund_stats
 
@@ -804,6 +826,7 @@ async def _run_scan_body(
         result.market_conditions = await loop.run_in_executor(None, get_market_conditions)
         if result.market_conditions.vix is not None:
             log.info("scan: VIX=%.2f", result.market_conditions.vix)
+            result.provenance.vix_available = True
     except Exception:
         log.warning("scan: failed to fetch market conditions")
 
@@ -899,6 +922,7 @@ async def _run_scan_body(
             # the floor last cycle). Skip the dominant option-chain fetch; analytics below still
             # run (cheap/day-cached) so the buy-to-own list stays complete.
             quotes = []
+            result.provenance.chain_skipped += 1
             log.debug("scan: skipping option chain for %s (immaterial this intraday cycle)", symbol)
         else:
             try:
@@ -916,12 +940,23 @@ async def _run_scan_body(
                     elapsed,
                 )
                 quotes = []
+                result.provenance.chain_failed += 1
                 await tracker.add_error(f"{symbol} — option chain timed out, skipped")
             except Exception:
                 log.exception("scan: option chain failed for %s", symbol)
                 quotes = []
+                result.provenance.chain_failed += 1
                 await tracker.add_error(f"{symbol} — option chain failed, skipped")
             else:
+                if quotes:
+                    result.provenance.chain_ibkr += 1
+                    for q in quotes:
+                        if q.greeks_source == "black_scholes":
+                            result.provenance.greeks_yfinance += 1
+                        else:
+                            result.provenance.greeks_ibkr += 1
+                else:
+                    result.provenance.chain_failed += 1
                 elapsed = time.monotonic() - symbol_start
                 if elapsed > cfg.market_data.symbol_timeout_seconds / 3:
                     log.warning(
@@ -946,10 +981,14 @@ async def _run_scan_body(
                     except Exception:
                         log.warning("scan: persist_chain_quotes failed for %s", symbol)
 
+        # Spot price (N17 follow-up): prefer the IBKR chain's put-call-parity spot over
+        # yfinance fast_info when we just paid for the chain fetch.
+        spot_override = infer_spot_from_quotes(quotes) if quotes else None
+
         # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
         # concurrently in the default executor to cut per-symbol latency.
         analytics_res, sentiment_res = await asyncio.gather(
-            loop.run_in_executor(None, _fetch_analytics, symbol, quotes),
+            loop.run_in_executor(None, _fetch_analytics, symbol, quotes, spot_override),
             loop.run_in_executor(None, sentiment.score, symbol),
             return_exceptions=True,
         )
@@ -961,6 +1000,16 @@ async def _run_scan_body(
         sentiment_score = None if isinstance(sentiment_res, BaseException) else sentiment_res
 
         analytics_map[symbol] = (iv_stats, tech_stats, fund_stats)
+
+        # Spot-price provenance (S1 follow-up): track which source produced the price Claude
+        # and the strategies see for this symbol this cycle.
+        if tech_stats.price > 0:
+            if tech_stats.price_source == "ibkr":
+                result.provenance.spot_ibkr += 1
+            else:
+                result.provenance.spot_yfinance += 1
+        else:
+            result.provenance.spot_unavailable += 1
 
         # Record the live spot at this fetch as the next cycle's materiality baseline (S1/S10).
         # Only fetched symbols update their baseline so slow drift accrues from the last *fetch*.
@@ -1149,6 +1198,31 @@ async def _run_scan_body(
             len(result.buy_candidates),
             vix=result.market_conditions.vix,
         )
+
+    # Full sweep (manual /scan, morning cron): close out with a provenance summary so the
+    # operator can see at a glance which data sources were live vs. fell back this run.
+    # Best-effort — a failure here must not affect the notify stage's success status above.
+    if not intraday and bot is not None and chat_id:
+        prov = result.provenance
+        try:
+            await bot.send_message(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                text=format_data_provenance(
+                    total_symbols=result.total_symbols,
+                    chain_ibkr=prov.chain_ibkr,
+                    chain_failed=prov.chain_failed,
+                    chain_skipped=prov.chain_skipped,
+                    spot_ibkr=prov.spot_ibkr,
+                    spot_yfinance=prov.spot_yfinance,
+                    spot_unavailable=prov.spot_unavailable,
+                    greeks_ibkr=prov.greeks_ibkr,
+                    greeks_yfinance=prov.greeks_yfinance,
+                    vix=result.market_conditions.vix if result.market_conditions else None,
+                ),
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            log.warning("scan: failed to send data-provenance summary", exc_info=True)
 
     log.info(
         "scan complete — run_id=%s CC=%d CSP=%d buy=%d reviews=%d",

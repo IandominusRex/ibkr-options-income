@@ -22,15 +22,29 @@ _SR_WINDOW = 30  # bars for local min/max detection
 _SR_LEVELS = 3  # how many support/resistance levels to keep
 
 
-def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats:
-    """Return TechnicalStats for *symbol* using the last *lookback_days* of OHLCV."""
+def get_technical_stats(
+    symbol: str, lookback_days: int = 260, spot_override: float | None = None
+) -> TechnicalStats:
+    """Return TechnicalStats for *symbol* using the last *lookback_days* of OHLCV.
+
+    ``spot_override`` (N17 follow-up): a live spot already derived from the IBKR option chain
+    (put-call parity) for this scan cycle. When provided it takes priority over the yfinance
+    fast_info quote — IBKR is the more authoritative live price when we've already paid for the
+    chain fetch. Falls back to yfinance when no chain was fetched or parity couldn't be inferred.
+    """
     # Settled bars come from the incremental price_history store (only the missing tail is
     # fetched); the live price is fetched fresh and overlaid as today's bar so indicators
     # reflect the current session.
-    live_price = _fetch_last_price(symbol)
+    live_price: float | None
+    if spot_override is not None and spot_override > 0:
+        live_price = spot_override
+        price_source = "ibkr"
+    else:
+        live_price = _fetch_last_price(symbol)
+        price_source = "yfinance"
     df = _working_frame(symbol, live_price)
     if df.empty:
-        return TechnicalStats(symbol=symbol, price=live_price or 0.0)
+        return TechnicalStats(symbol=symbol, price=live_price or 0.0, price_source=price_source)
 
     close = df["Close"]
     high = df["High"]
@@ -63,6 +77,7 @@ def get_technical_stats(symbol: str, lookback_days: int = 260) -> TechnicalStats
         resistance_levels=resistances,
         atr_ratio=atr_ratio,
         regime=regime,
+        price_source=price_source,
     )
 
 

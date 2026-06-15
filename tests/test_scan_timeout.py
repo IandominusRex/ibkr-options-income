@@ -74,7 +74,7 @@ async def test_hung_symbol_does_not_hang_the_scan(tmp_path, monkeypatch):
         scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol)
     )
     monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
@@ -132,7 +132,7 @@ async def test_timeout_logs_error_and_continues(tmp_path, monkeypatch, caplog):
         scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol)
     )
     monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)

@@ -187,7 +187,7 @@ def _stub_common(scanmod, monkeypatch, *, positions):
     monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
     monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
@@ -390,4 +390,7 @@ async def test_full_sweep_never_sends_heartbeat(tmp_path, monkeypatch):
     )
 
     assert result.quiet_cycle is False
-    bot.send_message.assert_not_awaited()
+    # The full sweep still sends the end-of-scan data-provenance summary, but never the
+    # intraday quiet-cycle heartbeat.
+    for call in bot.send_message.await_args_list:
+        assert "Quiet cycle" not in call.kwargs["text"]

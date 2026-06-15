@@ -258,6 +258,59 @@ def format_quiet_cycle(
     return "\n".join(lines)
 
 
+def format_data_provenance(
+    *,
+    total_symbols: int,
+    chain_ibkr: int,
+    chain_failed: int,
+    chain_skipped: int,
+    spot_ibkr: int,
+    spot_yfinance: int,
+    spot_unavailable: int,
+    greeks_ibkr: int,
+    greeks_yfinance: int,
+    vix: float | None,
+) -> str:
+    """End-of-scan summary of where each piece of data actually came from this cycle.
+
+    Sent after the candidate/buy-list messages on a full sweep (manual /scan, morning cron)
+    so an operator can see at a glance which sources were live vs. fell back this run.
+    """
+    lines = ["📊 *Data sources this scan*", ""]
+
+    chain_bits = [f"{chain_ibkr}/{total_symbols} from IBKR"]
+    if chain_failed:
+        chain_bits.append(f"{chain_failed} failed/timed out")
+    if chain_skipped:
+        chain_bits.append(f"{chain_skipped} skipped (immaterial)")
+    lines.append(_md(f"Option chains: {', '.join(chain_bits)}"))
+
+    spot_bits = []
+    if spot_ibkr:
+        spot_bits.append(f"{spot_ibkr} from IBKR chain")
+    if spot_yfinance:
+        spot_bits.append(f"{spot_yfinance} from yfinance")
+    if spot_unavailable:
+        spot_bits.append(f"{spot_unavailable} unavailable")
+    lines.append(_md(f"Spot prices: {', '.join(spot_bits) if spot_bits else 'none'}"))
+
+    if vix is not None:
+        lines.append(_md(f"VIX: {vix:.1f} (yfinance)"))
+    else:
+        lines.append(_md("VIX: unavailable (yfinance)"))
+
+    if greeks_ibkr or greeks_yfinance:
+        greeks_total = greeks_ibkr + greeks_yfinance
+        lines.append(
+            _md(
+                f"Option Greeks: {greeks_ibkr}/{greeks_total} from IBKR, "
+                f"{greeks_yfinance} via yfinance Black-Scholes fallback"
+            )
+        )
+
+    return "\n".join(lines)
+
+
 def format_help() -> str:
     """List all available bot commands."""
     lines = [

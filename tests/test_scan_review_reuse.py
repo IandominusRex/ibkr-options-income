@@ -170,7 +170,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
     monkeypatch.setattr(scanmod, "_compute_material_symbols", _all_material)
 
     async def _chain(ib, symbol):
-        return [object()]  # non-empty so CSP generation runs
+        return [SimpleNamespace(mid=None, greeks_source="ibkr")]  # non-empty so CSP generation runs
 
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _chain)
     monkeypatch.setattr(scanmod, "persist_chain_quotes", lambda *a, **k: None)
@@ -178,7 +178,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
     monkeypatch.setattr(
         scanmod,
         "get_technical_stats",
-        lambda symbol: SimpleNamespace(symbol=symbol, price=100.0),
+        lambda symbol, **_: SimpleNamespace(symbol=symbol, price=100.0, price_source="yfinance"),
     )
     monkeypatch.setattr(scanmod, "get_fundamental_stats", lambda symbol: SimpleNamespace())
 

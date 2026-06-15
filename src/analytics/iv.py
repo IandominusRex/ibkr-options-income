@@ -123,7 +123,7 @@ def _chain_stats(symbol: str, quotes: list[OptionQuote]) -> tuple[float | None, 
         return None, None
 
     # Infer spot from tightest-spread ATM options
-    spot = _infer_spot(quotes)
+    spot = infer_spot_from_quotes(quotes)
     if spot is None:
         return None, None
 
@@ -132,7 +132,7 @@ def _chain_stats(symbol: str, quotes: list[OptionQuote]) -> tuple[float | None, 
     return term_slope, skew
 
 
-def _infer_spot(quotes: list[OptionQuote]) -> float | None:
+def infer_spot_from_quotes(quotes: list[OptionQuote]) -> float | None:
     """Estimate the underlying spot price from the option chain.
 
     Uses put-call parity on same-strike/expiry pairs: spot ≈ strike + call_mid − put_mid.
@@ -169,7 +169,7 @@ def _live_atm_iv(quotes: list[OptionQuote]) -> float | None:
     nearest expiry. Used as the current point for IV rank/percentile. None if uncomputable."""
     if not quotes:
         return None
-    spot = _infer_spot(quotes)
+    spot = infer_spot_from_quotes(quotes)
     if spot is None:
         return None
     near_dte = min((q.dte for q in quotes if q.dte > 0), default=None)
