@@ -24,14 +24,21 @@ from src.ibkr.contracts import (
     qualify_stock,
 )
 from src.ibkr.market_data import (
+    _await_ready,
     _batch_quotes,
+    _enrich_greeks_from_ibkr_iv,
     _enrich_greeks_yf,
     _filter_expirations,
     _filter_strikes,
     _get_spot,
     _get_spot_async,
+    _pick_greeks,
+    _quote_ready,
+    _resolve_spot_async,
     _safe,
     _safe_int,
+    _spot_ready,
+    _ticker_to_quote,
 )
 
 # ---------------------------------------------------------------------------
@@ -612,3 +619,203 @@ class TestGetSpotAsync:
         stock.symbol = "ZZZ"
         with pytest.raises(ValueError, match="Could not get spot price"):
             await _get_spot_async(ib, stock)
+
+
+# ---------------------------------------------------------------------------
+# S3 — _resolve_spot_async prefers the cached daily close (no extra snapshot)
+# ---------------------------------------------------------------------------
+
+
+def _close_df(close: float):
+    import pandas as pd
+
+    return pd.DataFrame({"Close": [close - 1.0, close]})
+
+
+class TestResolveSpotAsync:
+    @pytest.mark.asyncio
+    async def test_uses_cached_close_without_reqmktdata(self, monkeypatch):
+        """Cached path: get_ohlcv has a close → no reqMktData snapshot is issued (S3)."""
+        monkeypatch.setattr("src.ibkr.market_data.get_ohlcv", lambda _sym: _close_df(187.5))
+        ib = MagicMock()
+        spot = await _resolve_spot_async(ib, MagicMock(), "AAPL")
+        assert spot == pytest.approx(187.5)
+        ib.reqMktData.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_snapshot_when_cache_empty(self, monkeypatch):
+        """No cached close → fall back to the live snapshot chain (46a21bf preserved)."""
+        import pandas as pd
+
+        monkeypatch.setattr("src.ibkr.market_data.get_ohlcv", lambda _sym: pd.DataFrame())
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=200.0)
+        ib.reqHistoricalDataAsync = AsyncMock()
+        spot = await _resolve_spot_async(ib, MagicMock(), "AAPL")
+        assert spot == pytest.approx(200.0)
+        ib.reqMktData.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_get_ohlcv_raises(self, monkeypatch):
+        def _boom(_sym):
+            raise RuntimeError("yfinance down")
+
+        monkeypatch.setattr("src.ibkr.market_data.get_ohlcv", _boom)
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+        ib = MagicMock()
+        ib.reqMktData.return_value = _make_spot_ticker(market_price=150.0)
+        ib.reqHistoricalDataAsync = AsyncMock()
+        spot = await _resolve_spot_async(ib, MagicMock(), "AAPL")
+        assert spot == pytest.approx(150.0)
+
+
+# ---------------------------------------------------------------------------
+# S7 — event-driven wait: returns as soon as ticks populate, ceiling-bounded
+# ---------------------------------------------------------------------------
+
+
+class TestAwaitReady:
+    @pytest.mark.asyncio
+    async def test_returns_immediately_when_ready(self):
+        calls = {"sleep": 0}
+
+        async def _no_sleep(_):
+            calls["sleep"] += 1
+
+        import src.ibkr.market_data as md
+
+        orig = md.asyncio.sleep
+        md.asyncio.sleep = _no_sleep  # type: ignore[assignment]
+        try:
+            await _await_ready(lambda: True, ceiling=2.0)
+        finally:
+            md.asyncio.sleep = orig
+        assert calls["sleep"] == 0  # predicate true on first check → no waiting
+
+    @pytest.mark.asyncio
+    async def test_bounded_by_ceiling_when_never_ready(self, monkeypatch):
+        calls = {"sleep": 0}
+
+        async def _count_sleep(_):
+            calls["sleep"] += 1
+
+        monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", _count_sleep)
+        await _await_ready(lambda: False, ceiling=2.0)
+        # ceiling / 0.1s poll interval = 20 iterations, then gives up (no spin).
+        assert calls["sleep"] == 20
+
+    def test_quote_ready_true_with_ask_only(self):
+        assert _quote_ready(SimpleNamespace(bid=float("nan"), ask=2.4)) is True
+
+    def test_quote_ready_false_when_bid_is_sentinel_and_no_ask(self):
+        assert _quote_ready(SimpleNamespace(bid=-1.0, ask=float("nan"))) is False
+
+    def test_spot_ready_true_with_marketprice(self):
+        assert _spot_ready(_make_spot_ticker(market_price=100.0)) is True
+
+    def test_spot_ready_true_with_close_only(self):
+        assert _spot_ready(_make_spot_ticker(market_price=float("nan"), close=99.0)) is True
+
+    def test_spot_ready_false_when_empty(self):
+        assert _spot_ready(_make_spot_ticker(market_price=float("nan"))) is False
+
+
+# ---------------------------------------------------------------------------
+# S2 — IBKR-first greeks: per-contract computation fallback + IBKR-IV Black-Scholes
+# ---------------------------------------------------------------------------
+
+
+class TestPickGreeks:
+    def test_prefers_model_greeks(self):
+        ticker = SimpleNamespace(
+            modelGreeks=_make_greeks(delta=-0.25),
+            lastGreeks=_make_greeks(delta=-0.40),
+        )
+        assert _pick_greeks(ticker).delta == pytest.approx(-0.25)
+
+    def test_falls_back_to_last_then_ask_then_bid(self):
+        # model absent, last present → use last
+        ticker = SimpleNamespace(
+            modelGreeks=None,
+            lastGreeks=_make_greeks(delta=-0.30),
+            askGreeks=_make_greeks(delta=-0.31),
+            bidGreeks=_make_greeks(delta=-0.32),
+        )
+        assert _pick_greeks(ticker).delta == pytest.approx(-0.30)
+
+        # model + last absent → use ask
+        ticker.lastGreeks = None
+        assert _pick_greeks(ticker).delta == pytest.approx(-0.31)
+
+    def test_returns_none_when_no_computation_has_delta(self):
+        ticker = SimpleNamespace(modelGreeks=None)
+        assert _pick_greeks(ticker) is None
+
+    def test_ticker_to_quote_uses_fallback_computation(self):
+        # No modelGreeks, but askGreeks carries real IBKR greeks → genuine IBKR delta.
+        ticker = _make_ticker(greeks=None)
+        ticker.modelGreeks = None
+        ticker.askGreeks = _make_greeks(iv=0.42, delta=0.28)
+        c = _make_option_contract(right="C", strike=400.0)
+        q = _ticker_to_quote(c, ticker)
+        assert q.delta == pytest.approx(0.28)
+        assert q.iv == pytest.approx(0.42)
+        assert q.greeks_source == "ibkr"
+
+    def test_ticker_to_quote_captures_underlying_iv_when_no_greeks(self):
+        # No per-contract greeks at all, but generic-tick-106 underlying IV is present.
+        ticker = _make_ticker(greeks=None)
+        ticker.modelGreeks = None
+        ticker.impliedVolatility = 0.55
+        c = _make_option_contract(right="P", strike=380.0)
+        q = _ticker_to_quote(c, ticker)
+        assert q.delta is None  # no delta yet — BS step fills it later
+        assert q.iv == pytest.approx(0.55)
+
+
+class TestEnrichGreeksFromIbkrIv:
+    def _quote(self, *, iv, delta=None, right="C", strike=200.0):
+        return OptionQuote(
+            underlying="AAPL",
+            right=OptionRight.CALL if right == "C" else OptionRight.PUT,
+            strike=strike,
+            expiry=date.today() + timedelta(days=34),
+            iv=iv,
+            delta=delta,
+            greeks_source="ibkr",
+        )
+
+    def test_fills_delta_from_ibkr_iv_and_labels_black_scholes(self):
+        q = self._quote(iv=0.30)
+        n = _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        assert n == 1
+        assert q.delta is not None
+        assert q.greeks_source == "black_scholes"
+
+    def test_put_delta_negative(self):
+        q = self._quote(iv=0.30, right="P", strike=190.0)
+        _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        assert q.delta is not None and q.delta < 0.0
+
+    def test_skips_quotes_with_existing_delta(self):
+        q = self._quote(iv=0.30, delta=0.25)
+        n = _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        assert n == 0
+        assert q.greeks_source == "ibkr"  # untouched
+
+    def test_skips_quotes_without_iv(self):
+        q = self._quote(iv=None)
+        n = _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        assert n == 0
+        assert q.delta is None
+
+    def test_yahoo_skipped_when_ibkr_iv_filled_everything(self, monkeypatch):
+        # After the IBKR-IV BS step fills delta, _enrich_greeks_yf must not call yfinance.
+        q = self._quote(iv=0.30)
+        _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        monkeypatch.setattr(
+            "src.ibkr.market_data.yf.Ticker",
+            lambda _: (_ for _ in ()).throw(AssertionError("yfinance must not be called")),
+        )
+        _enrich_greeks_yf("AAPL", 200.0, [q])  # no missing → short-circuits before yf

@@ -20,6 +20,7 @@ import yfinance as yf
 from ib_async import IB, Option
 
 from src.analytics.black_scholes import bs_delta
+from src.analytics.price_data import get_ohlcv
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import OptionQuote, OptionRight
@@ -129,6 +130,45 @@ def _safe_int(val: Any) -> int | None:
 
 
 # ---------------------------------------------------------------------------
+# Event-driven wait — return as soon as ticks arrive, with a hard ceiling.
+# ---------------------------------------------------------------------------
+
+# How often to re-check a ticker between reqMktData and the ceiling. ib_async populates
+# ticks asynchronously on the loop while we await; a short poll lets a well-behaved symbol
+# return in ~0.2-0.5s instead of always sleeping the full ceiling (the old fixed floor).
+_POLL_INTERVAL_SECONDS = 0.1
+
+
+async def _await_ready(predicate: Callable[[], bool], ceiling: float) -> None:
+    """Await until *predicate* holds, bounded by *ceiling* seconds (a ceiling, not a floor).
+
+    Polls every ``_POLL_INTERVAL_SECONDS`` and returns the instant *predicate* is true, so
+    well-behaved symbols no longer pay the full fixed wait. Iteration count is bounded by
+    ``ceiling`` (not wall-clock), so it can't spin even when ``asyncio.sleep`` is patched in
+    tests. On timeout it returns silently — the caller reads whatever ticks did populate,
+    exactly as the old fixed-sleep path did.
+    """
+    polls = max(1, int(ceiling / _POLL_INTERVAL_SECONDS))
+    for _ in range(polls):
+        if predicate():
+            return
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+
+
+def _quote_ready(ticker: Any) -> bool:
+    """True once a ticker carries a usable quote (a non-sentinel bid or an ask)."""
+    return _clean_bid(getattr(ticker, "bid", None)) is not None or (
+        _safe(getattr(ticker, "ask", None)) is not None
+    )
+
+
+def _spot_ready(ticker: Any) -> bool:
+    """True once a stock ticker exposes a usable price (live mark or prior close)."""
+    mark = _safe(ticker.marketPrice()) if hasattr(ticker, "marketPrice") else None
+    return (mark is not None and mark > 0) or (_safe(getattr(ticker, "close", None)) or 0) > 0
+
+
+# ---------------------------------------------------------------------------
 # Spot price (needed to build the strike band)
 # ---------------------------------------------------------------------------
 
@@ -165,9 +205,14 @@ def _get_spot(ib: IB, stock: Any) -> float:
 
 
 async def _get_spot_async(ib: IB, stock: Any) -> float:
-    """Async variant of _get_spot — awaits on the loop instead of ib.sleep."""
+    """Async variant of _get_spot — awaits on the loop instead of ib.sleep.
+
+    The fixed ``quote_sleep_seconds`` wait is now a *ceiling*: we return as soon as the
+    snapshot exposes a price (S7), not after a flat 2s. Only reached when no cached daily
+    close is available (see ``_resolve_spot_async``).
+    """
     ticker = ib.reqMktData(stock, snapshot=True)
-    await asyncio.sleep(get_config().market_data.quote_sleep_seconds)
+    await _await_ready(lambda: _spot_ready(ticker), get_config().market_data.quote_sleep_seconds)
     price = ticker.marketPrice()
     p = _safe(price)
     if p is None or math.isnan(p) or p <= 0:
@@ -195,6 +240,29 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
     if p is None or p <= 0:
         raise ValueError(f"Could not get spot price for {stock.symbol!r}")
     return p
+
+
+async def _resolve_spot_async(ib: IB, stock: Any, symbol: str) -> float:
+    """Resolve a spot price for strike-band centring + the BS-greeks fallback (S3).
+
+    The strike band (±15-42%) and the Black-Scholes delta back-fill don't need an exact
+    RTH tick — the latest settled close from ``get_ohlcv`` (already ``@daily_cached``, so
+    free after the first scan, and on a delayed/paper account essentially what the snapshot
+    would return anyway) is accurate enough. Preferring it skips a dedicated
+    ``reqMktData(snapshot=True)`` + ``quote_sleep_seconds`` round-trip per symbol per scan
+    (~2s × ~50 symbols × ~26 intraday scans/day). Only when no cached close exists (new
+    symbol, yfinance unavailable) do we fall back to the live snapshot chain in
+    ``_get_spot_async`` — the ``46a21bf`` no-tick fallback is preserved intact.
+    """
+    try:
+        df = get_ohlcv(symbol)
+        if df is not None and not df.empty:
+            close = _safe(df["Close"].iloc[-1])
+            if close is not None and close > 0:
+                return close
+    except Exception:
+        log.debug("resolve_spot: cached close unavailable for %s — live snapshot", symbol)
+    return await _get_spot_async(ib, stock)
 
 
 # ---------------------------------------------------------------------------
@@ -332,21 +400,31 @@ async def _batch_quotes_async(
 ) -> list[OptionQuote]:
     """Async variant of _batch_quotes — runs on the ib_async event loop thread.
 
-    Uses ``await asyncio.sleep`` instead of ``ib.sleep`` so it never blocks (or
-    cross-threads) the loop. ``reqMktData`` is non-blocking; ticks populate via the
-    loop while we await. Same batching + cancel discipline as the sync version.
+    Uses an event-driven wait instead of ``ib.sleep``/a fixed floor: ``reqMktData`` is
+    non-blocking and ticks populate via the loop, so we await only until every ticker in
+    the batch carries a usable bid/ask, bounded by the old 2s as a *ceiling* (S7). A
+    well-behaved batch returns in ~0.2-0.5s. Greeks are not waited on — they're absent on
+    delayed/paper data and the yfinance Black-Scholes fallback fills them; blocking on them
+    would forfeit the speedup on exactly the target account. Same batching + cancel
+    discipline as the sync version.
     """
     quotes: list[OptionQuote] = []
-    wait = max(throttle, 2.0)
+    ceiling = max(throttle, 2.0)
 
     for i in range(0, len(contracts), batch_size):
         batch = contracts[i : i + batch_size]
         tickers = [
-            ib.reqMktData(c, genericTickList="101", snapshot=False, regulatorySnapshot=False)
+            # 101 = option open interest; 106 = option implied volatility (S2: lets us BS-fill
+            # delta from an IBKR IV instead of a second Yahoo chain download when greeks lag).
+            ib.reqMktData(c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
         try:
-            await asyncio.sleep(wait)
+            # Bind the current batch's tickers (not the loop variable) for the readiness check.
+            def _batch_ready(ts: list[Any] = tickers) -> bool:
+                return all(_quote_ready(t) for t in ts)
+
+            await _await_ready(_batch_ready, ceiling)
             for c, ticker in zip(batch, tickers, strict=True):
                 quotes.append(_ticker_to_quote(c, ticker))
         finally:
@@ -436,7 +514,7 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     dte_max = max(risk["covered_call"]["dte_max"], risk["cash_secured_put"]["dte_max"])
 
     stock = await qualify_stock_async(ib, symbol)
-    spot = await _get_spot_async(ib, stock)
+    spot = await _resolve_spot_async(ib, stock, symbol)
     log.info("get_option_chain_quotes_async: symbol=%s spot=%.2f", symbol, spot)
 
     chains = await ib.reqSecDefOptParamsAsync(stock.symbol, "", stock.secType, stock.conId)

@@ -11,6 +11,8 @@ import math
 import re
 from typing import Any
 
+from src.common.cache import daily_cached
+
 logger = logging.getLogger(__name__)
 
 _SUBREDDITS = ("options", "wallstreetbets")
@@ -43,6 +45,7 @@ def _make_reddit(client_id: str, client_secret: str, user_agent: str) -> Any:
     )
 
 
+@daily_cached
 def fetch_sentiment(
     symbol: str,
     *,
@@ -58,6 +61,11 @@ def fetch_sentiment(
     by mention volume (log-compressed so 50+ mentions ≈ full weight).
 
     Returns 50.0 on any error or when credentials are missing.
+
+    ``@daily_cached`` keys on the positional ``symbol`` (credentials/``_reddit`` are
+    keyword-only and excluded from the key), so each symbol hits praw at most once per
+    calendar day in a long-lived process — the ~26 intraday scans/session reuse the
+    first cycle's result instead of re-querying Reddit ~1,200×/day.
     """
     if _reddit is None:
         # Only enforce credentials + praw availability when building a real client.
@@ -111,8 +119,11 @@ def fetch_sentiment(
 class SentimentScorer:
     """Per-run cache wrapper around fetch_sentiment.
 
-    Instantiate once per morning scan; repeated calls for the same symbol
-    return the cached value without hitting the Reddit API again.
+    Instantiate once per scan; repeated calls for the same symbol return the cached
+    value without hitting the Reddit API again. ``fetch_sentiment`` is additionally
+    ``@daily_cached``, so the cache survives across the ~26 intraday scans in a
+    long-lived process even though a fresh scorer is built each cycle — each symbol
+    queries Reddit at most once per calendar day.
     """
 
     def __init__(

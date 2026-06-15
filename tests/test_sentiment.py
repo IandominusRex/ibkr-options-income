@@ -155,8 +155,11 @@ class TestFetchSentimentMocked:
 
     def test_volume_factor_increases_with_more_posts(self) -> None:
         """More mentions of the same quality should push score further from neutral."""
+        from src.common.cache import clear_all
 
         def _score(n: int) -> float:
+            # fetch_sentiment is @daily_cached on `symbol`; clear so each call re-fetches.
+            clear_all()
             posts = [_make_post(f"AAPL bull calls rally {i}", upvote_ratio=0.9) for i in range(n)]
             reddit = _make_reddit({"options": posts, "wallstreetbets": []})
             return fetch_sentiment("AAPL", client_id="id", client_secret="s", _reddit=reddit)
@@ -189,6 +192,28 @@ class TestSentimentScorer:
         second = scorer.score("AAPL")
 
         assert first == second
+
+    def test_daily_cache_skips_second_fetch_same_day(self) -> None:
+        """A fresh scorer in the same process/day reuses the cached value — no praw call.
+
+        Simulates the intraday loop, which builds a new SentimentScorer each cycle: the
+        module-level @daily_cached on fetch_sentiment must short-circuit the second cycle.
+        """
+        posts = [_make_post("AAPL bull calls moon", upvote_ratio=0.9)]
+        reddit = _make_reddit({"options": posts, "wallstreetbets": []})
+
+        first_scorer = SentimentScorer(client_id="id", client_secret="s")
+        first_scorer._reddit = reddit
+        first = first_scorer.score("AAPL")
+
+        # A new scorer (next scan cycle) whose reddit would raise if queried.
+        second_scorer = SentimentScorer(client_id="id", client_secret="s")
+        second_scorer._reddit = MagicMock()
+        second_scorer._reddit.subreddit.side_effect = AssertionError("praw must not be hit")
+        second = second_scorer.score("AAPL")
+
+        assert first == second
+        reddit.subreddit.assert_called()  # first cycle did query
 
     def test_different_symbols_fetched_independently(self) -> None:
         aapl_posts = [_make_post("AAPL bull calls", upvote_ratio=0.9)]
