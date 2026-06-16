@@ -411,7 +411,6 @@ async def _send_with_session(
 
 async def send_buy_list(
     candidates: list[BuyCandidate],
-    bot: object,
     chat_id: str,
     *,
     suppress_unchanged: bool = False,
@@ -440,9 +439,7 @@ async def send_buy_list(
 
     if not candidates:
         try:
-            from telegram import Bot as TelegramBot
-
-            async with TelegramBot(token=token) as tbot:
+            async with Bot(token=token) as tbot:
                 await tbot.send_message(
                     chat_id=chat_id,
                     message_thread_id=thread_id_val,
@@ -462,9 +459,7 @@ async def send_buy_list(
     if suppress_unchanged and get_setting(_BUY_LIST_HASH_KEY) == current_hash:
         since = get_setting(_BUY_LIST_TIME_KEY) or "earlier"
         try:
-            from telegram import Bot as TelegramBot
-
-            async with TelegramBot(token=token) as tbot:
+            async with Bot(token=token) as tbot:
                 await tbot.send_message(
                     chat_id=chat_id,
                     message_thread_id=thread_id_val,
@@ -484,9 +479,7 @@ async def send_buy_list(
         return False
 
     try:
-        from telegram import Bot as TelegramBot
-
-        async with TelegramBot(token=token) as tbot:
+        async with Bot(token=token) as tbot:
             await tbot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id_val,

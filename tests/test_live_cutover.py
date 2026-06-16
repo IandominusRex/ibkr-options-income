@@ -7,7 +7,6 @@ DB tests use tmp_path + SQLite so they never touch production state.
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,7 +31,7 @@ from src.common.schemas import (
     Strategy,
     TradeCandidate,
 )
-from src.storage.models import ApprovalRow, OrderRow
+from src.storage.models import OrderRow
 
 # --------------------------------------------------------------------------- #
 # Helpers shared across tests

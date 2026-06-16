@@ -1228,7 +1228,7 @@ async def _run_scan_body(
         )
         cand_sent = cc_sent or csp_sent
         buy_sent = await send_buy_list(
-            result.buy_candidates, bot, chat_id, suppress_unchanged=intraday
+            result.buy_candidates, chat_id, suppress_unchanged=intraday
         )
         # S6: an intraday cycle that surfaced nothing (no candidate cleared the gate, buy list
         # unchanged) would otherwise be silent — the operator can't tell a deliberately quiet

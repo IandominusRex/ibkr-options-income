@@ -1123,8 +1123,8 @@ async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
         )
     ]
 
-    with patch("telegram.Bot", mock_cls):
-        await send_buy_list(candidates, bot=object(), chat_id="99999")
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_buy_list(candidates, chat_id="99999")
 
     mock_instance.send_message.assert_called_once()
     text = mock_instance.send_message.call_args.kwargs["text"]
@@ -1267,15 +1267,15 @@ async def test_send_buy_list_digest_when_unchanged(monkeypatch, tmp_path):
 
     cands = [BuyCandidate(symbol="AAPL", score=85.0), BuyCandidate(symbol="MSFT", score=70.0)]
 
-    with patch("telegram.Bot", mock_cls):
+    with patch("src.notify.sender.Bot", mock_cls):
         # First send: full list, hash stored.
-        await send_buy_list(cands, bot=object(), chat_id="99999", suppress_unchanged=True)
+        await send_buy_list(cands, chat_id="99999", suppress_unchanged=True)
         first_text = mock_instance.send_message.call_args.kwargs["text"]
         assert "Buy\\-to\\-Own Candidates" in first_text
 
         mock_instance.send_message.reset_mock()
         # Second send, identical → compact digest.
-        await send_buy_list(cands, bot=object(), chat_id="99999", suppress_unchanged=True)
+        await send_buy_list(cands, chat_id="99999", suppress_unchanged=True)
 
     digest = mock_instance.send_message.call_args.kwargs["text"]
     assert "unchanged" in digest.lower()
@@ -1291,14 +1291,14 @@ async def test_send_buy_list_full_when_changed(monkeypatch, tmp_path):
     mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
     mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("telegram.Bot", mock_cls):
+    with patch("src.notify.sender.Bot", mock_cls):
         await send_buy_list(
-            [BuyCandidate(symbol="AAPL", score=85.0)], object(), "9", suppress_unchanged=True
+            [BuyCandidate(symbol="AAPL", score=85.0)], "9", suppress_unchanged=True
         )
         mock_instance.send_message.reset_mock()
         # Different symbol set → full list again, not a digest.
         await send_buy_list(
-            [BuyCandidate(symbol="NVDA", score=88.0)], object(), "9", suppress_unchanged=True
+            [BuyCandidate(symbol="NVDA", score=88.0)], "9", suppress_unchanged=True
         )
 
     text = mock_instance.send_message.call_args.kwargs["text"]
@@ -1592,8 +1592,8 @@ async def test_send_buy_list_empty_sends_diagnostic(monkeypatch, tmp_path):
     mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
     mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("telegram.Bot", mock_cls):
-        sent = await send_buy_list([], bot=object(), chat_id="99999")
+    with patch("src.notify.sender.Bot", mock_cls):
+        sent = await send_buy_list([], chat_id="99999")
 
     assert sent is True
     mock_instance.send_message.assert_called_once()
@@ -1613,8 +1613,8 @@ async def test_send_buy_list_routes_to_thread_buy(monkeypatch, tmp_path):
     mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
     cands = [BuyCandidate(symbol="AAPL", score=85.0)]
-    with patch("telegram.Bot", mock_cls):
-        await send_buy_list(cands, bot=object(), chat_id="99999")
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_buy_list(cands, chat_id="99999")
 
     call_kwargs = mock_instance.send_message.call_args.kwargs
     # telegram_thread_buy = "" → thread_id("") = None

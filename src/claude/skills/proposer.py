@@ -13,14 +13,13 @@ first and falls back to the local model.
 
 from __future__ import annotations
 
-import json
 import logging
 import subprocess
 
 from src.claude import ollama_runner
 from src.claude.eval.ledger import load_records
 from src.claude.eval.metrics import evaluate
-from src.claude.parser import _loads_lenient, _strip_fences
+from src.claude.parser import _parse_dict_payload, _unwrap_cli
 from src.claude.skills.registry import load_active_skills, save_proposal
 from src.common.config import get_config
 from src.common.schemas import SkillProposal, VerdictEvaluation, VerdictRecord
@@ -108,25 +107,11 @@ def build_proposal_prompt(
 
 
 def _parse_proposal(raw: str) -> SkillProposal | None:
-    if not raw or not raw.strip():
+    inner = _unwrap_cli(raw, "skills")
+    if inner is None:
         return None
-    try:
-        envelope = json.loads(raw)
-    except json.JSONDecodeError:
-        log.warning("skills: proposer outer JSON parse failed")
-        return None
-    inner = envelope.get("result") if isinstance(envelope, dict) else None
-    if not isinstance(inner, str):
-        log.warning("skills: proposer envelope missing 'result'")
-        return None
-    try:
-        payload = _loads_lenient(_strip_fences(inner))
-    except json.JSONDecodeError:
-        log.warning("skills: proposer inner JSON parse failed")
-        return None
-    if isinstance(payload, list) and payload:
-        payload = payload[0]
-    if not isinstance(payload, dict):
+    payload = _parse_dict_payload(inner, "skills")
+    if payload is None:
         return None
     try:
         return SkillProposal.model_validate(payload)

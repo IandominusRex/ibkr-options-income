@@ -6,8 +6,10 @@ so the orchestrator can fall back to the deterministic Rules-Engine-approved lis
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
+from collections.abc import Callable
 
 from src.claude import ollama_runner
 from src.claude.parser import parse_claude_output, parse_journal_output, parse_roll_output
@@ -47,6 +49,37 @@ def _build_cmd(cfg: object) -> list[str]:
     if cfg.disallowed_tools:  # type: ignore[attr-defined]
         cmd += ["--disallowedTools", cfg.disallowed_tools]  # type: ignore[attr-defined]
     return cmd
+
+
+def _run_cli[T](prompt: str, prefix: str, parse_fn: Callable[[str], T | None]) -> T | None:
+    """Shared subprocess retry loop for roll and EOD journal CLI calls.
+
+    Retries up to cfg.max_retries on TimeoutExpired or empty/unparseable output;
+    returns immediately None on FileNotFoundError. Calls _log_cost on success.
+    """
+    cfg = get_config().claude
+    cmd = _build_cmd(cfg)
+    for attempt in range(cfg.max_retries + 1):
+        try:
+            result = subprocess.run(
+                cmd, input=prompt, capture_output=True, text=True, timeout=cfg.timeout_seconds
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("%s: timed out (attempt %d)", prefix, attempt + 1)
+            continue
+        except FileNotFoundError:
+            log.warning("claude: CLI not found — skipping %s", prefix)
+            return None
+        if result.returncode != 0 and not result.stdout:
+            log.warning("%s: rc=%d, no stdout (attempt %d)", prefix, result.returncode, attempt + 1)
+            continue
+        parsed = parse_fn(result.stdout)
+        if parsed is not None:
+            _log_cost(result.stdout)
+            return parsed
+        log.warning("%s: unparseable output (attempt %d)", prefix, attempt + 1)
+    log.error("%s: all %d attempt(s) failed", prefix, cfg.max_retries + 1)
+    return None
 
 
 def review_candidates(
@@ -187,45 +220,10 @@ def _review_roll_cli(
     Returns None on any failure — the caller proceeds without Claude's input.
     """
     cfg = get_config().claude
-
     if not cfg.enabled:
         log.info("claude: disabled by config — skipping roll review")
         return None
-
-    prompt = build_roll_prompt(alert, pos, quote)
-    cmd = _build_cmd(cfg)
-
-    for attempt in range(cfg.max_retries + 1):
-        try:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=cfg.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired:
-            log.warning("claude roll: timed out (attempt %d)", attempt + 1)
-            continue
-        except FileNotFoundError:
-            log.warning("claude: CLI not found — skipping roll review")
-            return None
-
-        if result.returncode != 0 and not result.stdout:
-            log.warning(
-                "claude roll: rc=%d, no stdout (attempt %d)", result.returncode, attempt + 1
-            )
-            continue
-
-        review = parse_roll_output(result.stdout)
-        if review is not None:
-            _log_cost(result.stdout)
-            return review
-
-        log.warning("claude roll: unparseable output (attempt %d)", attempt + 1)
-
-    log.error("claude roll: all %d attempt(s) failed", cfg.max_retries + 1)
-    return None
+    return _run_cli(build_roll_prompt(alert, pos, quote), "claude roll", parse_roll_output)
 
 
 def write_journal_narrative(summary: EODSummary) -> str | None:
@@ -249,49 +247,14 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
 def _write_journal_narrative_cli(summary: EODSummary) -> str | None:
     """Shell out to `claude -p` for an EOD journal narrative. None on any failure."""
     cfg = get_config().claude
-
     if not cfg.enabled:
         log.info("claude: disabled by config — skipping EOD journal")
         return None
-
-    prompt = build_eod_prompt(summary)
-    cmd = _build_cmd(cfg)
-
-    for attempt in range(cfg.max_retries + 1):
-        try:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=cfg.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired:
-            log.warning("claude eod: timed out (attempt %d)", attempt + 1)
-            continue
-        except FileNotFoundError:
-            log.warning("claude: CLI not found — skipping EOD journal")
-            return None
-
-        if result.returncode != 0 and not result.stdout:
-            log.warning("claude eod: rc=%d, no stdout (attempt %d)", result.returncode, attempt + 1)
-            continue
-
-        narrative = parse_journal_output(result.stdout)
-        if narrative is not None:
-            _log_cost(result.stdout)
-            return narrative
-
-        log.warning("claude eod: unparseable output (attempt %d)", attempt + 1)
-
-    log.error("claude eod: all %d attempt(s) failed", cfg.max_retries + 1)
-    return None
+    return _run_cli(build_eod_prompt(summary), "claude eod", parse_journal_output)
 
 
 def _log_cost(raw: str) -> None:
     """Best-effort cost logging from the envelope; never raises."""
-    import json
-
     try:
         envelope = json.loads(raw)
         cost = envelope.get("total_cost_usd")
