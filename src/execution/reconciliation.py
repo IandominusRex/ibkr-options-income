@@ -111,9 +111,7 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
     with session_scope() as s:
         rows = (
             s.query(OrderRow)
-            .filter(
-                OrderRow.state.in_(_RECOVERABLE_STATES), OrderRow.ib_order_id.isnot(None)
-            )
+            .filter(OrderRow.state.in_(_RECOVERABLE_STATES), OrderRow.ib_order_id.isnot(None))
             .all()
         )
         orphans = [(o.id, o.candidate_id, o.ib_order_id) for o in rows]
@@ -276,7 +274,13 @@ async def reconcile_external_closes(ib: IB, bot: object, chat_id: str) -> None:
             expiry = _expiry_to_date(str(getattr(contract, "lastTradeDateOrContractMonth", "")))
             shares = float(getattr(ex, "shares", 0.0) or 0.0)
             price = float(getattr(ex, "price", 0.0) or 0.0)
-            if not symbol or right not in ("C", "P") or strike <= 0 or expiry is None or shares <= 0:
+            if (
+                not symbol
+                or right not in ("C", "P")
+                or strike <= 0
+                or expiry is None
+                or shares <= 0
+            ):
                 continue
 
             # Match to a candidate we actually sold on this exact contract.

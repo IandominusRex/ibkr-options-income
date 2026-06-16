@@ -208,6 +208,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
     monkeypatch.setattr(scanmod, "_load_memory", lambda syms: [])
     monkeypatch.setattr(scanmod, "send_candidates", AsyncMock())
     monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock())
+    monkeypatch.setattr(scanmod, "send_account_snapshot", AsyncMock())
 
     def _fake_review(*a, **k):
         review_counter["n"] += 1

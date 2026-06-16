@@ -26,7 +26,9 @@ def test_suppresses_runs_of_near_identical_messages():
 
     decisions = []
     for i in range(6):
-        rec = _record("ib_async.wrapper", f"Error 300, reqId 1792{i}: Can't find EId with tickerId:1792{i}")
+        rec = _record(
+            "ib_async.wrapper", f"Error 300, reqId 1792{i}: Can't find EId with tickerId:1792{i}"
+        )
         decisions.append(f.filter(rec))
 
     # First _SUPPRESS_AFTER+1 pass through (identical 120-char prefix), rest suppressed.

@@ -12,20 +12,42 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.common.schemas import (
+    AccountSnapshot,
     BuyCandidate,
     ClaudeReview,
     OptionRight,
+    PositionSnapshot,
     ScoreCard,
     Strategy,
     TradeCandidate,
 )
-from src.notify.formatters import _md, format_candidate, format_status
-from src.notify.sender import send_buy_list, send_candidates
+from src.notify.formatters import (
+    _md,
+    format_account_snapshot,
+    format_candidate,
+    format_screen_empty,
+    format_screen_unchanged,
+    format_status,
+)
+from src.notify.sender import send_buy_list, send_candidates, thread_id
 from src.storage.models import ApprovalRow, OrderRow
 
 # --------------------------------------------------------------------------- #
 # Shared fixtures
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# thread_id helper
+# --------------------------------------------------------------------------- #
+
+
+def test_thread_id_parses_numeric_string():
+    assert thread_id("52") == 52
+
+
+def test_thread_id_empty_string_is_none():
+    assert thread_id("") is None
 
 
 def _make_candidate(
@@ -220,24 +242,43 @@ def _mock_cfg(monkeypatch, *, token: str = "tok", chat_id: str = "99999", ttl: i
     mock = MagicMock()
     mock.secrets.telegram_bot_token = token
     mock.secrets.telegram_chat_id = chat_id
+    mock.secrets.telegram_thread_scan = ""
+    mock.secrets.telegram_thread_csp = "52"
+    mock.secrets.telegram_thread_cc = "54"
+    mock.secrets.telegram_thread_buy = "56"
+    mock.secrets.telegram_thread_account = "58"
     mock.approval.ttl_minutes = ttl
     monkeypatch.setattr("src.notify.sender.get_config", lambda: mock)
     return mock
 
 
-async def test_send_candidates_empty_list_no_bot_calls(mock_bot_cls, monkeypatch, tmp_path):
+def _cc_kwargs(**overrides) -> dict:
+    """Default send_candidates required kwargs for test calls (CC screen)."""
+    kw: dict = dict(
+        thread_id=54,
+        label="Covered Calls",
+        icon="🔵",
+        hash_key="last_cc_hash",
+        time_key="last_cc_time",
+    )
+    kw.update(overrides)
+    return kw
+
+
+async def test_send_candidates_empty_list_sends_diagnostic(mock_bot_cls, monkeypatch, tmp_path):
+    """Empty candidate list → diagnostic 'no candidates' message sent (always-send-something rule)."""
     _db_setup(tmp_path, monkeypatch)
     _mock_cfg(monkeypatch)
-    mock_cls, _ = mock_bot_cls
-
-    import src.storage.db as dbmod
+    mock_cls, mock_instance = mock_bot_cls
 
     with patch("src.notify.sender.Bot", mock_cls):
-        with dbmod.session_scope() as session:
-            sent = await send_candidates([], [], session)
+        sent = await send_candidates([], [], **_cc_kwargs(empty_reason="0/4 passed the risk gate"))
 
-    mock_cls.assert_not_called()
-    assert sent is False  # nothing sent → feeds the quiet-cycle heartbeat decision (S6)
+    mock_instance.send_message.assert_called_once()
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "no candidates this cycle" in text
+    assert "0/4 passed the risk gate" in text
+    assert sent is True
 
 
 async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tmp_path):
@@ -245,11 +286,8 @@ async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tm
     _mock_cfg(monkeypatch, token="")
     mock_cls, _ = mock_bot_cls
 
-    import src.storage.db as dbmod
-
     with patch("src.notify.sender.Bot", mock_cls):
-        with dbmod.session_scope() as session:
-            await send_candidates([_make_candidate()], [], session)
+        await send_candidates([_make_candidate()], [], **_cc_kwargs())
 
     mock_cls.assert_not_called()
 
@@ -265,7 +303,7 @@ async def test_send_candidates_one_message_per_candidate(mock_bot_cls, monkeypat
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates(candidates, [], session)
+            await send_candidates(candidates, [], session=session, **_cc_kwargs())
 
     assert mock_instance.send_message.call_count == 2
 
@@ -282,7 +320,7 @@ async def test_send_candidates_persists_approval_row(mock_bot_cls, monkeypatch, 
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([_make_candidate("c-001")], [], session)
+            await send_candidates([_make_candidate("c-001")], [], session=session, **_cc_kwargs())
 
     with dbmod.session_scope() as s:
         rows = s.execute(select(ApprovalRow)).scalars().all()
@@ -305,7 +343,7 @@ async def test_send_candidates_approval_has_expires_at(mock_bot_cls, monkeypatch
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([_make_candidate()], [], session)
+            await send_candidates([_make_candidate()], [], session=session, **_cc_kwargs())
 
     with dbmod.session_scope() as s:
         row = s.execute(select(ApprovalRow)).scalar_one()
@@ -326,7 +364,7 @@ async def test_send_candidates_uses_review_when_available(mock_bot_cls, monkeypa
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([candidate], [review], session)
+            await send_candidates([candidate], [review], session=session, **_cc_kwargs())
 
     call_kwargs = mock_instance.send_message.call_args.kwargs
     assert "SELL" in call_kwargs["text"]  # recommendation from review
@@ -344,7 +382,7 @@ async def test_send_candidates_no_review_for_unmatched(mock_bot_cls, monkeypatch
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([candidate], [review], session)
+            await send_candidates([candidate], [review], session=session, **_cc_kwargs())
 
     call_kwargs = mock_instance.send_message.call_args.kwargs
     assert "Claude Review" not in call_kwargs["text"]
@@ -359,7 +397,7 @@ async def test_send_candidates_keyboard_uses_approval_id(mock_bot_cls, monkeypat
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as session:
-            await send_candidates([_make_candidate("c-001")], [], session)
+            await send_candidates([_make_candidate("c-001")], [], session=session, **_cc_kwargs())
 
     keyboard = mock_instance.send_message.call_args.kwargs["reply_markup"]
     buttons = keyboard.inline_keyboard[0]
@@ -555,8 +593,8 @@ async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monke
     candidate = _make_candidate("dup-001")
 
     with patch("src.notify.sender.Bot", mock_cls):
-        await send_candidates([candidate], [])  # first scan
-        await send_candidates([candidate], [])  # 15 min later — same candidate_id
+        await send_candidates([candidate], [], **_cc_kwargs())  # first scan
+        await send_candidates([candidate], [], **_cc_kwargs())  # 15 min later — same candidate_id
 
     with dbmod.session_scope() as s:
         orders = (
@@ -1064,7 +1102,7 @@ async def test_external_close_ignores_sell_side_executions(tmp_path, monkeypatch
 async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
     cfg = MagicMock()
     cfg.secrets.telegram_bot_token = "tok"
-    cfg.secrets.telegram_thread_id = None
+    cfg.secrets.telegram_thread_buy = ""
     monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
 
     mock_instance = AsyncMock()
@@ -1110,16 +1148,17 @@ async def test_send_candidates_suppresses_unchanged_pending(mock_bot_cls, monkey
     import src.storage.db as dbmod
 
     cand = _make_candidate("c-001")
+    kw = _cc_kwargs(suppress_unchanged=True)
     with patch("src.notify.sender.Bot", mock_cls):
         # First cycle: full card sent, one PENDING approval persisted.
         with dbmod.session_scope() as s:
-            await send_candidates([cand], [], s, suppress_unchanged=True)
+            await send_candidates([cand], [], session=s, **kw)
         assert mock_instance.send_message.call_count == 1
 
         mock_instance.send_message.reset_mock()
         # Second cycle: unchanged → suppressed to a single digest, still no second approval.
         with dbmod.session_scope() as s:
-            await send_candidates([cand], [], s, suppress_unchanged=True)
+            await send_candidates([cand], [], session=s, **kw)
 
     assert mock_instance.send_message.call_count == 1
     digest_text = mock_instance.send_message.call_args.kwargs["text"]
@@ -1141,7 +1180,9 @@ async def test_suppress_sends_full_card_without_prior(mock_bot_cls, monkeypatch,
 
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as s:
-            await send_candidates([_make_candidate("c-xyz")], [], s, suppress_unchanged=True)
+            await send_candidates(
+                [_make_candidate("c-xyz")], [], session=s, **_cc_kwargs(suppress_unchanged=True)
+            )
 
     assert mock_instance.send_message.call_count == 1
     with dbmod.session_scope() as s:
@@ -1161,10 +1202,10 @@ async def test_manual_send_ignores_suppression(mock_bot_cls, monkeypatch, tmp_pa
     cand = _make_candidate("c-001")
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as s:
-            await send_candidates([cand], [], s, suppress_unchanged=True)
+            await send_candidates([cand], [], session=s, **_cc_kwargs(suppress_unchanged=True))
         mock_instance.send_message.reset_mock()
         with dbmod.session_scope() as s:
-            await send_candidates([cand], [], s)  # default suppress_unchanged=False
+            await send_candidates([cand], [], session=s, **_cc_kwargs())  # suppress_unchanged=False
 
     assert mock_instance.send_message.call_count == 1
     with dbmod.session_scope() as s:
@@ -1184,12 +1225,18 @@ async def test_score_band_change_resends_full_card(mock_bot_cls, monkeypatch, tm
     with patch("src.notify.sender.Bot", mock_cls):
         with dbmod.session_scope() as s:
             await send_candidates(
-                [_make_candidate("c-001", blended_score=74.5)], [], s, suppress_unchanged=True
+                [_make_candidate("c-001", blended_score=74.5)],
+                [],
+                session=s,
+                **_cc_kwargs(suppress_unchanged=True),
             )
         mock_instance.send_message.reset_mock()
         with dbmod.session_scope() as s:
             await send_candidates(
-                [_make_candidate("c-001", blended_score=92.0)], [], s, suppress_unchanged=True
+                [_make_candidate("c-001", blended_score=92.0)],
+                [],
+                session=s,
+                **_cc_kwargs(suppress_unchanged=True),
             )
 
     # New score band (14 → 18) → fresh full card, not a digest.
@@ -1202,7 +1249,7 @@ async def test_score_band_change_resends_full_card(mock_bot_cls, monkeypatch, tm
 def _buy_cfg(monkeypatch):
     cfg = MagicMock()
     cfg.secrets.telegram_bot_token = "tok"
-    cfg.secrets.telegram_thread_id = None
+    cfg.secrets.telegram_thread_buy = ""
     monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
     return cfg
 
@@ -1308,3 +1355,394 @@ async def test_note_intraday_skip_warns_again_after_interval():
     bot_data["_overrun_warn_at"] = datetime.now(UTC) - _OVERRUN_WARN_INTERVAL - timedelta(seconds=1)
     await _note_intraday_skip(bot_data, bot, "123", "overran")
     assert bot.send_message.call_count == 2
+
+
+# --------------------------------------------------------------------------- #
+# format_screen_unchanged / format_screen_empty
+# --------------------------------------------------------------------------- #
+
+
+def test_format_screen_unchanged_pluralizes_and_escapes():
+    text = format_screen_unchanged("🟢", "Buy-to-Own", 8, "12:33", "name")
+    assert text == "🟢 *Buy\\-to\\-Own* — 8 names unchanged since 12:33 \\(no new screens\\)"
+
+
+def test_format_screen_unchanged_singular_no_plural():
+    text = format_screen_unchanged("🟣", "Cash-Secured Puts", 1, "09:15", "candidate")
+    assert (
+        text == "🟣 *Cash\\-Secured Puts* — 1 candidate unchanged since 09:15 \\(no new screens\\)"
+    )
+
+
+def test_format_screen_empty():
+    text = format_screen_empty("🔵", "Covered Calls", "0/4 candidates passed the risk gate")
+    assert (
+        text
+        == "🔵 *Covered Calls* — no candidates this cycle\n_0/4 candidates passed the risk gate_"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# format_account_snapshot
+# --------------------------------------------------------------------------- #
+
+
+def _snapshot_account(net_liq: float = 100_000.0) -> AccountSnapshot:
+    return AccountSnapshot(
+        account="DU123456",
+        net_liquidation=net_liq,
+        total_cash=50_000.0,
+        buying_power=80_000.0,
+        maintenance_margin=5_000.0,
+        excess_liquidity=75_000.0,
+    )
+
+
+def _snapshot_stock(
+    symbol: str = "AAPL",
+    position: float = 100.0,
+    avg_cost: float = 180.0,
+    market_value: float | None = 18_200.0,
+    unrealized_pnl: float | None = 200.0,
+) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=symbol,
+        sec_type="STK",
+        position=position,
+        avg_cost=avg_cost,
+        market_value=market_value,
+        unrealized_pnl=unrealized_pnl,
+        underlying=symbol,
+    )
+
+
+def _snapshot_option(
+    underlying: str,
+    right: OptionRight,
+    strike: float,
+    avg_cost: float,
+    unrealized_pnl: float,
+    position: float = -1.0,
+    dte: int = 14,
+) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=f"{underlying}  OPT",
+        sec_type="OPT",
+        position=position,
+        avg_cost=avg_cost,
+        right=right,
+        strike=strike,
+        expiry=date.today() + timedelta(days=dte),
+        underlying=underlying,
+        unrealized_pnl=unrealized_pnl,
+    )
+
+
+def test_format_account_snapshot_stocks_only():
+    account = _snapshot_account()
+    positions = [_snapshot_stock()]
+    text = format_account_snapshot(account, positions, "09:30 ET")
+
+    assert "📊 *Account Snapshot*" in text
+    assert "Net Liq \\$100,000" in text
+    assert f"*{_md('Stocks')}*" in text
+    assert "AAPL: 100 shares" in text
+    assert "+1\\.1%" in text  # 200 / (180 * 100) * 100
+    assert "_\\(last updated 09:30 ET\\)_" in text
+
+
+def test_format_account_snapshot_nested_covered_call():
+    account = _snapshot_account()
+    positions = [
+        _snapshot_stock(),
+        _snapshot_option("AAPL", OptionRight.CALL, 190.0, avg_cost=3.0, unrealized_pnl=50.0),
+    ]
+    text = format_account_snapshot(account, positions, "09:30 ET")
+
+    # Nested CC line follows the stock line, prefixed with the tree marker.
+    lines = text.splitlines()
+    aapl_idx = next(i for i, ln in enumerate(lines) if ln.startswith("AAPL: 100 shares"))
+    assert lines[aapl_idx + 1].startswith("  └ ")
+    assert "C " in lines[aapl_idx + 1]
+    assert "+16\\.7%" in lines[aapl_idx + 1]  # 50 / (3 * 1 * 100) * 100
+    assert "Cash\\-Secured Puts" not in text
+
+
+def test_format_account_snapshot_standalone_csp():
+    account = _snapshot_account()
+    positions = [
+        _snapshot_stock(),
+        _snapshot_option("MSFT", OptionRight.PUT, 300.0, avg_cost=4.0, unrealized_pnl=-20.0),
+    ]
+    text = format_account_snapshot(account, positions, "09:30 ET")
+
+    assert f"*{_md('Cash-Secured Puts')}*" in text
+    csp_line = next(ln for ln in text.splitlines() if ln.strip().startswith("MSFT"))
+    assert "P " in csp_line
+    assert "\\-5\\.0%" in csp_line  # -20 / (4 * 1 * 100) * 100
+
+
+def test_format_account_snapshot_zero_cost_basis_is_na():
+    account = _snapshot_account()
+    positions = [_snapshot_stock(avg_cost=0.0, unrealized_pnl=0.0)]
+    text = format_account_snapshot(account, positions, "09:30 ET")
+
+    assert "N/A" in text
+    # Total P&L % also falls back to N/A when total cost basis is zero.
+    assert "\\(N/A\\)" in text
+
+
+def test_format_account_snapshot_truncates_long_message():
+    account = _snapshot_account()
+    positions = [_snapshot_stock(symbol=f"SYM{i}") for i in range(200)]
+    text = format_account_snapshot(account, positions, "09:30 ET")
+
+    # Truncated to _MAX_MESSAGE_LEN - 3 plus the escaped "..." marker (same convention as
+    # format_positions / format_buy_list).
+    assert len(text) <= 4000 + len("\\.\\.\\.")
+    assert text.endswith("\\.\\.\\.")
+
+
+# --------------------------------------------------------------------------- #
+# sender — send_candidates per-thread routing + empty/unchanged behaviour
+# --------------------------------------------------------------------------- #
+
+
+async def test_send_candidates_routes_to_provided_thread_id(mock_bot_cls, monkeypatch, tmp_path):
+    """send_candidates passes the caller-provided thread_id to Telegram, not a hardcoded config."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        with dbmod.session_scope() as s:
+            await send_candidates(
+                [_make_candidate("c-001")], [], session=s, **_cc_kwargs(thread_id=54)
+            )
+
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    assert call_kwargs["message_thread_id"] == 54
+
+
+async def test_send_candidates_empty_sends_with_thread(mock_bot_cls, monkeypatch, tmp_path):
+    """Empty list diagnostic message uses the caller-provided thread_id."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        sent = await send_candidates(
+            [], [], **_cc_kwargs(thread_id=52, label="Cash-Secured Puts", icon="🟣")
+        )
+
+    assert sent is True
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    assert call_kwargs["message_thread_id"] == 52
+    assert "no candidates this cycle" in call_kwargs["text"]
+
+
+async def test_send_candidates_hash_unchanged_all_suppressed_sends_screen_digest(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """Hash matches + all candidates have live pending approvals → format_screen_unchanged.
+
+    Calls send_candidates without a session (matching production usage) so that set_setting
+    can open its own session after the approval-row session commits — no DB lock conflict.
+    """
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    cand = _make_candidate("c-001")
+    kw = _cc_kwargs(suppress_unchanged=True)
+    with patch("src.notify.sender.Bot", mock_cls):
+        # First send: opens its own session, commits, then stores hash.
+        await send_candidates([cand], [], **kw)
+        mock_instance.send_message.reset_mock()
+        # Second send: hash matches + live pending card → screen-level unchanged digest.
+        await send_candidates([cand], [], **kw)
+
+    assert mock_instance.send_message.call_count == 1
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    # format_screen_unchanged output (not per-card digest)
+    assert "no new screens" in text
+    assert "Covered Calls" in text
+
+
+# --------------------------------------------------------------------------- #
+# sender — send_buy_list empty-state + thread routing
+# --------------------------------------------------------------------------- #
+
+
+async def test_send_buy_list_empty_sends_diagnostic(monkeypatch, tmp_path):
+    """Empty buy list sends a format_screen_empty diagnostic to telegram_thread_buy."""
+    _db_setup(tmp_path, monkeypatch)
+
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_buy = "56"
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("telegram.Bot", mock_cls):
+        sent = await send_buy_list([], bot=object(), chat_id="99999")
+
+    assert sent is True
+    mock_instance.send_message.assert_called_once()
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "no candidates this cycle" in text
+    assert mock_instance.send_message.call_args.kwargs["message_thread_id"] == 56
+
+
+async def test_send_buy_list_routes_to_thread_buy(monkeypatch, tmp_path):
+    """send_buy_list always uses telegram_thread_buy, not telegram_thread_scan."""
+    _db_setup(tmp_path, monkeypatch)
+    _buy_cfg(monkeypatch)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    cands = [BuyCandidate(symbol="AAPL", score=85.0)]
+    with patch("telegram.Bot", mock_cls):
+        await send_buy_list(cands, bot=object(), chat_id="99999")
+
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    # telegram_thread_buy = "" → thread_id("") = None
+    assert call_kwargs["message_thread_id"] is None
+
+
+# --------------------------------------------------------------------------- #
+# sender — send_account_snapshot
+# --------------------------------------------------------------------------- #
+
+
+def _mock_account_cfg(monkeypatch):
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_chat_id = "99999"
+    cfg.secrets.telegram_thread_account = "58"
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+    return cfg
+
+
+async def test_send_account_snapshot_first_send(monkeypatch, tmp_path):
+    """No stored message → send_message called, message_id and date stored."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_account_cfg(monkeypatch)
+
+    from src.notify.sender import send_account_snapshot
+
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=99)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    account = _snapshot_account()
+    with patch("src.notify.sender.Bot", mock_cls):
+        result = await send_account_snapshot(account, [_snapshot_stock()])
+
+    assert result is True
+    mock_instance.send_message.assert_called_once()
+    mock_instance.edit_message_text.assert_not_called()
+
+    from src.storage.system_settings import get_setting
+
+    assert get_setting("account_snapshot_message_id") == "99"
+    assert get_setting("account_snapshot_date") is not None
+
+
+async def test_send_account_snapshot_edits_same_day(monkeypatch, tmp_path):
+    """Stored message from today → edit_message_text called, no new send."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_account_cfg(monkeypatch)
+
+    from zoneinfo import ZoneInfo
+
+    from src.notify.sender import send_account_snapshot
+    from src.storage.system_settings import set_setting
+
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    set_setting("account_snapshot_message_id", "77")
+    set_setting("account_snapshot_date", today)
+
+    mock_instance = AsyncMock()
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    account = _snapshot_account()
+    with patch("src.notify.sender.Bot", mock_cls):
+        result = await send_account_snapshot(account, [])
+
+    assert result is True
+    mock_instance.edit_message_text.assert_called_once()
+    call_kw = mock_instance.edit_message_text.call_args.kwargs
+    assert call_kw["message_id"] == 77
+    mock_instance.send_message.assert_not_called()
+
+
+async def test_send_account_snapshot_edit_fails_falls_back_to_send(monkeypatch, tmp_path):
+    """edit_message_text raises (e.g. message deleted) → fallback send_message + overwrite id."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_account_cfg(monkeypatch)
+
+    from zoneinfo import ZoneInfo
+
+    from src.notify.sender import send_account_snapshot
+    from src.storage.system_settings import get_setting, set_setting
+
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    set_setting("account_snapshot_message_id", "77")
+    set_setting("account_snapshot_date", today)
+
+    mock_instance = AsyncMock()
+    mock_instance.edit_message_text.side_effect = Exception("message not found")
+    mock_instance.send_message.return_value = MagicMock(message_id=88)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    account = _snapshot_account()
+    with patch("src.notify.sender.Bot", mock_cls):
+        result = await send_account_snapshot(account, [])
+
+    assert result is True
+    mock_instance.send_message.assert_called_once()
+    assert get_setting("account_snapshot_message_id") == "88"
+
+
+async def test_send_account_snapshot_new_day_resends(monkeypatch, tmp_path):
+    """Stored date is yesterday → send_message (not edit) and overwrite stored date."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_account_cfg(monkeypatch)
+
+    from src.notify.sender import send_account_snapshot
+    from src.storage.system_settings import get_setting, set_setting
+
+    set_setting("account_snapshot_message_id", "55")
+    set_setting("account_snapshot_date", "2020-01-01")  # old date
+
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=100)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    account = _snapshot_account()
+    with patch("src.notify.sender.Bot", mock_cls):
+        result = await send_account_snapshot(account, [])
+
+    assert result is True
+    mock_instance.send_message.assert_called_once()
+    mock_instance.edit_message_text.assert_not_called()
+    assert get_setting("account_snapshot_message_id") == "100"
+    assert get_setting("account_snapshot_date") != "2020-01-01"

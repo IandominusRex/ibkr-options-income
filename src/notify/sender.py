@@ -19,17 +19,21 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.common.config import get_config
 from src.common.schemas import (
+    AccountSnapshot,
     ApprovalStatus,
     BuyCandidate,
     ClaudeReview,
     OrderState,
+    PositionSnapshot,
     TradeCandidate,
 )
 from src.notify.formatters import (
+    format_account_snapshot,
     format_auto_trade_notification,
     format_buy_list,
-    format_buy_list_digest,
     format_candidate,
+    format_screen_empty,
+    format_screen_unchanged,
     format_unchanged_cards_digest,
 )
 from src.storage.db import session_scope
@@ -41,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
 
-# S6 — system_settings keys for buy-list output suppression (intraday loop only).
+# system_settings keys for buy-list output suppression (intraday loop only).
 _BUY_LIST_HASH_KEY = "last_buy_list_hash"
 _BUY_LIST_TIME_KEY = "last_buy_list_time"
 
@@ -61,18 +65,28 @@ def _et_hhmm(dt: datetime | None = None) -> str:
     return dt.astimezone(_ET).strftime("%H:%M")
 
 
-def _buy_list_hash(candidates: list[BuyCandidate]) -> str:
-    """Content hash of the buy-to-own list keyed on (symbol, score-band), so an unchanged
-    screen is detected across cycles (S6)."""
-    payload = sorted((c.symbol, _score_band(c.score)) for c in candidates)
-    return hashlib.sha256(json.dumps(payload).encode()).hexdigest()
+def thread_id(raw: str) -> int | None:
+    """Parse a configured thread-ID string into an int, or None if unset."""
+    return int(raw) if raw else None
+
+
+def _screen_hash(keys: list[tuple]) -> str:
+    """Content hash for any screen keyed on caller-provided (symbol/id, score-band) tuples."""
+    return hashlib.sha256(json.dumps(sorted(keys)).encode()).hexdigest()
 
 
 async def send_candidates(
     candidates: list[TradeCandidate],
     reviews: list[ClaudeReview],
-    session: Session | None = None,
     *,
+    thread_id: int | None,
+    label: str,
+    icon: str,
+    hash_key: str,
+    time_key: str,
+    empty_reason: str | None = None,
+    noun: str = "candidate",
+    session: Session | None = None,
     suppress_unchanged: bool = False,
 ) -> bool:
     """Send one Telegram message per candidate; persist the message_id to DB.
@@ -84,20 +98,18 @@ async def send_candidates(
 
     In MANUAL mode (default): sends one Approve/Reject message per candidate.
 
+    Empty candidates: sends a diagnostic ``format_screen_empty`` message to the thread so the
+    operator can always see *something* per cycle (not silent on slow markets / gate rejections).
+
     ``suppress_unchanged`` (set by the 15-min intraday loop, never by manual /scan or the
-    morning cron) collapses a candidate that still has a live, same-score-band PENDING approval
-    into a compact "unchanged" digest instead of re-spamming a full card every cycle (S6) — the
-    original card's buttons remain actionable, so nothing is lost.
+    morning cron) first checks if the overall screen hash is unchanged; if so and every candidate
+    already has a live same-band pending card, emits one compact ``format_screen_unchanged``
+    message instead of re-spamming the full screen. Per-candidate suppression still applies inside
+    the full-send path. On a fresh full send the hash+time are stored for future cycle comparisons.
 
-    Safe to call with an empty list — no API calls are made.
-
-    Returns ``True`` if any Telegram message (a card, an auto-queue summary, or an unchanged
-    digest) was sent, ``False`` if nothing went out — the intraday loop uses this to decide
-    whether the cycle was silent enough to warrant a quiet-cycle heartbeat (S6).
+    Returns ``True`` if any Telegram message was sent, ``False`` if nothing went out — the
+    intraday loop uses this to decide whether the cycle warrants a quiet-cycle heartbeat (S6).
     """
-    if not candidates:
-        return False
-
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
     chat_id = cfg.secrets.telegram_chat_id
@@ -106,19 +118,64 @@ async def send_candidates(
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping send")
         return False
 
-    thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
+    # Empty screen: always send a diagnostic message so the thread is never silently empty.
+    if not candidates:
+        reason = empty_reason or "no candidates this cycle"
+        try:
+            async with Bot(token=token) as bot:
+                await bot.send_message(
+                    chat_id=str(chat_id),
+                    message_thread_id=thread_id,
+                    text=format_screen_empty(icon, label, reason),
+                    parse_mode="MarkdownV2",
+                )
+            logger.info("%s screen: no candidates — sent empty diagnostic", label)
+        except Exception:
+            logger.exception("Failed to send empty-screen diagnostic for %s", label)
+        return True
+
+    # Hash-based unchanged check: if the screen content hasn't changed and every candidate
+    # still has a live same-band pending card, send a compact digest instead of re-spamming.
+    current_hash = _screen_hash(
+        [(c.candidate_id, _score_band(c.blended_score)) for c in candidates]
+    )
+    if suppress_unchanged and get_setting(hash_key) == current_hash:
+
+        def _all_suppressed(sess: Session) -> bool:
+            return all(_live_pending_approval(sess, c) is not None for c in candidates)
+
+        suppressed: bool
+        if session is not None:
+            suppressed = _all_suppressed(session)
+        else:
+            with session_scope() as tmp:
+                suppressed = _all_suppressed(tmp)
+
+        if suppressed:
+            since = get_setting(time_key) or "earlier"
+            try:
+                async with Bot(token=token) as bot:
+                    await bot.send_message(
+                        chat_id=str(chat_id),
+                        message_thread_id=thread_id,
+                        text=format_screen_unchanged(icon, label, len(candidates), since, noun),
+                        parse_mode="MarkdownV2",
+                    )
+                logger.info(
+                    "%s screen: %d candidate(s) unchanged since %s — sent compact digest",
+                    label,
+                    len(candidates),
+                    since,
+                )
+            except Exception:
+                logger.exception("Failed to send unchanged digest for %s", label)
+            return True
 
     if is_automated_mode():
-        return await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
-
-    if session is not None:
-        return await _send_with_session(
-            session, candidates, reviews, cfg, token, str(chat_id), thread_id, suppress_unchanged
-        )
-
-    with session_scope() as own_session:
-        return await _send_with_session(
-            own_session,
+        sent = await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
+    elif session is not None:
+        sent = await _send_with_session(
+            session,
             candidates,
             reviews,
             cfg,
@@ -127,6 +184,23 @@ async def send_candidates(
             thread_id,
             suppress_unchanged,
         )
+    else:
+        with session_scope() as own_session:
+            sent = await _send_with_session(
+                own_session,
+                candidates,
+                reviews,
+                cfg,
+                token,
+                str(chat_id),
+                thread_id,
+                suppress_unchanged,
+            )
+
+    if sent:
+        set_setting(hash_key, current_hash)
+        set_setting(time_key, _et_hhmm())
+    return sent
 
 
 async def _auto_queue_candidates(
@@ -346,25 +420,43 @@ async def send_buy_list(
 
     No Approve/Reject buttons — these are stock purchase suggestions, not option orders.
 
+    Empty candidates: sends a diagnostic message to thread 56 so the thread is never silent.
+
     ``suppress_unchanged`` (intraday loop only) replaces the full screen with a one-line
     "unchanged since HH:MM" digest when the (symbol, score-band) set is identical to the last
-    full send (S6), cutting ~26 near-identical buy-list blasts/day. Manual /scan and the morning
+    full send, cutting ~26 near-identical buy-list blasts/day. Manual /scan and the morning
     cron always send the full list.
 
     Returns ``True`` if any Telegram message (the full screen or the unchanged digest) was sent,
     ``False`` otherwise — feeds the intraday quiet-cycle heartbeat decision (S6).
     """
-    if not candidates:
-        return False
-
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
     if not token or not chat_id:
         logger.warning("TELEGRAM credentials not set — skipping buy list send")
         return False
 
-    thread_id = int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
-    current_hash = _buy_list_hash(candidates)
+    thread_id_val = thread_id(cfg.secrets.telegram_thread_buy)
+
+    if not candidates:
+        try:
+            from telegram import Bot as TelegramBot
+
+            async with TelegramBot(token=token) as tbot:
+                await tbot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id_val,
+                    text=format_screen_empty(
+                        "🟢", "Buy-to-Own", "0 would_own names cleared the buy screen this cycle"
+                    ),
+                    parse_mode="MarkdownV2",
+                )
+            logger.info("Buy list: no candidates — sent empty diagnostic")
+        except Exception:
+            logger.exception("Failed to send buy-list empty diagnostic to Telegram")
+        return True
+
+    current_hash = _screen_hash([(c.symbol, _score_band(c.score)) for c in candidates])
 
     # S6: unchanged since the last full send → compact digest instead of the full screen.
     if suppress_unchanged and get_setting(_BUY_LIST_HASH_KEY) == current_hash:
@@ -375,8 +467,10 @@ async def send_buy_list(
             async with TelegramBot(token=token) as tbot:
                 await tbot.send_message(
                     chat_id=chat_id,
-                    message_thread_id=thread_id,
-                    text=format_buy_list_digest(len(candidates), since),
+                    message_thread_id=thread_id_val,
+                    text=format_screen_unchanged(
+                        "🟢", "Buy-to-Own", len(candidates), since, "name"
+                    ),
                     parse_mode="MarkdownV2",
                 )
             logger.info("Buy list unchanged since %s — sent compact digest (S6)", since)
@@ -395,7 +489,7 @@ async def send_buy_list(
         async with TelegramBot(token=token) as tbot:
             await tbot.send_message(
                 chat_id=chat_id,
-                message_thread_id=thread_id,
+                message_thread_id=thread_id_val,
                 text=text,
                 parse_mode="MarkdownV2",
             )
@@ -406,4 +500,62 @@ async def send_buy_list(
         return True
     except Exception:
         logger.exception("Failed to send buy list to Telegram")
+        return False
+
+
+async def send_account_snapshot(
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+) -> bool:
+    """Send (or edit-in-place) an account snapshot to the dedicated Telegram thread.
+
+    On the first call each ET calendar day a new message is sent and its message_id is stored.
+    Subsequent calls on the same day edit that message in place (updating the "last updated"
+    footer), so the thread stays tidy. If the stored message can't be edited (deleted, >48h old)
+    a fresh send is issued and the stored id/date are overwritten.
+
+    Best-effort: logs and returns ``False`` on any failure; never raises.
+    """
+    cfg = get_config()
+    token = cfg.secrets.telegram_bot_token
+    chat_id = cfg.secrets.telegram_chat_id
+    if not token or not chat_id:
+        logger.warning("TELEGRAM credentials not set — skipping account snapshot")
+        return False
+
+    thread_id_val = thread_id(cfg.secrets.telegram_thread_account)
+    text = format_account_snapshot(account, positions, _et_hhmm())
+    today = datetime.now(_ET).date().isoformat()
+    stored_date = get_setting("account_snapshot_date")
+    stored_msg_id = get_setting("account_snapshot_message_id")
+
+    try:
+        async with Bot(token=token) as bot:
+            if stored_date == today and stored_msg_id:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=str(chat_id),
+                        message_id=int(stored_msg_id),
+                        text=text,
+                        parse_mode="MarkdownV2",
+                    )
+                    logger.info("Edited account snapshot (message_id=%s)", stored_msg_id)
+                    return True
+                except Exception:
+                    logger.warning(
+                        "Account snapshot edit failed — sending fresh message", exc_info=True
+                    )
+
+            msg = await bot.send_message(
+                chat_id=str(chat_id),
+                message_thread_id=thread_id_val,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
+            set_setting("account_snapshot_message_id", str(msg.message_id))
+            set_setting("account_snapshot_date", today)
+            logger.info("Sent account snapshot (message_id=%s)", msg.message_id)
+            return True
+    except Exception:
+        logger.exception("Failed to send account snapshot")
         return False

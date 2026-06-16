@@ -34,7 +34,9 @@ def load_price_series(
         if df.empty:
             log.warning("backtest: no price history for %s", symbol)
             return []
-        return [(idx.date(), float(close)) for idx, close in zip(df.index, df["Close"], strict=False)]
+        return [
+            (idx.date(), float(close)) for idx, close in zip(df.index, df["Close"], strict=False)
+        ]
     except Exception as exc:
         log.warning("backtest: price load failed for %s: %s", symbol, exc)
         return []

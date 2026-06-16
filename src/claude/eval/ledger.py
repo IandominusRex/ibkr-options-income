@@ -247,8 +247,4 @@ def load_records(
 
 def open_filled_records() -> list[VerdictRecord]:
     """Filled rows with no terminal outcome yet — the reconciler's work queue."""
-    return [
-        r
-        for r in load_records(filled_only=True)
-        if r.outcome == VerdictOutcome.STILL_OPEN
-    ]
+    return [r for r in load_records(filled_only=True) if r.outcome == VerdictOutcome.STILL_OPEN]

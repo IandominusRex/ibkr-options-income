@@ -321,9 +321,7 @@ def test_ollama_backend_review_roll_success():
     }
 
     cfg, runner_patch, ollama_patch = _patch_ollama_cfg()
-    with patch(
-        "src.claude.ollama_runner.httpx.post", return_value=_ollama_response(roll_payload)
-    ):
+    with patch("src.claude.ollama_runner.httpx.post", return_value=_ollama_response(roll_payload)):
         with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
             mock_runner_cfg.return_value.claude = cfg
             mock_ollama_cfg.return_value.claude = cfg

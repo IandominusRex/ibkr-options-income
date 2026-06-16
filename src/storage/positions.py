@@ -24,9 +24,7 @@ def save_position_snapshot(snapshot_date: date, positions: list[PositionSnapshot
     payload = [p.model_dump(mode="json") for p in positions]
     try:
         with session_scope() as s:
-            row = (
-                s.query(PositionSnapshotRow).filter_by(snapshot_date=snapshot_date).first()
-            )
+            row = s.query(PositionSnapshotRow).filter_by(snapshot_date=snapshot_date).first()
             if row is None:
                 s.add(PositionSnapshotRow(snapshot_date=snapshot_date, payload=payload))
             else:

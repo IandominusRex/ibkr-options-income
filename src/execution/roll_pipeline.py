@@ -92,7 +92,9 @@ def queue_roll_for_approval(
             s.flush()
             approval_id = approval.id
         log.info(
-            "roll: queued candidate %s for approval (approval_id=%s)", cand.candidate_id, approval_id
+            "roll: queued candidate %s for approval (approval_id=%s)",
+            cand.candidate_id,
+            approval_id,
         )
         return approval_id, cand
     except Exception:

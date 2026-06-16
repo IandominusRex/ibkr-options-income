@@ -118,7 +118,9 @@ def _trailing_hv(closes: list[float], end_idx: int) -> float | None:
     return hv if hv > 0 else None
 
 
-def _strike_for_delta(spot: float, dte: int, iv: float, right: str, target_delta: float, r: float) -> float | None:
+def _strike_for_delta(
+    spot: float, dte: int, iv: float, right: str, target_delta: float, r: float
+) -> float | None:
     """Pick the strike whose model |delta| is closest to ``target_delta``.
 
     Scans a $0.50-granular grid spanning ±35% of spot (wide enough to bracket any sane income
@@ -255,9 +257,7 @@ def simulate(
             intrinsic = 0.0  # bought back before expiry → no assignment
             pnl = (premium - take_mark) * mult - commission
         else:
-            intrinsic = (
-                max(0.0, s_t - strike) if params.right == "C" else max(0.0, strike - s_t)
-            )
+            intrinsic = max(0.0, s_t - strike) if params.right == "C" else max(0.0, strike - s_t)
             pnl = (premium - intrinsic) * mult - commission
 
         result.trades.append(

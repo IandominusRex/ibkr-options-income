@@ -58,7 +58,15 @@ Now open `.env` in any text editor and fill in three values:
 IBKR_ACCOUNT=U1234567          # Your IBKR account ID (optional — uses first account if blank)
 TELEGRAM_BOT_TOKEN=123456:ABC…  # From @BotFather on Telegram
 TELEGRAM_CHAT_ID=-1003902780355 # Group chat ID (negative for groups/supergroups)
-TELEGRAM_THREAD_ID=2            # Topic/thread ID within the group (omit for DMs or non-forum groups)
+
+# Forum-topic (thread) IDs — one per purpose. Defaults match a common setup; override
+# per-group. Leave a value empty to send that category without a thread (General topic).
+TELEGRAM_THREAD_SCAN=2     # System/ops: scan-started pings, startup, overrun warnings
+TELEGRAM_THREAD_CSP=52     # Cash-secured put candidates
+TELEGRAM_THREAD_CC=54      # Covered-call candidates
+TELEGRAM_THREAD_BUY=56     # Buy-to-own recommendations
+TELEGRAM_THREAD_ACCOUNT=58 # Account snapshot
+
 LIVE_TRADING=false              # Keep false until you are ready to go live
 ```
 
@@ -70,7 +78,10 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
    `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser.
 4. Find `"chat":{"id":...}` in the response — that negative number is your `TELEGRAM_CHAT_ID`.
 5. If using a forum-type supergroup with topics, find `"message_thread_id":...` in the same
-   response — that number is your `TELEGRAM_THREAD_ID`. Leave it unset for DMs or plain groups.
+   response — that number identifies the topic the message was sent in. Repeat this for each
+   topic you want the bot to use, and set the corresponding `TELEGRAM_THREAD_*` variable
+   (`TELEGRAM_THREAD_SCAN`, `TELEGRAM_THREAD_CSP`, `TELEGRAM_THREAD_CC`, `TELEGRAM_THREAD_BUY`,
+   `TELEGRAM_THREAD_ACCOUNT`). Leave a variable unset for DMs or plain (non-forum) groups.
 
 ---
 
@@ -802,8 +813,8 @@ prompt length and memory pressure.
 |---|---|---|
 | `ConnectionRefusedError` on healthcheck | TWS/Gateway not running or API not enabled | Start TWS and check API settings (Step 4) |
 | `clientId already in use` | Another process using the same IBKR client ID | Check `config/settings.yaml` for the `client_ids` map; each process needs a unique ID |
-| No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or `TELEGRAM_THREAD_ID` | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
-| Messages arrive in wrong topic | `TELEGRAM_THREAD_ID` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic. |
+| No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or one of the `TELEGRAM_THREAD_*` vars | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
+| Messages arrive in wrong topic | `TELEGRAM_THREAD_SCAN` / `_CSP` / `_CC` / `_BUY` / `_ACCOUNT` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic, and set the matching `TELEGRAM_THREAD_*` variable. |
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
 | Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
 | `/scan` progress message shows "Scan failed" with a ❌ stage | A critical stage (account fetch or scoring) threw an unexpected exception | Check the approval service logs for the full traceback; restart TWS/Gateway if the account stage fails |

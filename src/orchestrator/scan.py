@@ -54,7 +54,7 @@ from src.engine.scoring import score_candidates
 from src.ibkr.market_data import get_option_chain_quotes_async, persist_chain_quotes
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.formatters import format_data_provenance
-from src.notify.sender import send_buy_list, send_candidates
+from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.scan_state import get_scan_state, upsert_scan_state
@@ -702,6 +702,18 @@ def _persist_scan_state(
         )
 
 
+def _no_candidates_reason(result: ScanResult, all_count: int) -> str:
+    """Human-readable explanation for why a per-strategy screen is empty this cycle."""
+    prov = result.provenance
+    if result.total_symbols == 0:
+        return "no symbols in universe"
+    if prov.chain_ibkr == 0 and prov.chain_failed > 0:
+        return f"{prov.chain_failed}/{result.total_symbols} option chains failed — check market-data subscription"
+    if all_count == 0:
+        return "0 candidates generated this cycle"
+    return f"0/{all_count} candidates passed the risk gate"
+
+
 async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -> None:
     """Send the intraday quiet-cycle heartbeat (S6). Best-effort; never raises.
 
@@ -716,9 +728,11 @@ async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -
 
     skipped = max(0, result.total_symbols - result.material_count)
     vix = result.market_conditions.vix if result.market_conditions else None
+    cfg_s = get_config().secrets
     try:
         await bot.send_message(  # type: ignore[attr-defined]
             chat_id=chat_id,
+            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
             text=format_quiet_cycle(
                 skipped=skipped,
                 total=result.total_symbols,
@@ -1189,11 +1203,30 @@ async def _run_scan_body(
     # Telegram network sends — that would block other processes writing the same SQLite DB).
     await tracker.tick("notify", "⏳")
     try:
-        cand_sent = await send_candidates(
-            result.cc_candidates + result.csp_candidates,
+        cfg_s = get_config().secrets
+        cc_sent = await send_candidates(
+            result.cc_candidates,
             result.reviews,
+            thread_id=thread_id(cfg_s.telegram_thread_cc),
+            label="Covered Calls",
+            icon="🔵",
+            hash_key="last_cc_hash",
+            time_key="last_cc_time",
+            empty_reason=_no_candidates_reason(result, len(cc_candidates)),
             suppress_unchanged=intraday,
         )
+        csp_sent = await send_candidates(
+            result.csp_candidates,
+            result.reviews,
+            thread_id=thread_id(cfg_s.telegram_thread_csp),
+            label="Cash-Secured Puts",
+            icon="🟣",
+            hash_key="last_csp_hash",
+            time_key="last_csp_time",
+            empty_reason=_no_candidates_reason(result, len(csp_candidates)),
+            suppress_unchanged=intraday,
+        )
+        cand_sent = cc_sent or csp_sent
         buy_sent = await send_buy_list(
             result.buy_candidates, bot, chat_id, suppress_unchanged=intraday
         )
@@ -1216,14 +1249,22 @@ async def _run_scan_body(
             vix=result.market_conditions.vix,
         )
 
+    # Best-effort account snapshot after every cycle (intraday + full sweep).
+    try:
+        await send_account_snapshot(account, positions)
+    except Exception:
+        log.warning("scan: failed to send account snapshot", exc_info=True)
+
     # Full sweep (manual /scan, morning cron): close out with a provenance summary so the
     # operator can see at a glance which data sources were live vs. fell back this run.
     # Best-effort — a failure here must not affect the notify stage's success status above.
     if not intraday and bot is not None and chat_id:
         prov = result.provenance
+        cfg_s = get_config().secrets
         try:
             await bot.send_message(  # type: ignore[attr-defined]
                 chat_id=chat_id,
+                message_thread_id=thread_id(cfg_s.telegram_thread_scan),
                 text=format_data_provenance(
                     total_symbols=result.total_symbols,
                     chain_ibkr=prov.chain_ibkr,

@@ -139,7 +139,9 @@ def score_outcome_report(
     blended_buckets: list[ScoreBucket] = []
     for lo, hi in _SCORE_BANDS:
         band = [
-            r for r in closed if (v := _signal_value(r, "blended_score")) is not None and lo <= v < hi
+            r
+            for r in closed
+            if (v := _signal_value(r, "blended_score")) is not None and lo <= v < hi
         ]
         if band:
             blended_buckets.append(_bucket(f"{int(lo)}-{int(min(hi, 100))}", band))

@@ -227,8 +227,15 @@ async def test_external_close_flips_expired_to_closed_early(tmp_path, monkeypatc
     with session_scope() as s:
         s.add(
             CandidateRow(
-                candidate_id="a", run_id="run1", strategy="covered_call", underlying="AAPL",
-                right="C", strike=185.0, expiry=expiry, blended_score=80.0, payload={"contracts": 2},
+                candidate_id="a",
+                run_id="run1",
+                strategy="covered_call",
+                underlying="AAPL",
+                right="C",
+                strike=185.0,
+                expiry=expiry,
+                blended_score=80.0,
+                payload={"contracts": 2},
             )
         )
         s.add(FillRow(order_id=1, candidate_id="a", action="SELL", filled_qty=2, avg_price=2.0))
@@ -241,12 +248,19 @@ async def test_external_close_flips_expired_to_closed_early(tmp_path, monkeypatc
                 "F",
                 (),
                 {
-                    "execution": type("E", (), {"execId": "tws1", "shares": 2.0, "price": 0.40, "side": "BOT"})(),
+                    "execution": type(
+                        "E", (), {"execId": "tws1", "shares": 2.0, "price": 0.40, "side": "BOT"}
+                    )(),
                     "contract": type(
                         "C",
                         (),
-                        {"symbol": "AAPL", "right": "C", "strike": 185.0,
-                         "lastTradeDateOrContractMonth": expiry.strftime("%Y%m%d"), "secType": "OPT"},
+                        {
+                            "symbol": "AAPL",
+                            "right": "C",
+                            "strike": 185.0,
+                            "lastTradeDateOrContractMonth": expiry.strftime("%Y%m%d"),
+                            "secType": "OPT",
+                        },
                     )(),
                     "commissionReport": type("R", (), {"commission": 1.0})(),
                 },

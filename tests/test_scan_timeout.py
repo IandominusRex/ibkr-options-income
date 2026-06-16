@@ -70,11 +70,11 @@ async def test_hung_symbol_does_not_hang_the_scan(tmp_path, monkeypatch):
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _hangs_forever)
 
     # --- Analytics / sentiment stubs ---
+    monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
-        scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol)
-    )
-    monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod,
+        "get_technical_stats",
+        lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0),
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
@@ -128,11 +128,11 @@ async def test_timeout_logs_error_and_continues(tmp_path, monkeypatch, caplog):
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _hangs_forever)
+    monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
-        scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol)
-    )
-    monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod,
+        "get_technical_stats",
+        lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0),
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
@@ -151,9 +151,7 @@ async def test_timeout_logs_error_and_continues(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock())
 
     with caplog.at_level(logging.ERROR, logger="src.orchestrator.scan"):
-        await asyncio.wait_for(
-            scanmod.run_scan(mock_ib, bot=object(), chat_id="123"), timeout=5.0
-        )
+        await asyncio.wait_for(scanmod.run_scan(mock_ib, bot=object(), chat_id="123"), timeout=5.0)
 
     assert any("exceeded symbol_timeout_seconds" in r.message for r in caplog.records)
     assert any("AAPL" in r.message for r in caplog.records)

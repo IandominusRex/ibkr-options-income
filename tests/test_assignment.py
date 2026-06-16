@@ -11,20 +11,37 @@ _TODAY = date(2026, 7, 17)
 
 
 def _stk(underlying: str, qty: float) -> PositionSnapshot:
-    return PositionSnapshot(symbol=underlying, sec_type="STK", position=qty, avg_cost=0.0,
-                            underlying=underlying)
-
-
-def _opt(underlying: str, right: str, strike: float, expiry: date, qty: float = -2.0) -> PositionSnapshot:
     return PositionSnapshot(
-        symbol=f"{underlying}  OPT", sec_type="OPT", position=qty, avg_cost=0.0,
-        right=OptionRight(right), strike=strike, expiry=expiry, underlying=underlying,
+        symbol=underlying, sec_type="STK", position=qty, avg_cost=0.0, underlying=underlying
     )
 
 
-def _short(cid="c1", underlying="AAPL", right="P", strike=180.0, expiry=_TODAY, contracts=2.0) -> OpenShort:
-    return OpenShort(candidate_id=cid, underlying=underlying, right=right, strike=strike,
-                     expiry=expiry, contracts=contracts)
+def _opt(
+    underlying: str, right: str, strike: float, expiry: date, qty: float = -2.0
+) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=f"{underlying}  OPT",
+        sec_type="OPT",
+        position=qty,
+        avg_cost=0.0,
+        right=OptionRight(right),
+        strike=strike,
+        expiry=expiry,
+        underlying=underlying,
+    )
+
+
+def _short(
+    cid="c1", underlying="AAPL", right="P", strike=180.0, expiry=_TODAY, contracts=2.0
+) -> OpenShort:
+    return OpenShort(
+        candidate_id=cid,
+        underlying=underlying,
+        right=right,
+        strike=strike,
+        expiry=expiry,
+        contracts=contracts,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -163,9 +180,18 @@ async def test_eod_autodetect_marks_ledger_assigned(tmp_path, monkeypatch):
     entry_day = date.today()
     expiry = entry_day + timedelta(days=5)
     rec = VerdictRecord(
-        candidate_id="p1", run_id="r", scan_date=entry_day, underlying="AAPL",
-        strategy=Strategy.CASH_SECURED_PUT, right=_R.PUT, strike=180.0, expiry=expiry, dte=5,
-        signals={}, claude_recommendation="sell", baseline_recommendation="sell",
+        candidate_id="p1",
+        run_id="r",
+        scan_date=entry_day,
+        underlying="AAPL",
+        strategy=Strategy.CASH_SECURED_PUT,
+        right=_R.PUT,
+        strike=180.0,
+        expiry=expiry,
+        dte=5,
+        signals={},
+        claude_recommendation="sell",
+        baseline_recommendation="sell",
     )
     record_verdicts([rec])
     with session_scope() as s:

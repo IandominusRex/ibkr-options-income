@@ -228,12 +228,101 @@ def format_unchanged_cards_digest(items: list[tuple[TradeCandidate, str]]) -> st
     return "\n".join(lines)
 
 
-def format_buy_list_digest(count: int, since: str) -> str:
-    """One-line MarkdownV2 digest for an unchanged buy-to-own list (S6)."""
+def format_screen_unchanged(
+    icon: str, label: str, count: int, since: str, noun: str = "name"
+) -> str:
+    """One-line MarkdownV2 digest for a screen (buy list / CC / CSP candidates) unchanged since
+    a prior cycle — replaces the per-screen full send when nothing material has changed."""
+    plural = "" if count == 1 else "s"
     return (
-        f"🟢 *Buy\\-to\\-Own* — {count} name\\(s\\) unchanged since {_md(since)} "
+        f"{icon} *{_md(label)}* — {count} {noun}{plural} unchanged since {_md(since)} "
         f"\\(no new screens\\)"
     )
+
+
+def format_screen_empty(icon: str, label: str, reason: str) -> str:
+    """One-line + reason MarkdownV2 diagnostic for a screen with zero candidates this cycle —
+    the "always send something" troubleshooting signal (Telegram routing plan)."""
+    return f"{icon} *{_md(label)}* — no candidates this cycle\n_{_md(reason)}_"
+
+
+def _position_pnl_pct(p: PositionSnapshot) -> str:
+    """Per-position unrealized P&L % (market value vs. cost basis): ``unrealized_pnl /
+    abs(avg_cost * position * multiplier)``, multiplier=100 for options, 1 for stock. Returns
+    'N/A' if the cost basis is zero (e.g. avg_cost or position is 0)."""
+    multiplier = 100 if p.sec_type == "OPT" else 1
+    denom = abs(p.avg_cost * p.position * multiplier)
+    if denom == 0:
+        return "N/A"
+    pct = (p.unrealized_pnl or 0.0) / denom * 100
+    return f"{_md(f'{pct:+.1f}')}%"
+
+
+def _format_option_snapshot_line(o: PositionSnapshot, *, show_symbol: bool) -> str:
+    """One line for a short option position in the account snapshot — strike, right, expiry,
+    DTE, and P&L $/%. Nested under a stock (show_symbol=False) it's prefixed with `└ `;
+    standalone (a CSP, show_symbol=True) it leads with the underlying symbol."""
+    right_lbl = "C" if o.right == OptionRight.CALL else "P"
+    strike_s = f"\\${_md(f'{o.strike:.0f}')}" if o.strike else ""
+    exp_s = _md(str(o.expiry)) if o.expiry else ""
+    dte = (o.expiry - date.today()).days if o.expiry else None
+    dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
+    pnl_s = f" · {_md(_pnl(o.unrealized_pnl or 0.0))} \\({_position_pnl_pct(o)}\\)"
+    body = f"{strike_s}{_md(right_lbl)} {exp_s}{dte_s}{pnl_s}"
+    if show_symbol:
+        sym = _md(o.underlying or o.symbol.split()[0])
+        return f"  {sym} {body}"
+    return f"  └ {body}"
+
+
+def format_account_snapshot(
+    account: AccountSnapshot, positions: list[PositionSnapshot], updated_at: str
+) -> str:
+    """Account snapshot for the dedicated Telegram thread: net liq + total unrealized P&L,
+    stock holdings (each with any covered calls sold against it nested below), and standalone
+    cash-secured puts — each position annotated with its unrealized P&L % (see
+    `_position_pnl_pct`). Sent once at 09:00 ET pre-open, then edited in place every cycle with
+    an updated `(last updated HH:MM)` footer.
+    """
+    parts: list[str] = ["📊 *Account Snapshot*", ""]
+
+    total_pnl = sum(p.unrealized_pnl or 0.0 for p in positions)
+    total_cost = sum(
+        abs(p.avg_cost * p.position * (100 if p.sec_type == "OPT" else 1)) for p in positions
+    )
+    line = f"💼 Net Liq \\${_md(f'{account.net_liquidation:,.0f}')} · {_md(_pnl(total_pnl))}"
+    if total_cost > 0:
+        total_pct = total_pnl / total_cost * 100
+        line += f" \\({_md(f'{total_pct:+.1f}')}%\\)"
+    else:
+        line += " \\(N/A\\)"
+    parts.append(line)
+
+    stocks = [p for p in positions if p.sec_type == "STK" and p.position > 0]
+    shorts = [p for p in positions if p.sec_type == "OPT" and p.position < 0]
+    calls = [o for o in shorts if o.right == OptionRight.CALL]
+    puts = [o for o in shorts if o.right == OptionRight.PUT]
+
+    if stocks:
+        parts += ["", f"*{_md('Stocks')}*"]
+        for s in sorted(stocks, key=lambda x: x.symbol):
+            mv_s = f" · MV \\${_md(f'{s.market_value:,.0f}')}" if s.market_value else ""
+            pnl_s = f" · {_md(_pnl(s.unrealized_pnl or 0.0))} \\({_position_pnl_pct(s)}\\)"
+            parts.append(f"{_md(s.symbol)}: {_md(f'{s.position:.0f}')} shares{mv_s}{pnl_s}")
+            for c in sorted(calls, key=lambda x: x.expiry or date.max):
+                if c.underlying == s.symbol:
+                    parts.append(_format_option_snapshot_line(c, show_symbol=False))
+
+    if puts:
+        parts += ["", f"*{_md('Cash-Secured Puts')}*"]
+        for p in sorted(puts, key=lambda x: (x.expiry or date.max, x.underlying or x.symbol)):
+            parts.append(_format_option_snapshot_line(p, show_symbol=True))
+
+    parts += ["", f"_\\(last updated {_md(updated_at)}\\)_"]
+    text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
 
 
 def format_quiet_cycle(

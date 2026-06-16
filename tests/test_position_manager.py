@@ -53,7 +53,9 @@ def _make_pos() -> PositionSnapshot:
     )
 
 
-def _make_close_ib(filled: bool = True, fill_qty: float = 2.0, avg_price: float = 0.40) -> MagicMock:
+def _make_close_ib(
+    filled: bool = True, fill_qty: float = 2.0, avg_price: float = 0.40
+) -> MagicMock:
     ib = MagicMock()
     qualified = MagicMock()
     qualified.conId = 99999999

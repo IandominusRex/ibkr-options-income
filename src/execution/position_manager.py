@@ -120,7 +120,9 @@ async def close_short_position(
 
         order = LimitOrder("BUY", qty, limit_price, tif="DAY")
         trade = ib_exec.placeOrder(qualified, order)
-        log.info("close placed: %s qty=%d @ %.2f order_id=%s", pos.symbol, qty, limit_price, order_id)
+        log.info(
+            "close placed: %s qty=%d @ %.2f order_id=%s", pos.symbol, qty, limit_price, order_id
+        )
 
         with session_scope() as session:
             row = session.get(OrderRow, order_id)
@@ -133,7 +135,9 @@ async def close_short_position(
         while not trade.isDone():
             await asyncio.sleep(1)
             if asyncio.get_running_loop().time() > deadline:
-                log.warning("close fill timeout for %s order_id=%s — cancelling", pos.symbol, order_id)
+                log.warning(
+                    "close fill timeout for %s order_id=%s — cancelling", pos.symbol, order_id
+                )
                 ib_exec.cancelOrder(trade.order)
                 await asyncio.sleep(2)
                 break
@@ -175,7 +179,13 @@ async def close_short_position(
                     row.state = new_state
                     row.filled_qty = filled_qty
                     row.avg_fill_price = avg_price
-            log.info("close filled: %s qty=%.0f @ %.2f state=%s", pos.symbol, filled_qty, avg_price, new_state)
+            log.info(
+                "close filled: %s qty=%.0f @ %.2f state=%s",
+                pos.symbol,
+                filled_qty,
+                avg_price,
+                new_state,
+            )
             status = "filled" if new_state == OrderState.FILLED else "partial"
             return CloseResult(status, pos.symbol, qty, limit_price, filled_qty, avg_price)
 

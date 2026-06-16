@@ -222,8 +222,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 order_row.state = OrderState.CANCELLED
                 order_row.detail = "Daily trade cap reached"
                 notify_msgs.append(
-                    f"Order CANCELLED: daily trade cap reached for "
-                    f"{order_row.candidate_id[:12]}."
+                    f"Order CANCELLED: daily trade cap reached for {order_row.candidate_id[:12]}."
                 )
                 continue
 

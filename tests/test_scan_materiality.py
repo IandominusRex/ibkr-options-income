@@ -187,7 +187,9 @@ def _stub_common(scanmod, monkeypatch, *, positions):
     monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
     monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
-        scanmod, "get_technical_stats", lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0)
+        scanmod,
+        "get_technical_stats",
+        lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0),
     )
     monkeypatch.setattr(
         scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
@@ -204,6 +206,7 @@ def _stub_common(scanmod, monkeypatch, *, positions):
     monkeypatch.setattr(scanmod, "generate_buy_candidates", lambda *a, **k: [])
     monkeypatch.setattr(scanmod, "send_candidates", AsyncMock())
     monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock())
+    monkeypatch.setattr(scanmod, "send_account_snapshot", AsyncMock())
 
 
 @pytest.mark.asyncio
@@ -374,9 +377,7 @@ async def test_full_sweep_never_sends_heartbeat(tmp_path, monkeypatch):
     from src.common.config import get_config
 
     cfg = get_config()
-    monkeypatch.setattr(
-        cfg, "universe", {"would_own": ["AAPL"], "sectors": {"AAPL": "tech"}}
-    )
+    monkeypatch.setattr(cfg, "universe", {"would_own": ["AAPL"], "sectors": {"AAPL": "tech"}})
     _stub_common(scanmod, monkeypatch, positions=[])
     monkeypatch.setattr(scanmod, "send_candidates", AsyncMock(return_value=False))
     monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock(return_value=False))

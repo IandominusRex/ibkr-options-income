@@ -37,9 +37,7 @@ def latest_iv(symbol: str) -> float | None:
         return None
 
 
-def append_observation(
-    symbol: str, obs_date: date, iv: float | None, source: str = "ibkr"
-) -> bool:
+def append_observation(symbol: str, obs_date: date, iv: float | None, source: str = "ibkr") -> bool:
     """Insert one daily IV observation. Skips if (symbol, obs_date) already exists or iv is
     non-positive. Returns True only when a row was inserted. Never raises."""
     if iv is None or iv <= 0:
@@ -53,9 +51,7 @@ def append_observation(
             ).first()
             if exists is not None:
                 return False
-            sess.add(
-                IVHistoryRow(symbol=symbol, obs_date=obs_date, iv=float(iv), source=source)
-            )
+            sess.add(IVHistoryRow(symbol=symbol, obs_date=obs_date, iv=float(iv), source=source))
             return True
     except Exception:
         log.warning("append_observation failed for %s", symbol, exc_info=True)

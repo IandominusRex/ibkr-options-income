@@ -54,7 +54,9 @@ def _fmt(ev: VerdictEvaluation) -> str:
         )
     if ev.edge_per_trade is not None:
         verdict = "Claude adds edge" if ev.edge_per_trade > 0 else "no edge from Claude"
-        lines.append(f"Edge per trade (follow_claude − baseline): {ev.edge_per_trade:+.2f}  → {verdict}")
+        lines.append(
+            f"Edge per trade (follow_claude − baseline): {ev.edge_per_trade:+.2f}  → {verdict}"
+        )
     if ev.agreement_rate is not None:
         lines.append(f"Claude/baseline agreement: {ev.agreement_rate:.0%}")
     lines.append("")

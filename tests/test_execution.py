@@ -1135,8 +1135,6 @@ def test_process_button_freezes_approval_snapshot_onto_order(monkeypatch, tmp_pa
     with dbmod.session_scope() as s:
         from sqlalchemy import select
 
-        order = s.execute(
-            select(OrderRow).where(OrderRow.approval_id == approval_id)
-        ).scalar_one()
+        order = s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalar_one()
         assert order.snapshot is not None
         assert order.snapshot["contracts"] == 3

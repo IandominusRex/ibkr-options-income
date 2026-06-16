@@ -191,6 +191,22 @@ def is_rth(now: datetime | None = None) -> bool:
     return _OPEN <= now.timetz().replace(tzinfo=None) < close
 
 
+def seconds_until_time(hh: int, mm: int, now: datetime | None = None) -> float:
+    """Seconds (ET wall-clock) until the next occurrence of HH:MM — today if still
+    ahead, else tomorrow. Mirrors seconds_until_next_aligned_mark's tz handling."""
+    if now is None:
+        now = datetime.now(_ET)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_ET)
+    else:
+        now = now.astimezone(_ET)
+
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
 def seconds_until_next_aligned_mark(interval_minutes: int, now: datetime | None = None) -> float:
     """Seconds (ET wall-clock) until the next :00/:15/:30/:45-style mark.
 

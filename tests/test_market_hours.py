@@ -13,6 +13,7 @@ from src.common.market_hours import (
     is_new_entry_window,
     is_rth,
     seconds_until_next_aligned_mark,
+    seconds_until_time,
     session_close,
 )
 
@@ -22,14 +23,14 @@ _ET = ZoneInfo("America/New_York")
 class TestHolidays:
     def test_fixed_and_floating_holidays_2026(self):
         # Spot-check the 2026 NYSE calendar.
-        assert is_market_holiday(date(2026, 1, 1))    # New Year's Day (Thursday)
-        assert is_market_holiday(date(2026, 1, 19))   # MLK (3rd Mon Jan)
-        assert is_market_holiday(date(2026, 2, 16))   # Presidents' (3rd Mon Feb)
-        assert is_market_holiday(date(2026, 4, 3))    # Good Friday 2026
-        assert is_market_holiday(date(2026, 5, 25))   # Memorial (last Mon May)
-        assert is_market_holiday(date(2026, 6, 19))   # Juneteenth
-        assert is_market_holiday(date(2026, 7, 3))    # Independence Day observed (Jul 4 = Sat)
-        assert is_market_holiday(date(2026, 9, 7))    # Labor Day
+        assert is_market_holiday(date(2026, 1, 1))  # New Year's Day (Thursday)
+        assert is_market_holiday(date(2026, 1, 19))  # MLK (3rd Mon Jan)
+        assert is_market_holiday(date(2026, 2, 16))  # Presidents' (3rd Mon Feb)
+        assert is_market_holiday(date(2026, 4, 3))  # Good Friday 2026
+        assert is_market_holiday(date(2026, 5, 25))  # Memorial (last Mon May)
+        assert is_market_holiday(date(2026, 6, 19))  # Juneteenth
+        assert is_market_holiday(date(2026, 7, 3))  # Independence Day observed (Jul 4 = Sat)
+        assert is_market_holiday(date(2026, 9, 7))  # Labor Day
         assert is_market_holiday(date(2026, 11, 26))  # Thanksgiving (4th Thu)
         assert is_market_holiday(date(2026, 12, 25))  # Christmas
 
@@ -132,6 +133,34 @@ class TestIsNewEntryWindow:
         # must not silently treat "3pm" as valid.
         with pytest.raises(ValueError):
             is_new_entry_window(datetime(2026, 6, 11, 12, 0, tzinfo=_ET), entry_cutoff="3pm")
+
+
+class TestSecondsUntilTime:
+    def test_target_ahead_today(self):
+        now = datetime(2026, 6, 11, 9, 0, tzinfo=_ET)
+        assert seconds_until_time(9, 30, now) == pytest.approx(30 * 60)
+
+    def test_target_already_passed_rolls_to_tomorrow(self):
+        # 10:00 ET, targeting 09:30 → 09:30 the next day = 23h 30m away
+        now = datetime(2026, 6, 11, 10, 0, tzinfo=_ET)
+        assert seconds_until_time(9, 30, now) == pytest.approx(23.5 * 3600)
+
+    def test_exactly_on_target_rolls_to_tomorrow(self):
+        # Exactly at the target second — target <= now, so next occurrence is tomorrow
+        now = datetime(2026, 6, 11, 9, 30, 0, tzinfo=_ET)
+        assert seconds_until_time(9, 30, now) == pytest.approx(24 * 3600)
+
+    def test_naive_datetime_treated_as_eastern(self):
+        now = datetime(2026, 6, 11, 9, 0)
+        assert seconds_until_time(9, 30, now) == pytest.approx(30 * 60)
+
+    def test_tz_aware_non_et_converted(self):
+        # 13:00 UTC = 09:00 EDT (UTC-4 in June) — 30 minutes to 09:30 ET
+        from zoneinfo import ZoneInfo
+
+        utc = ZoneInfo("UTC")
+        now = datetime(2026, 6, 11, 13, 0, tzinfo=utc)
+        assert seconds_until_time(9, 30, now) == pytest.approx(30 * 60)
 
 
 class TestSecondsUntilNextAlignedMark:

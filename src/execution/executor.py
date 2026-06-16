@@ -308,7 +308,9 @@ async def execute_candidate(
             else None
         )
         min_ratio_f = _as_float(min_ratio, 0.0) if min_ratio is not None else 0.0
-        floor = min_ratio_f * candidate.premium if (min_ratio_f > 0 and candidate.premium > 0) else None
+        floor = (
+            min_ratio_f * candidate.premium if (min_ratio_f > 0 and candidate.premium > 0) else None
+        )
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + fill_timeout

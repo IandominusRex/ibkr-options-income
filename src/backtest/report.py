@@ -20,7 +20,9 @@ def format_report(result: BacktestResult) -> str:
         return "\n".join(lines)
 
     iv_note = (
-        "stored IV (measures VRP)" if result.iv_source == "stored_iv" else "trailing HV (fair-value proxy)"
+        "stored IV (measures VRP)"
+        if result.iv_source == "stored_iv"
+        else "trailing HV (fair-value proxy)"
     )
     lines += [
         f"  Pricing IV:    {iv_note}",

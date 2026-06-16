@@ -200,20 +200,26 @@ def _reconcile_one(
 ) -> tuple[VerdictOutcome, float | None, bool, float | None, int | None]:
     with session_scope() as sess:
         fills = list(
-            sess.execute(
-                select(FillRow).where(FillRow.candidate_id == candidate_id)
-            ).scalars()
+            sess.execute(select(FillRow).where(FillRow.candidate_id == candidate_id)).scalars()
         )
-        order = sess.execute(
-            select(OrderRow)
-            .where(OrderRow.candidate_id == candidate_id)
-            .order_by(OrderRow.created_at.desc())
-        ).scalars().first()
-        approval = sess.execute(
-            select(ApprovalRow)
-            .where(ApprovalRow.candidate_id == candidate_id)
-            .order_by(ApprovalRow.created_at.desc())
-        ).scalars().first()
+        order = (
+            sess.execute(
+                select(OrderRow)
+                .where(OrderRow.candidate_id == candidate_id)
+                .order_by(OrderRow.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
+        approval = (
+            sess.execute(
+                select(ApprovalRow)
+                .where(ApprovalRow.candidate_id == candidate_id)
+                .order_by(ApprovalRow.created_at.desc())
+            )
+            .scalars()
+            .first()
+        )
         # Detach the pure-decision inputs from the session before it closes.
         fills_snapshot = [
             FillRow(

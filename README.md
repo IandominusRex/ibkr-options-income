@@ -41,6 +41,19 @@ the top candidates to your phone via Telegram.
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
 | `/help` | List all commands |
 
+### Telegram topic routing
+
+Messages are routed to separate forum topics so each thread stays focused. Defaults match
+the IDs listed below; override any `TELEGRAM_THREAD_*` variable in `.env` to match your group.
+
+| Topic (thread ID) | Env var | Content |
+|---|---|---|
+| **2** (`TELEGRAM_THREAD_SCAN`) | `TELEGRAM_THREAD_SCAN` | Scan-started pings, startup notification, overrun warnings, quiet-cycle heartbeat — general ops/system messages |
+| **52** (`TELEGRAM_THREAD_CSP`) | `TELEGRAM_THREAD_CSP` | Cash-secured put candidates (or "unchanged" digest / "no candidates" diagnostic each cycle) |
+| **54** (`TELEGRAM_THREAD_CC`) | `TELEGRAM_THREAD_CC` | Covered-call candidates on currently-held underlyings |
+| **56** (`TELEGRAM_THREAD_BUY`) | `TELEGRAM_THREAD_BUY` | Buy-to-own recommendations (stocks worth owning to sell CCs against) |
+| **58** (`TELEGRAM_THREAD_ACCOUNT`) | `TELEGRAM_THREAD_ACCOUNT` | Account snapshot: net liq, holdings with nested CCs/CSPs, per-position unrealized P&L % — sent fresh at 09:00 ET then edited in-place each cycle |
+
 ## Prerequisites
 
 - Interactive Brokers account with TWS or IB Gateway installed
@@ -84,7 +97,7 @@ python -m pytest               # all tests pass without TWS
 - The **Rules Engine** (`src/engine/risk_engine.py`) is the only path to order execution. It runs
   twice — once when ranking candidates, once again at the moment of execution against a fresh live
   quote. It contains no AI and cannot be bypassed.
-- All secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_ID`, `IBKR_ACCOUNT`) live only in `.env`, which is gitignored.
+- All secrets (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_THREAD_SCAN`/`_CSP`/`_CC`/`_BUY`/`_ACCOUNT`, `IBKR_ACCOUNT`) live only in `.env`, which is gitignored.
 
 ## Layout
 

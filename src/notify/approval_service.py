@@ -31,6 +31,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ib_async import IB
 from sqlalchemy.exc import IntegrityError
@@ -42,8 +43,10 @@ from src.common.config import get_config
 from src.common.market_hours import (
     is_new_entry_window,
     is_rth,
+    is_trading_day,
     now_et_hhmm,
     seconds_until_next_aligned_mark,
+    seconds_until_time,
 )
 from src.common.schemas import ApprovalStatus, OrderState
 from src.execution.approval import process_queued_orders
@@ -62,6 +65,7 @@ from src.execution.reconciliation import (
     recover_orphan_orders,
 )
 from src.ibkr.connection import AutoReconnect
+from src.notify.sender import thread_id
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
@@ -74,6 +78,8 @@ from src.storage.system_settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ET = ZoneInfo("America/New_York")
 
 # /health flags a symbol's IV history as stale when its newest observation is older than this
 # many days. The EOD job appends daily, so a healthy symbol sits at 0–1 day (3 over a weekend);
@@ -834,8 +840,10 @@ async def _note_intraday_skip(bot_data: dict, bot: object, chat_id: str, reason:
         return
     bot_data["_overrun_warn_at"] = now
     try:
+        cfg_s = get_config().secrets
         await bot.send_message(  # type: ignore[attr-defined]
             chat_id=chat_id,
+            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
             text=(
                 f"⚠️ Intraday scan cycle skipped: {reason}. "
                 f"{skipped} cycle(s) skipped this session — scans are running less often than "
@@ -877,7 +885,11 @@ async def _intraday_scan_loop(
 
             logger.info("Intraday loop: RTH cycle starting")
             try:
-                await bot.send_message(chat_id=chat_id, text=f"\U0001f504 Scan started · {now_et_hhmm()}")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id(cfg.secrets.telegram_thread_scan),
+                    text=f"\U0001f504 Scan started · {now_et_hhmm()}",
+                )
             except Exception:
                 logger.exception("Intraday loop: failed to send scan-started message")
 
@@ -947,6 +959,24 @@ async def _intraday_scan_loop(
                 bot_data["scan_running"] = False
         except Exception:
             logger.exception("Intraday loop: unexpected error — continuing to next cycle")
+
+
+async def _premarket_snapshot_loop(ib_scan: IB, chat_id: str) -> None:
+    """Background task: send the day's first account-snapshot to thread 58 at 09:00 ET
+    (30 min pre-open). Subsequent intraday edits come from run_scan → send_account_snapshot."""
+    while True:
+        await asyncio.sleep(seconds_until_time(9, 0))
+        try:
+            if is_trading_day(datetime.now(_ET).date()) and ib_scan.isConnected():
+                from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+                from src.notify.sender import send_account_snapshot
+
+                cfg = get_config()
+                account = await get_account_snapshot_async(ib_scan, cfg.secrets.ibkr_account)
+                positions = get_positions(ib_scan)
+                await send_account_snapshot(account, positions)
+        except Exception:
+            logger.exception("Premarket snapshot loop: failed")
 
 
 # ---------------------------------------------------------------------------
@@ -1108,12 +1138,10 @@ async def _run_service(token: str, chat_id: str) -> None:
                 + (" — active" if ib_scan else " — disabled (no scan connection)"),
                 f"Trading mode: {current_mode}",
             ]
-            thread_id = (
-                int(cfg.secrets.telegram_thread_id) if cfg.secrets.telegram_thread_id else None
-            )
+            thread_id_val = thread_id(cfg.secrets.telegram_thread_scan)
             await app.bot.send_message(
                 chat_id=chat_id,
-                message_thread_id=thread_id,
+                message_thread_id=thread_id_val,
                 text=format_startup(
                     ib_exec_ok=ib is not None,
                     ib_scan_ok=ib_scan is not None,
@@ -1157,6 +1185,11 @@ async def _run_service(token: str, chat_id: str) -> None:
                 cfg.scheduler.intraday_loop_minutes,
             )
 
+        premarket_task: asyncio.Task | None = None
+        if ib_scan is not None:
+            premarket_task = asyncio.create_task(_premarket_snapshot_loop(ib_scan, chat_id))
+            logger.info("Premarket snapshot loop started (09:00 ET daily)")
+
         try:
             await stop_event.wait()
         finally:
@@ -1170,6 +1203,10 @@ async def _run_service(token: str, chat_id: str) -> None:
                 intraday_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await intraday_task
+            if premarket_task is not None:
+                premarket_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await premarket_task
             await app.updater.stop()
             await app.stop()
 
