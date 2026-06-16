@@ -165,8 +165,8 @@ class ScanStateRow(Base):
     that cleared the score floor last cycle is material, and a ``would_own`` name is material
     only once its live spot has drifted past ``market_data.intraday_rescan_move_pct`` from
     ``last_spot`` (the spot at its *last fetch*, not the last check — so slow drift still
-    accumulates to a re-fetch). The morning cron / manual ``/scan`` fetch everything and so
-    seed every row; they never read the gate.
+    accumulates to a re-fetch). Manual ``/scan`` and the first intraday cycle fetch
+    everything and seed every row; they never read the gate.
     """
 
     __tablename__ = "scan_state"

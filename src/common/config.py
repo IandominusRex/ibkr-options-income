@@ -64,14 +64,13 @@ class IBKRCfg(BaseModel):
 
 class SchedulerCfg(BaseModel):
     timezone: str = "America/New_York"
-    morning_scan: str = "09:45"
     eod_report: str = "16:15"
     intraday_poll_seconds: int = 60
     intraday_loop_minutes: int = 15  # how often the intraday scan+profit-take loop fires
     profit_take_pct: float = 50.0  # close a short position once this % of premium is captured
     entry_cutoff: str = "15:00"  # no new entries surfaced/queued after this ET time
 
-    @field_validator("morning_scan", "eod_report", "entry_cutoff")
+    @field_validator("eod_report", "entry_cutoff")
     @classmethod
     def _valid_hhmm(cls, v: str) -> str:
         """Fail loud at config load on a malformed HH:MM time.
@@ -129,7 +128,7 @@ class MarketDataCfg(BaseModel):
     # held positions and materially-moved would_own names can change a decision. A would_own
     # name is re-fetched intraday only once its live spot drifts ≥ this fraction from the spot at
     # its last fetch; held names and names that cleared the score floor last cycle always fetch.
-    # The morning cron and manual /scan ignore this gate and always sweep the full universe.
+    # Manual /scan ignores this gate and always sweeps the full universe.
     intraday_rescan_move_pct: float = 0.005  # 0.5%
     # Safety net: force a full intraday sweep when the oldest fetched symbol hasn't been
     # refreshed in this many minutes, so a quiet-but-drifting name can't go stale indefinitely.

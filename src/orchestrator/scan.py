@@ -1,4 +1,4 @@
-"""Full-pipeline scan orchestrator — shared by the Telegram /scan command and the morning cron.
+"""Full-pipeline scan orchestrator — shared by the 15-min daemon loop and the Telegram /scan command.
 
 Runs:
   1. IBKR: fetch positions + account
@@ -632,7 +632,7 @@ async def _compute_material_symbols(
         ``get_technical_stats`` doesn't pay for a second identical ``fast_info`` fetch (S1
         follow-up).
 
-    Only ever *narrows* the set — callers in full-sweep mode (morning cron, manual ``/scan``)
+    Only ever *narrows* the set — callers in full-sweep mode (manual ``/scan``)
     must not call this and instead fetch every symbol. Pure read; never raises.
     """
     cfg = get_config()
@@ -786,12 +786,12 @@ async def run_scan(
 
     ``intraday=True`` (the 15-min loop) enables the S1 materiality gate: only held positions,
     materially-moved ``would_own`` names, and names that cleared the score floor last cycle get
-    a fresh option-chain fetch; everything else is skipped this cycle. The morning cron and
-    manual ``/scan`` leave it ``False`` and always sweep the full universe.
+    a fresh option-chain fetch; everything else is skipped this cycle. Manual ``/scan``
+    leaves it ``False`` and always sweeps the full universe.
 
     A full chain scan consumes most of the account-level ~100 market-data line cap, so two
-    concurrent scans (e.g. the morning cron and the 15-min daemon loop, in separate
-    processes) would poison each other. The lease serialises them; a scan that can't acquire
+    concurrent full scans (e.g. two simultaneous ``/scan`` commands, in separate processes)
+    would poison each other. The lease serialises them; a scan that can't acquire
     it returns an empty result with ``lease_skipped=True`` rather than competing for lines.
 
     Args:
@@ -901,7 +901,7 @@ async def _run_scan_body(
     )
 
     # --- 3b. Intraday materiality gate (S1) ---
-    # Full-sweep modes (morning cron, manual /scan) fetch every symbol; the 15-min loop fetches
+    # Full-sweep mode (manual /scan) fetches every symbol; the 15-min loop fetches
     # only material ones and skips the rest, sparing the dominant option-chain cost.
     if intraday:
         material_symbols, probed_spots = await _compute_material_symbols(
@@ -1133,7 +1133,7 @@ async def _run_scan_body(
     # --- 6b. Persist per-symbol materiality state for the next intraday cycle (S1/S10) ---
     # Only symbols we actually fetched this run get a fresh baseline; `cleared_floor` marks the
     # names that cleared the score floor so the next cycle always re-checks them. Runs in both
-    # modes so the morning full sweep seeds the gate the first intraday cycle reads.
+    # modes so the first intraday cycle (full sweep, no prior baselines) seeds the gate.
     cleared_floor_symbols = {c.underlying for c in passed}
     if fetched_spots:
         scanned_at = datetime.now(UTC)
@@ -1161,7 +1161,7 @@ async def _run_scan_body(
                 if tech.price  # drop missing/zero spot
             }
             # S5: skip the LLM when the top set + signals are unchanged from the prior cycle
-            # (intraday loop only — manual /scan and the morning cron always review fresh).
+            # (intraday loop only — manual /scan always reviews fresh).
             vix = result.market_conditions.vix if result.market_conditions else None
             review_hash = _candidates_review_hash(top, vix)
             if intraday and get_setting(_REVIEW_HASH_KEY) == review_hash:
@@ -1255,7 +1255,7 @@ async def _run_scan_body(
     except Exception:
         log.warning("scan: failed to send account snapshot", exc_info=True)
 
-    # Full sweep (manual /scan, morning cron): close out with a provenance summary so the
+    # Full sweep (manual /scan): close out with a provenance summary so the
     # operator can see at a glance which data sources were live vs. fell back this run.
     # Best-effort — a failure here must not affect the notify stage's success status above.
     if not intraday and bot is not None and chat_id:

@@ -1,4 +1,4 @@
-"""Stateless Telegram send — called once by the morning_scan one-shot.
+"""Stateless Telegram send — called by the 15-min daemon loop and on-demand /scan.
 
 Sends one message per candidate with inline Approve/Reject buttons, then
 persists ApprovalRow records (status='pending') to SQLite so the approval
@@ -101,8 +101,8 @@ async def send_candidates(
     Empty candidates: sends a diagnostic ``format_screen_empty`` message to the thread so the
     operator can always see *something* per cycle (not silent on slow markets / gate rejections).
 
-    ``suppress_unchanged`` (set by the 15-min intraday loop, never by manual /scan or the
-    morning cron) first checks if the overall screen hash is unchanged; if so and every candidate
+    ``suppress_unchanged`` (set by the 15-min intraday loop, never by manual /scan) first
+    checks if the overall screen hash is unchanged; if so and every candidate
     already has a live same-band pending card, emits one compact ``format_screen_unchanged``
     message instead of re-spamming the full screen. Per-candidate suppression still applies inside
     the full-send path. On a fresh full send the hash+time are stored for future cycle comparisons.

@@ -1,9 +1,9 @@
 # IBKR Options Income System
 
 A semi-autonomous options-income trading system for an Interactive Brokers account. It scans your
-holdings and a watchlist every morning (and every 15 minutes during market hours), scores and ranks
-covered-call and cash-secured-put opportunities, gets a plain-English review from Claude, and sends
-the top candidates to your phone via Telegram.
+holdings and a watchlist every 15 minutes during market hours, scores and ranks covered-call and
+cash-secured-put opportunities, gets a plain-English review from Claude, and sends the top candidates
+to your phone via Telegram.
 
 > **Two operating modes.** In **MANUAL** mode (default) every trade requires your explicit Telegram
 > approval before touching the broker. In **AUTOMATED** mode the system executes trades
@@ -19,8 +19,7 @@ the top candidates to your phone via Telegram.
 
 | Time | What happens |
 |---|---|
-| **9:45 AM ET (auto)** | Morning scan: fetches live data, scores candidates, Claude reviews the top picks (full reasoning included), sends a Telegram summary |
-| **Every 15 min (RTH)** | Intraday loop: checks profit-take targets (50% rule), runs a fresh scan; in AUTOMATED mode executes autonomously, in MANUAL mode sends approval requests |
+| **Every 15 min (RTH)** | Intraday loop: checks profit-take targets (50% rule), runs a fresh scan (full sweep on first cycle each session); in AUTOMATED mode executes autonomously, in MANUAL mode sends approval requests |
 | **During market hours** | Event-driven monitor watches open positions for delta drift, IV spikes, and early-assignment risk; alerts you to roll when needed |
 | **4:15 PM ET (auto)** | End-of-day report: P&L summary, journal entry, tomorrow's watchlist |
 | **Any time** | Telegram bot commands (see below) — query the system interactively from your phone |
@@ -30,7 +29,7 @@ the top candidates to your phone via Telegram.
 
 | Command | What it does |
 |---|---|
-| `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — same pipeline as the morning cron |
+| `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh |
 | `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |
@@ -116,7 +115,7 @@ python -m pytest               # all tests pass without TWS
 | `src/notify/` | Telegram messaging and approval service |
 | `src/monitor/` | Event-driven intraday position monitoring |
 | `src/backtest/` | Offline CC/CSP income backtest (Black-Scholes-synthesised premiums over historical prices) |
-| `src/orchestrator/` | Morning scan, EOD report, and on-demand scan pipeline |
+| `src/orchestrator/` | EOD report and on-demand scan pipeline |
 | `src/storage/` | SQLite database models, session management, and order-creation idempotency |
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |
 | `scripts/` | Command-line entrypoints |

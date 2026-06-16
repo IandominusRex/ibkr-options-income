@@ -57,14 +57,12 @@ class TestSchedulerTimeValidation:
             with pytest.raises(ValidationError):
                 SchedulerCfg(entry_cutoff=bad)
 
-    def test_morning_scan_and_eod_validated_too(self):
+    def test_eod_report_time_validated(self):
         import pytest
         from pydantic import ValidationError
 
         from src.common.config import SchedulerCfg
 
-        with pytest.raises(ValidationError):
-            SchedulerCfg(morning_scan="quarter to ten")
         with pytest.raises(ValidationError):
             SchedulerCfg(eod_report="25:00")
 

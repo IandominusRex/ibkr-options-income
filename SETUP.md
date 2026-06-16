@@ -142,7 +142,7 @@ Conservative defaults are pre-configured. Key settings to review:
 | `portfolio.max_pct_per_ticker` | 5.0 | Max % of net liquidation in one ticker |
 | `portfolio.max_pct_per_sector` | 25.0 | Max % per sector (uses the `sectors:` map in `universe.yaml`) |
 | `portfolio.max_csp_allocation_pct` | 60.0 | Max total cash collateral tied up across all CSPs (% of net liq). **New live users should start at 30–40%** and increase after validating the pipeline. |
-| `portfolio.max_new_positions_per_run` | 10 | Max new positions a single morning scan may propose. New live users should start at 1–3. |
+| `portfolio.max_new_positions_per_run` | 10 | Max new positions a single scan may propose. New live users should start at 1–3. |
 | `covered_call.delta_min` / `delta_max` | 0.20 / 0.35 | Delta range for covered-call strikes |
 | `covered_call.min_strike_vs_basis` | 1.00 | Reject CC if strike is below cost basis (prevents locking in a loss on the shares) |
 | `cash_secured_put.delta_min` / `delta_max` | 0.15 / 0.30 | Delta range for cash-secured-put strikes |
@@ -195,8 +195,8 @@ Two processes must stay running during market hours:
 > name once its spot has moved past `market_data.intraday_rescan_move_pct` (default 0.5%) since its
 > last fetch — held positions and names that just cleared the score floor always refresh, and a full
 > sweep is forced every `market_data.force_full_scan_minutes` (default 90). Leave these at the
-> defaults unless you want the loop more or less eager. The morning cron and a manual `/scan` always
-> sweep the full universe regardless. If a scan ever overruns the interval (or loses the scan lease),
+> defaults unless you want the loop more or less eager. Manual `/scan` always sweeps the full
+> universe regardless. If a scan ever overruns the interval (or loses the scan lease),
 > the loop counts the skipped cycle and sends a throttled warning; `/status` shows the per-session
 > "🔁 N run · ⚠️ M skipped" tally so you can see intended (~26) vs actual scan count.
 >
@@ -215,8 +215,7 @@ python -m scripts.start
 Logs are written to `logs/approval.log` and `logs/monitor.log`. Stop with Ctrl-C.
 Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval service.
 
-> **Note:** The cron jobs (morning scan, EOD report) are NOT started by this launcher — they
-> must be scheduled separately (§7).
+> **Note:** The EOD cron job is NOT started by this launcher — it must be scheduled separately (§7).
 
 ### Option B — run each daemon separately
 
@@ -280,7 +279,7 @@ Once the approval service is running, you can interact with the system from your
 
 | Command | What you get |
 |---|---|
-| `/scan` | Triggers a full pipeline scan — same as the morning cron. Two live messages update as it runs: a **checklist** (Account → Market data → Scoring → Claude review → Sending results) and a **dashboard** with a progress bar + ETA, the current activity, and a 🔴 error log of any symbols that were skipped. Final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED); a "Buy-to-Own Candidates" card lists the strongest few stocks to acquire for future covered calls. |
+| `/scan` | Triggers a full pipeline scan — full universe sweep with fresh Claude review. Two live messages update as it runs: a **checklist** (Account → Market data → Scoring → Claude review → Sending results) and a **dashboard** with a progress bar + ETA, the current activity, and a 🔴 error log of any symbols that were skipped. Final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED); a "Buy-to-Own Candidates" card lists the strongest few stocks to acquire for future covered calls. |
 | `/mode` | Shows the current trading mode (👤 MANUAL or 🤖 AUTOMATED) with a toggle button. AUTOMATED mode executes trades without approval and auto-closes positions at 50% profit. A confirmation prompt appears before enabling AUTO. |
 | `/halt` | 🛑 **Kill switch.** Immediately stops all order queuing/transmission (profit-take *closes* still run — closing risk is always allowed). The halt is saved, so it persists across restarts until you `/resume`. You can add a reason, e.g. `/halt market looks ugly`. Also auto-engages on a daily realized-loss breach. |
 | `/resume` | Releases the kill switch; QUEUED orders resume on the next poll cycle. |
@@ -290,28 +289,26 @@ Once the approval service is running, you can interact with the system from your
 | `/pending` | Lists all pending approvals by score and time-to-expiry. Useful if you want to review what's waiting before deciding. |
 | `/fills` | Shows the last 7 days of executed fills: symbol, strike, quantity, fill price, and credit received. |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
-| `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. Use this to confirm the service is healthy before the morning scan. |
+| `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
 
 Trade approval messages include Claude's full reasoning: why the trade is attractive, key risks, tradeoffs, assignment considerations, rolling considerations, and confidence level — all embedded in the message before the ✅ Approve / ❌ Reject buttons.
 
 ---
 
-## 7. Set up the daily cron jobs
+## 7. Set up the daily cron job
 
-Two jobs need to fire on a market-hours schedule: the morning scan (9:45 AM ET Mon–Fri) and the
-EOD report (4:15 PM ET Mon–Fri). Choose the instructions for your operating system below.
+One job needs to fire on a market-hours schedule: the EOD report (4:15 PM ET Mon–Fri). Choose the
+instructions for your operating system below.
 
-> **What these jobs do:** `run_morning` connects to IBKR, runs the full scanning pipeline, and
-> sends Approve/Reject messages to Telegram. `run_eod` fetches positions and P&L and sends an
-> end-of-day summary to Telegram. Both are short-lived (they exit when done); the always-on
-> daemons (`scripts.start`) are separate and must already be running.
+> **What this job does:** `run_eod` connects to IBKR, fetches positions and P&L, generates a
+> Claude journal entry, and sends an end-of-day summary to Telegram's **account snapshot** thread.
+> It is short-lived (exits when done); the always-on daemons (`scripts.start`) are separate and must
+> already be running.
 
-> **Morning scan is optional (SYSTEM_REVIEW F5):** the always-on daemon already runs a full scan
-> every 15 minutes during RTH, so `run_morning` is largely redundant. If you run both, that's safe —
-> a cross-process **scan lease** now serialises scans so the cron and the daemon loop can't compete
-> for the ~100 market-data line cap. You can omit the `run_morning` line entirely if you prefer to
-> rely solely on the daemon loop. The `run_eod` job is still needed (the daemon doesn't run EOD).
+> **Note:** the always-on daemon runs a full scan every 15 minutes during RTH, so no morning cron
+> is needed. The `run_eod` job covers end-of-day tasks the daemon does not: P&L accounting,
+> journal writing, daily IV/price append, verdict ledger reconciliation, and nightly DB backup.
 
 ---
 
@@ -327,9 +324,6 @@ Paste the following (replace `/path/to/IBKR Investments` with the real absolute 
 
 ```
 TZ=America/New_York
-# Morning scan — 9:45 AM ET Monday-Friday
-45 9 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_morning >> logs/morning.log 2>&1
-
 # EOD report — 4:15 PM ET Monday-Friday
 15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
 ```
@@ -413,38 +407,25 @@ Windows does not have cron. Use **Task Scheduler** (`taskschd.msc`) instead.
 Open PowerShell **as Administrator** and run these four commands. Replace `C:\path\to\IBKR Investments` with your real path.
 
 ```powershell
-# Morning scan — 9:45 AM ET Mon-Fri
-$action = New-ScheduledTaskAction `
-  -Execute "C:\path\to\IBKR Investments\.venv\Scripts\python.exe" `
-  -Argument "-m scripts.run_morning" `
-  -WorkingDirectory "C:\path\to\IBKR Investments"
-$trigger = New-ScheduledTaskTrigger -Weekly `
-  -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
-  -At "09:45AM"
-Register-ScheduledTask -TaskName "IBKR Morning Scan" `
-  -Action $action -Trigger $trigger `
-  -RunLevel Highest -Force
-
 # EOD report — 4:15 PM ET Mon-Fri
-$action2 = New-ScheduledTaskAction `
+$action = New-ScheduledTaskAction `
   -Execute "C:\path\to\IBKR Investments\.venv\Scripts\python.exe" `
   -Argument "-m scripts.run_eod" `
   -WorkingDirectory "C:\path\to\IBKR Investments"
-$trigger2 = New-ScheduledTaskTrigger -Weekly `
+$trigger = New-ScheduledTaskTrigger -Weekly `
   -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
   -At "04:15PM"
 Register-ScheduledTask -TaskName "IBKR EOD Report" `
-  -Action $action2 -Trigger $trigger2 `
+  -Action $action -Trigger $trigger `
   -RunLevel Highest -Force
 ```
 
 > **Timezone:** Task Scheduler always uses the system clock. Set Windows timezone to Eastern Time
 > (**Settings → Time & Language → Date & Time → Time zone → Eastern Time (US & Canada)**) and the
-> times above are correct. If you are in a different timezone, convert ET to local time manually.
+> time above is correct. If you are in a different timezone, convert ET to local time manually.
 
-Verify the tasks were created:
+Verify the task was created:
 ```powershell
-Get-ScheduledTask -TaskName "IBKR Morning Scan"
 Get-ScheduledTask -TaskName "IBKR EOD Report"
 ```
 
@@ -452,14 +433,13 @@ Get-ScheduledTask -TaskName "IBKR EOD Report"
 
 1. Open **Task Scheduler** (search the Start menu for `taskschd.msc`).
 2. In the right panel click **Create Basic Task…**
-3. Name: `IBKR Morning Scan` → Next
-4. Trigger: **Weekly** → Next → set time `9:45 AM`, tick Mon/Tue/Wed/Thu/Fri → Next
+3. Name: `IBKR EOD Report` → Next
+4. Trigger: **Weekly** → Next → set time `4:15 PM`, tick Mon/Tue/Wed/Thu/Fri → Next
 5. Action: **Start a program** → Next
    - Program: `C:\path\to\IBKR Investments\.venv\Scripts\python.exe`
-   - Arguments: `-m scripts.run_morning`
+   - Arguments: `-m scripts.run_eod`
    - Start in: `C:\path\to\IBKR Investments`
 6. Finish → tick **Open the Properties dialog** → **Run with highest privileges** → OK.
-7. Repeat for the EOD report (name `IBKR EOD Report`, time `4:15 PM`).
 
 #### Auto-start daemons on Windows boot
 
@@ -514,12 +494,11 @@ sudo systemctl start ibkr-start
 sudo systemctl status ibkr-start   # confirm it is running
 ```
 
-**Cron jobs** — add as above using `crontab -e`:
+**Cron job** — add as above using `crontab -e`:
 
 ```
 TZ=America/New_York
-45 9  * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_morning >> logs/morning.log 2>&1
-15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod    >> logs/eod.log    2>&1
+15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
 ```
 
 ---

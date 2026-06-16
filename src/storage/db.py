@@ -70,7 +70,7 @@ def _init() -> None:
 
 
 def _enable_sqlite_concurrency(engine: Engine) -> None:
-    """WAL mode + a busy timeout so concurrent processes (morning_scan, approval_service,
+    """WAL mode + a busy timeout so concurrent processes (approval_service,
     monitor, eod) don't immediately hit 'database is locked'. WAL lets readers proceed
     during a write; busy_timeout makes a writer wait instead of failing."""
 

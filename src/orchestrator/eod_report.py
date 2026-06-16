@@ -229,11 +229,19 @@ async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping EOD send")
         return
 
+    from src.notify.sender import thread_id
+
+    thread_id_val = thread_id(cfg.secrets.telegram_thread_account)
     text = format_eod_summary(summary, narrative)
     try:
         async with Bot(token=token) as bot:
-            await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")
-        logger.info("EOD summary sent to Telegram")
+            await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id_val,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
+        logger.info("EOD summary sent to Telegram (thread=%s)", thread_id_val)
     except Exception:
         logger.exception("Failed to send EOD Telegram message")
 

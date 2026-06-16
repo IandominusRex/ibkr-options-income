@@ -380,7 +380,7 @@ def format_data_provenance(
 ) -> str:
     """End-of-scan summary of where each piece of data actually came from this cycle.
 
-    Sent after the candidate/buy-list messages on a full sweep (manual /scan, morning cron)
+    Sent after the candidate/buy-list messages on a full sweep (manual /scan)
     so an operator can see at a glance which sources were live vs. fell back this run.
     """
     lines = ["📊 *Data sources this scan*", ""]

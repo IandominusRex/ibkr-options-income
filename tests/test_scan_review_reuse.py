@@ -3,7 +3,7 @@
 The 15-min intraday loop re-runs the scan ~26×/session; when the top candidates + their signal
 vectors are identical to the prior cycle, the `claude -p` subprocess would return the same review,
 so it is skipped and the persisted ClaudeReview is reused. Enrichment-only — never gates anything
-(the fence). Manual /scan and the morning cron always review fresh. No TWS/Gateway required.
+(the fence). Manual /scan always reviews fresh. No TWS/Gateway required.
 """
 
 from __future__ import annotations

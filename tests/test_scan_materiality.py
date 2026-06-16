@@ -2,8 +2,8 @@
 
 The 15-min intraday loop must re-fetch the (expensive) option chain only for symbols that
 can change a decision this cycle — held positions, materially-moved would_own names, and names
-that cleared the score floor last cycle — and skip the rest. The morning cron / manual /scan
-(intraday=False) always sweep the full universe. No TWS/Gateway required.
+that cleared the score floor last cycle — and skip the rest. Manual /scan
+(intraday=False) always sweeps the full universe. No TWS/Gateway required.
 """
 
 from __future__ import annotations
@@ -370,8 +370,8 @@ async def test_quiet_intraday_cycle_sends_heartbeat(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_full_sweep_never_sends_heartbeat(tmp_path, monkeypatch):
-    """Manual /scan and the morning cron (intraday=False) must never emit the heartbeat, even
-    when the cycle surfaces nothing — they always send in full."""
+    """Manual /scan (intraday=False) must never emit the heartbeat, even
+    when the cycle surfaces nothing — it always sends in full."""
     _db_setup(tmp_path, monkeypatch)
     import src.orchestrator.scan as scanmod
     from src.common.config import get_config

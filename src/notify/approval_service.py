@@ -940,7 +940,7 @@ async def _intraday_scan_loop(
 
                 result = await run_scan(ib_scan, bot, chat_id, intraday=True)
                 if result.lease_skipped:
-                    # S9: another process (e.g. the morning cron) held the scan lease — skipped.
+                    # S9: another process (e.g. a concurrent /scan) held the scan lease — skipped.
                     await _note_intraday_skip(
                         bot_data, bot, chat_id, "another process holds the scan lease"
                     )

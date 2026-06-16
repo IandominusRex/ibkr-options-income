@@ -8,8 +8,8 @@ Usage:
     python -m scripts.start --no-monitor   # approval service only
     python -m scripts.start --no-approval  # monitor only
 
-Cron jobs (morning scan, EOD report) are NOT started here — they must be
-scheduled via cron so they fire at exact market-hours times. See SETUP.md §8.
+The EOD cron job is NOT started here — it must be scheduled via cron to fire
+after the close. See SETUP.md §7.
 
 Stop with Ctrl-C or SIGTERM — both child processes are cleanly terminated.
 """
@@ -93,8 +93,8 @@ def main() -> None:
         procs[name] = _start(name)
 
     log.info(
-        "All daemons running. Cron jobs (morning scan, EOD) are NOT managed here — "
-        "set them up with `crontab -e` per SETUP.md §8."
+        "All daemons running. EOD cron job is NOT managed here — "
+        "schedule it with `crontab -e` per SETUP.md §7."
     )
 
     while True:

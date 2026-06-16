@@ -28,7 +28,6 @@ ibkr:
 
 scheduler:
   timezone: "America/New_York"
-  morning_scan: "09:45"   # after the open settles
   eod_report: "16:15"     # after the close
   intraday_poll_seconds: 60
   # How often the intraday loop runs a fresh scan + profit-take check during RTH.

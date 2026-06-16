@@ -238,7 +238,7 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
     """Second gate: re-check a single candidate against the FRESH live quote at send time.
 
     Catches the case the decision-time gate cannot see: the option drifted between the
-    morning scan and execution (e.g. went deep ITM → delta out of range, or the mid
+    the scan and execution (e.g. went deep ITM → delta out of range, or the mid
     collapsed). Deterministic. Delta is only enforced when the live quote actually carries
     greeks — missing live greeks degrade to the (already-passed) decision-time gate rather
     than blocking the fill.
