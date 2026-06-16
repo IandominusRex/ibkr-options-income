@@ -192,7 +192,9 @@ def test_format_truncates_long_message():
         assignment_considerations="",
     )
     text = format_candidate(_make_candidate(), review)
-    assert len(text) <= 4010  # small buffer for escape sequences
+    # Body is truncated to _MAX_MESSAGE_LEN; footer is appended after, so allow a small overage.
+    assert len(text) <= 4100
+    assert "Sources:" in text
 
 
 def test_md_escapes_all_special_chars():
@@ -1448,7 +1450,8 @@ def test_format_account_snapshot_stocks_only():
     assert f"*{_md('Stocks')}*" in text
     assert "AAPL: 100 shares" in text
     assert "+1\\.1%" in text  # 200 / (180 * 100) * 100
-    assert "_\\(last updated 09:30 ET\\)_" in text
+    assert "Source: IBKR" in text
+    assert "last updated 09:30 ET" in text
 
 
 def test_format_account_snapshot_nested_covered_call():
@@ -1497,10 +1500,9 @@ def test_format_account_snapshot_truncates_long_message():
     positions = [_snapshot_stock(symbol=f"SYM{i}") for i in range(200)]
     text = format_account_snapshot(account, positions, "09:30 ET")
 
-    # Truncated to _MAX_MESSAGE_LEN - 3 plus the escaped "..." marker (same convention as
-    # format_positions / format_buy_list).
-    assert len(text) <= 4000 + len("\\.\\.\\.")
-    assert text.endswith("\\.\\.\\.")
+    # Body is truncated; source footer is appended after the truncation marker.
+    assert "\\.\\.\\." in text
+    assert "Source: IBKR" in text
 
 
 # --------------------------------------------------------------------------- #

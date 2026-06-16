@@ -130,6 +130,8 @@ def generate_csp_candidates(
                 dte=dte,
                 next_earnings=fund_stats.next_earnings,
                 scores=scores,
+                price_source=tech_stats.price_source,
+                greeks_source=quote.greeks_source,
             )
         )
 

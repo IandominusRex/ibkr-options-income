@@ -39,6 +39,16 @@ def _icon(ok: bool) -> str:
     return "🟢" if ok else "🔴"
 
 
+def _candidate_sources(c: TradeCandidate) -> str:
+    """MarkdownV2-ready data-source string for one trade candidate."""
+    parts = ["IBKR option chain"]
+    if c.price_source == "yfinance":
+        parts.append("yfinance spot \\(fallback\\)")
+    if c.greeks_source != "ibkr":
+        parts.append("yfinance Greeks \\(fallback\\)")
+    return " · ".join(parts)
+
+
 def _pnl(v: float) -> str:
     """Format a P&L value with no decimals, e.g. +$1,234 or -$567."""
     return f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
@@ -103,10 +113,11 @@ def format_candidate(
         if review.rolling_considerations:
             parts.append(f"Rolling: {_md(review.rolling_considerations)}")
 
+    footer = f"\n_Sources: {_candidate_sources(candidate)}_"
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
-    return text
+    return text + footer
 
 
 def _pct(frac: float | None, *, signed: bool = False) -> str | None:
@@ -204,7 +215,10 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
     text = "\n".join(lines).rstrip()
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
-    return text
+    return (
+        text
+        + "\n_Sources: yfinance \\(prices · IV · technicals · fundamentals\\) · IBKR \\(IV rank history\\)_"
+    )
 
 
 def _strat_abbr(strategy_value: str) -> str:
@@ -318,11 +332,10 @@ def format_account_snapshot(
         for p in sorted(puts, key=lambda x: (x.expiry or date.max, x.underlying or x.symbol)):
             parts.append(_format_option_snapshot_line(p, show_symbol=True))
 
-    parts += ["", f"_\\(last updated {_md(updated_at)}\\)_"]
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
-    return text
+    return text + f"\n_Source: IBKR · last updated {_md(updated_at)}_"
 
 
 def format_quiet_cycle(
@@ -346,7 +359,10 @@ def format_quiet_cycle(
     lines = [head, body]
     if vix is not None:
         lines.append(_md(f"VIX {vix:.1f}"))
-    return "\n".join(lines)
+        src_footer = "_Sources: IBKR \\(price moves\\) · yfinance \\(VIX\\)_"
+    else:
+        src_footer = "_Sources: IBKR \\(price moves\\)_"
+    return "\n".join(lines) + "\n" + src_footer
 
 
 def format_data_provenance(
@@ -462,6 +478,12 @@ def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
             f" — score {_md(f'{c.blended_score:.0f}')}/100{_md(vrp_part)}"
         )
     lines += ["", "_The risk gate re\\-validates each order before execution\\._"]
+    all_src = ["IBKR option chain"]
+    if any(c.price_source == "yfinance" for c in candidates):
+        all_src.append("yfinance spot \\(fallback\\)")
+    if any(c.greeks_source != "ibkr" for c in candidates):
+        all_src.append("yfinance Greeks \\(fallback\\)")
+    lines += ["", f"_Sources: {' · '.join(all_src)}_"]
     return "\n".join(lines)[:_MAX_MESSAGE_LEN]
 
 
@@ -760,7 +782,7 @@ def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
-    return text
+    return text + "\n_Sources: IBKR \\(fills · positions\\)_"
 
 
 def format_fill_confirm(
@@ -888,7 +910,7 @@ def format_roll_alert(
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
-    return text
+    return text + "\n_Source: IBKR_"
 
 
 def format_pending_approvals(pending: list[dict]) -> str:

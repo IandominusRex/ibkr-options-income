@@ -145,6 +145,8 @@ def generate_roll_candidates(
                 iv_rank=iv_stats.iv_rank,
                 dte=new_dte,
                 scores=scores,
+                price_source=tech_stats.price_source,
+                greeks_source=quote.greeks_source,
             )
         )
 

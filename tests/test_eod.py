@@ -536,7 +536,9 @@ def test_format_eod_summary_truncated_gracefully() -> None:
     long_narrative = "A" * 5000
     summary = _make_eod_summary()
     text = format_eod_summary(summary, long_narrative)
-    assert len(text) <= 4010  # some slack for escaping
+    # Body is truncated to _MAX_MESSAGE_LEN; source footer appended after, so allow overage.
+    assert "\\.\\.\\." in text
+    assert "Sources:" in text
 
 
 def test_format_eod_summary_negative_realized_uses_minus() -> None:

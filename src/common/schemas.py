@@ -250,6 +250,10 @@ class TradeCandidate(BaseModel):
     blended_score: float = 0.0  # weighted 0-100
     rationale_tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_utcnow)
+    # Data-source attribution for the Telegram footer — matches the generating OptionQuote's
+    # greeks_source and the TechnicalStats.price_source at scan time.
+    price_source: str = "ibkr"  # "ibkr" | "yfinance"
+    greeks_source: str = "ibkr"  # "ibkr" | "black_scholes"
 
 
 class RiskVerdict(BaseModel):
