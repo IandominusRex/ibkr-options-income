@@ -8,9 +8,10 @@ Everything you need to get the system running, from a fresh machine to your firs
 
 Before you start, make sure you have:
 
-- **Interactive Brokers account** with Trader Workstation (TWS) or IB Gateway installed.
-  Download from [ibkr.com]
-  (https://www.interactivebrokers.com/en/trading/tws.php) or (https://www.interactivebrokers.com/en/trading/ibgateway-latest.php).
+- **Interactive Brokers account** with **IB Gateway** installed (recommended over TWS — lighter
+  weight, no desktop UI overhead, same API surface). Download from
+  [ibkr.com](https://www.interactivebrokers.com/en/trading/ibgateway-latest.php).
+  TWS also works but uses different default ports (see Step 4).
 - **Python 3.12 or newer.** Check with `python3 --version`.
 - **The Claude Code CLI** installed and signed in. Check with `claude --version`.
   If not installed, follow the Claude Code setup instructions at [claude.ai/code](https://claude.ai/code).
@@ -85,21 +86,33 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
 
 ---
 
-## 4. Configure IBKR connection (TWS / IB Gateway)
+## 4. Configure IBKR connection (IB Gateway)
 
-### Enable the API in TWS or IB Gateway
+This project uses **IB Gateway** (not TWS). Gateway is a minimal headless process — no charting
+UI, lower memory, and it doesn't steal your screen. The API surface is identical.
 
-1. Open TWS or IB Gateway and log in to your **paper** account.
-2. Go to **Edit → Global Configuration → API → Settings** (TWS) or
-   **Configure → API → Settings** (IB Gateway).
+**Port reference** (IB Gateway defaults differ from TWS):
+
+| App | Paper | Live |
+|---|---|---|
+| **IB Gateway** | **4002** | **4001** |
+| TWS | 7497 | 7496 |
+
+`config/settings.yaml` is pre-configured for IB Gateway (`paper_port: 4002`, `live_port: 4001`).
+If you ever switch to TWS, update those values to match.
+
+### Enable the API in IB Gateway
+
+1. Open IB Gateway and log in to your **paper** account.
+2. Go to **Configure → Settings → API → Settings**.
 3. Check **"Enable ActiveX and Socket Clients"**.
-4. Set **Socket port** to `7497` (paper TWS) — this matches the default in `config/settings.yaml`.
+4. Confirm **Socket port** is `4002` — this matches `config/settings.yaml → ibkr.paper_port`.
 5. Uncheck **"Read-Only API"** so the system can place orders.
-6. Click **OK** and restart TWS/Gateway if prompted.
+6. Click **OK** and restart Gateway if prompted.
 
 ### Verify the connection
 
-Start TWS/Gateway, then run:
+Start IB Gateway, then run:
 
 ```bash
 python -m scripts.healthcheck
@@ -558,21 +571,27 @@ Open `http://localhost:8501` in your browser. The dashboard reads from the SQLit
 
 ## 11. Market data subscriptions
 
-The scan pipeline requires option Greeks (`delta`, `iv`, `modelGreeks`) to score and filter
-candidates. These come from IBKR's live market data feed — **delayed data (15-min) does not include
-Greeks**, so running the scan without a subscription will produce zero CC/CSP candidates even though
-the scan completes without errors.
+The scan pipeline requires option **bid/ask prices** and **delta** to score and filter candidates.
+Bid/ask comes from IBKR's market data feed; delta is sourced from IBKR model greeks when available,
+and falls back to a Black-Scholes calculation via Yahoo Finance when not.
 
-### Paper trading
+### Paper trading (no subscriptions — recommended default)
 
-Your IBKR paper account **inherits subscriptions from a linked live account**. This means:
+Use `market_data_type: 3` (delayed) in `config/settings.yaml` — this is the default. IBKR
+serves 15-minute delayed bid/ask for all symbols without requiring a paid subscription. Delta is
+computed via the Yahoo Finance Black-Scholes fallback, which works for all scanned symbols.
 
-- If you have a live IBKR account with US Options data subscriptions → paper trading works fully
-  with real Greeks.
-- If you have no live account or no subscription → option quotes return `delta=None` and all
-  CC/CSP candidates are filtered out. The scan runs, completes, and sends nothing.
+**Do not use `market_data_type: 1` (live) unless you have verified real-time subscriptions for
+every symbol in your universe.** Without a subscription, type 1 returns error 10091 and sends
+**no bid/ask** for that symbol — causing `strict_mid = None` on every quote and zero candidates,
+even though the scan completes without errors.
 
-To check your current subscriptions: TWS → Account Management → Market Data Subscriptions.
+Your IBKR paper account inherits subscriptions from a linked live account. If you have full US
+Options streaming subscriptions on your live account, you may use `market_data_type: 1` for paper
+as well, and IBKR model greeks will populate. To verify subscription inheritance on IB Gateway:
+log into the **IBKR Client Portal** (interactivebrokers.com) → Settings → Account Settings →
+Paper Trading section. IB Gateway has no in-app subscription panel — the Client Portal is the
+only place to check.
 
 ### Going live — required subscription
 
@@ -580,15 +599,16 @@ Before going live, subscribe to the **US Equity and Options Add-On Streaming Bun
 IBKR Account Management (search for "US Equity and Options"). This provides:
 
 - Real-time US stock + option streaming quotes via the API
-- `modelGreeks` (delta, gamma, theta, vega, IV) needed for candidate scoring
+- `modelGreeks` (delta, gamma, theta, vega, IV) needed for the live-greeks gate
 
 The bundle costs ~$4.50/month and is **fully rebated** if you pay ≥$5 in commissions that month
-(which any single trade will exceed). Activate in TWS → Account Management → Market Data
-Subscriptions.
+(which any single trade will exceed). Activate via **IBKR Client Portal** → Settings →
+Market Data Subscriptions (IB Gateway has no in-app subscription panel).
 
-> `config/settings.yaml → ibkr.market_data_type: 1` (live) is the correct setting for both paper
-> (with subscriptions) and live. Do not change it to `3` (delayed) — delayed data has no Greeks and
-> the scan will produce no candidates.
+For live trading, set `market_data_type: 1` in `config/settings.yaml`. The live-greeks gate
+(`require_ibkr_greeks_when_live: true` in `risk_limits.yaml`) blocks any live order where greeks
+came from the Yahoo fallback rather than IBKR — this forces real subscriptions before live orders
+can be placed.
 
 ## 12. Going live
 
@@ -601,7 +621,7 @@ When you are ready:
    and that paper scans are producing real CC/CSP candidates with valid delta values.
 2. Verify at least 10–20 successful paper trades have filled and confirmed back to Telegram.
 3. Open `.env` and change `LIVE_TRADING=false` to `LIVE_TRADING=true`.
-4. In `config/settings.yaml`, confirm `ibkr.live_port` matches the port your live TWS uses (default: 7496).
+4. In `config/settings.yaml`, confirm `ibkr.live_port` is `4001` (IB Gateway live default). If you are using TWS instead, set it to `7496`.
 5. Restart all processes (approval service, monitor, cron).
 6. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
    which account it is connected to. Verify this before approving any trade.
@@ -790,7 +810,7 @@ prompt length and memory pressure.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `ConnectionRefusedError` on healthcheck | TWS/Gateway not running or API not enabled | Start TWS and check API settings (Step 4) |
+| `ConnectionRefusedError` on healthcheck | IB Gateway not running, API not enabled, or wrong port | Start IB Gateway and check API settings (Step 4). Confirm `config/settings.yaml → ibkr.paper_port` matches the Socket port set in Gateway (default `4002`). |
 | `clientId already in use` | Another process using the same IBKR client ID | Check `config/settings.yaml` for the `client_ids` map; each process needs a unique ID |
 | No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or one of the `TELEGRAM_THREAD_*` vars | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
 | Messages arrive in wrong topic | `TELEGRAM_THREAD_SCAN` / `_CSP` / `_CC` / `_BUY` / `_ACCOUNT` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic, and set the matching `TELEGRAM_THREAD_*` variable. |
@@ -800,8 +820,9 @@ prompt length and memory pressure.
 | `/scan` progress freezes on one symbol (e.g. "32/46 — SOFI") and never advances | That symbol's option-chain fetch hung waiting on an IBKR response that never arrived (pacing violation, error 10197 competing-session lockout, or a stuck `qualifyContractsAsync`) | Wait up to `market_data.symbol_timeout_seconds` (default 90s) — the scan logs `option chain for SOFI exceeded symbol_timeout_seconds=... — skipping this symbol` and continues with the remaining symbols. If it still never recovers, the process itself has hung; restart it. |
 | `/scan` progress reaches "Sending results" but nothing arrives | The follow-up message threw an unhandled exception (e.g. malformed MarkdownV2) | Check `logs/approval.log` for `telegram.error.BadRequest` around the scan's completion time; the scan itself likely succeeded — check `scan complete — run_id=... CC=... CSP=... buy=...` in the same log |
 | IBKR daemons stop reconnecting after a TWS/Gateway restart (`reconnect failed after 20 attempts — giving up`) | TWS/Gateway's nightly restart (~midnight ET) outlasted the 20-attempt reconnect window | Restart TWS/Gateway, then restart `python -m scripts.start` (or just the affected daemon) — the reconnect loop only runs once per process lifetime |
-| IBKR errors 354 / 10091 flood the log during `/scan` and zero CC/CSP candidates are generated | No active US Options data subscription — delayed data has no Greeks, so every option is skipped at the delta filter | Subscribe to the **US Equity and Options Add-On Streaming Bundle** via TWS → Account Management → Market Data Subscriptions (see Step 11). Paper accounts inherit subscriptions from a linked live account. |
-| IBKR error 10197 "No market data during competing live session" | A live TWS session is open at the same time as the paper session | Close the live TWS window while running the paper bot, or ensure each session uses a distinct clientId and market data subscription. |
+| IBKR error 10091 floods the log and zero CC/CSP candidates are generated for a symbol | `market_data_type: 1` (live) set but no real-time subscription for that symbol — IBKR sends no bid/ask, so `strict_mid = None` on every quote | Set `config/settings.yaml → ibkr.market_data_type: 3` (delayed). Delayed data provides bid/ask for all symbols; delta is supplied by the Yahoo Finance fallback. Only switch to `1` if you have verified full subscriptions. |
+| IBKR error 354 floods the log and candidates have `greeks_source=black_scholes` | No live model-greeks subscription — the system fell back to Black-Scholes via Yahoo Finance | Acceptable for paper trading with `market_data_type: 3`. For live trading, subscribe to the **US Equity and Options Add-On Streaming Bundle** and set `market_data_type: 1` so IBKR model greeks flow through (required by the live-greeks gate). |
+| IBKR error 10197 "No market data during competing live session" | A competing IB Gateway or TWS session is open simultaneously | Close the competing session, or ensure each session uses a distinct clientId and a separate IB Gateway / TWS instance. |
 | IBKR error 300 "Can't find EId with tickerId" floods the log | Benign cleanup: ib_async tries to cancel a market data subscription that already timed out | Safe to ignore — these fire after each option chain batch and do not affect scan results. |
 | "Unknown contract" warnings for half-dollar strikes (e.g. JPM 292.5) | IBKR doesn't list those non-standard strikes for that expiry | Normal — the strike grid for some underlyings uses $5 or $10 increments; half-dollar strikes are skipped automatically. |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |

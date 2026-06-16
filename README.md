@@ -55,7 +55,7 @@ the IDs listed below; override any `TELEGRAM_THREAD_*` variable in `.env` to mat
 
 ## Prerequisites
 
-- Interactive Brokers account with TWS or IB Gateway installed
+- Interactive Brokers account with **IB Gateway** installed (recommended over TWS — lighter weight, no UI overhead, same API)
 - Python 3.12+
 - A Telegram bot token and your chat ID
 - The Claude Code CLI installed and authenticated (`claude --version`) — **or**, if you don't have
@@ -71,10 +71,10 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env          # fill in Telegram token/chat-id and IBKR account
-# Start TWS or IB Gateway (paper account, API enabled, port 7497)
+# Start IB Gateway (paper account, API enabled, port 4002)
 
 python -m scripts.healthcheck  # verifies connection, prints account summary
-python -m pytest               # all tests pass without TWS
+python -m pytest               # all tests pass without IB Gateway
 ```
 
 ## Documentation

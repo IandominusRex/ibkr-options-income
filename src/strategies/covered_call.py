@@ -68,22 +68,31 @@ def generate_cc_candidates(
     candidates: list[TradeCandidate] = []
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
 
+    # Per-filter rejection counters for the diagnostic warning below.
+    r_right = r_no_delta = r_delta = r_dte = r_no_mid = r_liq = r_basis = r_roc = r_yield = 0
+
     for quote in quotes:
         if quote.right != OptionRight.CALL:
+            r_right += 1
             continue
         if quote.delta is None:
+            r_no_delta += 1
             continue
         delta = abs(quote.delta)
         if not (delta_min <= delta <= delta_max):
+            r_delta += 1
             continue
         dte = quote.dte
         if not (dte_min <= dte <= dte_max):
+            r_dte += 1
             continue
         # Require a genuine two-sided market (N10): never price a candidate off a stale `last`.
         mid = quote.strict_mid
         if mid is None or mid <= 0:
+            r_no_mid += 1
             continue
         if not passes_liquidity_gates(quote, enforce_volume=enforce_volume):
+            r_liq += 1
             continue
         # Drawdown-CC policy (N18, explicit decision): with the default `min_strike_vs_basis: 1.00`
         # a strike below cost basis is rejected — so an *underwater* holding generates no covered
@@ -92,6 +101,7 @@ def generate_cc_candidates(
         # writes (e.g. to keep harvesting premium on a long-term hold), lower the knob in
         # risk_limits.yaml (e.g. 0.95 permits strikes down to 5% below basis).
         if quote.strike < position.avg_cost * min_strike_vs_basis:
+            r_basis += 1
             continue
 
         collateral = position.avg_cost * contracts * 100  # full capital at risk for all contracts
@@ -103,8 +113,10 @@ def generate_cc_candidates(
         annualized_yield_pct = roc_pct * (365 / dte) if dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
+            r_roc += 1
             continue
         if annualized_yield_pct < income_cfg["min_annualized_yield_pct"]:
+            r_yield += 1
             continue
 
         scores = ScoreCard(
@@ -147,7 +159,19 @@ def generate_cc_candidates(
     if not candidates:
         call_quotes = sum(1 for q in quotes if q.right == OptionRight.CALL)
         log.warning(
-            "No CC candidates passed filters for %s (%d call quotes evaluated)", symbol, call_quotes
+            "No CC candidates passed filters for %s (%d call quotes evaluated) — "
+            "rejections: no_delta=%d delta_range=%d dte=%d no_bid_ask=%d liquidity=%d "
+            "below_basis=%d roc=%d yield=%d",
+            symbol,
+            call_quotes,
+            r_no_delta,
+            r_delta,
+            r_dte,
+            r_no_mid,
+            r_liq,
+            r_basis,
+            r_roc,
+            r_yield,
         )
 
     candidates.sort(key=lambda c: c.roc_pct, reverse=True)

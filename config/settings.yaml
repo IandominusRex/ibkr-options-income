@@ -4,8 +4,8 @@
 ibkr:
   host: "127.0.0.1"
   # Paper TWS: 7497 | Live TWS: 7496 | Paper Gateway: 4002 | Live Gateway: 4001
-  paper_port: 7497
-  live_port: 7496
+  paper_port: 4002
+  live_port: 4001
   # One clientId per process to avoid conflicts. The trading_skills MCP and the
   # dashboard must each use a DIFFERENT id from these.
   client_ids:
@@ -18,8 +18,13 @@ ibkr:
     # trading_skills MCP should be configured with clientId 20 (see .mcp.json)
     # dashboard should use clientId 21
   # 1 = real-time, 2 = frozen, 3 = delayed, 4 = delayed-frozen.
-  # You have real-time OPRA data, so 1. Falls back to 3 automatically if a line
-  # has no subscription.
+  # 3 = delayed: IBKR serves 15-min delayed bid/ask for symbols without a real-time
+  # subscription. Required for paper trading — without this, symbols lacking a paid
+  # OPRA/exchange subscription return error 10091 and send no bid/ask, causing
+  # strict_mid=None and all candidates for those symbols to be filtered out.
+  # Switch to 1 only if you have verified real-time option subscriptions for every
+  # scanned symbol; even then, IBKR does NOT auto-fallback to delayed on error 10091
+  # when type=1 is set.
   market_data_type: 1
   connect_timeout_seconds: 15
   reconnect:

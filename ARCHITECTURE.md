@@ -184,7 +184,7 @@ Handles everything between your Telegram approval and the order reaching IBKR.
 | `profit_take.py` | **Profit-take orchestration** (extracted from the notify layer, N23): `check_profit_takes` loads short positions, computes each one's net entry credit (`net_entry_credit_per_share`, qty-weighted SELL fills less commission), polls a live quote for the cost-to-close, and — at the 50% threshold — either auto-buys-to-close (AUTO mode, via `position_manager`) or sends a profit alert. Telegram sends go through the passed `bot`, so the trading logic no longer lives in `notify/`. The intraday loop calls it; `approval_service` re-exports it for back-compat. |
 | `position_manager.py` | Buy-to-close execution for short option positions (profit-take auto-closes). Routes the close through the same `OrderRow`/`FillRow` lifecycle and cancel-on-timeout discipline as entries, and is idempotent at the contract level (a deterministic `close:` candidate id + `has_active_order`) so the next intraday cycle can't stack a second buy-to-close. Buy-to-close is risk-reducing, so it deliberately skips the income Rules Engine gate but still records the order/fill. `_auto_close_position` in `notify/` is now just the Telegram-notification wrapper around `close_short_position`. |
 | `circuit_breakers.py` | AUTOMATED-mode safety breakers (the risk gate bounds *exposure*; these bound *activity + losses*). `remaining_entry_allowance` enforces `max_auto_trades_per_day`; `daily_loss_breached` auto-engages the kill switch on a daily realized-loss breach. Read-only except for tripping the persisted halt — never feeds the risk engine, scoring, or sizing. Consumed by `process_queued_orders`. |
-| `reconciliation.py` | Broker ↔ DB recovery, extracted from the notify layer. `recover_orphan_orders` resets SUBMITTED rows with no `ib_order_id` (crash before `placeOrder`) back to QUEUED; `reconcile_orphan_fills` back-fills FillRows for orders whose fill event was lost, matching `reqExecutions` by broker order id then contract — covering SUBMITTED rows **and** REJECTED/CANCELLED rows that still carry an `ib_order_id` (N8: the executor's except path marks an order REJECTED when its monitor loop throws, but the SELL may already have filled; pre-placement cancels have no `ib_order_id` and are ignored); `reconcile_external_closes` records *manual* buy-to-closes done in TWS as BUY FillRows attributed to the original short's `candidate_id` (idempotent on IBKR `execId`), so the verdict ledger labels the position `closed_early` rather than `expired_worthless` and EOD cashflow includes the debit (SYSTEM_REVIEW F7). All three are strictly additive (record only proven broker state; never cancel/resubmit) and run at startup **and** periodically from the intraday loop, so fills/closes landing mid-session are recovered on the next cycle, not only on the next restart. |
+| `reconciliation.py` | Broker ↔ DB recovery, extracted from the notify layer. `recover_orphan_orders` resets SUBMITTED rows with no `ib_order_id` (crash before `placeOrder`) back to QUEUED; `reconcile_orphan_fills` back-fills FillRows for orders whose fill event was lost, matching `reqExecutions` by broker order id then contract — covering SUBMITTED rows **and** REJECTED/CANCELLED rows that still carry an `ib_order_id` (N8: the executor's except path marks an order REJECTED when its monitor loop throws, but the SELL may already have filled; pre-placement cancels have no `ib_order_id` and are ignored); `reconcile_external_closes` records *manual* buy-to-closes done in IB Gateway as BUY FillRows attributed to the original short's `candidate_id` (idempotent on IBKR `execId`), so the verdict ledger labels the position `closed_early` rather than `expired_worthless` and EOD cashflow includes the debit (SYSTEM_REVIEW F7). All three are strictly additive (record only proven broker state; never cancel/resubmit) and run at startup **and** periodically from the intraday loop, so fills/closes landing mid-session are recovered on the next cycle, not only on the next restart. |
 
 ---
 
@@ -339,7 +339,7 @@ These are the scripts you run directly:
 
 ### `tests/` — The test suite
 
-Unit tests for every module. IBKR is mocked, so tests run without a live TWS connection.
+Unit tests for every module. IBKR is mocked, so tests run without a live IB Gateway connection.
 
 Run with: `python -m pytest`
 
@@ -360,7 +360,7 @@ processes that run at the same time.**
 | `approval_service` | Always-on daemon | **14 (`exec`) + 15 (`scan`)** | Telegram callbacks + order execution (14) and a second connection for `/scan`, `/positions`, `/account`, `/status` (15) |
 | `healthcheck` | Manual | 19 | Connection check / account print |
 | `trading_skills` MCP | Inside `claude -p` (opt-in) | 20 | Ad-hoc Claude lookups (see `STATUS.md`) |
-| dashboard | Optional Streamlit (archived to `Archive/dashboard/`) | 21 | Read-only views (reads SQLite; rarely hits TWS) |
+| dashboard | Optional Streamlit (archived to `Archive/dashboard/`) | 21 | Read-only views (reads SQLite; rarely hits IB Gateway) |
 
 One-shots connect, work, and disconnect; the daemons run continuously and self-heal on a dropped socket via `AutoReconnect`.
 
@@ -415,7 +415,7 @@ mitigations:
 
 | Risk | Mitigation |
 |---|---|
-| **TWS/Gateway disconnects mid-session** | `AutoReconnect` on the daemons (backoff + re-subscribe); the monitor self-heals on the next poll; one-shots simply abort and retry next cron. |
+| **IB Gateway disconnects mid-session** | `AutoReconnect` on the daemons (backoff + re-subscribe); the monitor self-heals on the next poll; one-shots simply abort and retry next cron. |
 | **Market-data line limit (~100)** | Option chains are requested in batches and cancelled between batches; only one symbol's chain is fetched at a time. |
 | **clientId conflicts** | Central registry in `settings.yaml`; one id per concurrent process (see the process table above). |
 | **Claude unavailable / unparseable** | Strict JSON validation + graceful fallback — the Rules-Engine-approved list still ships to Telegram. Claude never blocks the pipeline. |
