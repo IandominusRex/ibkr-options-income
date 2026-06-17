@@ -239,9 +239,8 @@ def _build_candidate_card(c: BuyCandidate) -> list[str]:
 def format_buy_list(candidates: list[BuyCandidate]) -> str:
     """Build the Telegram MarkdownV2 message for the buy-to-own screen.
 
-    Candidates are grouped by sector (up to 10 total). Each sector block is wrapped in a
-    Telegram spoiler (||…||) so it collapses until the user taps to reveal. Sectors are shown
-    in a fixed display order; sectors not in the order map appear last, alphabetically.
+    Candidates are grouped by sector (up to 10 total), shown in a fixed display order;
+    sectors not in the order map appear last, alphabetically.
     """
     if not candidates:
         return ""
@@ -268,6 +267,7 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
         "",
     ]
 
+    rank = 0
     for sector in sector_order:
         sector_candidates = by_sector[sector]
         icon = _SECTOR_ICON.get(sector, "📌")
@@ -275,24 +275,15 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
         count = len(sector_candidates)
         noun = "name" if count == 1 else "names"
 
-        # Sector header (always visible).
-        lines.append(
-            f"{icon} *{_md(label)}* \\({count} {noun}\\) — _tap to reveal_ 👇"
-        )
+        lines.append(f"{icon} *{_md(label)}* \\({count} {noun}\\)")
 
-        # Sector content wrapped in a spoiler.
-        spoiler_lines: list[str] = []
-        for rank, c in enumerate(sector_candidates, 1):
-            spoiler_lines.append(
+        for c in sector_candidates:
+            rank += 1
+            lines.append(
                 f"*{rank}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*"
             )
-            spoiler_lines.extend(_build_candidate_card(c))
-            spoiler_lines.append("")
-
-        # Strip trailing blank inside the spoiler, then wrap.
-        spoiler_text = "\n".join(spoiler_lines).rstrip()
-        lines.append(f"||{spoiler_text}||")
-        lines.append("")
+            lines.extend(_build_candidate_card(c))
+            lines.append("")
 
     text = "\n".join(lines).rstrip()
     if len(text) > _MAX_MESSAGE_LEN:

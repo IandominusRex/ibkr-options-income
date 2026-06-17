@@ -702,15 +702,43 @@ def _persist_scan_state(
         )
 
 
-def _no_candidates_reason(result: ScanResult, all_count: int) -> str:
+def _no_candidates_reason(
+    result: ScanResult,
+    all_count: int,
+    *,
+    strategy: str = "",
+    positions: list[PositionSnapshot] | None = None,
+) -> str:
     """Human-readable explanation for why a per-strategy screen is empty this cycle."""
     prov = result.provenance
     if result.total_symbols == 0:
         return "no symbols in universe"
+
+    # All chains came back empty (no quotes at all — market closed or data subscription issue).
     if prov.chain_ibkr == 0 and prov.chain_failed > 0:
-        return f"{prov.chain_failed}/{result.total_symbols} option chains failed — check market-data subscription"
+        return (
+            f"{prov.chain_failed}/{result.total_symbols} option chains returned no data"
+            " — market may be closed or check data subscription"
+        )
+
     if all_count == 0:
-        return "0 candidates generated this cycle"
+        # CC-specific: no long stock positions means no shares to write calls against.
+        if strategy == "covered_call" and positions is not None:
+            held = [p for p in positions if p.sec_type == "STK" and p.position > 0]
+            if not held:
+                return "no long stock positions held — covered calls require owned shares"
+
+        # Chain data was fetched but every quote was filtered out by delta/DTE/ROC/yield/liquidity.
+        if prov.chain_ibkr > 0:
+            return (
+                f"option data returned for {prov.chain_ibkr}/{result.total_symbols} symbols"
+                " but no quotes met delta/DTE/ROC/yield criteria"
+                " (check market hours and filter thresholds)"
+            )
+
+        # Fallback: chains returned nothing and nothing failed either (shouldn't happen in full scan).
+        return "no option chain data returned this cycle — market may be closed"
+
     return f"0/{all_count} candidates passed the risk gate"
 
 
@@ -1212,7 +1240,9 @@ async def _run_scan_body(
             icon="🔵",
             hash_key="last_cc_hash",
             time_key="last_cc_time",
-            empty_reason=_no_candidates_reason(result, len(cc_candidates)),
+            empty_reason=_no_candidates_reason(
+                result, len(cc_candidates), strategy="covered_call", positions=positions
+            ),
             suppress_unchanged=intraday,
         )
         csp_sent = await send_candidates(
@@ -1223,7 +1253,9 @@ async def _run_scan_body(
             icon="🟣",
             hash_key="last_csp_hash",
             time_key="last_csp_time",
-            empty_reason=_no_candidates_reason(result, len(csp_candidates)),
+            empty_reason=_no_candidates_reason(
+                result, len(csp_candidates), strategy="cash_secured_put"
+            ),
             suppress_unchanged=intraday,
         )
         cand_sent = cc_sent or csp_sent
