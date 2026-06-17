@@ -1129,7 +1129,8 @@ async def test_send_buy_list_escapes_pipes_and_special_chars(monkeypatch):
     mock_instance.send_message.assert_called_once()
     text = mock_instance.send_message.call_args.kwargs["text"]
     # Every literal '|' must be escaped — Telegram rejects a bare '|' in MarkdownV2.
-    assert "|" not in text.replace("\\|", "")
+    # '||' is the spoiler syntax and is intentionally unescaped; strip those first.
+    assert "|" not in text.replace("\\|", "").replace("||", "")
     assert "85/100" in text
     assert "AAPL" in text
 

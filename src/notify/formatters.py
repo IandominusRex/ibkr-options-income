@@ -10,6 +10,7 @@ Provides formatters for:
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import UTC, date, datetime
 
 from src.common.schemas import (
@@ -140,76 +141,157 @@ def _trend_note(c: BuyCandidate) -> str | None:
     return ", ".join(refs) if refs else None
 
 
+_SECTOR_ICON: dict[str, str] = {
+    "index": "📈",
+    "tech": "💻",
+    "semis": "🔬",
+    "financials": "🏦",
+    "healthcare": "🏥",
+    "consumer": "🛒",
+    "energy": "⚡",
+    "utilities": "🔌",
+    "industrials": "🏭",
+    "bonds": "📊",
+    "commodities": "🏅",
+    "biotech": "🧬",
+    "crypto": "₿",
+}
+
+_SECTOR_LABEL: dict[str, str] = {
+    "index": "Indexes & ETFs",
+    "tech": "Tech",
+    "semis": "Semiconductors",
+    "financials": "Financials",
+    "healthcare": "Healthcare",
+    "consumer": "Consumer",
+    "energy": "Energy",
+    "utilities": "Utilities",
+    "industrials": "Industrials",
+    "bonds": "Bonds",
+    "commodities": "Commodities",
+    "biotech": "Biotech",
+    "crypto": "Crypto",
+}
+
+# Preferred display order for sectors.
+_SECTOR_ORDER = [
+    "index", "tech", "semis", "financials", "healthcare",
+    "consumer", "energy", "utilities", "industrials",
+    "bonds", "commodities", "biotech", "crypto",
+]
+
+
+def _build_candidate_card(c: BuyCandidate) -> list[str]:
+    """Return MarkdownV2 lines for a single BuyCandidate card (no trailing blank line)."""
+    card: list[str] = []
+
+    # Price + premium richness.
+    if c.price is not None:
+        price_line = f"💵 \\${_md(f'{c.price:,.2f}')}"
+        if c.iv_rank is not None:
+            price_line += f" · IV Rank *{_md(f'{c.iv_rank:.0f}')}*"
+        card.append(f"• {price_line}")
+
+    if c.current_iv is not None and c.hv_30 is not None:
+        vrp_pts = f" \\(VRP {_md(f'{c.vrp:+.1f}')}pts\\)" if c.vrp is not None else ""
+        card.append(
+            f"• IV {_md(f'{c.current_iv:.1f}')}% vs HV {_md(f'{c.hv_30:.1f}')}%{vrp_pts}"
+        )
+    elif c.current_iv is not None:
+        card.append(f"• IV {_md(f'{c.current_iv:.1f}')}%")
+
+    # Trend context.
+    b: list[str] = []
+    if c.technical_regime:
+        b.append(_md(c.technical_regime))
+    trend = _trend_note(c)
+    if trend:
+        b.append(_md(trend))
+    if c.rsi_14 is not None:
+        b.append(f"RSI {_md(f'{c.rsi_14:.0f}')}")
+    if b:
+        card.append("• Trend: " + " · ".join(b))
+
+    # Income/timing context.
+    cc: list[str] = []
+    ccy = _pct(c.est_monthly_cc_yield)
+    if ccy:
+        cc.append(f"est\\. CC \\~{_md(ccy)}/mo")
+    if c.next_earnings is not None:
+        days = (c.next_earnings - date.today()).days
+        warn = " ⚠️" if 0 <= days <= 14 else ""
+        cc.append(f"earnings {_md(str(days))}d{warn}")
+    dy = _pct(c.dividend_yield)
+    if dy and c.dividend_yield:
+        cc.append(f"div {_md(dy)}")
+    if cc:
+        card.append("• " + " · ".join(cc))
+
+    # Quality + rationale.
+    quality = "✓" if c.quality_flag else ("✗" if c.quality_flag is False else "?")
+    card.append(f"• Quality: {quality}")
+    if c.rationale:
+        card.append(f"_{_md(c.rationale)}_")
+
+    return card
+
+
 def format_buy_list(candidates: list[BuyCandidate]) -> str:
     """Build the Telegram MarkdownV2 message for the buy-to-own screen.
 
-    One compact card per name: price, premium richness (IV rank / IV-vs-HV / VRP), trend
-    context (regime + MA position + RSI), an estimated monthly CC yield, earnings/dividend
-    notes, and the deterministic rationale. Returns a single string (≤ _MAX_MESSAGE_LEN).
+    Candidates are grouped by sector (up to 10 total). Each sector block is wrapped in a
+    Telegram spoiler (||…||) so it collapses until the user taps to reveal. Sectors are shown
+    in a fixed display order; sectors not in the order map appear last, alphabetically.
     """
     if not candidates:
         return ""
 
-    lines = [
+    # Group by sector, preserving score-desc order within each sector.
+    by_sector: dict[str, list[BuyCandidate]] = defaultdict(list)
+    for c in candidates:
+        by_sector[c.sector or "other"].append(c)
+
+    # Sort sectors: known order first, then unknown alphabetically.
+    known = [s for s in _SECTOR_ORDER if s in by_sector]
+    unknown = sorted(s for s in by_sector if s not in _SECTOR_ORDER)
+    sector_order = known + unknown
+
+    # Header.
+    sector_summary = " · ".join(
+        f"{_SECTOR_ICON.get(s, '📌')} {_md(_SECTOR_LABEL.get(s, s))} \\({len(by_sector[s])}\\)"
+        for s in sector_order
+    )
+    lines: list[str] = [
         "🟢 *Buy\\-to\\-Own Candidates*",
         "_Stocks worth owning to sell covered calls against_",
+        sector_summary,
         "",
     ]
 
-    for i, c in enumerate(candidates, 1):
-        # Header: rank, symbol, score.
-        lines.append(f"*{i}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*")
+    for sector in sector_order:
+        sector_candidates = by_sector[sector]
+        icon = _SECTOR_ICON.get(sector, "📌")
+        label = _SECTOR_LABEL.get(sector, sector)
+        count = len(sector_candidates)
+        noun = "name" if count == 1 else "names"
 
-        # Price + premium richness.
-        if c.price is not None:
-            price_line = f"💵 \\${_md(f'{c.price:,.2f}')}"
-            if c.iv_rank is not None:
-                price_line += f" · IV Rank *{_md(f'{c.iv_rank:.0f}')}*"
-            lines.append(f"• {price_line}")
+        # Sector header (always visible).
+        lines.append(
+            f"{icon} *{_md(label)}* \\({count} {noun}\\) — _tap to reveal_ 👇"
+        )
 
-        if c.current_iv is not None and c.hv_30 is not None:
-            vrp_pts = f" \\(VRP {_md(f'{c.vrp:+.1f}')}pts\\)" if c.vrp is not None else ""
-            lines.append(
-                f"• IV {_md(f'{c.current_iv:.1f}')}% vs HV {_md(f'{c.hv_30:.1f}')}%{vrp_pts}"
+        # Sector content wrapped in a spoiler.
+        spoiler_lines: list[str] = []
+        for rank, c in enumerate(sector_candidates, 1):
+            spoiler_lines.append(
+                f"*{rank}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*"
             )
-        elif c.current_iv is not None:
-            lines.append(f"• IV {_md(f'{c.current_iv:.1f}')}%")
+            spoiler_lines.extend(_build_candidate_card(c))
+            spoiler_lines.append("")
 
-        # Trend context.
-        b: list[str] = []
-        if c.technical_regime:
-            b.append(_md(c.technical_regime))
-        trend = _trend_note(c)
-        if trend:
-            b.append(_md(trend))
-        if c.rsi_14 is not None:
-            b.append(f"RSI {_md(f'{c.rsi_14:.0f}')}")
-        if b:
-            lines.append("• Trend: " + " · ".join(b))
-
-        # Income/timing context.
-        cc: list[str] = []
-        ccy = _pct(c.est_monthly_cc_yield)
-        if ccy:
-            cc.append(f"est\\. CC \\~{_md(ccy)}/mo")
-        if c.next_earnings is not None:
-            days = (c.next_earnings - date.today()).days
-            warn = " ⚠️" if 0 <= days <= 14 else ""
-            cc.append(f"earnings {_md(str(days))}d{warn}")
-        dy = _pct(c.dividend_yield)
-        if dy and c.dividend_yield:
-            cc.append(f"div {_md(dy)}")
-        if cc:
-            lines.append("• " + " · ".join(cc))
-
-        # Quality.
-        quality = "✓" if c.quality_flag else ("✗" if c.quality_flag is False else "?")
-        lines.append(f"• Quality: {quality}")
-
-        # Rationale.
-        if c.rationale:
-            lines.append(f"_{_md(c.rationale)}_")
-
+        # Strip trailing blank inside the spoiler, then wrap.
+        spoiler_text = "\n".join(spoiler_lines).rstrip()
+        lines.append(f"||{spoiler_text}||")
         lines.append("")
 
     text = "\n".join(lines).rstrip()

@@ -169,13 +169,15 @@ def generate_buy_candidates(
     Returns:
         List sorted by score DESC, filtered to score ≥ min_score and capped at max_candidates.
     """
+    cfg = get_config()
     if min_score is None or max_candidates is None:
-        buy_cfg = get_config().weights.get("buy_to_own", {})
+        buy_cfg = cfg.weights.get("buy_to_own", {})
         if min_score is None:
             min_score = float(buy_cfg.get("min_score", _DEFAULT_MIN_SCORE))
         if max_candidates is None:
             max_candidates = int(buy_cfg.get("max_candidates", _DEFAULT_MAX_CANDIDATES))
 
+    sectors_map: dict[str, str] = cfg.universe.get("sectors", {})
     candidates: list[BuyCandidate] = []
     below_floor = 0
 
@@ -209,6 +211,7 @@ def generate_buy_candidates(
             BuyCandidate(
                 symbol=symbol,
                 score=blended,
+                sector=sectors_map.get(symbol),
                 iv_rank=iv_stats.iv_rank,
                 quality_flag=fund_stats.quality_flag,
                 technical_regime=tech_stats.regime.value if tech_stats.regime else None,

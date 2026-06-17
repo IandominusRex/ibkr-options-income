@@ -320,6 +320,7 @@ class BuyCandidate(BaseModel):
 
     symbol: str
     score: float  # 0-100 blended
+    sector: str | None = None  # from universe.yaml sectors map
     iv_rank: float | None = None  # high IV rank = better future CC premium
     quality_flag: bool | None = None
     technical_regime: str | None = None  # from Regime enum value
