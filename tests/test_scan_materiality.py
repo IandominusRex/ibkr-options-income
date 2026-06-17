@@ -163,6 +163,40 @@ class TestScanStateStore:
         assert got["AAPL"].cleared_floor is True
 
 
+class TestBulkUpsertScanState:
+    def test_inserts_multiple_symbols_in_one_transaction(self, tmp_path, monkeypatch):
+        _db_setup(tmp_path, monkeypatch)
+        from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
+
+        ts = datetime.now(UTC)
+        bulk_upsert_scan_state({"AAPL": (190.0, ts, True), "MSFT": (350.0, ts, False)})
+        got = get_scan_state(["AAPL", "MSFT", "TSLA"])
+        assert got["AAPL"].last_spot == pytest.approx(190.0)
+        assert got["AAPL"].cleared_floor is True
+        assert got["MSFT"].last_spot == pytest.approx(350.0)
+        assert got["MSFT"].cleared_floor is False
+        assert "TSLA" not in got
+
+    def test_updates_existing_rows(self, tmp_path, monkeypatch):
+        _db_setup(tmp_path, monkeypatch)
+        from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state, upsert_scan_state
+
+        ts = datetime.now(UTC)
+        upsert_scan_state("AAPL", last_spot=100.0, last_scanned_at=ts, cleared_floor=False)
+        bulk_upsert_scan_state({"AAPL": (110.0, ts, True), "TSLA": (250.0, ts, False)})
+        got = get_scan_state(["AAPL", "TSLA"])
+        assert got["AAPL"].last_spot == pytest.approx(110.0)
+        assert got["AAPL"].cleared_floor is True
+        assert got["TSLA"].last_spot == pytest.approx(250.0)
+
+    def test_empty_dict_is_noop(self, tmp_path, monkeypatch):
+        _db_setup(tmp_path, monkeypatch)
+        from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
+
+        bulk_upsert_scan_state({})
+        assert get_scan_state(["AAPL"]) == {}
+
+
 # ---------------------------------------------------------------------------
 # End-to-end gating through run_scan(intraday=True)
 # ---------------------------------------------------------------------------

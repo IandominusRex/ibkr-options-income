@@ -57,7 +57,7 @@ from src.notify.formatters import format_data_provenance
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
-from src.storage.scan_state import get_scan_state, upsert_scan_state
+from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
     get_setting,
@@ -693,13 +693,12 @@ def _persist_scan_state(
     scanned_at: datetime,
 ) -> None:
     """Write the per-symbol materiality baseline for every fetched symbol (S1/S10). Off-thread."""
-    for symbol, spot in fetched_spots.items():
-        upsert_scan_state(
-            symbol,
-            last_spot=spot,
-            last_scanned_at=scanned_at,
-            cleared_floor=symbol in cleared_floor_symbols,
-        )
+    bulk_upsert_scan_state(
+        {
+            symbol: (spot, scanned_at, symbol in cleared_floor_symbols)
+            for symbol, spot in fetched_spots.items()
+        }
+    )
 
 
 def _no_candidates_reason(
@@ -1259,9 +1258,7 @@ async def _run_scan_body(
             suppress_unchanged=intraday,
         )
         cand_sent = cc_sent or csp_sent
-        buy_sent = await send_buy_list(
-            result.buy_candidates, chat_id, suppress_unchanged=intraday
-        )
+        buy_sent = await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
         # S6: an intraday cycle that surfaced nothing (no candidate cleared the gate, buy list
         # unchanged) would otherwise be silent — the operator can't tell a deliberately quiet
         # market from a dead daemon. Send one compact heartbeat that confirms the scan ran and
