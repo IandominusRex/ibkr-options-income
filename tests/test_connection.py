@@ -1,4 +1,4 @@
-"""Tests for AutoReconnect in src/ibkr/connection.py.
+"""Tests for AutoReconnect and account-summary helpers in src/ibkr/connection.py.
 
 P1-09: _reconnecting flag set synchronously before create_task.
 P1-10: max_reconnect_attempts stops the loop and logs CRITICAL.
@@ -9,7 +9,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.ibkr.connection import AutoReconnect
+import ib_async
+
+from src.ibkr.connection import (
+    AutoReconnect,
+    debounce_account_summary_on_reconnect,
+    suppress_account_summary_on_reconnect,
+)
 
 
 def _make_ib(connected: bool = True) -> MagicMock:
@@ -170,3 +176,75 @@ def test_stop_disables_future_reconnects() -> None:
         assert tasks_created == []
     finally:
         loop.close()
+
+
+# ---------------------------------------------------------------------------
+# Account-summary reconnect helpers
+# ---------------------------------------------------------------------------
+
+
+async def test_suppress_account_summary_on_reconnect_blocks_1102() -> None:
+    """suppress_account_summary_on_reconnect must prevent reqAccountSummaryAsync
+    from firing when Error 1102 arrives on the patched (exec) IB object."""
+    ib = ib_async.IB()
+    subscribe_calls: list[bool] = []
+
+    orig = ib_async.IB.reqAccountSummaryAsync
+
+    async def _tracked(self: ib_async.IB) -> None:  # type: ignore[override]
+        subscribe_calls.append(True)
+
+    ib_async.IB.reqAccountSummaryAsync = _tracked  # type: ignore[method-assign]
+    try:
+        suppress_account_summary_on_reconnect(ib)
+        ib.errorEvent.emit(-1, 1102, "Connectivity restored", None)
+        await asyncio.sleep(0)
+        assert subscribe_calls == [], "exec connection must not subscribe to account summary on 1102"
+    finally:
+        ib_async.IB.reqAccountSummaryAsync = orig  # type: ignore[method-assign]
+
+
+async def test_suppress_account_summary_passes_other_errors() -> None:
+    """Non-1102 errors must still be forwarded to ib_async's normal handler."""
+    ib = ib_async.IB()
+    other_errors: list[int] = []
+
+    orig = ib_async.IB._onError
+
+    def _tracking(self: ib_async.IB, reqId: int, errorCode: int, *a: object) -> None:
+        other_errors.append(errorCode)
+
+    ib_async.IB._onError = _tracking  # type: ignore[method-assign]
+    try:
+        suppress_account_summary_on_reconnect(ib)
+        ib.errorEvent.emit(1, 200, "No security definition", None)
+        await asyncio.sleep(0)
+        assert 200 in other_errors
+    finally:
+        ib_async.IB._onError = orig  # type: ignore[method-assign]
+
+
+async def test_debounce_account_summary_on_reconnect_deduplicates() -> None:
+    """debounce_account_summary_on_reconnect must issue only one resubscription
+    even when Error 1102 fires multiple times before the first resolves."""
+    ib = ib_async.IB()
+    subscribe_calls: list[bool] = []
+
+    async def _tracked() -> None:
+        subscribe_calls.append(True)
+
+    ib.reqAccountSummaryAsync = _tracked  # type: ignore[assignment]
+
+    # _reconnect_delay=0 avoids a real 0.5 s sleep; we yield with real asyncio.sleep(0).
+    debounce_account_summary_on_reconnect(ib, _reconnect_delay=0)
+    # Fire 1102 three times rapidly before any scheduled task can run.
+    ib.errorEvent.emit(-1, 1102, "restored", None)
+    ib.errorEvent.emit(-1, 1102, "restored", None)
+    ib.errorEvent.emit(-1, 1102, "restored", None)
+    # Yield twice: once to start the task, once for it to reach reqAccountSummaryAsync.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert len(subscribe_calls) == 1, (
+        f"expected exactly 1 resubscription, got {len(subscribe_calls)}"
+    )

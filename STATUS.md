@@ -405,6 +405,49 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 
 ---
 
+## Bugs fixed (2026-06-18 — Ollama circuit breaker)
+
+- **Ollama parse failures logged every cycle:** `qwen3:14b` with `format: "json"` leaks `<think>`
+  traces that produce malformed JSON, generating a WARNING on every scan cycle even when the model
+  is persistently unhealthy. Added a module-level circuit breaker in `src/claude/ollama_runner.py`:
+  after `_CIRCUIT_THRESHOLD` (3) consecutive connection errors or unparseable outputs the circuit
+  opens, subsequent calls return empty immediately with only a DEBUG trace, and a single WARNING is
+  logged when it opens. The circuit resets (with a recovery WARNING) on the first successful parse.
+  All four public functions (`review_candidates`, `review_roll`, `write_journal_narrative`,
+  `propose_skill`) participate.
+
+## Bugs fixed (2026-06-18 — account summary reconnect leak)
+
+- **Error 322 / account summary never populated after reconnect:** `ib_async.IB._onError`
+  fires `reqAccountSummaryAsync()` on **every** connected IB object that receives Error 1102
+  (connectivity restored). With two concurrent objects — exec (clientId 14) and scan
+  (clientId 15) — both reacted to 1102, generating two simultaneous `reqAccountSummary`
+  subscriptions. IBKR allows only one per account; the second (and any subsequent) was
+  rejected with Error 322, leaving `wrapper.acctSummary` empty for the entire session.
+  Fixed in `src/ibkr/connection.py`:
+  - `suppress_account_summary_on_reconnect(ib)` — patches the exec IB object so its
+    `_onError` handler skips 1102; the exec connection never calls `accountSummaryAsync`.
+  - `debounce_account_summary_on_reconnect(ib)` — patches the scan IB object so rapid
+    1100/1102 flaps don't stack concurrent resubscription requests before the first resolves.
+  Both helpers are applied in `_run_service` immediately after each IB object is created.
+
+## Bugs fixed (2026-06-18 — scan diagnostics)
+
+- **GOOGL/IWM/MA/PLTR silently skipped by scan:** `reqSecDefOptParams` for some symbols returns
+  a SMART OptionChain with an empty `expirations` set (the real listings sit on an exchange-specific
+  chain). The code was selecting the SMART chain unconditionally, producing `expirations=[]`, an empty
+  raw-contract list, and the misleading "No qualified option contracts" warning. Fixed: both
+  `get_option_chain_quotes` and `get_option_chain_quotes_async` now require a non-empty `expirations`
+  field when selecting the SMART chain, falling back to any chain that carries expirations before
+  giving up. These symbols now contribute to every scan.
+- **SPY/QQQ always timed out:** Both have large, fully-liquid chains where nearly all 600+ contracts
+  qualify and need live quotes — pushing past the previous 90s ceiling. `symbol_timeout_seconds`
+  raised to 150 to accommodate them without risking indefinite hangs on truly stuck symbols.
+- **CSP rejections fully silent:** `generate_csp_candidates` returned `[]` with no log output,
+  making it impossible to diagnose why no CSPs were surfaced. Added the same per-filter rejection
+  counters and `WARNING` log that the CC generator already emits (no_delta / delta_range / dte /
+  no_bid_ask / liquidity / no_cash / roc / yield).
+
 ## Remaining known issues (not fixed — require live validation or design decision)
 
 - **Overnight stale data:** `validate_live_quote` re-checks delta and price but not DTE or earnings

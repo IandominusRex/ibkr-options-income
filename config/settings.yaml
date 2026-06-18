@@ -57,8 +57,9 @@ market_data:
   strike_band_iv_mult: 1.5
   # Max time to spend fetching one symbol's option chain during /scan. If IBKR never
   # responds (pacing violation, competing-session lockout), the symbol is skipped and the
-  # scan moves on instead of hanging indefinitely.
-  symbol_timeout_seconds: 90
+  # scan moves on instead of hanging indefinitely. SPY/QQQ have large chains where all
+  # strikes qualify, pushing past 90s; 150s accommodates them without hanging forever.
+  symbol_timeout_seconds: 150
   # Bounds the reqHistoricalData fallback in _get_spot/_get_spot_async, only reached when
   # the snapshot has neither a live tick nor a previous close. ib_async's default is 60s —
   # on a weekend/no-subscription session that was ~60s x every symbol, the dominant cost

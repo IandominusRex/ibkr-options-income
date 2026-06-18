@@ -40,6 +40,37 @@ from src.common.schemas import (
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Circuit breaker — suppresses per-cycle noise when Ollama is persistently broken
+# ---------------------------------------------------------------------------
+# After _CIRCUIT_THRESHOLD consecutive failures (connection error OR unparseable
+# output), the circuit opens. Subsequent calls return empty immediately with only a
+# DEBUG trace. The circuit resets on the first successful parse, logging a recovery
+# WARNING so the operator knows the model is healthy again.
+_CIRCUIT_THRESHOLD = 3
+_consecutive_failures: int = 0
+_circuit_open: bool = False
+
+
+def _record_failure() -> None:
+    global _consecutive_failures, _circuit_open
+    _consecutive_failures += 1
+    if not _circuit_open and _consecutive_failures >= _CIRCUIT_THRESHOLD:
+        _circuit_open = True
+        log.warning(
+            "ollama: %d consecutive failures — circuit open, suppressing per-cycle warnings"
+            " until the model recovers (check `ollama serve` and the model JSON output)",
+            _consecutive_failures,
+        )
+
+
+def _record_success() -> None:
+    global _consecutive_failures, _circuit_open
+    if _consecutive_failures > 0:
+        log.warning("ollama: recovered after %d consecutive failure(s)", _consecutive_failures)
+    _consecutive_failures = 0
+    _circuit_open = False
+
 
 def _generate(prompt: str, cfg: object) -> str | None:
     """POST to Ollama's `/api/generate`. Returns the model's response text, or None on failure.
@@ -86,6 +117,10 @@ def review_candidates(
         log.info("ollama: disabled by config — skipping review")
         return []
 
+    if _circuit_open:
+        log.debug("ollama: circuit open — skipping review")
+        return []
+
     if not candidates:
         log.info("ollama: no candidates to review")
         return []
@@ -100,11 +135,15 @@ def review_candidates(
 
     raw = _generate(prompt, cfg)
     if raw is None:
+        _record_failure()
         return []
 
     reviews = parse_ollama_review_output(raw)
     if not reviews:
         log.warning("ollama: output parsed to empty list")
+        _record_failure()
+    else:
+        _record_success()
     return reviews
 
 
@@ -116,15 +155,23 @@ def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> 
         log.info("ollama: disabled by config — skipping roll review")
         return None
 
+    if _circuit_open:
+        log.debug("ollama: circuit open — skipping roll review")
+        return None
+
     prompt = build_roll_prompt(alert, pos, quote)
 
     raw = _generate(prompt, cfg)
     if raw is None:
+        _record_failure()
         return None
 
     review = parse_ollama_roll_output(raw)
     if review is None:
         log.warning("ollama roll: unparseable output")
+        _record_failure()
+    else:
+        _record_success()
     return review
 
 
@@ -136,15 +183,23 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
         log.info("ollama: disabled by config — skipping EOD journal")
         return None
 
+    if _circuit_open:
+        log.debug("ollama: circuit open — skipping EOD journal")
+        return None
+
     prompt = build_eod_prompt(summary)
 
     raw = _generate(prompt, cfg)
     if raw is None:
+        _record_failure()
         return None
 
     narrative = parse_ollama_journal_output(raw)
     if narrative is None:
         log.warning("ollama eod: unparseable output")
+        _record_failure()
+    else:
+        _record_success()
     return narrative
 
 
@@ -160,11 +215,19 @@ def propose_skill(prompt: str) -> SkillProposal | None:
         log.info("ollama: disabled by config — skipping skill proposal")
         return None
 
+    if _circuit_open:
+        log.debug("ollama: circuit open — skipping skill proposal")
+        return None
+
     raw = _generate(prompt, cfg)
     if raw is None:
+        _record_failure()
         return None
 
     proposal = parse_ollama_skill_proposal(raw)
     if proposal is None:
         log.warning("ollama skills: unparseable output")
+        _record_failure()
+    else:
+        _record_success()
     return proposal

@@ -540,9 +540,12 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
     log.info("get_option_chain_quotes: symbol=%s spot=%.2f", symbol, spot)
 
     chains = ib.reqSecDefOptParams(stock.symbol, "", stock.secType, stock.conId)
-    smart = next((c for c in chains if c.exchange == "SMART"), None)
+    # Prefer SMART routing with non-empty expirations; some symbols return a SMART chain
+    # with empty expirations (the real listings sit under a specific exchange like CBOE or
+    # ARCA). Fall back to any chain that has expirations before giving up entirely.
+    smart = next((c for c in chains if c.exchange == "SMART" and c.expirations), None)
     if smart is None:
-        smart = next(iter(chains), None)
+        smart = next((c for c in chains if c.expirations), None)
     if smart is None:
         log.warning("No option chain params returned for %s", symbol)
         return []
@@ -597,9 +600,12 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     log.info("get_option_chain_quotes_async: symbol=%s spot=%.2f", symbol, spot)
 
     chains = await ib.reqSecDefOptParamsAsync(stock.symbol, "", stock.secType, stock.conId)
-    smart = next((c for c in chains if c.exchange == "SMART"), None)
+    # Prefer SMART routing with non-empty expirations; some symbols return a SMART chain
+    # with empty expirations (the real listings sit under a specific exchange like CBOE or
+    # ARCA). Fall back to any chain that has expirations before giving up entirely.
+    smart = next((c for c in chains if c.exchange == "SMART" and c.expirations), None)
     if smart is None:
-        smart = next(iter(chains), None)
+        smart = next((c for c in chains if c.expirations), None)
     if smart is None:
         log.warning("No option chain params returned for %s", symbol)
         return []

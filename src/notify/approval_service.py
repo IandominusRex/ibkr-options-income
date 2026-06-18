@@ -64,7 +64,11 @@ from src.execution.reconciliation import (
     reconcile_orphan_fills,
     recover_orphan_orders,
 )
-from src.ibkr.connection import AutoReconnect
+from src.ibkr.connection import (
+    AutoReconnect,
+    debounce_account_summary_on_reconnect,
+    suppress_account_summary_on_reconnect,
+)
 from src.notify.sender import thread_id
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
@@ -1000,6 +1004,10 @@ async def _run_service(token: str, chat_id: str) -> None:
             timeout=cfg.ibkr.connect_timeout_seconds,
         )
         ib = ib_inst
+        # Exec never calls accountSummaryAsync; suppress ib_async's auto-subscribe
+        # on Error 1102 so it doesn't compete with ib_scan for the one allowed
+        # account-summary subscription per account (would cause Error 322 on both).
+        suppress_account_summary_on_reconnect(ib_inst)
         reconnectors.append(
             AutoReconnect(
                 ib,
@@ -1036,6 +1044,8 @@ async def _run_service(token: str, chat_id: str) -> None:
             timeout=cfg.ibkr.connect_timeout_seconds,
         )
         ib_scan = ib_scan_inst
+        # Guard against concurrent reqAccountSummary on rapid 1100/1102 flaps.
+        debounce_account_summary_on_reconnect(ib_scan_inst)
         reconnectors.append(
             AutoReconnect(
                 ib_scan,

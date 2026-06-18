@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.analytics.liquidity import (
     passes_liquidity_gates,
     score_liquidity,
@@ -20,6 +22,8 @@ from src.common.schemas import (
     TradeCandidate,
 )
 from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
+
+log = logging.getLogger(__name__)
 
 
 def generate_csp_candidates(
@@ -56,22 +60,29 @@ def generate_csp_candidates(
     candidates: list[TradeCandidate] = []
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
 
+    r_no_delta = r_delta = r_dte = r_no_mid = r_liq = r_cash = r_roc = r_yield = 0
+
     for quote in quotes:
         if quote.right != OptionRight.PUT:
             continue
         if quote.delta is None:
+            r_no_delta += 1
             continue
         delta_abs = abs(quote.delta)
         if not (delta_min <= delta_abs <= delta_max):
+            r_delta += 1
             continue
         dte = quote.dte
         if not (dte_min <= dte <= dte_max):
+            r_dte += 1
             continue
         # Require a genuine two-sided market (N10): never price a candidate off a stale `last`.
         mid = quote.strict_mid
         if mid is None or mid <= 0:
+            r_no_mid += 1
             continue
         if not passes_liquidity_gates(quote, enforce_volume=enforce_volume):
+            r_liq += 1
             continue
 
         # Size off ExcessLiquidity (the post-margin-requirement cushion) rather than
@@ -88,14 +99,17 @@ def generate_csp_candidates(
         contracts = min(max_contracts, cash_n, csp_budget_n)
         if contracts < 1:
             # Not enough cash/budget to secure even one contract — skip rather than fake a 1-lot.
+            r_cash += 1
             continue
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100
         annualized_yield_pct = roc_pct * (365 / dte) if dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
+            r_roc += 1
             continue
         if annualized_yield_pct < income_cfg["min_annualized_yield_pct"]:
+            r_yield += 1
             continue
 
         scores = ScoreCard(
@@ -133,6 +147,24 @@ def generate_csp_candidates(
                 price_source=tech_stats.price_source,
                 greeks_source=quote.greeks_source,
             )
+        )
+
+    if not candidates:
+        put_quotes = sum(1 for q in quotes if q.right == OptionRight.PUT)
+        log.warning(
+            "No CSP candidates passed filters for %s (%d put quotes evaluated) — "
+            "rejections: no_delta=%d delta_range=%d dte=%d no_bid_ask=%d liquidity=%d "
+            "no_cash=%d roc=%d yield=%d",
+            symbol,
+            put_quotes,
+            r_no_delta,
+            r_delta,
+            r_dte,
+            r_no_mid,
+            r_liq,
+            r_cash,
+            r_roc,
+            r_yield,
         )
 
     candidates.sort(key=lambda c: c.roc_pct, reverse=True)

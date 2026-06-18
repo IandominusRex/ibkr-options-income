@@ -11,7 +11,9 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
+import src.claude.ollama_runner as ollama_mod
 from src.claude.parser import (
     parse_ollama_journal_output,
     parse_ollama_review_output,
@@ -231,6 +233,16 @@ def test_parse_ollama_skill_proposal_not_json():
 # --------------------------------------------------------------------------- #
 # ollama_runner — review_candidates / review_roll / write_journal_narrative
 # --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _reset_circuit() -> None:
+    """Reset the module-level circuit breaker before every test so failures don't leak."""
+    ollama_mod._consecutive_failures = 0
+    ollama_mod._circuit_open = False
+    yield
+    ollama_mod._consecutive_failures = 0
+    ollama_mod._circuit_open = False
 
 
 def _patch_ollama_cfg(**overrides):
@@ -583,3 +595,90 @@ def test_proposer_propose_skill_no_closed_records_returns_none():
 
     assert result is None
     mock_ollama_propose.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# Circuit breaker
+# --------------------------------------------------------------------------- #
+
+
+def test_circuit_opens_after_threshold_connection_failures():
+    """After _CIRCUIT_THRESHOLD consecutive connection failures the circuit opens."""
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg()
+
+    with patch(
+        "src.claude.ollama_runner.httpx.post",
+        side_effect=httpx.ConnectError("refused"),
+    ):
+        with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+            mock_runner_cfg.return_value.claude = cfg
+            mock_ollama_cfg.return_value.claude = cfg
+            for _ in range(ollama_mod._CIRCUIT_THRESHOLD):
+                ollama_mod.review_candidates(candidates, account)
+
+    assert ollama_mod._circuit_open is True
+    assert ollama_mod._consecutive_failures >= ollama_mod._CIRCUIT_THRESHOLD
+
+
+def test_circuit_open_skips_http_call():
+    """When the circuit is open, no HTTP request is made."""
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg()
+
+    ollama_mod._circuit_open = True
+    ollama_mod._consecutive_failures = ollama_mod._CIRCUIT_THRESHOLD
+
+    with patch("src.claude.ollama_runner.httpx.post") as mock_post:
+        with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+            mock_runner_cfg.return_value.claude = cfg
+            mock_ollama_cfg.return_value.claude = cfg
+            result = ollama_mod.review_candidates(candidates, account)
+
+    assert result == []
+    mock_post.assert_not_called()
+
+
+def test_circuit_resets_on_success():
+    """A successful parse resets the failure counter and closes the circuit."""
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg()
+
+    # Pre-load near the threshold.
+    ollama_mod._consecutive_failures = ollama_mod._CIRCUIT_THRESHOLD - 1
+    ollama_mod._circuit_open = False
+
+    with patch(
+        "src.claude.ollama_runner.httpx.post",
+        return_value=_ollama_response([_review_dict()]),
+    ):
+        with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+            mock_runner_cfg.return_value.claude = cfg
+            mock_ollama_cfg.return_value.claude = cfg
+            result = ollama_mod.review_candidates(candidates, account)
+
+    assert len(result) == 1
+    assert ollama_mod._consecutive_failures == 0
+    assert ollama_mod._circuit_open is False
+
+
+def test_circuit_opens_on_persistent_parse_failures():
+    """Unparseable model output (empty-list parse result) also trips the circuit."""
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg()
+
+    # Ollama responds successfully but returns malformed JSON the schema rejects.
+    bad_response = _ollama_response({"not": "a review list"})
+
+    with patch("src.claude.ollama_runner.httpx.post", return_value=bad_response):
+        with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+            mock_runner_cfg.return_value.claude = cfg
+            mock_ollama_cfg.return_value.claude = cfg
+            for _ in range(ollama_mod._CIRCUIT_THRESHOLD):
+                ollama_mod.review_candidates(candidates, account)
+
+    assert ollama_mod._circuit_open is True

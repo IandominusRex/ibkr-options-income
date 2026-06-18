@@ -295,3 +295,68 @@ class AutoReconnect:
         self._stopped = True
         with contextlib.suppress(Exception):
             self._ib.disconnectedEvent -= self._on_disconnect
+
+
+# ---------------------------------------------------------------------------
+# Account-summary subscription helpers
+# ---------------------------------------------------------------------------
+
+
+def suppress_account_summary_on_reconnect(ib: IB) -> None:
+    """Remove ib_async's automatic reqAccountSummary on Error 1102 for this IB object.
+
+    ib_async fires reqAccountSummaryAsync() on every connected IB object that
+    receives Error 1102 (connectivity restored). When two concurrent objects —
+    exec (clientId 14) and scan (clientId 15) — both react to 1102, IBKR
+    rejects the second with Error 322 ("maximum account summary requests
+    exceeded") because only one reqAccountSummary per account is allowed at
+    a time. The exec connection never calls accountSummaryAsync() directly, so
+    suppressing its auto-subscribe ensures only ib_scan holds the subscription.
+    """
+    ib.errorEvent -= ib._onError
+    _orig = ib._onError
+
+    def _patched(reqId: int, errorCode: int, errorString: str, contract: object) -> None:
+        if errorCode != 1102:
+            _orig(reqId, errorCode, errorString, contract)
+
+    ib.errorEvent += _patched
+
+
+def debounce_account_summary_on_reconnect(
+    ib: IB, *, _reconnect_delay: float = 0.5
+) -> None:
+    """Guard the scan IB object against concurrent reqAccountSummary on rapid reconnects.
+
+    During a connection storm (1100 → 1102 → 1100 → 1102 in quick succession),
+    ib_async's default _onError fires a new reqAccountSummaryAsync() on each 1102
+    before the previous request resolves. IBKR rejects the second with Error 322.
+    This replaces the default handler with one that skips resubscription when one
+    is already in-flight, then retries naturally on the next scan cycle.
+
+    _reconnect_delay: seconds to wait after 1102 before resubscribing, giving
+    IBKR time to clear the previous subscription. Exposed for testing (pass 0).
+    """
+    _in_flight: list[bool] = [False]
+
+    async def _resubscribe() -> None:
+        try:
+            await asyncio.sleep(_reconnect_delay)
+            await ib.reqAccountSummaryAsync()
+        except Exception:
+            log.warning("account summary resubscription after 1102 failed", exc_info=True)
+        finally:
+            _in_flight[0] = False
+
+    ib.errorEvent -= ib._onError
+    _orig = ib._onError
+
+    def _patched(reqId: int, errorCode: int, errorString: str, contract: object) -> None:
+        if errorCode == 1102:
+            if not _in_flight[0]:
+                _in_flight[0] = True
+                asyncio.ensure_future(_resubscribe())
+            return
+        _orig(reqId, errorCode, errorString, contract)
+
+    ib.errorEvent += _patched
