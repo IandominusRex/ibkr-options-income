@@ -32,8 +32,7 @@ from src.notify.formatters import (
     format_auto_trade_notification,
     format_buy_list,
     format_candidate,
-    format_screen_empty,
-    format_screen_unchanged,
+    format_order_notification,
     format_unchanged_cards_digest,
 )
 from src.storage.db import session_scope
@@ -48,6 +47,12 @@ _ET = ZoneInfo("America/New_York")
 # system_settings keys for buy-list output suppression (intraday loop only).
 _BUY_LIST_HASH_KEY = "last_buy_list_hash"
 _BUY_LIST_TIME_KEY = "last_buy_list_time"
+_BUY_LIST_STATUS_MSG_KEY = "last_buy_list_status_msg_id"
+
+# Suffix appended to each status-msg key to store the accumulated plain-text body.
+_STATUS_BODY_SUFFIX = "_body"
+# Cut a fresh message when the accumulated body exceeds this length (Telegram limit: 4096).
+_STATUS_MAX_BODY = 3800
 
 
 def _score_band(score: float | None) -> int:
@@ -73,6 +78,64 @@ def thread_id(raw: str) -> int | None:
 def _screen_hash(keys: list[tuple]) -> str:
     """Content hash for any screen keyed on caller-provided (symbol/id, score-band) tuples."""
     return hashlib.sha256(json.dumps(sorted(keys)).encode()).hexdigest()
+
+
+async def _append_status(
+    bot: Bot,
+    *,
+    chat_id: str,
+    thread_id_val: int | None,
+    line: str,
+    status_msg_key: str,
+) -> None:
+    """Append a timestamped plain-text line to the persisted status message for this screen.
+
+    Each "no candidates" or "unchanged" cycle appends one ``[HH:MM] ...`` line to a single
+    Telegram message (edited in-place), so repeated quiet cycles don't spam the thread.
+    When the accumulated body exceeds ``_STATUS_MAX_BODY`` the slate is wiped and a fresh
+    message is sent so we stay within Telegram's 4096-char limit.
+
+    ``thread_id_val`` is forwarded only on new sends — ``edit_message_text`` does not
+    accept ``message_thread_id``.
+    """
+    body_key = status_msg_key + _STATUS_BODY_SUFFIX
+    stored_id = get_setting(status_msg_key)
+    stored_body = get_setting(body_key)
+
+    timestamp = _et_hhmm()
+    new_line = f"[{timestamp}] {line}"
+    new_body = (stored_body + "\n" + new_line) if stored_body else new_line
+
+    if len(new_body) > _STATUS_MAX_BODY:
+        stored_id = ""
+        new_body = new_line
+
+    if stored_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=int(stored_id),
+                text=new_body,
+            )
+            set_setting(body_key, new_body)
+            logger.debug("Appended status line (key=%s, message_id=%s)", status_msg_key, stored_id)
+            return
+        except Exception:
+            logger.debug(
+                "Append-status edit failed for %s (message_id=%s) — falling back to send",
+                status_msg_key,
+                stored_id,
+                exc_info=True,
+            )
+
+    msg = await bot.send_message(
+        chat_id=chat_id,
+        message_thread_id=thread_id_val,
+        text=new_body,
+    )
+    set_setting(status_msg_key, str(msg.message_id))
+    set_setting(body_key, new_body)
+    logger.debug("Sent new status message (key=%s, message_id=%s)", status_msg_key, msg.message_id)
 
 
 async def send_candidates(
@@ -118,18 +181,22 @@ async def send_candidates(
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — skipping send")
         return False
 
-    # Empty screen: always send a diagnostic message so the thread is never silently empty.
+    # Empty/unchanged screen: append a timestamped line to the persisted status message.
+    # Derives the status-msg key from the hash_key, e.g. "last_cc_hash" → "last_cc_status_msg_id".
+    status_msg_key = hash_key.replace("_hash", "_status_msg_id")
     if not candidates:
-        reason = empty_reason or "no candidates this cycle"
+        suffix = f"  {empty_reason}" if empty_reason else ""
+        line = f"{icon} {label} — no candidates this cycle{suffix}"
         try:
             async with Bot(token=token) as bot:
-                await bot.send_message(
+                await _append_status(
+                    bot,
                     chat_id=str(chat_id),
-                    message_thread_id=thread_id,
-                    text=format_screen_empty(icon, label, reason),
-                    parse_mode="MarkdownV2",
+                    thread_id_val=thread_id,
+                    line=line,
+                    status_msg_key=status_msg_key,
                 )
-            logger.info("%s screen: no candidates — sent empty diagnostic", label)
+            logger.info("%s screen: no candidates — appended empty diagnostic", label)
         except Exception:
             logger.exception("Failed to send empty-screen diagnostic for %s", label)
         return True
@@ -153,18 +220,22 @@ async def send_candidates(
 
         if suppressed:
             since = get_setting(time_key) or "earlier"
+            count = len(candidates)
+            plural = "" if count == 1 else "s"
+            line = f"{icon} {label} — {count} {noun}{plural} unchanged since {since}"
             try:
                 async with Bot(token=token) as bot:
-                    await bot.send_message(
+                    await _append_status(
+                        bot,
                         chat_id=str(chat_id),
-                        message_thread_id=thread_id,
-                        text=format_screen_unchanged(icon, label, len(candidates), since, noun),
-                        parse_mode="MarkdownV2",
+                        thread_id_val=thread_id,
+                        line=line,
+                        status_msg_key=status_msg_key,
                     )
                 logger.info(
-                    "%s screen: %d candidate(s) unchanged since %s — sent compact digest",
+                    "%s screen: %d candidate(s) unchanged since %s — appended compact digest",
                     label,
-                    len(candidates),
+                    count,
                     since,
                 )
             except Exception:
@@ -200,6 +271,10 @@ async def send_candidates(
     if sent:
         set_setting(hash_key, current_hash)
         set_setting(time_key, _et_hhmm())
+        # Clear both the stored status-message id and accumulated body so the next
+        # empty/unchanged cycle starts fresh rather than editing the stale candidate card.
+        set_setting(status_msg_key, "")
+        set_setting(status_msg_key + _STATUS_BODY_SUFFIX, "")
     return sent
 
 
@@ -440,15 +515,14 @@ async def send_buy_list(
     if not candidates:
         try:
             async with Bot(token=token) as tbot:
-                await tbot.send_message(
+                await _append_status(
+                    tbot,
                     chat_id=chat_id,
-                    message_thread_id=thread_id_val,
-                    text=format_screen_empty(
-                        "🟢", "Buy-to-Own", "0 would_own names cleared the buy screen this cycle"
-                    ),
-                    parse_mode="MarkdownV2",
+                    thread_id_val=thread_id_val,
+                    line="🟢 Buy-to-Own — 0 would_own names cleared the buy screen this cycle",
+                    status_msg_key=_BUY_LIST_STATUS_MSG_KEY,
                 )
-            logger.info("Buy list: no candidates — sent empty diagnostic")
+            logger.info("Buy list: no candidates — appended empty diagnostic")
         except Exception:
             logger.exception("Failed to send buy-list empty diagnostic to Telegram")
         return True
@@ -458,17 +532,18 @@ async def send_buy_list(
     # S6: unchanged since the last full send → compact digest instead of the full screen.
     if suppress_unchanged and get_setting(_BUY_LIST_HASH_KEY) == current_hash:
         since = get_setting(_BUY_LIST_TIME_KEY) or "earlier"
+        count = len(candidates)
+        noun = "name" if count == 1 else "names"
         try:
             async with Bot(token=token) as tbot:
-                await tbot.send_message(
+                await _append_status(
+                    tbot,
                     chat_id=chat_id,
-                    message_thread_id=thread_id_val,
-                    text=format_screen_unchanged(
-                        "🟢", "Buy-to-Own", len(candidates), since, "name"
-                    ),
-                    parse_mode="MarkdownV2",
+                    thread_id_val=thread_id_val,
+                    line=f"🟢 Buy-to-Own — {count} {noun} unchanged since {since}",
+                    status_msg_key=_BUY_LIST_STATUS_MSG_KEY,
                 )
-            logger.info("Buy list unchanged since %s — sent compact digest (S6)", since)
+            logger.info("Buy list unchanged since %s — appended compact digest (S6)", since)
             return True
         except Exception:
             logger.exception("Failed to send buy-list digest to Telegram")
@@ -490,6 +565,10 @@ async def send_buy_list(
         # Record the content + time so the next cycle can suppress an unchanged repeat (S6).
         set_setting(_BUY_LIST_HASH_KEY, current_hash)
         set_setting(_BUY_LIST_TIME_KEY, _et_hhmm())
+        # Clear both status-message id and accumulated body so the next empty/unchanged
+        # cycle starts fresh rather than editing the (now stale) full buy-list card.
+        set_setting(_BUY_LIST_STATUS_MSG_KEY, "")
+        set_setting(_BUY_LIST_STATUS_MSG_KEY + _STATUS_BODY_SUFFIX, "")
         return True
     except Exception:
         logger.exception("Failed to send buy list to Telegram")
@@ -552,3 +631,87 @@ async def send_account_snapshot(
     except Exception:
         logger.exception("Failed to send account snapshot")
         return False
+
+
+async def send_order_notification(
+    status: str,
+    *,
+    candidate: TradeCandidate,
+    order_id: int,
+    limit_price: float | None = None,
+    underlying_price: float | None = None,
+    option_mid: float | None = None,
+    filled_qty: float | None = None,
+    avg_price: float | None = None,
+    failure_reason: str | None = None,
+) -> None:
+    """Send or edit an order status notification to thread 58 (account thread).
+
+    *status* is one of ``"placed"``, ``"update"``, ``"filled"``, or ``"failed"``.
+    Each order gets one persistent message (keyed by order_id) that is edited in-place
+    as the order progresses.  A fresh message is sent if the stored id is unavailable.
+
+    Best-effort — logs and returns on any failure.
+    """
+    cfg = get_config()
+    token = cfg.secrets.telegram_bot_token
+    chat_id = str(cfg.secrets.telegram_chat_id)
+    if not token or not chat_id:
+        return
+
+    thread_id_val = thread_id(cfg.secrets.telegram_thread_account)
+    msg_key = f"order_notification_{order_id}_msg_id"
+    stored_id = get_setting(msg_key)
+
+    text = format_order_notification(
+        status,
+        underlying=candidate.underlying,
+        strategy=candidate.strategy.value,
+        strike=candidate.strike,
+        right=candidate.right.value,
+        expiry=candidate.expiry,
+        contracts=candidate.contracts,
+        order_id=order_id,
+        limit_price=limit_price,
+        underlying_price=underlying_price,
+        option_mid=option_mid,
+        filled_qty=filled_qty,
+        avg_price=avg_price,
+        failure_reason=failure_reason,
+        updated_at=_et_hhmm() if status == "update" else None,
+    )
+
+    try:
+        async with Bot(token=token) as bot:
+            if stored_id:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=int(stored_id),
+                        text=text,
+                    )
+                    logger.info(
+                        "Edited order notification (order_id=%s status=%s)", order_id, status
+                    )
+                    return
+                except Exception:
+                    logger.debug(
+                        "Order notification edit failed (order_id=%s) — sending fresh",
+                        order_id,
+                        exc_info=True,
+                    )
+
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id_val,
+                text=text,
+            )
+            set_setting(msg_key, str(msg.message_id))
+            logger.info(
+                "Sent order notification (order_id=%s status=%s message_id=%s)",
+                order_id,
+                status,
+                msg.message_id,
+            )
+    except Exception:
+        logger.exception("Failed to send order notification for order_id=%s", order_id)

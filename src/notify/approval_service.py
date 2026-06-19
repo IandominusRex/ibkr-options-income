@@ -48,7 +48,7 @@ from src.common.market_hours import (
     seconds_until_next_aligned_mark,
     seconds_until_time,
 )
-from src.common.schemas import ApprovalStatus, OrderState
+from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
 
@@ -286,8 +286,72 @@ async def handle_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(format_help(), parse_mode="MarkdownV2")
 
 
+async def _run_ticker_scan_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    ticker: str,
+    ib_scan: IB,
+) -> None:
+    """Handle /scan TICKER — single-ticker on-demand scan."""
+    assert update.message is not None  # caller checked
+    chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
+
+    prog_msg = await update.message.reply_text(
+        f"🔍 *Scanning {ticker}\\.\\.\\.*\n_Fetching option chain and analytics\\._",
+        parse_mode="MarkdownV2",
+    )
+    prog_msg_id = prog_msg.message_id
+
+    async def _task() -> None:
+        from src.orchestrator.scan import TickerNotFoundError, run_ticker_scan
+
+        try:
+            await run_ticker_scan(
+                ib_scan,
+                ticker,
+                bot=context.bot,
+                chat_id=chat_id,
+                progress_msg_id=prog_msg_id,
+            )
+        except TickerNotFoundError:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=prog_msg_id,
+                    text=f"❌ *{_md_escape(ticker)}* — ticker not found on IBKR\\.",
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("Single-ticker scan failed for %s", ticker)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=prog_msg_id,
+                    text=f"❌ Scan failed for *{_md_escape(ticker)}* — check logs\\.",
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                pass
+
+    asyncio.create_task(_task())
+
+
+def _md_escape(text: str) -> str:
+    """Escape a string for Telegram MarkdownV2 (minimal, for inline use in approval_service)."""
+    for c in r"\_*[]()~`>#+-=|{}.!":
+        text = text.replace(c, f"\\{c}")
+    return text
+
+
 async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Trigger a full live pipeline scan."""
+    """Trigger a full live pipeline scan, or a single-ticker scan when a symbol is given.
+
+    Usage:
+      /scan          — full universe sweep (unchanged behaviour)
+      /scan AAPL     — single-ticker scan for AAPL
+    """
     if not _is_authorized(update) or update.message is None:
         if update.effective_chat:
             logger.warning("Ignoring /scan from unauthorized chat %s", update.effective_chat.id)
@@ -298,6 +362,12 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "IBKR market data connection unavailable — scan aborted\\.", parse_mode="MarkdownV2"
         )
+        return
+
+    # Single-ticker mode: /scan AAPL
+    if context.args:
+        ticker = context.args[0].upper()
+        await _run_ticker_scan_command(update, context, ticker, ib_scan)
         return
 
     # Single-flight: two overlapping scans would interleave market data requests.
@@ -961,8 +1031,111 @@ async def _intraday_scan_loop(
                 logger.exception("Intraday loop: scan failed")
             finally:
                 bot_data["scan_running"] = False
+
+            # Update thread-58 notifications for any SUBMITTED (pending-fill) orders
+            # with the latest underlying and option mid prices from this scan cycle.
+            if ib_scan.isConnected():
+                try:
+                    await _update_pending_order_notifications(ib_scan)
+                except Exception:
+                    logger.exception("Intraday loop: pending order price update failed")
         except Exception:
             logger.exception("Intraday loop: unexpected error — continuing to next cycle")
+
+
+async def _fetch_pending_prices(
+    ib: IB,
+    candidate: TradeCandidate,
+) -> tuple[float | None, float | None]:
+    """Fetch (underlying_price, option_mid) for a pending/submitted order. Best-effort.
+
+    Uses a short 5-second timeout so slow or missing quotes don't stall the loop.
+    Returns (None, None) on any failure.
+    """
+    from typing import cast
+
+    from ib_async import Contract, Stock
+
+    from src.ibkr.contracts import build_option
+
+    timeout = 5.0
+    loop = asyncio.get_running_loop()
+
+    underlying_price: float | None = None
+    try:
+        stock = cast(Contract, Stock(candidate.underlying, "SMART", "USD"))
+        ticker = ib.reqMktData(stock, genericTickList="", snapshot=False, regulatorySnapshot=False)
+        deadline = loop.time() + timeout
+        while ticker.last is None and loop.time() < deadline:
+            await asyncio.sleep(0.1)
+        ib.cancelMktData(stock)
+        raw = ticker.last if ticker.last is not None else ticker.close
+        if raw is not None:
+            underlying_price = float(raw)
+    except Exception:
+        logger.debug("Could not fetch underlying price for %s", candidate.underlying)
+
+    option_mid: float | None = None
+    try:
+        contract = build_option(
+            candidate.underlying, candidate.expiry, candidate.strike, candidate.right.value
+        )
+        qualified_list = await ib.qualifyContractsAsync(contract)
+        if qualified_list and getattr(qualified_list[0], "conId", None):
+            qualified = cast(Contract, qualified_list[0])
+            ticker = ib.reqMktData(
+                qualified, genericTickList="", snapshot=False, regulatorySnapshot=False
+            )
+            deadline = loop.time() + timeout
+            while (ticker.bid is None or ticker.ask is None) and loop.time() < deadline:
+                await asyncio.sleep(0.1)
+            ib.cancelMktData(qualified)
+            if ticker.bid is not None and ticker.ask is not None:
+                option_mid = (float(ticker.bid) + float(ticker.ask)) / 2
+    except Exception:
+        logger.debug(
+            "Could not fetch option mid for %s %s %s",
+            candidate.underlying,
+            candidate.strike,
+            candidate.right,
+        )
+
+    return underlying_price, option_mid
+
+
+async def _update_pending_order_notifications(ib_scan: IB) -> None:
+    """Edit thread-58 order notifications for any SUBMITTED orders with live price updates.
+
+    Called after each intraday scan so pending-order messages stay current without
+    the user having to check IBKR manually.  Best-effort — a single failing order
+    does not abort the rest.
+    """
+    from src.notify.sender import send_order_notification
+
+    with session_scope() as session:
+        submitted = session.query(OrderRow).filter(OrderRow.state == OrderState.SUBMITTED).all()
+        if not submitted:
+            return
+        orders = [(r.id, r.snapshot, r.limit_price) for r in submitted]
+
+    for order_id, snapshot, limit_price in orders:
+        if not snapshot:
+            continue
+        try:
+            candidate = TradeCandidate.model_validate(snapshot)
+            underlying_price, option_mid = await _fetch_pending_prices(ib_scan, candidate)
+            await send_order_notification(
+                "update",
+                candidate=candidate,
+                order_id=order_id,
+                limit_price=limit_price,
+                underlying_price=underlying_price,
+                option_mid=option_mid,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to update pending order notification for order_id=%s", order_id
+            )
 
 
 async def _premarket_snapshot_loop(ib_scan: IB, chat_id: str) -> None:
@@ -1105,7 +1278,7 @@ async def _run_service(token: str, chat_id: str) -> None:
 
             await app.bot.set_my_commands(
                 [
-                    BotCommand("scan", "Run full pipeline scan (CC/CSP/buy candidates)"),
+                    BotCommand("scan", "Full scan, or /scan AAPL for single-ticker"),
                     BotCommand("mode", "Show/toggle MANUAL ↔ AUTOMATED trading mode"),
                     BotCommand("halt", "🛑 Kill switch: stop all order transmission now"),
                     BotCommand("resume", "Release the kill switch and resume execution"),

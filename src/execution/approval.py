@@ -119,6 +119,8 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
     to_execute: list[tuple[int, TradeCandidate]] = []
     # Notifications to send in Phase 2 (can't await inside the session block).
     notify_msgs: list[str] = []
+    # Thread-58 failure notifications: (order_id, candidate, reason).
+    thread58_failures: list[tuple[int, TradeCandidate | None, str]] = []
 
     with session_scope() as session:
         queued = session.query(OrderRow).filter(OrderRow.state == OrderState.QUEUED).all()
@@ -165,6 +167,13 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 order_row.state = OrderState.CANCELLED
                 order_row.detail = "TTL expired"
                 record_outcome(order_row.candidate_id, EXPIRED)
+                tc: TradeCandidate | None = None
+                if order_row.snapshot:
+                    try:
+                        tc = TradeCandidate.model_validate(order_row.snapshot)
+                    except Exception:
+                        pass
+                thread58_failures.append((order_row.id, tc, "TTL expired — order not placed"))
                 continue
 
             if cfg.execution.transmit_only_in_rth and not is_rth():
@@ -209,6 +218,9 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 order_row.state = OrderState.CANCELLED
                 order_row.detail = f"Re-validation failed: {reasons}"
                 record_outcome(order_row.candidate_id, RISK_REJECTED)
+                thread58_failures.append(
+                    (order_row.id, candidate, f"Re-validation failed: {', '.join(reasons)}")
+                )
                 continue
 
             # Daily trade-count circuit breaker: once today's entry cap is reached,
@@ -223,6 +235,9 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 order_row.detail = "Daily trade cap reached"
                 notify_msgs.append(
                     f"Order CANCELLED: daily trade cap reached for {order_row.candidate_id[:12]}."
+                )
+                thread58_failures.append(
+                    (order_row.id, candidate, "Daily trade cap reached — order not placed")
                 )
                 continue
 
@@ -243,6 +258,23 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             await bot.send_message(chat_id=chat_id, text=msg)
         except Exception:
             log.exception("Failed to send TTL-null cancel notification")
+
+    from src.notify.sender import send_order_notification
+
+    for fail_order_id, fail_candidate, fail_reason in thread58_failures:
+        if fail_candidate is None:
+            continue
+        try:
+            await send_order_notification(
+                "failed",
+                candidate=fail_candidate,
+                order_id=fail_order_id,
+                failure_reason=fail_reason,
+            )
+        except Exception:
+            log.exception(
+                "Failed to send thread-58 failure notification for order_id=%s", fail_order_id
+            )
 
     for order_id, candidate in to_execute:
         try:

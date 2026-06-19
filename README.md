@@ -30,6 +30,7 @@ to your phone via Telegram.
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh |
+| `/scan AAPL` | Single-ticker scan: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result |
 | `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |

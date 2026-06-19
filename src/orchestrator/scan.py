@@ -1320,3 +1320,185 @@ async def _run_scan_body(
         len(result.reviews),
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Single-ticker scan (Telegram /scan TICKER)
+# ---------------------------------------------------------------------------
+
+
+class TickerNotFoundError(Exception):
+    """Raised when a ticker cannot be qualified on IBKR."""
+
+
+async def run_ticker_scan(
+    ib: IB,
+    ticker: str,
+    *,
+    bot: object,
+    chat_id: str,
+    progress_msg_id: int,
+) -> None:
+    """Run a single-ticker on-demand scan and edit *progress_msg_id* with the result.
+
+    Fetches the option chain for *ticker*, runs analytics + CC/CSP/buy-candidate
+    generation, applies scoring and the risk gate, and formats a compact Telegram
+    MarkdownV2 summary.  The progress message is always edited — either with the
+    result or an error.  Never raises (errors edit the message and return).
+
+    Raises:
+        TickerNotFoundError: if *ticker* cannot be qualified as an IBKR Stock.
+    """
+    from src.ibkr.contracts import qualify_stock_async
+    from src.notify.formatters import format_ticker_scan_result
+
+    cfg = get_config()
+    loop = asyncio.get_running_loop()
+
+    # 1. Validate the ticker exists on IBKR.
+    try:
+        await qualify_stock_async(ib, ticker)
+    except ValueError as exc:
+        raise TickerNotFoundError(ticker) from exc
+
+    # 2. Fetch option chain.
+    try:
+        quotes = await asyncio.wait_for(
+            get_option_chain_quotes_async(ib, ticker),
+            timeout=cfg.market_data.symbol_timeout_seconds,
+        )
+    except TimeoutError:
+        log.error("ticker_scan: option chain for %s timed out", ticker)
+        quotes = []
+    except Exception:
+        log.exception("ticker_scan: option chain failed for %s", ticker)
+        quotes = []
+
+    # 3. Analytics (yfinance) — blocking, run off-thread.
+    spot_override = infer_spot_from_quotes(quotes) if quotes else None
+    try:
+        iv_stats, tech_stats, fund_stats = await loop.run_in_executor(
+            None, _fetch_analytics, ticker, quotes, spot_override, None
+        )
+    except Exception:
+        log.exception("ticker_scan: analytics failed for %s", ticker)
+        await _ticker_edit_msg(bot, chat_id, progress_msg_id, "❌ *Scan failed* — analytics error\\.")
+        return
+
+    # 4. Portfolio: fetch positions and account (needed for CC sizing / CSP collateral).
+    try:
+        positions: list[PositionSnapshot] = get_positions(ib)
+        managed = ib.managedAccounts()
+        acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
+        account: AccountSnapshot = await get_account_snapshot_async(ib, acct)
+    except Exception:
+        log.exception("ticker_scan: failed to fetch positions/account for %s", ticker)
+        await _ticker_edit_msg(
+            bot, chat_id, progress_msg_id, "❌ *Scan failed* — account fetch error\\."
+        )
+        return
+
+    # 5. CC candidates — only if we hold the stock.
+    cc_candidates: list[TradeCandidate] = []
+    stock_pos = next(
+        (
+            p
+            for p in positions
+            if (p.underlying or p.symbol) == ticker and p.sec_type == "STK" and p.position > 0
+        ),
+        None,
+    )
+    is_held = stock_pos is not None
+    if stock_pos and quotes:
+        existing_short_calls = sum(
+            int(abs(p.position))
+            for p in positions
+            if (p.underlying or p.symbol) == ticker
+            and p.sec_type == "OPT"
+            and p.right == OptionRight.CALL
+            and p.position < 0
+        )
+        cc_candidates = generate_cc_candidates(
+            ticker,
+            quotes,
+            stock_pos,
+            iv_stats,
+            tech_stats,
+            fund_stats,
+            existing_short_calls=existing_short_calls,
+        )
+
+    # 6. CSP candidates — always attempt (generate_csp_candidates filters by would_own).
+    csp_candidates: list[TradeCandidate] = []
+    if quotes:
+        csp_candidates = generate_csp_candidates(
+            ticker, quotes, account, iv_stats, tech_stats, fund_stats
+        )
+
+    # 7. Scoring + risk gate on CC+CSP.
+    all_option_candidates = cc_candidates + csp_candidates
+    if all_option_candidates:
+        try:
+            scored = score_candidates(all_option_candidates)
+            verdicts = validate_candidates(scored, account, positions)
+            verdict_map = {v.candidate_id: v for v in verdicts}
+            min_score = cfg.weights.get("min_candidate_score", 0)
+            passed = [
+                c
+                for c in scored
+                if verdict_map.get(c.candidate_id)
+                and verdict_map[c.candidate_id].verdict.value == "pass"
+                and c.blended_score >= min_score
+            ]
+        except Exception:
+            log.exception("ticker_scan: scoring/risk-gate failed for %s", ticker)
+            passed = []
+        cc_passed = [c for c in passed if c.strategy.value == "covered_call"]
+        csp_passed = [c for c in passed if c.strategy.value == "cash_secured_put"]
+    else:
+        cc_passed = []
+        csp_passed = []
+
+    # 8. Buy candidate for this single ticker.
+    analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {
+        ticker: (iv_stats, tech_stats, fund_stats)
+    }
+    holdings_symbols: set[str] = {
+        p.underlying or p.symbol for p in positions if p.sec_type == "STK" and p.position > 0
+    }
+    buy_candidates = generate_buy_candidates([ticker], holdings_symbols, analytics_map)
+    buy_candidate = buy_candidates[0] if buy_candidates else None
+
+    # 9. Format and edit the progress message.
+    text = format_ticker_scan_result(
+        ticker=ticker,
+        iv_stats=iv_stats,
+        tech_stats=tech_stats,
+        fund_stats=fund_stats,
+        cc_candidates=cc_passed,
+        csp_candidates=csp_passed,
+        buy_candidate=buy_candidate,
+        is_held=is_held,
+        quotes_available=bool(quotes),
+    )
+    await _ticker_edit_msg(bot, chat_id, progress_msg_id, text)
+    log.info(
+        "ticker_scan complete — %s CC=%d CSP=%d buy=%s",
+        ticker,
+        len(cc_passed),
+        len(csp_passed),
+        buy_candidate is not None,
+    )
+
+
+async def _ticker_edit_msg(bot: object, chat_id: str, message_id: int, text: str) -> None:
+    """Best-effort edit of a Telegram message (silently swallows errors)."""
+    try:
+        await bot.edit_message_text(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            parse_mode="MarkdownV2",
+        )
+    except Exception:
+        log.debug("ticker_scan: failed to edit message %s", message_id, exc_info=True)

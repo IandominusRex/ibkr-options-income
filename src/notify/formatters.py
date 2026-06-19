@@ -18,11 +18,14 @@ from src.common.schemas import (
     BuyCandidate,
     ClaudeReview,
     EODSummary,
+    FundamentalStats,
+    IVStats,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
     RollAlert,
     RollReview,
+    TechnicalStats,
     TradeCandidate,
 )
 
@@ -491,6 +494,191 @@ def format_data_provenance(
     return "\n".join(lines)
 
 
+def format_ticker_scan_result(
+    *,
+    ticker: str,
+    iv_stats: IVStats,
+    tech_stats: TechnicalStats,
+    fund_stats: FundamentalStats,
+    cc_candidates: list[TradeCandidate],
+    csp_candidates: list[TradeCandidate],
+    buy_candidate: BuyCandidate | None,
+    is_held: bool,
+    quotes_available: bool = True,
+) -> str:
+    """Compact Telegram MarkdownV2 summary for a single-ticker /scan TICKER result.
+
+    Sections:
+      - Header: price, IV rank, VRP
+      - Technicals: trend (vs SMAs), RSI, earnings days
+      - Covered Call: best candidate (or reason for none)
+      - Cash-Secured Put: best candidate (or reason for none)
+      - Buy-to-Own: score + rationale (omitted if not applicable)
+      - Sources footer
+    """
+    lines: list[str] = [f"🔍 *{_md(ticker)} — Ticker Scan*", ""]
+
+    # --- Price / IV header ---
+    price = tech_stats.price
+    price_str = f"\\${_md(f'{price:,.2f}')}" if price else "N/A"
+    iv_rank_str = _md(f"{iv_stats.iv_rank:.0f}") if iv_stats.iv_rank is not None else "N/A"
+    vrp_str = (
+        f" · VRP {_md(f'{iv_stats.vrp:+.1f}')}%"
+        if iv_stats.vrp is not None
+        else ""
+    )
+    lines.append(f"💵 {price_str} · IV Rank {iv_rank_str}{vrp_str}")
+    lines.append("")
+
+    # --- Technicals ---
+    lines.append("📈 *Technicals*")
+    tech_bits: list[str] = []
+    if tech_stats.sma_50 is not None and price:
+        tech_bits.append("above 50d" if price >= tech_stats.sma_50 else "below 50d")
+    if tech_stats.sma_200 is not None and price:
+        tech_bits.append("above 200d" if price >= tech_stats.sma_200 else "below 200d")
+    if tech_stats.rsi_14 is not None:
+        tech_bits.append(f"RSI {_md(f'{tech_stats.rsi_14:.0f}')}")
+    if tech_bits:
+        lines.append("• " + " · ".join(tech_bits))
+    if fund_stats.next_earnings is not None:
+        days_to_earn = (fund_stats.next_earnings - date.today()).days
+        earn_warn = " ⚠️" if 0 <= days_to_earn <= 14 else ""
+        lines.append(f"• Earnings: {_md(str(days_to_earn))}d{earn_warn}")
+    lines.append("")
+
+    # --- Covered Call ---
+    lines.append("🔵 *Covered Call*")
+    if not quotes_available:
+        lines.append("_No option chain data — market may be closed_")
+    elif not is_held:
+        lines.append("_Not held — buy shares first to sell covered calls_")
+    elif cc_candidates:
+        best_cc = cc_candidates[0]
+        right_lbl = "C" if best_cc.right == OptionRight.CALL else "P"
+        exp_str = best_cc.expiry.strftime("%b%d")
+        contracts_lbl = f" \\({_md(str(int(best_cc.contracts)))} contracts\\)"
+        lines.append(
+            f"  \\${_md(f'{best_cc.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f" \\({_md(str(best_cc.dte))}d\\){contracts_lbl}"
+        )
+        lines.append(
+            f"  \\${_md(f'{best_cc.premium:.2f}')}/sh"
+            f" · ROC {_md(f'{best_cc.roc_pct:.1f}')}%"
+            f" · Score {_md(f'{best_cc.blended_score:.0f}')}/100 ✅"
+        )
+    else:
+        lines.append("_No qualifying CC options_")
+    lines.append("")
+
+    # --- Cash-Secured Put ---
+    lines.append("🟣 *Cash\\-Secured Put*")
+    if not quotes_available:
+        lines.append("_No option chain data — market may be closed_")
+    elif csp_candidates:
+        best_csp = csp_candidates[0]
+        right_lbl = "C" if best_csp.right == OptionRight.CALL else "P"
+        exp_str = best_csp.expiry.strftime("%b%d")
+        contracts_lbl = f" \\({_md(str(int(best_csp.contracts)))} contracts\\)"
+        lines.append(
+            f"  \\${_md(f'{best_csp.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f" \\({_md(str(best_csp.dte))}d\\){contracts_lbl}"
+        )
+        lines.append(
+            f"  \\${_md(f'{best_csp.premium:.2f}')}/sh"
+            f" · ROC {_md(f'{best_csp.roc_pct:.1f}')}%"
+            f" · Score {_md(f'{best_csp.blended_score:.0f}')}/100 ✅"
+        )
+    else:
+        lines.append("_No qualifying CSP options_")
+    lines.append("")
+
+    # --- Buy-to-Own ---
+    if buy_candidate is not None:
+        lines.append("🟢 *Buy\\-to\\-Own*")
+        score_str = _md(f"{buy_candidate.score:.0f}")
+        lines.append(f"  Score {score_str}/100")
+        if buy_candidate.rationale:
+            lines.append(f"  _{_md(buy_candidate.rationale)}_")
+        lines.append("")
+
+    # --- Sources footer ---
+    sources = ["IBKR option chain", "yfinance"]
+    lines.append(f"_Sources: {' · '.join(sources)}_")
+
+    text = "\n".join(lines)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def format_order_notification(
+    status: str,
+    *,
+    underlying: str,
+    strategy: str,
+    strike: float,
+    right: str,
+    expiry: date,
+    contracts: int,
+    order_id: int,
+    limit_price: float | None = None,
+    underlying_price: float | None = None,
+    option_mid: float | None = None,
+    filled_qty: float | None = None,
+    avg_price: float | None = None,
+    failure_reason: str | None = None,
+    updated_at: str | None = None,
+) -> str:
+    """Plain-text order status notification for thread 58.
+
+    *status* is one of ``"placed"``, ``"update"``, ``"filled"``, or ``"failed"``.
+    Returns plain text (no MarkdownV2) so it composes cleanly with timestamped edits.
+    """
+    strategy_label = strategy.replace("_", " ").title()
+    right_label = "Call" if right == "C" else "Put"
+    noun = "contract" if contracts == 1 else "contracts"
+
+    header = {
+        "placed": "📋 Order Placed",
+        "update": "🔄 Order Pending",
+        "filled": "✅ Order Filled",
+        "failed": "❌ Order Failed",
+    }.get(status, f"📋 Order ({status})")
+
+    lines = [
+        f"{header} — {underlying} {strategy_label}",
+        f"${strike:.0f} {right_label} · {expiry} · {contracts} {noun}",
+    ]
+
+    if limit_price is not None:
+        total = limit_price * contracts * 100
+        lines.append(f"Limit: ${limit_price:.2f}/sh (${total:.0f} total)")
+
+    if status in ("placed", "update"):
+        price_parts: list[str] = []
+        if underlying_price is not None:
+            price_parts.append(f"Underlying: ${underlying_price:.2f}")
+        if option_mid is not None:
+            price_parts.append(f"Option mid: ${option_mid:.2f}")
+        if price_parts:
+            lines.append(" | ".join(price_parts))
+
+    if status == "filled" and filled_qty is not None and avg_price is not None:
+        total = avg_price * filled_qty * 100
+        lines.append(
+            f"Filled {filled_qty:.0f}x @ ${avg_price:.2f}/sh (${total:.0f} total)"
+        )
+
+    if status == "failed" and failure_reason:
+        lines.append(f"Reason: {failure_reason}")
+
+    if updated_at:
+        lines.append(f"[{updated_at}]")
+
+    return "\n".join(lines)
+
+
 def format_help() -> str:
     """List all available bot commands."""
     lines = [
@@ -498,6 +686,7 @@ def format_help() -> str:
         "",
         "*Scans & trading*",
         "/scan — Run full pipeline scan \\(CC/CSP/buy opportunities\\)",
+        "/scan TICKER — Single\\-ticker scan \\(e\\.g\\. /scan AAPL\\)",
         "/pending — List pending approvals with expiry times",
         "/expire — Expire all pending approvals",
         "",

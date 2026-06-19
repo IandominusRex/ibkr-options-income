@@ -273,6 +273,17 @@ async def execute_candidate(
                     f"({', '.join(live_verdict.reasons)})."
                 ),
             )
+            from src.notify.sender import send_order_notification
+
+            try:
+                await send_order_notification(
+                    "failed",
+                    candidate=candidate,
+                    order_id=order_id,
+                    failure_reason=f"Live re-validation failed: {', '.join(live_verdict.reasons)}",
+                )
+            except Exception:
+                log.exception("Failed to send re-gate failure notification for order_id=%s", order_id)
             return
 
         order = build_limit_order(candidate, quote)
@@ -285,12 +296,32 @@ async def execute_candidate(
             order.lmtPrice,
         )
 
+        lmt = float(order.lmtPrice) if order.lmtPrice is not None else None
         with session_scope() as session:
             row = session.get(OrderRow, order_id)
             if row:
                 row.state = OrderState.SUBMITTED
                 row.ib_order_id = trade.order.orderId
-                row.limit_price = float(order.lmtPrice) if order.lmtPrice is not None else None
+                row.limit_price = lmt
+
+        from src.notify.sender import send_order_notification
+
+        option_mid = (
+            (quote.bid + quote.ask) / 2
+            if quote.bid is not None and quote.ask is not None
+            else quote.ask
+        )
+        try:
+            await send_order_notification(
+                "placed",
+                candidate=candidate,
+                order_id=order_id,
+                limit_price=lmt,
+                underlying_price=None,
+                option_mid=option_mid,
+            )
+        except Exception:
+            log.exception("Failed to send placed notification for order_id=%s", order_id)
 
         # Wait for terminal state or timeout — optionally chasing the fill by repricing the
         # limit toward the bid (config-gated; default off). The premium floor prevents the
@@ -405,6 +436,7 @@ async def execute_candidate(
                 new_state,
             )
             from src.notify.formatters import format_fill_confirm
+            from src.notify.sender import send_order_notification
 
             msg = format_fill_confirm(
                 underlying=candidate.underlying,
@@ -416,6 +448,17 @@ async def execute_candidate(
                 avg_price=avg_price,
             )
             await bot.send_message(chat_id=chat_id, text=msg, parse_mode="MarkdownV2")
+            try:
+                await send_order_notification(
+                    "filled",
+                    candidate=candidate,
+                    order_id=order_id,
+                    limit_price=lmt,
+                    filled_qty=filled_qty,
+                    avg_price=avg_price,
+                )
+            except Exception:
+                log.exception("Failed to send filled notification for order_id=%s", order_id)
 
         elif ib_status in ("Inactive", "ApiCancelled", "Error"):
             with session_scope() as session:
@@ -430,6 +473,16 @@ async def execute_candidate(
                 chat_id=chat_id,
                 text=f"Order rejected by IB: {candidate.underlying} ({ib_status})",
             )
+            try:
+                await send_order_notification(
+                    "failed",
+                    candidate=candidate,
+                    order_id=order_id,
+                    limit_price=lmt,
+                    failure_reason=f"IB rejected: {ib_status}",
+                )
+            except Exception:
+                log.exception("Failed to send IB-rejection notification for order_id=%s", order_id)
 
         else:
             with session_scope() as session:
@@ -442,6 +495,16 @@ async def execute_candidate(
                 candidate.candidate_id,
                 ib_status,
             )
+            try:
+                await send_order_notification(
+                    "failed",
+                    candidate=candidate,
+                    order_id=order_id,
+                    limit_price=lmt,
+                    failure_reason=f"Order timed out / cancelled ({ib_status})",
+                )
+            except Exception:
+                log.exception("Failed to send timeout notification for order_id=%s", order_id)
 
     except Exception:
         log.exception(

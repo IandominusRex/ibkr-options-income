@@ -1569,9 +1569,139 @@ async def test_send_candidates_hash_unchanged_all_suppressed_sends_screen_digest
 
     assert mock_instance.send_message.call_count == 1
     text = mock_instance.send_message.call_args.kwargs["text"]
-    # format_screen_unchanged output (not per-card digest)
-    assert "no new screens" in text
+    # _append_status plain-text output: timestamped "unchanged" line, no MarkdownV2
     assert "Covered Calls" in text
+    assert "unchanged" in text
+    # plain text — no MarkdownV2 escaping or "no new screens" suffix
+    assert "parse_mode" not in (mock_instance.send_message.call_args.kwargs or {})
+
+
+# --------------------------------------------------------------------------- #
+# _edit_or_send — edit-in-place behaviour for status messages
+# --------------------------------------------------------------------------- #
+
+
+async def test_empty_screen_edits_existing_message_on_repeat(mock_bot_cls, monkeypatch, tmp_path):
+    """Second empty-screen cycle edits the previous status message instead of sending a new one."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+    mock_instance.send_message.return_value = MagicMock(message_id=55)
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        # First call: no stored msg_id → send_message, stores id=55.
+        await send_candidates([], [], **_cc_kwargs(empty_reason="0/4 passed the risk gate"))
+        assert mock_instance.send_message.call_count == 1
+        mock_instance.send_message.reset_mock()
+
+        # Second call: stored id=55 → edit_message_text, NOT send_message.
+        await send_candidates([], [], **_cc_kwargs(empty_reason="0/4 passed the risk gate"))
+
+    mock_instance.edit_message_text.assert_called_once()
+    mock_instance.send_message.assert_not_called()
+    call_kw = mock_instance.edit_message_text.call_args.kwargs
+    assert call_kw["message_id"] == 55
+
+
+async def test_empty_screen_falls_back_to_send_when_edit_fails(mock_bot_cls, monkeypatch, tmp_path):
+    """If edit_message_text raises, _edit_or_send falls back to send_message and stores new id."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+    mock_instance.send_message.return_value = MagicMock(message_id=55)
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates([], [], **_cc_kwargs())  # stores id=55
+        mock_instance.send_message.reset_mock()
+        mock_instance.edit_message_text.side_effect = Exception("message deleted")
+        mock_instance.send_message.return_value = MagicMock(message_id=66)
+
+        await send_candidates([], [], **_cc_kwargs())
+
+    # Edit was attempted but failed → fell back to send_message with new id.
+    mock_instance.edit_message_text.assert_called_once()
+    mock_instance.send_message.assert_called_once()
+
+    from src.storage.system_settings import get_setting
+
+    assert get_setting("last_cc_status_msg_id") == "66"
+
+
+async def test_full_candidate_send_clears_status_msg_id(mock_bot_cls, monkeypatch, tmp_path):
+    """When actual candidates are sent, status_msg_id is cleared so next empty cycle sends fresh.
+
+    Uses no explicit session (let send_candidates open its own) so that set_setting can write
+    after the approval-row session commits — same pattern as the hash/time keys (avoids DB lock).
+    """
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+    mock_instance.send_message.return_value = MagicMock(message_id=55)
+
+    from src.storage.system_settings import get_setting, set_setting
+
+    # Prime a stored status msg id (as if a previous empty cycle ran).
+    set_setting("last_cc_status_msg_id", "42")
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        # No session= arg: send_candidates opens+commits its own session, then set_setting succeeds.
+        await send_candidates([_make_candidate("c-001")], [], **_cc_kwargs())
+
+    # After a real candidate send, the status msg id must be cleared.
+    assert get_setting("last_cc_status_msg_id") == ""
+
+
+async def test_buy_list_empty_edits_on_repeat(monkeypatch, tmp_path):
+    """Second empty buy-list cycle edits the previous status message."""
+    _db_setup(tmp_path, monkeypatch)
+
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_buy = ""
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=77)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_buy_list([], chat_id="99999")  # first: send, stores id=77
+        assert mock_instance.send_message.call_count == 1
+        mock_instance.send_message.reset_mock()
+
+        await send_buy_list([], chat_id="99999")  # second: edit
+
+    mock_instance.edit_message_text.assert_called_once()
+    mock_instance.send_message.assert_not_called()
+    assert mock_instance.edit_message_text.call_args.kwargs["message_id"] == 77
+
+
+async def test_buy_list_full_send_clears_status_msg_id(monkeypatch, tmp_path):
+    """Full buy-list send clears the status msg id so the next empty cycle sends fresh."""
+    _db_setup(tmp_path, monkeypatch)
+
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_buy = ""
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+
+    from src.storage.system_settings import get_setting, set_setting
+
+    set_setting("last_buy_list_status_msg_id", "42")
+
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=99)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    cands = [BuyCandidate(symbol="AAPL", score=85.0)]
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_buy_list(cands, chat_id="99999")
+
+    assert get_setting("last_buy_list_status_msg_id") == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -1599,7 +1729,8 @@ async def test_send_buy_list_empty_sends_diagnostic(monkeypatch, tmp_path):
     assert sent is True
     mock_instance.send_message.assert_called_once()
     text = mock_instance.send_message.call_args.kwargs["text"]
-    assert "no candidates this cycle" in text
+    assert "Buy-to-Own" in text
+    assert "would_own" in text  # the plain-text empty line contains this phrase
     assert mock_instance.send_message.call_args.kwargs["message_thread_id"] == 56
 
 
