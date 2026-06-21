@@ -89,7 +89,8 @@ def format_candidate(
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
     vrp_str = f" · VRP {candidate.vrp:+.1f}%" if candidate.vrp is not None else ""
-    parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}{_md(vrp_str)}")
+    iv_rv_str = f" · IV/RV {candidate.iv_rv_ratio:.2f}" if candidate.iv_rv_ratio is not None else ""
+    parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}{_md(vrp_str)}{_md(iv_rv_str)}")
 
     score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
     if candidate.rationale_tags:
@@ -178,9 +179,19 @@ _SECTOR_LABEL: dict[str, str] = {
 
 # Preferred display order for sectors.
 _SECTOR_ORDER = [
-    "index", "tech", "semis", "financials", "healthcare",
-    "consumer", "energy", "utilities", "industrials",
-    "bonds", "commodities", "biotech", "crypto",
+    "index",
+    "tech",
+    "semis",
+    "financials",
+    "healthcare",
+    "consumer",
+    "energy",
+    "utilities",
+    "industrials",
+    "bonds",
+    "commodities",
+    "biotech",
+    "crypto",
 ]
 
 
@@ -197,9 +208,7 @@ def _build_candidate_card(c: BuyCandidate) -> list[str]:
 
     if c.current_iv is not None and c.hv_30 is not None:
         vrp_pts = f" \\(VRP {_md(f'{c.vrp:+.1f}')}pts\\)" if c.vrp is not None else ""
-        card.append(
-            f"• IV {_md(f'{c.current_iv:.1f}')}% vs HV {_md(f'{c.hv_30:.1f}')}%{vrp_pts}"
-        )
+        card.append(f"• IV {_md(f'{c.current_iv:.1f}')}% vs HV {_md(f'{c.hv_30:.1f}')}%{vrp_pts}")
     elif c.current_iv is not None:
         card.append(f"• IV {_md(f'{c.current_iv:.1f}')}%")
 
@@ -282,9 +291,7 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
 
         for c in sector_candidates:
             rank += 1
-            lines.append(
-                f"*{rank}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*"
-            )
+            lines.append(f"*{rank}\\. __{_md(c.symbol)}__* — Score *{_md(f'{c.score:.0f}')}/100*")
             lines.extend(_build_candidate_card(c))
             lines.append("")
 
@@ -414,6 +421,16 @@ def format_account_snapshot(
     return text + f"\n_Source: IBKR · last updated {_md(updated_at)}_"
 
 
+def format_market_holiday(name: str, next_open_date: date) -> str:
+    """MarkdownV2 notification sent at 9:30 ET on NYSE full-day holidays."""
+    next_str = next_open_date.strftime("%a %d %b")
+    return (
+        f"🔴 *Market Holiday — {_md(name)}*\n"
+        f"_US markets closed today\\. No scans will run\\._\n"
+        f"_Next session: {_md(next_str)}_"
+    )
+
+
 def format_quiet_cycle(
     *,
     skipped: int,
@@ -522,11 +539,7 @@ def format_ticker_scan_result(
     price = tech_stats.price
     price_str = f"\\${_md(f'{price:,.2f}')}" if price else "N/A"
     iv_rank_str = _md(f"{iv_stats.iv_rank:.0f}") if iv_stats.iv_rank is not None else "N/A"
-    vrp_str = (
-        f" · VRP {_md(f'{iv_stats.vrp:+.1f}')}%"
-        if iv_stats.vrp is not None
-        else ""
-    )
+    vrp_str = f" · VRP {_md(f'{iv_stats.vrp:+.1f}')}%" if iv_stats.vrp is not None else ""
     lines.append(f"💵 {price_str} · IV Rank {iv_rank_str}{vrp_str}")
     lines.append("")
 
@@ -622,6 +635,7 @@ def format_order_notification(
     expiry: date,
     contracts: int,
     order_id: int,
+    action: str = "SELL",
     limit_price: float | None = None,
     underlying_price: float | None = None,
     option_mid: float | None = None,
@@ -633,16 +647,18 @@ def format_order_notification(
     """Plain-text order status notification for thread 58.
 
     *status* is one of ``"placed"``, ``"update"``, ``"filled"``, or ``"failed"``.
+    *action* is ``"SELL"`` (open) or ``"BUY"`` (close / buy-to-close).
     Returns plain text (no MarkdownV2) so it composes cleanly with timestamped edits.
     """
     strategy_label = strategy.replace("_", " ").title()
     right_label = "Call" if right == "C" else "Put"
     noun = "contract" if contracts == 1 else "contracts"
+    is_close = action == "BUY"
 
     header = {
-        "placed": "📋 Order Placed",
+        "placed": "📬 Order Placed" if not is_close else "📬 Close Order Placed",
         "update": "🔄 Order Pending",
-        "filled": "✅ Order Filled",
+        "filled": "📈 Closed" if is_close else "✅ Opened",
         "failed": "❌ Order Failed",
     }.get(status, f"📋 Order ({status})")
 
@@ -666,9 +682,7 @@ def format_order_notification(
 
     if status == "filled" and filled_qty is not None and avg_price is not None:
         total = avg_price * filled_qty * 100
-        lines.append(
-            f"Filled {filled_qty:.0f}x @ ${avg_price:.2f}/sh (${total:.0f} total)"
-        )
+        lines.append(f"Filled {filled_qty:.0f}x @ ${avg_price:.2f}/sh (${total:.0f} total)")
 
     if status == "failed" and failure_reason:
         lines.append(f"Reason: {failure_reason}")
@@ -677,6 +691,71 @@ def format_order_notification(
         lines.append(f"[{updated_at}]")
 
     return "\n".join(lines)
+
+
+def format_skip_reasons(per_symbol_skip: dict[str, list[str]], *, max_symbols: int = 15) -> str:
+    """Compact MarkdownV2 card showing why each scanned symbol produced no approved candidate.
+
+    Shows the top rejection reason(s) per symbol so the operator can see at a glance what
+    gates dominated (e.g. iv_rank_below_minimum vs. earnings_blackout vs. dte_out_of_range).
+    Limited to *max_symbols* lines to keep the message compact.
+    """
+    if not per_symbol_skip:
+        return ""
+
+    items = sorted(per_symbol_skip.items())
+    shown = items[:max_symbols]
+    truncated = len(items) - len(shown)
+
+    parts = ["⏸️ *Skipped symbols*", ""]
+    for sym, reasons in shown:
+        # Show at most 2 reasons per symbol; combine with " · "
+        reasons_str = " · ".join(_md(r) for r in reasons[:2])
+        if len(reasons) > 2:
+            reasons_str += f" \\(\\+{len(reasons) - 2} more\\)"
+        parts.append(f"*{_md(sym)}* — {reasons_str}")
+
+    if truncated:
+        parts.append(f"_…and {_md(str(truncated))} more symbols_")
+
+    return "\n".join(parts)
+
+
+def format_pnl_calendar(rows: list[dict], *, days: int = 30) -> str:
+    """MarkdownV2 per-day P&L calendar from a list of fill dicts.
+
+    Each dict must have: ``date`` (date), ``cashflow`` (float, signed net premium),
+    ``fills`` (int count). Shows the most recent *days* calendar days with any fills.
+    """
+    if not rows:
+        return f"*P&L Calendar \\(last {_md(str(days))} days\\)*\n\n_No fills recorded\\._"
+
+    parts = [f"*P&L Calendar \\(last {_md(str(days))} days\\)*", ""]
+    total = 0.0
+    for row in rows:
+        d = row["date"]
+        cf = row["cashflow"]
+        n = row["fills"]
+        total += cf
+        date_str = _md(d.strftime("%b %d"))
+        cf_str = _md(_pnl2(cf))
+        noun = "fill" if n == 1 else "fills"
+        parts.append(f"{date_str}  {cf_str}  _{_md(str(n))} {_md(noun)}_")
+
+    parts += ["", f"*Total: {_md(_pnl2(total))}*"]
+    return "\n".join(parts)
+
+
+def format_profile_status(name: str) -> str:
+    """MarkdownV2 message showing the active trading profile and what it means."""
+    _DESCRIPTIONS = {
+        "default": "Base config — risk\\_limits\\.yaml and scoring\\_weights\\.yaml as written\\.",
+        "conservative": "Tighter delta/DTE windows, higher IV/score floors \\(fewer, safer trades\\)\\.",
+        "balanced": "Matches the base config defaults — no overrides applied\\.",
+        "aggressive": "Wider delta/DTE windows, lower IV/score floors \\(more, riskier trades\\)\\.",
+    }
+    desc = _DESCRIPTIONS.get(name, _md(name))
+    return f"📐 *Active profile: {_md(name)}*\n{desc}"
 
 
 def format_help() -> str:
@@ -695,11 +774,18 @@ def format_help() -> str:
         "/positions — Full portfolio positions with P&L",
         "/account — Account balances \\(buying power, net liq, margin\\)",
         "/fills — Recent fills \\(last 7 days\\)",
+        "/calendar — Per\\-day P&L calendar \\(last 30 days\\)",
+        "/campaigns — Wheel campaigns: P&L threads linking all legs per symbol",
+        "/campaigns open — Only open campaigns",
         "",
         "*Automation*",
         "/mode — Show current mode \\(MANUAL/AUTOMATED\\) and toggle",
         "/halt — 🛑 Kill switch: stop all order transmission now",
         "/resume — Release the kill switch and resume execution",
+        "",
+        "*Profile*",
+        "/profile — Show active trading profile",
+        "/profile conservative|balanced|aggressive|default — Switch profile",
         "",
         "*System*",
         "/health — Connections, DB, last scan, open orders",
@@ -1175,6 +1261,54 @@ def format_roll_alert(
     return text + "\n_Source: IBKR_"
 
 
+def format_assignment_alert(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    alerts: list[RollAlert],
+    review: RollReview | None,
+) -> str:
+    """Format an assignment-risk alert for Telegram MarkdownV2.
+
+    Distinct from roll alerts: frames the decision as roll / close / let-assign
+    rather than a generic trigger list.
+    """
+    right_label = pos.right.value if pos.right else "?"
+    strategy = "CC" if right_label == "C" else "CSP"
+    strike_str = f"{pos.strike:.0f}" if pos.strike else "?"
+    sym = pos.underlying or pos.symbol
+
+    abs_delta = abs(quote.delta) if quote.delta is not None else None
+    dte_str = str(alerts[0].dte) if alerts and alerts[0].dte is not None else "?"
+
+    parts: list[str] = [
+        f"🔴 *Assignment Risk — {_md(sym)} {_md(strategy)} \\${_md(strike_str)}*",
+        f"\\|Δ\\| {_md(f'{abs_delta:.2f}') if abs_delta is not None else '?'} · DTE {_md(dte_str)}",
+        "",
+        "*Actions to consider:*",
+        "• Roll out\\-and\\-up to a later expiry",
+        "• Buy to close \\(take the loss\\)",
+        "• Let assignment proceed \\(accept stock\\)",
+    ]
+
+    if review:
+        parts += [
+            "",
+            "*── Claude ──*",
+            f"*{_md(review.recommendation.upper())}*",
+        ]
+        if review.roll_target or review.rationale:
+            parts.append(f"→ {_md(review.roll_target or review.rationale or '')}")
+        if review.risks:
+            parts.append(f"Risk: {_md(review.risks)}")
+    else:
+        parts += ["", "_Claude review unavailable — manual evaluation required_"]
+
+    text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text + "\n_Source: IBKR_"
+
+
 def format_pending_approvals(pending: list[dict]) -> str:
     """Format a list of pending approvals for Telegram MarkdownV2.
 
@@ -1265,6 +1399,61 @@ def format_fills_history(fills: list[dict]) -> str:
         )
 
     text = "\n".join(parts)
+    if len(text) > _MAX_MESSAGE_LEN:
+        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
+    return text
+
+
+def format_campaigns(campaigns: list[dict]) -> str:
+    """MarkdownV2 summary of wheel-strategy campaigns (C6).
+
+    Each dict should have: symbol, status, opened_date, closed_date, leg_count,
+    total_premium_collected, total_debit_paid, net_premium, assigned,
+    adjusted_cost_basis, realized_stock_pnl.
+    """
+    if not campaigns:
+        return (
+            "*Campaigns*\n\n_No campaigns recorded yet\\. "
+            "Campaigns open automatically when the first option fill is recorded for a symbol\\._"
+        )
+
+    parts = [f"*Campaigns \\({_md(str(len(campaigns)))}\\)*", ""]
+
+    for c in campaigns:
+        symbol = c.get("symbol", "?")
+        status = c.get("status", "open")
+        opened = c.get("opened_date")
+        closed = c.get("closed_date")
+        leg_count = c.get("leg_count", 0)
+        net = c.get("net_premium", 0.0)
+        collected = c.get("total_premium_collected", 0.0)
+        paid = c.get("total_debit_paid", 0.0)
+        assigned = c.get("assigned", False)
+        acb = c.get("adjusted_cost_basis")
+        stock_pnl = c.get("realized_stock_pnl")
+
+        status_icon = "🟢" if status == "open" else "⚪"
+        assigned_tag = " 📦 assigned" if assigned else ""
+        opened_str = opened.strftime("%b %d") if opened else "?"
+        closed_str = f" → {closed.strftime('%b %d')}" if closed else ""
+        net_str = _pnl(net) if net >= 0 else f"-${abs(net):,.0f}"
+        legs_label = f"{leg_count} leg{'s' if leg_count != 1 else ''}"
+
+        parts.append(
+            f"{status_icon} *{_md(symbol)}*"
+            f"  {_md(opened_str)}{_md(closed_str)}"
+            f"  {_md(legs_label)}{_md(assigned_tag)}"
+        )
+        parts.append(
+            f"  Net: {_md(net_str)}  \\(\\+{_md(f'{collected:,.0f}')} \\− {_md(f'{paid:,.0f}')}\\)"
+        )
+        if acb is not None:
+            parts.append(f"  Adj\\. cost basis: \\${_md(f'{acb:.2f}')}/sh")
+        if stock_pnl is not None:
+            parts.append(f"  Stock leg P&L: {_md(_pnl(stock_pnl))}")
+        parts.append("")
+
+    text = "\n".join(parts).rstrip()
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text

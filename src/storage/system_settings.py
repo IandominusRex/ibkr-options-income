@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from src.storage.db import session_scope
 from src.storage.models import SystemSettingRow
@@ -21,6 +22,7 @@ AUTOMATED_MODE_KEY = "automated_mode"
 HALT_KEY = "execution_halted"
 HALT_REASON_KEY = "execution_halt_reason"
 SCAN_LEASE_KEY = "scan_lease_expiry"
+ACTIVE_PROFILE_KEY = "active_profile"
 
 # Sortable UTC timestamp (zero-padded) so lexicographic string comparison == chronological.
 _LEASE_TS_FMT = "%Y%m%dT%H%M%S.%f"
@@ -43,14 +45,21 @@ def get_setting(key: str, default: str = "") -> str:
         return default
 
 
-def set_setting(key: str, value: str) -> None:
+def _write_setting(s: Session, key: str, value: str) -> None:
+    row = s.query(SystemSettingRow).filter_by(key=key).first()
+    if row:
+        row.value = value
+    else:
+        s.add(SystemSettingRow(key=key, value=value))
+
+
+def set_setting(key: str, value: str, *, session: Session | None = None) -> None:
     try:
-        with session_scope() as s:
-            row = s.query(SystemSettingRow).filter_by(key=key).first()
-            if row:
-                row.value = value
-            else:
-                s.add(SystemSettingRow(key=key, value=value))
+        if session is not None:
+            _write_setting(session, key, value)
+        else:
+            with session_scope() as s:
+                _write_setting(s, key, value)
     except Exception:
         log.warning("set_setting(%s=%s) failed", key, value, exc_info=True)
 
@@ -85,6 +94,16 @@ def set_halted(enabled: bool, reason: str = "") -> None:
 def get_halt_reason() -> str:
     """Human-readable reason the kill switch is engaged (empty when not halted)."""
     return get_setting(HALT_REASON_KEY, "")
+
+
+def get_active_profile() -> str:
+    """Return the active trading profile name (default: 'default')."""
+    return get_setting(ACTIVE_PROFILE_KEY, "default")
+
+
+def set_active_profile(name: str) -> None:
+    """Persist the active trading profile name."""
+    set_setting(ACTIVE_PROFILE_KEY, name)
 
 
 def _lease_value(expiry_str: str, owner: str) -> str:

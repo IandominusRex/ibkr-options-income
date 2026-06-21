@@ -323,9 +323,7 @@ def suppress_account_summary_on_reconnect(ib: IB) -> None:
     ib.errorEvent += _patched
 
 
-def debounce_account_summary_on_reconnect(
-    ib: IB, *, _reconnect_delay: float = 0.5
-) -> None:
+def debounce_account_summary_on_reconnect(ib: IB, *, _reconnect_delay: float = 0.5) -> None:
     """Guard the scan IB object against concurrent reqAccountSummary on rapid reconnects.
 
     During a connection storm (1100 → 1102 → 1100 → 1102 in quick succession),

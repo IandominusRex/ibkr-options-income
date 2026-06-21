@@ -10,6 +10,7 @@ from src.analytics.liquidity import (
     volume_gate_active,
 )
 from src.common.config import get_config
+from src.common.profile import get_effective_risk
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -21,7 +22,12 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
-from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
+from src.strategies._scoring import (
+    annualized_roc_score,
+    fundamental_score,
+    make_candidate_id,
+    technical_score,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,9 +49,10 @@ def generate_csp_candidates(
     if symbol not in cfg.universe["would_own"]:
         return []
 
-    csp_cfg = cfg.risk["cash_secured_put"]
-    income_cfg = cfg.risk["income"]
-    portfolio_cfg = cfg.risk.get("portfolio", {})
+    risk = get_effective_risk()
+    csp_cfg = risk["cash_secured_put"]
+    income_cfg = risk["income"]
+    portfolio_cfg = risk.get("portfolio", {})
 
     delta_min: float = csp_cfg["delta_min"]
     delta_max: float = csp_cfg["delta_max"]
@@ -119,6 +126,7 @@ def generate_csp_candidates(
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
             assignment_safety_score=(1 - delta_abs) * 100,
+            annualized_roc_score=annualized_roc_score(annualized_yield_pct),
         )
 
         candidates.append(
@@ -141,6 +149,7 @@ def generate_csp_candidates(
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 vrp=iv_stats.vrp,
+                iv_rv_ratio=iv_stats.iv_rv_ratio,
                 dte=dte,
                 next_earnings=fund_stats.next_earnings,
                 scores=scores,

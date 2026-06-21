@@ -37,6 +37,8 @@ from ib_async import Contract as IBContract
 
 from src.common.config import get_config
 from src.common.schemas import OrderState, PositionSnapshot
+from src.execution.executor import _as_float, _refetch_bid_ask, _safe_float
+from src.execution.order_builder import reprice_limit
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
 from src.storage.models import FillRow, OrderRow
@@ -131,16 +133,56 @@ async def close_short_position(
                 row.ib_order_id = trade.order.orderId
 
         # 2. Wait for terminal state or timeout — cancel on timeout (the F1 fix).
-        deadline = asyncio.get_running_loop().time() + cfg.execution.fill_timeout_minutes * 60
+        # Optionally chase the fill by repricing toward the ask (config-gated; default off).
+        exec_cfg = cfg.execution
+        reprice_enabled = getattr(exec_cfg, "reprice_enabled", False) is True
+        reprice_interval = _as_float(getattr(exec_cfg, "reprice_interval_seconds", 45.0), 45.0)
+        max_reprices = int(_as_float(getattr(exec_cfg, "max_reprices", 0), 0.0))
+        step_pct = _as_float(getattr(exec_cfg, "reprice_step_pct", 0.34), 0.34)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + cfg.execution.fill_timeout_minutes * 60
+        next_reprice_at = loop.time() + reprice_interval
+        reprices_done = 0
         while not trade.isDone():
             await asyncio.sleep(1)
-            if asyncio.get_running_loop().time() > deadline:
+            now = loop.time()
+            if now > deadline:
                 log.warning(
                     "close fill timeout for %s order_id=%s — cancelling", pos.symbol, order_id
                 )
                 ib_exec.cancelOrder(trade.order)
                 await asyncio.sleep(2)
                 break
+            if (
+                reprice_enabled
+                and reprices_done < max_reprices
+                and now >= next_reprice_at
+                and not trade.isDone()
+            ):
+                next_reprice_at = now + reprice_interval
+                cur_limit = _safe_float(order.lmtPrice)
+                fresh_bid, fresh_ask = await _refetch_bid_ask(ib_exec, qualified)
+                new_price = (
+                    reprice_limit("BUY", cur_limit, fresh_bid, fresh_ask, step_pct)
+                    if cur_limit is not None and fresh_ask is not None
+                    else None
+                )
+                if new_price is not None:
+                    order.lmtPrice = new_price
+                    ib_exec.placeOrder(qualified, order)
+                    reprices_done += 1
+                    log.info(
+                        "close reprice %d/%d %s -> %.2f",
+                        reprices_done,
+                        max_reprices,
+                        pos.symbol,
+                        new_price,
+                    )
+                    with session_scope() as session:
+                        row = session.get(OrderRow, order_id)
+                        if row:
+                            row.limit_price = new_price
 
         filled_qty = float(getattr(trade.orderStatus, "filled", 0.0) or 0.0)
         avg_price = float(getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0)

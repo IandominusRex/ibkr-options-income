@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 from src.common.config import get_config
+from src.common.profile import get_effective_risk
 from src.common.schemas import (
     AccountSnapshot,
     OptionQuote,
@@ -32,8 +33,8 @@ _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
 
 def _strategy_limits(strategy: Strategy) -> dict:
-    """Return the strategy-specific limits dict from risk_limits.yaml."""
-    return get_config().risk.get(strategy.value, {})
+    """Return the strategy-specific limits dict, merged with any active profile overlay."""
+    return get_effective_risk().get(strategy.value, {})
 
 
 def _sector_of(symbol: str) -> str | None:
@@ -95,11 +96,11 @@ def validate_candidates(
     if not candidates:
         return []
 
-    cfg = get_config()
-    income = cfg.risk.get("income", {})
-    portfolio = cfg.risk.get("portfolio", {})
-    iv_cfg = cfg.risk.get("iv", {})
-    events = cfg.risk.get("events", {})
+    risk = get_effective_risk()
+    income = risk.get("income", {})
+    portfolio = risk.get("portfolio", {})
+    iv_cfg = risk.get("iv", {})
+    events = risk.get("events", {})
     today = date.today()
 
     net_liq = account.net_liquidation
@@ -147,6 +148,17 @@ def validate_candidates(
         # risk, just lost optimization — rejecting all would silently zero out scans).
         if min_iv_rank is not None and cand.iv_rank is not None and cand.iv_rank < min_iv_rank:
             reasons.append("iv_rank_below_minimum")
+
+        # --- IV/RV richness gate: sell only when implied vol richly exceeds realized vol.
+        # Missing ratio is treated as "data unavailable" — not a capital risk — so it never
+        # blocks the scan. Threshold configurable via risk_limits.yaml → iv → min_iv_rv_ratio.
+        min_iv_rv = iv_cfg.get("min_iv_rv_ratio")
+        if (
+            min_iv_rv is not None
+            and cand.iv_rv_ratio is not None
+            and cand.iv_rv_ratio < float(min_iv_rv)
+        ):
+            reasons.append("iv_rv_below_minimum")
 
         # --- DTE window (strategy-specific) ---
         if limits and not (limits.get("dte_min", 0) <= cand.dte <= limits.get("dte_max", 999)):
@@ -257,9 +269,9 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
         # produce a wildly wrong mid-price (e.g. mid = (-1 + 2) / 2 = $0.50).
         reasons.append("negative_bid_sentinel")
 
-    cfg = get_config()
-    live_cfg = cfg.risk.get("live_execution", {}) or {}
+    live_cfg = get_effective_risk().get("live_execution", {}) or {}
     is_income = candidate.strategy in _INCOME_STRATEGIES
+    cfg = get_config()
 
     # F6: in LIVE mode, refuse to fill an income trade unless the live quote carries
     # IBKR-sourced greeks. The delta gate below silently degrades when greeks are absent

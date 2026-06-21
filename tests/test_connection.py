@@ -199,7 +199,9 @@ async def test_suppress_account_summary_on_reconnect_blocks_1102() -> None:
         suppress_account_summary_on_reconnect(ib)
         ib.errorEvent.emit(-1, 1102, "Connectivity restored", None)
         await asyncio.sleep(0)
-        assert subscribe_calls == [], "exec connection must not subscribe to account summary on 1102"
+        assert subscribe_calls == [], (
+            "exec connection must not subscribe to account summary on 1102"
+        )
     finally:
         ib_async.IB.reqAccountSummaryAsync = orig  # type: ignore[method-assign]
 

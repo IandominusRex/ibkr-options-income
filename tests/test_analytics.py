@@ -42,6 +42,12 @@ def _mock_session_scope(values: list[float]):
 
 
 class TestIVStats:
+    @pytest.fixture(autouse=True)
+    def _no_realized_vol_network(self):
+        """Suppress compute_realized_vol network calls in all TestIVStats tests."""
+        with patch("src.analytics.iv.compute_realized_vol", return_value=None):
+            yield
+
     def test_iv_rank_formula(self):
         # history: [0.30, 0.25, 0.20, 0.15, 0.10] — current=0.30, min=0.10, max=0.30
         history = [0.30, 0.25, 0.20, 0.15, 0.10]
@@ -528,3 +534,129 @@ class TestDailyCaching:
     # HV30 and the technical OHLCV history now share the incremental price_data.get_ohlcv
     # loader (itself @daily_cached and backed by the price_history store). Its caching /
     # tail-fetch behaviour is covered directly in tests/test_price_data.py.
+
+
+# --------------------------------------------------------------------------- #
+# C1: realized_vol.py — compute_realized_vol
+# --------------------------------------------------------------------------- #
+
+
+class TestComputeRealizedVol:
+    """Unit tests for the standalone realized-vol helper (C1)."""
+
+    def _price_df(self, n: int = 60, drift: float = 0.0, vol: float = 0.02) -> pd.DataFrame:
+        """Build a deterministic log-normal price series."""
+        import math
+
+        rng = np.random.default_rng(7)
+        log_rets = rng.normal(drift, vol, n)
+        prices = [100.0]
+        for r in log_rets:
+            prices.append(prices[-1] * math.exp(r))
+        df = pd.DataFrame({"Close": prices[:-1]})
+        df.index = pd.date_range("2024-01-01", periods=n, freq="B")
+        return df
+
+    def test_returns_float_with_sufficient_history(self):
+        from src.analytics.realized_vol import compute_realized_vol
+
+        df = self._price_df(60)
+        with patch("src.analytics.realized_vol.get_ohlcv", return_value=df):
+            rv = compute_realized_vol("TEST", window=20)
+        assert rv is not None
+        assert rv > 0
+
+    def test_matches_manual_log_return_calculation(self):
+        import math
+
+        from src.analytics.realized_vol import compute_realized_vol
+
+        df = self._price_df(60)
+        with patch("src.analytics.realized_vol.get_ohlcv", return_value=df):
+            rv = compute_realized_vol("TEST", window=20)
+
+        closes = np.array(df["Close"])
+        log_rets = np.log(closes[1:] / closes[:-1])
+        expected = float(np.std(log_rets[-20:], ddof=1) * math.sqrt(252) * 100)
+        assert rv == pytest.approx(expected, rel=0.01)
+
+    def test_returns_none_when_insufficient_data(self):
+        from src.analytics.realized_vol import compute_realized_vol
+
+        df = pd.DataFrame({"Close": [100.0, 101.0]})
+        with patch("src.analytics.realized_vol.get_ohlcv", return_value=df):
+            rv = compute_realized_vol("TEST", window=20)
+        assert rv is None
+
+    def test_returns_none_on_empty_dataframe(self):
+        from src.analytics.realized_vol import compute_realized_vol
+
+        with patch("src.analytics.realized_vol.get_ohlcv", return_value=pd.DataFrame()):
+            rv = compute_realized_vol("TEST", window=20)
+        assert rv is None
+
+    def test_returns_none_on_exception(self):
+        from src.analytics.realized_vol import compute_realized_vol
+
+        with patch("src.analytics.realized_vol.get_ohlcv", side_effect=Exception("network")):
+            rv = compute_realized_vol("TEST", window=20)
+        assert rv is None
+
+    def test_configurable_window(self):
+        from src.analytics.realized_vol import compute_realized_vol
+
+        df = self._price_df(60)
+        with patch("src.analytics.realized_vol.get_ohlcv", return_value=df):
+            rv20 = compute_realized_vol("TEST", window=20)
+            rv30 = compute_realized_vol("TEST", window=30)
+        # Different windows → generally different results (not guaranteed but very likely)
+        assert rv20 is not None
+        assert rv30 is not None
+
+
+# --------------------------------------------------------------------------- #
+# C1: iv_rv_ratio populated on IVStats
+# --------------------------------------------------------------------------- #
+
+
+class TestIVRVRatio:
+    def test_iv_rv_ratio_populated_when_both_available(self):
+        history = [0.30, 0.25, 0.20, 0.15, 0.10]
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+            patch("src.analytics.iv.compute_realized_vol", return_value=25.0),
+        ):
+            stats = get_iv_stats("TEST")
+        # current_iv = 0.30 → current_iv_pct = 30.0; realized_vol = 25.0
+        assert stats.iv_rv_ratio == pytest.approx(30.0 / 25.0, rel=0.001)
+
+    def test_iv_rv_ratio_none_when_realized_vol_unavailable(self):
+        history = [0.30, 0.25, 0.20, 0.15, 0.10]
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+            patch("src.analytics.iv.compute_realized_vol", return_value=None),
+        ):
+            stats = get_iv_stats("TEST")
+        assert stats.iv_rv_ratio is None
+
+    def test_iv_rv_ratio_none_when_realized_vol_zero(self):
+        history = [0.30, 0.25, 0.20, 0.15, 0.10]
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+            patch("src.analytics.iv.compute_realized_vol", return_value=0.0),
+        ):
+            stats = get_iv_stats("TEST")
+        assert stats.iv_rv_ratio is None
+
+    def test_iv_rv_ratio_none_when_no_iv_history(self):
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope([])),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+            patch("src.analytics.iv.compute_realized_vol", return_value=25.0),
+        ):
+            stats = get_iv_stats("TEST")
+        # Empty history → no current_iv → iv_rv_ratio must be None
+        assert stats.iv_rv_ratio is None

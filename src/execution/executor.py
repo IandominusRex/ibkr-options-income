@@ -283,7 +283,9 @@ async def execute_candidate(
                     failure_reason=f"Live re-validation failed: {', '.join(live_verdict.reasons)}",
                 )
             except Exception:
-                log.exception("Failed to send re-gate failure notification for order_id=%s", order_id)
+                log.exception(
+                    "Failed to send re-gate failure notification for order_id=%s", order_id
+                )
             return
 
         order = build_limit_order(candidate, quote)
@@ -435,6 +437,25 @@ async def execute_candidate(
                 avg_price,
                 new_state,
             )
+
+            # Campaign chaining (C6): update the wheel P&L thread for this symbol.
+            try:
+                from src.storage.campaigns import attach_fill_to_campaign
+
+                attach_fill_to_campaign(
+                    candidate.underlying,
+                    candidate.candidate_id,
+                    candidate.strategy.value,
+                    order.action,
+                    avg_price,
+                    filled_qty,
+                )
+            except Exception:
+                log.warning(
+                    "Campaign update failed for %s — non-fatal",
+                    candidate.candidate_id,
+                    exc_info=True,
+                )
             from src.notify.formatters import format_fill_confirm
             from src.notify.sender import send_order_notification
 

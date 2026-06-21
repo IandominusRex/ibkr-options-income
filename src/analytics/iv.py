@@ -13,6 +13,8 @@ import math
 from sqlalchemy import select
 
 from src.analytics.price_data import get_ohlcv
+from src.analytics.realized_vol import compute_realized_vol
+from src.common.config import get_config
 from src.common.schemas import IVStats, OptionQuote, OptionRight
 from src.storage.db import session_scope
 from src.storage.models import IVHistoryRow
@@ -59,6 +61,15 @@ def get_iv_stats(symbol: str, quotes: list[OptionQuote] | None = None) -> IVStat
     current_iv_pct = round(current_iv * 100, 4)
     vrp = round(current_iv_pct - hv_30, 4) if hv_30 is not None else None
 
+    iv_cfg = get_config().risk.get("iv", {})
+    rv_window = int(iv_cfg.get("realized_vol_window", 20))
+    realized_vol = compute_realized_vol(symbol, rv_window)
+    iv_rv_ratio = (
+        round(current_iv_pct / realized_vol, 4)
+        if realized_vol is not None and realized_vol > 0
+        else None
+    )
+
     return IVStats(
         symbol=symbol,
         current_iv=current_iv_pct,
@@ -68,6 +79,7 @@ def get_iv_stats(symbol: str, quotes: list[OptionQuote] | None = None) -> IVStat
         vrp=vrp,
         term_structure_slope=term_slope,
         put_call_skew=skew,
+        iv_rv_ratio=iv_rv_ratio,
     )
 
 

@@ -302,7 +302,12 @@ Once the approval service is running, you can interact with the system from your
 | `/account` | Account balances: net liquidation, total cash, buying power, maintenance margin, excess liquidity. |
 | `/pending` | Lists all pending approvals by score and time-to-expiry. Useful if you want to review what's waiting before deciding. |
 | `/fills` | Shows the last 7 days of executed fills: symbol, strike, quantity, fill price, and credit received. |
+| `/calendar` | Per-day P&L calendar for the last 30 days — net premium cashflow per calendar day, with fill count and a running total. |
+| `/campaigns` | Wheel campaigns for all symbols: the CSP→assignment→CC→close chain per ticker, with cumulative net premium collected and adjusted cost basis after assignment. |
+| `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only. |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
+| `/profile` | Shows the active trading profile (default / conservative / balanced / aggressive) and its description. |
+| `/profile conservative` | Switches to the named profile — overlays tighter delta/DTE/IV/score-floor settings onto the base config for the current and future scans. Valid names: `default`, `conservative`, `balanced`, `aggressive`. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
 
@@ -727,6 +732,19 @@ so the report's **Mean VRP** (IV − HV) and net P&L reflect the actual variance
 `--profit-take` and `--min-iv-rank` test the management rules with/without IV-rank gating. The
 covered-call P&L is the *option overlay* only (premium minus call-away intrinsic); the underlying's
 own appreciation is the buy-&-hold line.
+
+For a compact 4-line summary suitable for pasting into a decision prompt, or to backtest across
+historical earnings cycles (C10/C11):
+
+```bash
+# Compact 4-line summary:
+python -m scripts.backtest_candidate --symbol AAPL --strategy cash_secured_put \
+    --delta 0.30 --dte 30 --compact
+
+# Earnings-cycle mode — segmented by prior earnings dates + optional vol-crush entry:
+python -m scripts.backtest_candidate --symbol AAPL --strategy cash_secured_put \
+    --delta 0.30 --dte 30 --earnings --blackout-before 14 --vol-crush-dte 14
+```
 
 ---
 

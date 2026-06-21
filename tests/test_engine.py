@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from src.common.schemas import (
     AccountSnapshot,
     OptionQuote,
@@ -659,3 +661,124 @@ class TestValidateCandidatesMaxContracts:
         verdicts = validate_candidates([cand], _account(), [])
         assert "contracts_exceeds_max" in verdicts[0].reasons
         assert verdicts[0].verdict == Verdict.REJECT
+
+
+# ---------------------------------------------------------------------------
+# C1: IV/RV richness gate (iv_rv_below_minimum)
+# ---------------------------------------------------------------------------
+
+
+class TestIVRVGate:
+    """C1: validate_candidates enforces min_iv_rv_ratio from risk_limits.yaml → iv."""
+
+    def _cand_with_ratio(self, ratio: float | None) -> TradeCandidate:
+        c = _candidate(iv_rank=80.0)
+        return c.model_copy(update={"iv_rv_ratio": ratio})
+
+    def test_ratio_above_minimum_passes(self) -> None:
+        # default min_iv_rv_ratio = 1.05; ratio 1.20 > 1.05 → pass
+        cand = self._cand_with_ratio(1.20)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "iv_rv_below_minimum" not in verdicts[0].reasons
+
+    def test_ratio_exactly_at_minimum_passes(self) -> None:
+        cand = self._cand_with_ratio(1.05)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "iv_rv_below_minimum" not in verdicts[0].reasons
+
+    def test_ratio_below_minimum_rejects(self) -> None:
+        # ratio 0.82 < 1.05 → iv_rv_below_minimum
+        cand = self._cand_with_ratio(0.82)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "iv_rv_below_minimum" in verdicts[0].reasons
+        assert verdicts[0].verdict == Verdict.REJECT
+
+    def test_none_ratio_does_not_reject(self) -> None:
+        # Missing ratio = data unavailable, not a capital risk → never blocks the scan.
+        cand = self._cand_with_ratio(None)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert "iv_rv_below_minimum" not in verdicts[0].reasons
+
+    def test_iv_rv_reason_in_rejection_tally(self) -> None:
+        # Confirm the reason string is exactly "iv_rv_below_minimum" (used by C7 skipped-reason).
+        cand = self._cand_with_ratio(0.80)
+        verdicts = validate_candidates([cand], _account(), [])
+        assert verdicts[0].reasons == [
+            r
+            for r in verdicts[0].reasons
+            if r  # all non-empty
+        ]
+        assert any(r == "iv_rv_below_minimum" for r in verdicts[0].reasons)
+
+
+# ---------------------------------------------------------------------------
+# C2: annualized_roc_score helper and ranking
+# ---------------------------------------------------------------------------
+
+
+class TestAnnualizedRocScore:
+    """C2: annualized_roc_score normalizes correctly and the cap prevents blow-up."""
+
+    def test_yield_at_cap_scores_100(self) -> None:
+        from src.strategies._scoring import annualized_roc_score
+
+        assert annualized_roc_score(100.0) == 100.0
+
+    def test_yield_above_cap_clamped_to_100(self) -> None:
+        from src.strategies._scoring import annualized_roc_score
+
+        # A 7-DTE option with 1% ROC ≈ 52% annualized — but 500% should still be 100.
+        assert annualized_roc_score(500.0) == 100.0
+
+    def test_yield_at_half_cap_scores_50(self) -> None:
+        from src.strategies._scoring import annualized_roc_score
+
+        assert annualized_roc_score(50.0) == pytest.approx(50.0, abs=0.01)
+
+    def test_zero_yield_scores_zero(self) -> None:
+        from src.strategies._scoring import annualized_roc_score
+
+        assert annualized_roc_score(0.0) == 0.0
+
+    def test_minimum_gate_yield_scores_low_but_nonzero(self) -> None:
+        from src.strategies._scoring import annualized_roc_score
+
+        # min_annualized_yield_pct = 12%; score = 12/100 * 100 = 12.
+        score = annualized_roc_score(12.0)
+        assert 10.0 < score < 20.0
+
+    def test_higher_annualized_yield_ranks_higher_with_nonzero_weight(self) -> None:
+        """With annualized_roc weight > 0, a higher annualized yield must produce a
+        higher blended_score — verifying cross-DTE candidates rank correctly (C2)."""
+        from src.common.config import get_config
+        from src.engine.scoring import score_candidates
+
+        cfg = get_config()
+        orig_weights = cfg.weights.get("cash_secured_put", {}).copy()
+        cfg.weights["cash_secured_put"] = {
+            "iv": 0.0,
+            "technical": 0.0,
+            "fundamental": 0.0,
+            "liquidity": 0.0,
+            "assignment_risk": 0.0,
+            "sentiment": 0.0,
+            "annualized_roc": 1.0,
+        }
+        try:
+            low_yield = _candidate(candidate_id="low", annualized_yield_pct=15.0)
+            low_yield = low_yield.model_copy(
+                update={
+                    "scores": low_yield.scores.model_copy(update={"annualized_roc_score": 15.0})
+                }
+            )
+            high_yield = _candidate(candidate_id="high", annualized_yield_pct=40.0)
+            high_yield = high_yield.model_copy(
+                update={
+                    "scores": high_yield.scores.model_copy(update={"annualized_roc_score": 40.0})
+                }
+            )
+            result = score_candidates([low_yield, high_yield])
+            assert result[0].candidate_id == "high"
+            assert result[1].candidate_id == "low"
+        finally:
+            cfg.weights["cash_secured_put"] = orig_weights

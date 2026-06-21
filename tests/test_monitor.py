@@ -22,6 +22,7 @@ from src.common.schemas import (
 )
 from src.monitor.triggers import (
     check_all,
+    check_assignment_risk,
     check_delta_drift,
     check_dte_threshold,
     check_ex_div,
@@ -280,6 +281,69 @@ def test_ex_div_fires_without_quote_backward_compatible() -> None:
 
 
 # ---------------------------------------------------------------------------
+# check_assignment_risk (C4)
+# ---------------------------------------------------------------------------
+
+_EXPIRY_21D = date.today() + timedelta(days=21)
+
+
+def test_assignment_risk_fires_deep_itm_near_expiry() -> None:
+    pos = _make_short_call(expiry=_EXPIRY_21D)
+    quote = _make_quote(delta=0.72, expiry=_EXPIRY_21D)
+    alert = check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21)
+    assert alert is not None
+    assert alert.trigger == "assignment_risk"
+    assert "|Δ|" in alert.detail
+    assert "roll / close / let-assign" in alert.detail
+
+
+def test_assignment_risk_no_fire_delta_below_threshold() -> None:
+    pos = _make_short_call(expiry=_EXPIRY_21D)
+    quote = _make_quote(delta=0.65, expiry=_EXPIRY_21D)
+    assert check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21) is None
+
+
+def test_assignment_risk_no_fire_dte_above_threshold() -> None:
+    pos = _make_short_call(expiry=date.today() + timedelta(days=22))
+    quote = _make_quote(delta=0.80, expiry=date.today() + timedelta(days=22))
+    assert check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21) is None
+
+
+def test_assignment_risk_skips_long_positions() -> None:
+    pos = _make_short_call(position=1.0)  # long
+    quote = _make_quote(delta=0.90, expiry=_EXPIRY_21D)
+    assert check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21) is None
+
+
+def test_assignment_risk_skips_missing_delta() -> None:
+    pos = _make_short_call(expiry=_EXPIRY_21D)
+    quote = _make_quote(delta=None, expiry=_EXPIRY_21D)
+    assert check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21) is None
+
+
+def test_assignment_risk_fires_exactly_at_thresholds() -> None:
+    pos = _make_short_call(expiry=date.today() + timedelta(days=21))
+    quote = _make_quote(delta=0.70, expiry=date.today() + timedelta(days=21))
+    alert = check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21)
+    assert alert is not None
+
+
+def test_check_all_includes_assignment_risk() -> None:
+    pos = _make_short_call(expiry=date.today() + timedelta(days=10))
+    quote = _make_quote(delta=0.75, expiry=date.today() + timedelta(days=10))
+    limits = {
+        "delta_ceiling": 0.45,
+        "dte_threshold": 7,
+        "iv_spike_pct": 40,
+        "ex_div_days_ahead": 5,
+        "assignment_alert_delta": 0.70,
+        "assignment_alert_dte": 21,
+    }
+    alerts = check_all(pos, quote, entry_iv=None, fund_stats=None, limits=limits)
+    assert any(a.trigger == "assignment_risk" for a in alerts)
+
+
+# ---------------------------------------------------------------------------
 # check_all
 # ---------------------------------------------------------------------------
 
@@ -474,6 +538,53 @@ def test_build_alert_text_with_review() -> None:
     text = format_roll_alert(pos, quote, [alert], review=review)
     assert "ROLL" in text
     assert "$190" in text
+
+
+def test_format_assignment_alert_no_review() -> None:
+    from src.notify.formatters import format_assignment_alert
+
+    pos = _make_short_call(expiry=_EXPIRY_21D)
+    quote = _make_quote(delta=0.75, expiry=_EXPIRY_21D)
+    alert = RollAlert(
+        position_symbol=pos.symbol,
+        underlying="AAPL",
+        trigger="assignment_risk",
+        detail="|Δ|=0.75 ≥ 0.70 with DTE=21 — consider: roll / close / let-assign",
+        current_delta=0.75,
+        dte=21,
+    )
+    text = format_assignment_alert(pos, quote, [alert], review=None)
+    assert "Assignment Risk" in text
+    assert "AAPL" in text
+    assert "roll" in text.lower()
+    assert "close" in text.lower()
+    assert "manual evaluation" in text
+
+
+def test_format_assignment_alert_with_review() -> None:
+    from src.notify.formatters import format_assignment_alert
+
+    pos = _make_short_call(expiry=_EXPIRY_21D)
+    quote = _make_quote(delta=0.80, expiry=_EXPIRY_21D)
+    alert = RollAlert(
+        position_symbol=pos.symbol,
+        underlying="AAPL",
+        trigger="assignment_risk",
+        detail="|Δ|=0.80 ≥ 0.70 with DTE=15 — consider: roll / close / let-assign",
+        current_delta=0.80,
+        dte=15,
+    )
+    review = RollReview(
+        position_symbol=pos.symbol,
+        recommendation="roll",
+        roll_target="roll out to Sep CC $195",
+        rationale="Deep ITM; rolling recovers premium.",
+        risks="Further upside possible.",
+        confidence=0.78,
+    )
+    text = format_assignment_alert(pos, quote, [alert], review=review)
+    assert "ROLL" in text
+    assert "Sep CC" in text
 
 
 # ---------------------------------------------------------------------------

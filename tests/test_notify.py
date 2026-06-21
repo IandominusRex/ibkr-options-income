@@ -1293,14 +1293,10 @@ async def test_send_buy_list_full_when_changed(monkeypatch, tmp_path):
     mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
 
     with patch("src.notify.sender.Bot", mock_cls):
-        await send_buy_list(
-            [BuyCandidate(symbol="AAPL", score=85.0)], "9", suppress_unchanged=True
-        )
+        await send_buy_list([BuyCandidate(symbol="AAPL", score=85.0)], "9", suppress_unchanged=True)
         mock_instance.send_message.reset_mock()
         # Different symbol set → full list again, not a digest.
-        await send_buy_list(
-            [BuyCandidate(symbol="NVDA", score=88.0)], "9", suppress_unchanged=True
-        )
+        await send_buy_list([BuyCandidate(symbol="NVDA", score=88.0)], "9", suppress_unchanged=True)
 
     text = mock_instance.send_message.call_args.kwargs["text"]
     assert "Buy\\-to\\-Own Candidates" in text

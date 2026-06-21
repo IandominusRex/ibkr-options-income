@@ -120,6 +120,41 @@ def check_ex_div(
     return None
 
 
+def check_assignment_risk(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    delta_threshold: float,
+    dte_threshold: int,
+) -> RollAlert | None:
+    """Fire when a short is deep-ITM (|delta| ≥ threshold) within dte_threshold days of expiry.
+
+    This combined check targets genuine assignment risk: a high-delta short near expiry where
+    the operator should act (roll out-and-up, buy to close, or let assignment proceed).
+    Missing delta is treated as data unavailable — no alert.
+    """
+    if pos.position >= 0:
+        return None
+    if pos.expiry is None:
+        return None
+    if quote.delta is None:
+        return None
+    dte = (pos.expiry - date.today()).days
+    abs_delta = abs(quote.delta)
+    if abs_delta >= delta_threshold and dte <= dte_threshold:
+        return RollAlert(
+            position_symbol=pos.symbol,
+            underlying=pos.underlying or pos.symbol,
+            trigger="assignment_risk",
+            detail=(
+                f"|Δ|={abs_delta:.2f} ≥ {delta_threshold:.2f} with DTE={dte}"
+                " — consider: roll / close / let-assign"
+            ),
+            current_delta=quote.delta,
+            dte=dte,
+        )
+    return None
+
+
 def check_all(
     pos: PositionSnapshot,
     quote: OptionQuote,
@@ -127,7 +162,7 @@ def check_all(
     fund_stats: FundamentalStats | None,
     limits: dict,
 ) -> list[RollAlert]:
-    """Run all four triggers and return every alert that fires.
+    """Run all triggers and return every alert that fires.
 
     Pass entry_iv=None to skip the IV-spike check (no entry data available).
     Pass fund_stats=None to skip the ex-div check.
@@ -151,5 +186,14 @@ def check_all(
         alert = check_ex_div(pos, fund_stats, limits.get("ex_div_days_ahead", 5), quote=quote)
         if alert:
             alerts.append(alert)
+
+    alert = check_assignment_risk(
+        pos,
+        quote,
+        limits.get("assignment_alert_delta", 0.70),
+        limits.get("assignment_alert_dte", 21),
+    )
+    if alert:
+        alerts.append(alert)
 
     return alerts

@@ -37,7 +37,12 @@ to your phone via Telegram.
 | `/account` | Account balances: net liquidation, buying power, margin, excess liquidity |
 | `/pending` | List all pending approvals with score and time-to-expiry |
 | `/fills` | Recent fills from the last 7 days with quantity, price, and credit received |
+| `/calendar` | Per-day P&L calendar for the last 30 days (net premium cashflow per day) |
+| `/campaigns` | Wheel campaigns per symbol: CSP→assignment→CC chain with cumulative net premium and adjusted cost basis |
+| `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only |
 | `/expire` | Expire all pending approvals (clears the queue without executing) |
+| `/profile` | Show the active trading profile (conservative / balanced / aggressive / default) |
+| `/profile conservative` | Switch to the named profile — overlays delta/DTE/IV/score-floor onto base config |
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
 | `/help` | List all commands |
 
@@ -86,7 +91,8 @@ python -m pytest               # all tests pass without IB Gateway
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | What every folder does, how the system fits together, the process/clientId model, and operational risk handling |
 | **[STATUS.md](STATUS.md)** | What's built, what's deliberately not built, tech stack, known limitations, and the live-cutover gate |
 | **[UNIVERSE_RESEARCH.md](UNIVERSE_RESEARCH.md)** | Deep-research findings for every ticker in the universe: tier classification, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF rules, and data-quality notes. Injected into Claude trade reviews. |
-| **[IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md)** | Active findings register (N1–N23) and phased remediation tracker from the 2026-06 signal-layer review; updated as fixes land |
+| **[COMPETITIVE_RESEARCH_PLAN.md](COMPETITIVE_RESEARCH_PLAN.md)** | Competitive research findings (Puthouse and peer landscape) and phased implementation tracker for borrowed features C1–C11; all 5 phases complete as of 2026-06-22 |
+| **`Archive/Improvement_Plans/`** | Historical: REMEDIATION.md, IMPROVEMENT_PLAN.md (N1–N23), IMPROVEMENT_PLAN_2.md, SCAN_EFFICIENCY_PLAN.md, SYSTEM_REVIEW.md, TELEGRAM_ROUTING_PLAN.md — all complete and archived |
 | **[CLAUDE.md](CLAUDE.md)** | Contributor and AI-assistant guidance |
 | **[ib_async_documentation.md](ib_async_documentation.md)** | IBKR API reference (ib_async library) |
 
@@ -106,7 +112,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
 | `config/skills/` | Human-promoted reasoning skills (active/proposed/rejected) injected into review prompts |
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
-| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring |
+| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1) |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate |
 | `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |

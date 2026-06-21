@@ -10,7 +10,7 @@ from src.analytics.liquidity import (
     score_liquidity,
     volume_gate_active,
 )
-from src.common.config import get_config
+from src.common.profile import get_effective_risk
 from src.common.schemas import (
     FundamentalStats,
     IVStats,
@@ -22,7 +22,12 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
-from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
+from src.strategies._scoring import (
+    annualized_roc_score,
+    fundamental_score,
+    make_candidate_id,
+    technical_score,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +60,9 @@ def generate_cc_candidates(
     if contracts < 1:
         return []
 
-    cfg = get_config()
-    cc_cfg = cfg.risk["covered_call"]
-    income_cfg = cfg.risk["income"]
+    risk = get_effective_risk()
+    cc_cfg = risk["covered_call"]
+    income_cfg = risk["income"]
 
     delta_min: float = cc_cfg["delta_min"]
     delta_max: float = cc_cfg["delta_max"]
@@ -126,6 +131,7 @@ def generate_cc_candidates(
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
             assignment_safety_score=(1 - delta) * 100,
+            annualized_roc_score=annualized_roc_score(annualized_yield_pct),
         )
 
         candidates.append(
@@ -148,6 +154,7 @@ def generate_cc_candidates(
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 vrp=iv_stats.vrp,
+                iv_rv_ratio=iv_stats.iv_rv_ratio,
                 dte=dte,
                 next_earnings=fund_stats.next_earnings,
                 scores=scores,

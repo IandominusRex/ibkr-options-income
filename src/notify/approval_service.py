@@ -30,7 +30,7 @@ import contextlib
 import logging
 import signal
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ib_async import IB
@@ -41,9 +41,12 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from src.claude.memory import USER_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.market_hours import (
+    holiday_name,
+    is_market_holiday,
     is_new_entry_window,
     is_rth,
     is_trading_day,
+    next_session,
     now_et_hhmm,
     seconds_until_next_aligned_mark,
     seconds_until_time,
@@ -74,9 +77,11 @@ from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
 from src.storage.system_settings import (
+    get_active_profile,
     get_halt_reason,
     is_automated_mode,
     is_halted,
+    set_active_profile,
     set_automated_mode,
     set_halted,
 )
@@ -732,6 +737,84 @@ async def handle_fills_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+async def handle_calendar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show a per-day P&L calendar for the last 30 days."""
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    try:
+        from collections import defaultdict
+        from zoneinfo import ZoneInfo
+
+        from sqlalchemy import select
+
+        _ET_ZONE = ZoneInfo("America/New_York")
+        cutoff = datetime.now(UTC) - timedelta(days=30)
+
+        with session_scope() as session:
+            rows = (
+                session.execute(
+                    select(FillRow).where(FillRow.filled_at >= cutoff).order_by(FillRow.filled_at)
+                )
+                .scalars()
+                .all()
+            )
+
+            # Group by ET calendar date, computing signed net cashflow per day.
+            by_date: dict[date, dict] = defaultdict(lambda: {"cashflow": 0.0, "fills": 0})
+            for row in rows:
+                filled_et = (
+                    row.filled_at.astimezone(_ET_ZONE) if row.filled_at.tzinfo else row.filled_at
+                )
+                day = filled_et.date()
+                sign = 1.0 if row.action == "SELL" else -1.0
+                by_date[day]["cashflow"] += sign * row.avg_price * row.filled_qty * 100
+                by_date[day]["fills"] += 1
+
+        calendar_rows = [
+            {"date": d, "cashflow": v["cashflow"], "fills": v["fills"]}
+            for d, v in sorted(by_date.items(), reverse=True)
+        ]
+
+        from src.notify.formatters import format_pnl_calendar
+
+        text = format_pnl_calendar(calendar_rows, days=30)
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("/calendar command failed")
+        await update.message.reply_text(
+            "Failed to fetch P&L calendar — check logs\\.", parse_mode="MarkdownV2"
+        )
+
+
+async def handle_profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show or set the active trading profile (conservative / balanced / aggressive / default)."""
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    from src.common.profile import VALID_PROFILES
+    from src.notify.formatters import format_profile_status
+
+    args = context.args or []
+    if not args:
+        name = get_active_profile()
+        await update.message.reply_text(format_profile_status(name), parse_mode="MarkdownV2")
+        return
+
+    name = args[0].lower()
+    if name not in VALID_PROFILES:
+        valid = ", ".join(sorted(VALID_PROFILES))
+        await update.message.reply_text(
+            f"Unknown profile *{name}*\\. Valid options: {valid}\\.",
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    set_active_profile(name)
+    logger.info("Trading profile changed to %r via /profile command", name)
+    await update.message.reply_text(format_profile_status(name), parse_mode="MarkdownV2")
+
+
 async def handle_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show current trading mode (MANUAL/AUTOMATED) and offer a toggle button."""
     if not _is_authorized(update) or update.message is None:
@@ -834,6 +917,34 @@ async def handle_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         auto = is_automated_mode()
         mode_str = "AUTOMATED 🤖" if auto else "MANUAL 👤"
         await query.edit_message_text(f"Mode unchanged: *{mode_str}*", parse_mode="MarkdownV2")
+
+
+async def handle_campaigns_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show wheel-strategy campaigns: P&L threads linking all option legs per symbol (C6).
+
+    Usage:
+      /campaigns        — last 20 campaigns (open + closed)
+      /campaigns open   — only open campaigns
+    """
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    args = context.args or []
+    open_only = bool(args) and args[0].lower() == "open"
+
+    try:
+        from src.storage.campaigns import load_campaigns
+
+        campaigns = load_campaigns(limit=20, open_only=open_only)
+        from src.notify.formatters import format_campaigns
+
+        text = format_campaigns(campaigns)
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
+    except Exception:
+        logger.exception("/campaigns command failed")
+        await update.message.reply_text(
+            "Failed to fetch campaigns — check logs\\.", parse_mode="MarkdownV2"
+        )
 
 
 async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1138,6 +1249,43 @@ async def _update_pending_order_notifications(ib_scan: IB) -> None:
             )
 
 
+async def _market_holiday_loop(app: object, chat_id: str) -> None:
+    """Background task: send a market-closed notification at 9:30 ET on NYSE full-day holidays.
+
+    If the service starts after 9:30 ET on a holiday the notification fires immediately rather
+    than waiting until the next day. Weekends are not notified — only named NYSE holidays.
+    """
+    from src.notify.formatters import format_market_holiday
+
+    notified_date: date | None = None
+
+    while True:
+        now = datetime.now(_ET)
+        today = now.date()
+
+        if is_market_holiday(today) and notified_date != today:
+            market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            if now < market_open:
+                await asyncio.sleep((market_open - now).total_seconds())
+
+            try:
+                cfg = get_config()
+                name = holiday_name(today) or "Market Holiday"
+                text = format_market_holiday(name, next_session(today))
+                await app.bot.send_message(  # type: ignore[attr-defined]
+                    chat_id=chat_id,
+                    message_thread_id=thread_id(cfg.secrets.telegram_thread_scan),
+                    text=text,
+                    parse_mode="MarkdownV2",
+                )
+                notified_date = today
+                logger.info("Market holiday notification sent: %s", name)
+            except Exception:
+                logger.exception("Market holiday notification failed")
+
+        await asyncio.sleep(seconds_until_time(9, 30))
+
+
 async def _premarket_snapshot_loop(ib_scan: IB, chat_id: str) -> None:
     """Background task: send the day's first account-snapshot to thread 58 at 09:00 ET
     (30 min pre-open). Subsequent intraday edits come from run_scan → send_account_snapshot."""
@@ -1258,6 +1406,9 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("mode", handle_mode_command))
     app.add_handler(CommandHandler("halt", handle_halt_command))
     app.add_handler(CommandHandler("resume", handle_resume_command))
+    app.add_handler(CommandHandler("calendar", handle_calendar_command))
+    app.add_handler(CommandHandler("profile", handle_profile_command))
+    app.add_handler(CommandHandler("campaigns", handle_campaigns_command))
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -1289,6 +1440,7 @@ async def _run_service(token: str, chat_id: str) -> None:
                     BotCommand("fills", "Recent fills (last 7 days)"),
                     BotCommand("expire", "Expire all pending approvals"),
                     BotCommand("health", "System health: connections, DB, last scan"),
+                    BotCommand("campaigns", "Wheel campaigns: P&L threads per symbol"),
                     BotCommand("help", "List all available commands"),
                 ]
             )
@@ -1373,6 +1525,9 @@ async def _run_service(token: str, chat_id: str) -> None:
             premarket_task = asyncio.create_task(_premarket_snapshot_loop(ib_scan, chat_id))
             logger.info("Premarket snapshot loop started (09:00 ET daily)")
 
+        holiday_task = asyncio.create_task(_market_holiday_loop(app, chat_id))
+        logger.info("Market holiday notification loop started")
+
         try:
             await stop_event.wait()
         finally:
@@ -1390,6 +1545,9 @@ async def _run_service(token: str, chat_id: str) -> None:
                 premarket_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await premarket_task
+            holiday_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await holiday_task
             await app.updater.stop()
             await app.stop()
 

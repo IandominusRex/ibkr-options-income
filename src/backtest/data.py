@@ -42,6 +42,32 @@ def load_price_series(
         return []
 
 
+def load_earnings_dates(symbol: str) -> list[date]:
+    """Return ascending historical (and near-future) earnings dates for *symbol* from yfinance.
+
+    Uses ``ticker.earnings_dates`` which provides a rolling ~2-year window of past announcements
+    and upcoming estimates. Returns an empty list (never raises) when the fetch fails or no data
+    is available (common for ETFs). Dates are sorted ascending so callers can iterate in order.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.earnings_dates
+        if df is None or df.empty:
+            return []
+        dates_out: list[date] = []
+        for ts in df.index:
+            try:
+                d = ts.date() if hasattr(ts, "date") else None
+                if d is not None:
+                    dates_out.append(d)
+            except Exception:
+                pass
+        return sorted(set(dates_out))
+    except Exception as exc:
+        log.warning("backtest: earnings_dates load failed for %s: %s", symbol, exc)
+        return []
+
+
 def load_iv_series(symbol: str, dates: list[date]) -> list[float | None]:
     """Stored daily IV (fraction) aligned to ``dates`` — the v2 backtest's entry-IV source (N21).
 

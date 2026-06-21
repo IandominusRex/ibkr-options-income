@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date as date_cls
 
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
-from src.common.config import get_config
+from src.common.profile import get_effective_risk
 from src.common.schemas import (
     IVStats,
     OptionQuote,
@@ -43,13 +43,11 @@ def generate_roll_candidates(
     if not should_roll:
         return []
 
-    cfg = get_config()
+    risk = get_effective_risk()
     leg_cfg = (
-        cfg.risk["covered_call"]
-        if position.right == OptionRight.CALL
-        else cfg.risk["cash_secured_put"]
+        risk["covered_call"] if position.right == OptionRight.CALL else risk["cash_secured_put"]
     )
-    income_cfg = cfg.risk["income"]
+    income_cfg = risk["income"]
 
     delta_min: float = leg_cfg["delta_min"]
     delta_max: float = leg_cfg["delta_max"]

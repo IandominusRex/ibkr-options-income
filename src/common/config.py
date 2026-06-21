@@ -224,6 +224,10 @@ class MonitorCfg(BaseModel):
     # Default False: the two-leg BAG sign convention is unverified on a live account, so rolls
     # stay alert-only until that is confirmed on paper (see STATUS.md live-verification list).
     roll_execution_enabled: bool = False
+    # C4 — assignment-risk alert: fires when |delta| ≥ threshold AND DTE ≤ dte window.
+    # Targets deep-ITM shorts near expiry where action (roll/close/assign) is required.
+    assignment_alert_delta: float = 0.70
+    assignment_alert_dte: int = 21
 
 
 class AutomationCfg(BaseModel):

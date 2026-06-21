@@ -383,3 +383,95 @@ async def test_roll_cancels_on_timeout(tmp_path, monkeypatch):
     with session_scope() as s:
         assert s.get(OrderRow, order_id).state == OrderState.CANCELLED
         assert s.query(FillRow).count() == 0
+
+
+async def test_roll_reprice_steps_toward_market(tmp_path, monkeypatch):
+    """With chase enabled, an unfilled roll combo is repriced toward live market credit (C5)."""
+    _db_setup(tmp_path, monkeypatch)
+    _no_sleep(monkeypatch)
+    import src.execution.roll_executor as rx
+
+    monkeypatch.setattr(rx, "get_positions", lambda ib: [_short()])
+    cfg = MagicMock()
+    cfg.is_live = False
+    cfg.execution.fill_timeout_minutes = 1
+    cfg.execution.reprice_enabled = True
+    cfg.execution.reprice_interval_seconds = 0.0
+    cfg.execution.max_reprices = 1
+    cfg.execution.reprice_step_pct = 0.34
+    cfg.risk = {"live_execution": {"min_live_premium_ratio": 0.80}}
+    monkeypatch.setattr(rx, "get_config", lambda: cfg)
+    # Fresh leg quotes: new=(1.68,1.72) → mid 1.70; old=(0.78,0.82) → mid 0.80
+    # fresh_net_credit = 0.90 → combo_ask_lmt = -0.90
+    monkeypatch.setattr(rx, "_refetch_bid_ask", AsyncMock(side_effect=[(1.68, 1.72), (0.78, 0.82)]))
+
+    cand = _roll_candidate(premium=1.00)
+    order_id = _seed_order(cand)
+    # Initial: new mid 1.80, old mid 0.80 → net credit 1.00, lmtPrice = -1.00.
+    ib = _make_ib(new_mid=(1.78, 1.82), old_mid=(0.78, 0.82), filled=True)
+    calls: dict[str, int] = {"n": 0}
+
+    def _isdone() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3  # False×2 (while + reprice guard), then True
+
+    ib.placeOrder.return_value.isDone.side_effect = _isdone
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    await execute_roll(ib, bot, "chat", order_id, cand)
+
+    # Two placeOrder calls: initial combo + one reprice.
+    assert ib.placeOrder.call_count == 2
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        # reprice_limit("BUY", -1.00, ask=-0.90, step=0.34) → -1.00+0.034 = -0.966 → -0.97
+        assert row.limit_price == pytest.approx(-0.97)
+
+
+async def test_roll_reprice_floor_not_breached(tmp_path, monkeypatch):
+    """Ceiling on the BAG lmtPrice prevents accepting less than min_live_premium_ratio credit (C5)."""
+    _db_setup(tmp_path, monkeypatch)
+    _no_sleep(monkeypatch)
+    import src.execution.roll_executor as rx
+
+    monkeypatch.setattr(rx, "get_positions", lambda ib: [_short()])
+    cfg = MagicMock()
+    cfg.is_live = False
+    cfg.execution.fill_timeout_minutes = 1
+    cfg.execution.reprice_enabled = True
+    cfg.execution.reprice_interval_seconds = 0.0
+    cfg.execution.max_reprices = 1
+    cfg.execution.reprice_step_pct = 1.0  # full step so the ceiling binds clearly
+    cfg.risk = {"live_execution": {"min_live_premium_ratio": 0.80}}
+    monkeypatch.setattr(rx, "get_config", lambda: cfg)
+    # Fresh market drops to $0.70 credit (< floor 0.80 × 1.00 = $0.80).
+    # ceiling_lmt = -0.80; reprice must cap at -0.80, not go above.
+    monkeypatch.setattr(rx, "_refetch_bid_ask", AsyncMock(side_effect=[(1.48, 1.52), (0.78, 0.82)]))
+
+    cand = _roll_candidate(premium=1.00)
+    order_id = _seed_order(cand)
+    ib = _make_ib(new_mid=(1.78, 1.82), old_mid=(0.78, 0.82), filled=True)
+    calls: dict[str, int] = {"n": 0}
+
+    def _isdone() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3
+
+    ib.placeOrder.return_value.isDone.side_effect = _isdone
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    await execute_roll(ib, bot, "chat", order_id, cand)
+
+    assert ib.placeOrder.call_count == 2
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        # fresh_net_credit = 1.50 - 0.80 = 0.70; combo_ask_lmt = -0.70
+        # reprice_limit("BUY", -1.00, ask=-0.70, step=1.0, ceiling=-0.80):
+        #   target = -0.70, min(-0.70, -0.80) = -0.80 → ceiling holds minimum $0.80 credit
+        assert row.limit_price == pytest.approx(-0.80)

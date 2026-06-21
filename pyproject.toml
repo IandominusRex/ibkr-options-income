@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.36"]
 sentiment = ["praw>=7.7"]
-dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "types-PyYAML"]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "ruff>=0.5", "mypy>=1.10", "types-PyYAML"]
 
 [build-system]
 requires = ["hatchling"]
@@ -51,3 +51,4 @@ check_untyped_defs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+timeout = 30

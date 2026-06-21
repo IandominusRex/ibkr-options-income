@@ -333,3 +333,38 @@ class JournalRow(Base):
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CampaignRow(Base):
+    """One wheel-strategy campaign — links all legs (CSP→assignment→CC→roll→close) under one P&L thread.
+
+    A campaign groups every option position opened on a symbol since the first entry. Each fill
+    (SELL = credit entry, BUY = debit close/roll) is aggregated into total_premium_collected,
+    total_debit_paid, and net_premium so the operator can see cumulative income per symbol
+    across a multi-leg wheel cycle. adjusted_cost_basis tracks stock cost after assignment.
+    """
+
+    __tablename__ = "campaigns"
+    __table_args__ = (UniqueConstraint("campaign_id", name="uq_campaigns_campaign_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    status: Mapped[str] = mapped_column(String(10), default="open")  # "open" | "closed"
+    opened_date: Mapped[date] = mapped_column(Date)
+    closed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # JSON list of candidate_ids in leg order (earliest first).
+    leg_candidate_ids: Mapped[list] = mapped_column(JSON, default=list)
+    # Rolled-up financials — recomputed from FillRow on every attach (C6).
+    total_premium_collected: Mapped[float] = mapped_column(Float, default=0.0)
+    total_debit_paid: Mapped[float] = mapped_column(Float, default=0.0)
+    net_premium: Mapped[float] = mapped_column(Float, default=0.0)
+    # Assignment tracking.
+    assigned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-share stock cost after assignment: assignment_price − premium_collected/contracts/100.
+    adjusted_cost_basis: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Realized P&L on the stock leg when shares are subsequently sold (CC assigned away).
+    realized_stock_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

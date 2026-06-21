@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.common.config import get_config
+from src.common.profile import get_effective_weights
 from src.common.schemas import Strategy, TradeCandidate
 
 _EQUAL_WEIGHTS: dict[str, float] = {
@@ -12,13 +12,13 @@ _EQUAL_WEIGHTS: dict[str, float] = {
     "liquidity": 0.2,
     "assignment_risk": 0.2,
     "sentiment": 0.0,  # off by default; enabled when sentiment weight is in config
+    "annualized_roc": 0.0,  # off by default (C2); enable in scoring_weights.yaml to rank by yield
 }
 
 
 def _get_weights(strategy: Strategy) -> dict[str, float]:
     """Return normalized weights for a strategy, falling back to equal weights."""
-    cfg = get_config()
-    raw: dict[str, float] = cfg.weights.get(strategy.value, {})
+    raw: dict[str, float] = get_effective_weights().get(strategy.value, {})
     if not raw:
         return _EQUAL_WEIGHTS.copy()
     total = sum(raw.values())
@@ -42,6 +42,7 @@ def score_candidates(candidates: list[TradeCandidate]) -> list[TradeCandidate]:
             + s.liquidity_score * w.get("liquidity", 0.2)
             + s.assignment_safety_score * w.get("assignment_risk", 0.2)
             + sentiment * w.get("sentiment", 0.0)
+            + s.annualized_roc_score * w.get("annualized_roc", 0.0)
         )
         result.append(c.model_copy(update={"blended_score": round(blended, 4)}))
     result.sort(key=lambda c: c.blended_score, reverse=True)

@@ -1,0 +1,5 @@
+# Balanced profile — matches the base config defaults (no overrides).
+# Selecting this profile has the same effect as "default".
+risk: {}
+
+weights: {}

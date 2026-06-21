@@ -158,6 +158,7 @@ class IVStats(BaseModel):
     )
     term_structure_slope: float | None = None  # near vs far IV
     put_call_skew: float | None = None
+    iv_rv_ratio: float | None = None  # current_iv / realized_vol; ≥1.05 = premium-rich (C1 gate)
 
 
 class MarketConditions(BaseModel):
@@ -215,6 +216,7 @@ class ScoreCard(BaseModel):
         0.0  # 0-100; higher = SAFER (less assignment risk, e.g. lower delta)
     )
     sentiment_score: float | None = None  # 0-100, 50=neutral; None = not fetched
+    annualized_roc_score: float = 0.0  # capped annualized ROC normalized to 0-100 (C2)
 
 
 class TradeCandidate(BaseModel):
@@ -241,6 +243,7 @@ class TradeCandidate(BaseModel):
     vrp: float | None = (
         None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
     )
+    iv_rv_ratio: float | None = None  # current_iv / realized_vol; ≥1.05 = premium-rich (C1)
     dte: int
     next_earnings: date | None = (
         None  # earnings date within the option's life → blackout (risk engine)

@@ -1,8 +1,61 @@
-"""Plain-text formatting of a BacktestResult for the CLI."""
+"""Plain-text formatting of BacktestResult and EarningsCycleBacktestResult for the CLI."""
 
 from __future__ import annotations
 
+from src.backtest.earnings import EarningsCycleBacktestResult
 from src.backtest.engine import BacktestResult
+
+
+def compact_report(result: BacktestResult) -> str:
+    """Four-line summary of a BacktestResult — suitable for injecting into Claude prompts (C11)."""
+    if result.num_cycles == 0:
+        return f"Backtest {result.symbol} {result.strategy}: 0 cycles (insufficient history)"
+    iv_note = "stored IV" if result.iv_source == "stored_iv" else "trailing HV"
+    return (
+        f"Backtest ({result.start}→{result.end}) — {result.symbol} {result.strategy} "
+        f"Δ{result.params.target_delta:.2f} {result.params.dte}d [{iv_note}]\n"
+        f"  Cycles: {result.num_cycles} · Win: {result.win_rate:.0%} · "
+        f"Assignment: {result.assignment_rate:.0%} · Profit-take: {result.profit_take_rate:.0%}\n"
+        f"  Ann. return: {result.annualized_return_pct:.1f}% · "
+        f"Max DD: {result.max_drawdown_pct:.1f}% · Mean VRP: {result.mean_vrp_pct:+.1f}%\n"
+        f"  Net P&L: ${result.total_pnl:,.0f} · Capital base: ${result.capital_base:,.0f}"
+    )
+
+
+def format_earnings_cycle_report(result: EarningsCycleBacktestResult) -> str:
+    """Human-readable summary of an earnings-cycle backtest run."""
+    p = result.params
+    lines = [
+        f"Earnings-Cycle Backtest — {result.symbol} {result.strategy}",
+        f"  Params:        Δ{p.target_delta:.2f} · {p.dte}d · blackout {result.blackout_before}d before / {result.blackout_after}d after",
+        f"  Earnings cycles evaluated: {len(result.cycles)}",
+    ]
+
+    if result.num_pre_cycles == 0:
+        lines.append("  (no pre-earnings cycles — insufficient price history or all windows gated)")
+    else:
+        lines += [
+            "",
+            "── Pre-earnings trades ──",
+            f"  Cycles:        {result.num_pre_cycles}",
+            f"  Net P&L:       ${result.total_pre_pnl:,.0f}",
+            f"  Win rate:      {result.pre_win_rate:.0%}",
+            f"  Assignment:    {result.pre_assignment_rate:.0%}",
+        ]
+
+    if result.vol_crush_dte is not None:
+        lines.append("")
+        lines.append(f"── Vol-crush trades (entry {result.vol_crush_dte}d after earnings) ──")
+        if result.num_vol_crush_cycles == 0:
+            lines.append("  (no vol-crush cycles)")
+        else:
+            lines += [
+                f"  Cycles:        {result.num_vol_crush_cycles}",
+                f"  Net P&L:       ${result.total_vol_crush_pnl:,.0f}",
+                f"  Win rate:      {result.vol_crush_win_rate:.0%}",
+            ]
+
+    return "\n".join(lines)
 
 
 def format_report(result: BacktestResult) -> str:

@@ -153,3 +153,7 @@ monitor:
   # execute_roll) instead of an alert-only message. Default false until the BAG combo sign
   # convention is verified on a live paper account.
   roll_execution_enabled: false
+  # C4: assignment-risk alert — fires when |delta| >= threshold AND DTE <= dte window.
+  # Targets deep-ITM shorts near expiry; suggests roll / close / let-assign.
+  assignment_alert_delta: 0.70
+  assignment_alert_dte: 21

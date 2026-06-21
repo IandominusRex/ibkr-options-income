@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from src.common.schemas import OptionRight, OrderState, PositionSnapshot
 from src.execution.position_manager import close_candidate_id, close_short_position
 from src.storage.models import FillRow, OrderRow
@@ -146,3 +148,44 @@ async def test_close_cancels_on_timeout(tmp_path, monkeypatch):
         assert len(orders) == 1
         assert orders[0].state == OrderState.CANCELLED
         assert s.query(FillRow).count() == 0
+
+
+async def test_close_reprice_steps_toward_ask(tmp_path, monkeypatch):
+    """With chase enabled, an unfilled buy-to-close is repriced upward toward the ask (C5)."""
+    _db_setup(tmp_path, monkeypatch)
+    import src.execution.position_manager as pm
+
+    cfg = MagicMock()
+    cfg.is_live = False
+    cfg.execution.fill_timeout_minutes = 1
+    cfg.execution.reprice_enabled = True
+    cfg.execution.reprice_interval_seconds = 0.0  # reprice on the first poll
+    cfg.execution.max_reprices = 1
+    cfg.execution.reprice_step_pct = 0.5
+    monkeypatch.setattr(pm, "get_config", lambda: cfg)
+    monkeypatch.setattr(pm.asyncio, "sleep", AsyncMock())
+    # Stub _refetch_bid_ask so the reprice step has known bid/ask without calling executor's config.
+    monkeypatch.setattr(pm, "_refetch_bid_ask", AsyncMock(return_value=(0.38, 0.42)))
+
+    ib = _make_close_ib(filled=True, fill_qty=2.0, avg_price=0.41)
+    # isDone: False×2 (enter loop + reprice guard), then True (exit).
+    calls: dict[str, int] = {"n": 0}
+
+    def _isdone() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3
+
+    ib.placeOrder.return_value.isDone.side_effect = _isdone
+
+    result = await close_short_position(ib, _make_pos(), bid=0.38, ask=0.42)
+
+    assert result.status == "filled"
+    # Two placeOrder calls: initial mid-price order + one reprice toward the ask.
+    assert ib.placeOrder.call_count == 2
+
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        row = s.query(OrderRow).first()
+        # Initial mid = (0.38+0.42)/2 = 0.40; reprice("BUY", 0.40, ask=0.42, step=0.5) = 0.41.
+        assert row.limit_price == pytest.approx(0.41)

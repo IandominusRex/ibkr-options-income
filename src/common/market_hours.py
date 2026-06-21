@@ -231,6 +231,44 @@ def seconds_until_next_aligned_mark(interval_minutes: int, now: datetime | None 
     return (target - now).total_seconds()
 
 
+def holiday_name(d: date) -> str | None:
+    """Return the NYSE holiday name for *d*, or None if *d* is not a full-day holiday."""
+    if d not in _holidays(d.year):
+        return None
+    year = d.year
+    nyd = date(year, 1, 1)
+    nyd_obs = nyd + timedelta(days=1) if nyd.weekday() == _SUN else nyd
+    if d == nyd_obs:
+        return "New Year's Day"
+    if d == _nth_weekday(year, 1, _MON, 3):
+        return "MLK Day"
+    if d == _nth_weekday(year, 2, _MON, 3):
+        return "Presidents' Day"
+    if d == _easter(year) - timedelta(days=2):
+        return "Good Friday"
+    if d == _last_weekday(year, 5, _MON):
+        return "Memorial Day"
+    if year >= 2022 and d == _observed(date(year, 6, 19)):
+        return "Juneteenth"
+    if d == _observed(date(year, 7, 4)):
+        return "Independence Day"
+    if d == _nth_weekday(year, 9, _MON, 1):
+        return "Labor Day"
+    if d == _nth_weekday(year, 11, _THU, 4):
+        return "Thanksgiving"
+    if d == _observed(date(year, 12, 25)):
+        return "Christmas"
+    return "Market Holiday"
+
+
+def next_session(d: date) -> date:
+    """The next trading day strictly after *d*."""
+    cur = d + timedelta(days=1)
+    while not is_trading_day(cur):
+        cur += timedelta(days=1)
+    return cur
+
+
 def now_et_hhmm() -> str:
     """Current wall-clock time as 'HH:MM ET', for operator-facing cycle messages."""
     return datetime.now(_ET).strftime("%H:%M ET")

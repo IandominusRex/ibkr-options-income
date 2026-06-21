@@ -35,6 +35,8 @@ from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
 from src.common.market_hours import now_et_hhmm
+from src.common.profile import activate as activate_profile
+from src.common.profile import get_effective_weights
 from src.common.schemas import (
     AccountSnapshot,
     BuyCandidate,
@@ -53,13 +55,14 @@ from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
 from src.ibkr.market_data import get_option_chain_quotes_async, persist_chain_quotes
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
-from src.notify.formatters import format_data_provenance
+from src.notify.formatters import format_data_provenance, format_skip_reasons
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
+    get_active_profile,
     get_setting,
     release_scan_lease,
     renew_scan_lease,
@@ -707,6 +710,8 @@ def _no_candidates_reason(
     *,
     strategy: str = "",
     positions: list[PositionSnapshot] | None = None,
+    rejection_tally: dict[str, int] | None = None,
+    symbol_count: int = 0,
 ) -> str:
     """Human-readable explanation for why a per-strategy screen is empty this cycle."""
     prov = result.provenance
@@ -738,7 +743,14 @@ def _no_candidates_reason(
         # Fallback: chains returned nothing and nothing failed either (shouldn't happen in full scan).
         return "no option chain data returned this cycle — market may be closed"
 
-    return f"0/{all_count} candidates passed the risk gate"
+    # Build a compact rejection breakdown so the operator can see which gate dominated.
+    sym_clause = f" across {symbol_count} symbols" if symbol_count > 0 else ""
+    gate_summary = ""
+    if rejection_tally:
+        top = sorted(rejection_tally.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        gate_summary = " (" + ", ".join(f"{r} ×{n}" for r, n in top) + ")"
+
+    return f"0/{all_count} candidates{sym_clause} passed the risk gate{gate_summary}"
 
 
 async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -> None:
@@ -869,6 +881,9 @@ async def _run_scan_body(
     cfg = get_config()
     result = ScanResult()
     tracker = _Tracker(progress_callback, dashboard_callback)
+
+    # Sync the in-process profile from the DB before any risk/scoring calls (C9).
+    activate_profile(get_active_profile())
 
     # --- 0. Market conditions (VIX) — fetched once, off-thread ---
     loop = asyncio.get_running_loop()
@@ -1127,6 +1142,8 @@ async def _run_scan_body(
     # per-sector / total-CSP / buying-power) greedily in priority order.
     await tracker.tick("scoring", "⏳")
     all_option_candidates = cc_candidates + csp_candidates
+    cc_rejection_tally: dict[str, int] = {}
+    csp_rejection_tally: dict[str, int] = {}
     try:
         if all_option_candidates:
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
@@ -1141,13 +1158,39 @@ async def _run_scan_body(
             log.info(
                 "scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates)
             )
+            # Tally rejection reasons per strategy and per symbol (C7).
+            # The per-symbol map drives the skip-reasons card sent at the end of each scan.
+            per_symbol_skip: dict[str, list[str]] = {}
+            for c in cc_candidates:
+                v = verdict_map.get(c.candidate_id)
+                if v and v.verdict.value != "pass":
+                    for r in v.reasons:
+                        cc_rejection_tally[r] = cc_rejection_tally.get(r, 0) + 1
+                    bucket = per_symbol_skip.setdefault(c.underlying, [])
+                    for r in v.reasons:
+                        if r not in bucket:
+                            bucket.append(r)
+            for c in csp_candidates:
+                v = verdict_map.get(c.candidate_id)
+                if v and v.verdict.value != "pass":
+                    for r in v.reasons:
+                        csp_rejection_tally[r] = csp_rejection_tally.get(r, 0) + 1
+                    bucket = per_symbol_skip.setdefault(c.underlying, [])
+                    for r in v.reasons:
+                        if r not in bucket:
+                            bucket.append(r)
             # Score floor: only surface candidates above the configured quality bar.
-            min_score = cfg.weights.get("min_candidate_score", 0)
+            min_score = get_effective_weights().get("min_candidate_score", 0)
             passed = [c for c in passed if c.blended_score >= min_score]
+            # Remove any symbol that has at least one passing candidate from the skip map —
+            # we only surface symbols where *every* candidate was rejected (C7).
+            for c in passed:
+                per_symbol_skip.pop(c.underlying, None)
             top = select_top_candidates(passed)
         else:
             top = []
             passed = []
+            per_symbol_skip = {}
     except Exception:
         log.exception("scan: scoring/risk-gate failed — aborting")
         await tracker.error("scoring", "failed — aborting")
@@ -1240,7 +1283,12 @@ async def _run_scan_body(
             hash_key="last_cc_hash",
             time_key="last_cc_time",
             empty_reason=_no_candidates_reason(
-                result, len(cc_candidates), strategy="covered_call", positions=positions
+                result,
+                len(cc_candidates),
+                strategy="covered_call",
+                positions=positions,
+                rejection_tally=cc_rejection_tally,
+                symbol_count=len({c.underlying for c in cc_candidates}),
             ),
             suppress_unchanged=intraday,
         )
@@ -1253,12 +1301,32 @@ async def _run_scan_body(
             hash_key="last_csp_hash",
             time_key="last_csp_time",
             empty_reason=_no_candidates_reason(
-                result, len(csp_candidates), strategy="cash_secured_put"
+                result,
+                len(csp_candidates),
+                strategy="cash_secured_put",
+                rejection_tally=csp_rejection_tally,
+                symbol_count=len({c.underlying for c in csp_candidates}),
             ),
             suppress_unchanged=intraday,
         )
         cand_sent = cc_sent or csp_sent
         buy_sent = await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
+
+        # C7: skip-reasons card — send on full sweeps (manual /scan) when any symbols
+        # were fully rejected. Omitted for intraday cycles (would fire ~26× per session).
+        if not intraday and per_symbol_skip and bot is not None and chat_id:
+            skip_text = format_skip_reasons(per_symbol_skip)
+            if skip_text:
+                try:
+                    await bot.send_message(  # type: ignore[attr-defined]
+                        chat_id=chat_id,
+                        message_thread_id=thread_id(cfg_s.telegram_thread_scan),
+                        text=skip_text,
+                        parse_mode="MarkdownV2",
+                    )
+                except Exception:
+                    log.warning("scan: failed to send skip-reasons card", exc_info=True)
+
         # S6: an intraday cycle that surfaced nothing (no candidate cleared the gate, buy list
         # unchanged) would otherwise be silent — the operator can't tell a deliberately quiet
         # market from a dead daemon. Send one compact heartbeat that confirms the scan ran and
@@ -1382,7 +1450,9 @@ async def run_ticker_scan(
         )
     except Exception:
         log.exception("ticker_scan: analytics failed for %s", ticker)
-        await _ticker_edit_msg(bot, chat_id, progress_msg_id, "❌ *Scan failed* — analytics error\\.")
+        await _ticker_edit_msg(
+            bot, chat_id, progress_msg_id, "❌ *Scan failed* — analytics error\\."
+        )
         return
 
     # 4. Portfolio: fetch positions and account (needed for CC sizing / CSP collateral).
@@ -1442,7 +1512,7 @@ async def run_ticker_scan(
             scored = score_candidates(all_option_candidates)
             verdicts = validate_candidates(scored, account, positions)
             verdict_map = {v.candidate_id: v for v in verdicts}
-            min_score = cfg.weights.get("min_candidate_score", 0)
+            min_score = get_effective_weights().get("min_candidate_score", 0)
             passed = [
                 c
                 for c in scored

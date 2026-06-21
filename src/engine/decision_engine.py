@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.common.config import get_config
+from src.common.profile import get_effective_risk
 from src.common.schemas import TradeCandidate
 
 
@@ -30,8 +30,7 @@ def select_top_candidates(
     isn't filled with many strikes of one name at the expense of breadth.
     """
     if n is None:
-        cfg = get_config()
-        n = cfg.risk["portfolio"]["max_new_positions_per_run"]
+        n = get_effective_risk()["portfolio"]["max_new_positions_per_run"]
 
     seen: set[tuple[str, str]] = set()
     deduped: list[TradeCandidate] = []

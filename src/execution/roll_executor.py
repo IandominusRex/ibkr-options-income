@@ -49,12 +49,14 @@ from src.common.schemas import (
 from src.engine.risk_engine import validate_live_quote
 from src.execution.executor import (
     _GREEKS_WAIT_FRACTION,
+    _as_float,
     _live_confirm_events,
     _quote_timeout,
+    _refetch_bid_ask,
     _safe_float,
     register_live_confirm,
 )
-from src.execution.order_builder import build_combo_roll_order
+from src.execution.order_builder import build_combo_roll_order, reprice_limit
 from src.ibkr.contracts import build_option
 from src.ibkr.portfolio import get_positions
 from src.storage.db import session_scope
@@ -370,14 +372,83 @@ async def execute_roll(
                 row.limit_price = float(order.lmtPrice) if order.lmtPrice is not None else None
 
         # 6. Wait for terminal state or timeout — cancel on timeout.
-        deadline = asyncio.get_running_loop().time() + fill_timeout
+        # Optionally reprice the combo limit toward the live market (config-gated; default off).
+        # Re-fetches per-leg bid/ask to compute a fresh net credit, then steps the BAG
+        # limit toward market while flooring at min_live_premium_ratio × approved premium.
+        exec_cfg = cfg.execution
+        reprice_enabled = getattr(exec_cfg, "reprice_enabled", False) is True
+        reprice_interval = _as_float(getattr(exec_cfg, "reprice_interval_seconds", 45.0), 45.0)
+        max_reprices = int(_as_float(getattr(exec_cfg, "max_reprices", 0), 0.0))
+        step_pct = _as_float(getattr(exec_cfg, "reprice_step_pct", 0.34), 0.34)
+        live_cfg_r = cfg.risk.get("live_execution", {}) or {}
+        min_ratio_r = live_cfg_r.get("min_live_premium_ratio")
+        min_ratio_f = _as_float(min_ratio_r, 0.0) if min_ratio_r is not None else 0.0
+        min_net_credit = (
+            min_ratio_f * candidate.premium if (min_ratio_f > 0 and candidate.premium > 0) else 0.0
+        )
+        # In lmtPrice space the BAG order BUYs at a negative price (credit = -lmtPrice).
+        # ceiling_lmt = -min_net_credit keeps lmtPrice from exceeding the minimum-credit limit.
+        ceiling_lmt = round(round(-min_net_credit / 0.01) * 0.01, 2) if min_net_credit > 0 else None
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + fill_timeout
+        next_reprice_at = loop.time() + reprice_interval
+        reprices_done = 0
         while not trade.isDone():
             await asyncio.sleep(1)
-            if asyncio.get_running_loop().time() > deadline:
+            now = loop.time()
+            if now > deadline:
                 log.warning("roll: fill timeout order_id=%s — cancelling", order_id)
                 ib.cancelOrder(trade.order)
                 await asyncio.sleep(2)
                 break
+            if (
+                reprice_enabled
+                and reprices_done < max_reprices
+                and now >= next_reprice_at
+                and not trade.isDone()
+            ):
+                next_reprice_at = now + reprice_interval
+                fn_bid, fn_ask = await _refetch_bid_ask(ib, open_contract)
+                fo_bid, fo_ask = await _refetch_bid_ask(ib, close_contract)
+                if fn_ask is not None and fo_ask is not None:
+                    fresh_new_mid = (
+                        (fn_bid + fn_ask) / 2 if fn_bid is not None and fn_bid > 0 else fn_ask
+                    )
+                    fresh_old_mid = (
+                        (fo_bid + fo_ask) / 2 if fo_bid is not None and fo_bid > 0 else fo_ask
+                    )
+                    fresh_net_credit = fresh_new_mid - fresh_old_mid
+                    if fresh_net_credit > 0:
+                        combo_ask_lmt = round(round(-fresh_net_credit / 0.01) * 0.01, 2)
+                        cur_limit = _safe_float(order.lmtPrice)
+                        new_price = (
+                            reprice_limit(
+                                "BUY",
+                                cur_limit,
+                                bid=None,
+                                ask=combo_ask_lmt,
+                                step_pct=step_pct,
+                                ceiling=ceiling_lmt,
+                            )
+                            if cur_limit is not None
+                            else None
+                        )
+                        if new_price is not None:
+                            order.lmtPrice = new_price
+                            ib.placeOrder(combo, order)
+                            reprices_done += 1
+                            log.info(
+                                "roll reprice %d/%d %s net-limit -> %.2f",
+                                reprices_done,
+                                max_reprices,
+                                candidate.underlying,
+                                new_price,
+                            )
+                            with session_scope() as session:
+                                row = session.get(OrderRow, order_id)
+                                if row:
+                                    row.limit_price = new_price
 
         filled_qty = float(getattr(trade.orderStatus, "filled", 0.0) or 0.0)
         net_avg = float(getattr(trade.orderStatus, "avgFillPrice", 0.0) or 0.0)

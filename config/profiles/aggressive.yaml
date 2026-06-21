@@ -1,0 +1,22 @@
+# Aggressive profile — wider delta/DTE windows, lower IV/score floors.
+# Overlays on risk_limits.yaml (risk:) and scoring_weights.yaml (weights:).
+risk:
+  covered_call:
+    delta_min: 0.20
+    delta_max: 0.40   # wider; default 0.35
+    dte_min: 14       # shorter DTE ok; default 21
+    dte_max: 60
+  cash_secured_put:
+    delta_min: 0.15
+    delta_max: 0.35   # wider; default 0.30
+    dte_min: 14
+    dte_max: 60
+  income:
+    min_roc_pct: 0.75           # lower bar; default 1.0
+    min_annualized_yield_pct: 9.0   # default 12.0
+  iv:
+    min_iv_rank: 20             # scan lower-IV environments; default 30
+    min_iv_rv_ratio: 1.00       # looser IV/RV gate; default 1.05
+
+weights:
+  min_candidate_score: 50       # lower score floor; default 55

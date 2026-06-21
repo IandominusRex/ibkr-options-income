@@ -235,9 +235,12 @@ async def fire_alerts(
                 ]
             )
 
-    from src.notify.formatters import format_roll_alert
+    from src.notify.formatters import format_assignment_alert, format_roll_alert
 
-    text = format_roll_alert(pos, quote, fresh, review)
+    if all(a.trigger == "assignment_risk" for a in fresh):
+        text = format_assignment_alert(pos, quote, fresh, review)
+    else:
+        text = format_roll_alert(pos, quote, fresh, review)
     try:
         await bot.send_message(
             chat_id=chat_id, text=text, parse_mode="MarkdownV2", reply_markup=reply_markup
@@ -392,6 +395,8 @@ class IntradayMonitor:
                 "dte_threshold": self._cfg.monitor.dte_threshold,
                 "iv_spike_pct": self._cfg.monitor.iv_spike_pct,
                 "ex_div_days_ahead": self._cfg.monitor.ex_div_days_ahead,
+                "assignment_alert_delta": self._cfg.monitor.assignment_alert_delta,
+                "assignment_alert_dte": self._cfg.monitor.assignment_alert_dte,
             }
             entry_iv = self._entry_iv.get(local_sym)
             fund_stats = self._fund_stats.get(pos.underlying or pos.symbol)

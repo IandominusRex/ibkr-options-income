@@ -44,6 +44,11 @@ liquidity:
 iv:
   # Only sell premium when it's relatively expensive.
   min_iv_rank: 30
+  # IV/RV richness gate (C1): sell only when implied vol exceeds realized vol by this ratio.
+  # Missing ratio is treated as "data unavailable" and never blocks the scan.
+  min_iv_rv_ratio: 1.05
+  # Lookback window (trading days) for the realized-vol computation used in the IV/RV ratio.
+  realized_vol_window: 20
 
 # --- Live execution re-gate (send-time, validate_live_quote) ---
 live_execution:

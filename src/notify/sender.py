@@ -269,12 +269,15 @@ async def send_candidates(
             )
 
     if sent:
-        set_setting(hash_key, current_hash)
-        set_setting(time_key, _et_hhmm())
+        # Use the caller's session when available to avoid a second SQLite write-lock
+        # request while the outer session is still open (would deadlock on file SQLite).
+        _sess = session
+        set_setting(hash_key, current_hash, session=_sess)
+        set_setting(time_key, _et_hhmm(), session=_sess)
         # Clear both the stored status-message id and accumulated body so the next
         # empty/unchanged cycle starts fresh rather than editing the stale candidate card.
-        set_setting(status_msg_key, "")
-        set_setting(status_msg_key + _STATUS_BODY_SUFFIX, "")
+        set_setting(status_msg_key, "", session=_sess)
+        set_setting(status_msg_key + _STATUS_BODY_SUFFIX, "", session=_sess)
     return sent
 
 
