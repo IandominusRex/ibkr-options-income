@@ -125,6 +125,26 @@ def _active_skills_block() -> str:
         return ""
 
 
+def _backtest_line(cand: TradeCandidate) -> str:
+    """Compact on-demand backtest for one candidate, gated by `claude.backtest_in_prompt` (C11).
+
+    Fail-soft and OFF by default: when disabled or on any error, returns an empty string so a
+    yfinance hiccup can never break prompt building. Enrichment only — reaches Claude solely
+    through this prompt, never the engine (CLAUDE.md fence).
+    """
+    from src.common.config import get_config
+
+    if not get_config().claude.backtest_in_prompt:
+        return ""
+    try:
+        from src.backtest.on_demand import backtest_candidate
+
+        summary = backtest_candidate(cand)
+        return f"Backtest:         {summary}" if summary else ""
+    except Exception:
+        return ""
+
+
 def _spot_prices_block(
     candidates: list[TradeCandidate], spot_prices: dict[str, float] | None
 ) -> list[str]:
@@ -246,6 +266,9 @@ def build_prompt(
         if c.prob_otm is not None:
             lines.append(f"Prob. OTM (≈1−|Δ|): {c.prob_otm:.1%}  (P expire OTM, not P profit)")
         lines.append(f"Blended Score:    {c.blended_score:.1f}/100")
+        backtest_line = _backtest_line(c)
+        if backtest_line:
+            lines.append(backtest_line)
         lines.append(f"Rationale Tags:   {', '.join(c.rationale_tags) or 'none'}")
         lines.append(
             f"ScoreCard:        IV={c.scores.iv_score:.0f}  Tech={c.scores.technical_score:.0f}  "

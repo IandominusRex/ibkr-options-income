@@ -141,13 +141,18 @@ def attach_fill_to_campaign(
 def mark_campaign_assigned(
     symbol: str,
     assignment_price: float | None = None,
+    right: str | None = None,
 ) -> None:
     """Mark the open campaign for *symbol* as assigned and compute adjusted cost basis.
 
     adjusted_cost_basis = assignment_price − (net_premium / 100) per share, so the
     operator knows their effective stock entry price net of all collected premium.
 
-    Called by the EOD reconciler when assignment is detected.
+    The ACB is only meaningful when shares are *acquired* — i.e. a short **put** assignment
+    (``right`` is ``"P"`` or unknown). For a short **call** assignment (``right == "C"``) the
+    shares are called *away*, so we flag the campaign assigned but leave the basis untouched.
+
+    Called by the EOD reconciler (``orchestrator/eod_report.py``) for each assigned short.
     """
     try:
         with session_scope() as session:
@@ -162,7 +167,8 @@ def mark_campaign_assigned(
                 return
 
             row.assigned = True
-            if assignment_price is not None and row.net_premium > 0:
+            acquires_shares = (right or "P").upper() != "C"
+            if acquires_shares and assignment_price is not None and row.net_premium > 0:
                 # net_premium is total dollars; divide by 100 to get per-share.
                 row.adjusted_cost_basis = round(assignment_price - row.net_premium / 100, 4)
     except Exception:

@@ -277,3 +277,124 @@ Plus the mandatory doc-update rule in CLAUDE.md.
   real money (BAG combo limit-sign for rolls; broker fill behaviour for the chase loop).
 - The existing ≥10–20-paper-cycle validation gate in SETUP.md §12 remains in force; C11/C10 backtests are
   supporting evidence, not a substitute for paper fills.
+
+---
+
+# Part E — Post-implementation verification (2026-06-22)
+
+Independent code-level audit of every claim above against the actual codebase. **Baseline confirmed:**
+`pytest -q` → **839 passed**, `ruff check .` → clean, `mypy src` → clean. The fence test
+(`tests/test_eval_skills.py::test_skills_never_reach_the_engine`) is present and green.
+
+## E1. Verification matrix
+
+| ID | Plan claim | Verified in code | Verdict |
+|---|---|---|---|
+| **C1** | IV/RV richness gate | `analytics/realized_vol.py`; `iv.py` computes `iv_rv_ratio`; `risk_engine.py:155` gates `iv_rv_below_minimum` (deterministic — **correct side of the fence**); `risk_limits.yaml` keys (`min_iv_rv_ratio: 1.05`, `realized_vol_window: 20`); formatter shows `IV/RV`; tested | ✅ **Done, fully wired** |
+| **C2** | Annualized ROC normalization | `_scoring.annualized_roc_score`; both strategies populate `ScoreCard.annualized_roc_score`; `scoring.py:45` blends it via `get_effective_weights()`; `scoring_weights.yaml` off-by-default; tested | ✅ **Done, fully wired** |
+| **C3** | Roll Assistant wire & activate | `intraday._try_queue_roll` → `roll_pipeline.queue_roll_for_approval` → PENDING approval with Approve/Reject buttons; gated by `monitor.roll_execution_enabled: false` | ✅ **Code wired; correctly gated OFF** pending live-paper BAG-sign verify (matches plan's unchecked box) |
+| **C4** | Assignment-risk alerts | `triggers.check_assignment_risk`; `intraday.py` dispatches to `format_assignment_alert`; config keys present; 7 tests | ✅ **Done, fully wired** |
+| **C5** | SmartPricing on close/roll legs | `position_manager.close_short_position` BUY-reprice loop; `roll_executor.execute_roll` BAG reprice with credit floor; gated by `execution.reprice_enabled: false` | ✅ **Code-only as documented; correctly gated OFF** pending live-paper amend verify |
+| **C6** | Campaign chaining + auto cost-basis | Chaining + premium rollup wired: `executor.py:443` calls `attach_fill_to_campaign` on every fill; `/campaigns` command + `format_campaigns`. **BUT** the auto cost-basis half is dead in production — see **E2** | ⚠️ **Partial — ACB never computed live** |
+| **C7** | Skipped-trade reasons | `formatters.format_skip_reasons`; `scan.py:1163-1318` builds `per_symbol_skip` and sends it on the scan summary; tested | ✅ **Done, fully wired** |
+| **C8** | P&L calendar + cards | `formatters.format_pnl_calendar`; `/calendar` command (`approval_service.py:740`, handler registered); tested | ✅ **Done, fully wired** |
+| **C9** | Named trading modes / presets | `common/profile.py` overlay; `config/profiles/{conservative,balanced,aggressive}.yaml`; `activate()` called at scan start (`scan.py:886`); engine/strategies read via `get_effective_risk/weights`; `/profile` command; tested | ✅ **Done, fully wired** |
+| **C10** | Earnings-cycle + vol-crush backtest | `backtest/earnings.simulate_earnings_cycles`; `report.format_earnings_cycle_report`; thorough coverage in `tests/test_phase5.py` (segmentation, vol-crush window, P&L tracking) | ✅ **Done, tested** |
+| **C11** | Backtest-on-demand for a candidate | CLI `scripts/backtest_candidate.py` exists and works. **BUT** it is CLI-only, has no reusable function, no Claude-invocable path, and no tests — see **E3** | ⚠️ **Partial — half the feature is missing** |
+
+**Net:** 8 of 11 fully delivered (C1, C2, C4, C7, C8, C9, C10 + the two intentionally-gated C3/C5).
+Two items are partial: **C6** (cost-basis not wired into the live reconciler) and **C11** (CLI-only,
+no programmatic/Claude path, untested).
+
+## E2. Issue — C6 adjusted cost basis is dead code outside tests
+
+**Severity: medium (silent data gap, not a safety risk).**
+
+`storage/campaigns.py::mark_campaign_assigned(symbol, assignment_price)` is the function that
+computes `adjusted_cost_basis = assignment_price − net_premium/100` after an assignment — the
+headline "auto cost-basis" half of C6. **It is never called in production.** The only callers are in
+`tests/test_phase4.py`.
+
+The EOD reconciler already detects assignments — `orchestrator/eod_report.py:321-326` calls
+`assigned_candidate_ids(positions, today)` and feeds them to `reconcile(...)` — but that path only
+updates the **verdict ledger** outcome to `ASSIGNED`; it never touches the **campaign** row. So after a
+real assignment a campaign's `adjusted_cost_basis` stays `None`, and `/campaigns` understates the
+wheel's true basis/return.
+
+**Wrinkle for the fix:** `assigned_candidate_ids()` returns only candidate-id strings; it carries no
+strike or fill price. `mark_campaign_assigned` needs the **assignment price (the short strike)**. The
+fix therefore has to surface the strike from `detect_assignments`/`OpenShort` (which knows the option
+contract) and map `candidate_id → symbol`, not just reuse the id set.
+
+## E3. Issue — C11 is CLI-only; the "Claude-invocable action" was never built
+
+**Severity: low (feature-completeness gap; no correctness/safety impact).**
+
+The plan scoped C11 as *"a command **and** a Claude-invocable action"* whose result is *"returned for
+the operator/strategist at decision time"*, with tests for *"candidate → params → backtest
+invocation; output schema."* What actually shipped:
+
+1. **CLI only.** `scripts/backtest_candidate.py` parses `--symbol/--delta/--dte/...` and builds
+   `BacktestParams` inside `main()`. All logic is locked behind `argparse` — there is **no reusable
+   function** anything else can import.
+2. **No candidate → params mapping.** It takes manual CLI args, not an actual `TradeCandidate`. Nothing
+   converts a live candidate's parameters into a backtest, so it can't run "before approval" on a real
+   surfaced candidate.
+3. **No Claude-invocable path.** The docstring says output is *"suitable for injection into a Claude
+   prompt,"* but no caller does so: `grep` for `backtest` across `src/claude/` returns nothing — the
+   strategist/roll prompt builders never include a backtest, and there is no MCP tool for it (note: the
+   `trading_skills` MCP referenced in CLAUDE.md is not present in `src/` either).
+4. **No tests.** No test references `scripts.backtest_candidate`. The underlying `simulate()` /
+   `compact_report()` are covered (via C10/backtest tests), but the C11 entrypoint and the claimed
+   "output schema" are unverified.
+
+## E4. Non-issues (verified intentional, not defects)
+
+- **C3 / C5 gated OFF** (`roll_execution_enabled: false`, `reprice_enabled: false`) is by design and
+  matches "Do-not-go-live until." These are outstanding **live-paper verification** items, not build
+  gaps. The wiring is in place to flip on after verification.
+- **C1 on the correct side of the fence:** the IV/RV gate is a deterministic Python check in
+  `risk_engine.py` reading a human-set threshold from `risk_limits.yaml` — not an LLM output. ✅
+
+---
+
+# Part F — Fix plan (Phase 6)
+
+Run the standard quality gate (`pytest -q` · `ruff check .` · `mypy src`) after each item and apply the
+CLAUDE.md doc-update rule.
+
+### Phase 6 — Close the two partial items ✅ 2026-06-22
+
+- [x] **F1 — C6: wire `mark_campaign_assigned` into the EOD reconciler.** ✅ 2026-06-22
+  - `eval/assignment.assigned_shorts(current_positions, today)` — new sibling of `assigned_candidate_ids`
+    returning the assigned `OpenShort` records (carrying `underlying`/`strike`/`right`); `assigned_candidate_ids`
+    now derives its set from it (single detection path).
+  - `orchestrator/eod_report.py` — after `reconcile(...)`, loops `assigned_shorts` and calls
+    `mark_campaign_assigned(symbol, assignment_price=strike, right=sh.right)`; best-effort inside the existing
+    try/except so a campaign failure never breaks the EOD run.
+  - `storage/campaigns.mark_campaign_assigned` is now **right-aware**: ACB is computed only for share-acquiring
+    (put) assignments; a short-call assignment flags `assigned=True` without altering the basis. Backward
+    compatible (`right` defaults to put behaviour).
+  - Tests (`tests/test_phase6.py`): put computes ACB, call skips ACB, unknown-right defaults to ACB,
+    `assigned_shorts` returns records with strike + stays consistent with `assigned_candidate_ids`.
+- [x] **F2 — C11: extract a reusable function + make it candidate-aware + test it.** ✅ 2026-06-22
+  - New `src/backtest/on_demand.py`: `params_from_candidate(cand, *, profit_take_pct, min_iv_rank)`,
+    `run_backtest(...) -> BacktestOutcome`, `summarize(outcome)`, `backtest_candidate(cand) -> str`.
+    `scripts/backtest_candidate.py` is now a thin CLI wrapper over `run_backtest`.
+  - **Claude-invocable action delivered:** `strategist.build_prompt` injects a per-candidate
+    `backtest_candidate(cand)` line via `_backtest_line`, gated behind new config key
+    `claude.backtest_in_prompt` (default **OFF** — it adds a yfinance fetch per candidate at prompt-build
+    time; fail-soft on any error).
+  - **Fence verified:** `on_demand.py` is reachable only through the prompt builder; `grep` confirms
+    `engine/`, `execution/`, and `strategies/` never import `src.backtest` (and `test_skills_never_reach_the_engine`
+    stays green).
+  - Tests (`tests/test_phase6.py`): candidate→params mapping (put/call/missing-delta/overrides),
+    `run_backtest` no-history error + standard result, `summarize`/`backtest_candidate` output, fail-soft,
+    strategist injection OFF-by-default + ON.
+
+**Gate after Phase 6:** ✅ tests (855 pass, +16) · ✅ ruff · ✅ mypy · ✅ docs (ARCHITECTURE src/backtest + config + assignment/eod/campaigns data-flow, STATUS C6/C11)
+
+> **Priority:** F1 (C6) ranks above F2 (C11). C6 is a silent data-correctness gap that affects reported
+> P&L/basis once a wheel takes an assignment; C11 is a convenience/completeness gap with no correctness
+> impact. Neither blocks the live cutover — the live gate still hinges on C3/C5 live-paper verification
+> and the SETUP.md §12 paper-cycle requirement.

@@ -24,12 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.backtest.data import load_earnings_dates, load_iv_series, load_price_series
-from src.backtest.earnings import simulate_earnings_cycles
-from src.backtest.engine import BacktestParams, simulate
-from src.backtest.report import compact_report, format_earnings_cycle_report, format_report
+from src.backtest.engine import BacktestParams
+from src.backtest.on_demand import run_backtest, summarize
+from src.backtest.report import compact_report, format_report
 from src.common.logging import setup_logging
-from src.storage.db import init_db
 
 
 def _parse_date(s: str | None) -> date | None:
@@ -99,12 +97,6 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging()
-    prices = load_price_series(
-        args.symbol, start=_parse_date(args.start), end=_parse_date(args.end), period=args.period
-    )
-    if not prices:
-        print(f"No price history for {args.symbol} — nothing to backtest.")
-        sys.exit(1)
 
     params = BacktestParams(
         strategy=args.strategy,
@@ -116,39 +108,29 @@ def main() -> None:
         min_iv_rank=args.min_iv_rank,
     )
 
-    # Load IV series when any v2 feature is requested.
-    iv_series = None
-    if args.min_iv_rank is not None or args.profit_take is not None:
-        init_db()
-        iv_series = load_iv_series(args.symbol, [d for d, _ in prices])
-        if not any(v is not None for v in iv_series):
-            print(
-                f"Warning: no iv_history for {args.symbol} — run scripts.backfill_iv first; "
-                "falling back to trailing-HV pricing."
-            )
-            iv_series = None
+    outcome = run_backtest(
+        args.symbol,
+        params,
+        start=_parse_date(args.start),
+        end=_parse_date(args.end),
+        period=args.period,
+        earnings=args.earnings,
+        blackout_before=args.blackout_before,
+        blackout_after=args.blackout_after,
+        vol_crush_dte=args.vol_crush_dte,
+    )
 
-    if args.earnings:
-        earnings_dates = load_earnings_dates(args.symbol)
-        if not earnings_dates:
-            print(
-                f"No earnings dates found for {args.symbol} — cannot run earnings-cycle backtest."
-            )
-            sys.exit(1)
-        result_ec = simulate_earnings_cycles(
-            args.symbol,
-            prices,
-            params,
-            earnings_dates,
-            blackout_before=args.blackout_before,
-            blackout_after=args.blackout_after,
-            vol_crush_dte=args.vol_crush_dte,
-            iv_series=iv_series,
-        )
-        print(format_earnings_cycle_report(result_ec))
+    if outcome.error is not None:
+        print(outcome.error)
+        sys.exit(1)
+
+    # Standard runs honour --compact / full; earnings runs have a single report form.
+    if outcome.result is not None and not args.compact:
+        print(format_report(outcome.result))
+    elif outcome.result is not None:
+        print(compact_report(outcome.result))
     else:
-        result = simulate(args.symbol, prices, params, iv_series=iv_series)
-        print(compact_report(result) if args.compact else format_report(result))
+        print(summarize(outcome))
 
 
 if __name__ == "__main__":

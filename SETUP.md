@@ -746,6 +746,12 @@ python -m scripts.backtest_candidate --symbol AAPL --strategy cash_secured_put \
     --delta 0.30 --dte 30 --earnings --blackout-before 14 --vol-crush-dte 14
 ```
 
+To have the same per-candidate backtest injected automatically into the Claude strategist prompt at
+scan time (so the reasoning layer sees historical behaviour for each surfaced strike/DTE/delta), set
+`claude.backtest_in_prompt: true` in `config/settings.yaml`. It is **off by default** because it adds
+a yfinance fetch per candidate while the prompt is built; it is enrichment only and never affects the
+deterministic gates.
+
 ---
 
 ## 14. Local-LLM (Ollama) backend for Claude review

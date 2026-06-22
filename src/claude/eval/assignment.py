@@ -132,10 +132,16 @@ def detect_assignments(
     return assigned
 
 
-def assigned_candidate_ids(
+def assigned_shorts(
     current_positions: list[PositionSnapshot], today: date | None = None
-) -> set[str]:
-    """DB-backed orchestration: detect assignments against the most recent prior snapshot."""
+) -> list[OpenShort]:
+    """DB-backed orchestration: the OpenShort objects that were assigned.
+
+    Same detection as ``assigned_candidate_ids`` but returns the full ``OpenShort`` records
+    (carrying ``underlying``/``strike``/``right``) so callers that need the assignment price —
+    e.g. campaign cost-basis (C6) — don't have to re-look-up the contract. The reconciler only
+    needs the candidate-id set, so it keeps using ``assigned_candidate_ids``.
+    """
     today = today or datetime.now(_ET).date()
     prior = load_latest_position_snapshot(before=today)
     shorts = open_shorts_from_ledger()
@@ -146,4 +152,11 @@ def assigned_candidate_ids(
             len(assigned),
             sorted(assigned),
         )
-    return assigned
+    return [sh for sh in shorts if sh.candidate_id in assigned]
+
+
+def assigned_candidate_ids(
+    current_positions: list[PositionSnapshot], today: date | None = None
+) -> set[str]:
+    """DB-backed orchestration: detect assignments against the most recent prior snapshot."""
+    return {sh.candidate_id for sh in assigned_shorts(current_positions, today)}

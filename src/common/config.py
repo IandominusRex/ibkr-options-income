@@ -164,6 +164,10 @@ class ClaudeCfg(BaseModel):
     # Inject human-promoted reasoning skills into the strategist/roll prompts. Skills shape
     # verdict + ranking only — never gates, weights, or sizing (see CLAUDE.md "the fence").
     skills_enabled: bool = True
+    # C11 — inject a per-candidate on-demand backtest (compact) into the strategist prompt so the
+    # reasoning layer sees how the exact strike/DTE/delta behaved historically. OFF by default: it
+    # adds a yfinance fetch per candidate at prompt-build time. Enrichment only (verdict/ranking).
+    backtest_in_prompt: bool = False
     # N3 — headless-subprocess hardening. The CLI runs unattended ~26+×/day on the trading
     # machine; the fence isolates Claude's *output* from execution, but the subprocess itself
     # must be unable to use tools or touch the filesystem. These flags constrain it.

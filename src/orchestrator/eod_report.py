@@ -318,12 +318,17 @@ async def run() -> None:
     #     positions (Phase 4) — a vanished short whose underlying stock moved ~100×contracts is
     #     assigned, not expired-worthless. Today's snapshot is then saved as tomorrow's baseline.
     try:
-        from src.claude.eval.assignment import assigned_candidate_ids
+        from src.claude.eval.assignment import assigned_shorts
         from src.claude.eval.reconcile import reconcile
+        from src.storage.campaigns import mark_campaign_assigned
         from src.storage.positions import save_position_snapshot
 
-        assigned = assigned_candidate_ids(positions, today)
-        reconcile(assigned_candidate_ids=assigned)
+        assigned = assigned_shorts(positions, today)
+        reconcile(assigned_candidate_ids={sh.candidate_id for sh in assigned})
+        # C6: roll the assignment through to the wheel campaign so adjusted cost basis is
+        # maintained (put assignment) / the campaign is flagged assigned (call assignment).
+        for sh in assigned:
+            mark_campaign_assigned(sh.underlying, assignment_price=sh.strike, right=sh.right)
         save_position_snapshot(today, positions)
     except Exception:
         logger.exception("EOD: ledger reconciliation failed — continuing")
