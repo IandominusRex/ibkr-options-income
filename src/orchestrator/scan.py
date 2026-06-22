@@ -86,6 +86,10 @@ _MEMORY_ROWS_PER_SYMBOL = 3
 # and reuses the persisted ClaudeReviews — enrichment-only, never touches gating (the fence).
 _REVIEW_HASH_KEY = "last_review_hash"
 
+# Max near-miss contracts to name on an empty CC/CSP screen; further rejects collapse into a
+# trailing "…and N more" line. Bounded so a large universe can't blow up the quiet-cycle digest.
+_NEAR_MISS_LIMIT = 3
+
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
 # ---------------------------------------------------------------------------
@@ -1144,6 +1148,13 @@ async def _run_scan_body(
     all_option_candidates = cc_candidates + csp_candidates
     cc_rejection_tally: dict[str, int] = {}
     csp_rejection_tally: dict[str, int] = {}
+    # Top contracts that *failed* the gate per strategy (the "near misses"), surfaced on an empty
+    # screen so a quiet cycle still names the closest trades and why they were rejected. Capped at
+    # _NEAR_MISS_LIMIT; any beyond that are counted in the `_more` tally for a "…and N more" line.
+    cc_near_misses: list[tuple[TradeCandidate, list[str]]] = []
+    csp_near_misses: list[tuple[TradeCandidate, list[str]]] = []
+    cc_near_miss_more = 0
+    csp_near_miss_more = 0
     try:
         if all_option_candidates:
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
@@ -1187,6 +1198,33 @@ async def _run_scan_body(
             for c in passed:
                 per_symbol_skip.pop(c.underlying, None)
             top = select_top_candidates(passed)
+
+            # Near-misses per strategy: the top-scoring contracts that did NOT make `passed`
+            # (failed the gate, or cleared it but fell below the score floor). `scored` is sorted
+            # desc, so iterating yields them best-first. Return up to _NEAR_MISS_LIMIT plus a count
+            # of how many further rejects were truncated (rendered as "…and N more").
+            passed_ids = {c.candidate_id for c in passed}
+
+            def _near_misses(
+                strategy_value: str,
+            ) -> tuple[list[tuple[TradeCandidate, list[str]]], int]:
+                rejected = [
+                    c
+                    for c in scored
+                    if c.strategy.value == strategy_value and c.candidate_id not in passed_ids
+                ]
+                shown: list[tuple[TradeCandidate, list[str]]] = []
+                for cand in rejected[:_NEAR_MISS_LIMIT]:
+                    v = verdict_map.get(cand.candidate_id)
+                    if v is not None and v.verdict.value == "pass":
+                        reasons = ["score_below_minimum"]  # passed gate, below score floor
+                    else:
+                        reasons = list(v.reasons) if v is not None else []
+                    shown.append((cand, reasons))
+                return shown, max(0, len(rejected) - len(shown))
+
+            cc_near_misses, cc_near_miss_more = _near_misses("covered_call")
+            csp_near_misses, csp_near_miss_more = _near_misses("cash_secured_put")
         else:
             top = []
             passed = []
@@ -1291,6 +1329,8 @@ async def _run_scan_body(
                 symbol_count=len({c.underlying for c in cc_candidates}),
             ),
             suppress_unchanged=intraday,
+            near_misses=cc_near_misses,
+            near_miss_more=cc_near_miss_more,
         )
         csp_sent = await send_candidates(
             result.csp_candidates,
@@ -1308,6 +1348,8 @@ async def _run_scan_body(
                 symbol_count=len({c.underlying for c in csp_candidates}),
             ),
             suppress_unchanged=intraday,
+            near_misses=csp_near_misses,
+            near_miss_more=csp_near_miss_more,
         )
         cand_sent = cc_sent or csp_sent
         buy_sent = await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
@@ -1507,9 +1549,16 @@ async def run_ticker_scan(
 
     # 7. Scoring + risk gate on CC+CSP.
     all_option_candidates = cc_candidates + csp_candidates
+    cc_reject_reasons: list[str] = []
+    csp_reject_reasons: list[str] = []
+    cc_near_miss: TradeCandidate | None = None
+    csp_near_miss: TradeCandidate | None = None
+    scored: list[TradeCandidate] = []
+    verdict_map: dict = {}
+    min_score: float = 0
     if all_option_candidates:
         try:
-            scored = score_candidates(all_option_candidates)
+            scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
             verdicts = validate_candidates(scored, account, positions)
             verdict_map = {v.candidate_id: v for v in verdicts}
             min_score = get_effective_weights().get("min_candidate_score", 0)
@@ -1525,6 +1574,27 @@ async def run_ticker_scan(
             passed = []
         cc_passed = [c for c in passed if c.strategy.value == "covered_call"]
         csp_passed = [c for c in passed if c.strategy.value == "cash_secured_put"]
+
+        # Why was a strategy empty? Surface the best-scoring contract that *failed* the gate (a
+        # "near miss") plus exactly what it failed on, so the card explains "No qualifying X
+        # options" with the closest strike rather than going silent (the single-ticker analogue
+        # of C7's skip-reasons card). `scored` is sorted desc, so the first rejected candidate of
+        # a strategy is its highest-scoring near miss.
+        def _near_miss(strategy_value: str) -> tuple[TradeCandidate | None, list[str]]:
+            for c in scored:
+                if c.strategy.value != strategy_value:
+                    continue
+                v = verdict_map.get(c.candidate_id)
+                if v is not None and v.verdict.value == "pass":
+                    # Cleared the gate but fell below the score floor (else it'd be in `passed`).
+                    return c, ["score_below_minimum"]
+                return c, (list(v.reasons) if v is not None else [])
+            return None, []
+
+        if not cc_passed:
+            cc_near_miss, cc_reject_reasons = _near_miss("covered_call")
+        if not csp_passed:
+            csp_near_miss, csp_reject_reasons = _near_miss("cash_secured_put")
     else:
         cc_passed = []
         csp_passed = []
@@ -1539,7 +1609,25 @@ async def run_ticker_scan(
     buy_candidates = generate_buy_candidates([ticker], holdings_symbols, analytics_map)
     buy_candidate = buy_candidates[0] if buy_candidates else None
 
+    # 8b. Claude/Ollama verdict on the best CC + best CSP (enrichment only — never gates).
+    # Review just the top candidate per strategy so the local model stays fast; failure is
+    # non-fatal (the card renders without a verdict). Runs off-thread (the runner blocks on a
+    # subprocess / HTTP call).
+    reviews: list[ClaudeReview] = []
+    to_review = cc_passed[:1] + csp_passed[:1]
+    if to_review:
+        spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
+        try:
+            reviews = await loop.run_in_executor(
+                None,
+                lambda: review_candidates(to_review, account, spot_prices=spot_prices),
+            )
+        except Exception:
+            log.warning("ticker_scan: Claude/Ollama review failed for %s", ticker, exc_info=True)
+
     # 9. Format and edit the progress message.
+    # Greeks provenance for the footer: did any contract's Greeks fall back to yfinance BS?
+    greeks_fallback = any(q.greeks_source == "black_scholes" for q in quotes)
     text = format_ticker_scan_result(
         ticker=ticker,
         iv_stats=iv_stats,
@@ -1550,6 +1638,12 @@ async def run_ticker_scan(
         buy_candidate=buy_candidate,
         is_held=is_held,
         quotes_available=bool(quotes),
+        reviews=reviews,
+        cc_reject_reasons=cc_reject_reasons,
+        csp_reject_reasons=csp_reject_reasons,
+        cc_near_miss=cc_near_miss,
+        csp_near_miss=csp_near_miss,
+        greeks_fallback=greeks_fallback,
     )
     await _ticker_edit_msg(bot, chat_id, progress_msg_id, text)
     log.info(

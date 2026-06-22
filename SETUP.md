@@ -240,7 +240,10 @@ Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval 
 > deterministic Rules-Engine list) until Ollama recovers. Nothing auto-starts Ollama; keep the
 > Ollama.app running (set it to "Open at Login") or run `ollama serve` yourself.
 
-> **Note:** The EOD cron job is NOT started by this launcher — it must be scheduled separately (§7).
+> **EOD report is automatic:** the launcher schedules the end-of-day report itself — at
+> `scheduler.eod_report` (default 16:15 ET) on NYSE trading days it spawns a one-shot
+> `scripts.run_eod`. No cron job is needed (see §7). Keep `scripts.start` running across the
+> close for it to fire; if it isn't, run `python -m scripts.run_eod` by hand.
 
 ### Option B — run each daemon separately
 
@@ -305,7 +308,7 @@ Once the approval service is running, you can interact with the system from your
 | Command | What you get |
 |---|---|
 | `/scan` | Triggers a full pipeline scan — full universe sweep with fresh Claude review. Two live messages update as it runs: a **checklist** (Account → Market data → Scoring → Claude review → Sending results) and a **dashboard** with a progress bar + ETA, the current activity, and a 🔴 error log of any symbols that were skipped. Final trade candidates arrive as ✅ Approve / ❌ Reject messages (MANUAL) or are auto-queued (AUTOMATED); a "Buy-to-Own Candidates" card lists the strongest few stocks to acquire for future covered calls. |
-| `/scan AAPL` | Single-ticker on-demand scan. Fetches the option chain for one symbol (must be IBKR-listed), runs analytics, applies the risk gate, and replies with a compact summary: price/IV rank, technicals, best CC (if you hold shares), best CSP, and buy-to-own assessment. If the ticker doesn't exist on IBKR, replies "ticker not found". |
+| `/scan AAPL` | Single-ticker on-demand scan. Fetches the option chain for one symbol (must be IBKR-listed), runs analytics, applies the risk gate, and replies with a compact summary: price/IV rank, a 💡 premium-environment read (what IV rank + VRP mean for selling), technicals, best CC (if you hold shares), best CSP, and buy-to-own assessment. The best CC/CSP gets a 🤖 Claude/Ollama verdict (recommendation + confidence + why/risks). When a strategy has no qualifying option, the card shows the **closest contract that failed** (strike/premium/score, marked ✗) and a `_Rejected: …_` line naming which gate(s) filtered it out (e.g. "IV rank too low", "annualized yield below floor"). The sources footer reflects what actually produced the numbers (IBKR parity spot vs yfinance, yfinance Greeks fallback). If the ticker doesn't exist on IBKR, replies "ticker not found". |
 | `/mode` | Shows the current trading mode (👤 MANUAL or 🤖 AUTOMATED) with a toggle button. AUTOMATED mode executes trades without approval and auto-closes positions at 50% profit. A confirmation prompt appears before enabling AUTO. |
 | `/halt` | 🛑 **Kill switch.** Immediately stops all order queuing/transmission (profit-take *closes* still run — closing risk is always allowed). The halt is saved, so it persists across restarts until you `/resume`. You can add a reason, e.g. `/halt market looks ugly`. Also auto-engages on a daily realized-loss breach. |
 | `/resume` | Releases the kill switch; QUEUED orders resume on the next poll cycle. |
@@ -327,58 +330,53 @@ Trade approval messages include Claude's full reasoning: why the trade is attrac
 
 ---
 
-## 7. Set up the daily cron job
+## 7. The daily EOD report — scheduled by the launcher (no cron needed)
 
-One job needs to fire on a market-hours schedule: the EOD report (4:15 PM ET Mon–Fri). Choose the
-instructions for your operating system below.
+The end-of-day report fires **automatically from `scripts.start`** — there is no cron job to set
+up. At `scheduler.eod_report` (default 16:15 ET, in `config/settings.yaml`) on NYSE trading days,
+the launcher spawns a one-shot `scripts.run_eod` subprocess and logs it to `logs/eod.log`. The
+last-run date is persisted to `data/eod_scheduler_state.json`, so:
 
-> **What this job does:** `run_eod` connects to IBKR, fetches positions and P&L, generates a
+- A launcher restart *after* the report already ran today will **not** re-fire it (which would
+  duplicate the journal row + Telegram summary).
+- A launcher start *after* the EOD time on a trading day that has **not** yet run fires the report
+  immediately (catch-up).
+- Weekends and NYSE holidays are skipped automatically.
+
+> **What the report does:** `run_eod` connects to IBKR, fetches positions and P&L, generates a
 > Claude journal entry, and sends an end-of-day summary to Telegram's **account snapshot** thread.
-> It is short-lived (exits when done); the always-on daemons (`scripts.start`) are separate and must
-> already be running.
+> It is short-lived (exits when done). It also covers tasks the always-on daemon does not: P&L
+> accounting, journal writing, daily IV/price append, verdict ledger reconciliation, and the
+> nightly DB backup. (No morning job is needed — the daemon runs a full scan every 15 minutes
+> during RTH.)
 
-> **Note:** the always-on daemon runs a full scan every 15 minutes during RTH, so no morning cron
-> is needed. The `run_eod` job covers end-of-day tasks the daemon does not: P&L accounting,
-> journal writing, daily IV/price append, verdict ledger reconciliation, and nightly DB backup.
+**Requirement:** keep `scripts.start` running across the close so the scheduler can fire. The
+launchd / systemd recipes below keep it alive across reboots and crashes.
 
----
+To change the time, edit `scheduler.eod_report` in `config/settings.yaml` and restart the launcher.
+To disable the built-in scheduler, start with `python -m scripts.start --no-eod`.
 
-### macOS / Linux — crontab
-
-Open the crontab editor:
-
-```bash
-crontab -e
-```
-
-Paste the following (replace `/path/to/IBKR Investments` with the real absolute path):
-
-```
-TZ=America/New_York
-# EOD report — 4:15 PM ET Monday-Friday
-15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
-```
-
-> **Timezone note:** The `TZ=America/New_York` line at the top of the crontab sets Eastern Time
-> for all jobs in the file, regardless of the system timezone. Without it, a UTC server running
-> `45 9 * * 1-5` fires at 9:45 UTC = 5:45 AM ET — too early.
-
-Save and exit. Verify cron registered the jobs:
-
-```bash
-crontab -l
-```
-
-**Tip (macOS):** macOS requires Full Disk Access for `cron` if the project is under `~/Desktop` or
-`~/Documents`. Go to **System Settings → Privacy & Security → Full Disk Access** and add
-`/usr/sbin/cron`.
+> **Manual / alternative trigger:** you can always run the report by hand with
+> `python -m scripts.run_eod`. If you prefer the OS scheduler instead of the launcher (e.g. you
+> don't keep `scripts.start` up 24/7), run `scripts.start --no-eod` and add this crontab line —
+> the `data/eod_scheduler_state.json` guard makes the two harmless to run together, but pick one:
+>
+> ```
+> TZ=America/New_York
+> # EOD report — 4:15 PM ET Monday-Friday
+> 15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
+> ```
+>
+> **Tip (macOS):** cron needs Full Disk Access when the project lives under `~/Desktop` or
+> `~/Documents` — add `/usr/sbin/cron` under **System Settings → Privacy & Security → Full Disk
+> Access**.
 
 ---
 
 ### macOS — auto-start daemons on login with launchd
 
-`crontab` only schedules the two short-lived scans. The always-on daemons (`scripts.start`) need
-to restart automatically if the machine reboots. The macOS-native way is a launchd plist.
+The launcher (`scripts.start`) runs the daemons *and* the EOD scheduler, so it needs to restart
+automatically if the machine reboots. The macOS-native way is a launchd plist.
 
 Create `~/Library/LaunchAgents/com.ibkr.start.plist`:
 
@@ -430,6 +428,11 @@ To stop it: `launchctl unload ~/Library/LaunchAgents/com.ibkr.start.plist`
 ---
 
 ### Windows — Task Scheduler
+
+> **You usually don't need this.** If `scripts.start` stays running across the close (see
+> "Auto-start daemons on Windows boot" below), it fires the EOD report itself — skip the EOD task.
+> Use the steps below **only** if you run the launcher with `--no-eod` and prefer Task Scheduler to
+> trigger `scripts.run_eod` instead.
 
 Windows does not have cron. Use **Task Scheduler** (`taskschd.msc`) instead.
 
@@ -494,8 +497,8 @@ if they crash mid-day — `scripts.start`'s built-in supervisor handles that.
 
 ### Linux — systemd service (recommended for servers)
 
-For a Linux server, systemd is more reliable than cron for the always-on daemons, and cron handles
-the two timed jobs.
+For a Linux server, run the launcher (`scripts.start`) under systemd — it supervises the daemons
+*and* fires the EOD report on schedule, so no cron job is required.
 
 **Daemon service** — create `/etc/systemd/system/ibkr-start.service`:
 
@@ -525,12 +528,8 @@ sudo systemctl start ibkr-start
 sudo systemctl status ibkr-start   # confirm it is running
 ```
 
-**Cron job** — add as above using `crontab -e`:
-
-```
-TZ=America/New_York
-15 16 * * 1-5 cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.run_eod >> logs/eod.log 2>&1
-```
+The EOD report is fired by the launcher itself — **no cron job is required.** (Only if you run
+`scripts.start --no-eod` would you add the `15 16 * * 1-5 … scripts.run_eod` crontab line from §7.)
 
 ---
 

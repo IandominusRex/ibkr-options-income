@@ -148,6 +148,24 @@ def test_format_with_review_contains_key_fields():
     assert "Caps upside" in text
 
 
+def test_format_candidate_includes_premium_read():
+    # _make_candidate has iv_rank=65 → "elevated — rich premium" 💡 line on the card.
+    text = format_candidate(_make_candidate(), None)
+    assert "💡" in text
+    assert "elevated" in text
+
+
+def test_format_near_miss_line_is_plain_text_with_reason():
+    from src.notify.formatters import format_near_miss_line
+
+    cand = _make_candidate(candidate_id="nm-1", underlying="NVDA")
+    line = format_near_miss_line(cand, ["yield_below_minimum"])
+    assert "closest: NVDA" in line
+    assert "annualized yield below floor" in line
+    # Plain text — no MarkdownV2 escaping.
+    assert "\\" not in line
+
+
 def test_format_escapes_special_chars_in_symbol():
     candidate = _make_candidate(underlying="SPY.X")
     text = format_candidate(candidate, None)
@@ -281,6 +299,59 @@ async def test_send_candidates_empty_list_sends_diagnostic(mock_bot_cls, monkeyp
     assert "no candidates this cycle" in text
     assert "0/4 passed the risk gate" in text
     assert sent is True
+
+
+async def test_send_candidates_empty_with_near_miss_appends_closest(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """Empty screen + a near-miss candidate → diagnostic names the closest failed contract."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    near = _make_candidate(candidate_id="nm-1", underlying="NVDA")
+    with patch("src.notify.sender.Bot", mock_cls):
+        sent = await send_candidates(
+            [],
+            [],
+            **_cc_kwargs(
+                empty_reason="0/4 passed the risk gate",
+                near_misses=[(near, ["yield_below_minimum"])],
+            ),
+        )
+
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "no candidates this cycle" in text
+    assert "closest: NVDA" in text
+    assert "annualized yield below floor" in text
+    assert sent is True
+
+
+async def test_send_candidates_empty_near_misses_top3_with_more(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """Up to 3 near-misses are listed; a trailing '…and N more' signals the truncated rest."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+
+    near_misses = [
+        (_make_candidate(candidate_id="nm-1", underlying="NVDA"), ["yield_below_minimum"]),
+        (_make_candidate(candidate_id="nm-2", underlying="AAPL"), ["delta_out_of_range"]),
+        (_make_candidate(candidate_id="nm-3", underlying="MSFT"), ["iv_rank_below_minimum"]),
+    ]
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates(
+            [],
+            [],
+            **_cc_kwargs(near_misses=near_misses, near_miss_more=5),
+        )
+
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert text.count("closest:") == 3
+    assert "closest: NVDA" in text
+    assert "closest: MSFT" in text
+    assert "…and 5 more that didn't pass" in text
 
 
 async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tmp_path):

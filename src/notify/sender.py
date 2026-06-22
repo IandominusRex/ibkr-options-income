@@ -32,6 +32,7 @@ from src.notify.formatters import (
     format_auto_trade_notification,
     format_buy_list,
     format_candidate,
+    format_near_miss_line,
     format_order_notification,
     format_unchanged_cards_digest,
 )
@@ -151,6 +152,8 @@ async def send_candidates(
     noun: str = "candidate",
     session: Session | None = None,
     suppress_unchanged: bool = False,
+    near_misses: list[tuple[TradeCandidate, list[str]]] | None = None,
+    near_miss_more: int = 0,
 ) -> bool:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
@@ -187,6 +190,14 @@ async def send_candidates(
     if not candidates:
         suffix = f"  {empty_reason}" if empty_reason else ""
         line = f"{icon} {label} — no candidates this cycle{suffix}"
+        # Near-miss: show the top few contracts that *failed* the gate this cycle (plain text —
+        # the status message has no parse_mode) so a quiet screen still names the closest trades.
+        # `near_miss_more` is how many further rejected contracts aren't shown — surfaced as a
+        # trailing "…and N more" so the operator knows the list was truncated.
+        for cand, reasons in near_misses or []:
+            line += "\n" + format_near_miss_line(cand, reasons)
+        if near_miss_more > 0:
+            line += f"\n↳ …and {near_miss_more} more that didn't pass"
         try:
             async with Bot(token=token) as bot:
                 await _append_status(

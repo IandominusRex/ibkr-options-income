@@ -92,6 +92,10 @@ def format_candidate(
     iv_rv_str = f" · IV/RV {candidate.iv_rv_ratio:.2f}" if candidate.iv_rv_ratio is not None else ""
     parts.append(f"Δ {_md(delta_str)} · IV Rank {_md(iv_str)}{_md(vrp_str)}{_md(iv_rv_str)}")
 
+    premium_read = _premium_read(candidate.iv_rank, candidate.vrp)
+    if premium_read is not None:
+        parts.append(premium_read)
+
     score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
     if candidate.rationale_tags:
         tags_str = " · ".join(_md(t) for t in candidate.rationale_tags)
@@ -511,6 +515,151 @@ def format_data_provenance(
     return "\n".join(lines)
 
 
+# Human-readable labels for the raw risk-gate / filter reason codes surfaced when a
+# single-ticker /scan turns up no qualifying option. Codes not listed fall back to a
+# de-snake-cased version of the code itself.
+_REJECT_REASON_LABELS: dict[str, str] = {
+    "iv_rank_below_minimum": "IV rank too low (poor premium)",
+    "iv_rv_below_minimum": "IV/RV ratio too low (premium not rich vs realized)",
+    "delta_out_of_range": "delta outside target band",
+    "delta_missing": "no delta available (illiquid / no Greeks)",
+    "delta_sign_mismatch": "delta sign wrong for strategy",
+    "dte_out_of_range": "no expiries in the target DTE window",
+    "roc_below_minimum": "return-on-capital below floor",
+    "yield_below_minimum": "annualized yield below floor",
+    "earnings_blackout": "earnings inside the window",
+    "no_contracts": "no contracts at the target strike",
+    "negative_bid_sentinel": "no real bid (stale / illiquid quote)",
+    "buying_power_buffer": "not enough buying-power headroom",
+    "concentration_limit": "per-ticker concentration cap hit",
+    "sector_limit": "per-sector concentration cap hit",
+    "csp_allocation_limit": "total CSP allocation cap hit",
+    "margin_limit": "margin limit hit",
+    "contracts_exceeds_max": "size exceeds max contracts",
+    "score_below_minimum": "blended score below quality floor",
+}
+
+
+def _humanize_reject_reason(code: str) -> str:
+    """Map a raw gate/filter reason code to a readable phrase (best-effort)."""
+    return _REJECT_REASON_LABELS.get(code, code.replace("_", " "))
+
+
+def _ticker_review_lines(review: ClaudeReview) -> list[str]:
+    """Indented MarkdownV2 lines rendering Claude/Ollama's verdict for a ticker-scan card."""
+    conf = (
+        f" · {_md(f'{review.confidence:.0%}')} confidence" if review.confidence is not None else ""
+    )
+    lines = [f"  🤖 *{_md(review.recommendation.upper())}*{conf}"]
+    if review.why_attractive:
+        lines.append(f"  _{_md(review.why_attractive)}_")
+    if review.risks:
+        lines.append(f"  ⚠️ {_md(review.risks)}")
+    return lines
+
+
+def _reject_reason_line(reasons: list[str] | None) -> str | None:
+    """A '_Rejected: …_' line summarizing the top distinct gate reasons, or None."""
+    if not reasons:
+        return None
+    seen: list[str] = []
+    for r in reasons:
+        label = _humanize_reject_reason(r)
+        if label not in seen:
+            seen.append(label)
+    return "  _Rejected: " + _md(" · ".join(seen[:3])) + "_"
+
+
+def _near_miss_lines(cand: TradeCandidate, reasons: list[str] | None) -> list[str]:
+    """Render the best non-qualifying contract (a 'near miss') so an empty strategy still
+    shows the closest strike and exactly what it failed on, rather than going silent."""
+    right_lbl = "C" if cand.right == OptionRight.CALL else "P"
+    exp_str = cand.expiry.strftime("%b%d")
+    lines = [
+        "_Closest contract \\(did not qualify\\):_",
+        (
+            f"  \\${_md(f'{cand.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f" \\({_md(str(cand.dte))}d\\)"
+        ),
+        (
+            f"  \\${_md(f'{cand.premium:.2f}')}/sh"
+            f" · ROC {_md(f'{cand.roc_pct:.1f}')}%"
+            f" · Score {_md(f'{cand.blended_score:.0f}')}/100 ✗"
+        ),
+    ]
+    reject_line = _reject_reason_line(reasons)
+    if reject_line is not None:
+        lines.append(reject_line)
+    return lines
+
+
+def _premium_read(iv_rank: float | None, vrp: float | None) -> str | None:
+    """One-line plain-English read of the premium-*selling* environment from IV rank + VRP.
+
+    Turns the raw header numbers into a decision: low IV rank / negative VRP means options are
+    cheap relative to realized vol (a poor environment for selling premium). Returns a
+    MarkdownV2-ready ``💡 _…_`` line, or None when neither input is available. Shared by the
+    single-ticker card and the CC/CSP candidate cards (so the 15-min loop shows it too)."""
+    bits: list[str] = []
+    if iv_rank is not None:
+        if iv_rank < 30:
+            bits.append("IV rank low — poor premium")
+        elif iv_rank < 60:
+            bits.append("IV rank moderate")
+        else:
+            bits.append("IV rank elevated — rich premium")
+    if vrp is not None:
+        if vrp < 0:
+            bits.append("VRP negative — options cheap vs realized")
+        else:
+            bits.append("VRP positive — premium above realized")
+    if not bits:
+        return None
+    return "💡 _" + _md(" · ".join(bits)) + "_"
+
+
+def format_near_miss_line(cand: TradeCandidate, reasons: list[str] | None = None) -> str:
+    """Plain-text (NOT MarkdownV2) one-liner naming the best contract that *failed* the gate.
+
+    Used by the full-scan empty-screen diagnostic (appended via ``_append_status``, which sends
+    plain text), so even a cycle where nothing qualified shows the closest trade and why it was
+    rejected — the multi-symbol analogue of the single-ticker near-miss block."""
+    right = "C" if cand.right == OptionRight.CALL else "P"
+    exp = cand.expiry.strftime("%b%d")
+    line = (
+        f"↳ closest: {cand.underlying} ${cand.strike:.0f}{right} {exp} ({cand.dte}d)"
+        f" ${cand.premium:.2f}/sh · ROC {cand.roc_pct:.1f}% · score {cand.blended_score:.0f}"
+    )
+    if reasons:
+        seen: list[str] = []
+        for r in reasons:
+            label = _humanize_reject_reason(r)
+            if label not in seen:
+                seen.append(label)
+        line += " — " + " · ".join(seen[:2])
+    return line
+
+
+def _ticker_sources(
+    *, quotes_available: bool, tech_stats: TechnicalStats, greeks_fallback: bool, has_review: bool
+) -> str:
+    """Honest data-source footer for a single-ticker scan: reflects which spot/Greeks source
+    actually produced this card's numbers rather than a hardcoded list."""
+    parts: list[str] = []
+    if quotes_available:
+        parts.append("IBKR option chain")
+    if tech_stats.price_source == "ibkr":
+        parts.append("IBKR spot (parity)")
+    else:
+        parts.append("yfinance spot")
+    if greeks_fallback:
+        parts.append("yfinance Greeks (fallback)")
+    parts.append("yfinance (IV · technicals · fundamentals)")
+    if has_review:
+        parts.append("Claude/Ollama review")
+    return " · ".join(parts)
+
+
 def format_ticker_scan_result(
     *,
     ticker: str,
@@ -522,17 +671,33 @@ def format_ticker_scan_result(
     buy_candidate: BuyCandidate | None,
     is_held: bool,
     quotes_available: bool = True,
+    reviews: list[ClaudeReview] | None = None,
+    cc_reject_reasons: list[str] | None = None,
+    csp_reject_reasons: list[str] | None = None,
+    cc_near_miss: TradeCandidate | None = None,
+    csp_near_miss: TradeCandidate | None = None,
+    greeks_fallback: bool = False,
 ) -> str:
     """Compact Telegram MarkdownV2 summary for a single-ticker /scan TICKER result.
 
     Sections:
-      - Header: price, IV rank, VRP
+      - Header: price, IV rank, VRP + a plain-English premium-environment read
       - Technicals: trend (vs SMAs), RSI, earnings days
-      - Covered Call: best candidate (or reason for none)
-      - Cash-Secured Put: best candidate (or reason for none)
+      - Covered Call: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
+      - Cash-Secured Put: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
       - Buy-to-Own: score + rationale (omitted if not applicable)
-      - Sources footer
+      - Sources footer (honest: reflects the actual spot/Greeks source)
+
+    Args:
+        reviews: optional Claude/Ollama reviews keyed (internally) by candidate_id; the verdict
+            for the best CC/CSP is rendered beneath that candidate.
+        cc_reject_reasons / csp_reject_reasons: raw gate/filter reason codes for the strategy when
+            no candidate qualified — surfaced so the operator sees *why* it was empty.
+        cc_near_miss / csp_near_miss: the best-scoring contract that *failed* the gate for the
+            strategy; rendered as a "closest contract" block when nothing qualified.
+        greeks_fallback: True when any option Greeks fell back to yfinance Black-Scholes (footer).
     """
+    review_map = {r.candidate_id: r for r in (reviews or [])}
     lines: list[str] = [f"🔍 *{_md(ticker)} — Ticker Scan*", ""]
 
     # --- Price / IV header ---
@@ -541,6 +706,9 @@ def format_ticker_scan_result(
     iv_rank_str = _md(f"{iv_stats.iv_rank:.0f}") if iv_stats.iv_rank is not None else "N/A"
     vrp_str = f" · VRP {_md(f'{iv_stats.vrp:+.1f}')}%" if iv_stats.vrp is not None else ""
     lines.append(f"💵 {price_str} · IV Rank {iv_rank_str}{vrp_str}")
+    premium_read = _premium_read(iv_stats.iv_rank, iv_stats.vrp)
+    if premium_read is not None:
+        lines.append(premium_read)
     lines.append("")
 
     # --- Technicals ---
@@ -580,8 +748,17 @@ def format_ticker_scan_result(
             f" · ROC {_md(f'{best_cc.roc_pct:.1f}')}%"
             f" · Score {_md(f'{best_cc.blended_score:.0f}')}/100 ✅"
         )
+        cc_review = review_map.get(best_cc.candidate_id)
+        if cc_review is not None:
+            lines.extend(_ticker_review_lines(cc_review))
     else:
         lines.append("_No qualifying CC options_")
+        if cc_near_miss is not None:
+            lines.extend(_near_miss_lines(cc_near_miss, cc_reject_reasons))
+        else:
+            reject_line = _reject_reason_line(cc_reject_reasons)
+            if reject_line is not None:
+                lines.append(reject_line)
     lines.append("")
 
     # --- Cash-Secured Put ---
@@ -602,8 +779,17 @@ def format_ticker_scan_result(
             f" · ROC {_md(f'{best_csp.roc_pct:.1f}')}%"
             f" · Score {_md(f'{best_csp.blended_score:.0f}')}/100 ✅"
         )
+        csp_review = review_map.get(best_csp.candidate_id)
+        if csp_review is not None:
+            lines.extend(_ticker_review_lines(csp_review))
     else:
         lines.append("_No qualifying CSP options_")
+        if csp_near_miss is not None:
+            lines.extend(_near_miss_lines(csp_near_miss, csp_reject_reasons))
+        else:
+            reject_line = _reject_reason_line(csp_reject_reasons)
+            if reject_line is not None:
+                lines.append(reject_line)
     lines.append("")
 
     # --- Buy-to-Own ---
@@ -615,9 +801,17 @@ def format_ticker_scan_result(
             lines.append(f"  _{_md(buy_candidate.rationale)}_")
         lines.append("")
 
-    # --- Sources footer ---
-    sources = ["IBKR option chain", "yfinance"]
-    lines.append(f"_Sources: {' · '.join(sources)}_")
+    # --- Sources footer (honest about what actually produced these numbers) ---
+    lines.append(
+        "_Sources: "
+        + _ticker_sources(
+            quotes_available=quotes_available,
+            tech_stats=tech_stats,
+            greeks_fallback=greeks_fallback,
+            has_review=bool(review_map),
+        )
+        + "_"
+    )
 
     text = "\n".join(lines)
     if len(text) > _MAX_MESSAGE_LEN:
