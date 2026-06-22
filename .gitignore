@@ -28,6 +28,10 @@ logs/*.log.*
 .idea/
 .vscode/
 
+# Tooling artifacts (temp agent worktrees, Playwright MCP snapshots)
+.claude/worktrees/
+.playwright-mcp/
+
 # Keep empty dirs tracked
 !data/.gitkeep
 !logs/.gitkeep
