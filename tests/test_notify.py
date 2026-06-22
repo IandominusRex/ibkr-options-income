@@ -815,6 +815,63 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     bot.send_message.assert_awaited()  # operator was notified
 
 
+async def test_reconcile_orphan_fills_does_not_hang_on_dead_socket(monkeypatch, tmp_path):
+    """Regression (2026-06-22): a half-dead TWS socket makes reqExecutions never return.
+
+    The bare ``await`` used to hang the approval-service startup forever, which silently
+    stopped the 15-min intraday scan loop from ever being created. reqExecutions is now
+    bounded, so reconcile must return promptly (skipping the pass) instead of blocking.
+    """
+    import asyncio
+    from datetime import date as _date
+
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    import src.execution.reconciliation as recon
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_orphan_fills
+    from src.storage.models import CandidateRow, FillRow
+
+    # Shrink the bound so the test is fast; the real value is 30s.
+    monkeypatch.setattr(recon, "_REQ_EXECUTIONS_TIMEOUT_SECONDS", 0.2)
+
+    with dbmod.session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="recon-hang",
+                run_id="r",
+                strategy="covered_call",
+                underlying="AAPL",
+                right="C",
+                strike=200.0,
+                expiry=_date(2026, 7, 17),
+                blended_score=70.0,
+                payload={"contracts": 2},
+            )
+        )
+        s.add(
+            OrderRow(candidate_id="recon-hang", approval_id=1, state="submitted", ib_order_id=555)
+        )
+
+    async def _never_returns():
+        await asyncio.Event().wait()  # simulates execDetailsEnd that never arrives
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = MagicMock(side_effect=lambda: _never_returns())
+    bot = AsyncMock()
+
+    # Must complete well within the outer guard — i.e. it did NOT hang.
+    await asyncio.wait_for(reconcile_orphan_fills(ib, bot, "99999"), timeout=5.0)
+
+    # The pass was skipped: the order is untouched, no fill recorded.
+    with dbmod.session_scope() as s:
+        order = s.query(OrderRow).filter_by(candidate_id="recon-hang").one()
+        fills = s.query(FillRow).filter_by(candidate_id="recon-hang").all()
+    assert order.state == "submitted"
+    assert fills == []
+
+
 async def test_reconcile_recovers_fill_for_rejected_order_with_order_id(monkeypatch, tmp_path):
     """N8: a REJECTED order (executor except path) whose SELL actually filled at the broker is
     still recovered, because it carries an ib_order_id. A pre-placement cancel (no ib_order_id)

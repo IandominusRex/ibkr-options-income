@@ -1489,8 +1489,26 @@ async def _run_service(token: str, chat_id: str) -> None:
         except Exception:
             logger.warning("Could not send startup notification to Telegram", exc_info=True)
 
+        # Arm the scan-only background loops FIRST, before any IBKR-touching startup recovery.
+        # Startup reconciliation calls the broker (reqExecutions); on a half-dead TWS socket
+        # those calls could stall, and they must never be able to gate the 15-min intraday scan
+        # loop from ever being created (which silently stopped scans for ~75 min on 2026-06-22).
+        intraday_task: asyncio.Task | None = None
+        if ib_scan is not None:
+            intraday_task = asyncio.create_task(_intraday_scan_loop(app, ib_scan, ib, chat_id))
+            logger.info(
+                "Intraday loop started (every %d min during RTH)",
+                cfg.scheduler.intraday_loop_minutes,
+            )
+
+        premarket_task: asyncio.Task | None = None
+        if ib_scan is not None:
+            premarket_task = asyncio.create_task(_premarket_snapshot_loop(ib_scan, chat_id))
+            logger.info("Premarket snapshot loop started (09:00 ET daily)")
+
         # Recover any fills that landed while a previous run was disconnected, before the
-        # poll loop starts processing new orders.
+        # poll loop starts processing new orders. Bounded internally (reqExecutions has a hard
+        # timeout) so a dead exec socket can no longer hang startup.
         if ib is not None:
             try:
                 await reconcile_orphan_fills(ib, app.bot, chat_id)
@@ -1511,19 +1529,6 @@ async def _run_service(token: str, chat_id: str) -> None:
             logger.info(
                 "Order execution loop started (poll every %ss)", cfg.execution.poll_interval_seconds
             )
-
-        intraday_task: asyncio.Task | None = None
-        if ib_scan is not None:
-            intraday_task = asyncio.create_task(_intraday_scan_loop(app, ib_scan, ib, chat_id))
-            logger.info(
-                "Intraday loop started (every %d min during RTH)",
-                cfg.scheduler.intraday_loop_minutes,
-            )
-
-        premarket_task: asyncio.Task | None = None
-        if ib_scan is not None:
-            premarket_task = asyncio.create_task(_premarket_snapshot_loop(ib_scan, chat_id))
-            logger.info("Premarket snapshot loop started (09:00 ET daily)")
 
         holiday_task = asyncio.create_task(_market_holiday_loop(app, chat_id))
         logger.info("Market holiday notification loop started")

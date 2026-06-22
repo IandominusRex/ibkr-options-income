@@ -449,6 +449,27 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   All four public functions (`review_candidates`, `review_roll`, `write_journal_narrative`,
   `propose_skill`) participate.
 
+## Bugs fixed (2026-06-23 — half-dead socket hung the intraday scan loop)
+
+- **15-min intraday scan never armed after a restart during a TWS connectivity drop:** when the
+  approval service was (re)started while TWS had lost its upstream link to IBKR (Error 1100), the
+  exec connection's socket handshake to TWS still succeeded, so `connectAsync` returned and `ib`
+  was non-`None` — but every data request to TWS timed out (a *half-dead* socket). Startup
+  fill-reconciliation (`reconcile_orphan_fills` → `reconcile_external_closes`) then called
+  `await ib.reqExecutionsAsync()`, which resolves only on the broker's `execDetailsEnd` event.
+  That event never arrived, so the bare `await` **hung forever**, blocking the rest of
+  `_run_service` — including the `asyncio.create_task(_intraday_scan_loop(...))` that arms the
+  15-minute scan. Observed 2026-06-22: the service hung from 23:33 until 00:48 (≈75 min, every
+  scan from 23:45–00:30 missed), unblocking only when TWS fully dropped the socket and forced
+  `reqExecutionsAsync` to raise. Fixed:
+  - `src/execution/reconciliation.py`: both `reqExecutionsAsync()` calls now go through
+    `_req_executions_bounded()`, which wraps them in `asyncio.wait_for(..., 30s)`; a timeout is
+    logged and the reconciliation pass is skipped (returns `None`) instead of hanging.
+  - `src/notify/approval_service._run_service`: the scan-only background loops (intraday +
+    premarket) are now created **before** the startup reconciliation, so no IBKR-touching
+    recovery step can ever gate the scan loop's creation.
+  - Regression test: `tests/test_notify.py::test_reconcile_orphan_fills_does_not_hang_on_dead_socket`.
+
 ## Bugs fixed (2026-06-18 — account summary reconnect leak)
 
 - **Error 322 / account summary never populated after reconnect:** `ib_async.IB._onError`
@@ -561,10 +582,18 @@ not been exercised against a live TWS/Gateway:
   on a live session, and that an amended order fills at the new price. Enable `execution.reprice_enabled`
   on paper and watch one order step toward the bid and fill before trusting it with real money.
 - **`market_data.symbol_timeout_seconds` (per-symbol `/scan` watchdog):** tests cover the timeout firing
-  against a mocked hang and the scan continuing to the next symbol. Not yet exercised against a real
-  IBKR pacing violation / error 10197 (competing live session) lockout — confirm on paper that a stuck
-  symbol is skipped cleanly (no leaked market-data lines) and the next symbol's `reqMktData` calls still
-  succeed.
+  against a mocked hang and the scan continuing to the next symbol. **This failure mode was hit live on
+  2026-06-22:** SMH built a 768-contract qualification cartesian (128 in-band strikes × 3 expirations × 2
+  rights) of mostly-nonexistent weekly strikes; the resulting `Error 200` / `reqContractDetails` storm
+  tripped an IBKR pacing lockout, and when `symbol_timeout` cancelled the hung `qualifyContractsAsync`
+  mid-flight the ib_async session was left unable to service any subsequent symbol — every name from SMH
+  onward then timed out (no market-data activity at all) and was skipped, so the scan produced nothing.
+  **Guards added:** `max_strikes_per_symbol` (caps the cartesian at the N nearest-spot strikes),
+  chunked + paced + per-chunk-timeout qualification (`qualify_timeout_seconds`, so a stuck chunk yields
+  partial results instead of being killed mid-flight), and a `_OPEN_LINES` registry + `drain_market_data_lines`
+  called on every symbol timeout/error to reclaim leaked lines. Still to confirm on paper: that a real
+  pacing lockout now recovers — a stuck symbol is skipped cleanly and the next symbol's `reqMktData`
+  calls succeed without a process restart.
 - **Layered IBKR-first greeks (S2):** the per-contract fallback (`lastGreeks`/`askGreeks`/`bidGreeks`) and
   the generic-tick-`106` IBKR IV → Black-Scholes path are unit-tested with mocked tickers, but it is
   **unverified which of these a real paper/delayed account actually populates**. Run one real paper scan

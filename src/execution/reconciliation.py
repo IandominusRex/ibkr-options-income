@@ -27,8 +27,10 @@ resubmit, so they cannot cause a double trade):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
+from typing import Any
 
 from ib_async import IB
 from sqlalchemy import select
@@ -40,6 +42,38 @@ from src.storage.db import session_scope
 from src.storage.models import CandidateRow, FillRow, OrderRow
 
 log = logging.getLogger(__name__)
+
+# ``reqExecutionsAsync`` resolves on the broker's ``execDetailsEnd`` event. On a half-dead
+# socket — TWS accepted the connection but has no upstream link to IBKR (Error 1100) — that
+# event never arrives and the bare ``await`` hangs *forever*. Because reconciliation runs in
+# the approval-service startup critical path (before the intraday-scan task is created), such
+# a hang silently stops the 15-min scan loop from ever arming. Bound every executions request
+# so a dead connection raises instead of blocking the whole service.
+_REQ_EXECUTIONS_TIMEOUT_SECONDS = 30.0
+
+
+async def _req_executions_bounded(ib: IB, context: str) -> list[Any] | None:
+    """``ib.reqExecutionsAsync()`` with a hard timeout. Returns None on failure/timeout.
+
+    A returned None means the caller must abort its reconciliation pass — never treat it as
+    "no executions" (which would be an empty list), since that distinction matters for the
+    additive recovery logic.
+    """
+    try:
+        return await asyncio.wait_for(
+            ib.reqExecutionsAsync(), timeout=_REQ_EXECUTIONS_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        log.error(
+            "%s: reqExecutions timed out after %.0fs (likely a half-dead TWS socket) — "
+            "skipping this reconciliation pass",
+            context,
+            _REQ_EXECUTIONS_TIMEOUT_SECONDS,
+        )
+        return None
+    except Exception:
+        log.exception("%s: reqExecutions failed", context)
+        return None
 
 
 def recover_orphan_orders() -> None:
@@ -125,10 +159,8 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
     if not orphans:
         return
 
-    try:
-        fills = await ib.reqExecutionsAsync()
-    except Exception:
-        log.exception("Fill reconciliation: reqExecutions failed")
+    fills = await _req_executions_bounded(ib, "Fill reconciliation")
+    if fills is None:
         return
 
     is_live = bool(get_config().is_live)
@@ -244,10 +276,8 @@ async def reconcile_external_closes(ib: IB, bot: object, chat_id: str) -> None:
 
     Strictly additive: it only records proven broker executions; it never places or cancels.
     """
-    try:
-        fills = await ib.reqExecutionsAsync()
-    except Exception:
-        log.exception("External-close reconciliation: reqExecutions failed")
+    fills = await _req_executions_bounded(ib, "External-close reconciliation")
+    if fills is None:
         return
 
     buys = _buy_option_executions(fills)
