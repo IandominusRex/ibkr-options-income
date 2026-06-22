@@ -132,7 +132,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Fundamentals | `yfinance` | FCF, debt, earnings/ex-div dates (supplemental only). |
 | Schemas | `pydantic` v2 | Typed contracts between modules (`src/common/schemas.py`). |
 | Storage | **SQLite + SQLAlchemy** | Postgres is a config change away; not migrated. |
-| Scheduling | system **`cron`** for one-shots; `asyncio` for the daemons | Never run a threaded scheduler in the same process as an `ib_async` loop. |
+| Scheduling | **`scripts.start`** spawns the EOD one-shot at the configured ET time (last-run persisted to `data/eod_scheduler_state.json`); `asyncio` for the daemons | The launcher is a plain process supervisor with no `ib_async` loop and runs the EOD job as a subprocess — so the "never run a threaded scheduler in the same process as an `ib_async` loop" invariant holds. No cron job required. |
 | Approval / notify | `python-telegram-bot` v21+ | Inline keyboards + callback handlers. |
 | Claude | **Claude Code CLI (`claude -p`)** | Headless. Since 2026-06-15, draws from a separate monthly Agent SDK credit pool (billed at API rates), not the interactive subscription. **Not used in this deployment** — `claude.backend: "ollama"` (no CLI access); both review and `scripts.propose_skill` dispatch to Ollama instead. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. Requires `claude -p`; inactive in this deployment. |

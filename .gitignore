@@ -19,6 +19,7 @@ data/*.db-shm
 data/*.db-wal
 data/*.parquet
 data/*.sqlite
+data/eod_scheduler_state.json
 logs/*.log
 logs/*.log.*
 *.log

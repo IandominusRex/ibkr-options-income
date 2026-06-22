@@ -93,7 +93,7 @@ claude:
   # to worry about — a simpler/more predictable choice if qwen3's output proves flaky.
   # If 18GB feels tight under load (TWS + this system running together), "qwen3:8b" (~5GB)
   # trades some reasoning depth for much more memory headroom.
-  ollama_model: "qwen3:14b"
+  ollama_model: "qwen3:8b"
   ollama_timeout_seconds: 120
 
 storage:
