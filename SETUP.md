@@ -121,6 +121,12 @@ python -m scripts.healthcheck
 You should see your account number, net liquidation value, and open positions printed to the
 terminal. If you see a connection error, double-check the port and that the API is enabled.
 
+When `claude.backend` is `ollama` or `cli_then_ollama`, the healthcheck also prints an
+`Ollama backend : OK/WARN …` line — it confirms the local server is reachable and the configured
+`ollama_model` is pulled. A `WARN` (server down, or model not pulled) never fails the healthcheck:
+LLM enrichment is optional and the pipeline runs deterministically without it. Fix a WARN by
+starting Ollama (the Ollama.app, or `ollama serve`) and running `ollama pull <model>`.
+
 ---
 
 ## 5. Configure your universe and risk limits
@@ -227,6 +233,12 @@ python -m scripts.start
 
 Logs are written to `logs/approval.log` and `logs/monitor.log`. Stop with Ctrl-C.
 Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval service.
+
+> **Ollama check at startup:** when `claude.backend` uses Ollama, the launcher probes the local
+> model on start and logs a loud `WARNING` if it's unreachable or not pulled. This is a warning,
+> **not** a blocker — the daemons start either way and simply skip LLM enrichment (shipping the
+> deterministic Rules-Engine list) until Ollama recovers. Nothing auto-starts Ollama; keep the
+> Ollama.app running (set it to "Open at Login") or run `ollama serve` yourself.
 
 > **Note:** The EOD cron job is NOT started by this launcher — it must be scheduled separately (§7).
 

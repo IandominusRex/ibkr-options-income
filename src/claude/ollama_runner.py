@@ -72,6 +72,39 @@ def _record_success() -> None:
     _circuit_open = False
 
 
+def probe_ollama() -> tuple[bool, str]:
+    """Check the Ollama backend is reachable and the configured model is pulled.
+
+    Hits `/api/tags` (cheap, no model load) and confirms `ollama_model` is among the
+    installed models. Returns `(ok, message)` and never raises — every failure mode
+    (server down, malformed response, model not pulled) is reported as `(False, msg)`.
+    Callers should gate on `cfg.backend` first; this is only meaningful when a backend
+    actually uses Ollama. Used by the launcher and healthcheck so a missing local model
+    surfaces up front instead of silently degrading to the deterministic-only path.
+    """
+    cfg = get_config().claude
+    host = cfg.ollama_host.rstrip("/")
+    try:
+        resp = httpx.get(f"{host}/api/tags", timeout=5.0)
+        resp.raise_for_status()
+        models = [m.get("name", "") for m in resp.json().get("models", [])]
+    except httpx.HTTPError as exc:
+        return False, f"Ollama not reachable at {host} ({exc}) — start Ollama.app or `ollama serve`"
+    except (ValueError, KeyError, TypeError) as exc:
+        return False, f"Ollama returned a malformed /api/tags response: {exc}"
+
+    want = cfg.ollama_model
+    # Ollama lists models as "name:tag". Match an exact entry, or — when the configured
+    # value omits a tag — any entry sharing the base name.
+    if any(m == want or m.split(":")[0] == want for m in models):
+        return True, f"reachable at {host}, model '{want}' available"
+    available = ", ".join(m for m in models if m) or "(none installed)"
+    return False, (
+        f"reachable at {host} but model '{want}' is not pulled "
+        f"(run `ollama pull {want}`); installed: {available}"
+    )
+
+
 def _generate(prompt: str, cfg: object) -> str | None:
     """POST to Ollama's `/api/generate`. Returns the model's response text, or None on failure.
 

@@ -56,7 +56,12 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   access, so `review_candidates`/`review_roll`/`write_journal_narrative` all go to a local
   `qwen3:14b` via Ollama (`think: false`, `num_ctx: 8192`). Same `ClaudeReview`/`RollReview`
   validation and fail-soft contract regardless of backend; active skills inject identically. See
-  SETUP.md §14. `scripts.propose_skill` (the skill-proposal loop, `proposer.py`) also dispatches
+  SETUP.md §14. The launcher (`scripts.start`) and `scripts.healthcheck` call
+  `ollama_runner.probe_ollama()` (a `GET /api/tags` reachability + configured-model check) on
+  startup so a down server or unpulled model surfaces immediately — a WARN, never a hard failure,
+  since the fail-soft path keeps the pipeline running deterministically without enrichment. Nothing
+  in the system auto-starts Ollama; the Ollama.app (or `ollama serve`) must already be running.
+  `scripts.propose_skill` (the skill-proposal loop, `proposer.py`) also dispatches
   on `claude.backend` — under `"ollama"` it drafts proposals via `ollama_runner.propose_skill`
   (`parse_ollama_skill_proposal`), so it works without CLI access too. The only thing that
   remains `claude -p`-only is the `trading_skills` MCP (ad-hoc tool lookups during `claude -p`'s

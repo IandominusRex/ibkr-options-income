@@ -41,6 +41,16 @@ def main() -> int:
     init_db()
     print("Database          : initialized OK")
 
+    # 2b. Ollama backend (optional enrichment — never fatal)
+    backend = cfg.claude.backend
+    if backend in ("ollama", "cli_then_ollama"):
+        from src.claude.ollama_runner import probe_ollama
+
+        ok, msg = probe_ollama()
+        print(f"Ollama backend    : {'OK' if ok else 'WARN'} ({backend}) — {msg}")
+    else:
+        print(f"Ollama backend    : not used (backend={backend})")
+
     # 3. Connect + read
     conn = IBKRConnection("healthcheck")
     try:

@@ -51,6 +51,31 @@ def _open_log(path: Path):
     return open(path, "a")  # noqa: SIM115  — intentionally kept open
 
 
+def _check_ollama() -> None:
+    """Warn (don't block) if the configured Ollama backend isn't ready.
+
+    The pipeline fails soft without Ollama — it ships the deterministic Rules-Engine
+    list with no LLM enrichment — so a failed probe is a loud warning, not a fatal
+    error. Skipped entirely when the backend doesn't use Ollama.
+    """
+    from src.claude.ollama_runner import probe_ollama
+    from src.common.config import get_config
+
+    backend = get_config().claude.backend
+    if backend not in ("ollama", "cli_then_ollama"):
+        return
+    ok, msg = probe_ollama()
+    if ok:
+        log.info("Ollama backend (%s): %s", backend, msg)
+    else:
+        log.warning(
+            "Ollama backend (%s) NOT ready — %s. Daemons will still run, but Claude "
+            "enrichment will be SKIPPED (deterministic list only) until Ollama recovers.",
+            backend,
+            msg,
+        )
+
+
 def _start(name: str) -> subprocess.Popen:
     cfg = SERVICES[name]
     log_fh = _open_log(cfg["log"])
@@ -88,6 +113,8 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _stop_all)
     signal.signal(signal.SIGTERM, _stop_all)
+
+    _check_ollama()
 
     for name in active:
         procs[name] = _start(name)

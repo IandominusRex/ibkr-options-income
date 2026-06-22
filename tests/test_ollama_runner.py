@@ -682,3 +682,72 @@ def test_circuit_opens_on_persistent_parse_failures():
                 ollama_mod.review_candidates(candidates, account)
 
     assert ollama_mod._circuit_open is True
+
+
+# --------------------------------------------------------------------------- #
+# probe_ollama — startup/healthcheck reachability + model check
+# --------------------------------------------------------------------------- #
+
+
+def _tags_response(model_names: list[str]) -> MagicMock:
+    """A mocked httpx.Response for Ollama's /api/tags."""
+    mock = MagicMock()
+    mock.json.return_value = {"models": [{"name": n} for n in model_names]}
+    mock.raise_for_status.return_value = None
+    return mock
+
+
+def test_probe_ollama_ok_when_model_present():
+    cfg, _, ollama_patch = _patch_ollama_cfg()
+    cfg.ollama_model = "qwen3:14b"
+    with patch(
+        "src.claude.ollama_runner.httpx.get",
+        return_value=_tags_response(["qwen3:14b", "qwen3:8b"]),
+    ):
+        with ollama_patch as mock_cfg:
+            mock_cfg.return_value.claude = cfg
+            ok, msg = ollama_mod.probe_ollama()
+    assert ok is True
+    assert "qwen3:14b" in msg
+
+
+def test_probe_ollama_matches_untagged_config_value():
+    """A config value without a tag (e.g. 'qwen3') matches any installed 'qwen3:*'."""
+    cfg, _, ollama_patch = _patch_ollama_cfg()
+    cfg.ollama_model = "qwen3"
+    with patch(
+        "src.claude.ollama_runner.httpx.get",
+        return_value=_tags_response(["qwen3:14b"]),
+    ):
+        with ollama_patch as mock_cfg:
+            mock_cfg.return_value.claude = cfg
+            ok, _msg = ollama_mod.probe_ollama()
+    assert ok is True
+
+
+def test_probe_ollama_fails_when_model_not_pulled():
+    cfg, _, ollama_patch = _patch_ollama_cfg()
+    cfg.ollama_model = "qwen3:14b"
+    with patch(
+        "src.claude.ollama_runner.httpx.get",
+        return_value=_tags_response(["qwen3:8b"]),
+    ):
+        with ollama_patch as mock_cfg:
+            mock_cfg.return_value.claude = cfg
+            ok, msg = ollama_mod.probe_ollama()
+    assert ok is False
+    assert "ollama pull qwen3:14b" in msg
+    assert "qwen3:8b" in msg
+
+
+def test_probe_ollama_fails_when_server_unreachable():
+    cfg, _, ollama_patch = _patch_ollama_cfg()
+    with patch(
+        "src.claude.ollama_runner.httpx.get",
+        side_effect=httpx.ConnectError("connection refused"),
+    ):
+        with ollama_patch as mock_cfg:
+            mock_cfg.return_value.claude = cfg
+            ok, msg = ollama_mod.probe_ollama()
+    assert ok is False
+    assert "not reachable" in msg
