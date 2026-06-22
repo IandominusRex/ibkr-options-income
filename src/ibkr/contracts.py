@@ -6,6 +6,7 @@ never needs to know the raw ib_async constructor signatures.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import cast
 
@@ -54,14 +55,53 @@ async def qualify_stock_async(ib: IB, symbol: str) -> Stock:
     return cast(Stock, first)
 
 
-async def qualify_options_async(ib: IB, contracts: list[Option]) -> list[Option]:
-    """Async variant of qualify_options — runs on the ib_async loop thread."""
+async def qualify_options_async(
+    ib: IB,
+    contracts: list[Option],
+    *,
+    chunk_size: int = 40,
+    throttle_seconds: float = 0.25,
+    chunk_timeout_seconds: float = 20.0,
+) -> list[Option]:
+    """Async variant of qualify_options — runs on the ib_async loop thread.
+
+    Qualification is **chunked, paced, and per-chunk timeout-bounded** rather than one
+    monolithic ``qualifyContractsAsync(*contracts)`` call. A single large burst (e.g. SMH's
+    768-contract cartesian on 2026-06-22) floods IBKR with ``reqContractDetails`` for the many
+    non-existent (expiration, strike) combos, tripping a pacing lockout that wedges the whole
+    session; and if the burst hasn't returned by ``symbol_timeout_seconds`` the outer
+    ``asyncio.wait_for`` cancels it mid-flight, which is what leaves the ib_async request
+    pipeline unable to service any subsequent symbol. Chunking caps the in-flight request
+    count, ``throttle_seconds`` paces between chunks, and a per-chunk ``asyncio.wait_for``
+    means a stuck chunk yields whatever qualified and we move on — the symbol is never killed
+    mid-qualification.
+    """
     if not contracts:
         return []
-    result = await ib.qualifyContractsAsync(*contracts)
-    items = result if isinstance(result, list) else [result]
-    ok: list[Option] = [
-        cast(Option, c) for c in items if c is not None and getattr(c, "conId", None)
-    ]
+    if chunk_size <= 0:
+        chunk_size = len(contracts)
+
+    ok: list[Option] = []
+    for i in range(0, len(contracts), chunk_size):
+        chunk = contracts[i : i + chunk_size]
+        try:
+            result = await asyncio.wait_for(
+                ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
+            )
+        except TimeoutError:
+            log.warning(
+                "qualify_options_async: chunk %d-%d timed out after %.0fs — skipping chunk",
+                i,
+                i + len(chunk),
+                chunk_timeout_seconds,
+            )
+            continue
+        items = result if isinstance(result, list) else [result]
+        ok.extend(
+            cast(Option, c) for c in items if c is not None and getattr(c, "conId", None)
+        )
+        if throttle_seconds > 0 and i + chunk_size < len(contracts):
+            await asyncio.sleep(throttle_seconds)
+
     log.debug("qualify_options_async: %d/%d contracts qualified", len(ok), len(contracts))
     return ok

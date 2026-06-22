@@ -55,6 +55,17 @@ market_data:
   # live in universe.yaml under `strike_bands:`.
   strike_band_pct: 0.15            # floor / fallback when a symbol has no stored IV
   strike_band_iv_mult: 1.5
+  # Cap on in-band strikes kept per symbol. A high-IV name at a wide band with dense ($2.50)
+  # spacing can yield 120+ strikes; the full cartesian (strikes × expirations × 2) then becomes
+  # a several-hundred-contract qualifyContractsAsync burst that floods IBKR with reqContractDetails
+  # for non-existent weekly strikes and trips a session-wedging pacing lockout (this hung the
+  # 2026-06-22 scan on SMH at 768 contracts). Keep the N strikes nearest spot. 0 disables.
+  max_strikes_per_symbol: 80
+  # Per-chunk timeout for chunked contract qualification. Qualification is paced in
+  # chain_batch_size chunks; a chunk that never resolves returns partial results instead of
+  # hanging the whole symbol and being killed mid-flight by symbol_timeout (that cancellation
+  # is what wedged the ib_async session on 2026-06-22).
+  qualify_timeout_seconds: 20
   # Max time to spend fetching one symbol's option chain during /scan. If IBKR never
   # responds (pacing violation, competing-session lockout), the symbol is skipped and the
   # scan moves on instead of hanging indefinitely. SPY/QQQ have large chains where all

@@ -21,11 +21,13 @@ from src.ibkr.contracts import (
     build_option,
     build_stock,
     qualify_options,
+    qualify_options_async,
     qualify_stock,
 )
 from src.ibkr.market_data import (
     _await_ready,
     _batch_quotes,
+    _cap_strikes,
     _enrich_greeks_from_ibkr_iv,
     _enrich_greeks_yf,
     _filter_expirations,
@@ -39,6 +41,7 @@ from src.ibkr.market_data import (
     _safe_int,
     _spot_ready,
     _ticker_to_quote,
+    drain_market_data_lines,
 )
 
 # ---------------------------------------------------------------------------
@@ -196,6 +199,28 @@ def test_filter_strikes_returns_sorted():
     strikes = {105.0, 95.0, 100.0}
     result = _filter_strikes(strikes, spot=100.0)
     assert result == sorted(result)
+
+
+# ---------------------------------------------------------------------------
+# _cap_strikes (line-leak prevention at the source — bounds the qualify cartesian)
+# ---------------------------------------------------------------------------
+
+
+def test_cap_strikes_keeps_nearest_spot_sorted():
+    strikes = [90.0, 95.0, 99.0, 100.0, 101.0, 105.0, 120.0]
+    result = _cap_strikes(strikes, spot=100.0, max_strikes=3)
+    # The 3 nearest 100 are 99, 100, 101 — returned sorted ascending.
+    assert result == [99.0, 100.0, 101.0]
+
+
+def test_cap_strikes_noop_when_under_cap():
+    strikes = [99.0, 100.0, 101.0]
+    assert _cap_strikes(strikes, spot=100.0, max_strikes=80) == strikes
+
+
+def test_cap_strikes_disabled_when_zero():
+    strikes = [float(i) for i in range(200)]
+    assert _cap_strikes(strikes, spot=100.0, max_strikes=0) == strikes
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +435,103 @@ def test_qualify_options_empty_input():
     result = qualify_options(ib, [])
     assert result == []
     ib.qualifyContracts.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# qualify_options_async — chunked, paced, per-chunk timeout-bounded (anti-wedge)
+# ---------------------------------------------------------------------------
+
+
+async def test_qualify_options_async_chunks_and_paces(monkeypatch):
+    """A large batch is qualified in chunk_size chunks with a throttle between chunks —
+    never one monolithic burst (the SMH 768-contract wedge)."""
+    sleep = AsyncMock()
+    monkeypatch.setattr("src.ibkr.contracts.asyncio.sleep", sleep)
+
+    ib = MagicMock()
+    # Each chunk echoes its input contracts back, all qualified.
+    ib.qualifyContractsAsync = AsyncMock(side_effect=lambda *cs: list(cs))
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=1000 + i) for i in range(5)]
+
+    result = await qualify_options_async(
+        ib, contracts, chunk_size=2, throttle_seconds=0.25, chunk_timeout_seconds=20
+    )
+
+    assert len(result) == 5
+    assert ib.qualifyContractsAsync.call_count == 3  # 2 + 2 + 1
+    assert sleep.await_count == 2  # paced between the 3 chunks, not after the last
+
+
+async def test_qualify_options_async_skips_timed_out_chunk():
+    """A chunk whose qualification hangs is dropped (returns partial) instead of hanging the
+    whole symbol — this is what prevents the outer symbol_timeout from killing it mid-flight.
+    The stuck chunk raises TimeoutError (as the real asyncio.wait_for would on a hung chunk)."""
+
+    async def _qualify(*cs):
+        if any(c.strike == 401.0 for c in cs):
+            raise TimeoutError  # the real wait_for trips on a stuck chunk
+        return list(cs)
+
+    ib = MagicMock()
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_qualify)
+
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=2000 + i) for i in range(4)]
+    result = await qualify_options_async(ib, contracts, chunk_size=2, throttle_seconds=0)
+
+    # First chunk (400,401) times out and is skipped; second chunk (402,403) qualifies.
+    assert {c.strike for c in result} == {402.0, 403.0}
+
+
+# ---------------------------------------------------------------------------
+# Market-data line registry — leak guard
+# ---------------------------------------------------------------------------
+
+
+def test_drain_market_data_lines_reclaims_open_lines():
+    """A chain fetch interrupted before its finally-cancel leaves registered lines; drain
+    cancels every straggler so it can't eat the next symbol's ~100-line budget."""
+    from src.ibkr import market_data as md
+
+    md._OPEN_LINES.clear()
+    ib = MagicMock()
+    ib.reqMktData.return_value = _make_ticker()
+    # Open 3 lines with distinct conIds but never close them (simulates a cancelled fetch).
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=3000 + i) for i in range(3)]
+    for c in contracts:
+        md._open_line(ib, c, snapshot=True)
+    assert len(md._OPEN_LINES) == 3
+
+    reclaimed = drain_market_data_lines(ib)
+
+    assert reclaimed == 3
+    assert ib.cancelMktData.call_count == 3
+    assert md._OPEN_LINES == {}
+
+
+def test_drain_market_data_lines_noop_when_clean():
+    from src.ibkr import market_data as md
+
+    md._OPEN_LINES.clear()
+    ib = MagicMock()
+    assert drain_market_data_lines(ib) == 0
+    ib.cancelMktData.assert_not_called()
+
+
+async def test_batch_quotes_async_leaves_no_open_lines(monkeypatch):
+    """The happy path must register and then deregister every line — no leak after a clean batch."""
+    from src.ibkr import market_data as md
+    from src.ibkr.market_data import _batch_quotes_async
+
+    md._OPEN_LINES.clear()
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+    ib = MagicMock()
+    ib.reqMktData.return_value = _make_ticker(bid=2.0, ask=2.4)
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=4000 + i) for i in range(5)]
+
+    await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert md._OPEN_LINES == {}
+    assert drain_market_data_lines(ib) == 0
 
 
 # ---------------------------------------------------------------------------

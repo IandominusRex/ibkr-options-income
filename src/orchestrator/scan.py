@@ -53,7 +53,11 @@ from src.common.schemas import (
 from src.engine.decision_engine import select_top_candidates
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
-from src.ibkr.market_data import get_option_chain_quotes_async, persist_chain_quotes
+from src.ibkr.market_data import (
+    drain_market_data_lines,
+    get_option_chain_quotes_async,
+    persist_chain_quotes,
+)
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.formatters import format_data_provenance, format_skip_reasons
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
@@ -1013,11 +1017,15 @@ async def _run_scan_body(
                 )
                 quotes = []
                 result.provenance.chain_failed += 1
+                # The timeout cancelled the chain fetch mid-flight; reclaim any market-data
+                # lines it left open so they don't eat into the next symbol's ~100-line budget.
+                drain_market_data_lines(ib)
                 await tracker.add_error(f"{symbol} — option chain timed out, skipped")
             except Exception:
                 log.exception("scan: option chain failed for %s", symbol)
                 quotes = []
                 result.provenance.chain_failed += 1
+                drain_market_data_lines(ib)
                 await tracker.add_error(f"{symbol} — option chain failed, skipped")
             else:
                 if quotes:
@@ -1480,9 +1488,11 @@ async def run_ticker_scan(
     except TimeoutError:
         log.error("ticker_scan: option chain for %s timed out", ticker)
         quotes = []
+        drain_market_data_lines(ib)
     except Exception:
         log.exception("ticker_scan: option chain failed for %s", ticker)
         quotes = []
+        drain_market_data_lines(ib)
 
     # 3. Analytics (yfinance) — blocking, run off-thread.
     spot_override = infer_spot_from_quotes(quotes) if quotes else None

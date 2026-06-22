@@ -109,6 +109,23 @@ class MarketDataCfg(BaseModel):
     # per-symbol override is a deliberate choice and is NOT clamped).
     strike_band_max_pct: float = 0.40
 
+    # Hard ceiling on the number of strikes kept per symbol after band-filtering. A high-IV name
+    # at a wide band with dense ($2.50) strike spacing can yield 120+ in-band strikes; the full
+    # cartesian (strikes × expirations × 2 rights) then becomes a several-hundred-contract
+    # qualifyContractsAsync burst. Many (expiration, strike) combos don't exist for weekly
+    # expirations, so that burst floods IBKR with reqContractDetails — tripping a pacing lockout
+    # that wedges the session (this is exactly what hung the 2026-06-22 scan on SMH: 128 strikes
+    # × 3 exp × 2 = 768 contracts). Keep only the N strikes nearest spot — that always covers the
+    # in-scope deltas. 0 disables the cap.
+    max_strikes_per_symbol: int = 80
+
+    # Per-chunk timeout for chunked option-contract qualification. qualifyContractsAsync is
+    # issued in `chain_batch_size` chunks paced by `request_throttle_seconds`; each chunk is
+    # bounded by this so a chunk that never resolves (non-existent contracts, pacing) returns
+    # whatever qualified instead of hanging the whole symbol and being killed mid-flight by the
+    # outer symbol_timeout (the cancellation is what wedged the ib_async session on 2026-06-22).
+    qualify_timeout_seconds: float = 20.0
+
     # Hard ceiling on a single symbol's option-chain fetch during /scan. Without this, a
     # qualifyContractsAsync/reqMktData call that never gets a response (IBKR pacing
     # violation, competing-session lockout, or a hung TWS) stalls the whole scan

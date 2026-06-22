@@ -39,6 +39,57 @@ log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Market-data line registry — guards the ~100-line cap against leaks.
+# ---------------------------------------------------------------------------
+#
+# Every reqMktData line opened for an option chain or spot snapshot is registered here and
+# removed on cancel, so a fetch interrupted between "open the line" and "cancel the line"
+# (a CancelledError from the outer symbol_timeout, an exception mid-batch) can't leak the line
+# against the account's ~100-line cap. A leaked line is invisible and permanent until the
+# session reconnects; enough of them and every subsequent reqMktData silently never ticks —
+# the failure mode behind the 2026-06-22 scan stall. The orchestrator calls
+# ``drain_market_data_lines`` after any symbol times out or errors to reclaim stragglers
+# before the next symbol opens its own lines.
+_OPEN_LINES: dict[int, Any] = {}
+
+
+def _open_line(ib: IB, contract: Any, **kwargs: Any) -> Any:
+    """reqMktData for *contract* and register the open line. Returns the ticker."""
+    ticker = ib.reqMktData(contract, **kwargs)
+    key = getattr(contract, "conId", None) or id(contract)
+    _OPEN_LINES[key] = contract
+    return ticker
+
+
+def _close_line(ib: IB, contract: Any) -> None:
+    """cancelMktData for *contract* and deregister the line (idempotent, never raises)."""
+    try:
+        ib.cancelMktData(contract)
+    except Exception:
+        log.debug("cancelMktData failed for %s", getattr(contract, "symbol", contract))
+    _OPEN_LINES.pop(getattr(contract, "conId", None) or id(contract), None)
+
+
+def drain_market_data_lines(ib: IB) -> int:
+    """Cancel every still-open registered market-data line. Returns the count reclaimed.
+
+    Defence-in-depth for the ~100-line cap: called by the orchestrator after a symbol's chain
+    fetch is cancelled (symbol_timeout) or errors, so a partially-cancelled batch can't leak
+    lines into the next symbol's budget. Safe to call when nothing is open (returns 0)."""
+    if not _OPEN_LINES:
+        return 0
+    n = len(_OPEN_LINES)
+    for contract in list(_OPEN_LINES.values()):
+        try:
+            ib.cancelMktData(contract)
+        except Exception:
+            pass
+    _OPEN_LINES.clear()
+    log.warning("drain_market_data_lines: reclaimed %d leaked market-data line(s)", n)
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Black-Scholes fallback — fills delta when IBKR returns no modelGreeks.
 # ---------------------------------------------------------------------------
 
@@ -222,7 +273,7 @@ def _spot_ready(ticker: Any) -> bool:
 
 
 def _get_spot(ib: IB, stock: Any) -> float:
-    ticker = ib.reqMktData(stock, snapshot=True)
+    ticker = _open_line(ib, stock, snapshot=True)
     ib.sleep(1)
     price = ticker.marketPrice()
     p = _safe(price)
@@ -230,7 +281,7 @@ def _get_spot(ib: IB, stock: Any) -> float:
         # No live/delayed tick (weekend, no subscription) — previous close is part of the
         # same snapshot and needs no extra round trip.
         p = _safe(ticker.close)
-    ib.cancelMktData(stock)
+    _close_line(ib, stock)
     if p is None or p <= 0:
         # Last resort: a tightly-bounded historical bar. ib_async's reqHistoricalData
         # defaults to a 60s timeout — without spot_history_timeout_seconds, a symbol with
@@ -259,7 +310,7 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
     snapshot exposes a price (S7), not after a flat 2s. Only reached when no cached daily
     close is available (see ``_resolve_spot_async``).
     """
-    ticker = ib.reqMktData(stock, snapshot=True)
+    ticker = _open_line(ib, stock, snapshot=True)
     await _await_ready(lambda: _spot_ready(ticker), get_config().market_data.quote_sleep_seconds)
     price = ticker.marketPrice()
     p = _safe(price)
@@ -267,7 +318,7 @@ async def _get_spot_async(ib: IB, stock: Any) -> float:
         # No live/delayed tick (weekend, no subscription) — previous close is part of the
         # same snapshot and needs no extra round trip.
         p = _safe(ticker.close)
-    ib.cancelMktData(stock)
+    _close_line(ib, stock)
     if p is None or p <= 0:
         # Last resort: a tightly-bounded historical bar. ib_async's reqHistoricalDataAsync
         # defaults to a 60s timeout — without spot_history_timeout_seconds, a symbol with
@@ -332,6 +383,21 @@ def _filter_expirations(expirations: Iterable[str], dte_min: int, dte_max: int) 
 def _filter_strikes(strikes: Iterable[float], spot: float, band_pct: float = 0.15) -> list[float]:
     lo, hi = spot * (1 - band_pct), spot * (1 + band_pct)
     return sorted(s for s in strikes if lo <= s <= hi)
+
+
+def _cap_strikes(strikes: list[float], spot: float, max_strikes: int) -> list[float]:
+    """Keep at most *max_strikes* in-band strikes, the ones nearest *spot* (sorted ascending).
+
+    A high-IV name at a wide band with dense ($2.50) spacing can leave 120+ in-band strikes;
+    the full cartesian (strikes × expirations × 2 rights) becomes a several-hundred-contract
+    qualification burst that floods IBKR with reqContractDetails for non-existent weekly strikes
+    and trips a session-wedging pacing lockout (the 2026-06-22 SMH stall). The strikes nearest
+    spot always cover the in-scope CC/CSP deltas, so trimming the wings is lossless for ranking.
+    ``max_strikes <= 0`` disables the cap."""
+    if max_strikes <= 0 or len(strikes) <= max_strikes:
+        return strikes
+    nearest = sorted(strikes, key=lambda s: abs(s - spot))[:max_strikes]
+    return sorted(nearest)
 
 
 def _strike_band_pct(symbol: str, dte_days: int) -> float:
@@ -445,7 +511,7 @@ def _batch_quotes(
         tickers = [
             # 101 = option open interest; 106 = option implied volatility (S2: lets us BS-fill
             # delta from an IBKR IV instead of a second Yahoo chain download when greeks lag).
-            ib.reqMktData(c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
+            _open_line(ib, c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
         try:
@@ -457,7 +523,7 @@ def _batch_quotes(
             # Always cancel subscriptions — an exception mid-batch must not leak lines
             # against the ~100-line cap, which would break every subsequent scan.
             for c in batch:
-                ib.cancelMktData(c)
+                _close_line(ib, c)
 
         log.debug(
             "chain batch %d-%d complete (%d quotes accumulated)",
@@ -493,7 +559,7 @@ async def _batch_quotes_async(
         tickers = [
             # 101 = option open interest; 106 = option implied volatility (S2: lets us BS-fill
             # delta from an IBKR IV instead of a second Yahoo chain download when greeks lag).
-            ib.reqMktData(c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
+            _open_line(ib, c, genericTickList="101,106", snapshot=False, regulatorySnapshot=False)
             for c in batch
         ]
         try:
@@ -506,7 +572,7 @@ async def _batch_quotes_async(
                 quotes.append(_ticker_to_quote(c, ticker))
         finally:
             for c in batch:
-                ib.cancelMktData(c)
+                _close_line(ib, c)
         log.debug(
             "chain batch %d-%d complete (%d quotes accumulated)",
             i,
@@ -552,7 +618,9 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
 
     expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
     band_pct = _strike_band_pct(symbol, dte_max)
-    strikes = _filter_strikes(smart.strikes, spot, band_pct)
+    strikes = _cap_strikes(
+        _filter_strikes(smart.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
+    )
     log.info(
         "symbol=%s expirations=%s strikes=%d band=%.0f%%",
         symbol,
@@ -612,7 +680,9 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
 
     expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
     band_pct = _strike_band_pct(symbol, dte_max)
-    strikes = _filter_strikes(smart.strikes, spot, band_pct)
+    strikes = _cap_strikes(
+        _filter_strikes(smart.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
+    )
     log.info(
         "symbol=%s expirations=%s strikes=%d band=%.0f%%",
         symbol,
@@ -628,7 +698,13 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
         for right in ("C", "P")
     ]
 
-    qualified = await qualify_options_async(ib, raw)
+    qualified = await qualify_options_async(
+        ib,
+        raw,
+        chunk_size=md.chain_batch_size,
+        throttle_seconds=md.request_throttle_seconds,
+        chunk_timeout_seconds=md.qualify_timeout_seconds,
+    )
     if not qualified:
         log.warning("No qualified option contracts for %s", symbol)
         return []
