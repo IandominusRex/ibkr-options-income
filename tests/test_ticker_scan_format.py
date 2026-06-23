@@ -245,8 +245,9 @@ def test_footer_reports_ibkr_parity_spot() -> None:
         is_held=False,
         quotes_available=True,
     )
-    assert "IBKR spot (parity)" in text
-    assert "yfinance Greeks (fallback)" not in text
+    # Parens must be MarkdownV2-escaped or Telegram rejects the whole message.
+    assert "IBKR spot \\(parity\\)" in text
+    assert "yfinance Greeks \\(fallback\\)" not in text
 
 
 def test_footer_reports_yfinance_spot_and_greeks_fallback() -> None:
@@ -263,7 +264,8 @@ def test_footer_reports_yfinance_spot_and_greeks_fallback() -> None:
         greeks_fallback=True,
     )
     assert "yfinance spot" in text
-    assert "yfinance Greeks (fallback)" in text
+    # Parens must be MarkdownV2-escaped or Telegram rejects the whole message.
+    assert "yfinance Greeks \\(fallback\\)" in text
 
 
 def test_footer_omits_chain_when_no_quotes() -> None:
@@ -279,6 +281,31 @@ def test_footer_omits_chain_when_no_quotes() -> None:
         quotes_available=False,
     )
     assert "IBKR option chain" not in text
+
+
+def test_card_has_no_unescaped_markdownv2_parens() -> None:
+    """Regression: the sources footer once emitted raw '(parity)'/'(fallback)' parens, which
+    Telegram MarkdownV2 rejects with BadRequest — silently freezing the /scan progress message.
+    The whole rendered card must never contain an unescaped reserved char."""
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(price_source="ibkr"),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        greeks_fallback=True,
+    )
+    # Reserved MarkdownV2 chars that must be escaped in plain text (excluding the
+    # entity markers '_' and '*' that the formatter uses intentionally).
+    reserved = set(r"[]()~`>#+-=|{}.!")
+    unescaped = [
+        (i, c) for i, c in enumerate(text) if c in reserved and (i == 0 or text[i - 1] != "\\")
+    ]
+    assert not unescaped, f"unescaped MarkdownV2 chars in card: {unescaped}"
 
 
 # ---------------------------------------------------------------------------

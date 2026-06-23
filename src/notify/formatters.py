@@ -804,11 +804,13 @@ def format_ticker_scan_result(
     # --- Sources footer (honest about what actually produced these numbers) ---
     lines.append(
         "_Sources: "
-        + _ticker_sources(
-            quotes_available=quotes_available,
-            tech_stats=tech_stats,
-            greeks_fallback=greeks_fallback,
-            has_review=bool(review_map),
+        + _md(
+            _ticker_sources(
+                quotes_available=quotes_available,
+                tech_stats=tech_stats,
+                greeks_fallback=greeks_fallback,
+                has_review=bool(review_map),
+            )
         )
         + "_"
     )

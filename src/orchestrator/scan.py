@@ -1712,4 +1712,4 @@ async def _ticker_edit_msg(bot: object, chat_id: str, message_id: int, text: str
             parse_mode="MarkdownV2",
         )
     except Exception:
-        log.debug("ticker_scan: failed to edit message %s", message_id, exc_info=True)
+        log.warning("ticker_scan: failed to edit message %s", message_id, exc_info=True)
