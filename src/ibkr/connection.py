@@ -26,6 +26,71 @@ class ConnectionError_(RuntimeError):
     """Raised when we cannot establish or maintain a TWS/Gateway connection."""
 
 
+async def connect_with_retry(
+    ib: IB,
+    host: str,
+    port: int,
+    client_id: int,
+    *,
+    timeout: float,
+    label: str,
+    retries: int | None = None,
+    backoff_base: float | None = None,
+) -> None:
+    """``ib.connectAsync`` with bounded retry/backoff for startup clientId collisions.
+
+    After a fast stop/start cycle, IB Gateway can still hold the *previous* process's clientId
+    for a few seconds — the new connect then fails (Error 326 "client id is already in use" →
+    "Peer closed connection" → a connect ``TimeoutError``). A single one-shot connect would then
+    disable that connection for the whole session: e.g. ``/account`` and ``/status`` (served by
+    the scan connection) go dark until the next manual restart (observed 2026-06-24 03:42, where
+    clientId 15 — the prior half-dead scan socket — lingered on the Gateway side). Retrying with
+    exponential backoff gives Gateway time to release the id so the connection self-heals.
+
+    Re-raises the last error if every attempt fails, so the caller's existing failure handling
+    (log + degrade) still runs. Retrying on the same ``IB`` instance is safe — ``connectAsync``
+    tears down its partial state on failure (this mirrors ``IBKRConnection.connect_async``).
+    """
+    cfg = get_config()
+    if retries is None:
+        retries = cfg.ibkr.reconnect.max_retries
+    if backoff_base is None:
+        backoff_base = cfg.ibkr.reconnect.backoff_base_seconds
+    retries = max(1, retries)
+
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            await ib.connectAsync(host, port, clientId=client_id, timeout=timeout)
+            if attempt > 1:
+                log.info(
+                    "[%s] IBKR connected on attempt %d/%d (clientId=%s)",
+                    label,
+                    attempt,
+                    retries,
+                    client_id,
+                )
+            return
+        except Exception as exc:  # noqa: BLE001 — surface any connect failure to retry/raise
+            last_err = exc
+            if attempt < retries:
+                wait = backoff_base * (2 ** (attempt - 1))
+                log.warning(
+                    "[%s] IBKR connect attempt %d/%d failed: %s — retrying in %.1fs "
+                    "(clientId %s may still be held by Gateway from a prior session)",
+                    label,
+                    attempt,
+                    retries,
+                    exc,
+                    wait,
+                    client_id,
+                )
+                await asyncio.sleep(wait)
+
+    assert last_err is not None
+    raise last_err
+
+
 class IBKRConnection:
     """Thin lifecycle wrapper around ib_async.IB with reconnect + safety banner.
 

@@ -290,6 +290,11 @@ class ScanResult:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     # True when this scan was skipped because another process held the scan lease (F5).
     lease_skipped: bool = False
+    # True when the run was aborted mid-sweep by the half-dead-socket circuit breaker:
+    # max_consecutive_chain_timeouts symbols timed out back-to-back, so rather than grind the
+    # rest of the universe at symbol_timeout_seconds each the scan bails. The caller (intraday
+    # loop) reads this to notify the operator and force a reconnect.
+    aborted_unhealthy: bool = False
     # Intraday telemetry (S1/S5/S6): how many symbols were fetched this cycle vs the universe
     # size, whether the Claude review was reused, and whether the cycle ended silently and so
     # emitted a quiet-cycle heartbeat instead of any card/buy-list message.
@@ -973,6 +978,14 @@ async def _run_scan_body(
     csp_candidates: list[TradeCandidate] = []
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {}
     fetched_spots: dict[str, float] = {}  # symbols whose chain we fetched → scan_state baseline
+    # Half-dead-socket circuit breaker (N-fix 2026-06-24): count consecutive chain-fetch
+    # timeouts. A live socket that hangs on one symbol (pacing, a non-existent weekly chain)
+    # recovers on the next; a socket that has lost its IBKR data farm times out on *every*
+    # symbol. After max_consecutive_chain_timeouts in a row we conclude the socket is dead and
+    # abort, rather than burning symbol_timeout_seconds × the rest of the universe (~115 min)
+    # and starving every later intraday cycle.
+    consecutive_chain_timeouts = 0
+    max_consecutive_timeouts = cfg.market_data.max_consecutive_chain_timeouts
 
     await tracker.tick("market_data", "⏳", f"0/{n} symbols")
     for i, symbol in enumerate(all_symbols):
@@ -1021,13 +1034,37 @@ async def _run_scan_body(
                 # lines it left open so they don't eat into the next symbol's ~100-line budget.
                 drain_market_data_lines(ib)
                 await tracker.add_error(f"{symbol} — option chain timed out, skipped")
+                # Circuit breaker: a run of back-to-back timeouts means the socket is dead, not
+                # that this one symbol is slow. Bail before grinding the rest of the universe.
+                consecutive_chain_timeouts += 1
+                if (
+                    max_consecutive_timeouts > 0
+                    and consecutive_chain_timeouts >= max_consecutive_timeouts
+                ):
+                    log.error(
+                        "scan: %d consecutive chain timeouts — aborting run, socket appears "
+                        "half-dead (processed %d/%d symbols)",
+                        consecutive_chain_timeouts,
+                        i + 1,
+                        n,
+                    )
+                    result.aborted_unhealthy = True
+                    await tracker.add_error(
+                        f"socket half-dead — aborted after {consecutive_chain_timeouts} "
+                        f"consecutive timeouts"
+                    )
+                    break
             except Exception:
                 log.exception("scan: option chain failed for %s", symbol)
                 quotes = []
                 result.provenance.chain_failed += 1
                 drain_market_data_lines(ib)
                 await tracker.add_error(f"{symbol} — option chain failed, skipped")
+                # An error (vs a timeout) means the socket answered — reset the breaker.
+                consecutive_chain_timeouts = 0
             else:
+                # The fetch returned, so the data farm is alive — reset the breaker.
+                consecutive_chain_timeouts = 0
                 if quotes:
                     result.provenance.chain_ibkr += 1
                     for q in quotes:

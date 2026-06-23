@@ -10,6 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import ib_async
+import pytest
 
 from src.ibkr.connection import (
     AutoReconnect,
@@ -250,3 +251,56 @@ async def test_debounce_account_summary_on_reconnect_deduplicates() -> None:
     assert len(subscribe_calls) == 1, (
         f"expected exactly 1 resubscription, got {len(subscribe_calls)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# connect_with_retry — startup clientId-collision resilience
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_with_retry_succeeds_first_try():
+    from src.ibkr.connection import connect_with_retry
+
+    ib = MagicMock()
+    ib.connectAsync = AsyncMock(return_value=None)
+
+    await connect_with_retry(
+        ib, "127.0.0.1", 4002, 15, timeout=5.0, label="scan", retries=5, backoff_base=0.0
+    )
+    ib.connectAsync.assert_called_once()
+    assert ib.connectAsync.call_args.kwargs["clientId"] == 15
+
+
+async def test_connect_with_retry_retries_then_succeeds():
+    """A transient 'client id already in use' on restart must self-heal, not disable the
+    connection for the session."""
+    from src.ibkr.connection import connect_with_retry
+
+    calls = {"n": 0}
+
+    async def _flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise TimeoutError("client id is already in use")
+        return None
+
+    ib = MagicMock()
+    ib.connectAsync = AsyncMock(side_effect=_flaky)
+
+    await connect_with_retry(
+        ib, "127.0.0.1", 4002, 15, timeout=5.0, label="scan", retries=5, backoff_base=0.0
+    )
+    assert calls["n"] == 3  # failed twice, succeeded on the third
+
+
+async def test_connect_with_retry_raises_after_exhausting_attempts():
+    from src.ibkr.connection import connect_with_retry
+
+    ib = MagicMock()
+    ib.connectAsync = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+
+    with pytest.raises(ConnectionRefusedError):
+        await connect_with_retry(
+            ib, "127.0.0.1", 4002, 15, timeout=5.0, label="scan", retries=3, backoff_base=0.0
+        )
+    assert ib.connectAsync.call_count == 3

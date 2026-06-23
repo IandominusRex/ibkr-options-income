@@ -1484,6 +1484,45 @@ async def test_note_intraday_skip_warns_again_after_interval():
     assert bot.send_message.call_count == 2
 
 
+async def test_notify_scan_blocked_always_sends_with_detail():
+    """A half-dead-socket block is rare and actionable — unlike skips it is never throttled,
+    and the message must carry the specific reason + detail so the operator knows what blocked."""
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = AsyncMock()
+    await _notify_scan_blocked(bot, "123", "data farm not responding", "probe timed out on SPY")
+    assert bot.send_message.call_count == 1
+    text = bot.send_message.call_args.kwargs["text"]
+    assert "Scan blocked" in text
+    assert "data farm not responding" in text
+    assert "probe timed out on SPY" in text
+
+    # No throttling: a second block sends again immediately.
+    await _notify_scan_blocked(bot, "123", "still down", "second probe failed")
+    assert bot.send_message.call_count == 2
+
+
+async def test_notify_scan_blocked_swallows_send_failure():
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = AsyncMock()
+    bot.send_message.side_effect = RuntimeError("telegram down")
+    # Must not raise — a Telegram outage cannot be allowed to crash the intraday loop.
+    await _notify_scan_blocked(bot, "123", "reason", "detail")
+
+
+async def test_force_scan_reconnect_disconnects_and_swallows():
+    from src.notify.approval_service import _force_scan_reconnect
+
+    ib = MagicMock()
+    await _force_scan_reconnect(ib)
+    ib.disconnect.assert_called_once()
+
+    # A disconnect that itself raises must not propagate (best-effort recovery).
+    ib.disconnect.side_effect = RuntimeError("already gone")
+    await _force_scan_reconnect(ib)
+
+
 # --------------------------------------------------------------------------- #
 # format_screen_unchanged / format_screen_empty
 # --------------------------------------------------------------------------- #

@@ -69,6 +69,7 @@ from src.execution.reconciliation import (
 )
 from src.ibkr.connection import (
     AutoReconnect,
+    connect_with_retry,
     debounce_account_summary_on_reconnect,
     suppress_account_summary_on_reconnect,
 )
@@ -1040,6 +1041,44 @@ async def _note_intraday_skip(bot_data: dict, bot: object, chat_id: str, reason:
         logger.exception("Intraday loop: failed to send overrun warning")
 
 
+async def _notify_scan_blocked(bot: object, chat_id: str, reason: str, detail: str) -> None:
+    """Tell the operator a scan cycle was *blocked* (not merely skipped) and exactly why.
+
+    Unlike ``_note_intraday_skip`` (throttled overrun/contention nuisance warnings), a block is
+    rare and actionable — the data socket is half-dead — so it is sent every time. Failures to
+    send are swallowed: a Telegram outage must not crash the loop.
+    """
+    logger.error("Intraday loop: scan BLOCKED — %s | %s", reason, detail)
+    try:
+        cfg_s = get_config().secrets
+        await bot.send_message(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
+            text=(
+                f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
+                f"*{reason}*\n{detail}\n\n"
+                f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
+            ),
+            parse_mode="MarkdownV2",
+        )
+    except Exception:
+        logger.exception("Intraday loop: failed to send scan-blocked notice")
+
+
+async def _force_scan_reconnect(ib_scan: IB) -> None:
+    """Drop the half-dead scan socket so AutoReconnect rebuilds it.
+
+    On a half-dead socket ``isConnected()`` stays True and ``disconnectedEvent`` never fires on
+    its own, so AutoReconnect never triggers. An explicit ``disconnect()`` fires that event,
+    which AutoReconnect picks up and reconnects with backoff. Best-effort: never raises.
+    """
+    try:
+        logger.warning("Intraday loop: forcing scan-socket disconnect to trigger reconnect")
+        ib_scan.disconnect()
+    except Exception:
+        logger.exception("Intraday loop: forced disconnect failed")
+
+
 async def _intraday_scan_loop(
     app: Application,
     ib_scan: IB,
@@ -1111,6 +1150,30 @@ async def _intraday_scan_loop(
                 logger.warning("Intraday loop: ib_scan disconnected — skipping scan")
                 continue
 
+            # Half-dead-socket guard: isConnected() above is satisfied by the TCP/exec-socket
+            # handshake even when TWS has lost its IBKR data farm (Error 1100), in which case
+            # every chain fetch would time out and the scan would monopolise the loop for ~2h.
+            # Probe the data farm with one bounded snapshot quote first; if it's dead, notify
+            # the operator, force a reconnect, and skip this cycle so the loop stays free.
+            from src.ibkr.market_data import probe_market_data_health
+
+            if not await probe_market_data_health(ib_scan):
+                probe_symbol = get_config().market_data.health_probe_symbol
+                probe_timeout = get_config().market_data.health_probe_timeout_seconds
+                await _notify_scan_blocked(
+                    bot,
+                    chat_id,
+                    "IBKR data farm not responding (half-dead socket)",
+                    f"Pre\\-scan health probe on {probe_symbol} returned no quote within "
+                    f"{probe_timeout:.0f}s, though the TWS socket still reports connected\\. "
+                    f"This is the Error 1100 \\(lost connectivity to IBKR\\) state\\.",
+                )
+                await _force_scan_reconnect(ib_scan)
+                await _note_intraday_skip(
+                    bot_data, bot, chat_id, "data-farm health probe failed (half-dead socket)"
+                )
+                continue
+
             if bot_data.get("scan_running"):
                 # S9: the prior cycle's scan is still running (overran the interval) — this cycle
                 # is lost. Count it and warn the operator (throttled) instead of failing silently.
@@ -1128,6 +1191,21 @@ async def _intraday_scan_loop(
                     # S9: another process (e.g. a concurrent /scan) held the scan lease — skipped.
                     await _note_intraday_skip(
                         bot_data, bot, chat_id, "another process holds the scan lease"
+                    )
+                elif result.aborted_unhealthy:
+                    # Circuit breaker fired mid-sweep: the socket went half-dead after the
+                    # pre-scan probe passed. Notify and force a reconnect (same recovery path).
+                    threshold = get_config().market_data.max_consecutive_chain_timeouts
+                    await _notify_scan_blocked(
+                        bot,
+                        chat_id,
+                        "IBKR data farm stopped responding mid-scan (half-dead socket)",
+                        f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
+                        f"run was aborted instead of grinding the rest of the universe\\.",
+                    )
+                    await _force_scan_reconnect(ib_scan)
+                    await _note_intraday_skip(
+                        bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
                     )
                 else:
                     bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
@@ -1318,11 +1396,13 @@ async def _run_service(token: str, chat_id: str) -> None:
     exec_id = cfg.ibkr.client_ids["exec"]
     try:
         ib_inst = IB()
-        await ib_inst.connectAsync(
+        await connect_with_retry(
+            ib_inst,
             cfg.ibkr.host,
             cfg.ibkr_port,
-            clientId=exec_id,
+            exec_id,
             timeout=cfg.ibkr.connect_timeout_seconds,
+            label="exec",
         )
         ib = ib_inst
         # Exec never calls accountSummaryAsync; suppress ib_async's auto-subscribe
@@ -1358,11 +1438,13 @@ async def _run_service(token: str, chat_id: str) -> None:
     scan_id = cfg.ibkr.client_ids.get("scan", 15)
     try:
         ib_scan_inst = IB()
-        await ib_scan_inst.connectAsync(
+        await connect_with_retry(
+            ib_scan_inst,
             cfg.ibkr.host,
             cfg.ibkr_port,
-            clientId=scan_id,
+            scan_id,
             timeout=cfg.ibkr.connect_timeout_seconds,
+            label="scan",
         )
         ib_scan = ib_scan_inst
         # Guard against concurrent reqAccountSummary on rapid 1100/1102 flaps.

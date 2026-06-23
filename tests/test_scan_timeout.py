@@ -155,3 +155,67 @@ async def test_timeout_logs_error_and_continues(tmp_path, monkeypatch, caplog):
 
     assert any("exceeded symbol_timeout_seconds" in r.message for r in caplog.records)
     assert any("AAPL" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_consecutive_timeouts_abort_the_scan(tmp_path, monkeypatch):
+    """A half-dead socket times out on EVERY symbol — the circuit breaker must abort the run
+    after max_consecutive_chain_timeouts rather than grinding through the whole universe."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.orchestrator.scan as scanmod
+    from src.common.config import get_config
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg.market_data, "symbol_timeout_seconds", 0.05)
+    monkeypatch.setattr(cfg.market_data, "max_consecutive_chain_timeouts", 2)
+    universe = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META"]
+    monkeypatch.setattr(
+        cfg, "universe", {"would_own": universe, "sectors": {s: "tech" for s in universe}}
+    )
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    monkeypatch.setattr(
+        scanmod, "get_account_snapshot_async", AsyncMock(return_value=_make_account())
+    )
+    monkeypatch.setattr(scanmod, "get_positions", lambda ib: [])
+    monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
+
+    calls: list[str] = []
+
+    async def _hangs_forever(ib, symbol):
+        calls.append(symbol)
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _hangs_forever)
+    monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
+    monkeypatch.setattr(
+        scanmod,
+        "get_technical_stats",
+        lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0),
+    )
+    monkeypatch.setattr(
+        scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
+    )
+
+    class _DummySentiment:
+        def __init__(self, **kwargs):
+            pass
+
+        def score(self, symbol):
+            return None
+
+    monkeypatch.setattr(scanmod, "SentimentScorer", _DummySentiment)
+    monkeypatch.setattr(scanmod, "generate_buy_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(scanmod, "send_candidates", AsyncMock())
+    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock())
+
+    result = await asyncio.wait_for(
+        scanmod.run_scan(mock_ib, bot=object(), chat_id="123"), timeout=5.0
+    )
+
+    assert result.aborted_unhealthy is True
+    # Breaker tripped after exactly the threshold — the remaining universe was NOT fetched.
+    assert len(calls) == 2
+    assert len(calls) < len(universe)

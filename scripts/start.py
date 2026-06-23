@@ -53,6 +53,14 @@ EOD_MODULE = "scripts.run_eod"
 EOD_LOG = PROJECT_ROOT / "logs" / "eod.log"
 EOD_STATE_FILE = PROJECT_ROOT / "data" / "eod_scheduler_state.json"
 
+# Grace pause before launching daemons, so a fast stop→start cycle gives IB Gateway time to
+# release the previous session's client IDs. Without it, the new exec/scan/monitor connects can
+# race the old sockets' teardown and hit Error 326 ("client id is already in use") — observed
+# 2026-06-24 03:42, where the scan connection (clientId 15) lost the race and /account, /status,
+# /scan, /positions went dark for the whole session. The connect-retry in connection.py is the
+# real backstop; this just makes the collision unlikely in the first place. 0 disables.
+STARTUP_GRACE_SECONDS = 4.0
+
 # Add project root to path so src.common is importable before any install
 sys.path.insert(0, str(PROJECT_ROOT))
 from src.common.logging import setup_logging  # noqa: E402
@@ -193,6 +201,14 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _stop_all)
 
     _check_ollama()
+
+    if STARTUP_GRACE_SECONDS > 0:
+        log.info(
+            "Waiting %.0fs before starting daemons so IB Gateway can release any client IDs "
+            "held by a prior session…",
+            STARTUP_GRACE_SECONDS,
+        )
+        time.sleep(STARTUP_GRACE_SECONDS)
 
     for name in active:
         procs[name] = _start(name)

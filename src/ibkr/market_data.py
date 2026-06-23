@@ -272,6 +272,52 @@ def _spot_ready(ticker: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def probe_market_data_health(ib: IB, timeout: float | None = None) -> bool:
+    """Cheap, fully-bounded liveness check for the IBKR data farm before a full scan.
+
+    ``ib.isConnected()`` only reflects the exec-socket/TCP handshake. On a *half-dead* socket
+    (TWS lost its upstream link to IBKR, Error 1100) that handshake stays up and cached calls
+    like account summary still return, but every data-farm request silently never ticks. A
+    scan that trusts ``isConnected()`` then grinds the whole universe at
+    ``symbol_timeout_seconds`` each (~115 min for 46 symbols), monopolising the single intraday
+    loop so every subsequent 15-min cycle is starved (observed 2026-06-24 02:00 SGT).
+
+    This fires one ``reqMktData`` snapshot on ``market_data.health_probe_symbol`` and waits up
+    to *timeout* seconds for any usable tick or prior close. Returns ``True`` if data flows,
+    ``False`` if the request never resolves (the caller should force a reconnect rather than
+    start the scan). Both the qualify and the tick wait are bounded, so the probe itself can
+    never hang, and it always reclaims its market-data line.
+    """
+    cfg = get_config()
+    if timeout is None:
+        timeout = cfg.market_data.health_probe_timeout_seconds
+    symbol = cfg.market_data.health_probe_symbol
+    try:
+        # A half-dead socket can hang qualify (TimeoutError) or surface a transport error;
+        # either way the farm isn't answering, so treat both as unhealthy.
+        stock = await asyncio.wait_for(qualify_stock_async(ib, symbol), timeout)
+    except Exception:
+        log.error(
+            "health probe: could not qualify %s within %.0fs — socket appears half-dead",
+            symbol,
+            timeout,
+        )
+        return False
+    ticker = _open_line(ib, stock, snapshot=True)
+    try:
+        await _await_ready(lambda: _spot_ready(ticker), timeout)
+        healthy = _spot_ready(ticker)
+    finally:
+        _close_line(ib, stock)
+    if not healthy:
+        log.error(
+            "health probe: no market-data tick for %s within %.0fs — socket appears half-dead",
+            symbol,
+            timeout,
+        )
+    return healthy
+
+
 def _get_spot(ib: IB, stock: Any) -> float:
     ticker = _open_line(ib, stock, snapshot=True)
     ib.sleep(1)

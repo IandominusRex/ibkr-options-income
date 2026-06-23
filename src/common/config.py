@@ -140,6 +140,24 @@ class MarketDataCfg(BaseModel):
     # since by this point we're just hoping for a cached daily bar, not a live quote.
     spot_history_timeout_seconds: float = 10.0
 
+    # Half-dead-socket guards. When TWS loses its upstream link to IBKR (Error 1100) the
+    # exec-socket handshake stays up, so ib.isConnected() returns True and cached calls
+    # (account summary) still resolve — but every data-farm request silently never ticks.
+    # A scan that trusts isConnected() then grinds the whole universe at
+    # symbol_timeout_seconds each (~115 min for 46 symbols), monopolising the single
+    # intraday loop so every later 15-min cycle is starved (observed 2026-06-24 02:00 SGT).
+    #
+    # health_probe_*: before each intraday scan, one snapshot quote on health_probe_symbol
+    #   must return a usable tick/close within health_probe_timeout_seconds; if not, the
+    #   cycle is skipped and a forced reconnect is triggered (drops the half-dead socket so
+    #   AutoReconnect rebuilds it).
+    # max_consecutive_chain_timeouts: mid-scan circuit breaker — this many symbols timing
+    #   out back-to-back aborts the run (ScanResult.aborted_unhealthy) instead of plowing
+    #   through the rest. 0 disables the breaker.
+    health_probe_symbol: str = "SPY"
+    health_probe_timeout_seconds: float = 15.0
+    max_consecutive_chain_timeouts: int = 3
+
     # S1 — intraday materiality gate. The 15-min loop re-runs the same scan body ~26×/session;
     # re-fetching the full universe chain (80% of wall-clock) every cycle is wasteful when only
     # held positions and materially-moved would_own names can change a decision. A would_own

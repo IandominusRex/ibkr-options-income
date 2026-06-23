@@ -42,6 +42,7 @@ from src.ibkr.market_data import (
     _spot_ready,
     _ticker_to_quote,
     drain_market_data_lines,
+    probe_market_data_health,
 )
 
 # ---------------------------------------------------------------------------
@@ -966,3 +967,60 @@ class TestEnrichGreeksFromIbkrIv:
             lambda _: (_ for _ in ()).throw(AssertionError("yfinance must not be called")),
         )
         _enrich_greeks_yf("AAPL", 200.0, [q])  # no missing → short-circuits before yf
+
+
+# ---------------------------------------------------------------------------
+# probe_market_data_health — half-dead-socket pre-scan guard
+# ---------------------------------------------------------------------------
+
+
+class _StockTicker:
+    """Minimal stand-in for an ib_async stock ticker that _spot_ready understands."""
+
+    def __init__(self, price: float = 0.0, close: float = 0.0) -> None:
+        self._price = price
+        self.close = close
+
+    def marketPrice(self) -> float:
+        return self._price
+
+
+@pytest.mark.asyncio
+async def test_probe_healthy_when_tick_arrives(monkeypatch):
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    ib.reqMktData.return_value = _StockTicker(price=500.0)
+
+    assert await probe_market_data_health(ib, timeout=0.5) is True
+
+
+@pytest.mark.asyncio
+async def test_probe_unhealthy_when_no_tick(monkeypatch):
+    """Qualify succeeds but the snapshot never produces a price/close — a half-dead farm."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    ib.reqMktData.return_value = _StockTicker(price=float("nan"), close=0.0)
+
+    assert await probe_market_data_health(ib, timeout=0.2) is False
+    # The probe must always reclaim its line, even on failure.
+    ib.cancelMktData.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_probe_unhealthy_when_qualify_hangs(monkeypatch):
+    """A half-dead socket can hang qualify itself — the probe stays bounded and returns False."""
+    import asyncio
+
+    async def _hangs(ib, symbol):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr("src.ibkr.market_data.qualify_stock_async", _hangs)
+    ib = MagicMock()
+
+    assert await asyncio.wait_for(probe_market_data_health(ib, timeout=0.1), timeout=2.0) is False

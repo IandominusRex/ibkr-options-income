@@ -76,6 +76,19 @@ market_data:
   # on a weekend/no-subscription session that was ~60s x every symbol, the dominant cost
   # of /scan.
   spot_history_timeout_seconds: 10
+  # Half-dead-socket guards. When TWS loses its upstream link to IBKR (Error 1100), the
+  # exec-socket handshake stays up so ib.isConnected() returns True and account summary still
+  # resolves, but every data-farm request silently never ticks. A scan that trusts
+  # isConnected() then times out on EVERY symbol at symbol_timeout_seconds (~115 min for 46
+  # symbols), monopolising the single intraday loop so every later 15-min cycle is starved
+  # (this is what killed the 2026-06-24 02:00 SGT scan and blocked the ones after it).
+  # health_probe_*: before each intraday scan, one snapshot quote on this symbol must return
+  #   within the timeout; if not, the cycle is skipped and a forced reconnect is triggered.
+  # max_consecutive_chain_timeouts: mid-scan circuit breaker — this many back-to-back symbol
+  #   timeouts aborts the run instead of grinding the rest of the universe. 0 disables it.
+  health_probe_symbol: "SPY"
+  health_probe_timeout_seconds: 15
+  max_consecutive_chain_timeouts: 3
 
 claude:
   cli_command: "claude"

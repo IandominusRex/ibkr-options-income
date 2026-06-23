@@ -449,6 +449,57 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   All four public functions (`review_candidates`, `review_roll`, `write_journal_narrative`,
   `propose_skill`) participate.
 
+## Bugs fixed (2026-06-24 — clientId collision on fast restart left /account & /status dark)
+
+- **A quick stop→start cycle disabled the scan connection for the whole session:** the approval
+  service's exec and scan connections (and the monitor) each did a single one-shot
+  `connectAsync` with no retry. On a fast restart, IB Gateway still held the previous process's
+  client IDs for a few seconds, so the new connect raced the old sockets' teardown and hit
+  `Error 326` ("client id is already in use") → `Peer closed connection` → a connect
+  `TimeoutError`. With no retry, that one failed attempt disabled the connection permanently:
+  `/account`, `/status`, `/scan`, `/positions` (all served by the scan connection, clientId 15)
+  reported "IBKR account unavailable" until the next manual restart. Observed 2026-06-24 03:42 —
+  clientId 15 was the prior **half-dead** scan socket, which lingered longest on Gateway's side,
+  so it specifically lost the race while the healthy exec/monitor ids reconnected. Fixed:
+  - `src/ibkr/connection.py`: new shared `connect_with_retry(...)` — `connectAsync` with bounded
+    exponential backoff (reuses `ibkr.reconnect.max_retries` / `backoff_base_seconds`), giving
+    Gateway time to release a lingering clientId. Re-raises only after all attempts fail, so the
+    caller's existing degrade-and-log path is unchanged.
+  - `src/notify/approval_service._run_service` (exec + scan) and `src/monitor/intraday.py`
+    (monitor) now connect through it.
+  - `scripts/start.py`: a `STARTUP_GRACE_SECONDS` (default 4s, `0` disables) pause before
+    launching daemons so a fast restart is unlikely to collide in the first place — the
+    connect-retry is the backstop.
+  - Regression tests: `tests/test_connection.py::test_connect_with_retry_*`.
+
+## Bugs fixed (2026-06-24 — half-dead socket timed out every symbol and starved the intraday loop)
+
+- **A mid-session half-dead socket made the intraday scan grind for ~2h and blocked every
+  subsequent cycle:** sibling failure to the 2026-06-23 fix, but on the *scan* connection during
+  a running session. After an evening of `Error 1100/1102` flapping, the scan socket settled into
+  a state where `ib.isConnected()` returned `True` and account summary still resolved (cached/quick
+  path), but every option-chain request silently never ticked. The 02:00 SGT cycle then timed out
+  on **every** one of the 46 symbols at `symbol_timeout_seconds` (150s each ≈ 115 min). Because
+  `_intraday_scan_loop` is a single sequential task that does not return to its top until
+  `run_scan` finishes, the 02:15/02:30/.../03:45 aligned marks were all swallowed — nothing fired
+  and every later cycle was blocked. The pre-existing `ib_scan.isConnected()` guard passed (TCP
+  handshake intact) and the per-symbol timeout "worked" but had no circuit breaker. Fixed:
+  - `src/orchestrator/scan.py`: a **circuit breaker** counts consecutive chain-fetch timeouts and,
+    after `market_data.max_consecutive_chain_timeouts` (default 3) in a row, aborts the run
+    (`ScanResult.aborted_unhealthy = True`) instead of grinding the rest of the universe. The
+    counter resets on any fetch that returns (success or a non-timeout error — the farm answered).
+  - `src/ibkr/market_data.py`: `probe_market_data_health(ib)` — a fully-bounded pre-scan liveness
+    check (one snapshot quote on `market_data.health_probe_symbol`, default `SPY`, within
+    `health_probe_timeout_seconds`, default 15s). `isConnected()` alone can't see a half-dead farm.
+  - `src/notify/approval_service._intraday_scan_loop`: runs the health probe before each cycle; on
+    failure (or on a mid-scan circuit-breaker abort) it **notifies the operator on Telegram with the
+    exact reason** (`_notify_scan_blocked`), forces a reconnect (`_force_scan_reconnect` →
+    `ib_scan.disconnect()`, which fires `disconnectedEvent` so `AutoReconnect` rebuilds the socket),
+    and skips the cycle so the loop stays free for the next mark.
+  - Regression tests: `tests/test_scan_timeout.py::test_consecutive_timeouts_abort_the_scan`,
+    `tests/test_market_data.py::test_probe_*`, `tests/test_notify.py::test_notify_scan_blocked_*` /
+    `test_force_scan_reconnect_disconnects_and_swallows`.
+
 ## Bugs fixed (2026-06-23 — half-dead socket hung the intraday scan loop)
 
 - **15-min intraday scan never armed after a restart during a TWS connectivity drop:** when the

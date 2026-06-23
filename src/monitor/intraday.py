@@ -37,7 +37,7 @@ from src.common.schemas import (
     RollAlert,
     RollReview,
 )
-from src.ibkr.connection import AutoReconnect
+from src.ibkr.connection import AutoReconnect, connect_with_retry
 from src.ibkr.contracts import build_option
 from src.ibkr.portfolio import get_positions
 from src.monitor.triggers import check_all
@@ -471,11 +471,13 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
 
     ib = IB()
     try:
-        await ib.connectAsync(
+        await connect_with_retry(
+            ib,
             cfg.ibkr.host,
             cfg.ibkr_port,
-            clientId=cfg.ibkr.client_ids.get("monitor", 12),
+            cfg.ibkr.client_ids.get("monitor", 12),
             timeout=cfg.ibkr.connect_timeout_seconds,
+            label="monitor",
         )
     except Exception:
         log.exception("IBKR connection failed — monitor cannot start")
