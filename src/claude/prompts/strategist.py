@@ -286,6 +286,22 @@ def build_prompt(
             f"Fund={c.scores.fundamental_score:.0f}  Liq={c.scores.liquidity_score:.0f}  "
             f"AsnRisk={c.scores.assignment_safety_score:.0f}"
         )
+        if c.next_earnings is not None:
+            lines.append(f"Next Earnings:    {c.next_earnings}  (event risk — see sentiment below)")
+        _sd = c.scores.sentiment_detail
+        if _sd is not None and _sd.overall is not None:
+            parts = [f"overall {_sd.overall:.0f}/100 ({_sd.label})"]
+            if _sd.delta_1d is not None:
+                parts.append(f"Δ1d {_sd.delta_1d:+.0f}")
+            if _sd.stocktwits is not None:
+                parts.append(f"StockTwits {_sd.stocktwits:.0f} [{_sd.stocktwits_msgs} msgs]")
+            if _sd.news is not None:
+                parts.append(f"News {_sd.news:.0f} [{_sd.news_count} hdl]")
+            if _sd.reddit is not None:
+                parts.append(f"Reddit {_sd.reddit:.0f}")
+            lines.append(f"Sentiment:        {'  '.join(parts)}")
+            if _sd.top_headline:
+                lines.append(f"Top Headline:     {_sd.top_headline[:120]}")
 
     candidate_ids = [c.candidate_id for c in candidates]
     # The single-ticker deep-dive adds an extra `summary` field whose job is to *teach*: explain
@@ -308,9 +324,16 @@ def build_prompt(
             "  2. Read the backdrop: the VIX regime and the SECTOR & MARKET BACKDROP above — is "
             "the sector leading or lagging, is the name out/under-performing it, what does the "
             "broad tape imply for selling premium here right now?",
-            "  3. Synthesize: pull it together into one clear sentiment read on the ticker and "
+            "  3. Factor in the SENTIMENT line if present: it blends StockTwits self-tags, recent "
+            "news headlines, and (if available) Reddit into one 0-100 read. Weigh it by its sample "
+            "size (msgs/hdl counts) and its 1-day change (Δ1d) — a sharp swing or a fresh headline "
+            "matters more than a stale flat reading. Sentiment is MOST decision-relevant when "
+            "earnings are near (see Next Earnings): bullish crowd + imminent earnings = elevated "
+            "gap risk for a premium seller; treat it as event risk, not a green light.",
+            "  4. Synthesize: pull it together into one clear sentiment read on the ticker and "
             "whether this is a good moment to sell premium on it — and why.",
-            "Be specific to THIS ticker's actual numbers; never invent data not shown above.",
+            "Be specific to THIS ticker's actual numbers; never invent data not shown above. If the "
+            "Sentiment line is absent, say sentiment data was unavailable rather than guessing.",
         ]
     lines += [
         *summary_guide,

@@ -30,7 +30,7 @@ to your phone via Telegram.
 | Command | What it does |
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh |
-| `/scan AAPL` | Single-ticker deep-dive: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result with a Claude/Ollama verdict. Holistic context: a **🌐 Market & Sector** line (VIX regime + how the name's sector / the broad market are trading + relative strength) and a **🧠 Read** — a plain-English synthesis explaining what the IV/VRP/delta/RSI numbers mean together and the overall sentiment; when a strategy has no qualifying option, shows the closest failed contract and *why* it was rejected |
+| `/scan AAPL` | Single-ticker deep-dive: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result with a Claude/Ollama verdict. Holistic context: a **💬 Sentiment** line (composite StockTwits + news + optional Reddit, 0-100 with 1-day trend), a **🌐 Market & Sector** line (VIX regime + how the name's sector / the broad market are trading + relative strength) and a **🧠 Read** — a plain-English synthesis explaining what the IV/VRP/delta/RSI numbers mean together and the overall sentiment; when a strategy has no qualifying option, shows the closest failed contract and *why* it was rejected |
 | `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |

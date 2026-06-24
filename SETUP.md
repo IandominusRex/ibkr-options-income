@@ -42,6 +42,27 @@ To also enable the Streamlit dashboard (currently archived to `Archive/dashboard
 pip install -e ".[dev,dashboard]"
 ```
 
+### Social + news sentiment (optional, but recommended — all free)
+
+The scan blends a **composite sentiment** read (StockTwits + news headlines + optional Reddit)
+into each candidate, surfaced on the `/scan TICKER` deep-dive card and to Claude. Install the
+extra to enable it:
+
+```bash
+pip install -e ".[dev,sentiment]"
+```
+
+This pulls `vaderSentiment` (offline NLP scorer), `curl_cffi` (needed to reach StockTwits, which
+sits behind Cloudflare), and `praw` (Reddit). **No API keys or payment are required** — StockTwits
+and news (via yfinance) work out of the box. If the extra is not installed, the scan still runs;
+sentiment simply reports "no data" and contributes nothing.
+
+**Reddit is optional and off until you add free credentials.** To enable it, create a free
+"script" app at <https://www.reddit.com/prefs/apps> (2 minutes, no cost) and set
+`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` in `.env`. Without them, the Reddit source is skipped
+and the composite uses StockTwits + news only. (The old unauthenticated `.json` URL trick no
+longer works — Reddit blocks it at the edge.)
+
 ---
 
 ## 3. Configure your secrets (.env)

@@ -221,6 +221,26 @@ class FundamentalStats(BaseModel):
 # --------------------------------------------------------------------------- #
 # Scoring & candidates
 # --------------------------------------------------------------------------- #
+class SentimentDetail(BaseModel):
+    """Composite social + news sentiment for one symbol — enrichment only.
+
+    ``overall`` (0-100, 50 = neutral, ``None`` = no data from any source) is the single
+    number that feeds scoring via :attr:`ScoreCard.sentiment_score`. The per-source fields,
+    counts, 1-day velocity, and headline are surfaced to Claude and the Telegram deep-dive
+    card to *explain* the read; they never reach the risk engine or position sizing.
+    """
+
+    overall: float | None = None  # 0-100, 50 = neutral; None = no data anywhere
+    label: str = "no data"  # Bullish / Lean bullish / Neutral / Lean bearish / Bearish / no data
+    delta_1d: float | None = None  # overall vs prior calendar day, in points; + = improving
+    stocktwits: float | None = None  # 0-100 from StockTwits self-tags + VADER on untagged
+    stocktwits_msgs: int = 0
+    news: float | None = None  # 0-100 from VADER over recent headlines
+    news_count: int = 0
+    reddit: float | None = None  # 0-100 from r/options + r/wallstreetbets (None if creds absent)
+    top_headline: str | None = None  # most recent headline, shown in the deep-dive card
+
+
 class ScoreCard(BaseModel):
     """Per-symbol component scores, each normalized 0-100."""
 
@@ -233,6 +253,8 @@ class ScoreCard(BaseModel):
         0.0  # 0-100; higher = SAFER (less assignment risk, e.g. lower delta)
     )
     sentiment_score: float | None = None  # 0-100, 50=neutral; None = not fetched
+    # Per-source breakdown behind sentiment_score (enrichment for Claude/Telegram, not scoring).
+    sentiment_detail: SentimentDetail | None = None
     annualized_roc_score: float = 0.0  # capped annualized ROC normalized to 0-100 (C2)
 
 

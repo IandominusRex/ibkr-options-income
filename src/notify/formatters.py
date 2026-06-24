@@ -558,9 +558,7 @@ def _vix_regime(vix: float) -> str:
     return "stressed — rich premium, high tail risk"
 
 
-def _market_sector_lines(
-    mc: MarketConditions | None, sc: SectorContext | None
-) -> list[str]:
+def _market_sector_lines(mc: MarketConditions | None, sc: SectorContext | None) -> list[str]:
     """Deterministic '🌐 Market & Sector' block: VIX regime + sector/market returns + rel-strength.
 
     Returns [] when neither a VIX level nor any sector datum is available, so the section is
@@ -585,9 +583,7 @@ def _market_sector_lines(
             if sc.rel_strength_1mo_pct is not None:
                 word = "outperforming" if sc.rel_strength_1mo_pct >= 0 else "underperforming"
                 rel = f" · {_md(f'{sc.rel_strength_1mo_pct:+.1f}')}% vs sector \\({word}\\)"
-            body.append(
-                f"• {_md(sc.symbol)} {_md(f'{sc.symbol_ret_1mo_pct:+.1f}')}% 1mo{rel}"
-            )
+            body.append(f"• {_md(sc.symbol)} {_md(f'{sc.symbol_ret_1mo_pct:+.1f}')}% 1mo{rel}")
     if not body:
         return []
     return ["🌐 *Market & Sector*", *body]
@@ -788,6 +784,38 @@ def format_ticker_scan_result(
         earn_warn = " ⚠️" if 0 <= days_to_earn <= 14 else ""
         lines.append(f"• Earnings: {_md(str(days_to_earn))}d{earn_warn}")
     lines.append("")
+
+    # --- Social & News sentiment (composite; omitted when no source returned data) ---
+    sentiment = next(
+        (
+            c.scores.sentiment_detail
+            for c in (*cc_candidates, *csp_candidates)
+            if c.scores.sentiment_detail is not None
+            and c.scores.sentiment_detail.overall is not None
+        ),
+        None,
+    )
+    if sentiment is not None and sentiment.overall is not None:
+        lines.append("💬 *Sentiment*")
+        delta_str = ""
+        if sentiment.delta_1d is not None and abs(sentiment.delta_1d) >= 1:
+            arrow = "▲" if sentiment.delta_1d > 0 else "▼"
+            delta_str = f" {arrow}{_md(f'{abs(sentiment.delta_1d):.0f}')}/1d"
+        lines.append(f"• {_md(f'{sentiment.overall:.0f}')}/100 {_md(sentiment.label)}{delta_str}")
+        src_bits: list[str] = []
+        if sentiment.stocktwits is not None:
+            src_bits.append(
+                f"ST {_md(f'{sentiment.stocktwits:.0f}')} ({sentiment.stocktwits_msgs})"
+            )
+        if sentiment.news is not None:
+            src_bits.append(f"News {_md(f'{sentiment.news:.0f}')} ({sentiment.news_count})")
+        if sentiment.reddit is not None:
+            src_bits.append(f"Reddit {_md(f'{sentiment.reddit:.0f}')}")
+        if src_bits:
+            lines.append("• " + " · ".join(src_bits))
+        if sentiment.top_headline:
+            lines.append(f"• 📰 _{_md(sentiment.top_headline[:90])}_")
+        lines.append("")
 
     # --- Market & Sector backdrop (deterministic) ---
     backdrop = _market_sector_lines(market_conditions, sector_context)

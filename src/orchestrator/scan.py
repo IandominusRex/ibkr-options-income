@@ -475,6 +475,11 @@ def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
             "assignment_safety": c.scores.assignment_safety_score,
             "sentiment": c.scores.sentiment_score,
         },
+        # Full sentiment breakdown (sources, counts, 1-day velocity) for later EV/calibration
+        # analysis in the verdict learning loop — enrichment only, never gates or sizes.
+        "sentiment_detail": (
+            c.scores.sentiment_detail.model_dump() if c.scores.sentiment_detail else None
+        ),
         "rationale_tags": list(c.rationale_tags),
         "vix": vix,
     }
@@ -1121,7 +1126,8 @@ async def _run_scan_body(
             await tracker.add_error(f"{symbol} — analytics failed, skipped")
             continue
         iv_stats, tech_stats, fund_stats = analytics_res
-        sentiment_score = None if isinstance(sentiment_res, BaseException) else sentiment_res
+        # SentimentScorer.score() returns a SentimentDetail (or None from the test stub / on error).
+        sentiment_detail = None if isinstance(sentiment_res, BaseException) else sentiment_res
 
         analytics_map[symbol] = (iv_stats, tech_stats, fund_stats)
 
@@ -1169,9 +1175,11 @@ async def _run_scan_body(
                 fund_stats,
                 existing_short_calls=existing_short_calls,
             )
-            # Inject sentiment score into ScoreCard
+            # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches)
             for c in new_cc:
-                c.scores.sentiment_score = sentiment_score
+                if sentiment_detail is not None:
+                    c.scores.sentiment_score = sentiment_detail.overall
+                    c.scores.sentiment_detail = sentiment_detail
             cc_candidates.extend(new_cc)
 
         # CSP candidates for would_own symbols
@@ -1180,7 +1188,9 @@ async def _run_scan_body(
                 symbol, quotes, account, iv_stats, tech_stats, fund_stats
             )
             for c in new_csp:
-                c.scores.sentiment_score = sentiment_score
+                if sentiment_detail is not None:
+                    c.scores.sentiment_score = sentiment_detail.overall
+                    c.scores.sentiment_detail = sentiment_detail
             csp_candidates.extend(new_csp)
 
     await tracker.tick("market_data", "✅", f"{n}/{n} symbols")
