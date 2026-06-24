@@ -42,6 +42,26 @@ logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
 
 
+def _today_et() -> date:
+    """The current market-timezone (ET) calendar date.
+
+    The journal is keyed on the ET trading day, so every date used to *write* a JournalRow must
+    match the date used to *read* one back. The local wall-clock date can differ from ET (the EOD
+    run typically fires next-morning local in UTC+8), so using `date.today()` to key the row while
+    reading by ET silently breaks the yesterday→today baseline lookup — the unrealized Δ then
+    collapses to the full unrealized value every day. Always anchor on ET.
+    """
+    return datetime.now(_ET).date()
+
+# Per-request cap for the EOD IV backfill. ib_async's default reqHistoricalData timeout is ~60s;
+# when IBKR's historical-data farm (HMDS) is down for a session, *every* symbol times out, turning
+# a 2-minute EOD into a ~1-hour hang that blocks the (data-independent) P&L summary and Telegram
+# send. We fail each request fast and trip a circuit breaker after a run of consecutive failures —
+# a dead farm fails the same way for all symbols, so there is nothing to gain by grinding on.
+_IV_REQUEST_TIMEOUT_S = 8.0
+_IV_MAX_CONSECUTIVE_FAILURES = 5
+
+
 def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
     """Return (premium_cashflow, fill_count, fill_ids) for the option fills on the *ET* trading day.
 
@@ -99,18 +119,23 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
     from src.storage.iv_history import append_observation
 
     inserted = 0
+    consecutive_failures = 0
     for sym in symbols:
         try:
             stock = await qualify_stock_async(ib, sym)
-            bars = await ib.reqHistoricalDataAsync(
-                stock,
-                endDateTime="",
-                durationStr="2 D",
-                barSizeSetting="1 day",
-                whatToShow="OPTION_IMPLIED_VOLATILITY",
-                useRTH=True,
-                keepUpToDate=False,
+            bars = await asyncio.wait_for(
+                ib.reqHistoricalDataAsync(
+                    stock,
+                    endDateTime="",
+                    durationStr="2 D",
+                    barSizeSetting="1 day",
+                    whatToShow="OPTION_IMPLIED_VOLATILITY",
+                    useRTH=True,
+                    keepUpToDate=False,
+                ),
+                timeout=_IV_REQUEST_TIMEOUT_S,
             )
+            consecutive_failures = 0
             if not bars:
                 continue
             last = bars[-1]
@@ -119,6 +144,17 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
                 inserted += 1
         except Exception:
             logger.debug("EOD IV append failed for %s", sym, exc_info=True)
+            consecutive_failures += 1
+            if consecutive_failures >= _IV_MAX_CONSECUTIVE_FAILURES:
+                # HMDS data farm is almost certainly down for this session — every remaining
+                # symbol would burn the full per-request timeout. Bail so the (IV-independent)
+                # P&L summary and Telegram send are not delayed by ~1 hour of dead requests.
+                logger.warning(
+                    "EOD: aborting IV append after %d consecutive failures — historical-data "
+                    "farm appears unavailable; iv_history will age until the next run",
+                    consecutive_failures,
+                )
+                break
         await asyncio.sleep(0.2)  # pace reqHistoricalData calls
     logger.info("EOD: appended %d new IV observation(s) across %d symbols", inserted, len(symbols))
 
@@ -157,6 +193,21 @@ def _load_yesterday_unrealized(today: date) -> float:
         return float(row.unrealized_pnl or 0.0) if row else 0.0
 
 
+def _load_yesterday_watchlist(today: date) -> list[str] | None:
+    """Return yesterday's `tomorrow_watchlist` from its JournalRow, or None if unavailable.
+
+    Used to decide whether to reprint the (usually static) watchlist in full or collapse it to a
+    count. None means "no prior entry" → treat as changed so the full list is shown.
+    """
+    yesterday = today - timedelta(days=1)
+    with session_scope() as session:
+        row = session.query(JournalRow).filter(JournalRow.entry_date == yesterday).first()
+        if not row or not row.payload:
+            return None
+        wl = row.payload.get("eod_summary", {}).get("tomorrow_watchlist")
+        return list(wl) if wl is not None else None
+
+
 def _build_eod_summary(
     positions: list[PositionSnapshot],
     account: AccountSnapshot,
@@ -164,9 +215,10 @@ def _build_eod_summary(
     fill_count: int,
     yesterday_unrealized: float,
     watchlist: list[str],
+    watchlist_changed: bool = True,
 ) -> EODSummary:
     """Compute EODSummary from live positions and DB history."""
-    today = date.today()
+    today = _today_et()
 
     unrealized_pnl = sum(p.unrealized_pnl or 0.0 for p in positions)
     unrealized_delta = unrealized_pnl - yesterday_unrealized
@@ -177,17 +229,18 @@ def _build_eod_summary(
     net_delta = sum((p.delta or 0.0) * p.position * 100 for p in positions if p.sec_type == "OPT")
     net_delta += sum(p.position for p in positions if p.sec_type == "STK")
 
-    # Top movers: option positions sorted by abs(unrealized_pnl), take top 3.
-    opt_positions = [p for p in positions if p.sec_type == "OPT" and p.unrealized_pnl is not None]
-    opt_positions.sort(key=lambda p: abs(p.unrealized_pnl or 0.0), reverse=True)
-    top_movers = [p.underlying or p.symbol for p in opt_positions[:3]]
-    # Deduplicate while preserving order.
-    seen: set[str] = set()
-    top_movers_dedup: list[str] = []
-    for sym in top_movers:
-        if sym not in seen:
-            seen.add(sym)
-            top_movers_dedup.append(sym)
+    # Top movers / drivers: aggregate unrealized P&L by underlying across *all* sec_types (a stock
+    # leg can be the day's largest swing — e.g. an assigned/wheeled position — so options-only would
+    # leave the report's drivers line empty). Rank by absolute swing and keep the top 3.
+    agg_pnl: dict[str, float] = {}
+    for p in positions:
+        if p.unrealized_pnl is None:
+            continue
+        sym = p.underlying or p.symbol
+        agg_pnl[sym] = agg_pnl.get(sym, 0.0) + p.unrealized_pnl
+    ranked = sorted(agg_pnl.items(), key=lambda kv: abs(kv[1]), reverse=True)[:3]
+    top_movers_dedup = [sym for sym, _ in ranked]
+    mover_pnl = {sym: pnl for sym, pnl in ranked}
 
     return EODSummary(
         date=today,
@@ -199,7 +252,9 @@ def _build_eod_summary(
         net_delta_exposure=net_delta,
         account=account,
         top_movers=top_movers_dedup,
+        mover_pnl=mover_pnl,
         tomorrow_watchlist=watchlist,
+        watchlist_changed=watchlist_changed,
     )
 
 
@@ -295,8 +350,16 @@ async def run() -> None:
 
     # 4. Build the summary.
     watchlist = list(cfg.universe.get("watchlist", []))
+    prev_watchlist = _load_yesterday_watchlist(today)
+    watchlist_changed = prev_watchlist is None or prev_watchlist != watchlist
     summary = _build_eod_summary(
-        positions, account, realized_pnl, fill_count, yesterday_unrealized, watchlist
+        positions,
+        account,
+        realized_pnl,
+        fill_count,
+        yesterday_unrealized,
+        watchlist,
+        watchlist_changed,
     )
     logger.info(
         "EODSummary: realized=%.2f unrealized=%.2f delta=%.2f fills=%d",

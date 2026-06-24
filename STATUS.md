@@ -175,6 +175,31 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 ---
 
+## Bugs fixed (2026-06-24 — EOD report quality & unrealized-Δ baseline)
+
+After two live EOD reports surfaced a redundant, hard-to-read summary, the report was reworked and
+a real bug was found:
+
+- **Unrealized Δ baseline silently broken (date skew):** `_build_eod_summary` keyed the JournalRow
+  on local `date.today()` while `_load_yesterday_unrealized` / `_compute_realized_pnl` read by the
+  **ET** trading day. In UTC+8 the EOD run fires next-morning local, so the write date and read date
+  differed — yesterday's row was never found and the unrealized Δ collapsed to the *full* unrealized
+  value every day (visible in the first two reports: Δ exactly equalled the total). **Fixed:** a
+  single `_today_et()` anchors the summary date so write and read align.
+- **Narrative was ~70% redundant:** the Claude journal paragraph restated the figures already shown
+  in the stats block (prompt literally said "Be specific about numbers"). **Fixed:** `prompts/eod.py`
+  now instructs interpretation only — explain *why* it moved + one action for tomorrow, one sentence
+  on a quiet day — and forbids restating the numbers.
+- **Drivers line was always empty:** `top_movers` was built from option positions only, so a
+  stock-only book (e.g. a wheeled/assigned holding) showed no driver. **Fixed:** movers now aggregate
+  unrealized P&L by underlying across **all** sec_types; `EODSummary.mover_pnl` carries each one's
+  P&L so the report renders "Drivers: NVDA -$7,673".
+- **Formatting:** the metric block is now a ``` code fence ``` (columns actually align in Telegram's
+  proportional font — the old manual space-padding did not), adds an **NLV/BP** line and the day's Δ
+  as **% of NLV**; the "excludes assignment P&L" disclaimer is shown only when there was cashflow or
+  fills (suppressed on flat days); and the static 30+ ticker watchlist collapses to "N names
+  (unchanged)" unless it actually changed (`EODSummary.watchlist_changed`).
+
 ## Bugs fixed (2026-06-02 full-system audit — P0/P1 remediation)
 
 All P0 and P1 bugs from the 2026-06-02 audit have been fixed:
@@ -330,6 +355,14 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   centralises access; the EOD run appends one IV observation per universe symbol each day
   (`_append_daily_iv`, idempotent on `(symbol, date)`); and `/health` warns (with a new "IV history"
   status line) when any universe symbol's latest observation is older than 5 days or missing.
+  **Hardened (2026-06-24):** `_append_daily_iv` no longer hangs the whole EOD report when IBKR's
+  historical-data farm (HMDS) is down for the session. Each `reqHistoricalData` call is bounded by
+  `_IV_REQUEST_TIMEOUT_S` (8s) via `asyncio.wait_for` instead of ib_async's 60s default, and a
+  circuit breaker (`_IV_MAX_CONSECUTIVE_FAILURES`, 5) aborts the loop once a run of symbols all
+  fail — a dead farm fails identically for every symbol, so grinding the full universe just delayed
+  the (IV-independent) P&L summary and Telegram send by ~1 hour. On a dead farm the run now bails in
+  ~40s, sends the summary on time, and lets `iv_history` age one day (it back-fills on the next
+  healthy run). This mirrors the scan loop's half-dead-socket guard.
 - **N5 Inconsistent exposure seeding:** `_seed_exposures` counted existing short puts at |option
   market value| (~1% of notional) for per-ticker/sector concentration but at strike×100 for the
   CSP-collateral tally, so a ticker with several working short puts looked nearly unexposed to the

@@ -5,6 +5,7 @@ All IBKR and Telegram calls are mocked. DB tests use tmp_path + in-process SQLit
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -194,6 +195,47 @@ def test_build_eod_summary_watchlist_passed_through() -> None:
     wl = ["NVDA", "AAPL", "SPY"]
     summary = _build_eod_summary([_make_option_pos()], _make_account(), 0.0, 0, 0.0, wl)
     assert summary.tomorrow_watchlist == wl
+
+
+def test_build_eod_summary_dates_on_et_day() -> None:
+    # The journal must be keyed on the ET trading day so write/read line up across UTC offsets.
+    from src.orchestrator.eod_report import _build_eod_summary
+
+    summary = _build_eod_summary([_make_option_pos()], _make_account(), 0.0, 0, 0.0, [])
+    assert summary.date == datetime.now(ZoneInfo("America/New_York")).date()
+
+
+def test_build_eod_summary_stock_can_be_a_driver() -> None:
+    # A stock leg with the largest swing must appear as a driver (options-only would miss it).
+    from src.orchestrator.eod_report import _build_eod_summary
+
+    positions = [
+        _make_stock_pos(symbol="NVDA", position=300.0),  # unrealized_pnl=200.0 default
+        _make_option_pos(underlying="AAPL", unrealized_pnl=-5.0),
+    ]
+    summary = _build_eod_summary(positions, _make_account(), 0.0, 0, 0.0, [])
+    assert "NVDA" in summary.top_movers
+    assert summary.mover_pnl["NVDA"] == pytest.approx(200.0)
+
+
+def test_build_eod_summary_mover_pnl_aggregates_legs() -> None:
+    from src.orchestrator.eod_report import _build_eod_summary
+
+    positions = [
+        _make_option_pos(symbol="AAPL  C", underlying="AAPL", unrealized_pnl=-100.0),
+        _make_option_pos(symbol="AAPL  P", underlying="AAPL", unrealized_pnl=-80.0),
+    ]
+    summary = _build_eod_summary(positions, _make_account(), 0.0, 0, 0.0, [])
+    assert summary.mover_pnl["AAPL"] == pytest.approx(-180.0)
+
+
+def test_build_eod_summary_watchlist_changed_flag_passed() -> None:
+    from src.orchestrator.eod_report import _build_eod_summary
+
+    summary = _build_eod_summary(
+        [_make_option_pos()], _make_account(), 0.0, 0, 0.0, ["AAPL"], False
+    )
+    assert summary.watchlist_changed is False
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +591,61 @@ def test_format_eod_summary_negative_realized_uses_minus() -> None:
     assert "50" in text
 
 
+def test_format_eod_summary_disclaimer_suppressed_on_flat_day() -> None:
+    # No cashflow and no fills → the premium-cashflow disclaimer is noise; suppress it.
+    from src.notify.formatters import format_eod_summary
+
+    summary = _make_eod_summary(realized_pnl=0.0, fills_today=0)
+    text = format_eod_summary(summary, None)
+    assert "excludes assignment" not in text.lower()
+
+
+def test_format_eod_summary_disclaimer_shown_when_cashflow() -> None:
+    from src.notify.formatters import format_eod_summary
+
+    summary = _make_eod_summary(realized_pnl=142.50, fills_today=0)
+    text = format_eod_summary(summary, None)
+    assert "excludes assignment" in text.lower()
+
+
+def test_format_eod_summary_shows_nlv_and_buying_power() -> None:
+    from src.notify.formatters import format_eod_summary
+
+    summary = _make_eod_summary(account=_make_account(nlv=1_000_000.0))
+    text = format_eod_summary(summary, None)
+    assert "NLV" in text and "BP" in text
+    assert "1,000,000" in text
+
+
+def test_format_eod_summary_drivers_carry_pnl() -> None:
+    from src.notify.formatters import format_eod_summary
+
+    summary = _make_eod_summary(top_movers=["NVDA"], mover_pnl={"NVDA": -7672.0})
+    text = format_eod_summary(summary, None)
+    assert "Drivers:" in text
+    assert "NVDA" in text
+    assert "7,672" in text  # P&L appears alongside the symbol
+
+
+def test_format_eod_summary_collapses_unchanged_watchlist() -> None:
+    from src.notify.formatters import format_eod_summary
+
+    wl = [f"SYM{i}" for i in range(37)]
+    summary = _make_eod_summary(tomorrow_watchlist=wl, watchlist_changed=False)
+    text = format_eod_summary(summary, None)
+    assert "37 names" in text
+    assert "unchanged" in text
+    assert "SYM0" not in text  # full list is NOT reprinted
+
+
+def test_format_eod_summary_full_watchlist_when_changed() -> None:
+    from src.notify.formatters import format_eod_summary
+
+    summary = _make_eod_summary(tomorrow_watchlist=["AAPL", "NVDA"], watchlist_changed=True)
+    text = format_eod_summary(summary, None)
+    assert "AAPL" in text and "NVDA" in text
+
+
 # ---------------------------------------------------------------------------
 # Telegram send (async)
 # ---------------------------------------------------------------------------
@@ -594,3 +691,56 @@ async def test_send_eod_telegram_skips_when_no_credentials() -> None:
 
     with patch("src.orchestrator.eod_report.get_config", return_value=cfg):
         await _send_eod_telegram(summary, None)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _append_daily_iv — fail-fast when the historical-data farm is unavailable
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_append_daily_iv_circuit_breaker_trips_on_dead_farm() -> None:
+    """A down HMDS farm fails every symbol; the loop must bail after the breaker threshold
+    instead of grinding through all symbols (the ~1-hour EOD hang we are fixing)."""
+    from src.orchestrator import eod_report
+
+    symbols = [f"SYM{i}" for i in range(30)]
+    ib = MagicMock()
+    ib.reqHistoricalDataAsync = AsyncMock(side_effect=RuntimeError("hmds down"))
+
+    with (
+        patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(return_value=MagicMock())),
+        patch("src.storage.iv_history.append_observation", return_value=False),
+        patch("src.orchestrator.eod_report.asyncio.sleep", new=AsyncMock()),
+    ):
+        await eod_report._append_daily_iv(ib, symbols)
+
+    # Stops at the breaker threshold, not after all 30 symbols.
+    assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES
+
+
+@pytest.mark.asyncio
+async def test_append_daily_iv_caps_slow_request_with_timeout() -> None:
+    """Each request is bounded by _IV_REQUEST_TIMEOUT_S so a hanging farm can't block for 60s."""
+    from src.orchestrator import eod_report
+
+    async def _never_returns(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    ib = MagicMock()
+    ib.reqHistoricalDataAsync = AsyncMock(side_effect=_never_returns)
+
+    # NB: do not patch asyncio.sleep here — eod_report.asyncio is the global module, so patching
+    # it would also neutralise the sleep inside _never_returns and defeat the timeout being tested.
+    with (
+        patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(return_value=MagicMock())),
+        patch("src.storage.iv_history.append_observation", return_value=False),
+        patch.object(eod_report, "_IV_REQUEST_TIMEOUT_S", 0.05),
+    ):
+        # Would take 60s+ per symbol without the wait_for cap; the breaker then bails fast.
+        await asyncio.wait_for(
+            eod_report._append_daily_iv(ib, [f"SYM{i}" for i in range(30)]),
+            timeout=10.0,
+        )
+
+    assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES

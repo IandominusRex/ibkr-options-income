@@ -1289,39 +1289,61 @@ def format_startup(
 
 
 def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
-    """Build the EOD report Telegram MarkdownV2 message."""
+    """Build the EOD report Telegram MarkdownV2 message.
+
+    The numeric block is a ``` code fence ``` so columns actually align in Telegram's proportional
+    body font (the old space-padding did not) and needs no per-character MarkdownV2 escaping. The
+    narrative is interpretation only — it must not restate these figures (see prompts/eod.py).
+    """
     date_str = _md(summary.date.strftime("%b %d, %Y"))
+    nlv = summary.account.net_liquidation
+    bp = summary.account.buying_power
+    pct = (summary.unrealized_pnl_delta / nlv * 100) if nlv else 0.0
+
+    # Monospace metric block — literal text inside a code fence (no MarkdownV2 escaping needed).
+    metrics = [
+        f"Premium cashflow  {_pnl2(summary.realized_pnl)}",
+        (
+            f"Unrealized        {_pnl2(summary.unrealized_pnl)}"
+            f"  (Δ {_pnl2(summary.unrealized_pnl_delta)} / {pct:+.2f}% NLV)"
+        ),
+        f"Positions         {summary.open_positions} · Net Δ {summary.net_delta_exposure:+.2f}",
+        f"NLV ${nlv:,.0f} · BP ${bp:,.0f}",
+    ]
     parts: list[str] = [
         f"*EOD Report — {date_str}*",
         "",
-        f"💰 Premium cashflow: {_md(_pnl2(summary.realized_pnl))}",
-        (
-            f"📊 Unrealized:  {_md(_pnl2(summary.unrealized_pnl))}"
-            f"  \\(Δ {_md(_pnl2(summary.unrealized_pnl_delta))}\\)"
-        ),
-        (
-            f"📋 Positions:   {_md(str(summary.open_positions))}"
-            f" · Net Δ {_md(f'{summary.net_delta_exposure:.2f}')}"
-        ),
+        "```",
+        *metrics,
+        "```",
     ]
 
-    # Clarify the figure: it is option premium cashflow (credits − debits), not a paired
-    # realized P&L — assignment stock-leg P&L is not included (N13).
-    parts.append(_md("(premium cashflow = option credits − debits; excludes assignment P&L)"))
+    # Clarify the figure only when there was cashflow to clarify — on a flat $0 / no-fill day the
+    # disclaimer is pure noise (N13: it is option premium credits − debits, not a paired realized
+    # P&L; assignment stock-leg P&L is excluded).
+    if summary.realized_pnl != 0 or summary.fills_today > 0:
+        parts.append(_md("(premium cashflow = option credits − debits; excludes assignment P&L)"))
 
     if summary.fills_today > 0:
         parts += ["", f"Fills today: {_md(str(summary.fills_today))}"]
 
     if summary.top_movers:
-        movers_str = " · ".join(_md(s) for s in summary.top_movers)
-        parts.append(f"Movers: {movers_str}")
+        driver_bits: list[str] = []
+        for s in summary.top_movers:
+            pnl = summary.mover_pnl.get(s)
+            driver_bits.append(f"{_md(s)} {_md(_pnl(pnl))}" if pnl is not None else _md(s))
+        parts.append(f"Drivers: {' · '.join(driver_bits)}")
 
     if narrative:
         parts += ["", f"_{_md(narrative)}_"]
 
     if summary.tomorrow_watchlist:
-        wl_str = " · ".join(_md(s) for s in summary.tomorrow_watchlist)
-        parts += ["", f"Tomorrow: {wl_str}"]
+        if summary.watchlist_changed:
+            wl_str = " · ".join(_md(s) for s in summary.tomorrow_watchlist)
+            parts += ["", f"Tomorrow: {wl_str}"]
+        else:
+            n = len(summary.tomorrow_watchlist)
+            parts += ["", f"Tomorrow: {_md(str(n))} names \\(unchanged\\)"]
 
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:

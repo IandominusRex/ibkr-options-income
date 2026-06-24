@@ -314,8 +314,13 @@ class EODSummary(BaseModel):
     open_positions: int
     net_delta_exposure: float  # sum of delta * position * 100 across all options
     account: AccountSnapshot
-    top_movers: list[str] = Field(default_factory=list)  # symbols with largest unrealized change
+    top_movers: list[str] = Field(default_factory=list)  # underlyings with largest unrealized swing
+    # underlying → aggregated unrealized P&L, for the top_movers shown as "Drivers" in the report.
+    mover_pnl: dict[str, float] = Field(default_factory=dict)
     tomorrow_watchlist: list[str] = Field(default_factory=list)
+    # False when tomorrow's watchlist is identical to yesterday's — lets the report collapse the
+    # (usually static) 30+ ticker list to a count instead of reprinting it every day.
+    watchlist_changed: bool = True
 
 
 class BuyCandidate(BaseModel):

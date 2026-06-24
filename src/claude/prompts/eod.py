@@ -17,10 +17,13 @@ def build_eod_prompt(summary: EODSummary) -> str:
     """Return the prompt string for a narrative end-of-day journal entry."""
     lines: list[str] = [
         "You are a disciplined options income strategist keeping a trading journal. "
-        "Write a concise 3-4 sentence narrative summarizing today's performance, "
-        "what changed in the portfolio, and any notable observations for tomorrow.",
+        "The figures below are ALREADY shown to the reader in a stats block — do NOT restate them. "
+        "Write a concise 1-3 sentence interpretation: explain what changed and *why*, flag anything "
+        "that needs attention, and give one concrete action for tomorrow. If nothing material "
+        "happened (no fills, no notable move, static positions), say so in a single short sentence "
+        "rather than padding.",
         "",
-        "=== EOD JOURNAL REQUEST ===",
+        "=== EOD JOURNAL REQUEST (context — do not parrot these numbers back) ===",
         f"Date:                  {summary.date}",
         f"Premium cashflow today:{_sign(summary.realized_pnl)} (option credits − debits; "
         "NOT a paired realized P&L — assignment stock-leg P&L is excluded)",
@@ -41,8 +44,9 @@ def build_eod_prompt(summary: EODSummary) -> str:
     lines += [
         "",
         "=== YOUR TASK ===",
-        "Write a 3-4 sentence journal entry. Be specific about numbers. "
-        "Note what worked, what changed, and one actionable observation for tomorrow.",
+        "Write a 1-3 sentence journal entry of interpretation, not a recap. Do not repeat the "
+        "figures above — the reader already sees them. Explain what drove the move, what changed, "
+        "and one actionable observation for tomorrow. On a quiet day, one sentence is correct.",
         "Return a single JSON object — no prose, no markdown fences.",
         "",
         'Schema: {"narrative": "<3-4 sentence journal text>"}',
