@@ -109,16 +109,24 @@ claude:
   # `ollama serve` running locally with `ollama_model` pulled — see SETUP.md.
   backend: "ollama"
   ollama_host: "http://localhost:11434"
-  # qwen3:14b (~9GB, Q4_K_M) — good reasoning quality for the strategist/roll prompts. Fits an
-  # 18GB Mac but leaves little headroom; ollama_runner disables its "thinking" mode (think=false)
-  # so format=json output stays clean and fast.
+  # qwen3:8b (~5GB) — the active model: comfortable memory headroom on an 18GB Mac alongside
+  # TWS/Gateway; ollama_runner disables its "thinking" mode (think=false) so format=json output
+  # stays clean and fast.
+  # Upgrade: "qwen3:14b" (~9GB, Q4_K_M) — more reasoning depth if you have the RAM (needs ~16-18GB
+  # free), at the cost of headroom alongside TWS.
   # Alternative: "phi4:14b" — similar ~9GB footprint, strong structured-output/instruction
   # following, and (being a non-hybrid-reasoning model) has no thinking-mode/JSON interaction
   # to worry about — a simpler/more predictable choice if qwen3's output proves flaky.
-  # If 18GB feels tight under load (TWS + this system running together), "qwen3:8b" (~5GB)
-  # trades some reasoning depth for much more memory headroom.
   ollama_model: "qwen3:8b"
   ollama_timeout_seconds: 120
+  # Context window (tokens). Must cover the whole prompt PLUS the generated JSON or Ollama
+  # silently truncates one or both → dropped reviews. A worst-case full scan measures ~6.3k
+  # input tokens + ~2k output; 16384 leaves headroom. Lower to 8192 if qwen3:8b OOMs on 18GB.
+  ollama_num_ctx: 16384
+  # Keep the model resident between a scan's successive calls so each one doesn't pay a reload.
+  ollama_keep_alive: "10m"
+  # Sampling temperature — low keeps the JSON disciplined; raise only to experiment.
+  ollama_temperature: 0.2
 
 storage:
   # SQLAlchemy URL. SQLite for v1; swap for postgresql://... later.

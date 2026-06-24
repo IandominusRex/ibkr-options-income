@@ -273,6 +273,45 @@ def test_build_prompt_includes_vrp_line():
     cand = _make_candidate().model_copy(update={"vrp": 4.2})
     prompt = build_prompt([cand], account)
     assert "VRP" in prompt and "+4.2%" in prompt
+
+
+def test_build_prompt_full_scan_omits_summary_field():
+    """The full-universe path must NOT request the educational `summary` (keeps cards concise)."""
+    prompt = build_prompt([_make_candidate()], _make_account())
+    assert '"summary"' not in prompt
+    assert "SUMMARY GUIDE" not in prompt
+
+
+def test_build_prompt_single_ticker_requests_summary_and_guide():
+    """`/scan TICKER` deep-dive asks for a `summary` and includes the explain-the-metrics guide."""
+    prompt = build_prompt([_make_candidate()], _make_account(), single_ticker=True)
+    assert '"summary"' in prompt
+    assert "SUMMARY GUIDE" in prompt
+    # The guide must steer the model to *explain* the metrics, not just restate them.
+    assert "IV rank" in prompt and "VRP" in prompt
+
+
+def test_build_prompt_single_ticker_injects_sector_context():
+    sector_block = "=== SECTOR & MARKET BACKDROP ===\n  Sector: Technology (proxy XLK)"
+    prompt = build_prompt(
+        [_make_candidate()],
+        _make_account(),
+        sector_context=sector_block,
+        single_ticker=True,
+    )
+    assert "SECTOR & MARKET BACKDROP" in prompt
+    assert "XLK" in prompt
+
+
+def test_build_prompt_sector_context_ignored_when_not_single_ticker():
+    """Sector backdrop is a single-ticker concern; the full scan must not inject it."""
+    prompt = build_prompt(
+        [_make_candidate()],
+        _make_account(),
+        sector_context="=== SECTOR & MARKET BACKDROP ===\n  Sector: Technology",
+        single_ticker=False,
+    )
+    assert "SECTOR & MARKET BACKDROP" not in prompt
     assert "AAPL" in prompt
     assert "MSFT" in prompt
 

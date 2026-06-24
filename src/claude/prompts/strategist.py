@@ -194,15 +194,22 @@ def build_prompt(
     history: list[ClaudeMemoryRow] | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
+    sector_context: str | None = None,
+    single_ticker: bool = False,
 ) -> str:
-    """Build the full prompt string sent to claude -p.
+    """Build the full prompt string sent to the reasoning backend.
 
-    Returns an empty string if there are no candidates (caller skips subprocess).
+    Returns an empty string if there are no candidates (caller skips the call).
     history: optional list of ClaudeMemoryRow from prior scans for learning injection.
     market_conditions: optional macro snapshot (VIX) so the reasoning layer can weigh the
         vol regime. Enrichment only — it never changes the deterministic gates.
-    spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels
+    spot_prices: optional scan-time {symbol: spot} so the model reasons from current levels
         rather than the stale Jun-2026 anchors baked into the static universe block (N17).
+    sector_context: optional pre-rendered SECTOR & MARKET BACKDROP block (single-ticker scans
+        only) so the model can place the name against its industry and the broad market.
+    single_ticker: when True, this is a `/scan TICKER` deep-dive — the task asks for a plain-
+        English ``summary`` that *explains what each metric means* and synthesizes the overall
+        sentiment. The full-universe path leaves it False to keep the buy-list cards concise.
     """
     if not candidates:
         return ""
@@ -223,6 +230,10 @@ def build_prompt(
 
     # Scan-time spot prices override the stale static anchors (N17).
     lines += _spot_prices_block(candidates, spot_prices)
+
+    # Single-ticker deep-dive: the sector/market backdrop so the model judges the name in context.
+    if single_ticker and sector_context:
+        lines += [sector_context, ""]
 
     # Human-promoted reasoning skills (verdict + ranking only — never gates). Enrichment, and
     # the only path a skill reaches Claude; the engine never sees this text.
@@ -277,7 +288,32 @@ def build_prompt(
         )
 
     candidate_ids = [c.candidate_id for c in candidates]
+    # The single-ticker deep-dive adds an extra `summary` field whose job is to *teach*: explain
+    # what the metrics mean and synthesize the sentiment. The full-universe buy-list omits it so
+    # its cards stay scannable.
+    summary_field = (
+        ['  "summary": "<see SUMMARY GUIDE below>",'] if single_ticker else []
+    )
+    summary_guide: list[str] = []
+    if single_ticker:
+        summary_guide = [
+            "",
+            "=== SUMMARY GUIDE (single-ticker deep-dive) ===",
+            "Write `summary` for a smart trader who is NOT an options expert. In 4-6 sentences, "
+            "plain English, no jargon dumps:",
+            "  1. Translate the key numbers into meaning — IV rank (is option premium rich or "
+            "cheap vs this name's own history?), VRP (are options overpriced vs realised "
+            "movement?), delta (rough assignment odds), RSI/trend (momentum), days-to-earnings "
+            "(event risk). Say what each *implies*, don't just restate the number.",
+            "  2. Read the backdrop: the VIX regime and the SECTOR & MARKET BACKDROP above — is "
+            "the sector leading or lagging, is the name out/under-performing it, what does the "
+            "broad tape imply for selling premium here right now?",
+            "  3. Synthesize: pull it together into one clear sentiment read on the ticker and "
+            "whether this is a good moment to sell premium on it — and why.",
+            "Be specific to THIS ticker's actual numbers; never invent data not shown above.",
+        ]
     lines += [
+        *summary_guide,
         "",
         "=== YOUR TASK ===",
         f"Review all {len(candidates)} candidates above and return a JSON array — one object per "
@@ -293,6 +329,7 @@ def build_prompt(
         '  "tradeoffs": "<2-3 sentences>",',
         '  "assignment_considerations": "<2-3 sentences>",',
         '  "rolling_considerations": "<2-3 sentences or empty string>",',
+        *summary_field,
         '  "confidence": <float 0.0-1.0>',
         "}",
         "",

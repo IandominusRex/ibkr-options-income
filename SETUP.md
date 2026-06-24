@@ -783,7 +783,7 @@ strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.co
 
 **This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
 access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
-against a local `qwen3:14b` model. The one exception is `scripts.propose_skill` (the
+against a local `qwen3:8b` model. The one exception is `scripts.propose_skill` (the
 skill-proposal step of the verdict learning loop, §13), which shells out to `claude -p` directly
 regardless of `claude.backend` — without CLI access it fails soft (logs a warning, writes no
 proposal). The rest of the learning loop (ledger, reconciliation, verdict scoring, promotion) is
@@ -794,7 +794,7 @@ unaffected since it doesn't call Claude at all.
 ```bash
 brew install ollama
 ollama serve &                       # or: brew services start ollama
-ollama pull qwen3:14b                # ~9GB; needs ~16-18GB free RAM. Try qwen3:8b for smaller machines.
+ollama pull qwen3:8b                 # ~5GB; comfortable headroom on an 18GB Mac alongside TWS. qwen3:14b (~9GB) if you have the RAM.
 ```
 
 **2. Choose a backend in `config/settings.yaml → claude`:**
@@ -803,8 +803,11 @@ ollama pull qwen3:14b                # ~9GB; needs ~16-18GB free RAM. Try qwen3:
 claude:
   backend: "ollama"           # "cli" | "ollama" (active here) | "cli_then_ollama"
   ollama_host: "http://localhost:11434"
-  ollama_model: "qwen3:14b"
+  ollama_model: "qwen3:8b"
   ollama_timeout_seconds: 120
+  ollama_num_ctx: 16384       # context window (tokens) — must cover prompt + JSON output
+  ollama_keep_alive: "10m"    # keep model resident between a scan's successive calls
+  ollama_temperature: 0.2     # low = disciplined JSON
 ```
 
 - **`"cli"`** — `claude -p` only. Requires CLI access; not usable in this deployment.
@@ -816,14 +819,14 @@ claude:
   automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
   Claude to be the primary reviewer again.
 
-**Model choice.** `qwen3:14b` (~9GB, Q4_K_M) is the default — good reasoning quality, and
-`ollama_runner.py` sends `think: false` so its hybrid-reasoning `<think>` traces don't fight the
-`format: "json"` output. Alternatives:
+**Model choice.** `qwen3:8b` (~5GB) is the active model here — it leaves comfortable memory
+headroom on an 18GB Mac alongside TWS/Gateway, and `ollama_runner.py` sends `think: false` so its
+hybrid-reasoning `<think>` traces don't fight the `format: "json"` output. Alternatives:
+- **`qwen3:14b`** (~9GB, Q4_K_M) — more reasoning depth; use it if you have the RAM (needs
+  ~16–18GB free) and want stronger multi-signal judgment.
 - **`phi4:14b`** — similar ~9GB footprint, strong structured-output/instruction-following, and
   (not being a hybrid-reasoning model) has no thinking-mode/JSON interaction to worry about — a
-  simpler, more predictable choice if `qwen3:14b`'s output proves flaky.
-- **`qwen3:8b`** (~5GB) — trades reasoning depth for memory headroom on machines with 16GB or
-  less, or if `qwen3:14b` causes memory pressure alongside TWS/Gateway.
+  simpler, more predictable choice if `qwen3`'s output proves flaky.
 
 **3. Active reasoning skills and the skill-proposal loop work unchanged.**
 `config/skills/active/*.md` is injected into the prompt text regardless of backend — no extra
@@ -837,17 +840,23 @@ promote`) is always a human-gated file move regardless of which backend drafted 
 Expect skill drafting to be a harder task for a local model than reviewing candidates — it has to
 find patterns across dozens of labeled trade outcomes and write a coherent, falsifiable playbook
 from scratch, rather than synthesize pre-computed signals. A weak or generic draft just gets
-rejected (`scripts.skills reject <name>`) — low risk, but review proposals from `qwen3:14b` more
+rejected (`scripts.skills reject <name>`) — low risk, but review proposals from `qwen3:8b` more
 critically than you would from `claude -p`.
 
-**Expectations:** a 14B local model is noticeably less reliable at nuanced multi-signal judgment
+**Expectations:** a small local model is noticeably less reliable at nuanced multi-signal judgment
 than Claude — expect more conservative (`wait`) verdicts and occasional validation failures (which
 fail soft to `[]`/`None`, same as a CLI failure). `format: "json"` constrains Ollama's output to
 valid JSON, but schema-validity (matching `ClaudeReview`/`RollReview`) still depends on the model
-following the prompt's instructions. `ollama_runner.py` also sets `num_ctx: 8192` (vs Ollama's
-4096 default) since the strategist prompt (universe context + history + active skills) can exceed
-4096 tokens. Latency is typically 5–60s per call on Apple Silicon for a 14B model, depending on
-prompt length and memory pressure.
+following the prompt's instructions. `ollama_runner.py` also raises `num_ctx` to `16384` (config
+`ollama_num_ctx`, vs Ollama's 4096 default): the requested window must cover the *whole prompt plus
+the generated JSON*, or Ollama silently left-truncates the prompt (dropping the universe context +
+candidates at the start) and/or cuts the output mid-JSON — both yield unparseable output and
+dropped reviews. A worst-case full scan (10 candidates + 30 memory rows + VIX + spots) measures
+~6.3k input tokens; 10 JSON verdicts add ~1.5–2.5k, so 8192 was too tight. Lower `ollama_num_ctx`
+to `8192` if `qwen3:8b` OOMs on an 18 GB Mac (a single-ticker `/scan` prompt is much smaller and
+fits comfortably). `ollama_keep_alive` (default `10m`) keeps the model resident so a scan's
+successive calls don't each pay a reload. Latency is typically 5–40s per call on Apple Silicon for
+an 8B model, depending on prompt length and memory pressure.
 
 ---
 
@@ -879,4 +888,4 @@ prompt length and memory pressure.
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
 | `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |
 | `ollama: request to http://localhost:11434/api/generate failed: ... Connection refused` | `claude.backend` is `"ollama"`/`"cli_then_ollama"` but `ollama serve` isn't running | Run `ollama serve` (or `brew services start ollama`); verify with `curl http://localhost:11434` |
-| `ollama: output parsed to empty list` / `ollama roll: unparseable output` | The local model's JSON didn't match the `ClaudeReview`/`RollReview` schema | Fails soft (same as a `claude -p` failure) — the pipeline proceeds with the deterministic list. Try a larger/different `ollama_model` if this happens often. |
+| `ollama: output parsed to empty list` / `ollama roll: unparseable output` | The local model's JSON didn't match the `ClaudeReview`/`RollReview` schema — often a context-window overflow on a large full scan, which truncates the prompt or the JSON output | Fails soft (same as a `claude -p` failure) — the pipeline proceeds with the deterministic list. If it happens mainly on full `/scan` (not single-ticker), raise `ollama_num_ctx`; otherwise try a larger/different `ollama_model`. |

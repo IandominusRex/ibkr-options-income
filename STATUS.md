@@ -54,7 +54,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   only), `"ollama"` (local model only), or `"cli_then_ollama"` (try `claude -p`, fall back to
   local on failure). **This deployment currently runs `backend: "ollama"`** — no `claude -p`
   access, so `review_candidates`/`review_roll`/`write_journal_narrative` all go to a local
-  `qwen3:14b` via Ollama (`think: false`, `num_ctx: 8192`). Same `ClaudeReview`/`RollReview`
+  `qwen3:8b` via Ollama (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). Same `ClaudeReview`/`RollReview`
   validation and fail-soft contract regardless of backend; active skills inject identically. See
   SETUP.md §14. The launcher (`scripts.start`) and `scripts.healthcheck` call
   `ollama_runner.probe_ollama()` (a `GET /api/tags` reachability + configured-model check) on
@@ -136,7 +136,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Approval / notify | `python-telegram-bot` v21+ | Inline keyboards + callback handlers. |
 | Claude | **Claude Code CLI (`claude -p`)** | Headless. Since 2026-06-15, draws from a separate monthly Agent SDK credit pool (billed at API rates), not the interactive subscription. **Not used in this deployment** — `claude.backend: "ollama"` (no CLI access); both review and `scripts.propose_skill` dispatch to Ollama instead. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. Requires `claude -p`; inactive in this deployment. |
-| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3:14b` | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 8192`). See SETUP.md §14. |
+| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3:8b` | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). See SETUP.md §14. |
 | Config | `PyYAML` + `python-dotenv` | YAML for rules/weights, `.env` for secrets. |
 | Dashboard | `Streamlit` | Read-only views off SQLite. Archived to `Archive/dashboard/`. |
 | Quality | `pytest`, `ruff`, `mypy` | IBKR mocked in tests. |
@@ -460,6 +460,23 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 
 ---
 
+## Built (2026-06-24 — holistic single-ticker `/scan TICKER` deep-dive)
+
+- **Educational, context-aware single-ticker scan:** `/scan TICKER` now produces a holistic read
+  rather than just a verdict. New `src/analytics/sector_context.py` builds a `SectorContext`
+  (yfinance GICS sector/industry → SPDR sector-ETF proxy, plus 1-month/5-day sector, SPY, and
+  ticker returns and a relative-strength figure from the day-cached OHLCV store; fully fail-soft).
+  `run_ticker_scan` gathers the ticker's prior-recommendation memory, `MarketConditions` (VIX), and
+  the `SectorContext` off-thread (in parallel) and passes them to `review_candidates(...,
+  single_ticker=True)`. The `single_ticker` flag switches `strategist.build_prompt` to inject the
+  sector backdrop and request a new `ClaudeReview.summary` field — a plain-English synthesis that
+  *explains what each metric (IV rank, VRP, delta, RSI, earnings) means*, reads the VIX regime and
+  sector performance, and gives an overall sentiment. The card renders a deterministic
+  "🌐 Market & Sector" line and a "🧠 Read" block, plus a `📌` assignment-considerations line under
+  each contract verdict. Full-universe `/scan` is unchanged (the prompt omits `summary` to keep the
+  buy-list concise). Enrichment only — none of this reaches the deterministic engine (the fence).
+  Backed by `tests/test_sector_context.py` + new prompt/formatter tests (14 new tests).
+
 ## Built (2026-06-21 — C5: reprice extended to close and roll legs)
 
 - **SmartPricing fill-walking extended to all three execution paths (C5):** `reprice_limit` chase
@@ -473,7 +490,7 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 
 ## Bugs fixed (2026-06-18 — Ollama circuit breaker)
 
-- **Ollama parse failures logged every cycle:** `qwen3:14b` with `format: "json"` leaks `<think>`
+- **Ollama parse failures logged every cycle:** `qwen3` with `format: "json"` leaks `<think>`
   traces that produce malformed JSON, generating a WARNING on every scan cycle even when the model
   is persistently unhealthy. Added a module-level circuit breaker in `src/claude/ollama_runner.py`:
   after `_CIRCUIT_THRESHOLD` (3) consecutive connection errors or unparseable outputs the circuit

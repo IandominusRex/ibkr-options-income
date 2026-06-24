@@ -88,11 +88,16 @@ def review_candidates(
     history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
+    sector_context: str | None = None,
+    single_ticker: bool = False,
 ) -> list[ClaudeReview]:
     """Review candidates via the configured `claude.backend`. Returns [] on any failure.
 
     "cli" (default): `claude -p` only. "ollama": local model only. "cli_then_ollama": try
     `claude -p`, fall back to the local model if it returns no reviews.
+
+    sector_context / single_ticker: forwarded to the prompt builder so a `/scan TICKER` deep-dive
+    gets the sector backdrop and the extra plain-English ``summary`` (see strategist.build_prompt).
     """
     cfg = get_config().claude
     kwargs = dict(
@@ -101,6 +106,8 @@ def review_candidates(
         history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
+        sector_context=sector_context,
+        single_ticker=single_ticker,
     )
 
     if cfg.backend == "ollama":
@@ -119,6 +126,8 @@ def _review_candidates_cli(
     history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
+    sector_context: str | None = None,
+    single_ticker: bool = False,
 ) -> list[ClaudeReview]:
     """Shell out to `claude -p`, parse output → list[ClaudeReview]. Returns [] on any failure.
 
@@ -144,6 +153,8 @@ def _review_candidates_cli(
         history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
+        sector_context=sector_context,
+        single_ticker=single_ticker,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits

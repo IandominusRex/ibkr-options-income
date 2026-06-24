@@ -253,6 +253,9 @@ def _patch_ollama_cfg(**overrides):
         ollama_host="http://localhost:11434",
         ollama_model="qwen2.5:14b-instruct",
         ollama_timeout_seconds=120.0,
+        ollama_num_ctx=16384,
+        ollama_keep_alive="10m",
+        ollama_temperature=0.2,
         **overrides,
     )
     runner_patch = patch("src.claude.runner.get_config")
@@ -281,6 +284,11 @@ def test_ollama_backend_review_candidates_success():
     body = mock_post.call_args.kwargs["json"]
     assert body["format"] == "json"
     assert body["model"] == "qwen2.5:14b-instruct"
+    # Tunable generation params must flow from config into the request (num_ctx large enough to
+    # avoid silent prompt/output truncation; keep_alive to skip per-call model reloads).
+    assert body["keep_alive"] == "10m"
+    assert body["options"]["num_ctx"] == 16384
+    assert body["options"]["temperature"] == 0.2
 
 
 def test_ollama_backend_connection_error_returns_empty():

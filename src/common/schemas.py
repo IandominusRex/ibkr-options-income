@@ -189,6 +189,23 @@ class TechnicalStats(BaseModel):
     price_source: str = "yfinance"
 
 
+class SectorContext(BaseModel):
+    """Sector/market backdrop for a single-ticker scan — how the name's industry and the broad
+    market are trading, so the reasoning layer can place the ticker in context. All fields
+    optional: every source (yfinance sector lookup, sector-ETF/SPY returns) degrades gracefully
+    to None. Enrichment only — never reaches the deterministic engine."""
+
+    symbol: str
+    sector: str | None = None  # yfinance GICS sector (e.g. "Technology")
+    industry: str | None = None
+    sector_etf: str | None = None  # SPDR proxy for the sector (e.g. "XLK")
+    sector_ret_1mo_pct: float | None = None  # sector ETF ~21-session % change
+    sector_ret_5d_pct: float | None = None
+    spy_ret_1mo_pct: float | None = None  # broad-market benchmark ~21-session % change
+    symbol_ret_1mo_pct: float | None = None  # the ticker's own ~21-session % change
+    rel_strength_1mo_pct: float | None = None  # symbol_ret_1mo − sector_ret_1mo (relative strength)
+
+
 class FundamentalStats(BaseModel):
     symbol: str
     next_earnings: date | None = None
@@ -277,6 +294,10 @@ class ClaudeReview(BaseModel):
     assignment_considerations: str
     rolling_considerations: str = ""
     confidence: float | None = None  # 0-1
+    # Plain-English synthesis for the single-ticker /scan card: what the metrics (IV rank, VRP,
+    # delta, RSI, earnings) mean together, read against the VIX regime and the name's sector, and
+    # the overall sentiment. Empty on the full-universe path (that prompt doesn't request it).
+    summary: str = ""
 
 
 class RollAlert(BaseModel):

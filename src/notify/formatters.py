@@ -20,11 +20,13 @@ from src.common.schemas import (
     EODSummary,
     FundamentalStats,
     IVStats,
+    MarketConditions,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
     RollAlert,
     RollReview,
+    SectorContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -545,6 +547,52 @@ def _humanize_reject_reason(code: str) -> str:
     return _REJECT_REASON_LABELS.get(code, code.replace("_", " "))
 
 
+def _vix_regime(vix: float) -> str:
+    """Short plain-English read of the VIX level for the ticker card."""
+    if vix < 15:
+        return "calm — premiums thin"
+    if vix < 20:
+        return "normal"
+    if vix < 30:
+        return "elevated — richer premium, wider moves"
+    return "stressed — rich premium, high tail risk"
+
+
+def _market_sector_lines(
+    mc: MarketConditions | None, sc: SectorContext | None
+) -> list[str]:
+    """Deterministic '🌐 Market & Sector' block: VIX regime + sector/market returns + rel-strength.
+
+    Returns [] when neither a VIX level nor any sector datum is available, so the section is
+    simply omitted rather than rendered empty."""
+    body: list[str] = []
+    if mc is not None and mc.vix is not None:
+        body.append(f"• VIX {_md(f'{mc.vix:.1f}')} — {_md(_vix_regime(mc.vix))}")
+    if sc is not None:
+        if sc.sector:
+            label = sc.sector + (f" / {sc.industry}" if sc.industry else "")
+            etf = f" \\({_md(sc.sector_etf)}\\)" if sc.sector_etf else ""
+            sect_ret = (
+                f" {_md(f'{sc.sector_ret_1mo_pct:+.1f}')}% 1mo"
+                if sc.sector_ret_1mo_pct is not None
+                else ""
+            )
+            body.append(f"• {_md(label)}{etf}{sect_ret}")
+        if sc.spy_ret_1mo_pct is not None:
+            body.append(f"• SPY {_md(f'{sc.spy_ret_1mo_pct:+.1f}')}% 1mo \\(broad market\\)")
+        if sc.symbol_ret_1mo_pct is not None:
+            rel = ""
+            if sc.rel_strength_1mo_pct is not None:
+                word = "outperforming" if sc.rel_strength_1mo_pct >= 0 else "underperforming"
+                rel = f" · {_md(f'{sc.rel_strength_1mo_pct:+.1f}')}% vs sector \\({word}\\)"
+            body.append(
+                f"• {_md(sc.symbol)} {_md(f'{sc.symbol_ret_1mo_pct:+.1f}')}% 1mo{rel}"
+            )
+    if not body:
+        return []
+    return ["🌐 *Market & Sector*", *body]
+
+
 def _ticker_review_lines(review: ClaudeReview) -> list[str]:
     """Indented MarkdownV2 lines rendering Claude/Ollama's verdict for a ticker-scan card."""
     conf = (
@@ -555,6 +603,10 @@ def _ticker_review_lines(review: ClaudeReview) -> list[str]:
         lines.append(f"  _{_md(review.why_attractive)}_")
     if review.risks:
         lines.append(f"  ⚠️ {_md(review.risks)}")
+    # Assignment is the decision that matters most on a single-name CC/CSP card, so surface the
+    # model's read on it here (the full-scan candidate card omits it for brevity).
+    if review.assignment_considerations:
+        lines.append(f"  📌 {_md(review.assignment_considerations)}")
     return lines
 
 
@@ -677,16 +729,25 @@ def format_ticker_scan_result(
     cc_near_miss: TradeCandidate | None = None,
     csp_near_miss: TradeCandidate | None = None,
     greeks_fallback: bool = False,
+    market_conditions: MarketConditions | None = None,
+    sector_context: SectorContext | None = None,
 ) -> str:
     """Compact Telegram MarkdownV2 summary for a single-ticker /scan TICKER result.
 
     Sections:
       - Header: price, IV rank, VRP + a plain-English premium-environment read
       - Technicals: trend (vs SMAs), RSI, earnings days
+      - Market & Sector: VIX regime + sector/market returns + relative strength (deterministic)
+      - Read: the LLM's plain-English synthesis of what the metrics mean + sentiment (if present)
       - Covered Call: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
       - Cash-Secured Put: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
       - Buy-to-Own: score + rationale (omitted if not applicable)
       - Sources footer (honest: reflects the actual spot/Greeks source)
+
+    Args (added for the holistic deep-dive):
+        market_conditions: macro snapshot (VIX) — rendered as a plain-English vol-regime line.
+        sector_context: how the name's sector and the broad market are trading; rendered as a
+            deterministic backdrop line. Both fail-soft — omitted when unavailable.
 
     Args:
         reviews: optional Claude/Ollama reviews keyed (internally) by candidate_id; the verdict
@@ -727,6 +788,19 @@ def format_ticker_scan_result(
         earn_warn = " ⚠️" if 0 <= days_to_earn <= 14 else ""
         lines.append(f"• Earnings: {_md(str(days_to_earn))}d{earn_warn}")
     lines.append("")
+
+    # --- Market & Sector backdrop (deterministic) ---
+    backdrop = _market_sector_lines(market_conditions, sector_context)
+    if backdrop:
+        lines.extend(backdrop)
+        lines.append("")
+
+    # --- LLM Read: plain-English synthesis of what it all means (single-ticker only) ---
+    summary = next((r.summary for r in (reviews or []) if r.summary), "")
+    if summary:
+        lines.append("🧠 *Read*")
+        lines.append(f"_{_md(summary)}_")
+        lines.append("")
 
     # --- Covered Call ---
     lines.append("🔵 *Covered Call*")

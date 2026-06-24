@@ -344,3 +344,98 @@ def test_premium_read_appears_in_card() -> None:
         quotes_available=True,
     )
     assert "💡" in text
+
+
+# ---------------------------------------------------------------------------
+# Market & Sector backdrop + LLM Read summary (holistic deep-dive)
+# ---------------------------------------------------------------------------
+
+
+def test_market_sector_block_renders_vix_and_sector() -> None:
+    from src.common.schemas import MarketConditions, SectorContext
+
+    sc = SectorContext(
+        symbol="NVDA",
+        sector="Technology",
+        industry="Semiconductors",
+        sector_etf="XLK",
+        sector_ret_1mo_pct=3.2,
+        spy_ret_1mo_pct=1.4,
+        symbol_ret_1mo_pct=6.1,
+        rel_strength_1mo_pct=2.9,
+    )
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        market_conditions=MarketConditions(vix=18.4),
+        sector_context=sc,
+    )
+    assert "Market & Sector" in text
+    assert "VIX 18" in text
+    assert "Technology" in text and "XLK" in text
+    assert "outperforming" in text
+
+
+def test_market_sector_block_omitted_when_no_data() -> None:
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+    )
+    assert "Market & Sector" not in text
+
+
+def test_llm_read_summary_renders_once() -> None:
+    cand = _candidate(candidate_id="csp-xyz")
+    review = _review("csp-xyz").model_copy(
+        update={"summary": "IV rank is low so premium is thin; the sector is leading and NVDA is "
+                "outperforming — a constructive but not premium-rich setup."}
+    )
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[cand],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        reviews=[review],
+    )
+    assert "🧠 *Read*" in text
+    assert text.count("🧠 *Read*") == 1
+    assert "premium is thin" in text
+
+
+def test_assignment_considerations_rendered_under_candidate() -> None:
+    cand = _candidate(candidate_id="csp-xyz")
+    review = _review("csp-xyz").model_copy(
+        update={"assignment_considerations": "Low 0.20 delta keeps assignment odds modest."}
+    )
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[cand],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        reviews=[review],
+    )
+    assert "assignment odds modest" in text

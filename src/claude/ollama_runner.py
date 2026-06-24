@@ -111,7 +111,9 @@ def _generate(prompt: str, cfg: object) -> str | None:
     `think: False` disables hybrid-reasoning models' (e.g. qwen3) <think> traces — they're slow
     and tend to fight the `format: "json"` grammar constraint. Ollama ignores the field for
     models that don't support it. `num_ctx` is raised from Ollama's 4096 default because the
-    strategist prompt (universe context + history + active skills) routinely exceeds it.
+    strategist prompt (universe context + history + active skills) plus the generated JSON
+    routinely exceeds it; an undersized window silently truncates the prompt and/or the output.
+    All three knobs (`num_ctx`, `keep_alive`, `temperature`) are config-tunable — see ClaudeCfg.
     """
     url = f"{cfg.ollama_host.rstrip('/')}/api/generate"  # type: ignore[attr-defined]
     body = {
@@ -120,7 +122,11 @@ def _generate(prompt: str, cfg: object) -> str | None:
         "format": "json",
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.2, "num_ctx": 8192},
+        "keep_alive": cfg.ollama_keep_alive,  # type: ignore[attr-defined]
+        "options": {
+            "temperature": cfg.ollama_temperature,  # type: ignore[attr-defined]
+            "num_ctx": cfg.ollama_num_ctx,  # type: ignore[attr-defined]
+        },
     }
     try:
         resp = httpx.post(url, json=body, timeout=cfg.ollama_timeout_seconds)  # type: ignore[attr-defined]
@@ -142,6 +148,8 @@ def review_candidates(
     history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
+    sector_context: str | None = None,
+    single_ticker: bool = False,
 ) -> list[ClaudeReview]:
     """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure."""
     cfg = get_config().claude
@@ -164,6 +172,8 @@ def review_candidates(
         history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
+        sector_context=sector_context,
+        single_ticker=single_ticker,
     )
 
     raw = _generate(prompt, cfg)

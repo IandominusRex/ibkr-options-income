@@ -30,6 +30,7 @@ from ib_async import IB
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats, infer_spot_from_quotes
 from src.analytics.market_conditions import get_market_conditions
+from src.analytics.sector_context import get_sector_context, render_sector_context
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
@@ -47,6 +48,7 @@ from src.common.schemas import (
     OptionQuote,
     OptionRight,
     PositionSnapshot,
+    SectorContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -1659,15 +1661,36 @@ async def run_ticker_scan(
     # 8b. Claude/Ollama verdict on the best CC + best CSP (enrichment only — never gates).
     # Review just the top candidate per strategy so the local model stays fast; failure is
     # non-fatal (the card renders without a verdict). Runs off-thread (the runner blocks on a
-    # subprocess / HTTP call).
+    # subprocess / HTTP call). Prior-recommendation memory for this ticker is injected so the
+    # verdict can learn from how past calls on the same name actually played out — the same
+    # history the full scan feeds, scoped to one symbol (cheap DB read, also off-thread).
+    # Macro + sector backdrop for the deep-dive: VIX regime and how the name's industry / the
+    # broad market are trading. Both are fail-soft and fetched off-thread (yfinance/OHLCV blocks);
+    # the SectorContext is also kept for the deterministic "Market & Sector" card line.
+    sector_ctx: SectorContext | None = None
+    market_conditions: MarketConditions | None = None
     reviews: list[ClaudeReview] = []
     to_review = cc_passed[:1] + csp_passed[:1]
     if to_review:
         spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
         try:
+            memory, market_conditions, sector_ctx = await asyncio.gather(
+                loop.run_in_executor(None, _load_memory, [ticker]),
+                loop.run_in_executor(None, get_market_conditions),
+                loop.run_in_executor(None, get_sector_context, ticker),
+            )
+            sector_block = render_sector_context(sector_ctx)
             reviews = await loop.run_in_executor(
                 None,
-                lambda: review_candidates(to_review, account, spot_prices=spot_prices),
+                lambda: review_candidates(
+                    to_review,
+                    account,
+                    history=memory,
+                    market_conditions=market_conditions,
+                    spot_prices=spot_prices,
+                    sector_context=sector_block,
+                    single_ticker=True,
+                ),
             )
         except Exception:
             log.warning("ticker_scan: Claude/Ollama review failed for %s", ticker, exc_info=True)
@@ -1691,6 +1714,8 @@ async def run_ticker_scan(
         cc_near_miss=cc_near_miss,
         csp_near_miss=csp_near_miss,
         greeks_fallback=greeks_fallback,
+        market_conditions=market_conditions,
+        sector_context=sector_ctx,
     )
     await _ticker_edit_msg(bot, chat_id, progress_msg_id, text)
     log.info(
