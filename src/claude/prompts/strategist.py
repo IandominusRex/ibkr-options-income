@@ -4,10 +4,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.common.schemas import AccountSnapshot, MarketConditions, TradeCandidate
+from src.common.schemas import (
+    AccountSnapshot,
+    FundamentalStats,
+    IVStats,
+    MarketConditions,
+    TechnicalStats,
+    TradeCandidate,
+)
 
 if TYPE_CHECKING:
     from src.storage.models import ClaudeMemoryRow
+
+# Per-underlying analytics keyed by symbol — the raw technical/fundamental/IV-microstructure
+# signals that were previously collapsed into the opaque ScoreCard digits before reaching the
+# reasoning layer. Threaded through `review_candidates` from the scan's `analytics_map`.
+AnalyticsMap = dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]]
 
 # Compact universe knowledge injected into every review prompt.
 # Full research with sources lives in UNIVERSE_RESEARCH.md at the project root.
@@ -173,6 +185,92 @@ def _spot_prices_block(
     ]
 
 
+def _compact_money(v: float) -> str:
+    """Render a (possibly large) dollar figure compactly with an explicit sign — e.g. +$12.4B."""
+    sign = "+" if v >= 0 else "-"
+    a = abs(v)
+    if a >= 1e9:
+        return f"{sign}${a / 1e9:.1f}B"
+    if a >= 1e6:
+        return f"{sign}${a / 1e6:.0f}M"
+    return f"{sign}${a:,.0f}"
+
+
+def _analytics_lines(c: TradeCandidate, analytics: AnalyticsMap | None) -> list[str]:
+    """Render the raw technical / fundamental / IV-microstructure signals for a candidate's
+    underlying.
+
+    These are computed every scan but were previously collapsed into the opaque ScoreCard digits
+    (Tech=NN, Fund=NN) before reaching the reasoning layer — so the model was asked to explain a
+    name's risks while only seeing a bare composite number. Surfacing the signals lets it reason
+    from momentum/trend/regime, leverage/dividend timing, and the IV term-structure/skew, and
+    makes the single-ticker SUMMARY GUIDE's request to interpret "RSI/trend" actually satisfiable.
+
+    Enrichment only — like the rest of this prompt these never reach the engine (CLAUDE.md fence).
+    """
+    if not analytics:
+        return []
+    triple = analytics.get(c.underlying)
+    if triple is None:
+        return []
+    iv, tech, fund = triple
+    lines: list[str] = []
+
+    # Technicals: momentum, regime, trend position vs the SMAs, realised-move magnitude.
+    tbits: list[str] = []
+    if tech.rsi_14 is not None:
+        tbits.append(f"RSI {tech.rsi_14:.0f}")
+    if tech.regime is not None:
+        tbits.append(f"regime {tech.regime.value}")
+    if tech.price > 0:
+        if tech.sma_50 is not None:
+            tbits.append("above 50d" if tech.price >= tech.sma_50 else "below 50d")
+        if tech.sma_200 is not None:
+            tbits.append("above 200d" if tech.price >= tech.sma_200 else "below 200d")
+    if tech.atr_ratio is not None:
+        tbits.append(f"ATR/px {tech.atr_ratio:.1f}%")
+    if tbits:
+        lines.append(f"Technicals:       {' · '.join(tbits)}")
+
+    # Fundamentals: quality, leverage, free cash flow, and dividend/ex-div (early-assignment
+    # timing matters for covered calls — a deep-ITM call can be assigned around the ex-date).
+    fbits: list[str] = []
+    if fund.pe_ratio is not None:
+        fbits.append(f"P/E {fund.pe_ratio:.1f}")
+    if fund.debt_to_equity is not None:
+        fbits.append(f"D/E {fund.debt_to_equity:.0f}")
+    if fund.free_cash_flow is not None:
+        fbits.append(f"FCF {_compact_money(fund.free_cash_flow)}")
+    if fund.dividend_yield:
+        safe = "" if fund.dividend_safe is None else (" safe" if fund.dividend_safe else " unsafe")
+        fbits.append(f"div {fund.dividend_yield * 100:.1f}%{safe}")
+    if fund.ex_dividend_date is not None:
+        fbits.append(f"ex-div {fund.ex_dividend_date}")
+    if fbits:
+        lines.append(f"Fundamentals:     {' · '.join(fbits)}")
+
+    # IV microstructure: percentile (complements rank), the IV/RV edge, term-structure shape,
+    # and put/call skew — the premium-selling edge and tail-pricing the composite IV score hides.
+    ibits: list[str] = []
+    if iv.current_iv is not None:
+        ibits.append(f"IV {iv.current_iv:.1f}%")
+    if iv.hv_30 is not None:
+        ibits.append(f"HV30 {iv.hv_30:.1f}%")
+    if iv.iv_percentile is not None:
+        ibits.append(f"IV%ile {iv.iv_percentile:.0f}")
+    if iv.iv_rv_ratio is not None:
+        ibits.append(f"IV/RV {iv.iv_rv_ratio:.2f}")
+    if iv.term_structure_slope is not None:
+        shape = "contango" if iv.term_structure_slope > 0 else "backwardation"
+        ibits.append(f"term {iv.term_structure_slope:+.4f} ({shape})")
+    if iv.put_call_skew is not None:
+        ibits.append(f"skew {iv.put_call_skew:+.2f}")
+    if ibits:
+        lines.append(f"IV structure:     {' · '.join(ibits)}")
+
+    return lines
+
+
 def _vix_context(vix: float | None) -> str:
     """One-line macro-vol regime hint derived from the VIX level."""
     if vix is None:
@@ -196,6 +294,7 @@ def build_prompt(
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
+    analytics: AnalyticsMap | None = None,
 ) -> str:
     """Build the full prompt string sent to the reasoning backend.
 
@@ -210,19 +309,38 @@ def build_prompt(
     single_ticker: when True, this is a `/scan TICKER` deep-dive — the task asks for a plain-
         English ``summary`` that *explains what each metric means* and synthesizes the overall
         sentiment. The full-universe path leaves it False to keep the buy-list cards concise.
+    analytics: optional {symbol: (IVStats, TechnicalStats, FundamentalStats)} so each candidate
+        is annotated with the raw technical/fundamental/IV-microstructure signals — not just the
+        opaque ScoreCard composites. Enrichment only (CLAUDE.md fence).
     """
     if not candidates:
         return ""
 
     vix = market_conditions.vix if market_conditions else None
+    # The full-universe path always reviews gate-approved candidates, so it can state that
+    # plainly. The single-ticker deep-dive may also review the closest *near-miss* when nothing
+    # cleared the gate (so the card still gets a Read), so its framing stays neutral about gate
+    # status — the card itself shows each contract's pass/fail and reason.
+    if single_ticker:
+        role = (
+            "These candidates were surfaced by the deterministic screen for a single-ticker "
+            "deep-dive (they may not all have cleared every risk gate — the card shows each "
+            "contract's status). Your role is enrichment only: explain the risks, tradeoffs, and "
+            "assignment considerations and synthesize an overall read. You cannot place, size, or "
+            "block orders."
+        )
+    else:
+        role = (
+            "These candidates have already been approved by the deterministic Rules Engine. "
+            "Your role is enrichment only: re-rank by priority and explain the risks, tradeoffs, "
+            "and assignment considerations so the trader can make an informed final decision. "
+            "You cannot place, size, or block orders."
+        )
     lines: list[str] = [
         "You are a disciplined options income strategist reviewing proposed covered call (CC) "
         "and cash-secured put (CSP) trades for an Interactive Brokers account.",
         "",
-        "These candidates have already been approved by the deterministic Rules Engine. "
-        "Your role is enrichment only: re-rank by priority and explain the risks, tradeoffs, "
-        "and assignment considerations so the trader can make an informed final decision. "
-        "You cannot place, size, or block orders.",
+        role,
         "",
         _UNIVERSE_CONTEXT,
         "",
@@ -286,6 +404,8 @@ def build_prompt(
             f"Fund={c.scores.fundamental_score:.0f}  Liq={c.scores.liquidity_score:.0f}  "
             f"AsnRisk={c.scores.assignment_safety_score:.0f}"
         )
+        # Raw signals behind the Tech/Fund/IV composites above (enrichment — never gates).
+        lines += _analytics_lines(c, analytics)
         if c.next_earnings is not None:
             lines.append(f"Next Earnings:    {c.next_earnings}  (event risk — see sentiment below)")
         _sd = c.scores.sentiment_detail
@@ -307,9 +427,7 @@ def build_prompt(
     # The single-ticker deep-dive adds an extra `summary` field whose job is to *teach*: explain
     # what the metrics mean and synthesize the sentiment. The full-universe buy-list omits it so
     # its cards stay scannable.
-    summary_field = (
-        ['  "summary": "<see SUMMARY GUIDE below>",'] if single_ticker else []
-    )
+    summary_field = ['  "summary": "<see SUMMARY GUIDE below>",'] if single_ticker else []
     summary_guide: list[str] = []
     if single_ticker:
         summary_guide = [
@@ -317,10 +435,13 @@ def build_prompt(
             "=== SUMMARY GUIDE (single-ticker deep-dive) ===",
             "Write `summary` for a smart trader who is NOT an options expert. In 4-6 sentences, "
             "plain English, no jargon dumps:",
-            "  1. Translate the key numbers into meaning — IV rank (is option premium rich or "
-            "cheap vs this name's own history?), VRP (are options overpriced vs realised "
-            "movement?), delta (rough assignment odds), RSI/trend (momentum), days-to-earnings "
-            "(event risk). Say what each *implies*, don't just restate the number.",
+            "  1. Translate the key numbers into meaning — IV rank/percentile (is option premium "
+            "rich or cheap vs this name's own history?), VRP and IV/RV (are options overpriced vs "
+            "realised movement — the premium-selling edge?), delta (rough assignment odds), "
+            "RSI/regime/trend-vs-SMAs (momentum and direction), term structure and put/call skew "
+            "(timing and tail pricing), days-to-earnings and ex-dividend (event/early-assignment "
+            "risk). Say what each *implies*, don't just restate the number; skip any that aren't "
+            "shown.",
             "  2. Read the backdrop: the VIX regime and the SECTOR & MARKET BACKDROP above — is "
             "the sector leading or lagging, is the name out/under-performing it, what does the "
             "broad tape imply for selling premium here right now?",

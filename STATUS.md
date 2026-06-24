@@ -462,6 +462,26 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 
 ---
 
+## Built (2026-06-24 — raw analytics surfaced to the AI layer + deep-dive hardening)
+
+- **Raw technical / fundamental / IV-microstructure signals now reach the reasoning layer.**
+  Previously the prompt only carried the opaque ScoreCard composites (`Tech=`/`Fund=`/`IV=`),
+  while RSI, regime, SMA position, ATR/price, P/E, D/E, FCF, dividend/ex-div, IV-percentile,
+  IV/RV, term-structure slope, and put/call skew were computed every scan and discarded before
+  reaching Claude/Ollama (and `term_structure_slope`/`put_call_skew`/`iv_percentile` were dead —
+  computed, some at chain-fetch cost, but consumed nowhere). `strategist.build_prompt` now takes an
+  `analytics` map and annotates each candidate with a compact Technicals / Fundamentals / IV-structure
+  block (`_analytics_lines`); `run_scan` and `run_ticker_scan` thread their `analytics_map` through
+  `review_candidates` → `runner`/`ollama_runner` → `build_prompt`. This also fixes a latent
+  mismatch where the single-ticker SUMMARY GUIDE asked the model to interpret "RSI/trend" that the
+  prompt never supplied. Enrichment only — never reaches the engine (the fence). New prompt tests.
+- **Single-ticker deep-dive no longer goes silent when nothing qualifies.** `run_ticker_scan`
+  previously gated the macro/sector backdrop **and** the LLM Read behind a passing candidate, so a
+  name with no gate-clearing contract lost both the "🌐 Market & Sector" line and the "🧠 Read".
+  The backdrop is now always fetched, and the Read falls back to reviewing the closest near-miss per
+  strategy (surfaced only as the overall `summary`, never as a per-candidate verdict). The prompt
+  intro is gate-neutral for single-ticker so the framing stays honest when reviewing near-misses.
+
 ## Built (2026-06-24 — holistic single-ticker `/scan TICKER` deep-dive)
 
 - **Educational, context-aware single-ticker scan:** `/scan TICKER` now produces a holistic read

@@ -21,13 +21,20 @@ from src.common.schemas import (
     AccountSnapshot,
     ClaudeReview,
     EODSummary,
+    FundamentalStats,
+    IVStats,
     MarketConditions,
     OptionQuote,
     PositionSnapshot,
     RollAlert,
     RollReview,
+    TechnicalStats,
     TradeCandidate,
 )
+
+# {symbol: (IVStats, TechnicalStats, FundamentalStats)} — raw analytics passed through to the
+# prompt builder so each candidate is annotated with its underlying's signals (enrichment only).
+AnalyticsMap = dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]]
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +97,7 @@ def review_candidates(
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
+    analytics: AnalyticsMap | None = None,
 ) -> list[ClaudeReview]:
     """Review candidates via the configured `claude.backend`. Returns [] on any failure.
 
@@ -98,6 +106,7 @@ def review_candidates(
 
     sector_context / single_ticker: forwarded to the prompt builder so a `/scan TICKER` deep-dive
     gets the sector backdrop and the extra plain-English ``summary`` (see strategist.build_prompt).
+    analytics: per-symbol raw signals annotated onto each candidate in the prompt (enrichment).
     """
     cfg = get_config().claude
     kwargs = dict(
@@ -108,6 +117,7 @@ def review_candidates(
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
+        analytics=analytics,
     )
 
     if cfg.backend == "ollama":
@@ -128,6 +138,7 @@ def _review_candidates_cli(
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
+    analytics: AnalyticsMap | None = None,
 ) -> list[ClaudeReview]:
     """Shell out to `claude -p`, parse output → list[ClaudeReview]. Returns [] on any failure.
 
@@ -136,6 +147,7 @@ def _review_candidates_cli(
     market_conditions: optional macro snapshot (VIX) injected as enrichment context.
     spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels rather
     than the stale static universe anchors (N17).
+    analytics: per-symbol raw signals annotated onto each candidate in the prompt (enrichment).
     """
     cfg = get_config().claude
 
@@ -155,6 +167,7 @@ def _review_candidates_cli(
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
+        analytics=analytics,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits

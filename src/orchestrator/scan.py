@@ -1346,6 +1346,7 @@ async def _run_scan_body(
                     history=memory,
                     market_conditions=result.market_conditions,
                     spot_prices=spot_prices,
+                    analytics=analytics_map,
                 )
             set_setting(_REVIEW_HASH_KEY, review_hash)
         log.info("scan: %d Claude reviews", len(result.reviews))
@@ -1668,28 +1669,41 @@ async def run_ticker_scan(
     buy_candidates = generate_buy_candidates([ticker], holdings_symbols, analytics_map)
     buy_candidate = buy_candidates[0] if buy_candidates else None
 
-    # 8b. Claude/Ollama verdict on the best CC + best CSP (enrichment only — never gates).
-    # Review just the top candidate per strategy so the local model stays fast; failure is
-    # non-fatal (the card renders without a verdict). Runs off-thread (the runner blocks on a
-    # subprocess / HTTP call). Prior-recommendation memory for this ticker is injected so the
-    # verdict can learn from how past calls on the same name actually played out — the same
-    # history the full scan feeds, scoped to one symbol (cheap DB read, also off-thread).
-    # Macro + sector backdrop for the deep-dive: VIX regime and how the name's industry / the
-    # broad market are trading. Both are fail-soft and fetched off-thread (yfinance/OHLCV blocks);
-    # the SectorContext is also kept for the deterministic "Market & Sector" card line.
+    # 8b. Deep-dive enrichment (enrichment only — never gates; the /scan TICKER path only formats
+    # text, so nothing here can reach execution).
+    #
+    # The macro + sector backdrop (VIX regime + how the name's industry / the broad market are
+    # trading) is deterministic and ALWAYS fetched — it doesn't depend on a tradeable contract
+    # existing, and feeds both the "Market & Sector" card line and the LLM Read. Fetched off-thread
+    # (yfinance/OHLCV block), fail-soft.
+    #
+    # The LLM "Read" reviews the best CC + best CSP. When neither cleared the gate we fall back to
+    # reviewing the closest *near-miss* per strategy so the deep-dive still produces a synthesis
+    # instead of going silent — these near-misses surface only as the overall summary, never as a
+    # per-candidate verdict (the card shows verdicts only beside a qualifying contract). Prior-
+    # recommendation memory for this ticker is injected so the read can learn from how past calls
+    # on the same name played out. Per-symbol analytics are passed so the model sees the raw
+    # technical/fundamental/IV signals, not just the composite scores.
     sector_ctx: SectorContext | None = None
     market_conditions: MarketConditions | None = None
     reviews: list[ClaudeReview] = []
+    memory: list = []
+    try:
+        memory, market_conditions, sector_ctx = await asyncio.gather(
+            loop.run_in_executor(None, _load_memory, [ticker]),
+            loop.run_in_executor(None, get_market_conditions),
+            loop.run_in_executor(None, get_sector_context, ticker),
+        )
+    except Exception:
+        log.warning("ticker_scan: backdrop fetch failed for %s", ticker, exc_info=True)
+
     to_review = cc_passed[:1] + csp_passed[:1]
+    if not to_review:
+        to_review = [c for c in (cc_near_miss, csp_near_miss) if c is not None]
     if to_review:
         spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
+        sector_block = render_sector_context(sector_ctx)
         try:
-            memory, market_conditions, sector_ctx = await asyncio.gather(
-                loop.run_in_executor(None, _load_memory, [ticker]),
-                loop.run_in_executor(None, get_market_conditions),
-                loop.run_in_executor(None, get_sector_context, ticker),
-            )
-            sector_block = render_sector_context(sector_ctx)
             reviews = await loop.run_in_executor(
                 None,
                 lambda: review_candidates(
@@ -1700,6 +1714,7 @@ async def run_ticker_scan(
                     spot_prices=spot_prices,
                     sector_context=sector_block,
                     single_ticker=True,
+                    analytics=analytics_map,
                 ),
             )
         except Exception:

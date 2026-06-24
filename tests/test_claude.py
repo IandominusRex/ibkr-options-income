@@ -16,9 +16,13 @@ from src.claude.prompts.strategist import build_prompt
 from src.claude.runner import _review_candidates_cli as review_candidates
 from src.common.schemas import (
     AccountSnapshot,
+    FundamentalStats,
+    IVStats,
     OptionRight,
+    Regime,
     ScoreCard,
     Strategy,
+    TechnicalStats,
     TradeCandidate,
 )
 
@@ -314,6 +318,91 @@ def test_build_prompt_sector_context_ignored_when_not_single_ticker():
     assert "SECTOR & MARKET BACKDROP" not in prompt
     assert "AAPL" in prompt
     assert "MSFT" in prompt
+
+
+def _make_analytics() -> dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]]:
+    """Per-symbol raw analytics for AAPL (the default candidate's underlying)."""
+    iv = IVStats(
+        symbol="AAPL",
+        current_iv=22.1,
+        hv_30=18.0,
+        iv_rank=65.0,
+        iv_percentile=41.0,
+        iv_rv_ratio=1.18,
+        term_structure_slope=0.0021,
+        put_call_skew=1.2,
+        vrp=4.1,
+    )
+    tech = TechnicalStats(
+        symbol="AAPL",
+        price=211.42,
+        rsi_14=58.0,
+        regime=Regime.SIDEWAYS,
+        sma_50=200.0,
+        sma_200=190.0,
+        atr_ratio=1.4,
+    )
+    fund = FundamentalStats(
+        symbol="AAPL",
+        pe_ratio=28.5,
+        debt_to_equity=45.0,
+        free_cash_flow=12.4e9,
+        dividend_yield=0.009,
+        dividend_safe=True,
+        ex_dividend_date=date(2026, 8, 10),
+    )
+    return {"AAPL": (iv, tech, fund)}
+
+
+def test_build_prompt_injects_raw_analytics_signals():
+    """Raw technical/fundamental/IV signals are surfaced, not just the ScoreCard composites."""
+    prompt = build_prompt([_make_candidate()], _make_account(), analytics=_make_analytics())
+    # Technicals
+    assert "Technicals:" in prompt
+    assert "RSI 58" in prompt
+    assert "regime sideways" in prompt
+    assert "above 50d" in prompt and "above 200d" in prompt
+    assert "ATR/px 1.4%" in prompt
+    # Fundamentals
+    assert "Fundamentals:" in prompt
+    assert "P/E 28.5" in prompt
+    assert "D/E 45" in prompt
+    assert "FCF +$12.4B" in prompt
+    assert "div 0.9% safe" in prompt
+    assert "ex-div 2026-08-10" in prompt
+    # IV microstructure (previously computed but never reached the model)
+    assert "IV structure:" in prompt
+    assert "IV%ile 41" in prompt
+    assert "IV/RV 1.18" in prompt
+    assert "contango" in prompt
+    assert "skew +1.20" in prompt
+
+
+def test_build_prompt_without_analytics_omits_signal_block():
+    prompt = build_prompt([_make_candidate()], _make_account())
+    assert "Technicals:" not in prompt
+    assert "IV structure:" not in prompt
+
+
+def test_build_prompt_analytics_missing_symbol_is_skipped():
+    """A candidate whose underlying has no analytics entry just omits the block (no crash)."""
+    prompt = build_prompt(
+        [_make_candidate()], _make_account(), analytics={"NVDA": _make_analytics()["AAPL"]}
+    )  # noqa: E501
+    assert "Technicals:" not in prompt
+
+
+def test_build_prompt_full_scan_states_gate_approved():
+    """Full-universe framing asserts the candidates cleared the Rules Engine."""
+    prompt = build_prompt([_make_candidate()], _make_account())
+    assert "already been approved by the deterministic Rules Engine" in prompt
+
+
+def test_build_prompt_single_ticker_framing_is_gate_neutral():
+    """Single-ticker may review near-misses, so its framing must not claim gate approval."""
+    prompt = build_prompt([_make_candidate()], _make_account(), single_ticker=True)
+    assert "already been approved by the deterministic Rules Engine" not in prompt
+    assert "surfaced by the deterministic screen" in prompt
 
 
 # --------------------------------------------------------------------------- #

@@ -29,14 +29,19 @@ from src.common.schemas import (
     AccountSnapshot,
     ClaudeReview,
     EODSummary,
+    FundamentalStats,
+    IVStats,
     MarketConditions,
     OptionQuote,
     PositionSnapshot,
     RollAlert,
     RollReview,
     SkillProposal,
+    TechnicalStats,
     TradeCandidate,
 )
+
+AnalyticsMap = dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]]
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +155,7 @@ def review_candidates(
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
+    analytics: AnalyticsMap | None = None,
 ) -> list[ClaudeReview]:
     """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure."""
     cfg = get_config().claude
@@ -174,6 +180,7 @@ def review_candidates(
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
+        analytics=analytics,
     )
 
     raw = _generate(prompt, cfg)
