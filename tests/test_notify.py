@@ -327,31 +327,28 @@ async def test_send_candidates_empty_with_near_miss_appends_closest(
     assert sent is True
 
 
-async def test_send_candidates_empty_near_misses_top3_with_more(
+async def test_send_candidates_empty_single_near_miss_with_more(
     mock_bot_cls, monkeypatch, tmp_path
 ):
-    """Up to 3 near-misses are listed; a trailing '…and N more' signals the truncated rest."""
+    """One 'closest' is listed; a trailing '…and N more' signals the truncated rest."""
     _db_setup(tmp_path, monkeypatch)
     _mock_cfg(monkeypatch)
     mock_cls, mock_instance = mock_bot_cls
 
     near_misses = [
         (_make_candidate(candidate_id="nm-1", underlying="NVDA"), ["yield_below_minimum"]),
-        (_make_candidate(candidate_id="nm-2", underlying="AAPL"), ["delta_out_of_range"]),
-        (_make_candidate(candidate_id="nm-3", underlying="MSFT"), ["iv_rank_below_minimum"]),
     ]
     with patch("src.notify.sender.Bot", mock_cls):
         await send_candidates(
             [],
             [],
-            **_cc_kwargs(near_misses=near_misses, near_miss_more=5),
+            **_cc_kwargs(near_misses=near_misses, near_miss_more=8),
         )
 
     text = mock_instance.send_message.call_args.kwargs["text"]
-    assert text.count("closest:") == 3
+    assert text.count("closest:") == 1
     assert "closest: NVDA" in text
-    assert "closest: MSFT" in text
-    assert "…and 5 more that didn't pass" in text
+    assert "…and 8 more that didn't pass" in text
 
 
 async def test_send_candidates_missing_token_skips(mock_bot_cls, monkeypatch, tmp_path):

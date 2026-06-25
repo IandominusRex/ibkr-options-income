@@ -105,7 +105,9 @@ async def _append_status(
 
     timestamp = _et_hhmm()
     new_line = f"[{timestamp}] {line}"
-    new_body = (stored_body + "\n" + new_line) if stored_body else new_line
+    # Blank line between cycles so each run reads as its own block (a `line` may itself span
+    # several rows — the header plus a near-miss "closest" line).
+    new_body = (stored_body + "\n\n" + new_line) if stored_body else new_line
 
     if len(new_body) > _STATUS_MAX_BODY:
         stored_id = ""

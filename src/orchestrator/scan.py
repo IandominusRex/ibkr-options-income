@@ -93,8 +93,8 @@ _MEMORY_ROWS_PER_SYMBOL = 3
 _REVIEW_HASH_KEY = "last_review_hash"
 
 # Max near-miss contracts to name on an empty CC/CSP screen; further rejects collapse into a
-# trailing "…and N more" line. Bounded so a large universe can't blow up the quiet-cycle digest.
-_NEAR_MISS_LIMIT = 3
+# trailing "…and N more" line. One "closest" per strategy keeps each quiet-cycle line compact.
+_NEAR_MISS_LIMIT = 1
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
