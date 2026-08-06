@@ -16,6 +16,7 @@ from datetime import date
 
 from sqlalchemy import func, select
 
+from src.common.market_hours import today_et
 from src.storage.db import session_scope
 from src.storage.models import IVHistoryRow
 
@@ -81,7 +82,7 @@ def stale_symbols(symbols: list[str], max_age_days: int) -> list[tuple[str, int 
     Returns (symbol, age_in_days) pairs; age is None when the symbol has no history at all.
     Sorted oldest/most-missing first so a `/health` warning surfaces the worst offenders.
     """
-    today = date.today()
+    today = today_et()
     latest = latest_obs_dates(symbols)
     out: list[tuple[str, int | None]] = []
     for sym in symbols:

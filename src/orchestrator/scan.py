@@ -23,7 +23,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from ib_async import IB
 
@@ -35,6 +35,7 @@ from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.profile import activate as activate_profile
 from src.common.profile import get_effective_weights
 from src.common.schemas import (
@@ -336,7 +337,7 @@ def _load_memory(symbols: list[str]) -> list[ClaudeMemoryRow]:
 
     from sqlalchemy import select
 
-    cutoff = date.today() - timedelta(days=_MEMORY_LOOKBACK_DAYS)
+    cutoff = today_et() - timedelta(days=_MEMORY_LOOKBACK_DAYS)
     try:
         with session_scope() as sess:
             rows = (
@@ -380,7 +381,7 @@ def _persist_memory(
     never clobbered (it's back-filled by candidate_id in claude/memory.py).
     """
     review_map = {r.candidate_id: r for r in reviews}
-    today = date.today()
+    today = today_et()
     written = 0
 
     with session_scope() as sess:
@@ -558,7 +559,7 @@ def _persist_ledger(
     review_map = {r.candidate_id: r for r in reviews}
     baselines = baseline_decisions(top)
     vix = market_conditions.vix if market_conditions else None
-    today = date.today()
+    today = today_et()
     records: list[VerdictRecord] = []
     for c in top:
         review = review_map.get(c.candidate_id)

@@ -26,6 +26,7 @@ from telegram import Bot
 
 from src.claude.runner import write_journal_narrative
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, EODSummary, PositionSnapshot
 from src.ibkr.connection import IBKRConnection
 from src.ibkr.portfolio import (
@@ -51,7 +52,7 @@ def _today_et() -> date:
     reading by ET silently breaks the yesterday→today baseline lookup — the unrealized Δ then
     collapses to the full unrealized value every day. Always anchor on ET.
     """
-    return datetime.now(_ET).date()
+    return today_et()
 
 
 # Per-request cap for the EOD IV backfill. ib_async's default reqHistoricalData timeout is ~60s;

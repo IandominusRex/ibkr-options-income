@@ -33,6 +33,7 @@ import math
 from datetime import date, timedelta
 
 from src.analytics.black_scholes import bs_price
+from src.common.market_hours import today_et
 from src.common.profile import get_effective_risk
 from src.common.schemas import (
     FundamentalStats,
@@ -82,17 +83,43 @@ def compute_ideal_zone(
         tech / iv / fund: The per-symbol analytics triple already computed by every scan.
         cost_basis: Average share cost, covered calls only. Clamps the band at
             ``cost_basis × min_strike_vs_basis`` so the zone never advises writing below basis.
-        today: Injectable for deterministic tests; defaults to ``date.today()``.
+        today: Injectable for deterministic tests; defaults to the ET trading date.
 
     Never raises — a degenerate input yields an ``IdealZone`` with ``confidence="low"`` and
     ``None`` fields rather than an exception.
     """
     zone = IdealZone(symbol=symbol, right=right, dte=dte, spot=spot)
     try:
-        return _compute(zone, right, dte, spot, tech, iv, fund, cost_basis, today or date.today())
+        return _compute(zone, right, dte, spot, tech, iv, fund, cost_basis, today or today_et())
     except Exception:  # pragma: no cover - defensive; analytics must never break a scan
         log.warning("compute_ideal_zone: failed for %s — returning empty zone", symbol)
         return zone
+
+
+def zone_for_contract(
+    zone: IdealZone, strike: float, iv: IVStats, *, cost_basis: float | None = None
+) -> IdealZone:
+    """Return *zone* with its credit floor repriced at the strike actually on offer.
+
+    ``compute_ideal_zone`` prices ``min_credit`` at the band's *anchor* strike, which is the
+    right number for the abstract zone ("what is a contract in this band worth?") but the
+    wrong one to compare a specific contract's premium against: option value falls steeply
+    with moneyness, so a call further OTM than the anchor is cheaper for entirely correct
+    reasons. Comparing it to the anchor's floor labelled it "below fair value" while it was
+    in fact trading at a multiple of its own — a $250C at $2.31 against a $1.13 floor.
+
+    The band, the anchors and the underlying levels are strike-independent and carried over
+    unchanged; only ``min_credit``/``credit_anchors`` are re-derived. Cheap enough to call
+    per candidate — the expensive part of the zone is the band, which is cached per DTE by
+    the strategy generators.
+
+    *cost_basis* is the covered-call share basis, forwarded so the ROC/yield component of the
+    floor divides by the same denominator the CC gate does (see ``_min_credit``). Omit it for
+    a CSP, whose ROC is measured against the strike.
+    """
+    roc_basis = cost_basis if zone.right == OptionRight.CALL else strike
+    min_credit, anchors = _min_credit(zone.spot, strike, zone.dte, iv, zone.right, roc_basis)
+    return zone.model_copy(update={"min_credit": min_credit, "credit_anchors": anchors})
 
 
 # --------------------------------------------------------------------------- #
@@ -141,6 +168,18 @@ def _compute(
         lo, hi, level = snapped
         anchors.append(f"{'resistance' if is_call else 'support'} ${level:.2f}")
         inputs_present += 1
+        # Snapping translates the band to land on the level, which can drag the *inner* edge
+        # through spot: AAPL at 232.40 with resistance at 248.10 produced a 232.54 floor — a
+        # 0.53-delta covered call rendering as "✓ in zone". Moneyness is non-linear, so a
+        # translation that preserves dollar width does not preserve the delta profile the
+        # width is meant to encode. Clamp the inner edge back to the base cushion and let the
+        # band stretch to reach the level instead.
+        if is_call:
+            lo = max(lo, spot + em * lo_mult)
+            hi = max(hi, lo)
+        else:
+            hi = min(hi, spot - em * lo_mult)
+            lo = min(lo, hi)
 
     # 4. Earnings / quality adjustments — push further OTM when the tail is fatter.
     if _event_inside(fund.next_earnings, today, dte):
@@ -181,8 +220,12 @@ def _compute(
     zone.strike_anchor = round(anchor, 2)
     zone.strike_anchors = anchors
 
-    # 7. Credit floor for the contract on offer, priced at the anchor strike.
-    zone.min_credit, zone.credit_anchors = _min_credit(spot, anchor, dte, iv, right)
+    # 7. Credit floor for the band as a whole, priced at the anchor strike. Callers holding a
+    #    specific contract should re-price it with `zone_for_contract` — comparing an offered
+    #    premium against the anchor's floor mislabels every strike away from the anchor.
+    zone.min_credit, zone.credit_anchors = _min_credit(
+        spot, anchor, dte, iv, right, cost_basis if is_call else anchor
+    )
     if zone.min_credit is not None:
         inputs_present += 1
 
@@ -199,7 +242,12 @@ def _compute(
 
 
 def _min_credit(
-    spot: float, strike: float, dte: int, iv: IVStats, right: OptionRight
+    spot: float,
+    strike: float,
+    dte: int,
+    iv: IVStats,
+    right: OptionRight,
+    roc_basis: float | None = None,
 ) -> tuple[float | None, list[str]]:
     """Least credit per share worth accepting at *strike*.
 
@@ -207,10 +255,17 @@ def _min_credit(
     price at which the trade carries no variance-risk premium. The floor is that plus a
     required edge, and never below what the configured ROC / annualized-yield gates demand —
     so the number is always at least as strict as the gate the candidate must clear anyway.
+
+    *roc_basis* is the denominator the ROC/yield gates actually divide by, and it differs by
+    strategy: a CSP's ROC is ``premium/strike`` but a covered call's is ``premium/avg_cost``
+    (see the generators). Defaulting it to *strike* — as this did for both — inflated the CC
+    floor whenever the strike sat above the basis, which is the normal case for a covered
+    call, and made the floor *rise* with strike while fair value fell.
     """
     anchors: list[str] = []
     risk = get_effective_risk()
     edge = 1.0 + _num(_zone_cfg()["min_credit_edge_pct"]) / 100.0
+    basis = roc_basis if roc_basis is not None and roc_basis > 0 else strike
 
     floors: list[float] = []
     hv = iv.hv_30
@@ -223,12 +278,10 @@ def _min_credit(
     income = risk.get("income", {})
     min_roc = _num(income.get("min_roc_pct"))
     min_yield = _num(income.get("min_annualized_yield_pct"))
-    # ROC is premium/strike for a CSP and premium/basis for a CC; strike is the right
-    # denominator here because the zone is expressed in strikes, not in a held position.
-    if min_roc and strike > 0:
-        floors.append(strike * min_roc / 100.0)
-    if min_yield and strike > 0 and dte > 0:
-        floors.append(strike * (min_yield / 100.0) * (dte / 365.0))
+    if min_roc and basis > 0:
+        floors.append(basis * min_roc / 100.0)
+    if min_yield and basis > 0 and dte > 0:
+        floors.append(basis * (min_yield / 100.0) * (dte / 365.0))
     if min_roc or min_yield:
         anchors.append(f"ROC/yield gates ({min_roc:.1f}% / {min_yield:.0f}% ann.)")
 

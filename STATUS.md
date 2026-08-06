@@ -212,6 +212,61 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 ---
 
+## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
+
+Every formatter was rendered with realistic data and the output read as an operator would see it.
+The notification layer itself held up well — quiet 15-min cycles emit **zero** new messages (the
+per-thread status message is edited in place), empty states are all specific, and the source
+footers are honest. The defects were concentrated in the **ideal-zone analytics** feeding the most
+prominent block on every card, plus raw internals leaking into two alerts that fire on live
+positions. None of them could reach an order: `zone_fit` ships at `0.0`, so all four were
+display-only. Regression tests: `tests/test_output_fidelity.py`.
+
+- **Ideal credit compared the wrong two numbers (P0):** `compute_ideal_zone` priced `min_credit` at
+  the band's **anchor** strike, and the card then rendered it against the **offered** contract's
+  premium. Option value falls steeply with moneyness, so every strike above the anchor was
+  systematically mislabelled — measured on AAPL (spot 232.40, 29 DTE, HV30 22.2%, anchor 240.32): a
+  $250C at $2.31 read "below fair value" while trading at **2.0× its own $1.13 floor**, and a $255C
+  at $1.42 at 2.4× its own. Since a typical 0.25–0.30Δ covered call sits *above* the anchor, the
+  common case was a false warning against a good trade. **Fixed:** new
+  `fair_value.zone_for_contract(zone, strike, iv, *, cost_basis)` re-prices the floor at the strike
+  actually on offer; both generators call it per candidate. The band stays memoized per DTE.
+- **ROC/yield floor used the wrong denominator for covered calls (P0, found while fixing the
+  above):** `_min_credit` divided by *strike* for both strategies, but a CC's gate is
+  `premium/avg_cost` (only a CSP's is `premium/strike`). On a strike above basis — the normal case
+  for a CC — this inflated the floor and made it **rise** with strike while fair value fell, so the
+  floor was non-monotonic. **Fixed:** `_min_credit` takes a `roc_basis`; CC passes cost basis, CSP
+  passes strike.
+- **"✓ in zone" endorsed at-the-money covered calls (P0):** `_snap_to_level` translated the whole
+  band onto a nearby support/resistance level, preserving dollar width. Moneyness is non-linear, so
+  that does **not** preserve the delta profile the width encodes. Same AAPL case: resistance at
+  248.10 sat 2.0% inside `support_pull_pct: 3.0`, shifting the band from 237.59–253.15 (Δ0.44–0.16)
+  to 232.54–248.10 (**Δ0.53**–0.22) — an inner edge $0.14 from spot. A 53-delta covered call
+  rendered "✓ in zone", and the verdict was near-unfalsifiable (anything ATM to +7% passed).
+  **Fixed:** the inner edge is clamped back to `em_lo_mult` after snapping, so the band stretches to
+  reach the level instead of sliding through spot. Inner edge is now Δ0.42.
+- **Two definitions of "today" (P0):** `date.today()` (server-local) was used in 16 modules while
+  `OptionQuote.dte` used ET. For an operator in UTC+8 these disagree for most of the working day —
+  visible *inside a single roll alert* as "`DTE=12 <= threshold=14`" beside "`DTE 13`", and reaching
+  `risk_engine.py`'s earnings/DTE windows, `triggers.check_dte_threshold` (firing a day early), and
+  `price_data`'s settled-bar check. This is the same class of bug as the 2026-06-24 EOD Δ-baseline
+  skew, which was fixed locally rather than generally. **Fixed:** `market_hours.today_et()` is now
+  the single definition of a market date; the two ad-hoc local `_today_et()` helpers
+  (`eod_report`, `eval/reconcile`) delegate to it. `date.today()` remains only for genuinely local
+  concerns (backtest fallbacks).
+- **Raw debug text in roll / assignment alerts (P1):** `RollAlert.detail` rendered as
+  `delta=0.46 > ceiling=0.45` and `DTE=12 <= threshold=14`, and trigger names as
+  `delta_drift + dte` — a jarring contrast with the 22-entry `_REJECT_REASON_LABELS` table used
+  elsewhere. **Fixed:** all five `check_*` functions write prose ("Delta 0.46 has drifted past the
+  0.45 roll line — the short is tracking the underlying more closely than intended"), and
+  `_TRIGGER_LABELS`/`_humanize_trigger` renders "Triggers: delta drift + nearing expiry".
+- **OCC symbol leaked into the two position alerts (P1):** `format_profit_alert` and
+  `format_auto_close_result` printed `AAPL  260818C00245000` (double space and all) while every
+  other card rendered `AAPL $245C Sep 04` — the same contract was unrecognisable between messages.
+  **Fixed:** both take the contract's parts and render via the new shared
+  `formatters.contract_label()`; `profit_take.py`'s inline auto-close **error** message was leaking
+  it too and now uses the same helper.
+
 ## Bugs fixed (2026-06-24 — EOD report quality & unrealized-Δ baseline)
 
 After two live EOD reports surfaced a redundant, hard-to-read summary, the report was reworked and

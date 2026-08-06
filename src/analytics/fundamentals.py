@@ -11,6 +11,7 @@ from datetime import date, datetime
 import yfinance as yf
 
 from src.common.cache import daily_cached
+from src.common.market_hours import today_et
 from src.common.schemas import FundamentalStats
 
 _PAYOUT_RATIO_SAFE = 0.60
@@ -85,7 +86,7 @@ def _next_earnings_date(ticker: yf.Ticker) -> date | None:
         earnings_dates = cal.get("Earnings Date", [])
         if not earnings_dates:
             return None
-        today = date.today()
+        today = today_et()
         for ts in earnings_dates:
             d = ts.date() if hasattr(ts, "date") else ts
             if isinstance(d, date) and d >= today:

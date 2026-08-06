@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from src.analytics.black_scholes import bs_delta, bs_price
+from src.common.market_hours import today_et
 
 # Trading days per year for annualising realised vol from daily log returns.
 _TRADING_DAYS = 252
@@ -178,8 +179,8 @@ def simulate(
     result = BacktestResult(
         symbol=symbol,
         strategy=params.strategy,
-        start=prices[0][0] if prices else date.today(),
-        end=prices[-1][0] if prices else date.today(),
+        start=prices[0][0] if prices else today_et(),
+        end=prices[-1][0] if prices else today_et(),
         params=params,
         iv_source="stored_iv" if iv_series is not None else "trailing_hv",
     )

@@ -164,13 +164,23 @@ def test_put_band_snaps_to_a_nearby_support_level() -> None:
     assert any("support" in a for a in snapped.strike_anchors)
 
 
-def test_snapping_translates_the_band_without_changing_its_width() -> None:
+def test_snapping_stretches_the_band_rather_than_sliding_it_toward_spot() -> None:
+    """Snapping moves the outer edge onto the level; the inner edge is clamped.
+
+    This previously asserted the band was *translated* with its width preserved. That is what
+    produced the audit defect: translating a call band onto a nearby resistance dragged the
+    inner edge through spot (AAPL 232.40 → a 232.54 floor, a 0.53-delta write reported
+    "✓ in zone"). Dollar width does not preserve a delta profile, so the inner edge is now
+    held at the base cushion and the band stretches to reach the level instead.
+    """
     plain = _zone()
     assert plain.strike_lo is not None and plain.strike_hi is not None
-    width = plain.strike_hi - plain.strike_lo
     snapped = _zone(tech=_tech(support_levels=[round(plain.strike_lo + 1.0, 2)]))
     assert snapped.strike_lo is not None and snapped.strike_hi is not None
-    assert (snapped.strike_hi - snapped.strike_lo) == pytest.approx(width, abs=0.02)
+    # Outer edge honours the level it snapped to.
+    assert snapped.strike_lo == pytest.approx(plain.strike_lo + 1.0, abs=0.02)
+    # Inner edge never moves closer to spot than the unsnapped band's.
+    assert snapped.strike_hi <= plain.strike_hi + 0.01
 
 
 def test_distant_support_does_not_pull_the_band() -> None:

@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from src.claude.eval.ledger import open_filled_records
+from src.common.market_hours import today_et
 from src.common.schemas import VerdictOutcome
 from src.storage.db import session_scope
 from src.storage.models import (
@@ -51,10 +52,6 @@ log = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
 OPTION_MULTIPLIER = 100
-
-
-def _today_et() -> date:
-    return datetime.now(_ET).date()
 
 
 def _fill_economics(fills: list[FillRow]) -> tuple[float, float, float, float, int]:
@@ -136,7 +133,7 @@ def reconcile(
 
     Returns a count of rows moved into each terminal outcome. Never raises.
     """
-    today = today or _today_et()
+    today = today or today_et()
     assigned = set(assigned_candidate_ids or ())
     counts: dict[str, int] = {}
 

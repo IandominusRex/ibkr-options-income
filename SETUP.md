@@ -202,10 +202,10 @@ contract. None of it gates a trade — it changes what the cards and the reasoni
 
 | Setting (YAML path) | Default | What it means |
 |---|---|---|
-| `ideal_zone.em_lo_mult` / `em_hi_mult` | 0.75 / 1.25 | Where the ideal strike band sits, in expected moves (1σ = spot × IV × √(DTE/365)). Roughly brackets the 0.15–0.30 delta band. |
-| `ideal_zone.support_pull_pct` | 3.0 | How close a support/resistance level must be (% of the band edge) for the band to snap to it |
+| `ideal_zone.em_lo_mult` / `em_hi_mult` | 0.30 / 1.20 | Where the ideal strike band sits, in expected moves (1σ = spot × IV × √(DTE/365)). Brackets the delta range actually traded (a 0.15–0.30Δ put sits at ~0.34–0.93σ, a 0.20–0.35Δ call at ~0.48–1.17σ). `em_lo_mult` doubles as the **inner-edge floor**: after the band snaps to a level it is clamped back to this cushion, so it can never slide to at-the-money. |
+| `ideal_zone.support_pull_pct` | 3.0 | How close a support/resistance level must be (% of the band edge) for the band to snap to it. The snap moves the **outer** edge onto the level; the inner edge stays clamped at `em_lo_mult`, so the band stretches rather than sliding toward spot. |
 | `ideal_zone.earnings_widen_mult` | 0.25 | Extra cushion, in expected moves, when earnings fall inside the option's life |
-| `ideal_zone.min_credit_edge_pct` | 10.0 | Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). Raise to insist on a richer entry. |
+| `ideal_zone.min_credit_edge_pct` | 10.0 | Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). The floor shown on a card is priced at **that contract's own strike** (not the band's anchor) and is never below what the ROC/annualized-yield gates already demand, so "clears fair value" means the credit beats both. Raise to insist on a richer entry. |
 | `ideal_zone.buy_margin_of_safety_pct` | 8.0 | Discount applied to the analyst mean target when placing the "buy shares below" level |
 
 > Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
@@ -923,6 +923,7 @@ an 8B model, depending on prompt length and memory pressure.
 | IBKR error 10197 "No market data during competing live session" | A competing IB Gateway or TWS session is open simultaneously | Close the competing session, or ensure each session uses a distinct clientId and a separate IB Gateway / TWS instance. |
 | IBKR error 300 "Can't find EId with tickerId" floods the log | Benign cleanup: ib_async tries to cancel a market data subscription that already timed out | Safe to ignore — these fire after each option chain batch and do not affect scan results. |
 | "Unknown contract" warnings for half-dollar strikes (e.g. JPM 292.5) | IBKR doesn't list those non-standard strikes for that expiry | Normal — the strike grid for some underlyings uses $5 or $10 increments; half-dollar strikes are skipped automatically. |
+| A roll alert shows two different DTEs (e.g. "12 days left" in the body but "DTE 13" on the meta line), or the earnings blackout seems to trigger a day early/late | The machine's local date differed from the **exchange** date — anything outside US/Eastern is routinely a day ahead of ET for part of the day, and market dates were being computed with `date.today()`. **Fixed (2026-08-06):** `market_hours.today_et()` is now the single definition of a market date across DTE, earnings/ex-div windows, the journal day key, and the daily cache | Self-resolved on a patched build. If you see it again, grep for `date.today()` in `src/` — only backtest fallbacks should remain |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
 | `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |
 | `ollama: request to http://localhost:11434/api/generate failed: ... Connection refused` | `claude.backend` is `"ollama"`/`"cli_then_ollama"` but `ollama serve` isn't running | Run `ollama serve` (or `brew services start ollama`); verify with `curl http://localhost:11434` |

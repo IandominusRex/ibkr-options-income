@@ -7,8 +7,7 @@ call check_all() to run all four triggers in one pass.
 
 from __future__ import annotations
 
-from datetime import date
-
+from src.common.market_hours import today_et
 from src.common.schemas import FundamentalStats, OptionQuote, PositionSnapshot, RollAlert
 
 
@@ -27,7 +26,10 @@ def check_delta_drift(
             position_symbol=pos.symbol,
             underlying=pos.underlying or pos.symbol,
             trigger="delta_drift",
-            detail=f"delta={quote.delta:.2f} > ceiling={delta_ceiling}",
+            detail=(
+                f"Delta {abs(quote.delta):.2f} has drifted past the {delta_ceiling:.2f} "
+                f"roll line — the short is tracking the underlying more closely than intended"
+            ),
             current_delta=quote.delta,
             dte=quote.dte,
         )
@@ -43,13 +45,16 @@ def check_dte_threshold(
         return None
     if pos.expiry is None:
         return None
-    dte = (pos.expiry - date.today()).days
+    dte = (pos.expiry - today_et()).days
     if dte <= dte_threshold:
         return RollAlert(
             position_symbol=pos.symbol,
             underlying=pos.underlying or pos.symbol,
             trigger="dte",
-            detail=f"DTE={dte} <= threshold={dte_threshold}",
+            detail=(
+                f"{dte} days left, inside the {dte_threshold}-day roll window — "
+                f"gamma risk rises sharply from here"
+            ),
             dte=dte,
         )
     return None
@@ -72,7 +77,10 @@ def check_iv_spike(
             position_symbol=pos.symbol,
             underlying=pos.underlying or pos.symbol,
             trigger="iv_spike",
-            detail=f"IV={quote.iv:.2%} (+{change_pct:.1f}% vs entry {entry_iv:.2%})",
+            detail=(
+                f"IV has risen to {quote.iv:.1%} from {entry_iv:.1%} at entry "
+                f"(+{change_pct:.0f}%) — buying this back now costs more than it did"
+            ),
             current_delta=quote.delta,
             dte=quote.dte,
         )
@@ -107,14 +115,18 @@ def check_ex_div(
         return None
     if quote is not None and quote.delta is not None and abs(quote.delta) < _EX_DIV_MIN_DELTA:
         return None  # OTM short call — no real assignment risk into the dividend
-    days_to_ex = (fund_stats.ex_dividend_date - date.today()).days
+    days_to_ex = (fund_stats.ex_dividend_date - today_et()).days
     if 0 <= days_to_ex <= days_ahead:
-        dte = (pos.expiry - date.today()).days if pos.expiry else None
+        dte = (pos.expiry - today_et()).days if pos.expiry else None
         return RollAlert(
             position_symbol=pos.symbol,
             underlying=pos.underlying or pos.symbol,
             trigger="ex_div",
-            detail=f"ex-div in {days_to_ex} day(s) ({fund_stats.ex_dividend_date})",
+            detail=(
+                f"Goes ex-dividend in {days_to_ex} day{'' if days_to_ex == 1 else 's'} "
+                f"({fund_stats.ex_dividend_date:%b %d}) — an ITM short call can be assigned "
+                f"early to capture it"
+            ),
             dte=dte,
         )
     return None
@@ -138,7 +150,7 @@ def check_assignment_risk(
         return None
     if quote.delta is None:
         return None
-    dte = (pos.expiry - date.today()).days
+    dte = (pos.expiry - today_et()).days
     abs_delta = abs(quote.delta)
     if abs_delta >= delta_threshold and dte <= dte_threshold:
         return RollAlert(
@@ -146,8 +158,8 @@ def check_assignment_risk(
             underlying=pos.underlying or pos.symbol,
             trigger="assignment_risk",
             detail=(
-                f"|Δ|={abs_delta:.2f} ≥ {delta_threshold:.2f} with DTE={dte}"
-                " — consider: roll / close / let-assign"
+                f"Delta {abs_delta:.2f} at or past {delta_threshold:.2f} with {dte} days "
+                f"left — assignment is a live possibility, not a tail risk"
             ),
             current_delta=quote.delta,
             dte=dte,

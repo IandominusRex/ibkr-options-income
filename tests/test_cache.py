@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from src.common import cache
 from src.common.cache import daily_cached
 
@@ -57,17 +59,11 @@ def test_stale_day_entries_dropped(monkeypatch):
         calls["n"] += 1
         return calls["n"]
 
-    class _Day:
-        value = (2026, 1, 1)
-
-        @classmethod
-        def today(cls):
-            from datetime import date
-
-            return date(*cls.value)
-
-    monkeypatch.setattr(cmod, "date", _Day)
+    # The cache is keyed on the ET trading date (see market_hours.today_et), so the seam to
+    # move time through is today_et — not date.today, which is the server's local day.
+    day = {"value": date(2026, 1, 1)}
+    monkeypatch.setattr(cmod, "today_et", lambda: day["value"])
     f("AAPL")  # cached under 2026-01-01
-    _Day.value = (2026, 1, 2)  # roll the day forward
+    day["value"] = date(2026, 1, 2)  # roll the day forward
     f("AAPL")  # recomputed for the new day
     assert calls["n"] == 2

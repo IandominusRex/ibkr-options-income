@@ -293,8 +293,12 @@ def test_assignment_risk_fires_deep_itm_near_expiry() -> None:
     alert = check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21)
     assert alert is not None
     assert alert.trigger == "assignment_risk"
-    assert "|Δ|" in alert.detail
-    assert "roll / close / let-assign" in alert.detail
+    # The detail is prose, not debug output — it used to read "|Δ|=0.72 ≥ 0.70 with DTE=21".
+    # The roll / close / let-assign options live in the card (format_assignment_alert), which
+    # is where they belong; repeating them inside every trigger detail duplicated the card.
+    assert "0.72" in alert.detail
+    assert "21 days left" in alert.detail
+    assert "=" not in alert.detail
 
 
 def test_assignment_risk_no_fire_delta_below_threshold() -> None:

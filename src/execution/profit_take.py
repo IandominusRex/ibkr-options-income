@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from telegram import Bot
 
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.schemas import PositionSnapshot
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
@@ -77,8 +78,10 @@ async def _send_profit_alert(
     from src.notify.formatters import format_profit_alert
 
     text = format_profit_alert(
-        symbol=pos.symbol,
         underlying=pos.underlying or pos.symbol,
+        strike=pos.strike or 0.0,
+        right=pos.right or "C",
+        expiry=pos.expiry or today_et(),
         entry_price=entry_price,
         current_mid=current_mid,
         profit_pct=profit_pct,
@@ -114,10 +117,20 @@ async def _auto_close_position(
         return
 
     if result.status == "error":
+        from src.notify.formatters import _md, contract_label
+
+        label = _md(
+            contract_label(
+                pos.underlying or pos.symbol,
+                pos.strike or 0.0,
+                pos.right or "C",
+                pos.expiry or today_et(),
+            )
+        )
         try:
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ Auto\\-close error for {pos.symbol} — check IBKR manually\\.",
+                text=f"⚠️ Auto\\-close error for {label} — check IBKR manually\\.",
                 parse_mode="MarkdownV2",
             )
         except Exception:
@@ -125,7 +138,14 @@ async def _auto_close_position(
         return
 
     text = format_auto_close_result(
-        result.symbol, result.qty, result.limit_price, result.filled_qty, result.avg_price
+        underlying=pos.underlying or pos.symbol,
+        strike=pos.strike or 0.0,
+        right=pos.right or "C",
+        expiry=pos.expiry or today_et(),
+        qty=result.qty,
+        limit_price=result.limit_price,
+        filled_qty=result.filled_qty,
+        avg_price=result.avg_price,
     )
     try:
         await bot.send_message(chat_id=chat_id, text=text, parse_mode="MarkdownV2")

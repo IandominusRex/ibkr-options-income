@@ -14,9 +14,8 @@ the cumulative budgets are consumed greedily in that order.
 
 from __future__ import annotations
 
-from datetime import date
-
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.profile import get_effective_risk
 from src.common.schemas import (
     AccountSnapshot,
@@ -101,7 +100,7 @@ def validate_candidates(
     portfolio = risk.get("portfolio", {})
     iv_cfg = risk.get("iv", {})
     events = risk.get("events", {})
-    today = date.today()
+    today = today_et()
 
     net_liq = account.net_liquidation
     # Account-level flags — computed once, applied to every candidate.

@@ -5,13 +5,12 @@ All computed from yfinance OHLCV data. No live TWS connection required.
 
 from __future__ import annotations
 
-from datetime import date
-
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
 from src.analytics.price_data import get_ohlcv
+from src.common.market_hours import today_et
 from src.common.schemas import Regime, TechnicalStats
 
 _HIGH_VOL_ATR_RATIO = 0.025  # ATR/close > this → HIGH_VOL
@@ -108,7 +107,7 @@ def _working_frame(symbol: str, live_price: float | None) -> pd.DataFrame:
     settled = get_ohlcv(symbol)
     if live_price is None or live_price <= 0:
         return settled
-    today = pd.Timestamp(date.today())
+    today = pd.Timestamp(today_et())
     if not settled.empty and settled.index[-1].normalize() == today.normalize():
         return settled  # already have today (unlikely — store excludes the forming bar)
     today_row = pd.DataFrame(

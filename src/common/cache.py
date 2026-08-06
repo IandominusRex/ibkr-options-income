@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import date
 from functools import wraps
 from typing import Any
+
+from src.common.market_hours import today_et
 
 # Registry of every cache created by @daily_cached, so tests can flush them all at once.
 _REGISTRY: list[dict] = []
@@ -35,7 +36,7 @@ def clear_all() -> None:
 
 
 def daily_cached[F: Callable[..., Any]](fn: F) -> F:
-    """Memoize *fn* by ``(args, date.today())``. Args must be hashable.
+    """Memoize *fn* by ``(args, today_et())``. Args must be hashable.
 
     Only positional args form the key; keyword args are passed through but not part of
     the key (the wrapped analytics helpers take a single positional symbol).
@@ -47,7 +48,7 @@ def daily_cached[F: Callable[..., Any]](fn: F) -> F:
 
     @wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        today = date.today()
+        today = today_et()
         key = (today, args)
         with lock:
             if key in store:

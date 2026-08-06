@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, date, datetime
 
+from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
     AssessedContract,
@@ -54,6 +55,19 @@ def _candidate_sources(c: TradeCandidate) -> str:
     if c.greeks_source != "ibkr":
         parts.append("yfinance Greeks \\(fallback\\)")
     return " · ".join(parts)
+
+
+def contract_label(underlying: str, strike: float, right: OptionRight | str, expiry: date) -> str:
+    """Human-readable contract identity: ``AAPL $245C Aug 18``.
+
+    The one place a contract is named for a human. Position-derived alerts used to print the
+    raw OCC symbol (``AAPL  260818C00245000``, double space and all) while every other card
+    in the system rendered this form — the same contract was unrecognisable between two
+    messages. Returns plain text; escape at the call site if the card is MarkdownV2.
+    """
+    r = right.value if isinstance(right, OptionRight) else str(right)
+    letter = "C" if r.upper().startswith("C") else "P"
+    return f"{underlying} ${strike:g}{letter} {expiry:%b %d}"
 
 
 def _pnl(v: float) -> str:
@@ -241,7 +255,7 @@ def _build_candidate_card(c: BuyCandidate) -> list[str]:
     if ccy:
         cc.append(f"est\\. CC \\~{_md(ccy)}/mo")
     if c.next_earnings is not None:
-        days = (c.next_earnings - date.today()).days
+        days = (c.next_earnings - today_et()).days
         warn = " ⚠️" if 0 <= days <= 14 else ""
         cc.append(f"earnings {_md(str(days))}d{warn}")
     dy = _pct(c.dividend_yield)
@@ -367,7 +381,7 @@ def _format_option_snapshot_line(o: PositionSnapshot, *, show_symbol: bool) -> s
     right_lbl = "C" if o.right == OptionRight.CALL else "P"
     strike_s = f"\\${_md(f'{o.strike:.0f}')}" if o.strike else ""
     exp_s = _md(str(o.expiry)) if o.expiry else ""
-    dte = (o.expiry - date.today()).days if o.expiry else None
+    dte = (o.expiry - today_et()).days if o.expiry else None
     dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
     pnl_s = f" · {_md(_pnl(o.unrealized_pnl or 0.0))} \\({_position_pnl_pct(o)}\\)"
     body = f"{strike_s}{_md(right_lbl)} {exp_s}{dte_s}{pnl_s}"
@@ -903,7 +917,7 @@ def format_ticker_scan_result(
     if tech_bits:
         lines.append("• " + " · ".join(tech_bits))
     if fund_stats.next_earnings is not None:
-        days_to_earn = (fund_stats.next_earnings - date.today()).days
+        days_to_earn = (fund_stats.next_earnings - today_et()).days
         earn_warn = " ⚠️" if 0 <= days_to_earn <= 14 else ""
         lines.append(f"• Earnings: {_md(str(days_to_earn))}d{earn_warn}")
     lines.append("")
@@ -1298,17 +1312,25 @@ def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
 
 
 def format_profit_alert(
-    symbol: str,
+    *,
     underlying: str,
+    strike: float,
+    right: OptionRight | str,
+    expiry: date,
     entry_price: float,
     current_mid: float,
     profit_pct: float,
 ) -> str:
-    """Profit-target alert sent in MANUAL mode when 50% threshold is reached."""
+    """Profit-target alert sent in MANUAL mode when 50% threshold is reached.
+
+    Takes the contract's parts rather than the position's OCC symbol: this alert fires on a
+    live position, and printing ``AAPL  260818C00245000`` made it the one card in the system
+    where the contract was unrecognisable against every other card's ``AAPL $245C Aug 18``.
+    """
     captured = profit_pct * 100
+    label = contract_label(underlying, strike, right, expiry)
     lines = [
-        f"💰 *Profit target reached — {_md(symbol)}*",
-        f"Underlying: {_md(underlying)}",
+        f"💰 *Profit target reached — {_md(label)}*",
         f"Entry \\(sold at\\): \\${_md(f'{entry_price:.2f}')}",
         f"Current mid \\(cost to close\\): \\${_md(f'{current_mid:.2f}')}",
         f"Premium captured: *{_md(f'{captured:.0f}')}%*",
@@ -1319,20 +1341,28 @@ def format_profit_alert(
 
 
 def format_auto_close_result(
-    symbol: str,
+    *,
+    underlying: str,
+    strike: float,
+    right: OptionRight | str,
+    expiry: date,
     qty: int,
     limit_price: float,
     filled_qty: float,
     avg_price: float,
 ) -> str:
-    """Notification for an automated buy-to-close order result."""
+    """Notification for an automated buy-to-close order result.
+
+    Contract parts rather than the OCC symbol — see ``format_profit_alert``.
+    """
+    label = _md(contract_label(underlying, strike, right, expiry))
     if filled_qty > 0:
         return (
-            f"🤖 *Auto\\-close filled* — {_md(symbol)}\n"
-            f"Bought {_md(str(qty))} × {_md(symbol)} @ \\${_md(f'{avg_price:.2f}')}"
+            f"🤖 *Auto\\-close filled* — {label}\n"
+            f"Bought {_md(str(qty))} @ \\${_md(f'{avg_price:.2f}')}/sh"
         )
     return (
-        f"⚠️ *Auto\\-close NOT filled* — {_md(symbol)}\n"
+        f"⚠️ *Auto\\-close did not fill* — {label}\n"
         f"Limit \\${_md(f'{limit_price:.2f}')} placed but did not fill — check IBKR manually\\."
     )
 
@@ -1381,7 +1411,7 @@ def format_positions(
             right_lbl = ("C" if p.right == OptionRight.CALL else "P") if p.right else ""
             strike_s = f"\\${_md(f'{p.strike:.0f}')}" if p.strike else ""
             exp_s = _md(str(p.expiry)) if p.expiry else ""
-            dte = (p.expiry - date.today()).days if p.expiry else None
+            dte = (p.expiry - today_et()).days if p.expiry else None
             dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
             price_s = f" @ \\${_md(f'{p.market_price:.2f}')}" if p.market_price else ""
             pnl_s = f" · {_md(_pnl(p.unrealized_pnl))}" if p.unrealized_pnl is not None else ""
@@ -1505,7 +1535,7 @@ def format_status(
         for p in sorted(short_opts, key=lambda x: x.expiry or date.max):
             right_lbl = ("C" if p.right == OptionRight.CALL else "P") if p.right else ""
             strike_s = f"\\${_md(f'{p.strike:.0f}')}" if p.strike else ""
-            dte = (p.expiry - date.today()).days if p.expiry else None
+            dte = (p.expiry - today_et()).days if p.expiry else None
             dte_s = f" {_md(str(dte))}d" if dte is not None else ""
             qty = abs(int(p.position))
             sym = _md(p.underlying or p.symbol.split()[0])
@@ -1693,6 +1723,23 @@ def format_live_confirm_request(
     return "\n".join(parts)
 
 
+# Plain-English names for the raw trigger codes on a RollAlert. The codes are the monitor's
+# internal vocabulary (`triggers.check_*`); an operator reading an alert at 15:40 should not
+# have to decode `delta_drift + ex_div`. Unknown codes de-snake-case, matching how
+# `_humanize_reject_reason` degrades.
+_TRIGGER_LABELS: dict[str, str] = {
+    "delta_drift": "delta drift",
+    "dte": "nearing expiry",
+    "iv_spike": "IV spike",
+    "ex_div": "ex-dividend",
+    "assignment_risk": "assignment risk",
+}
+
+
+def _humanize_trigger(code: str) -> str:
+    return _TRIGGER_LABELS.get(code, code.replace("_", " "))
+
+
 def format_roll_alert(
     pos: PositionSnapshot,
     quote: OptionQuote,
@@ -1704,7 +1751,7 @@ def format_roll_alert(
     strategy = "CC" if right_label == "C" else "CSP"
     strike_str = f"{pos.strike:.0f}" if pos.strike else "?"
     sym = pos.underlying or pos.symbol
-    triggers_str = " \\+ ".join(_md(a.trigger) for a in alerts)
+    triggers_str = " \\+ ".join(_md(_humanize_trigger(a.trigger)) for a in alerts)
 
     parts: list[str] = [
         f"⚠️ *Roll Alert — {_md(sym)} {_md(strategy)} \\${_md(strike_str)}*",

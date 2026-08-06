@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 
-from src.analytics.fair_value import compute_ideal_zone
+from src.analytics.fair_value import compute_ideal_zone, zone_for_contract
 from src.analytics.liquidity import (
     passes_liquidity_gates,
     score_liquidity,
@@ -209,7 +209,9 @@ def screen_cc_candidates(
             iv_rv_ratio=iv_stats.iv_rv_ratio,
             dte=dte,
             next_earnings=fund_stats.next_earnings,
-            ideal=zone,
+            # Re-price the credit floor at this contract's strike (the band itself is shared
+            # across strikes at this DTE) so the card compares like with like.
+            ideal=zone_for_contract(zone, quote.strike, iv_stats, cost_basis=position.avg_cost),
             scores=scores,
             price_source=tech_stats.price_source,
             greeks_source=quote.greeks_source,

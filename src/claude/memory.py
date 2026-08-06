@@ -12,10 +12,10 @@ call it without import cycles.
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 from sqlalchemy import select
 
+from src.common.market_hours import today_et
 from src.storage.db import session_scope
 from src.storage.models import ClaudeMemoryRow
 
@@ -46,6 +46,6 @@ def record_outcome(candidate_id: str | None, outcome: str) -> None:
             ).scalar_one_or_none()
             if row and row.outcome is None:
                 row.outcome = outcome
-                row.outcome_date = date.today()
+                row.outcome_date = today_et()
     except Exception:
         log.exception("Failed to record ClaudeMemoryRow outcome for %s", candidate_id)

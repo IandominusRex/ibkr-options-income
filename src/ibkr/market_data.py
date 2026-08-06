@@ -24,6 +24,7 @@ from src.analytics.black_scholes import bs_delta
 from src.analytics.price_data import get_ohlcv
 from src.common.config import get_config
 from src.common.logging import get_logger
+from src.common.market_hours import today_et
 from src.common.schemas import OptionQuote, OptionRight
 from src.ibkr.contracts import (
     build_option,
@@ -416,7 +417,7 @@ async def _resolve_spot_async(ib: IB, stock: Any, symbol: str) -> float:
 
 
 def _filter_expirations(expirations: Iterable[str], dte_min: int, dte_max: int) -> list[str]:
-    today = date.today()
+    today = today_et()
     result = []
     for exp_str in sorted(expirations):
         exp = date(int(exp_str[:4]), int(exp_str[4:6]), int(exp_str[6:]))

@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 
 from src.common.cache import daily_cached
+from src.common.market_hours import today_et
 from src.common.schemas import SentimentDetail
 
 logger = logging.getLogger(__name__)
@@ -333,7 +334,7 @@ def _velocity(symbol: str, overall: float | None, *, today: date | None = None) 
     """
     if overall is None:
         return None
-    today = today or date.today()
+    today = today or today_et()
     today_key = today.isoformat()
     cutoff = (today - timedelta(days=_HISTORY_DAYS)).isoformat()
 

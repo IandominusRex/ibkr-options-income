@@ -21,7 +21,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.common.cache import daily_cached
-from src.common.market_hours import previous_session
+from src.common.market_hours import previous_session, today_et
 from src.storage.price_history import Bar, append_bars, load_bars
 
 log = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def get_ohlcv(symbol: str) -> pd.DataFrame:
     settled bars before returning. The current (forming) session is never stored — callers
     overlay the live price themselves.
     """
-    today = date.today()
+    today = today_et()
     target = previous_session(today)  # the latest session that should already be settled
 
     bars = load_bars(symbol)

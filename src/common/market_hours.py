@@ -114,6 +114,23 @@ def _early_closes(year: int) -> frozenset[date]:
     return frozenset(days) - _holidays(year)
 
 
+def today_et() -> date:
+    """Today's calendar date in **exchange time** (US/Eastern).
+
+    The single definition of "today" for anything measured in trading days: DTE, earnings
+    windows, ex-dividend proximity, and the journal's day key. ``date.today()`` returns the
+    *server's* local date, which for an operator outside US/Eastern is routinely a day ahead
+    of the exchange — that mismatch printed two different DTEs inside one roll alert
+    (``DTE=12 <= threshold=14`` beside ``DTE 13``) and shifted the earnings-blackout window
+    by a day. ``OptionQuote.dte`` has always been ET-anchored; this makes everything else
+    agree with it.
+
+    Use ``date.today()`` only for genuinely local concerns (log file names, wall-clock
+    scheduling), never for a market date.
+    """
+    return datetime.now(_ET).date()
+
+
 def is_market_holiday(d: date) -> bool:
     """True if *d* is a full-day US equity-market holiday."""
     return d in _holidays(d.year)

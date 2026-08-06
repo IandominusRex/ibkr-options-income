@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date
 
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.schemas import (
     BuyCandidate,
     FundamentalStats,
@@ -95,7 +95,7 @@ def _est_monthly_cc_yield(iv_stats: IVStats) -> float | None:
 def _days_to_earnings(fund_stats: FundamentalStats) -> int | None:
     if fund_stats.next_earnings is None:
         return None
-    return (fund_stats.next_earnings - date.today()).days
+    return (fund_stats.next_earnings - today_et()).days
 
 
 def _build_rationale(
