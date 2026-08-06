@@ -2,6 +2,12 @@
 # (engine/decision_engine.py). Each block must sum to ~1.0; the engine normalizes
 # regardless. Component scores themselves are normalized to 0-100 in scoring.py.
 
+# `zone_fit` is NOT a block weight — it is a blend *inside* `technical`, mixing regime
+# alignment with how well the strike sits in the ideal band computed by
+# analytics/fair_value.py (expected move snapped to support/resistance). 0.0 = regime only
+# (identical to the behaviour before the ideal-zone feature); 1.0 = strike placement only.
+# The ideal zone is never a gate — raising this only reorders the slate.
+
 covered_call:
   iv: 0.30            # higher IV rank = richer premium = better
   technical: 0.25     # resistance proximity, trend (capped upside is OK in sideways)
@@ -10,6 +16,7 @@ covered_call:
   assignment_risk: 0.20   # lower assignment likelihood scores higher (we keep shares)
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
   annualized_roc: 0.0 # C2: off by default; raise to rank by normalized annualized yield
+  zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
 
 cash_secured_put:
   iv: 0.30
@@ -19,6 +26,7 @@ cash_secured_put:
   assignment_risk: 0.10   # assignment is acceptable here (we'd own it), so low weight
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
   annualized_roc: 0.0 # C2: off by default; raise to rank by normalized annualized yield
+  zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
 
 # Minimum blended score (0-100) to surface a candidate to Claude / Telegram.
 # Enforced in orchestrator/scan.py after the risk gate.

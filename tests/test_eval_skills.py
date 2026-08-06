@@ -157,6 +157,40 @@ def test_skills_never_reach_the_engine() -> None:
     assert not offenders, f"fence violated — skills reachable from: {offenders}"
 
 
+def test_fair_value_stays_in_the_deterministic_tier() -> None:
+    """`analytics/fair_value.py` can influence ranking (the optional `zone_fit` weight feeds
+    `technical_score`), so it sits on the deterministic side of the fence.
+
+    That means it may read technicals, IV, fundamentals and Black-Scholes — and nothing else.
+    Pulling in sentiment, macro, sector context, or anything under `src.claude` would route
+    enrichment-tier signals (news tone, crowd sentiment, LLM output) into candidate scoring,
+    which the fence forbids.
+    """
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "src" / "analytics" / "fair_value.py").read_text(encoding="utf-8")
+    forbidden = ["sentiment", "sector_context", "market_conditions", "src.claude"]
+    offenders = [
+        token
+        for token in forbidden
+        # Only flag real imports, not the word appearing in prose/comments.
+        if f"import {token}" in text or f"from src.analytics.{token}" in text
+    ]
+    assert not offenders, f"fence violated — fair_value imports enrichment-tier: {offenders}"
+
+
+def test_macro_never_reaches_the_engine() -> None:
+    """The macro backdrop (VIX term, rates, headline tone) is enrichment: it may reach the
+    prompt and the Telegram card, never the gate, the weights, or sizing."""
+    root = Path(__file__).resolve().parents[1]
+    targets = list(_ENGINE_PATH_MODULES) + [
+        str(p.relative_to(root)) for p in (root / "src" / "strategies").glob("*.py")
+    ]
+    offenders = [
+        rel for rel in targets if "market_conditions" in (root / rel).read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"fence violated — macro reachable from: {offenders}"
+
+
 def test_render_active_skills_only_imported_by_prompt_builders() -> None:
     """`render_active_skills` (the injection function) is referenced only by the prompt
     builders — the single, auditable path skills take to Claude."""

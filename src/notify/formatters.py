@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 
 from src.common.schemas import (
     AccountSnapshot,
+    AssessedContract,
     BuyCandidate,
     ClaudeReview,
     EODSummary,
@@ -97,6 +98,10 @@ def format_candidate(
     premium_read = _premium_read(candidate.iv_rank, candidate.vrp)
     if premium_read is not None:
         parts.append(premium_read)
+
+    # Where this contract *should* sit vs where it does — the approval decision is much easier
+    # when the offered strike and credit are shown against a derived target rather than alone.
+    parts.extend(_ideal_lines(candidate, indent=""))
 
     score_line = f"Score *{_md(f'{candidate.blended_score:.1f}')}*/100"
     if candidate.rationale_tags:
@@ -343,12 +348,6 @@ def format_screen_unchanged(
     )
 
 
-def format_screen_empty(icon: str, label: str, reason: str) -> str:
-    """One-line + reason MarkdownV2 diagnostic for a screen with zero candidates this cycle —
-    the "always send something" troubleshooting signal (Telegram routing plan)."""
-    return f"{icon} *{_md(label)}* — no candidates this cycle\n_{_md(reason)}_"
-
-
 def _position_pnl_pct(p: PositionSnapshot) -> str:
     """Per-position unrealized P&L % (market value vs. cost basis): ``unrealized_pnl /
     abs(avg_cost * position * multiplier)``, multiplier=100 for options, 1 for stock. Returns
@@ -437,33 +436,6 @@ def format_market_holiday(name: str, next_open_date: date) -> str:
     )
 
 
-def format_quiet_cycle(
-    *,
-    skipped: int,
-    total: int,
-    move_pct: float,
-    vix: float | None,
-    at: str,
-) -> str:
-    """Heartbeat for an intraday cycle that surfaced nothing new (S1/S5/S6).
-
-    The 15-min loop otherwise sends *nothing* when no candidate clears the gate and the buy
-    list is unchanged — indistinguishable from a dead daemon. This compact message confirms the
-    scan ran and explains the silence: most names moved less than the materiality threshold, so
-    their option chains were not re-fetched and Claude was not invoked this cycle.
-    """
-    pct = f"{move_pct * 100:g}"
-    head = "🟰 *Quiet cycle* · " + _md(at)
-    body = _md(f"{skipped}/{total} names moved <{pct}% — chain re-fetch & Claude skipped.")
-    lines = [head, body]
-    if vix is not None:
-        lines.append(_md(f"VIX {vix:.1f}"))
-        src_footer = "_Sources: IBKR \\(price moves\\) · yfinance \\(VIX\\)_"
-    else:
-        src_footer = "_Sources: IBKR \\(price moves\\)_"
-    return "\n".join(lines) + "\n" + src_footer
-
-
 def format_data_provenance(
     *,
     total_symbols: int,
@@ -539,6 +511,15 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "margin_limit": "margin limit hit",
     "contracts_exceeds_max": "size exceeds max contracts",
     "score_below_minimum": "blended score below quality floor",
+    # Generator-stage codes (strategies/_evaluation.py). These fire before the risk gate and
+    # are numerically the most common reason a scan surfaces nothing.
+    "no_two_sided_market": "no live bid/ask (can't price it)",
+    "illiquid": "fails liquidity gates (spread / OI / volume)",
+    "strike_below_basis": "strike below cost basis (would lock in a loss)",
+    "insufficient_cash": "not enough cash to secure one contract",
+    # Post-gate drops — the trade was fine, the slate was not.
+    "dedupe_not_surfaced": "a better strike on this name won the slot",
+    "top_n_not_surfaced": "max new positions per run already full",
 }
 
 
@@ -548,7 +529,12 @@ def _humanize_reject_reason(code: str) -> str:
 
 
 def _vix_regime(vix: float) -> str:
-    """Short plain-English read of the VIX level for the ticker card."""
+    """Short plain-English read of the VIX level for the ticker card.
+
+    Deliberately terser than ``analytics.market_conditions.vix_regime`` (which the prompt
+    uses) because Telegram cards are length-constrained, but the 15/20/30 thresholds are the
+    same — retune both together.
+    """
     if vix < 15:
         return "calm — premiums thin"
     if vix < 20:
@@ -565,7 +551,24 @@ def _market_sector_lines(mc: MarketConditions | None, sc: SectorContext | None) 
     simply omitted rather than rendered empty."""
     body: list[str] = []
     if mc is not None and mc.vix is not None:
-        body.append(f"• VIX {_md(f'{mc.vix:.1f}')} — {_md(_vix_regime(mc.vix))}")
+        term = ""
+        if mc.vix_term_ratio is not None:
+            shape = "backwardation" if mc.vix_term_ratio > 1 else "contango"
+            term = f" · VIX/VIX3M {_md(f'{mc.vix_term_ratio:.2f}')} \\({_md(shape)}\\)"
+        body.append(f"• VIX {_md(f'{mc.vix:.1f}')} — {_md(_vix_regime(mc.vix))}{term}")
+    if mc is not None and mc.ten_year_yield is not None:
+        move = ""
+        if mc.ten_year_change_5d_bp is not None:
+            move = f" \\({_md(f'{mc.ten_year_change_5d_bp:+.0f}')}bp 5d\\)"
+        tape = ""
+        if mc.spy_ret_5d_pct is not None:
+            tape = f" · SPY {_md(f'{mc.spy_ret_5d_pct:+.1f}')}% 5d"
+        body.append(f"• 10y {_md(f'{mc.ten_year_yield:.2f}')}%{move}{tape}")
+    if mc is not None and mc.macro_headline_score is not None and mc.macro_headline_count > 0:
+        body.append(
+            f"• Macro headlines {_md(f'{mc.macro_headline_score:.0f}')}/100"
+            f" \\({_md(str(mc.macro_headline_count))} hdl\\)"
+        )
     if sc is not None:
         if sc.sector:
             label = sc.sector + (f" / {sc.industry}" if sc.industry else "")
@@ -639,6 +642,120 @@ def _near_miss_lines(cand: TradeCandidate, reasons: list[str] | None) -> list[st
     if reject_line is not None:
         lines.append(reject_line)
     return lines
+
+
+def _ideal_lines(cand: TradeCandidate, *, indent: str = "  ") -> list[str]:
+    """Render the deterministic ideal zone beside the strike actually on offer.
+
+    The point of the block is the *comparison*: a strike is only meaningful next to where the
+    technicals and IV say it ought to be, and a premium only next to what the contract is
+    worth. Returns [] when no zone was derivable, so the card degrades to what it showed
+    before rather than printing empty scaffolding."""
+    zone = cand.ideal
+    if zone is None:
+        return []
+    lines: list[str] = []
+    if zone.strike_lo is not None and zone.strike_hi is not None:
+        verdict = "✓ in zone" if zone.strike_lo <= cand.strike <= zone.strike_hi else "outside"
+        lines.append(
+            f"{indent}🎯 Ideal strike \\${_md(f'{zone.strike_lo:.2f}')}"
+            f"–\\${_md(f'{zone.strike_hi:.2f}')} · {_md(verdict)}"
+        )
+    if zone.min_credit is not None:
+        short = cand.premium < zone.min_credit
+        mark = "below fair value" if short else "clears fair value"
+        lines.append(
+            f"{indent}💰 Ideal credit ≥ \\${_md(f'{zone.min_credit:.2f}')}/sh"
+            f" · now \\${_md(f'{cand.premium:.2f}')} \\({_md(mark)}\\)"
+        )
+    if zone.strike_anchors:
+        lines.append(f"{indent}_{_md(' · '.join(zone.strike_anchors[:3]))}_")
+    if zone.action_note:
+        lines.append(f"{indent}📍 {_md(zone.action_note)}")
+    return lines
+
+
+def _alternative_strike_lines(candidates: list[TradeCandidate], *, max_rows: int = 2) -> list[str]:
+    """Compact rows for the *other* strikes that also qualified.
+
+    The card leads with the single best contract per strategy; without this the runners-up —
+    the ones a trader would actually weigh against it — are invisible. Only qualifying
+    contracts appear here; rejected ones go in the "Other contracts considered" block with
+    their reasons.
+    """
+    extras = candidates[1 : 1 + max_rows]
+    if not extras:
+        return []
+    lines = ["  _Also qualifying:_"]
+    for c in extras:
+        right = "C" if c.right == OptionRight.CALL else "P"
+        delta = f" · Δ{_md(f'{c.delta:.2f}')}" if c.delta is not None else ""
+        lines.append(
+            f"  · \\${_md(f'{c.strike:.2f}')}{_md(right)}"
+            f" \\${_md(f'{c.premium:.2f}')}/sh"
+            f" · ROC {_md(f'{c.roc_pct:.1f}')}%{delta}"
+        )
+    remaining = len(candidates) - 1 - len(extras)
+    if remaining > 0:
+        lines.append(f"  _…and {_md(str(remaining))} more qualifying_")
+    return lines
+
+
+def _assessed_row(item: AssessedContract) -> list[str]:
+    """Two-to-three MarkdownV2 lines describing one assessed-but-not-approved contract."""
+    cand = item.candidate
+    right = "C" if cand.right == OptionRight.CALL else "P"
+    exp = cand.expiry.strftime("%b%d")
+    delta = f" · Δ{_md(f'{cand.delta:.2f}')}" if cand.delta is not None else ""
+    lines = [
+        (
+            f"✗ {_md(cand.underlying)} \\${_md(f'{cand.strike:.2f}')}{_md(right)}"
+            f" · {_md(exp)} \\({_md(str(cand.dte))}d\\)"
+            f" · \\${_md(f'{cand.premium:.2f}')}/sh{delta}"
+        )
+    ]
+    zone = cand.ideal
+    if zone is not None and zone.strike_lo is not None and zone.strike_hi is not None:
+        credit = f" · ≥\\${_md(f'{zone.min_credit:.2f}')}" if zone.min_credit is not None else ""
+        lines.append(
+            f"   ideal \\${_md(f'{zone.strike_lo:.2f}')}–\\${_md(f'{zone.strike_hi:.2f}')}{credit}"
+        )
+    reasons: list[str] = []
+    for r in item.reasons:
+        label = _humanize_reject_reason(r)
+        if label not in reasons:
+            reasons.append(label)
+    if reasons:
+        lines.append(f"   _{_md(' · '.join(reasons[:3]))}_")
+    return lines
+
+
+def format_assessed_contracts(
+    assessed: list[AssessedContract],
+    *,
+    strategy: str | None = None,
+    max_rows: int = 8,
+    title: str = "Assessed — not approved",
+) -> str:
+    """Render the contracts a scan looked at and set aside, with the reason for each.
+
+    Every scan prices contracts; before this block, the ones that didn't clear were dropped
+    with nothing but a log counter, so a quiet screen was indistinguishable from a broken one.
+    *assessed* is expected pre-ranked closest-to-approved first (see
+    ``orchestrator.scan._rank_assessed``). Returns "" when there is nothing to report."""
+    rows = [
+        a
+        for a in assessed
+        if not a.passed and (strategy is None or a.candidate.strategy.value == strategy)
+    ]
+    if not rows:
+        return ""
+    lines = [f"🔎 *{_md(title)}*"]
+    for item in rows[:max_rows]:
+        lines.extend(_assessed_row(item))
+    if len(rows) > max_rows:
+        lines.append(f"_…and {_md(str(len(rows) - max_rows))} more assessed_")
+    return "\n".join(lines)
 
 
 def _premium_read(iv_rank: float | None, vrp: float | None) -> str | None:
@@ -727,6 +844,7 @@ def format_ticker_scan_result(
     greeks_fallback: bool = False,
     market_conditions: MarketConditions | None = None,
     sector_context: SectorContext | None = None,
+    assessed: list[AssessedContract] | None = None,
 ) -> str:
     """Compact Telegram MarkdownV2 summary for a single-ticker /scan TICKER result.
 
@@ -735,8 +853,10 @@ def format_ticker_scan_result(
       - Technicals: trend (vs SMAs), RSI, earnings days
       - Market & Sector: VIX regime + sector/market returns + relative strength (deterministic)
       - Read: the LLM's plain-English synthesis of what the metrics mean + sentiment (if present)
-      - Covered Call: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
-      - Cash-Secured Put: best candidate + Claude/Ollama verdict (or near-miss + reason for none)
+      - Covered Call: best candidate + ideal zone + Claude/Ollama verdict (or near-miss + reason)
+      - Cash-Secured Put: same
+      - Other contracts considered: the runners-up and why each was set aside
+      - Levels: the underlying prices at which to write / acquire shares
       - Buy-to-Own: score + rationale (omitted if not applicable)
       - Sources footer (honest: reflects the actual spot/Greeks source)
 
@@ -753,6 +873,9 @@ def format_ticker_scan_result(
         cc_near_miss / csp_near_miss: the best-scoring contract that *failed* the gate for the
             strategy; rendered as a "closest contract" block when nothing qualified.
         greeks_fallback: True when any option Greeks fell back to yfinance Black-Scholes (footer).
+        assessed: every contract this scan priced and what became of it, ranked closest-to-
+            approved first. Drives the "Other contracts considered" block and supplies the
+            ideal-zone levels when nothing qualified.
     """
     review_map = {r.candidate_id: r for r in (reviews or [])}
     lines: list[str] = [f"🔍 *{_md(ticker)} — Ticker Scan*", ""]
@@ -850,6 +973,8 @@ def format_ticker_scan_result(
             f" · ROC {_md(f'{best_cc.roc_pct:.1f}')}%"
             f" · Score {_md(f'{best_cc.blended_score:.0f}')}/100 ✅"
         )
+        lines.extend(_ideal_lines(best_cc))
+        lines.extend(_alternative_strike_lines(cc_candidates))
         cc_review = review_map.get(best_cc.candidate_id)
         if cc_review is not None:
             lines.extend(_ticker_review_lines(cc_review))
@@ -881,6 +1006,8 @@ def format_ticker_scan_result(
             f" · ROC {_md(f'{best_csp.roc_pct:.1f}')}%"
             f" · Score {_md(f'{best_csp.blended_score:.0f}')}/100 ✅"
         )
+        lines.extend(_ideal_lines(best_csp))
+        lines.extend(_alternative_strike_lines(csp_candidates))
         csp_review = review_map.get(best_csp.candidate_id)
         if csp_review is not None:
             lines.extend(_ticker_review_lines(csp_review))
@@ -893,6 +1020,43 @@ def format_ticker_scan_result(
             if reject_line is not None:
                 lines.append(reject_line)
     lines.append("")
+
+    # --- Alternatives considered ---
+    # The card shows the single best contract per strategy; this names the runners-up and why
+    # each was set aside, so "no qualifying options" is a report rather than a dead end.
+    alternatives = format_assessed_contracts(
+        assessed or [], max_rows=6, title="Other contracts considered"
+    )
+    if alternatives:
+        lines.append(alternatives)
+        lines.append("")
+
+    # --- Where to act (deterministic levels from the ideal zone) ---
+    action = next(
+        (c.ideal for c in (*cc_candidates, *csp_candidates) if c.ideal is not None),
+        None,
+    )
+    if action is None and assessed:
+        action = next((a.candidate.ideal for a in assessed if a.candidate.ideal is not None), None)
+    # The action level is already printed under a qualifying contract, so only repeat it here
+    # when nothing qualified — otherwise this block carries the share-entry level alone.
+    shown_under_candidate = bool(cc_candidates or csp_candidates)
+    show_action = (
+        action is not None
+        and not shown_under_candidate
+        and action.action_price is not None
+        and action.action_note
+    )
+    if action is not None and (action.buy_below is not None or show_action):
+        lines.append("🎯 *Levels*")
+        if show_action and action.action_note:
+            lines.append(f"• {_md(action.action_note)}")
+        if action.buy_below is not None:
+            why = f" — {_md(action.buy_anchors[0])}" if action.buy_anchors else ""
+            lines.append(f"• Buy shares below \\${_md(f'{action.buy_below:.2f}')}{why}")
+            for extra in action.buy_anchors[1:3]:
+                lines.append(f"  _deeper: {_md(extra)}_")
+        lines.append("")
 
     # --- Buy-to-Own ---
     if buy_candidate is not None:

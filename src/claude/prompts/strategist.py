@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.analytics.market_conditions import render_macro_context
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -271,19 +272,59 @@ def _analytics_lines(c: TradeCandidate, analytics: AnalyticsMap | None) -> list[
     return lines
 
 
+def _ideal_zone_lines(c: TradeCandidate) -> list[str]:
+    """Render the deterministic ideal zone for a candidate.
+
+    Gives the model a *reference point* rather than an isolated quote: the strike band the
+    technicals and IV imply, the credit below which the trade carries no variance-risk
+    premium, and the underlying level that would restore the intended cushion. The model's job
+    is to reconcile the offered contract with these, not to recompute them — the numbers are
+    produced by ``analytics.fair_value`` in deterministic Python.
+
+    Enrichment only — never reaches the engine (CLAUDE.md fence).
+    """
+    zone = c.ideal
+    if zone is None:
+        return []
+    lines: list[str] = []
+    if zone.strike_lo is not None and zone.strike_hi is not None:
+        placement = "inside" if zone.strike_lo <= c.strike <= zone.strike_hi else "OUTSIDE"
+        anchor = f" (anchor ${zone.strike_anchor:.2f})" if zone.strike_anchor is not None else ""
+        lines.append(
+            f"Ideal strike:     ${zone.strike_lo:.2f}-${zone.strike_hi:.2f}{anchor};"
+            f" this contract's ${c.strike:.2f} is {placement}"
+        )
+    if zone.strike_anchors:
+        lines.append(f"Zone drivers:     {' · '.join(zone.strike_anchors)}")
+    if zone.min_credit is not None:
+        verdict = "below" if c.premium < zone.min_credit else "above"
+        lines.append(
+            f"Ideal credit:     >= ${zone.min_credit:.2f}/sh"
+            f" (offered ${c.premium:.2f} is {verdict} it)"
+        )
+    if zone.credit_anchors:
+        lines.append(f"Credit basis:     {' · '.join(zone.credit_anchors)}")
+    if zone.action_note:
+        lines.append(f"Action level:     {zone.action_note}")
+    if zone.buy_below is not None:
+        lines.append(f"Share entry:      buy below ${zone.buy_below:.2f}")
+    if lines:
+        lines.append(f"Zone confidence:  {zone.confidence} (how much data the zone had)")
+    return lines
+
+
 def _vix_context(vix: float | None) -> str:
-    """One-line macro-vol regime hint derived from the VIX level."""
+    """One-line macro-vol regime hint derived from the VIX level.
+
+    Delegates to ``analytics.market_conditions.vix_regime``. The Telegram card
+    (``formatters._vix_regime``) keeps its own terser phrasing for message-length reasons but
+    uses the same 15/20/30 thresholds — keep them in step if either is retuned.
+    """
     if vix is None:
         return "VIX: unavailable"
-    if vix < 15:
-        regime = "calm — premiums thin; be selective, favour higher IV-rank names"
-    elif vix < 20:
-        regime = "normal"
-    elif vix < 30:
-        regime = "elevated — richer premium but wider moves; mind assignment risk"
-    else:
-        regime = "stressed — premium is rich but tail risk is high; size down"
-    return f"VIX: {vix:.1f} ({regime})"
+    from src.analytics.market_conditions import vix_regime
+
+    return f"VIX: {vix:.1f} ({vix_regime(vix)})"
 
 
 def build_prompt(
@@ -363,6 +404,17 @@ def build_prompt(
         "=== MARKET CONTEXT ===",
         _vix_context(vix),
         "",
+    ]
+
+    # Macro backdrop: VIX term structure, rates, the tape and broad-market news flow. Only the
+    # single-ticker deep-dive gets it — the full-universe prompt is shared across ~10 candidates
+    # and must stay compact enough for the local model's context window.
+    if single_ticker:
+        macro_block = render_macro_context(market_conditions)
+        if macro_block:
+            lines += [macro_block, ""]
+
+    lines += [
         "=== PORTFOLIO SUMMARY ===",
         f"Net Liquidation: ${account.net_liquidation:,.0f}",
         f"Buying Power:    ${account.buying_power:,.0f}",
@@ -406,6 +458,9 @@ def build_prompt(
         )
         # Raw signals behind the Tech/Fund/IV composites above (enrichment — never gates).
         lines += _analytics_lines(c, analytics)
+        # Where this contract *should* sit, per deterministic technicals + IV. Gives the model a
+        # reference to reconcile the offered strike/credit against instead of judging in a vacuum.
+        lines += _ideal_zone_lines(c)
         if c.next_earnings is not None:
             lines.append(f"Next Earnings:    {c.next_earnings}  (event risk — see sentiment below)")
         _sd = c.scores.sentiment_detail
@@ -442,17 +497,29 @@ def build_prompt(
             "(timing and tail pricing), days-to-earnings and ex-dividend (event/early-assignment "
             "risk). Say what each *implies*, don't just restate the number; skip any that aren't "
             "shown.",
-            "  2. Read the backdrop: the VIX regime and the SECTOR & MARKET BACKDROP above — is "
-            "the sector leading or lagging, is the name out/under-performing it, what does the "
-            "broad tape imply for selling premium here right now?",
-            "  3. Factor in the SENTIMENT line if present: it blends StockTwits self-tags, recent "
+            "  2. Read the backdrop: the VIX regime, the MACRO BACKDROP (VIX term structure — "
+            "backwardation means near-term risk is priced above 3-month, so premium that looks "
+            "rich may be fairly priced for a real event; the 10-year level and its 5-day move; the "
+            "SPY tape; broad-market headline tone) and the SECTOR & MARKET BACKDROP — is the "
+            "sector leading or lagging, is the name out/under-performing it, what does all of it "
+            "imply for selling premium here right now?",
+            "  3. Address the IDEAL STRIKE / IDEAL CREDIT lines directly. They are computed "
+            "deterministically from support/resistance, the expected move, earnings timing and "
+            "Black-Scholes fair value at *realised* vol — treat them as the reference, not as a "
+            "suggestion to re-derive. If the offered strike sits OUTSIDE the zone or the offered "
+            "credit is BELOW the ideal, say plainly what that costs the seller (less cushion, or "
+            "no variance-risk premium for the risk taken) and whether the rest of the setup "
+            "justifies it anyway. If both are comfortably met, say so — that is the strongest "
+            "single argument for the trade.",
+            "  4. Factor in the SENTIMENT line if present: it blends StockTwits self-tags, recent "
             "news headlines, and (if available) Reddit into one 0-100 read. Weigh it by its sample "
             "size (msgs/hdl counts) and its 1-day change (Δ1d) — a sharp swing or a fresh headline "
             "matters more than a stale flat reading. Sentiment is MOST decision-relevant when "
             "earnings are near (see Next Earnings): bullish crowd + imminent earnings = elevated "
             "gap risk for a premium seller; treat it as event risk, not a green light.",
-            "  4. Synthesize: pull it together into one clear sentiment read on the ticker and "
-            "whether this is a good moment to sell premium on it — and why.",
+            "  5. Synthesize: pull it together into one clear sentiment read on the ticker and "
+            "whether this is a good moment to sell premium on it — and why. If it is not, say "
+            "what would have to change (a level, a credit, an IV rank) to make it one.",
             "Be specific to THIS ticker's actual numbers; never invent data not shown above. If the "
             "Sentiment line is absent, say sentiment data was unavailable rather than guessing.",
         ]

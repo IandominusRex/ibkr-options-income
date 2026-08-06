@@ -24,6 +24,7 @@ from src.common.schemas import (
     Strategy,
     TradeCandidate,
 )
+from src.strategies._evaluation import ScreenResult
 
 
 def _db_setup(tmp_path, monkeypatch) -> None:
@@ -190,8 +191,10 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
             return None
 
     monkeypatch.setattr(scanmod, "SentimentScorer", _Sent)
-    monkeypatch.setattr(scanmod, "generate_cc_candidates", lambda *a, **k: [])
-    monkeypatch.setattr(scanmod, "generate_csp_candidates", lambda *a, **k: [cand])
+    monkeypatch.setattr(scanmod, "screen_cc_candidates", lambda *a, **k: ScreenResult())
+    monkeypatch.setattr(
+        scanmod, "screen_csp_candidates", lambda *a, **k: ScreenResult(passed=[cand])
+    )
     monkeypatch.setattr(scanmod, "generate_buy_candidates", lambda *a, **k: [])
     monkeypatch.setattr(scanmod, "score_candidates", lambda cands: cands)
     monkeypatch.setattr(
@@ -202,7 +205,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
             for c in scored
         ],
     )
-    monkeypatch.setattr(scanmod, "select_top_candidates", lambda passed: passed)
+    monkeypatch.setattr(scanmod, "select_top_candidates_detailed", lambda passed: (passed, []))
     monkeypatch.setattr(scanmod, "_persist_memory", lambda *a, **k: None)
     monkeypatch.setattr(scanmod, "_persist_ledger", lambda *a, **k: None)
     monkeypatch.setattr(scanmod, "_load_memory", lambda syms: [])

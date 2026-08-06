@@ -30,9 +30,15 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
     except Exception:
         return FundamentalStats(symbol=symbol)
 
-    # ETF shortcut — almost no fundamental data available
+    # ETF shortcut — almost no fundamental data available. The 52-week range is the one
+    # valuation anchor ETFs do carry, and this universe is ETF-heavy, so keep it.
     if info.get("quoteType") == "ETF":
-        return FundamentalStats(symbol=symbol, quality_flag=True)
+        return FundamentalStats(
+            symbol=symbol,
+            quality_flag=True,
+            fifty_two_week_high=_safe_float(info.get("fiftyTwoWeekHigh")),
+            fifty_two_week_low=_safe_float(info.get("fiftyTwoWeekLow")),
+        )
 
     next_earnings = _next_earnings_date(ticker)
     pe_ratio = _safe_float(info.get("trailingPE"))
@@ -55,6 +61,14 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
         ex_dividend_date=ex_div_date,
         dividend_safe=dividend_safe,
         quality_flag=quality_flag,
+        # Valuation anchors — same `info` dict, no extra request. Consumed only by
+        # analytics/fair_value.py to place a share-acquisition level; never a gate.
+        target_mean_price=_safe_float(info.get("targetMeanPrice")),
+        target_high_price=_safe_float(info.get("targetHighPrice")),
+        target_low_price=_safe_float(info.get("targetLowPrice")),
+        recommendation_key=_safe_str(info.get("recommendationKey")),
+        fifty_two_week_high=_safe_float(info.get("fiftyTwoWeekHigh")),
+        fifty_two_week_low=_safe_float(info.get("fiftyTwoWeekLow")),
     )
 
 
@@ -108,6 +122,13 @@ def _quality_screen(
     if pe_ratio is None or debt_to_equity is None or free_cash_flow is None:
         return None
     return pe_ratio > 0 and debt_to_equity < _MAX_DEBT_TO_EQUITY and free_cash_flow > 0
+
+
+def _safe_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _safe_float(value: object) -> float | None:

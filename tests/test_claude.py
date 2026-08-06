@@ -229,6 +229,93 @@ def test_build_prompt_empty_candidates():
     assert build_prompt([], _make_account()) == ""
 
 
+# --------------------------------------------------------------------------- #
+# Ideal zone + macro backdrop in the prompt (enrichment only — never gates)
+# --------------------------------------------------------------------------- #
+
+
+def _zoned_candidate():
+    """A candidate carrying an ideal zone whose band deliberately excludes its own strike."""
+    from src.common.schemas import IdealZone
+
+    cand = _make_candidate()  # strike 185.0
+    return cand.model_copy(
+        update={
+            "ideal": IdealZone(
+                symbol="AAPL",
+                right=OptionRight.CALL,
+                dte=30,
+                spot=180.0,
+                expected_move=9.0,
+                strike_lo=190.0,
+                strike_hi=196.0,
+                strike_anchor=193.0,
+                strike_anchors=["resistance $192.00"],
+                min_credit=2.10,
+                credit_anchors=["fair value $1.90 at HV30 24%"],
+                action_price=184.0,
+                action_note="spot <= $184.00 keeps the $193.00 call ~1s OTM",
+                buy_below=170.0,
+                confidence="high",
+            )
+        }
+    )
+
+
+def test_prompt_states_where_the_strike_should_be_and_where_it_is():
+    prompt = build_prompt([_zoned_candidate()], _make_account())
+    assert "Ideal strike:" in prompt
+    assert "$190.00-$196.00" in prompt
+    assert "OUTSIDE" in prompt  # the offered 185 strike sits below the band
+    assert "resistance $192.00" in prompt
+
+
+def test_prompt_flags_a_credit_below_fair_value():
+    prompt = build_prompt([_zoned_candidate()], _make_account())  # premium 1.50 vs min 2.10
+    assert "Ideal credit:" in prompt
+    assert "is below it" in prompt
+    assert "fair value $1.90" in prompt
+
+
+def test_prompt_reports_a_credit_that_clears_fair_value():
+    cand = _zoned_candidate()
+    rich = cand.model_copy(update={"premium": 3.00})
+    prompt = build_prompt([rich], _make_account())
+    assert "is above it" in prompt
+
+
+def test_prompt_omits_the_zone_block_when_none_was_derivable():
+    prompt = build_prompt([_make_candidate()], _make_account())
+    assert "Ideal strike:" not in prompt
+
+
+def test_macro_backdrop_is_injected_for_the_single_ticker_deep_dive():
+    from src.common.schemas import MarketConditions
+
+    mc = MarketConditions(vix=18.4, vix_term_ratio=1.15, ten_year_yield=4.31)
+    prompt = build_prompt(
+        [_make_candidate()], _make_account(), market_conditions=mc, single_ticker=True
+    )
+    assert "MACRO BACKDROP" in prompt
+    assert "backwardation" in prompt
+
+
+def test_macro_backdrop_is_omitted_from_the_full_universe_prompt():
+    """The full-scan prompt is shared across ~10 candidates and must stay compact."""
+    from src.common.schemas import MarketConditions
+
+    mc = MarketConditions(vix=18.4, vix_term_ratio=1.15, ten_year_yield=4.31)
+    prompt = build_prompt([_make_candidate()], _make_account(), market_conditions=mc)
+    assert "MACRO BACKDROP" not in prompt
+    assert "VIX: 18.4" in prompt  # the one-line VIX hint is still there
+
+
+def test_summary_guide_asks_the_model_to_address_the_zone():
+    prompt = build_prompt([_zoned_candidate()], _make_account(), single_ticker=True)
+    assert "IDEAL STRIKE / IDEAL CREDIT" in prompt
+    assert "variance-risk premium" in prompt
+
+
 def test_build_prompt_injects_scan_time_spot_prices():
     """N17: scan-time spot prices are injected and flagged authoritative; static block warns stale."""
     account = _make_account()

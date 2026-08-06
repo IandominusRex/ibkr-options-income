@@ -25,7 +25,6 @@ from src.notify.formatters import (
     _md,
     format_account_snapshot,
     format_candidate,
-    format_screen_empty,
     format_screen_unchanged,
     format_status,
 )
@@ -222,24 +221,6 @@ def test_md_escapes_all_special_chars():
     assert "\\" in escaped
     # No unescaped special char sequence (the function adds backslashes)
     assert "_" not in escaped.replace("\\_", "")
-
-
-def test_format_quiet_cycle_renders_and_escapes():
-    from src.notify.formatters import format_quiet_cycle
-
-    text = format_quiet_cycle(skipped=42, total=50, move_pct=0.005, vix=14.2, at="11:30 ET")
-    assert "Quiet cycle" in text
-    assert "42/50" in text
-    assert "0\\.5%" in text  # 0.5% with the period escaped for MarkdownV2
-    assert "VIX 14\\.2" in text
-
-
-def test_format_quiet_cycle_omits_vix_when_unknown():
-    from src.notify.formatters import format_quiet_cycle
-
-    text = format_quiet_cycle(skipped=1, total=3, move_pct=0.01, vix=None, at="09:50 ET")
-    assert "VIX" not in text
-    assert "1/3" in text
 
 
 # --------------------------------------------------------------------------- #
@@ -1521,7 +1502,7 @@ async def test_force_scan_reconnect_disconnects_and_swallows():
 
 
 # --------------------------------------------------------------------------- #
-# format_screen_unchanged / format_screen_empty
+# format_screen_unchanged
 # --------------------------------------------------------------------------- #
 
 
@@ -1534,14 +1515,6 @@ def test_format_screen_unchanged_singular_no_plural():
     text = format_screen_unchanged("🟣", "Cash-Secured Puts", 1, "09:15", "candidate")
     assert (
         text == "🟣 *Cash\\-Secured Puts* — 1 candidate unchanged since 09:15 \\(no new screens\\)"
-    )
-
-
-def test_format_screen_empty():
-    text = format_screen_empty("🔵", "Covered Calls", "0/4 candidates passed the risk gate")
-    assert (
-        text
-        == "🔵 *Covered Calls* — no candidates this cycle\n_0/4 candidates passed the risk gate_"
     )
 
 
@@ -1870,7 +1843,7 @@ async def test_buy_list_full_send_clears_status_msg_id(monkeypatch, tmp_path):
 
 
 async def test_send_buy_list_empty_sends_diagnostic(monkeypatch, tmp_path):
-    """Empty buy list sends a format_screen_empty diagnostic to telegram_thread_buy."""
+    """Empty buy list appends a status-message diagnostic to telegram_thread_buy."""
     _db_setup(tmp_path, monkeypatch)
 
     cfg = MagicMock()

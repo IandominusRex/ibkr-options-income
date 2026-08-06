@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from src.common.schemas import (
     ClaudeReview,
     FundamentalStats,
+    IdealZone,
     IVStats,
     OptionRight,
     ScoreCard,
@@ -401,8 +402,10 @@ def test_market_sector_block_omitted_when_no_data() -> None:
 def test_llm_read_summary_renders_once() -> None:
     cand = _candidate(candidate_id="csp-xyz")
     review = _review("csp-xyz").model_copy(
-        update={"summary": "IV rank is low so premium is thin; the sector is leading and NVDA is "
-                "outperforming — a constructive but not premium-rich setup."}
+        update={
+            "summary": "IV rank is low so premium is thin; the sector is leading and NVDA is "
+            "outperforming — a constructive but not premium-rich setup."
+        }
     )
     text = format_ticker_scan_result(
         ticker="NVDA",
@@ -419,6 +422,154 @@ def test_llm_read_summary_renders_once() -> None:
     assert "🧠 *Read*" in text
     assert text.count("🧠 *Read*") == 1
     assert "premium is thin" in text
+
+
+def test_macro_line_renders_term_structure_rates_and_headlines() -> None:
+    from src.common.schemas import MarketConditions
+
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        market_conditions=MarketConditions(
+            vix=18.4,
+            vix_term_ratio=1.15,
+            ten_year_yield=4.31,
+            ten_year_change_5d_bp=12.0,
+            spy_ret_5d_pct=-0.8,
+            macro_headline_score=41.0,
+            macro_headline_count=7,
+        ),
+    )
+    assert "backwardation" in text
+    assert "10y 4" in text
+    assert "SPY" in text
+    assert "Macro headlines" in text
+
+
+# ---------------------------------------------------------------------------
+# Ideal zone + alternatives considered
+# ---------------------------------------------------------------------------
+
+
+def _zone() -> IdealZone:
+    return IdealZone(
+        symbol="NVDA",
+        right=OptionRight.PUT,
+        dte=30,
+        spot=210.69,
+        expected_move=14.0,
+        strike_lo=193.0,
+        strike_hi=196.0,
+        strike_anchor=195.0,
+        strike_anchors=["support $194.10", "anchored to 50d SMA $195.20"],
+        min_credit=3.35,
+        action_price=209.0,
+        action_note="spot >= $209.00 keeps the $195.00 put ~1 sigma OTM",
+        buy_below=190.0,
+        buy_anchors=["support $190.00"],
+        confidence="high",
+    )
+
+
+def _card(**kw) -> str:
+    args: dict = {
+        "ticker": "NVDA",
+        "iv_stats": _iv(),
+        "tech_stats": _tech(),
+        "fund_stats": _fund(),
+        "cc_candidates": [],
+        "csp_candidates": [],
+        "buy_candidate": None,
+        "is_held": False,
+        "quotes_available": True,
+    }
+    args.update(kw)
+    return format_ticker_scan_result(**args)
+
+
+def test_qualifying_candidate_shows_the_ideal_zone_beside_the_strike() -> None:
+    cand = _candidate().model_copy(update={"ideal": _zone()})
+    text = _card(csp_candidates=[cand])
+    assert "Ideal strike" in text
+    assert "193" in text and "196" in text
+    assert "Ideal credit" in text
+    assert "below fair value" in text  # premium 3.00 vs min_credit 3.35
+
+
+def test_levels_block_names_the_action_and_share_entry_prices() -> None:
+    cand = _candidate().model_copy(update={"ideal": _zone()})
+    text = _card(csp_candidates=[cand])
+    assert "Levels" in text
+    assert "Buy shares below" in text
+    assert "190" in text
+
+
+def test_levels_block_survives_an_empty_screen_via_assessed() -> None:
+    """Nothing qualified, but the deep-dive can still say where to act."""
+    from src.common.schemas import AssessedContract, AssessmentStage
+
+    rejected = _candidate(candidate_id="csp-rej").model_copy(update={"ideal": _zone()})
+    text = _card(
+        assessed=[
+            AssessedContract(
+                candidate=rejected,
+                stage=AssessmentStage.RISK_GATE,
+                reasons=["iv_rank_below_minimum"],
+            )
+        ]
+    )
+    assert "Levels" in text
+    assert "Other contracts considered" in text
+    assert "IV rank too low" in text
+
+
+def test_alternatives_block_is_omitted_when_everything_qualified() -> None:
+    from src.common.schemas import AssessedContract, AssessmentStage
+
+    cand = _candidate()
+    text = _card(
+        csp_candidates=[cand],
+        assessed=[AssessedContract(candidate=cand, stage=AssessmentStage.PASSED)],
+    )
+    assert "Other contracts considered" not in text
+
+
+def test_full_card_with_every_new_block_stays_markdownv2_safe() -> None:
+    """The whole reason this regression test exists: one raw paren freezes the message."""
+    from src.common.schemas import AssessedContract, AssessmentStage, MarketConditions
+
+    cand = _candidate().model_copy(update={"ideal": _zone()})
+    rejected = _candidate(candidate_id="rej").model_copy(update={"ideal": _zone()})
+    text = _card(
+        csp_candidates=[cand],
+        market_conditions=MarketConditions(
+            vix=18.4,
+            vix_term_ratio=1.15,
+            ten_year_yield=4.31,
+            ten_year_change_5d_bp=-12.0,
+            spy_ret_5d_pct=-0.8,
+            macro_headline_score=41.0,
+            macro_headline_count=7,
+        ),
+        assessed=[
+            AssessedContract(candidate=cand, stage=AssessmentStage.PASSED),
+            AssessedContract(
+                candidate=rejected, stage=AssessmentStage.GENERATOR, reasons=["illiquid"]
+            ),
+        ],
+    )
+    reserved = set(r"[]()~`>#+-=|{}.!")
+    unescaped = [
+        (i, c) for i, c in enumerate(text) if c in reserved and (i == 0 or text[i - 1] != "\\")
+    ]
+    assert not unescaped, f"unescaped MarkdownV2 chars in card: {unescaped}"
 
 
 def test_assignment_considerations_rendered_under_candidate() -> None:
@@ -439,3 +590,21 @@ def test_assignment_considerations_rendered_under_candidate() -> None:
         reviews=[review],
     )
     assert "assignment odds modest" in text
+
+
+def test_runner_up_qualifying_strikes_are_listed() -> None:
+    """The card leads with the best contract; without this the alternatives a trader would
+    actually weigh against it are invisible."""
+    best = _candidate(candidate_id="a")
+    second = _candidate(candidate_id="b").model_copy(update={"strike": 195.0, "premium": 2.4})
+    third = _candidate(candidate_id="c").model_copy(update={"strike": 190.0, "premium": 1.8})
+    fourth = _candidate(candidate_id="d").model_copy(update={"strike": 185.0, "premium": 1.2})
+    text = _card(csp_candidates=[best, second, third, fourth])
+    assert "Also qualifying" in text
+    assert "195" in text and "190" in text
+    assert "and 1 more qualifying" in text  # the 4th is truncated, but counted
+
+
+def test_no_alternatives_line_for_a_single_qualifying_strike() -> None:
+    text = _card(csp_candidates=[_candidate()])
+    assert "Also qualifying" not in text

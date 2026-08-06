@@ -29,8 +29,8 @@ to your phone via Telegram.
 
 | Command | What it does |
 |---|---|
-| `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh |
-| `/scan AAPL` | Single-ticker deep-dive: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result with a Claude/Ollama verdict. Holistic context: a **💬 Sentiment** line (composite StockTwits + news + optional Reddit, 0-100 with 1-day trend), a **🌐 Market & Sector** line (VIX regime + how the name's sector / the broad market are trading + relative strength) and a **🧠 Read** — a plain-English synthesis explaining what the IV/VRP/delta/RSI numbers mean together and the overall sentiment; when a strategy has no qualifying option, shows the closest failed contract and *why* it was rejected |
+| `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh. Each strategy thread also gets an **"Assessed — not approved"** block listing the contracts that were priced and set aside, with the gate each failed |
+| `/scan AAPL` | Single-ticker deep-dive: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result with a Claude/Ollama verdict. Holistic context: a **💬 Sentiment** line (composite StockTwits + news + optional Reddit, 0-100 with 1-day trend), a **🌐 Market & Sector** line (VIX regime + how the name's sector / the broad market are trading + relative strength) and a **🧠 Read** — a plain-English synthesis explaining what the IV/VRP/delta/RSI numbers mean together and the overall sentiment; a **🎯 ideal strike zone + minimum credit** beside the contract actually on offer (derived from support/resistance, expected move, earnings timing and Black-Scholes fair value at realised vol), the runner-up qualifying strikes, an **"Other contracts considered"** list naming every contract that didn't make it and why, and a **🎯 Levels** block with the share-entry price. When a strategy has no qualifying option it shows the closest failed contract and *why* — never silence |
 | `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |
@@ -53,7 +53,7 @@ the IDs listed below; override any `TELEGRAM_THREAD_*` variable in `.env` to mat
 
 | Topic (thread ID) | Env var | Content |
 |---|---|---|
-| **2** (`TELEGRAM_THREAD_SCAN`) | `TELEGRAM_THREAD_SCAN` | Scan-started pings, startup notification, overrun warnings, quiet-cycle heartbeat — general ops/system messages |
+| **2** (`TELEGRAM_THREAD_SCAN`) | `TELEGRAM_THREAD_SCAN` | Scan-started pings, startup notification, overrun warnings, skipped-symbol card, data-provenance summary — general ops/system messages |
 | **52** (`TELEGRAM_THREAD_CSP`) | `TELEGRAM_THREAD_CSP` | Cash-secured put candidates (or "unchanged" digest / "no candidates" diagnostic each cycle) |
 | **54** (`TELEGRAM_THREAD_CC`) | `TELEGRAM_THREAD_CC` | Covered-call candidates on currently-held underlyings |
 | **56** (`TELEGRAM_THREAD_BUY`) | `TELEGRAM_THREAD_BUY` | Buy-to-own recommendations (stocks worth owning to sell CCs against) |
@@ -112,8 +112,8 @@ python -m pytest               # all tests pass without IB Gateway
 | `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
 | `config/skills/` | Human-promoted reasoning skills (active/proposed/rejected) injected into review prompts |
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
-| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `market_conditions.py` (VIX) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive) |
-| `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation |
+| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive) |
+| `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation. The CC/CSP screens return the contracts they **rejected** alongside those they passed (`_evaluation.py`), each tagged with every gate it failed — so a scan that approves nothing still shows what it looked at and why |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate |
 | `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |
 | `src/claude/eval/` | Outcome ledger, close reconciler, and verdict scoring (calibration + EV vs baseline) |
@@ -123,7 +123,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `src/monitor/` | Event-driven intraday position monitoring |
 | `src/backtest/` | Offline CC/CSP income backtest (Black-Scholes-synthesised premiums over historical prices) |
 | `src/orchestrator/` | EOD report and on-demand scan pipeline |
-| `src/storage/` | SQLite database models, session management, and order-creation idempotency |
+| `src/storage/` | SQLite database models, session management, order-creation idempotency, and the `risk_verdicts.py` assessment audit trail (every contract a scan priced and why it was set aside, pruned to 14 days) |
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |
 | `scripts/` | Command-line entrypoints |
 | `tests/` | pytest suite (IBKR mocked; no TWS needed) |

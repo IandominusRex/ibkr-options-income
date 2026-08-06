@@ -53,6 +53,7 @@ def _today_et() -> date:
     """
     return datetime.now(_ET).date()
 
+
 # Per-request cap for the EOD IV backfill. ib_async's default reqHistoricalData timeout is ~60s;
 # when IBKR's historical-data farm (HMDS) is down for a session, *every* symbol times out, turning
 # a 2-minute EOD into a ~1-hour hang that blocks the (data-independent) P&L summary and Telegram
@@ -399,10 +400,13 @@ async def run() -> None:
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
 
-    # 8. Prune the write-only option_quotes audit table so SQLite stays bounded.
+    # 8. Prune the write-only audit tables so SQLite stays bounded. Both are forensics-only —
+    # no production code reads them back, so a bounded window costs nothing operationally.
     from src.storage.maintenance import backup_database, purge_old_option_quotes
+    from src.storage.risk_verdicts import purge_old_risk_verdicts
 
     purge_old_option_quotes()
+    purge_old_risk_verdicts()
 
     # 9. Nightly backup of the system of record (orders, fills, learning history).
     backup_database()

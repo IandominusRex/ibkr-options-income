@@ -78,6 +78,27 @@ or contract count. The guarantee is enforced by `tests/test_eval_skills.py::test
 — keep it green. Skill **promotion is always human-gated** (a `scripts.skills promote` file move);
 the proposer drafts, it never activates.
 
+## Analytics tiers — which signals may influence ranking
+
+`src/analytics/` is split into two tiers, and the split is load-bearing:
+
+- **Deterministic tier** — `iv.py`, `technicals.py`, `fundamentals.py`, `liquidity.py`,
+  `realized_vol.py`, `black_scholes.py`, `price_data.py`, `fair_value.py`. These may feed
+  `engine/`, the strategy screens, and position sizing.
+- **Enrichment tier** — `sentiment.py`, `sector_context.py`, `market_conditions.py` (the macro
+  backdrop). These reach the Telegram cards and the reasoning prompt **only**. They must never be
+  imported by `engine/`, `execution/`, or `strategies/`.
+
+The trap: `analytics/fair_value.py` produces the ideal-price zone, which *can* influence ranking via
+the optional `zone_fit` weight in `technical_score`. That places it on the deterministic side — so it
+may read technicals/IV/fundamentals/Black-Scholes and nothing else. Adding a sentiment or macro term
+to it would quietly route news tone and crowd sentiment into candidate scoring. Enforced by
+`tests/test_eval_skills.py::test_fair_value_stays_in_the_deterministic_tier` and
+`::test_macro_never_reaches_the_engine` — keep both green.
+
+The ideal zone itself **never gates**: it is display + optional ranking, and `zone_fit` ships at
+`0.0`. The Rules Engine remains the sole path to an order.
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this

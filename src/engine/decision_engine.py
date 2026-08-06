@@ -25,21 +25,46 @@ def select_top_candidates(
 ) -> list[TradeCandidate]:
     """Return the top-N candidates (by blended_score) with rationale_tags filled in.
 
+    Thin wrapper over :func:`select_top_candidates_detailed` for callers that don't care
+    what was dropped.
+    """
+    return select_top_candidates_detailed(candidates, n)[0]
+
+
+def select_top_candidates_detailed(
+    candidates: list[TradeCandidate],
+    n: int | None = None,
+) -> tuple[list[TradeCandidate], list[tuple[TradeCandidate, str]]]:
+    """Return ``(top, dropped)`` where each dropped candidate carries *why* it was dropped.
+
     Expects candidates already sorted DESC by blended_score (output of score_candidates).
     Deduplicates to the single best strike per (underlying, strategy) first, so the slate
     isn't filled with many strikes of one name at the expense of breadth.
+
+    The two drop reasons read very differently to an operator and are reported separately:
+
+      * ``"dedupe"`` — a better strike on the same name won; the trade is available, just not
+        this contract.
+      * ``"top_n"`` — the candidate was good enough but ``max_new_positions_per_run`` was
+        already full; raising the cap would surface it.
+
+    Both used to vanish silently, which made a fully-gated slate indistinguishable from one
+    that simply ran out of room.
     """
     if n is None:
         n = get_effective_risk()["portfolio"]["max_new_positions_per_run"]
 
     seen: set[tuple[str, str]] = set()
     deduped: list[TradeCandidate] = []
+    dropped: list[tuple[TradeCandidate, str]] = []
     for c in candidates:  # already sorted desc → first seen per key is the best
         key = (c.underlying, c.strategy.value)
         if key in seen:
+            dropped.append((c, "dedupe"))
             continue
         seen.add(key)
         deduped.append(c)
 
     top = deduped[:n]
-    return [c.model_copy(update={"rationale_tags": _build_tags(c)}) for c in top]
+    dropped.extend((c, "top_n") for c in deduped[n:])
+    return [c.model_copy(update={"rationale_tags": _build_tags(c)}) for c in top], dropped

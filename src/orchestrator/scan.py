@@ -35,11 +35,12 @@ from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
-from src.common.market_hours import now_et_hhmm
 from src.common.profile import activate as activate_profile
 from src.common.profile import get_effective_weights
 from src.common.schemas import (
     AccountSnapshot,
+    AssessedContract,
+    AssessmentStage,
     BuyCandidate,
     ClaudeReview,
     FundamentalStats,
@@ -49,10 +50,11 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     SectorContext,
+    SentimentDetail,
     TechnicalStats,
     TradeCandidate,
 )
-from src.engine.decision_engine import select_top_candidates
+from src.engine.decision_engine import select_top_candidates_detailed
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
 from src.ibkr.market_data import (
@@ -61,10 +63,15 @@ from src.ibkr.market_data import (
     persist_chain_quotes,
 )
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
-from src.notify.formatters import format_data_provenance, format_skip_reasons
+from src.notify.formatters import (
+    format_assessed_contracts,
+    format_data_provenance,
+    format_skip_reasons,
+)
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
+from src.storage.risk_verdicts import record_assessments
 from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
@@ -74,9 +81,10 @@ from src.storage.system_settings import (
     renew_scan_lease,
     set_setting,
 )
+from src.strategies._evaluation import ScreenResult
 from src.strategies.buy_candidates import generate_buy_candidates
-from src.strategies.cash_secured_put import generate_csp_candidates
-from src.strategies.covered_call import generate_cc_candidates
+from src.strategies.cash_secured_put import screen_csp_candidates
+from src.strategies.covered_call import screen_cc_candidates
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +103,11 @@ _REVIEW_HASH_KEY = "last_review_hash"
 # Max near-miss contracts to name on an empty CC/CSP screen; further rejects collapse into a
 # trailing "…and N more" line. One "closest" per strategy keeps each quiet-cycle line compact.
 _NEAR_MISS_LIMIT = 1
+
+# Max assessed-but-not-approved contracts to list per strategy on a *manual* /scan or a full
+# sweep. The 15-min intraday loop never renders this block (it keeps the one-line digest
+# above), so this bound only shapes the deliberate, human-requested view.
+_ASSESSED_LIMIT = 8
 
 # ---------------------------------------------------------------------------
 # Telegram progress tracker
@@ -287,6 +300,10 @@ class ScanResult:
     cc_candidates: list[TradeCandidate] = field(default_factory=list)
     csp_candidates: list[TradeCandidate] = field(default_factory=list)
     buy_candidates: list[BuyCandidate] = field(default_factory=list)
+    # Every contract this scan priced and what became of it — approved, or rejected with the
+    # reasons why, at whichever stage it stopped. Ranked best-first. This is what lets a scan
+    # that approves nothing still show the operator what it looked at.
+    assessed: list[AssessedContract] = field(default_factory=list)
     reviews: list[ClaudeReview] = field(default_factory=list)
     market_conditions: MarketConditions = field(default_factory=MarketConditions)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -297,13 +314,12 @@ class ScanResult:
     # rest of the universe at symbol_timeout_seconds each the scan bails. The caller (intraday
     # loop) reads this to notify the operator and force a reconnect.
     aborted_unhealthy: bool = False
-    # Intraday telemetry (S1/S5/S6): how many symbols were fetched this cycle vs the universe
-    # size, whether the Claude review was reused, and whether the cycle ended silently and so
-    # emitted a quiet-cycle heartbeat instead of any card/buy-list message.
+    # Intraday telemetry (S1/S5): how many symbols were fetched this cycle vs the universe
+    # size, and whether the Claude review was reused. `material_count` also feeds the
+    # "N/M names moved <X%" clause appended to a quiet cycle's empty-screen diagnostic.
     total_symbols: int = 0
     material_count: int = 0
     reused_reviews: bool = False
-    quiet_cycle: bool = False
     # Data-provenance counters for the end-of-scan summary: where each piece of data this
     # cycle actually came from, and how many symbols/quotes fell back to a secondary source.
     provenance: ProvenanceCounts = field(default_factory=lambda: ProvenanceCounts())
@@ -724,6 +740,54 @@ def _persist_scan_state(
     )
 
 
+def _rank_assessed(assessed: list[AssessedContract]) -> list[AssessedContract]:
+    """Order assessed contracts best-first: approved, then closest-to-approved.
+
+    Within the rejected set, a contract that stumbled at the last hurdle (score floor, top-N)
+    ranks above one that never cleared the delta band, and higher blended score breaks ties.
+    ``AssessmentStage`` is declared in pipeline order, so its position in the enum *is* the
+    "how far did it get" rank.
+    """
+    order = {stage: i for i, stage in enumerate(AssessmentStage)}
+
+    def key(a: AssessedContract) -> tuple[int, int, float]:
+        # PASSED sorts first; among rejects, later stages (got further) sort first.
+        return (0 if a.passed else 1, -order[a.stage], -a.candidate.blended_score)
+
+    return sorted(assessed, key=key)
+
+
+def _near_misses(
+    assessed: list[AssessedContract], strategy_value: str
+) -> tuple[list[tuple[TradeCandidate, list[str]]], int]:
+    """The closest rejected contracts for one strategy, plus how many more were truncated.
+
+    Feeds the compact one-line digest appended on a quiet cycle. Expects *assessed* already
+    ranked by :func:`_rank_assessed`.
+    """
+    rejected = [
+        a for a in assessed if not a.passed and a.candidate.strategy.value == strategy_value
+    ]
+    shown = [(a.candidate, a.reasons) for a in rejected[:_NEAR_MISS_LIMIT]]
+    return shown, max(0, len(rejected) - len(shown))
+
+
+def _apply_sentiment(screen: ScreenResult, detail: SentimentDetail | None) -> None:
+    """Stamp composite sentiment onto every contract a screen produced, passed or rejected.
+
+    ``overall`` drives scoring; the per-source detail is enrichment for the card and the
+    prompt. Rejected contracts are rendered on the same cards, so they carry it too.
+    """
+    if detail is None:
+        return
+    for cand in screen.passed:
+        cand.scores.sentiment_score = detail.overall
+        cand.scores.sentiment_detail = detail
+    for cand, _ in screen.rejected:
+        cand.scores.sentiment_score = detail.overall
+        cand.scores.sentiment_detail = detail
+
+
 def _no_candidates_reason(
     result: ScanResult,
     all_count: int,
@@ -732,8 +796,34 @@ def _no_candidates_reason(
     positions: list[PositionSnapshot] | None = None,
     rejection_tally: dict[str, int] | None = None,
     symbol_count: int = 0,
+    intraday: bool = False,
 ) -> str:
-    """Human-readable explanation for why a per-strategy screen is empty this cycle."""
+    """Human-readable explanation for why a per-strategy screen is empty this cycle.
+
+    On an intraday cycle the answer is often "we didn't look" rather than "we looked and
+    found nothing" — the materiality gate (S1) skips the chain fetch for names that barely
+    moved. That distinction is appended so a deliberately quiet market never reads as a dead
+    daemon; it used to live in a separate heartbeat message that could not actually fire.
+    """
+    return _empty_screen_base(
+        result,
+        all_count,
+        strategy=strategy,
+        positions=positions,
+        rejection_tally=rejection_tally,
+        symbol_count=symbol_count,
+    ) + _materiality_clause(result, intraday)
+
+
+def _empty_screen_base(
+    result: ScanResult,
+    all_count: int,
+    *,
+    strategy: str,
+    positions: list[PositionSnapshot] | None,
+    rejection_tally: dict[str, int] | None,
+    symbol_count: int,
+) -> str:
     prov = result.provenance
     if result.total_symbols == 0:
         return "no symbols in universe"
@@ -773,42 +863,15 @@ def _no_candidates_reason(
     return f"0/{all_count} candidates{sym_clause} passed the risk gate{gate_summary}"
 
 
-async def _send_quiet_heartbeat(bot: object, chat_id: str, result: ScanResult) -> None:
-    """Send the intraday quiet-cycle heartbeat (S6). Best-effort; never raises.
-
-    Called only when an ``intraday`` cycle surfaced nothing — no candidate cleared the gate and
-    the buy list was unchanged, so neither ``send_candidates`` nor ``send_buy_list`` emitted a
-    message. Without this the operator sees total silence and can't distinguish a deliberately
-    quiet market from a dead daemon. Reuses the same ``bot``/``chat_id`` as the buy-list send.
-    """
-    if bot is None or not chat_id:
-        return
-    from src.notify.formatters import format_quiet_cycle
-
+def _materiality_clause(result: ScanResult, intraday: bool) -> str:
+    """ " · N/M names moved <X% (chain re-fetch skipped)" for a gated intraday cycle, else ""."""
+    if not intraday or result.total_symbols <= 0:
+        return ""
     skipped = max(0, result.total_symbols - result.material_count)
-    vix = result.market_conditions.vix if result.market_conditions else None
-    cfg_s = get_config().secrets
-    try:
-        await bot.send_message(  # type: ignore[attr-defined]
-            chat_id=chat_id,
-            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
-            text=format_quiet_cycle(
-                skipped=skipped,
-                total=result.total_symbols,
-                move_pct=get_config().market_data.intraday_rescan_move_pct,
-                vix=vix,
-                at=now_et_hhmm(),
-            ),
-            parse_mode="MarkdownV2",
-        )
-        result.quiet_cycle = True
-        log.info(
-            "scan: quiet intraday cycle — sent heartbeat (%d/%d names below the move threshold)",
-            skipped,
-            result.total_symbols,
-        )
-    except Exception:
-        log.warning("scan: failed to send quiet-cycle heartbeat", exc_info=True)
+    if skipped <= 0:
+        return ""
+    pct = f"{get_config().market_data.intraday_rescan_move_pct * 100:g}"
+    return f" · {skipped}/{result.total_symbols} names moved <{pct}% (chain re-fetch skipped)"
 
 
 def _fetch_analytics(
@@ -983,6 +1046,10 @@ async def _run_scan_body(
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []
     csp_candidates: list[TradeCandidate] = []
+    # Contracts the strategy generators priced but rejected (delta band, DTE, liquidity,
+    # ROC/yield). Previously these were dropped with a `continue` and survived only as an
+    # aggregate log counter — so a symbol whose whole chain failed produced nothing to show.
+    generator_rejects: list[tuple[TradeCandidate, list[str]]] = []
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {}
     fetched_spots: dict[str, float] = {}  # symbols whose chain we fetched → scan_state baseline
     # Half-dead-socket circuit breaker (N-fix 2026-06-24): count consecutive chain-fetch
@@ -1166,7 +1233,7 @@ async def _run_scan_body(
                 and p.right == OptionRight.CALL
                 and p.position < 0
             )
-            new_cc = generate_cc_candidates(
+            cc_screen = screen_cc_candidates(
                 symbol,
                 quotes,
                 stock_pos,
@@ -1175,23 +1242,20 @@ async def _run_scan_body(
                 fund_stats,
                 existing_short_calls=existing_short_calls,
             )
-            # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches)
-            for c in new_cc:
-                if sentiment_detail is not None:
-                    c.scores.sentiment_score = sentiment_detail.overall
-                    c.scores.sentiment_detail = sentiment_detail
-            cc_candidates.extend(new_cc)
+            # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches).
+            # Rejected contracts get it too — they are shown on the same cards.
+            _apply_sentiment(cc_screen, sentiment_detail)
+            cc_candidates.extend(cc_screen.passed)
+            generator_rejects.extend(cc_screen.rejected)
 
         # CSP candidates for would_own symbols
         if symbol in would_own and quotes:
-            new_csp = generate_csp_candidates(
+            csp_screen = screen_csp_candidates(
                 symbol, quotes, account, iv_stats, tech_stats, fund_stats
             )
-            for c in new_csp:
-                if sentiment_detail is not None:
-                    c.scores.sentiment_score = sentiment_detail.overall
-                    c.scores.sentiment_detail = sentiment_detail
-            csp_candidates.extend(new_csp)
+            _apply_sentiment(csp_screen, sentiment_detail)
+            csp_candidates.extend(csp_screen.passed)
+            generator_rejects.extend(csp_screen.rejected)
 
     await tracker.tick("market_data", "✅", f"{n}/{n} symbols")
 
@@ -1212,19 +1276,42 @@ async def _run_scan_body(
     csp_near_misses: list[tuple[TradeCandidate, list[str]]] = []
     cc_near_miss_more = 0
     csp_near_miss_more = 0
+    # Every contract this scan priced, and what became of it. Generator-stage rejects are
+    # scored separately from the gated slate so they can be ranked and displayed, but they are
+    # deliberately NOT fed to validate_candidates — the risk engine's cumulative budgets are
+    # consumed greedily, and charging them against contracts that never qualified would
+    # wrongly starve the ones that did.
+    assessed: list[AssessedContract] = []
+    if generator_rejects:
+        try:
+            scored_rejects = {
+                c.candidate_id: c for c in score_candidates([cand for cand, _ in generator_rejects])
+            }
+            assessed.extend(
+                AssessedContract(
+                    candidate=scored_rejects.get(cand.candidate_id, cand),
+                    stage=AssessmentStage.GENERATOR,
+                    reasons=reasons,
+                )
+                for cand, reasons in generator_rejects
+            )
+        except Exception:
+            log.exception("scan: scoring generator rejects failed — continuing without them")
     try:
         if all_option_candidates:
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
             verdicts = validate_candidates(scored, account, positions)
             verdict_map = {v.candidate_id: v for v in verdicts}
-            passed = [
+            gate_passed = [
                 c
                 for c in scored
                 if verdict_map.get(c.candidate_id)
                 and verdict_map[c.candidate_id].verdict.value == "pass"
             ]
             log.info(
-                "scan: %d/%d candidates passed risk gate", len(passed), len(all_option_candidates)
+                "scan: %d/%d candidates passed risk gate",
+                len(gate_passed),
+                len(all_option_candidates),
             )
             # Tally rejection reasons per strategy and per symbol (C7).
             # The per-symbol map drives the skip-reasons card sent at the end of each scan.
@@ -1249,39 +1336,51 @@ async def _run_scan_body(
                             bucket.append(r)
             # Score floor: only surface candidates above the configured quality bar.
             min_score = get_effective_weights().get("min_candidate_score", 0)
-            passed = [c for c in passed if c.blended_score >= min_score]
+            passed = [c for c in gate_passed if c.blended_score >= min_score]
             # Remove any symbol that has at least one passing candidate from the skip map —
             # we only surface symbols where *every* candidate was rejected (C7).
             for c in passed:
                 per_symbol_skip.pop(c.underlying, None)
-            top = select_top_candidates(passed)
+            top, dropped = select_top_candidates_detailed(passed)
 
-            # Near-misses per strategy: the top-scoring contracts that did NOT make `passed`
-            # (failed the gate, or cleared it but fell below the score floor). `scored` is sorted
-            # desc, so iterating yields them best-first. Return up to _NEAR_MISS_LIMIT plus a count
-            # of how many further rejects were truncated (rendered as "…and N more").
-            passed_ids = {c.candidate_id for c in passed}
-
-            def _near_misses(
-                strategy_value: str,
-            ) -> tuple[list[tuple[TradeCandidate, list[str]]], int]:
-                rejected = [
-                    c
-                    for c in scored
-                    if c.strategy.value == strategy_value and c.candidate_id not in passed_ids
-                ]
-                shown: list[tuple[TradeCandidate, list[str]]] = []
-                for cand in rejected[:_NEAR_MISS_LIMIT]:
+            # Record the fate of every gated contract. `gate_passed` is pre-score-floor, so the
+            # difference between it and `passed` is exactly the score-floor casualties.
+            gate_passed_ids = {c.candidate_id for c in gate_passed}
+            floor_ids = gate_passed_ids - {c.candidate_id for c in passed}
+            top_ids = {c.candidate_id for c in top}
+            dropped_reasons = {c.candidate_id: why for c, why in dropped}
+            for cand in scored:
+                if cand.candidate_id in top_ids:
+                    assessed.append(AssessedContract(candidate=cand, stage=AssessmentStage.PASSED))
+                elif cand.candidate_id in dropped_reasons:
+                    why = dropped_reasons[cand.candidate_id]
+                    assessed.append(
+                        AssessedContract(
+                            candidate=cand,
+                            stage=(
+                                AssessmentStage.DEDUPE if why == "dedupe" else AssessmentStage.TOP_N
+                            ),
+                            reasons=[f"{why}_not_surfaced"],
+                        )
+                    )
+                elif cand.candidate_id in floor_ids:
+                    assessed.append(
+                        AssessedContract(
+                            candidate=cand,
+                            stage=AssessmentStage.SCORE_FLOOR,
+                            reasons=["score_below_minimum"],
+                        )
+                    )
+                else:
                     v = verdict_map.get(cand.candidate_id)
-                    if v is not None and v.verdict.value == "pass":
-                        reasons = ["score_below_minimum"]  # passed gate, below score floor
-                    else:
-                        reasons = list(v.reasons) if v is not None else []
-                    shown.append((cand, reasons))
-                return shown, max(0, len(rejected) - len(shown))
+                    assessed.append(
+                        AssessedContract(
+                            candidate=cand,
+                            stage=AssessmentStage.RISK_GATE,
+                            reasons=list(v.reasons) if v is not None else [],
+                        )
+                    )
 
-            cc_near_misses, cc_near_miss_more = _near_misses("covered_call")
-            csp_near_misses, csp_near_miss_more = _near_misses("cash_secured_put")
         else:
             top = []
             passed = []
@@ -1290,6 +1389,13 @@ async def _run_scan_body(
         log.exception("scan: scoring/risk-gate failed — aborting")
         await tracker.error("scoring", "failed — aborting")
         return result
+
+    # Rank the assessed-but-not-approved contracts best-first, per strategy. This now covers
+    # generator-stage rejects too, so a symbol whose entire chain failed the delta band still
+    # produces a named closest contract instead of silence.
+    result.assessed = _rank_assessed(assessed)
+    cc_near_misses, cc_near_miss_more = _near_misses(result.assessed, "covered_call")
+    csp_near_misses, csp_near_miss_more = _near_misses(result.assessed, "cash_secured_put")
 
     result.cc_candidates = [c for c in top if c.strategy.value == "covered_call"]
     result.csp_candidates = [c for c in top if c.strategy.value == "cash_secured_put"]
@@ -1363,6 +1469,10 @@ async def _run_scan_body(
     _persist_memory(top, result.buy_candidates, result.reviews)
     # Outcome ledger: verdict + signals + deterministic baseline (outcomes back-filled later).
     _persist_ledger(top, result.reviews, result.market_conditions, result.run_id)
+    # Assessment audit trail: every contract priced this run and why it was or wasn't
+    # surfaced. Write-only forensics (pruned to 14d at EOD) — nothing reads it back, so it
+    # can never influence a trading decision, and a write failure never aborts the scan.
+    record_assessments(result.run_id, result.assessed)
 
     # --- 10. Send to Telegram ---
     # send_candidates manages its own short DB transactions (no session held across the
@@ -1370,7 +1480,24 @@ async def _run_scan_body(
     await tracker.tick("notify", "⏳")
     try:
         cfg_s = get_config().secrets
-        cc_sent = await send_candidates(
+        # The full "assessed but not approved" listing goes out on manual /scan and full
+        # sweeps only. The 15-min intraday loop keeps the compact one-line near-miss digest
+        # (`near_misses` below) so this can't reintroduce ~26 extra messages a day (S6).
+        cc_assessed_text = (
+            format_assessed_contracts(
+                result.assessed, strategy="covered_call", max_rows=_ASSESSED_LIMIT
+            )
+            if not intraday
+            else None
+        )
+        csp_assessed_text = (
+            format_assessed_contracts(
+                result.assessed, strategy="cash_secured_put", max_rows=_ASSESSED_LIMIT
+            )
+            if not intraday
+            else None
+        )
+        await send_candidates(
             result.cc_candidates,
             result.reviews,
             thread_id=thread_id(cfg_s.telegram_thread_cc),
@@ -1385,12 +1512,14 @@ async def _run_scan_body(
                 positions=positions,
                 rejection_tally=cc_rejection_tally,
                 symbol_count=len({c.underlying for c in cc_candidates}),
+                intraday=intraday,
             ),
             suppress_unchanged=intraday,
             near_misses=cc_near_misses,
             near_miss_more=cc_near_miss_more,
+            assessed_text=cc_assessed_text,
         )
-        csp_sent = await send_candidates(
+        await send_candidates(
             result.csp_candidates,
             result.reviews,
             thread_id=thread_id(cfg_s.telegram_thread_csp),
@@ -1404,13 +1533,14 @@ async def _run_scan_body(
                 strategy="cash_secured_put",
                 rejection_tally=csp_rejection_tally,
                 symbol_count=len({c.underlying for c in csp_candidates}),
+                intraday=intraday,
             ),
             suppress_unchanged=intraday,
             near_misses=csp_near_misses,
             near_miss_more=csp_near_miss_more,
+            assessed_text=csp_assessed_text,
         )
-        cand_sent = cc_sent or csp_sent
-        buy_sent = await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
+        await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
 
         # C7: skip-reasons card — send on full sweeps (manual /scan) when any symbols
         # were fully rejected. Omitted for intraday cycles (would fire ~26× per session).
@@ -1427,14 +1557,13 @@ async def _run_scan_body(
                 except Exception:
                     log.warning("scan: failed to send skip-reasons card", exc_info=True)
 
-        # S6: an intraday cycle that surfaced nothing (no candidate cleared the gate, buy list
-        # unchanged) would otherwise be silent — the operator can't tell a deliberately quiet
-        # market from a dead daemon. Send one compact heartbeat that confirms the scan ran and
-        # explains the silence (most names moved < the materiality threshold, so chains weren't
-        # re-fetched and Claude wasn't invoked). Manual /scan and the cron never reach this
-        # (intraday=False) and always send in full.
-        if intraday and not cand_sent and not buy_sent:
-            await _send_quiet_heartbeat(bot, chat_id, result)
+        # S6 note: an intraday cycle that surfaces nothing is NOT silent. `send_candidates`
+        # appends a timestamped `[HH:MM] … no candidates this cycle <reason>` line (plus the
+        # closest near-miss) to the persisted per-thread status message, and `_no_candidates_
+        # reason` now carries the materiality clause explaining *why* chains weren't re-fetched.
+        # A separate heartbeat message used to exist for this but could never fire — both send
+        # functions return True on their empty path — and reinstating it would mean two
+        # messages per quiet cycle, which is exactly the flood S6 removed.
     except Exception:
         log.exception("scan: failed to send Telegram messages")
         await tracker.error("notify", "send failed")
@@ -1572,6 +1701,7 @@ async def run_ticker_scan(
 
     # 5. CC candidates — only if we hold the stock.
     cc_candidates: list[TradeCandidate] = []
+    ticker_rejects: list[tuple[TradeCandidate, list[str]]] = []
     stock_pos = next(
         (
             p
@@ -1590,7 +1720,7 @@ async def run_ticker_scan(
             and p.right == OptionRight.CALL
             and p.position < 0
         )
-        cc_candidates = generate_cc_candidates(
+        cc_screen = screen_cc_candidates(
             ticker,
             quotes,
             stock_pos,
@@ -1599,13 +1729,17 @@ async def run_ticker_scan(
             fund_stats,
             existing_short_calls=existing_short_calls,
         )
+        cc_candidates = cc_screen.passed
+        ticker_rejects.extend(cc_screen.rejected)
 
-    # 6. CSP candidates — always attempt (generate_csp_candidates filters by would_own).
+    # 6. CSP candidates — always attempt (the screen filters by would_own).
     csp_candidates: list[TradeCandidate] = []
     if quotes:
-        csp_candidates = generate_csp_candidates(
+        csp_screen = screen_csp_candidates(
             ticker, quotes, account, iv_stats, tech_stats, fund_stats
         )
+        csp_candidates = csp_screen.passed
+        ticker_rejects.extend(csp_screen.rejected)
 
     # 7. Scoring + risk gate on CC+CSP.
     all_option_candidates = cc_candidates + csp_candidates
@@ -1634,30 +1768,72 @@ async def run_ticker_scan(
             passed = []
         cc_passed = [c for c in passed if c.strategy.value == "covered_call"]
         csp_passed = [c for c in passed if c.strategy.value == "cash_secured_put"]
-
-        # Why was a strategy empty? Surface the best-scoring contract that *failed* the gate (a
-        # "near miss") plus exactly what it failed on, so the card explains "No qualifying X
-        # options" with the closest strike rather than going silent (the single-ticker analogue
-        # of C7's skip-reasons card). `scored` is sorted desc, so the first rejected candidate of
-        # a strategy is its highest-scoring near miss.
-        def _near_miss(strategy_value: str) -> tuple[TradeCandidate | None, list[str]]:
-            for c in scored:
-                if c.strategy.value != strategy_value:
-                    continue
-                v = verdict_map.get(c.candidate_id)
-                if v is not None and v.verdict.value == "pass":
-                    # Cleared the gate but fell below the score floor (else it'd be in `passed`).
-                    return c, ["score_below_minimum"]
-                return c, (list(v.reasons) if v is not None else [])
-            return None, []
-
-        if not cc_passed:
-            cc_near_miss, cc_reject_reasons = _near_miss("covered_call")
-        if not csp_passed:
-            csp_near_miss, csp_reject_reasons = _near_miss("cash_secured_put")
     else:
         cc_passed = []
         csp_passed = []
+
+    # Assemble every contract this deep-dive priced, gate-stage and generator-stage alike, so
+    # the card can name the closest miss and list the alternatives it considered. Before this,
+    # a ticker whose whole chain failed the delta band produced no candidate at all and the
+    # near-miss block silently vanished.
+    passed_ids = {c.candidate_id for c in cc_passed + csp_passed}
+    ticker_assessed: list[AssessedContract] = [
+        AssessedContract(candidate=c, stage=AssessmentStage.PASSED) for c in cc_passed + csp_passed
+    ]
+    for cand in scored:
+        if cand.candidate_id in passed_ids:
+            continue
+        v = verdict_map.get(cand.candidate_id)
+        if v is not None and v.verdict.value == "pass":
+            # Cleared the gate but fell below the score floor (else it'd be in `passed`).
+            ticker_assessed.append(
+                AssessedContract(
+                    candidate=cand,
+                    stage=AssessmentStage.SCORE_FLOOR,
+                    reasons=["score_below_minimum"],
+                )
+            )
+        else:
+            ticker_assessed.append(
+                AssessedContract(
+                    candidate=cand,
+                    stage=AssessmentStage.RISK_GATE,
+                    reasons=list(v.reasons) if v is not None else [],
+                )
+            )
+    if ticker_rejects:
+        try:
+            scored_rejects = {
+                c.candidate_id: c for c in score_candidates([c for c, _ in ticker_rejects])
+            }
+        except Exception:
+            log.warning("ticker_scan: scoring rejects failed for %s", ticker, exc_info=True)
+            scored_rejects = {}
+        ticker_assessed.extend(
+            AssessedContract(
+                candidate=scored_rejects.get(cand.candidate_id, cand),
+                stage=AssessmentStage.GENERATOR,
+                reasons=reasons,
+            )
+            for cand, reasons in ticker_rejects
+        )
+    ticker_assessed = _rank_assessed(ticker_assessed)
+    # Same write-only audit trail as the full scan, keyed by a per-deep-dive run id.
+    record_assessments(f"ticker-{uuid.uuid4().hex[:8]}", ticker_assessed)
+
+    # Why was a strategy empty? Name the closest contract that failed plus exactly what it
+    # failed on, so the card explains "No qualifying X options" with a real strike rather than
+    # going silent (the single-ticker analogue of C7's skip-reasons card).
+    def _closest(strategy_value: str) -> tuple[TradeCandidate | None, list[str]]:
+        for a in ticker_assessed:
+            if not a.passed and a.candidate.strategy.value == strategy_value:
+                return a.candidate, a.reasons
+        return None, []
+
+    if not cc_passed:
+        cc_near_miss, cc_reject_reasons = _closest("covered_call")
+    if not csp_passed:
+        csp_near_miss, csp_reject_reasons = _closest("cash_secured_put")
 
     # 8. Buy candidate for this single ticker.
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {
@@ -1741,6 +1917,7 @@ async def run_ticker_scan(
         greeks_fallback=greeks_fallback,
         market_conditions=market_conditions,
         sector_context=sector_ctx,
+        assessed=ticker_assessed,
     )
     await _ticker_edit_msg(bot, chat_id, progress_msg_id, text)
     log.info(

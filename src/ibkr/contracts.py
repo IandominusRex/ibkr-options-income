@@ -97,9 +97,7 @@ async def qualify_options_async(
             )
             continue
         items = result if isinstance(result, list) else [result]
-        ok.extend(
-            cast(Option, c) for c in items if c is not None and getattr(c, "conId", None)
-        )
+        ok.extend(cast(Option, c) for c in items if c is not None and getattr(c, "conId", None))
         if throttle_seconds > 0 and i + chunk_size < len(contracts):
             await asyncio.sleep(throttle_seconds)
 

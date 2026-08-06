@@ -162,9 +162,28 @@ class IVStats(BaseModel):
 
 
 class MarketConditions(BaseModel):
-    """Market-level signals fetched once per scan (not per-symbol)."""
+    """Market-level signals fetched once per scan (not per-symbol).
+
+    The macro backdrop for a premium seller: how expensive is fear (VIX), is that fear
+    front-loaded or termed-out (VIX/VIX3M), what are rates doing (10y level + 5-day change),
+    how is the tape trading, and what is the news flow saying. Every field degrades to
+    ``None`` independently — no macro source is ever allowed to fail a scan.
+
+    **Enrichment only.** This reaches the Telegram card and the reasoning prompt; it never
+    enters scoring, the risk engine, or position sizing.
+    """
 
     vix: float | None = None
+    vix3m: float | None = None  # 3-month VIX — the far end of the vol term structure
+    # VIX / VIX3M. < 1 = contango (calm, the normal state); > 1 = backwardation, i.e. the
+    # market is pricing more risk *now* than in three months — historically a stress signal.
+    vix_term_ratio: float | None = None
+    ten_year_yield: float | None = None  # US 10-year Treasury yield, percent (^TNX / 10)
+    ten_year_change_5d_bp: float | None = None  # 5-session change, basis points
+    spy_ret_5d_pct: float | None = None  # broad-tape 5-session % change
+    macro_headline_score: float | None = None  # 0-100 VADER read over SPY/QQQ headlines
+    macro_headline_count: int = 0
+    top_macro_headline: str | None = None
     captured_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -216,6 +235,15 @@ class FundamentalStats(BaseModel):
     dividend_safe: bool | None = None
     ex_dividend_date: date | None = None
     quality_flag: bool | None = None  # passes the basic quality screen
+    # Valuation anchors (yfinance `info`, same dict the fields above are read from — no extra
+    # network cost). Used by analytics/fair_value.py to place a share-acquisition level; never
+    # a gate. Analyst targets are consensus opinion, not fact — treat as one weak anchor.
+    target_mean_price: float | None = None
+    target_high_price: float | None = None
+    target_low_price: float | None = None
+    recommendation_key: str | None = None  # "buy" / "hold" / "underperform" / …
+    fifty_two_week_high: float | None = None
+    fifty_two_week_low: float | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -258,6 +286,47 @@ class ScoreCard(BaseModel):
     annualized_roc_score: float = 0.0  # capped annualized ROC normalized to 0-100 (C2)
 
 
+class IdealZone(BaseModel):
+    """Where a short option *ought* to be written, and for how much.
+
+    Computed deterministically by :mod:`src.analytics.fair_value` from technicals
+    (support/resistance, SMAs), IV (expected move) and fundamentals (earnings, ex-div,
+    quality, analyst targets). It answers three questions the raw chain does not:
+
+      * **strike_lo/hi/anchor** — the strike band worth writing, not merely the band the
+        delta filter admits.
+      * **min_credit** — the least credit worth accepting for the contract actually on
+        offer: Black-Scholes fair value at *realised* vol plus a required edge, floored by
+        the configured ROC/yield gates. Selling below it is selling variance for free.
+      * **action_price / buy_below** — the underlying level that makes the write attractive,
+        and the level at which acquiring shares is sensible.
+
+    Every field is optional: each input degrades independently and ``confidence`` reports how
+    much of the derivation actually had data. Display + optional ranking only — this never
+    rejects a candidate (the deterministic Rules Engine remains the sole gate).
+    """
+
+    symbol: str
+    right: OptionRight
+    dte: int
+    spot: float
+    expected_move: float | None = None  # spot · IV · √(dte/365), in dollars (1σ)
+    # Strike zone
+    strike_lo: float | None = None
+    strike_hi: float | None = None
+    strike_anchor: float | None = None  # the single preferred strike within the band
+    strike_anchors: list[str] = Field(default_factory=list)  # human-readable drivers
+    # Credit floor for the contract on offer
+    min_credit: float | None = None  # per share
+    credit_anchors: list[str] = Field(default_factory=list)
+    # Underlying levels
+    action_price: float | None = None  # spot at which strike_anchor sits ~1σ OTM
+    action_note: str | None = None
+    buy_below: float | None = None  # share-acquisition level
+    buy_anchors: list[str] = Field(default_factory=list)
+    confidence: Literal["high", "medium", "low"] = "low"
+
+
 class TradeCandidate(BaseModel):
     """A concrete proposed option sale, fully specified and scored."""
 
@@ -287,6 +356,9 @@ class TradeCandidate(BaseModel):
     next_earnings: date | None = (
         None  # earnings date within the option's life → blackout (risk engine)
     )
+    # Where this contract *should* sit vs where it does — enrichment for the card and the
+    # reasoning layer, plus an optional (default-off) `zone_fit` ranking term. Never a gate.
+    ideal: IdealZone | None = None
     # Provenance
     scores: ScoreCard
     blended_score: float = 0.0  # weighted 0-100
@@ -302,6 +374,39 @@ class RiskVerdict(BaseModel):
     candidate_id: str
     verdict: Verdict
     reasons: list[str] = Field(default_factory=list)  # why pass/reject
+
+
+class AssessmentStage(StrEnum):
+    """How far a contract got before it was set aside.
+
+    Ordered from earliest to latest. Anything other than ``PASSED`` means the contract was
+    assessed and not surfaced for approval — the reason codes say why.
+    """
+
+    GENERATOR = "generator"  # failed a strategy filter (delta band, DTE, liquidity, ROC/yield)
+    RISK_GATE = "risk_gate"  # failed the deterministic Rules Engine
+    SCORE_FLOOR = "score_floor"  # cleared the gate but scored below min_candidate_score
+    DEDUPE = "dedupe"  # a better strike for the same (underlying, strategy) won
+    TOP_N = "top_n"  # good enough, but max_new_positions_per_run was already full
+    PASSED = "passed"  # surfaced for approval
+
+
+class AssessedContract(BaseModel):
+    """One contract the scan looked at, and what became of it.
+
+    Every contract the strategy generators price ends up here — approved or not — so a scan
+    can always answer "what did you see, and why didn't you take it?" instead of going
+    silent. Rejections used to exist only as an aggregate log counter (generator stage) or an
+    in-memory verdict discarded at the end of the run (gate stage).
+    """
+
+    candidate: TradeCandidate
+    stage: AssessmentStage
+    reasons: list[str] = Field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        return self.stage == AssessmentStage.PASSED
 
 
 class ClaudeReview(BaseModel):

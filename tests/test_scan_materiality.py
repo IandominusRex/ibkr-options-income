@@ -356,14 +356,20 @@ async def test_held_position_always_fetched_even_when_unmoved(tmp_path, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# Quiet-cycle heartbeat (S6) — an intraday cycle that surfaces nothing still pings Telegram
+# Quiet intraday cycle — silence is explained, not empty (S6)
+#
+# A quiet cycle used to be routed to a separate `format_quiet_cycle` heartbeat message, but
+# that path was unreachable: both `send_candidates` and `send_buy_list` return True on their
+# empty path, so `if not cand_sent and not buy_sent` never fired in production (only the
+# mocked tests, which stubbed the return to False, ever exercised it). The materiality detail
+# it carried now rides on the empty-screen diagnostic that actually gets appended.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_quiet_intraday_cycle_sends_heartbeat(tmp_path, monkeypatch):
-    """No candidate clears the gate and the buy list is empty → one quiet-cycle heartbeat goes
-    out (so silence ≠ dead daemon), explaining how many names were below the move threshold."""
+async def test_quiet_intraday_cycle_explains_why_chains_were_skipped(tmp_path, monkeypatch):
+    """No candidate clears the gate → the empty-screen reason names how many symbols were
+    below the move threshold, so silence is distinguishable from a dead daemon."""
     _db_setup(tmp_path, monkeypatch)
     import src.orchestrator.scan as scanmod
     from src.common.config import get_config
@@ -375,10 +381,9 @@ async def test_quiet_intraday_cycle_sends_heartbeat(tmp_path, monkeypatch):
         {"would_own": ["AAPL", "MSFT"], "sectors": {"AAPL": "tech", "MSFT": "tech"}},
     )
     _stub_common(scanmod, monkeypatch, positions=[])
-    # Nothing surfaced this cycle → both sends report "nothing went out".
-    monkeypatch.setattr(scanmod, "send_candidates", AsyncMock(return_value=False))
-    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock(return_value=False))
-
+    send_candidates = AsyncMock(return_value=True)
+    monkeypatch.setattr(scanmod, "send_candidates", send_candidates)
+    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock(return_value=True))
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", AsyncMock(return_value=[]))
     # Both would_own names unmoved → skipped → material_count 0, skipped 2.
     monkeypatch.setattr(
@@ -391,21 +396,17 @@ async def test_quiet_intraday_cycle_sends_heartbeat(tmp_path, monkeypatch):
     bot = MagicMock()
     bot.send_message = AsyncMock()
 
-    result = await asyncio.wait_for(
+    await asyncio.wait_for(
         scanmod.run_scan(MagicMock(), bot=bot, chat_id="1", intraday=True), timeout=5.0
     )
 
-    assert result.quiet_cycle is True
-    bot.send_message.assert_awaited_once()
-    text = bot.send_message.await_args.kwargs["text"]
-    assert "Quiet cycle" in text
-    assert "2/2" in text  # both names below the move threshold
+    reasons = [c.kwargs.get("empty_reason", "") for c in send_candidates.await_args_list]
+    assert any("2/2 names moved" in (r or "") for r in reasons), reasons
 
 
 @pytest.mark.asyncio
-async def test_full_sweep_never_sends_heartbeat(tmp_path, monkeypatch):
-    """Manual /scan (intraday=False) must never emit the heartbeat, even
-    when the cycle surfaces nothing — it always sends in full."""
+async def test_full_sweep_omits_the_materiality_clause(tmp_path, monkeypatch):
+    """A manual /scan re-fetches everything, so "names moved <X%" would be a lie there."""
     _db_setup(tmp_path, monkeypatch)
     import src.orchestrator.scan as scanmod
     from src.common.config import get_config
@@ -413,19 +414,22 @@ async def test_full_sweep_never_sends_heartbeat(tmp_path, monkeypatch):
     cfg = get_config()
     monkeypatch.setattr(cfg, "universe", {"would_own": ["AAPL"], "sectors": {"AAPL": "tech"}})
     _stub_common(scanmod, monkeypatch, positions=[])
-    monkeypatch.setattr(scanmod, "send_candidates", AsyncMock(return_value=False))
-    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock(return_value=False))
+    send_candidates = AsyncMock(return_value=True)
+    monkeypatch.setattr(scanmod, "send_candidates", send_candidates)
+    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock(return_value=True))
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", AsyncMock(return_value=[]))
 
     bot = MagicMock()
     bot.send_message = AsyncMock()
 
-    result = await asyncio.wait_for(
-        scanmod.run_scan(MagicMock(), bot=bot, chat_id="1"), timeout=5.0
-    )
+    await asyncio.wait_for(scanmod.run_scan(MagicMock(), bot=bot, chat_id="1"), timeout=5.0)
 
-    assert result.quiet_cycle is False
-    # The full sweep still sends the end-of-scan data-provenance summary, but never the
-    # intraday quiet-cycle heartbeat.
-    for call in bot.send_message.await_args_list:
-        assert "Quiet cycle" not in call.kwargs["text"]
+    for call in send_candidates.await_args_list:
+        assert "names moved" not in (call.kwargs.get("empty_reason") or "")
+
+
+def test_materiality_clause_is_empty_when_everything_was_fetched() -> None:
+    import src.orchestrator.scan as scanmod
+
+    result = scanmod.ScanResult(total_symbols=5, material_count=5)
+    assert scanmod._materiality_clause(result, intraday=True) == ""

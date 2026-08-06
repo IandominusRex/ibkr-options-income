@@ -50,6 +50,32 @@ iv:
   # Lookback window (trading days) for the realized-vol computation used in the IV/RV ratio.
   realized_vol_window: 20
 
+# --- Ideal-price zone (analytics/fair_value.py) ---
+# DISPLAY + OPTIONAL RANKING ONLY. Nothing here rejects a candidate — the Rules Engine
+# (risk_engine.py) remains the sole gate. These knobs shape the "ideal strike / ideal credit /
+# action level" shown on every card and injected into the reasoning prompt.
+ideal_zone:
+  # The strike band, expressed in expected moves (1σ = spot · IV · √(DTE/365)).
+  # Calibrated against the delta bands the generators actually screen — NOT picked by feel.
+  # Measured with Black-Scholes across this universe's spot/IV/DTE range, a 0.15–0.30 delta
+  # put sits at ~0.34–0.93σ and a 0.20–0.35 delta call at ~0.48–1.17σ; 0.30–1.20 brackets
+  # both with margin. Get this wrong and the feature becomes noise: a band placed outside the
+  # range actually traded reports every real candidate as "outside the ideal zone".
+  # The band is the *acceptable* range; the specificity lives in `strike_anchor`, which the
+  # support/resistance snap and the SMA anchor pull to a particular level inside it.
+  em_lo_mult: 0.30    # inner edge (closer to spot)
+  em_hi_mult: 1.20    # outer edge (further OTM)
+  # Extra cushion pushed outward when earnings fall inside the option's life.
+  earnings_widen_mult: 0.25
+  # Snap the band to a support/resistance level when one sits within this % of an edge.
+  support_pull_pct: 3.0
+  # Required premium over Black-Scholes fair value priced at *realised* vol (HV30). This is
+  # the variance-risk-premium thesis made explicit: selling at or below fair value earns no
+  # edge for the risk taken. Raise to demand a richer entry.
+  min_credit_edge_pct: 10.0
+  # Discount applied to the analyst mean target when placing the share-acquisition level.
+  buy_margin_of_safety_pct: 8.0
+
 # --- Live execution re-gate (send-time, validate_live_quote) ---
 live_execution:
   # Reject a fill when the live mid has collapsed below this fraction of the approved

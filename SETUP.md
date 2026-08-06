@@ -196,6 +196,18 @@ Conservative defaults are pre-configured. Key settings to review:
 | `live_execution.min_live_premium_ratio` | 0.80 | Send-time floor: reject a fill if the live mid drops below this fraction of the approved premium (IV-crush guard). 0 disables. |
 | `live_execution.require_ibkr_greeks_when_live` | true | In LIVE mode, the delta re-gate requires IBKR-sourced greeks (never the paper yfinance fallback). |
 
+The `ideal_zone:` block tunes the **ideal strike / ideal credit / action levels** shown beside every
+contract. None of it gates a trade — it changes what the cards and the reasoning prompt say, and
+(only if you raise `zone_fit` in `scoring_weights.yaml`) how candidates are ranked:
+
+| Setting (YAML path) | Default | What it means |
+|---|---|---|
+| `ideal_zone.em_lo_mult` / `em_hi_mult` | 0.75 / 1.25 | Where the ideal strike band sits, in expected moves (1σ = spot × IV × √(DTE/365)). Roughly brackets the 0.15–0.30 delta band. |
+| `ideal_zone.support_pull_pct` | 3.0 | How close a support/resistance level must be (% of the band edge) for the band to snap to it |
+| `ideal_zone.earnings_widen_mult` | 0.25 | Extra cushion, in expected moves, when earnings fall inside the option's life |
+| `ideal_zone.min_credit_edge_pct` | 10.0 | Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). Raise to insist on a richer entry. |
+| `ideal_zone.buy_margin_of_safety_pct` | 8.0 | Discount applied to the analyst mean target when placing the "buy shares below" level |
+
 > Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
 > engine — see `STATUS.md`). The per-ticker and per-sector caps are the active concentration gates.
 
@@ -210,6 +222,11 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,
 fundamentals, liquidity, assignment risk). You can leave these at the defaults to start.
+
+`zone_fit` (default `0.0`, one per strategy block) is **not** a block weight — it is a blend *inside*
+`technical`, mixing regime alignment with how well the strike sits in the ideal band. At `0.0`
+scoring behaves exactly as it did before the ideal-zone feature; raise it (e.g. `0.3`) to rank by
+strike placement as well as regime. It never gates a trade.
 
 Two extra knobs control what gets surfaced:
 - `min_candidate_score` (default 55) — the minimum blended score for an option (CC/CSP) candidate
@@ -890,7 +907,7 @@ an 8B model, depending on prompt length and memory pressure.
 | No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or one of the `TELEGRAM_THREAD_*` vars | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
 | Messages arrive in wrong topic | `TELEGRAM_THREAD_SCAN` / `_CSP` / `_CC` / `_BUY` / `_ACCOUNT` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic, and set the matching `TELEGRAM_THREAD_*` variable. |
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
-| Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
+| Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | **A scan that approves nothing now tells you why.** Read the "🔎 Assessed — not approved" block (manual `/scan` and full sweeps) or the `↳ closest:` line on a quiet intraday cycle: each names a real contract and the gates it failed (delta band, DTE window, liquidity, ROC/yield floor, IV rank, score floor, or simply that a better strike won the slot). Tune the matching key in `config/risk_limits.yaml`; check `config/universe.yaml` if whole symbols are absent. |
 | `/scan` progress message shows "Scan failed" with a ❌ stage | A critical stage (account fetch or scoring) threw an unexpected exception | Check the approval service logs for the full traceback; restart TWS/Gateway if the account stage fails |
 | `/scan` progress freezes on one symbol (e.g. "32/46 — SOFI") and never advances | That symbol's option-chain fetch hung waiting on an IBKR response that never arrived (pacing violation, error 10197 competing-session lockout, or a stuck `qualifyContractsAsync`) | Wait up to `market_data.symbol_timeout_seconds` (default 150s) — the scan logs `option chain for SOFI exceeded symbol_timeout_seconds=... — skipping this symbol` and continues with the remaining symbols. If it still never recovers, the process itself has hung; restart it. |
 | Every symbol from one point on times out (`option chain for X exceeded symbol_timeout_seconds`), and the logs show an `Error 200, No security definition has been found` storm just before it | A high-IV name built a several-hundred-contract qualification burst of mostly-nonexistent weekly strikes, tripping an IBKR pacing lockout that wedged the session (the 2026-06-22 SMH stall). This is now guarded: `market_data.max_strikes_per_symbol` caps the strike count, qualification is chunked/paced/timeout-bounded, and `drain_market_data_lines` reclaims leaked lines after each failed symbol | If you still hit it, lower `market_data.max_strikes_per_symbol` (default 80) or `qualify_timeout_seconds`, and restart the process to clear any session-level pacing lockout |

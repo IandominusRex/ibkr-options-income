@@ -50,12 +50,39 @@ class CandidateRow(Base):
 
 
 class RiskVerdictRow(Base):
+    """The fate of every contract a scan priced — approved or not, and why not.
+
+    Rejections used to be entirely ephemeral: generator-stage filters left only an aggregate
+    log counter, gate-stage verdicts lived in memory until the run ended, and dedupe/top-N
+    losers vanished. That made "why did NVDA never fire in July?" unanswerable after the fact.
+
+    One row per assessed contract per run. `stage` says how far it got (see
+    :class:`~src.common.schemas.AssessmentStage`); `reasons` is the raw code list the
+    formatters humanize. The ideal-zone columns are denormalized so a historical row can be
+    read without recomputing the zone from analytics that have since moved.
+
+    Written best-effort by ``storage.risk_verdicts.record_assessments`` and pruned to 14 days
+    by the EOD run, exactly like ``option_quotes``.
+    """
+
     __tablename__ = "risk_verdicts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     candidate_id: Mapped[str] = mapped_column(String(64), index=True)
+    run_id: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(16), index=True, nullable=True)
+    strategy: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    strike: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
     verdict: Mapped[str] = mapped_column(String(10))
+    stage: Mapped[str | None] = mapped_column(String(16), index=True, nullable=True)
     reasons: Mapped[dict] = mapped_column(JSON)
+    blended_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    premium: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Denormalized ideal zone (analytics/fair_value.py) as it stood at assessment time.
+    ideal_lo: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ideal_hi: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_credit: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

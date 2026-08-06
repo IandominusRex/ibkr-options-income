@@ -156,6 +156,7 @@ async def send_candidates(
     suppress_unchanged: bool = False,
     near_misses: list[tuple[TradeCandidate, list[str]]] | None = None,
     near_miss_more: int = 0,
+    assessed_text: str | None = None,
 ) -> bool:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
@@ -166,8 +167,10 @@ async def send_candidates(
 
     In MANUAL mode (default): sends one Approve/Reject message per candidate.
 
-    Empty candidates: sends a diagnostic ``format_screen_empty`` message to the thread so the
-    operator can always see *something* per cycle (not silent on slow markets / gate rejections).
+    Empty candidates: appends a timestamped ``[HH:MM] … no candidates this cycle <reason>`` line
+    (plus the closest near-miss) to the thread's persisted status message via ``_append_status``,
+    so the operator can always see *something* per cycle — never silent on slow markets or gate
+    rejections.
 
     ``suppress_unchanged`` (set by the 15-min intraday loop, never by manual /scan) first
     checks if the overall screen hash is unchanged; if so and every candidate
@@ -175,8 +178,14 @@ async def send_candidates(
     message instead of re-spamming the full screen. Per-candidate suppression still applies inside
     the full-send path. On a fresh full send the hash+time are stored for future cycle comparisons.
 
+    ``assessed_text`` is a pre-rendered "assessed but not approved" block (see
+    ``formatters.format_assessed_contracts``). It is sent as its own message after the screen,
+    so a scan can always show what it looked at and why it passed. Only manual ``/scan`` and
+    full sweeps pass it — the 15-min intraday loop leaves it ``None`` and keeps the compact
+    one-line near-miss digest, so this cannot reintroduce the per-cycle message flood S6 removed.
+
     Returns ``True`` if any Telegram message was sent, ``False`` if nothing went out — the
-    intraday loop uses this to decide whether the cycle warrants a quiet-cycle heartbeat (S6).
+    caller uses this to decide whether a cycle produced any substantive output (S6).
     """
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token
@@ -212,6 +221,7 @@ async def send_candidates(
             logger.info("%s screen: no candidates — appended empty diagnostic", label)
         except Exception:
             logger.exception("Failed to send empty-screen diagnostic for %s", label)
+        await _send_assessed_block(assessed_text, token, str(chat_id), thread_id, label)
         return True
 
     # Hash-based unchanged check: if the screen content hasn't changed and every candidate
@@ -291,7 +301,34 @@ async def send_candidates(
         # empty/unchanged cycle starts fresh rather than editing the stale candidate card.
         set_setting(status_msg_key, "", session=_sess)
         set_setting(status_msg_key + _STATUS_BODY_SUFFIX, "", session=_sess)
+    await _send_assessed_block(assessed_text, token, str(chat_id), thread_id, label)
     return sent
+
+
+async def _send_assessed_block(
+    assessed_text: str | None,
+    token: str,
+    chat_id: str,
+    thread_id_val: int | None,
+    label: str,
+) -> None:
+    """Send the "assessed but not approved" block as its own message. Best-effort.
+
+    A failure here must never affect the screen's return value — the candidates (or the empty
+    diagnostic) have already gone out, and this is supplementary transparency.
+    """
+    if not assessed_text:
+        return
+    try:
+        async with Bot(token=token) as bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id_val,
+                text=assessed_text,
+                parse_mode="MarkdownV2",
+            )
+    except Exception:
+        logger.exception("Failed to send assessed-contracts block for %s", label)
 
 
 async def _auto_queue_candidates(
@@ -518,7 +555,7 @@ async def send_buy_list(
     cron always send the full list.
 
     Returns ``True`` if any Telegram message (the full screen or the unchanged digest) was sent,
-    ``False`` otherwise — feeds the intraday quiet-cycle heartbeat decision (S6).
+    ``False`` otherwise — signals whether the buy screen produced any output this cycle (S6).
     """
     cfg = get_config()
     token = cfg.secrets.telegram_bot_token

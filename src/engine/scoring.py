@@ -16,9 +16,16 @@ _EQUAL_WEIGHTS: dict[str, float] = {
 }
 
 
+# Keys inside a strategy block that are NOT component weights and must be excluded from the
+# normalization sum. `zone_fit` is a blend *within* technical_score (see _scoring.py), not a
+# ScoreCard component — counting it here would silently dilute every real weight.
+_NON_COMPONENT_KEYS = frozenset({"zone_fit"})
+
+
 def _get_weights(strategy: Strategy) -> dict[str, float]:
     """Return normalized weights for a strategy, falling back to equal weights."""
-    raw: dict[str, float] = get_effective_weights().get(strategy.value, {})
+    block: dict[str, float] = get_effective_weights().get(strategy.value, {})
+    raw = {k: v for k, v in block.items() if k not in _NON_COMPONENT_KEYS}
     if not raw:
         return _EQUAL_WEIGHTS.copy()
     total = sum(raw.values())

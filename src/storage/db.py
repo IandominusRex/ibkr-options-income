@@ -37,6 +37,22 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "orders": {
         "snapshot": "JSON",
     },
+    # risk_verdicts existed as an empty, unwired table long before anything wrote to it, so
+    # deployed databases already have the original three-column shape. These are the columns
+    # added when the assessment audit trail was turned on.
+    "risk_verdicts": {
+        "run_id": "VARCHAR(40)",
+        "symbol": "VARCHAR(16)",
+        "strategy": "VARCHAR(20)",
+        "strike": "FLOAT",
+        "expiry": "DATE",
+        "stage": "VARCHAR(16)",
+        "blended_score": "FLOAT",
+        "premium": "FLOAT",
+        "ideal_lo": "FLOAT",
+        "ideal_hi": "FLOAT",
+        "min_credit": "FLOAT",
+    },
 }
 
 # Partial/conditional indexes that SQLAlchemy's model metadata can't express portably.

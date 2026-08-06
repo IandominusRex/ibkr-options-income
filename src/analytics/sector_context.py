@@ -89,11 +89,7 @@ def get_sector_context(symbol: str) -> SectorContext:
     sector_5d = _pct_return(etf, _ONE_WEEK_SESSIONS) if etf else None
     spy_1mo = _pct_return("SPY", _ONE_MONTH_SESSIONS)
     sym_1mo = _pct_return(symbol, _ONE_MONTH_SESSIONS)
-    rel = (
-        round(sym_1mo - sector_1mo, 2)
-        if sym_1mo is not None and sector_1mo is not None
-        else None
-    )
+    rel = round(sym_1mo - sector_1mo, 2) if sym_1mo is not None and sector_1mo is not None else None
 
     return SectorContext(
         symbol=symbol,
@@ -129,7 +125,9 @@ def render_sector_context(sc: SectorContext | None) -> str:
             if sc.rel_strength_1mo_pct is not None
             else ""
         )
-        rows.append(f"  {sc.symbol} 1mo:{' ' * max(1, 7 - len(sc.symbol))}{sc.symbol_ret_1mo_pct:+.1f}%{rel}")
+        rows.append(
+            f"  {sc.symbol} 1mo:{' ' * max(1, 7 - len(sc.symbol))}{sc.symbol_ret_1mo_pct:+.1f}%{rel}"
+        )
     if not rows:
         return ""
     return "=== SECTOR & MARKET BACKDROP (place the ticker in context) ===\n" + "\n".join(rows)
