@@ -8,6 +8,7 @@ Public API:
   attach_fill_to_campaign  — called after every fill; opens or updates the campaign
   mark_campaign_assigned   — called by EOD reconciler when assignment is detected
   load_campaigns           — read-side for /campaigns Telegram command
+  adjusted_cost_basis_for  — read-side for the covered-call gate (D5)
 """
 
 from __future__ import annotations
@@ -215,3 +216,35 @@ def load_campaigns(
     except Exception:
         log.warning("load_campaigns failed", exc_info=True)
         return []
+
+
+def adjusted_cost_basis_for(symbol: str) -> float | None:
+    """Per-share adjusted cost basis from *symbol*'s open, assigned campaign, or None.
+
+    After a CSP assignment the true basis is the assignment price less the premium already
+    collected across the campaign (``mark_campaign_assigned``). Without this reader, the
+    covered-call gate compared strikes to IBKR's raw ``avg_cost`` — so with the default
+    ``min_strike_vs_basis: 1.00`` the premium already earned was invisible to the gate
+    deciding whether you may earn more (D5).
+
+    Never raises — a storage failure here must not break a scan.
+    """
+    try:
+        with session_scope() as session:
+            row = session.execute(
+                select(CampaignRow)
+                .where(
+                    CampaignRow.symbol == symbol,
+                    CampaignRow.status == "open",
+                    CampaignRow.assigned,
+                )
+                .order_by(CampaignRow.opened_date.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if row is None or row.adjusted_cost_basis is None:
+                return None
+            basis = float(row.adjusted_cost_basis)
+            return basis if basis > 0 else None
+    except Exception:
+        log.warning("adjusted_cost_basis_for failed for %s", symbol, exc_info=True)
+        return None

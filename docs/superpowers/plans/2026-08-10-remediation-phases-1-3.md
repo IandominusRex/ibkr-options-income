@@ -59,7 +59,7 @@ is worse than a stopped one.
 | 3 | Size CSPs to headroom | 1 | done | 2026-08-10 | |
 | 4 | Risk units in the gate | 1 | done | 2026-08-10 | |
 | 5 | VRP floor from display to gate | 1 | done | 2026-08-10 | |
-| 6 | Wheel cost basis into the CC gate | 1 | pending | | |
+| 6 | Wheel cost basis into the CC gate | 1 | done | 2026-08-11 | |
 | 7 | IV rank at constant 30-day maturity | 1 | pending | | |
 | 8 | Capacity report + account-size tests | 1 | pending | | |
 | 9 | Phase 1 config and doc sweep | 1 | pending | | |
@@ -461,6 +461,79 @@ know. Empty until the first task runs.
      round's scope. The specific hole raised ("rolls have no edge control at all") is fully
      closed: rolls now clear the identical Black-Scholes-at-HV30 VRP gate CSPs/CCs do, degrading
      the same way (missing zone/vol data → no rejection, never silently blocking).
+
+- **Task 6** — Production code (`src/storage/campaigns.py`, `src/strategies/covered_call.py`)
+  implements the brief's *intent* exactly, but the brief's example code did not match the real
+  API at four points, corrected before any code was written (per the task owner's pre-verified
+  notes, confirmed independently against the live tree):
+  1. **`CampaignRow` has no `closed` field.** The brief's reader query used
+     `.filter_by(symbol=symbol, closed=False, assigned=True)`; the real column is
+     `status: Mapped[str]` (`"open"` / `"closed"`). `adjusted_cost_basis_for` filters on
+     `CampaignRow.status == "open"` instead, matching the `status`-based filter every other
+     function in the file already uses (`attach_fill_to_campaign`, `mark_campaign_assigned`).
+  2. **`open_or_append` does not exist.** The brief's Step 1 test called
+     `open_or_append("AAPL", "cand-1", "cash_secured_put", "SELL", 4.50, 1)`. The real function
+     is `attach_fill_to_campaign(symbol, candidate_id, strategy, action, avg_price,
+     filled_qty)` — used verbatim in the actual test.
+  3. **`_use_temp_db` does not exist** in `tests/test_phase6.py`. The real helper is
+     `_db_setup(tmp_path, monkeypatch)` (line 26) — used verbatim.
+  4. **`_call_chain`, `_tech`, `_fund` do not exist** in `tests/test_phase6.py`. Built a local
+     `_cc_quote_at(strike, *, dte=34)` fixture (single-quote list) plus inline
+     `TechnicalStats(symbol="AAPL", price=147.0, rsi_14=55.0)` /
+     `FundamentalStats(symbol="AAPL")` construction, rather than importing `test_strategies.py`'s
+     `_tech()`/`_fund()` (whose default `price=185.0` would have priced the $147 strike deep
+     ITM against a Black-Scholes-at-HV30 fair value floor of roughly $38/share — one to two
+     orders of magnitude above any plausible bid/ask, which would have made the test's premium
+     fixture fail the VRP gate (`REASON_BELOW_FAIR_VALUE`) for reasons unrelated to the basis
+     bug this test exists to isolate). Chose spot `$147.00` (at the $147 strike) instead, so the
+     Black-Scholes-at-HV30 floor is a modest ≈$4.71/share (`bs_price(147.0, 147.0, 34, 0.22,
+     "C") * 1.10`, verified by hand and by direct call before writing the fixture) comfortably
+     under the fixture's $5.20 mid — the quote's `delta=0.28` is set directly on the
+     `OptionQuote` regardless of moneyness (the screen never recomputes delta from strike/spot,
+     it only reads `quote.delta`), so this has no effect on the delta-range gate.
+  5. **Test correction found during RED verification, beyond the brief's four flagged gaps:**
+     the brief's Step 1 snippet calls `mark_campaign_assigned` immediately after
+     `open_or_append`/`attach_fill_to_campaign` with no underlying `FillRow` seeded first.
+     Running that exact shape against a debug script showed `net_premium` staying `0.0` and
+     `adjusted_cost_basis` staying `None` — `attach_fill_to_campaign` computes `_rollup` from
+     `FillRow` rows matching the campaign's `leg_candidate_ids`, not from its own call
+     arguments, mirroring the pattern the file's own pre-existing F1 tests already use
+     (`_seed_fill` into `session_scope()`, then `attach_fill_to_campaign`). The first RED run
+     (before this correction) failed with `AssertionError: [['strike_below_basis']]` — the
+     right shape of failure — but only because the missing fill made `adjusted_cost_basis_for`
+     legitimately return `None` regardless of the reader's own correctness, which would have
+     stayed true even with a broken reader. Added `_seed_fill(s, "cand-1", "SELL", 4.50, 1.0)`
+     inside a `session_scope()` block before `attach_fill_to_campaign`, then re-verified RED
+     (still `strike_below_basis`, now for the intended reason) by stashing the two production
+     files and re-running before restoring them. GREEN confirmed after the fix; full suite
+     1114→1115, `ruff check .` and `mypy src` clean.
+  6. **`select(CampaignRow).where(CampaignRow.assigned)`, not `filter_by(..., assigned=True)`**
+     — matches the file's existing idiom (`select(...).where(...).scalar_one_or_none()`, used
+     by `attach_fill_to_campaign`/`mark_campaign_assigned`) and avoids ruff `E712` ("comparison
+     to `True` should be `if cond:`") that a literal `CampaignRow.assigned == True` would have
+     drawn under this repo's `select = ["E", ...]` ruff config. No production behavior
+     difference from the brief's intent.
+  7. **No circular import.** `src/strategies/covered_call.py` importing
+     `src.storage.campaigns.adjusted_cost_basis_for` is a new edge from `strategies/` to
+     `storage/`; confirmed one-directional both by grep (`storage/campaigns.py`, `storage/db.py`,
+     `storage/models.py` import nothing from `strategies/`; `execution/executor.py` already
+     imports `storage.campaigns`, so this shape already exists elsewhere in the tree) and by
+     directly importing `strategies.covered_call`, `storage.campaigns`, `engine.risk_engine`,
+     and `execution.executor` together at runtime with no `ImportError`.
+  8. **Comment accuracy, not required by the brief but corrected for consistency:** the
+     pre-existing ROC comment ("ROC is deliberately measured against the cost BASIS
+     (avg_cost)...") named `avg_cost` specifically; reworded to describe the cost basis
+     generically (wheel-adjusted when a campaign exists, else `avg_cost`) since the variable it
+     documents (`basis`) is no longer always `avg_cost`. No assertion or gate logic changed.
+  No existing test's assertion moved — the brief's "Watch for" warning (existing CC tests would
+  be unaffected since none seed a campaign) held exactly as predicted; `basis` falls back to
+  `position.avg_cost` for every pre-existing fixture. `STATUS.md`'s "Campaign chaining (C6)" row
+  and `ARCHITECTURE.md`'s `campaigns.py` row were both updated (the brief's Step 6 named only
+  `STATUS.md`; `ARCHITECTURE.md` was updated in addition, per CLAUDE.md's general rule that the
+  reader should never get a stale picture of a module's public API) — `README.md` and
+  `SETUP.md`'s existing `/campaigns` and `min_strike_vs_basis` rows were checked and remain
+  accurate as written (neither claims the basis source is `avg_cost` specifically), so neither
+  needed a change.
 
 ---
 
@@ -1627,7 +1700,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `CampaignRow.adjusted_cost_basis` (already written by `mark_campaign_assigned`).
 - Produces: `campaigns.adjusted_cost_basis_for(symbol: str) -> float | None` — the open assigned campaign's per-share adjusted basis, or None.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_phase6.py — append
@@ -1653,12 +1726,12 @@ def test_covered_call_uses_campaign_adjusted_cost_basis(tmp_path, monkeypatch):
     assert 147.0 in passed_strikes, [r for _, r in result.rejected]
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `python -m pytest tests/test_phase6.py -k adjusted_cost_basis -q`
 Expected: FAIL — the $147 strike is rejected with `strike_below_basis` against the raw $150 basis.
 
-- [ ] **Step 3: Add the reader**
+- [x] **Step 3: Add the reader**
 
 In `src/storage/campaigns.py`, append:
 
@@ -1690,7 +1763,7 @@ def adjusted_cost_basis_for(symbol: str) -> float | None:
 
 Verify the `CampaignRow` field names (`closed`, `assigned`) against `src/storage/models.py:371-392` before writing, and match them exactly.
 
-- [ ] **Step 4: Use it in the covered-call screen**
+- [x] **Step 4: Use it in the covered-call screen**
 
 In `src/strategies/covered_call.py`, add the import:
 
@@ -1711,16 +1784,16 @@ Then replace every use of `position.avg_cost` inside the per-quote loop with `ba
 `min_strike_vs_basis` comparison (line 146), `collateral` (line 153), `roc_pct` (line 158),
 `breakeven` (line 204), and both `cost_basis=` arguments (lines 176 and 214).
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 6: Update docs**
+- [x] **Step 6: Update docs**
 
 In `STATUS.md`, find the "Campaign chaining (C6)" row and replace "`/campaigns` and `/campaigns open` Telegram commands display the wheel P&L thread" with a note that `adjusted_cost_basis` now feeds the covered-call gate via `adjusted_cost_basis_for`, so the wheel's collected premium affects which strikes are writable.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/storage/campaigns.py src/strategies/covered_call.py tests/test_phase6.py STATUS.md

@@ -24,6 +24,7 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
+from src.storage.campaigns import adjusted_cost_basis_for
 from src.strategies._evaluation import (
     REASON_BELOW_BASIS,
     REASON_BELOW_FAIR_VALUE,
@@ -99,6 +100,12 @@ def screen_cc_candidates(
         result.skipped = "shares_already_covered" if owned_contracts else "under_one_round_lot"
         return result
 
+    # Prefer the wheel-adjusted basis: after a CSP assignment the real basis is the assignment
+    # price less the premium already collected on this campaign (D5) — without it, the gate
+    # below compares strikes to IBKR's raw avg_cost and refuses strikes that are genuinely
+    # profitable on the campaign. Falls back to avg_cost for shares bought outright.
+    basis = adjusted_cost_basis_for(symbol) or position.avg_cost
+
     risk = get_effective_risk()
     cc_cfg = risk["covered_call"]
     income_cfg = risk["income"]
@@ -144,19 +151,20 @@ def screen_cc_candidates(
         # favours not capping the recovery over squeezing income from a loser. To allow below-basis
         # writes (e.g. to keep harvesting premium on a long-term hold), lower the knob in
         # risk_limits.yaml (e.g. 0.95 permits strikes down to 5% below basis).
-        if quote.strike < position.avg_cost * min_strike_vs_basis:
+        if quote.strike < basis * min_strike_vs_basis:
             reasons.append(REASON_BELOW_BASIS)
 
         # Price the contract for display even when it failed above; the reasons list tells the
         # reader how much to trust it.
         mid = display_premium(strict, quote.mid, quote.last)
 
-        collateral = position.avg_cost * contracts * 100  # full capital at risk for all contracts
-        # ROC is deliberately measured against the cost BASIS (avg_cost), i.e. return on the
-        # capital actually tied up in the shares you own — not the current market price. For a
-        # name that has run up this understates yield-on-market-value, which is the conservative
-        # choice for an income screen (you don't want the run-up to inflate the apparent yield).
-        roc_pct = (mid / position.avg_cost) * 100 if position.avg_cost > 0 else 0.0
+        collateral = basis * contracts * 100  # full capital at risk for all contracts
+        # ROC is deliberately measured against the cost basis — the wheel-adjusted basis when a
+        # campaign exists, else IBKR's avg_cost — i.e. return on the capital actually tied up in
+        # the shares you own — not the current market price. For a name that has run up this
+        # understates yield-on-market-value, which is the conservative choice for an income
+        # screen (you don't want the run-up to inflate the apparent yield).
+        roc_pct = (mid / basis) * 100 if basis > 0 else 0.0
         annualized_yield_pct = roc_pct * (365 / dte) if dte > 0 else 0.0
 
         if roc_pct < income_cfg["min_roc_pct"]:
@@ -174,14 +182,14 @@ def screen_cc_candidates(
                 tech=tech_stats,
                 iv=iv_stats,
                 fund=fund_stats,
-                cost_basis=position.avg_cost,
+                cost_basis=basis,
             )
             zones[dte] = zone
 
         # Re-price the credit floor at this contract's strike (the band itself is shared
         # across strikes at this DTE) so the card compares like with like, and so the VRP
         # gate below and the displayed `ideal` agree on the same number.
-        contract_zone = zone_for_contract(zone, quote.strike, iv_stats, cost_basis=position.avg_cost)
+        contract_zone = zone_for_contract(zone, quote.strike, iv_stats, cost_basis=basis)
         if income_cfg.get("require_vrp_edge", True):
             floor = contract_zone.min_credit
             if floor is not None and floor > 0 and mid < floor:
@@ -211,7 +219,7 @@ def screen_cc_candidates(
             collateral=collateral,
             roc_pct=round(roc_pct, 4),
             annualized_yield_pct=round(annualized_yield_pct, 4),
-            breakeven=round(position.avg_cost - mid, 4),
+            breakeven=round(basis - mid, 4),
             prob_otm=round(1 - delta, 4) if delta is not None else None,
             delta=quote.delta,
             iv_rank=iv_stats.iv_rank,

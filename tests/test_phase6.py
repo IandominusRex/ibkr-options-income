@@ -16,7 +16,18 @@ from datetime import date, timedelta
 
 import pytest
 
-from src.common.schemas import OptionRight, PositionSnapshot, ScoreCard, Strategy, TradeCandidate
+from src.common.market_hours import today_et
+from src.common.schemas import (
+    FundamentalStats,
+    IVStats,
+    OptionQuote,
+    OptionRight,
+    PositionSnapshot,
+    ScoreCard,
+    Strategy,
+    TechnicalStats,
+    TradeCandidate,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -330,3 +341,68 @@ def test_build_prompt_excludes_backtest_when_off(monkeypatch):
     )
     prompt = build_prompt([_candidate()], acct)
     assert "Backtest:" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# D5 — wheel-adjusted cost basis reaches the covered-call gate
+# ---------------------------------------------------------------------------
+
+
+def _cc_quote_at(strike: float, *, dte: int = 34) -> OptionQuote:
+    """A single CALL quote priced to clear every CC gate except (pre-fix) cost basis.
+
+    Delta (0.28) and DTE (34) sit mid-band for `covered_call.delta_min/max` (0.20/0.35) and
+    `dte_min/max` (21/45). The $5.00/$5.40 market (mid $5.20, spread 7.7% < the 10% liquidity
+    cap) is priced above the Black-Scholes-at-HV30 floor for a spot near this strike — verified
+    by hand: ``bs_price(147.0, 147.0, 34, 0.22, "C") * 1.10 edge ≈ $4.71 < $5.20`` — so the VRP
+    floor (`income.require_vrp_edge`) does not confound the basis-gate assertion this test
+    exists to prove.
+    """
+    return OptionQuote(
+        underlying="AAPL",
+        right=OptionRight.CALL,
+        strike=strike,
+        expiry=today_et() + timedelta(days=dte),
+        bid=5.00,
+        ask=5.40,
+        volume=500,
+        open_interest=2000,
+        iv=0.28,
+        delta=0.28,
+    )
+
+
+def test_covered_call_uses_campaign_adjusted_cost_basis(tmp_path, monkeypatch):
+    """D5: premium already collected must be visible to the gate deciding on more.
+
+    A CSP on AAPL is assigned at $150 after collecting $4.50/share of premium across the
+    campaign, so the wheel's true basis is $145.50 — but the raw IBKR `avg_cost` on the
+    resulting stock position is $150.00. A $147 call is genuinely profitable against the
+    true basis and must pass; screened against the raw $150 basis it would be rejected as
+    below cost.
+    """
+    from src.storage.campaigns import attach_fill_to_campaign, mark_campaign_assigned
+    from src.storage.db import session_scope
+    from src.strategies.covered_call import screen_cc_candidates
+
+    _db_setup(tmp_path, monkeypatch)
+    # attach_fill_to_campaign rolls up financials from FillRow, not from its own arguments —
+    # a real FillRow (as the executor writes on every fill) must exist first, matching the
+    # pattern the F1 tests above already use (_seed_fill then attach_fill_to_campaign).
+    with session_scope() as s:
+        _seed_fill(s, "cand-1", "SELL", 4.50, 1.0)  # $450 net premium on 1 contract
+    attach_fill_to_campaign("AAPL", "cand-1", "cash_secured_put", "SELL", 4.50, 1.0)
+    mark_campaign_assigned("AAPL", assignment_price=150.0, right="P")
+
+    pos = PositionSnapshot(
+        symbol="AAPL", sec_type="STK", position=100, avg_cost=150.0, underlying="AAPL"
+    )
+    iv_stats = IVStats(symbol="AAPL", current_iv=28.0, iv_rank=55.0, hv_30=22.0)
+    tech = TechnicalStats(symbol="AAPL", price=147.0, rsi_14=55.0)
+    fund = FundamentalStats(symbol="AAPL")
+
+    result = screen_cc_candidates("AAPL", [_cc_quote_at(147.0)], pos, iv_stats, tech, fund)
+
+    # Adjusted basis is 150.00 - 4.50 = 145.50, so the $147 strike is ABOVE basis and allowed.
+    passed_strikes = [c.strike for c in result.passed]
+    assert 147.0 in passed_strikes, [r for _, r in result.rejected]
