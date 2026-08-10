@@ -241,6 +241,11 @@ an order. Run it whenever you change a `portfolio.*` cap to make sure a clear ma
 `would_own` list is still reachable — a cap tight enough to quietly exclude most of the universe is
 exactly the kind of bug this report exists to catch.
 
+The final line always states its own coverage — `Coverage: N/M requested symbols had usable
+price/IV data (K skipped for missing data)` — so a data outage (no cached IV/price for a symbol)
+can never look identical to "fewer symbols are tradeable." If `K` is large, fix the data gap (run
+the backfills below) before trusting the tradeable count.
+
 ### `config/scoring_weights.yaml`
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,

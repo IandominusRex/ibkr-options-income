@@ -125,7 +125,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `src/orchestrator/` | EOD report and on-demand scan pipeline |
 | `src/storage/` | SQLite database models, session management, order-creation idempotency, and the `risk_verdicts.py` assessment audit trail (every contract a scan priced and why it was set aside, pruned to 14 days) |
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |
-| `scripts/` | Command-line entrypoints |
+| `scripts/` | Command-line entrypoints, including `capacity_report.py` — a read-only account-sizing diagnostic: one row per `would_own` symbol showing how many contracts the account can actually support right now and which constraint would stop the next one |
 | `tests/` | pytest suite (IBKR mocked; no TWS needed) |
 
 ---

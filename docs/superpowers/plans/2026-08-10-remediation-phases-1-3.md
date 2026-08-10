@@ -718,6 +718,60 @@ know. Empty until the first task runs.
     *not* excluding names outright at this account size, though a human should still review it
     before Task 9 formalizes it into config (per the plan's own binding note above the ledger).
 
+- **Task 8 — review fix round.** Code review found three Important findings, all plan-mandated
+  (present in the brief's own snippet), none requiring a human ruling. All three fixed; full
+  gate (`pytest -q` → 1124 passed, `ruff check .`, `mypy src`) re-run clean afterward, and the
+  Step 5 checkpoint re-run for real — **46/46 still tradeable**, unchanged by any of the three
+  fixes.
+  1. **`nlv_needed_for_one` used the wrong cap (Finding 1) — the shipped formula changed.**
+     The brief's snippet divided `unit_collateral` by `max_collateral_per_ticker_pct`
+     unconditionally. Per `capital._fits` (Task 4), that cap only gates the no-IV fallback path
+     and the large-slot threshold — a first lot with IV present is gated by the risk-unit cap
+     (`max_risk_units_per_ticker_pct`) instead, and the Step 5 run proved it empirically:
+     `ticker_collateral` bound 0 of 46 rows. The brief's formula overstated the true NLV
+     requirement by ~5-6x for a typical IV~30%/DTE=30 symbol. **Fixed by replacing the brief's
+     formula with a new helper, `_nlv_needed_for_one_lot(unit_collateral, current_iv, dte,
+     risk)`**, that mirrors `_fits`'s own branch: risk-unit cap when `risk_units(...)` resolves
+     (IV known and positive), raw-collateral cap only in the fallback. This is a **deliberate
+     departure from the brief's literal formula**, chosen (per the review's stated preference)
+     over the alternative of renaming the field and documenting the collateral-based meaning as
+     a known caveat — the risk-unit-aware formula is the honest answer to the field's own name
+     ("NLV needed for one lot"), not a workaround. `CapacityRow.nlv_needed_for_one` keeps its
+     name; a code comment on the field and a docstring on the new helper explain the
+     derivation, and `ARCHITECTURE.md`'s `capacity_report.py` row now describes it. Verified by
+     hand outside the test suite: `META` (IV=35, price=700, the brief's own fixture) →
+     ≈$126,431 (unchanged direction, still `> 50_000`); `SPY` (IV=13.5, price=660, same
+     fixture) → ≈$45,980 — **below** the test's `> 50_000` threshold, proving the assertion is
+     not vacuous under the new formula (a symbol exists in the same fixture set that would fail
+     it). `test_report_reports_the_nlv_needed_for_one_lot` (which only exercises `META`) still
+     passes unmodified — no test file change was needed for this finding.
+  2. **The checkpoint's own denominator could silently shrink (Finding 2).** `build_report`
+     drops any symbol with `spot <= 0` from `rows` before either the numerator or the
+     denominator of `format_report`'s `f"{tradeable}/{len(rows)}"` line ever sees it, so a data
+     outage that dropped symbols would report a smaller-but-still-100%-looking fraction instead
+     of surfacing a coverage failure. `build_report`'s signature (list in, `list[CapacityRow]`
+     out) was kept as specified — the fix lives entirely in `format_report`, which now takes an
+     optional keyword-only `total_requested: int | None`, and in `main()`, which passes
+     `len(symbols)`. When given, the output gains a line: `Coverage: N/M requested symbols had
+     usable price/IV data (K skipped for missing data).` — printed even when `K == 0`, so "we
+     checked and nothing was missing" is stated, not merely implied by omission. Re-verified
+     Step 5 with this line active (see the fresh table in the fix report) — `Coverage: 46/46
+     requested symbols had usable price/IV data (0 skipped for missing data)`, confirming the
+     100% coverage this run's 46/46 tradeable claim depends on. `SETUP.md`'s new subsection and
+     `ARCHITECTURE.md`'s row both now describe the coverage line.
+  3. **`README.md`'s layout table (Finding 3).** Originally left unchanged on the reasoning that
+     the table is directory-level only; the review pointed out an existing, already-used
+     convention (`src/analytics/`, `src/strategies/`, `src/storage/` rows all name one or two
+     notable files inline in prose without turning the table into a per-file list — e.g.
+     `realized_vol.py`, `fair_value.py`, `_evaluation.py`, `risk_verdicts.py`). Applied the same
+     convention to the `scripts/` row: it now reads `"Command-line entrypoints, including
+     capacity_report.py — a read-only account-sizing diagnostic: ..."` instead of the bare
+     `"Command-line entrypoints"`. The original reasoning wasn't wrong about the table's
+     granularity, but it missed that the file already had a house style for exactly this case.
+  - No config keys were added or changed. `max_risk_units_per_ticker_pct` was not touched — the
+    human ruling (relayed by the reviewer) keeps it at `5.0`; Task 9 writes it into
+    `risk_limits.yaml`. No new IBKR connection was added.
+
 ---
 
 ## File Structure

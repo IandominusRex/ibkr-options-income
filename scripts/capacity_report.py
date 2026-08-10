@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from src.common.config import get_config
 from src.common.schemas import AccountSnapshot, PositionSnapshot
-from src.engine.capital import max_contracts, resolve_caps, seed_budgets
+from src.engine.capital import max_contracts, resolve_caps, risk_units, seed_budgets
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,37 @@ class CapacityRow:
     contracts: int
     binding: str
     collateral: float
+    # The NLV at which *this ticker's own concentration cap* — and only that cap, in isolation —
+    # would admit exactly one lot. Mirrors capital._fits's own choice of cap: the risk-unit cap
+    # (collateral x IV x sqrt(DTE/365), against max_risk_units_per_ticker_pct) when current_iv is
+    # known, since that is what actually gates a first lot once IV is present; the raw-collateral
+    # cap (against max_collateral_per_ticker_pct) only in the no-IV fallback path, where it is the
+    # real gate. Ignores cash, the CSP budget, sector risk, and any budget already seeded from
+    # existing positions — it answers "is this ticker's own cap the binding NLV floor," not
+    # "what NLV clears every constraint."
     nlv_needed_for_one: float
+
+
+def _nlv_needed_for_one_lot(
+    unit_collateral: float, current_iv: float | None, dte: int, risk: dict
+) -> float:
+    """NLV at which this ticker's own concentration cap alone would admit one lot.
+
+    Mirrors ``capital._fits``'s own choice between the two ticker-level caps: when
+    ``current_iv`` is known, ``max_ticker_risk`` (a percentage of NLV against risk units —
+    collateral x IV x sqrt(DTE/365)) is what actually gates a first lot; the raw-collateral cap
+    ``max_ticker_collateral`` only binds in the no-IV fallback path. Using the collateral cap
+    unconditionally (the original version of this function) overstated the true NLV requirement
+    by roughly 5-6x for a typical IV~30%, DTE=30 symbol, and the shipped checkpoint run bore
+    that out: ``ticker_collateral`` never bound a single one of the 46 rows.
+    """
+    p = risk.get("portfolio", {})
+    units = risk_units(unit_collateral, current_iv, dte)
+    if units is not None and units > 0:
+        ticker_risk_pct = float(p.get("max_risk_units_per_ticker_pct", 5.0))
+        return units / (ticker_risk_pct / 100.0) if ticker_risk_pct > 0 else 0.0
+    ticker_collateral_pct = float(p.get("max_collateral_per_ticker_pct", 10.0))
+    return unit_collateral / (ticker_collateral_pct / 100.0) if ticker_collateral_pct > 0 else 0.0
 
 
 def build_report(
@@ -74,7 +104,6 @@ def build_report(
             budgets=budgets,
             hard_max=hard_max,
         )
-        ticker_pct = float(risk.get("portfolio", {}).get("max_collateral_per_ticker_pct", 10.0))
         rows.append(
             CapacityRow(
                 symbol=symbol,
@@ -82,14 +111,23 @@ def build_report(
                 contracts=n,
                 binding=binding,
                 collateral=unit * n,
-                nlv_needed_for_one=unit / (ticker_pct / 100.0) if ticker_pct > 0 else 0.0,
+                nlv_needed_for_one=_nlv_needed_for_one_lot(unit, iv_by_symbol.get(symbol), dte, risk),
             )
         )
     return rows
 
 
-def format_report(rows: list[CapacityRow]) -> str:
-    """Render the table. Handles an empty *rows* without a ZeroDivisionError."""
+def format_report(rows: list[CapacityRow], *, total_requested: int | None = None) -> str:
+    """Render the table. Handles an empty *rows* without a ZeroDivisionError.
+
+    *total_requested*, when given, is the number of symbols actually asked about — before any
+    were dropped for missing price/IV data. Without it, a data outage that silently shrinks
+    ``rows`` looks identical to "fewer symbols were tradeable": the tradeable fraction's own
+    denominator (``len(rows)``) would quietly shrink right along with the numerator, and a
+    reader would have no way to tell a coverage failure from a genuine capacity result. Passing
+    it prints the full requested population explicitly and names how many were skipped, so the
+    two failure modes can never be confused.
+    """
     header = f"{'SYMBOL':<8}{'SPOT':>10}{'LOTS':>6}{'COLLATERAL':>13}  {'BINDING'}"
     lines = [header, "-" * len(header)]
     for r in sorted(rows, key=lambda x: (-x.contracts, x.symbol)):
@@ -98,11 +136,20 @@ def format_report(rows: list[CapacityRow]) -> str:
             f"{r.binding or 'none (hit hard_max)'}"
         )
     tradeable = sum(1 for r in rows if r.contracts >= 1)
+    missing = max(0, total_requested - len(rows)) if total_requested is not None else None
     lines.append("")
     if not rows:
-        lines.append("0 symbols had price/IV data — no report to show.")
-    else:
-        lines.append(f"{tradeable}/{len(rows)} symbols tradeable at this account size.")
+        if total_requested:
+            lines.append(f"0 of {total_requested} requested symbols had usable price/IV data — no report to show.")
+        else:
+            lines.append("0 symbols had price/IV data — no report to show.")
+        return "\n".join(lines)
+    lines.append(f"{tradeable}/{len(rows)} symbols tradeable at this account size.")
+    if missing is not None:
+        lines.append(
+            f"Coverage: {len(rows)}/{total_requested} requested symbols had usable price/IV "
+            f"data ({missing} skipped for missing data)."
+        )
     return "\n".join(lines)
 
 
@@ -151,7 +198,8 @@ def main() -> None:
         if tech.price:
             price_by_symbol[sym] = tech.price
 
-    print(format_report(build_report(account, positions, symbols, iv_by_symbol, price_by_symbol)))
+    rows = build_report(account, positions, symbols, iv_by_symbol, price_by_symbol)
+    print(format_report(rows, total_requested=len(symbols)))
 
 
 if __name__ == "__main__":
