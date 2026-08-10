@@ -54,7 +54,7 @@ is worse than a stopped one.
 
 | # | Task | Phase | Status | Date | Commit |
 |---|---|---|---|---|---|
-| 1 | Risk-unit arithmetic and resolved caps | 1 | pending | | |
+| 1 | Risk-unit arithmetic and resolved caps | 1 | done | 2026-08-10 | |
 | 2 | Carry IV on the candidate | 1 | pending | | |
 | 3 | Size CSPs to headroom | 1 | pending | | |
 | 4 | Risk units in the gate | 1 | pending | | |
@@ -94,6 +94,15 @@ run in parallel with 16–17. Task 18 is last.
 
 Append one entry per deviation: task number, what changed, why, and what a later task needs to
 know. Empty until the first task runs.
+
+- **Task 1** — The brief's verbatim `tests/test_capital.py` imports `Budgets` and `Caps` from
+  `src.engine.capital` but never uses either name in the file (both dataclass instances are
+  obtained only via `resolve_caps`/`seed_budgets` return values, never constructed or
+  type-annotated directly). `ruff check` failed with `F401` on both. Removed the two unused
+  names from the import statement; no assertion, fixture, or test intent changed. Schema
+  fields (`AccountSnapshot`, `PositionSnapshot`, `OptionRight`) matched the brief exactly —
+  no deviation there. A later task adding more tests against `capital.py` that construct
+  `Caps`/`Budgets` directly will need to re-import them.
 
 ---
 
@@ -162,7 +171,7 @@ Two places where implementation is simpler than §3–§9 describe. Both preserv
   - `seed_budgets(positions: list[PositionSnapshot], sector_of: Callable[[str], str | None]) -> Budgets`
   - `max_contracts(*, unit_collateral: float, current_iv: float | None, dte: int, symbol: str, sector: str | None, caps: Caps, budgets: Budgets, hard_max: int) -> tuple[int, str]` — returns `(contracts, binding)`; `binding` is `""` when nothing bound below `hard_max`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_capital.py
@@ -346,12 +355,12 @@ def test_max_contracts_returns_zero_when_nothing_fits():
     assert binding == "cash"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_capital.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'src.engine.capital'`
 
-- [ ] **Step 3: Implement `src/engine/capital.py`**
+- [x] **Step 3: Implement `src/engine/capital.py`**
 
 ```python
 """Capital arithmetic for the deterministic risk layer.
@@ -578,17 +587,17 @@ def charge(
         budgets.large_slots_used += 1
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_capital.py -q`
 Expected: PASS (11 tests)
 
-- [ ] **Step 5: Lint and type-check**
+- [x] **Step 5: Lint and type-check**
 
 Run: `ruff check src/engine/capital.py tests/test_capital.py && ruff format src/engine/capital.py tests/test_capital.py && mypy src/engine/capital.py`
 Expected: no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/engine/capital.py tests/test_capital.py
