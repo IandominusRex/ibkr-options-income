@@ -189,23 +189,26 @@ Conservative defaults are pre-configured. Key settings to review:
 | `cash_secured_put.max_contracts` | 10 | Hard cap on contracts per single CSP candidate |
 | `<strategy>.dte_min` / `dte_max` | 21 / 45 | Days-to-expiry range for new positions |
 | `events.earnings_blackout_days` | 14 | Reject candidates that live through / open within N days of earnings |
-| `income.min_roc_pct` | 1.0 | Minimum return-on-collateral (%) to consider a trade |
-| `income.min_annualized_yield_pct` | 12.0 | Minimum annualized yield to surface a candidate. In low-IV environments this filter is the most common reason zero candidates are returned; lower to 8–10% if needed. |
+| `income.require_vrp_edge` | true | **Primary income gate.** Reject a candidate whose credit doesn't clear Black-Scholes fair value priced at *realised* vol (HV30) plus `ideal_zone.min_credit_edge_pct` — the variance-risk-premium thesis made explicit. Reason code `premium_below_fair_value`. Missing ideal-zone data is never a rejection, only a missed optimization. |
+| `income.min_roc_pct` | 0.15 | Noise floor only (the primary gate above replaced it). The old default of 1.0 was a hidden ~25–30% IV floor that made every low-vol name (SPY, GLD, TLT, sector ETFs) unreachable regardless of the actual variance-risk-premium edge. |
+| `income.min_annualized_yield_pct` | 0.0 | Noise floor only, same history as above (old default 12.0). |
 | `liquidity.min_option_volume` | 10 | Minimum daily option volume. Consider increasing to 50 for multi-contract positions. |
 | `iv.min_iv_rank` | 30 | Only sell premium when IV rank is at least this (when known) |
 | `live_execution.min_live_premium_ratio` | 0.80 | Send-time floor: reject a fill if the live mid drops below this fraction of the approved premium (IV-crush guard). 0 disables. |
 | `live_execution.require_ibkr_greeks_when_live` | true | In LIVE mode, the delta re-gate requires IBKR-sourced greeks (never the paper yfinance fallback). |
 
 The `ideal_zone:` block tunes the **ideal strike / ideal credit / action levels** shown beside every
-contract. None of it gates a trade — it changes what the cards and the reasoning prompt say, and
-(only if you raise `zone_fit` in `scoring_weights.yaml`) how candidates are ranked:
+contract, and changes what the cards and the reasoning prompt say. The strike band, action levels,
+and (only if you raise `zone_fit` in `scoring_weights.yaml`) ranking are display/ranking-only. The
+one exception is `min_credit_edge_pct`: it sizes `min_credit`, which — when `income.require_vrp_edge`
+is on (the default) — **is** the primary income gate (see the `income:` table above).
 
 | Setting (YAML path) | Default | What it means |
 |---|---|---|
 | `ideal_zone.em_lo_mult` / `em_hi_mult` | 0.30 / 1.20 | Where the ideal strike band sits, in expected moves (1σ = spot × IV × √(DTE/365)). Brackets the delta range actually traded (a 0.15–0.30Δ put sits at ~0.34–0.93σ, a 0.20–0.35Δ call at ~0.48–1.17σ). `em_lo_mult` doubles as the **inner-edge floor**: after the band snaps to a level it is clamped back to this cushion, so it can never slide to at-the-money. |
 | `ideal_zone.support_pull_pct` | 3.0 | How close a support/resistance level must be (% of the band edge) for the band to snap to it. The snap moves the **outer** edge onto the level; the inner edge stays clamped at `em_lo_mult`, so the band stretches rather than sliding toward spot. |
 | `ideal_zone.earnings_widen_mult` | 0.25 | Extra cushion, in expected moves, when earnings fall inside the option's life |
-| `ideal_zone.min_credit_edge_pct` | 10.0 | Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). The floor shown on a card is priced at **that contract's own strike** (not the band's anchor) and is never below what the ROC/annualized-yield gates already demand, so "clears fair value" means the credit beats both. Raise to insist on a richer entry. |
+| `ideal_zone.min_credit_edge_pct` | 10.0 | **Feeds the primary income gate.** Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). The floor is priced at **that contract's own strike** (not the band's anchor) and is never below the `income.min_roc_pct` / `min_annualized_yield_pct` noise floors, so "clears fair value" means the credit beats all three. When `income.require_vrp_edge` is true (default), a candidate whose premium falls below this floor is rejected with `premium_below_fair_value` — raise to insist on a richer entry, at the cost of fewer candidates. |
 | `ideal_zone.buy_margin_of_safety_pct` | 8.0 | Discount applied to the analyst mean target when placing the "buy shares below" level |
 
 > Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
@@ -222,11 +225,6 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,
 fundamentals, liquidity, assignment risk). You can leave these at the defaults to start.
-
-`zone_fit` (default `0.0`, one per strategy block) is **not** a block weight — it is a blend *inside*
-`technical`, mixing regime alignment with how well the strike sits in the ideal band. At `0.0`
-scoring behaves exactly as it did before the ideal-zone feature; raise it (e.g. `0.3`) to rank by
-strike placement as well as regime. It never gates a trade.
 
 Two extra knobs control what gets surfaced:
 - `min_candidate_score` (default 55) — the minimum blended score for an option (CC/CSP) candidate
@@ -907,7 +905,7 @@ an 8B model, depending on prompt length and memory pressure.
 | No Telegram messages | Wrong `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, or one of the `TELEGRAM_THREAD_*` vars | Re-check `.env`; confirm values by visiting `https://api.telegram.org/bot<YOUR_TOKEN>/getMe` (validates the token) and re-running steps 3–5 for the chat/thread IDs. With the approval service running, send `/health` to confirm round-trip messaging. |
 | Messages arrive in wrong topic | `TELEGRAM_THREAD_SCAN` / `_CSP` / `_CC` / `_BUY` / `_ACCOUNT` missing or incorrect | Re-check the `message_thread_id` from `getUpdates` for a message sent in the correct topic, and set the matching `TELEGRAM_THREAD_*` variable. |
 | Approval button presses do nothing | Approval service not running | Start `python -m scripts.run_approval_service` |
-| Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | **A scan that approves nothing now tells you why.** Read the "🔎 Assessed — not approved" block (manual `/scan` and full sweeps) or the `↳ closest:` line on a quiet intraday cycle: each names a real contract and the gates it failed (delta band, DTE window, liquidity, ROC/yield floor, IV rank, score floor, or simply that a better strike won the slot). Tune the matching key in `config/risk_limits.yaml`; check `config/universe.yaml` if whole symbols are absent. |
+| Zero candidates every scan | Liquidity gates too strict, or no positions/universe configured | Check `config/risk_limits.yaml` thresholds and `config/universe.yaml` |
 | `/scan` progress message shows "Scan failed" with a ❌ stage | A critical stage (account fetch or scoring) threw an unexpected exception | Check the approval service logs for the full traceback; restart TWS/Gateway if the account stage fails |
 | `/scan` progress freezes on one symbol (e.g. "32/46 — SOFI") and never advances | That symbol's option-chain fetch hung waiting on an IBKR response that never arrived (pacing violation, error 10197 competing-session lockout, or a stuck `qualifyContractsAsync`) | Wait up to `market_data.symbol_timeout_seconds` (default 150s) — the scan logs `option chain for SOFI exceeded symbol_timeout_seconds=... — skipping this symbol` and continues with the remaining symbols. If it still never recovers, the process itself has hung; restart it. |
 | Every symbol from one point on times out (`option chain for X exceeded symbol_timeout_seconds`), and the logs show an `Error 200, No security definition has been found` storm just before it | A high-IV name built a several-hundred-contract qualification burst of mostly-nonexistent weekly strikes, tripping an IBKR pacing lockout that wedged the session (the 2026-06-22 SMH stall). This is now guarded: `market_data.max_strikes_per_symbol` caps the strike count, qualification is chunked/paced/timeout-bounded, and `drain_market_data_lines` reclaims leaked lines after each failed symbol | If you still hit it, lower `market_data.max_strikes_per_symbol` (default 80) or `qualify_timeout_seconds`, and restart the process to clear any session-level pacing lockout |
@@ -923,7 +921,6 @@ an 8B model, depending on prompt length and memory pressure.
 | IBKR error 10197 "No market data during competing live session" | A competing IB Gateway or TWS session is open simultaneously | Close the competing session, or ensure each session uses a distinct clientId and a separate IB Gateway / TWS instance. |
 | IBKR error 300 "Can't find EId with tickerId" floods the log | Benign cleanup: ib_async tries to cancel a market data subscription that already timed out | Safe to ignore — these fire after each option chain batch and do not affect scan results. |
 | "Unknown contract" warnings for half-dollar strikes (e.g. JPM 292.5) | IBKR doesn't list those non-standard strikes for that expiry | Normal — the strike grid for some underlyings uses $5 or $10 increments; half-dollar strikes are skipped automatically. |
-| A roll alert shows two different DTEs (e.g. "12 days left" in the body but "DTE 13" on the meta line), or the earnings blackout seems to trigger a day early/late | The machine's local date differed from the **exchange** date — anything outside US/Eastern is routinely a day ahead of ET for part of the day, and market dates were being computed with `date.today()`. **Fixed (2026-08-06):** `market_hours.today_et()` is now the single definition of a market date across DTE, earnings/ex-div windows, the journal day key, and the daily cache | Self-resolved on a patched build. If you see it again, grep for `date.today()` in `src/` — only backtest fallbacks should remain |
 | `claude: command not found` | Claude Code CLI not installed or not on PATH | Run `claude --version`; install if missing |
 | `RuntimeError: There is no current event loop` or `socket.socketpair()` crash on healthcheck | Windows + Python 3.14: `ProactorEventLoop` fails on startup | Fixed automatically in `connection.py` (switches to `WindowsSelectorEventLoopPolicy`). If you still see it, ensure you are running the installed version and not an older cached `.pyc`. |
 | `ollama: request to http://localhost:11434/api/generate failed: ... Connection refused` | `claude.backend` is `"ollama"`/`"cli_then_ollama"` but `ollama serve` isn't running | Run `ollama serve` (or `brew services start ollama`); verify with `curl http://localhost:11434` |
