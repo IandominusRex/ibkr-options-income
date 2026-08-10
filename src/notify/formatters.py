@@ -531,6 +531,7 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "illiquid": "fails liquidity gates (spread / OI / volume)",
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
+    "no_headroom": "no room under the concentration or budget caps",
     # Post-gate drops — the trade was fine, the slate was not.
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",
@@ -741,6 +742,14 @@ def _assessed_row(item: AssessedContract) -> list[str]:
             reasons.append(label)
     if reasons:
         lines.append(f"   _{_md(' · '.join(reasons[:3]))}_")
+    # A CSP blocked purely on affordability has another route to the same exposure:
+    # buy the shares at the level the analytics already computed. Turning the rejection
+    # into an alternative is also the on-ramp to the buy-to-own screen.
+    cash_blocked = {"insufficient_cash", "no_headroom", "buying_power_buffer"}
+    if set(item.reasons) & cash_blocked and item.candidate.ideal is not None:
+        buy_below = item.candidate.ideal.buy_below
+        if buy_below:
+            lines.append(f"    ↳ share entry level {_md(f'${buy_below:.2f}')}")
     return lines
 
 

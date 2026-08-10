@@ -19,17 +19,20 @@ from src.common.schemas import (
     IVStats,
     OptionQuote,
     OptionRight,
+    PositionSnapshot,
     ScoreCard,
     Strategy,
     TechnicalStats,
     TradeCandidate,
 )
+from src.engine.capital import Budgets, max_contracts, resolve_caps, seed_budgets
 from src.strategies._evaluation import (
     REASON_DELTA_MISSING,
     REASON_DELTA_RANGE,
     REASON_DTE_RANGE,
     REASON_ILLIQUID,
     REASON_INSUFFICIENT_CASH,
+    REASON_NO_HEADROOM,
     REASON_NO_MARKET,
     REASON_ROC,
     REASON_YIELD,
@@ -70,13 +73,18 @@ def screen_csp_candidates(
     iv_stats: IVStats,
     tech_stats: TechnicalStats,
     fund_stats: FundamentalStats,
+    *,
+    positions: list[PositionSnapshot] | None = None,
 ) -> ScreenResult:
     """Screen *symbol*'s put chain, returning both the passing and the rejected contracts.
 
     Every quote is evaluated against **all** gates rather than short-circuiting on the first
     failure, so a rejected contract carries the complete list of what stood in its way and
-    can be ranked by how close it came. Contract count is sized by available buying power,
-    capped by config.
+    can be ranked by how close it came. Contract count is sized to the largest lot that fits
+    every cash/concentration constraint (``engine.capital.max_contracts``) rather than to the
+    maximum affordable lot — the same helper the risk gate uses, so the two can never disagree
+    about how big a position may be. *positions* seeds the running budgets from what the
+    account already holds; omit it (or pass ``[]``) to size against an empty portfolio.
     """
     cfg = get_config()
     result = ScreenResult()
@@ -87,17 +95,16 @@ def screen_csp_candidates(
     risk = get_effective_risk()
     csp_cfg = risk["cash_secured_put"]
     income_cfg = risk["income"]
-    portfolio_cfg = risk.get("portfolio", {})
 
     delta_min: float = csp_cfg["delta_min"]
     delta_max: float = csp_cfg["delta_max"]
     dte_min: int = csp_cfg["dte_min"]
     dte_max: int = csp_cfg["dte_max"]
-    max_contracts: int = csp_cfg.get("max_contracts", 10)
-    # Total CSP collateral budget (% of net liq). Sizing a single CSP to this ceiling keeps
-    # it from blowing the whole cap by itself — which would make the cumulative risk gate
-    # reject it outright (the gate rejects, it does not trim) and yield zero fills.
-    max_csp_pct: float = portfolio_cfg.get("max_csp_allocation_pct", 60.0)
+    hard_max: int = csp_cfg.get("max_contracts", 10)
+    caps = resolve_caps(account, risk)
+    sector_of = cfg.universe.get("sectors", {}).get
+    budgets: Budgets = seed_budgets(positions or [], sector_of)
+    sector = sector_of(symbol)
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
     rejected: list[tuple[TradeCandidate, list[str]]] = []
@@ -135,12 +142,22 @@ def screen_csp_candidates(
         per_contract = quote.strike * 100
         if per_contract <= 0:
             continue
-        cash_n = int(account.excess_liquidity // per_contract)
-        csp_budget_n = int((account.net_liquidation * max_csp_pct / 100) // per_contract)
-        contracts = min(max_contracts, cash_n, csp_budget_n)
+        # Size to the binding constraint rather than to the maximum affordable lot. The gate
+        # rejects rather than trims, so proposing the max meant any position whose *largest*
+        # size breached a cap was refused entirely — even when one lot fitted comfortably (D1).
+        contracts, binding = max_contracts(
+            unit_collateral=per_contract,
+            current_iv=iv_stats.current_iv,
+            dte=dte,
+            symbol=symbol,
+            sector=sector,
+            caps=caps,
+            budgets=budgets,
+            hard_max=hard_max,
+        )
         if contracts < 1:
-            reasons.append(REASON_INSUFFICIENT_CASH)
-            contracts = 1  # display a 1-lot; the reason records that it isn't fundable
+            reasons.append(REASON_INSUFFICIENT_CASH if binding == "cash" else REASON_NO_HEADROOM)
+            contracts = 1  # display a 1-lot; the reason records that it does not fit
 
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100

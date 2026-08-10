@@ -26,13 +26,19 @@ from src.analytics.fair_value import (
 )
 from src.common.market_hours import today_et
 from src.common.schemas import (
+    AssessedContract,
+    AssessmentStage,
     FundamentalStats,
+    IdealZone,
     IVStats,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
     RollReview,
+    ScoreCard,
+    Strategy,
     TechnicalStats,
+    TradeCandidate,
 )
 from src.monitor.triggers import (
     check_assignment_risk,
@@ -41,6 +47,7 @@ from src.monitor.triggers import (
 )
 from src.notify.formatters import (
     contract_label,
+    format_assessed_contracts,
     format_assignment_alert,
     format_auto_close_result,
     format_profit_alert,
@@ -425,3 +432,49 @@ def test_assignment_alert_has_no_raw_debug_text() -> None:
     text = format_assignment_alert(pos, quote, [alert], review)
     assert "≥ 0.45 with DTE=" not in text
     assert "|Δ| 0.46" in text.replace("\\", "")
+
+
+# ---------------------------------------------------------------------------
+# 5. A cash-blocked CSP should surface the share-entry alternative (D1 follow-on)
+# ---------------------------------------------------------------------------
+
+
+def _csp_candidate(
+    *, underlying: str = "AAPL", strike: float = 190.0, contracts: int = 1
+) -> TradeCandidate:
+    """Minimal CSP-shaped candidate for formatter tests — not the generator's own path.
+
+    `tests/test_engine.py` will gain its own `_csp_candidate` (Task 4); this one is local to
+    this file, mirroring the `_cand()` pattern already used by `tests/test_assessed_contracts.py`.
+    """
+    return TradeCandidate(
+        candidate_id=f"{underlying}-{strike}-csp",
+        strategy=Strategy.CASH_SECURED_PUT,
+        underlying=underlying,
+        right=OptionRight.PUT,
+        strike=strike,
+        expiry=date.today() + timedelta(days=30),
+        contracts=contracts,
+        premium=3.0,
+        collateral=strike * contracts * 100,
+        roc_pct=1.5,
+        annualized_yield_pct=18.0,
+        breakeven=strike - 3.0,
+        dte=30,
+        scores=ScoreCard(symbol=underlying),
+    )
+
+
+def test_cash_blocked_csp_names_the_share_entry_level() -> None:
+    """A rejection should offer the other route to the same exposure, not just say no."""
+    zone = IdealZone(symbol="META", right=OptionRight.PUT, dte=30, spot=700.0, buy_below=612.0)
+    cand = _csp_candidate(underlying="META", strike=650.0, contracts=1).model_copy(
+        update={"ideal": zone}
+    )
+    assessed = [
+        AssessedContract(
+            candidate=cand, stage=AssessmentStage.GENERATOR, reasons=["insufficient_cash"]
+        )
+    ]
+    text = format_assessed_contracts(assessed)
+    assert "612" in text, "the share entry level must be surfaced when cash blocks the CSP"

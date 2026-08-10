@@ -27,6 +27,7 @@ REASON_NO_MARKET = "no_two_sided_market"
 REASON_ILLIQUID = "illiquid"
 REASON_BELOW_BASIS = "strike_below_basis"
 REASON_INSUFFICIENT_CASH = "insufficient_cash"
+REASON_NO_HEADROOM = "no_headroom"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
 

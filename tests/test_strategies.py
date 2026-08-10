@@ -94,14 +94,22 @@ def _long_stock(
     return PositionSnapshot(symbol=symbol, sec_type="STK", position=shares, avg_cost=avg_cost)
 
 
-def _account() -> AccountSnapshot:
+def _account(
+    *,
+    net_liq: float = 100_000.0,
+    cash: float = 70_000.0,
+    total_cash: float = 50_000.0,
+    buying_power: float = 80_000.0,
+) -> AccountSnapshot:
+    # `cash` maps to `excess_liquidity` — the post-margin cushion `capital.resolve_caps`
+    # actually reads as its deployable-cash basis, not `total_cash`.
     return AccountSnapshot(
         account="DU123456",
-        net_liquidation=100_000.0,
-        total_cash=50_000.0,
-        buying_power=80_000.0,
+        net_liquidation=net_liq,
+        total_cash=total_cash,
+        buying_power=buying_power,
         maintenance_margin=10_000.0,
-        excess_liquidity=70_000.0,
+        excess_liquidity=cash,
     )
 
 
@@ -376,15 +384,19 @@ class TestCashSecuredPut:
         assert result[0].collateral == pytest.approx(strike * expected_contracts * 100)
 
     def test_contracts_sized_by_excess_liquidity(self):
-        # CSPs size off ExcessLiquidity (post-margin cushion): excess_liquidity=70_000, strike=170
-        # → cash_n = floor(70000 / (170*100)) = 4
-        # → csp_budget_n = floor((100_000 * 0.60) / (170*100)) = 3
-        # → contracts = min(10, 4, 3) = 3
+        # D1: sizing now calls engine.capital.max_contracts, which sizes to the *binding*
+        # constraint rather than to the maximum affordable lot. With the in-code defaults
+        # (no portfolio.* keys in config yet — Task 9 adds them), one contract already
+        # costs strike*100 = 17,000, which exceeds max_ticker_collateral (10% of net_liq =
+        # 10,000) and so consumes the single large-position slot; a second contract
+        # (34,000) would breach large_ticker_collateral (25% of net_liq = 25,000). So the
+        # binding constraint caps this candidate at 1 contract, not the 3 the old
+        # cash/csp-budget-only formula would have proposed.
         result = generate_csp_candidates(
             "AAPL", [_put_quote()], _account(), _iv(), _tech(), _fund()
         )
         assert len(result) == 1
-        assert result[0].contracts == 3
+        assert result[0].contracts == 1
 
     def test_filters_call_quotes(self):
         result = generate_csp_candidates(
@@ -634,9 +646,37 @@ def test_candidates_carry_current_iv_for_risk_unit_sizing(monkeypatch):
     from src.common.schemas import IVStats
 
     iv_stats = IVStats(symbol="AAPL", current_iv=28.5, iv_rank=55.0, hv_30=22.0)
-    result = screen_csp_candidates(
-        "AAPL", [_put_quote()], _account(), iv_stats, _tech(), _fund()
-    )
+    result = screen_csp_candidates("AAPL", [_put_quote()], _account(), iv_stats, _tech(), _fund())
     all_cands = result.passed + [c for c, _ in result.rejected]
     assert all_cands, "fixture should produce at least one contract"
     assert all(c.current_iv == 28.5 for c in all_cands)
+
+
+def test_csp_sizing_trims_to_headroom_rather_than_maxing_out():
+    """D1: sizing must not propose a lot the gate will reject outright."""
+    from src.common.schemas import IVStats
+    from src.strategies.cash_secured_put import screen_csp_candidates
+
+    account = _account(net_liq=300_000.0, cash=100_000.0)
+    iv_stats = IVStats(symbol="AAPL", current_iv=28.0, iv_rank=55.0, hv_30=22.0)
+    result = screen_csp_candidates(
+        "AAPL", [_put_quote()], account, iv_stats, _tech(), _fund(), positions=[]
+    )
+    for cand in result.passed:
+        # deployable cash = 100k - max(20k, 10k) = 80k
+        assert cand.collateral <= 80_000.0
+
+
+def test_csp_high_priced_name_is_sized_to_one_lot_not_rejected():
+    """A $650 strike must yield a 1-lot candidate, not a 0-lot rejection."""
+    from src.common.schemas import IVStats
+    from src.strategies.cash_secured_put import screen_csp_candidates
+
+    account = _account(net_liq=300_000.0, cash=100_000.0)
+    iv_stats = IVStats(symbol="META", current_iv=35.0, iv_rank=60.0, hv_30=28.0)
+    result = screen_csp_candidates(
+        "META", [_put_quote(strike=650.0)], account, iv_stats, _tech(), _fund(), positions=[]
+    )
+    sized = result.passed + [c for c, _ in result.rejected]
+    assert sized, "expected a candidate to be produced"
+    assert all(c.contracts == 1 for c in sized)

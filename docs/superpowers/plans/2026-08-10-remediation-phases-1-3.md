@@ -56,7 +56,7 @@ is worse than a stopped one.
 |---|---|---|---|---|---|
 | 1 | Risk-unit arithmetic and resolved caps | 1 | done | 2026-08-10 | |
 | 2 | Carry IV on the candidate | 1 | done | 2026-08-10 | |
-| 3 | Size CSPs to headroom | 1 | pending | | |
+| 3 | Size CSPs to headroom | 1 | done | 2026-08-10 | |
 | 4 | Risk units in the gate | 1 | pending | | |
 | 5 | VRP floor from display to gate | 1 | pending | | |
 | 6 | Wheel cost basis into the CC gate | 1 | pending | | |
@@ -112,6 +112,57 @@ know. Empty until the first task runs.
   added to the import from `src.strategies.cash_secured_put`. The test now passes and all
   existing tests remain green. No change needed by later tasks — this is a transparent
   adaptation within the test layer.
+
+- **Task 3** — Six deviations from the brief, all within the test/doc layer; the production
+  code (`cash_secured_put.py`, `_evaluation.py`, `scan.py`, `formatters.py`) matches the brief
+  exactly.
+  1. **`_put_chain()` does not exist** (same gap Task 2 hit). Both new tests use
+     `[_put_quote()]` / `[_put_quote(strike=650.0)]` in place of `_put_chain()` /
+     `_put_chain(strike=650.0)`, matching the existing fixture pattern.
+  2. **`_account()` took no arguments.** Extended it to accept optional keyword args
+     (`net_liq`, `cash`, `total_cash`, `buying_power`), each defaulting to the value it
+     previously hardcoded, so the ~60 existing bare `_account()` call sites are unaffected.
+     `cash=` maps to `AccountSnapshot.excess_liquidity` (not `total_cash`) because that is the
+     field `capital.resolve_caps` actually reads as its deployable-cash basis — confirmed by
+     running the brief's own arithmetic (`deployable = 100k − 20k = 80k`) against the resolved
+     `Caps` before writing the test.
+  3. **META did not need adding to `would_own`** — it was already present in
+     `config/universe.yaml`'s `would_own` list, so no fixture/monkeypatch change was needed
+     for the second new test; this simplifies on the brief, it doesn't diverge from it.
+  4. **`_csp_candidate` did not exist anywhere.** Built it locally in
+     `tests/test_output_fidelity.py`, mirroring the `_cand()` pattern already used by
+     `tests/test_assessed_contracts.py` (a bare `TradeCandidate(...)` construction with a
+     `ScoreCard(symbol=...)`). Added `AssessedContract`, `AssessmentStage`, `IdealZone`,
+     `ScoreCard`, `Strategy`, `TradeCandidate`, and `format_assessed_contracts` to that file's
+     top-level imports rather than importing them locally inside the test function (the
+     brief's snippet imports locally; this file had no existing local-import precedent for
+     schema/formatter names, so top-level was the cleaner fit and is what `ruff format`
+     confirmed as unremarkable). **Task 4 will separately add its own `_csp_candidate` to
+     `tests/test_engine.py` — this is a distinct, file-local helper and does not collide.**
+  5. **`_assessed_row`'s loop variables are `lines`/`item`, not `parts`/`item`.** The brief's
+     Step 10 snippet was written against `parts`; the real function builds `lines`. Substituted
+     `lines.append(...)` with no other change to the snippet's logic.
+  6. **Existing assertion updated:** `TestCashSecuredPut.test_contracts_sized_by_excess_liquidity`
+     asserted `contracts == 3` under the old cash/csp-budget-only formula. Under the new
+     `max_contracts` sizing, one contract's collateral (170 strike × 100 = 17,000) already
+     exceeds `max_ticker_collateral` (10% of net_liq = 10,000 with no `portfolio.*` config keys
+     yet — Task 9 adds them), so it consumes the account's one large-position slot; a second
+     contract (34,000) breaches `large_ticker_collateral` (25% of net_liq = 25,000). The binding
+     constraint caps the candidate at 1 contract. Updated the assertion to `contracts == 1` and
+     rewrote the comment to explain the new binding constraint instead of the old cash/budget
+     arithmetic — verified by hand and by running `engine.capital.max_contracts` directly
+     against the same inputs before editing the test. The test's original intent (CSP sizing
+     responds sensibly to account capital) is preserved.
+  7. **Beyond the brief's literal Step 5:** `screen_csp_candidates` is called from **two**
+     sites in `src/orchestrator/scan.py`, not one — the full-sweep path (`_run_scan_body`,
+     ~line 1254, which the brief named) and the single-ticker `/scan TICKER` path
+     (`run_ticker_scan`, ~line 1739, which it didn't). Both scopes already have a `positions`
+     list fetched earlier in the same function, so both were updated to pass
+     `positions=positions` — leaving the second uncorrected would have silently reintroduced
+     the old zero-headroom sizing (budgets seeded from an empty portfolio) for every
+     single-ticker scan while the full sweep was fixed. No test exercises this call site's
+     `positions` wiring directly (the existing `run_ticker_scan` tests don't assert on CSP
+     sizing); flagging here in case a later task wants to add coverage.
 
 ---
 
@@ -714,7 +765,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `capital.resolve_caps`, `capital.seed_budgets`, `capital.max_contracts` (Task 1); `TradeCandidate.current_iv` (Task 2).
 - Produces: `REASON_NO_HEADROOM = "no_headroom"` in `_evaluation.py`. `screen_csp_candidates` gains a keyword-only `positions: list[PositionSnapshot] | None = None` parameter.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_strategies.py — append
@@ -750,12 +801,12 @@ def test_csp_high_priced_name_is_sized_to_one_lot_not_rejected():
 
 Add `META` to the `would_own` list used by the test fixture config, or monkeypatch `get_config().universe["would_own"]` to include it — follow whichever pattern `tests/test_strategies.py` already uses.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_strategies.py -k headroom -q`
 Expected: FAIL — `TypeError: screen_csp_candidates() got an unexpected keyword argument 'positions'`
 
-- [ ] **Step 3: Add the reason code**
+- [x] **Step 3: Add the reason code**
 
 In `src/strategies/_evaluation.py`, after `REASON_INSUFFICIENT_CASH`:
 
@@ -763,7 +814,7 @@ In `src/strategies/_evaluation.py`, after `REASON_INSUFFICIENT_CASH`:
 REASON_NO_HEADROOM = "no_headroom"
 ```
 
-- [ ] **Step 4: Rewrite the sizing block**
+- [x] **Step 4: Rewrite the sizing block**
 
 In `src/strategies/cash_secured_put.py`, add to the imports:
 
@@ -826,7 +877,7 @@ Replace the sizing block (lines 135-145, from `per_contract = quote.strike * 100
         collateral = quote.strike * contracts * 100
 ```
 
-- [ ] **Step 5: Update the caller**
+- [x] **Step 5: Update the caller**
 
 In `src/orchestrator/scan.py`, find the `screen_csp_candidates(` call (near line 1254) and pass positions:
 
@@ -836,12 +887,12 @@ In `src/orchestrator/scan.py`, find the `screen_csp_candidates(` call (near line
             )
 ```
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS — all tests including the two new ones.
 
-- [ ] **Step 7: Add the reason label**
+- [x] **Step 7: Add the reason label**
 
 In `src/notify/formatters.py`, find `_REJECT_REASON_LABELS` and add:
 
@@ -849,7 +900,7 @@ In `src/notify/formatters.py`, find `_REJECT_REASON_LABELS` and add:
     "no_headroom": "no room under the concentration or budget caps",
 ```
 
-- [ ] **Step 8: Write the failing test for the share-route fallback**
+- [x] **Step 8: Write the failing test for the share-route fallback**
 
 ```python
 # tests/test_output_fidelity.py — append
@@ -877,12 +928,12 @@ def test_cash_blocked_csp_names_the_share_entry_level():
 Reuse `_csp_candidate` from `tests/test_engine.py` by importing it, or replicate its
 construction locally — follow whichever pattern `tests/test_output_fidelity.py` already uses.
 
-- [ ] **Step 9: Run to verify it fails**
+- [x] **Step 9: Run to verify it fails**
 
 Run: `python -m pytest tests/test_output_fidelity.py -k share_entry -q`
 Expected: FAIL — the rendered block names the rejection but not the alternative.
 
-- [ ] **Step 10: Surface the share route**
+- [x] **Step 10: Surface the share route**
 
 In `src/notify/formatters.py`, inside `format_assessed_contracts`, where each contract's
 reasons are rendered, add after the reason line:
@@ -902,12 +953,12 @@ reasons are rendered, add after the reason line:
 
 Match `parts`/`item` to the loop variables that function actually uses; read it before editing.
 
-- [ ] **Step 11: Run the full suite**
+- [x] **Step 11: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add src/strategies/cash_secured_put.py src/strategies/_evaluation.py src/orchestrator/scan.py src/notify/formatters.py tests/test_strategies.py tests/test_output_fidelity.py

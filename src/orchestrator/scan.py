@@ -1252,7 +1252,7 @@ async def _run_scan_body(
         # CSP candidates for would_own symbols
         if symbol in would_own and quotes:
             csp_screen = screen_csp_candidates(
-                symbol, quotes, account, iv_stats, tech_stats, fund_stats
+                symbol, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
             )
             _apply_sentiment(csp_screen, sentiment_detail)
             csp_candidates.extend(csp_screen.passed)
@@ -1737,7 +1737,7 @@ async def run_ticker_scan(
     csp_candidates: list[TradeCandidate] = []
     if quotes:
         csp_screen = screen_csp_candidates(
-            ticker, quotes, account, iv_stats, tech_stats, fund_stats
+            ticker, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
         )
         csp_candidates = csp_screen.passed
         ticker_rejects.extend(csp_screen.rejected)
