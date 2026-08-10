@@ -668,15 +668,29 @@ def test_csp_sizing_trims_to_headroom_rather_than_maxing_out():
 
 
 def test_csp_high_priced_name_is_sized_to_one_lot_not_rejected():
-    """A $650 strike must yield a 1-lot candidate, not a 0-lot rejection."""
+    """A $650 strike must be trimmed to 1 lot, not sized to the 2 lots the old
+    cash/csp-budget-only formula would have proposed.
+
+    Fixture review (2026-08-10): the brief's original fixture (net_liq=300k, cash=100k)
+    already produced contracts=1 under the *pre-fix* formula too (cash_n=1, csp_budget_n=2,
+    min(10,1,2)=1) — it never exercised the regression. This fixture is deliberately tighter:
+    under the pre-fix formula, cash_n=floor(150_000/65_000)=2, csp_budget_n=
+    floor(300_000*0.60/65_000)=2, so contracts=min(10,2,2)=2 — a $130,000 (43% of net_liq)
+    single-name position. `engine.capital.max_contracts` trims this to 1 lot ($65,000, 21.7%
+    of net_liq) because a second lot would exceed the deployable-cash ceiling. The premium is
+    set high enough that the contract clears every other gate regardless of contract count
+    (ROC/yield/delta/liquidity don't depend on size), so it lands in `.passed` at exactly 1 lot
+    — a genuine fit, not the `insufficient_cash` display fallback for a 0-lot reject.
+    """
     from src.common.schemas import IVStats
     from src.strategies.cash_secured_put import screen_csp_candidates
 
-    account = _account(net_liq=300_000.0, cash=100_000.0)
+    account = _account(net_liq=300_000.0, cash=150_000.0)
     iv_stats = IVStats(symbol="META", current_iv=35.0, iv_rank=60.0, hv_30=28.0)
+    quote = _put_quote(strike=650.0, bid=8.00, ask=8.20)  # mid=8.10; roc~1.25%, ann~13.4%
     result = screen_csp_candidates(
-        "META", [_put_quote(strike=650.0)], account, iv_stats, _tech(), _fund(), positions=[]
+        "META", [quote], account, iv_stats, _tech(), _fund(), positions=[]
     )
-    sized = result.passed + [c for c, _ in result.rejected]
-    assert sized, "expected a candidate to be produced"
-    assert all(c.contracts == 1 for c in sized)
+    assert result.rejected == [], "should clear every gate at the trimmed size, not be flagged"
+    assert len(result.passed) == 1
+    assert result.passed[0].contracts == 1

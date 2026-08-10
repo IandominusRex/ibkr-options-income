@@ -163,6 +163,29 @@ know. Empty until the first task runs.
      single-ticker scan while the full sweep was fixed. No test exercises this call site's
      `positions` wiring directly (the existing `run_ticker_scan` tests don't assert on CSP
      sizing); flagging here in case a later task wants to add coverage.
+  8. **Post-review fixture correction (2026-08-10, human-approved):** review flagged that
+     `test_csp_high_priced_name_is_sized_to_one_lot_not_rejected`'s brief-literal fixture
+     (net_liq=300k, cash=100k, strike=650) does not discriminate — hand-computed against the
+     **pre-fix** formula it already yields `cash_n=1, csp_budget_n=2, contracts=min(10,1,2)=1`,
+     identical to the post-fix result, so the test passed unchanged before this task's
+     production code existed and proved nothing. The reviewer's first suggested repair
+     (`cash=50_000`) was checked and **also found non-discriminating**: at that value both the
+     pre-fix formula (`cash_n=0`) and the post-fix `max_contracts` (`binding="cash"` at n=1)
+     hit the *same* `contracts<1 → display 1, tag insufficient_cash` fallback that already
+     existed in the pre-fix code, so old and new produce an identical outcome. Human-approved
+     resolution: re-derive the fixture from the constraint arithmetic instead — `cash=150_000`
+     (net_liq unchanged at 300k) makes the pre-fix formula give `cash_n=2, csp_budget_n=2,
+     contracts=2` (a genuinely-sized, non-fallback candidate a real user could have received),
+     while `engine.capital.max_contracts` trims the same inputs to 1 (verified directly against
+     `resolve_caps`/`seed_budgets`/`max_contracts` — `n=2`'s $130,000 collateral breaches
+     `caps.max_csp_collateral` of $120,000). Also bumped the quote's premium (`bid=8.00,
+     ask=8.20`, up from the default `2.10/2.30`) so the $650 strike clears the ROC/annualized-
+     yield floors regardless of contract count, landing the candidate in `.passed` at exactly 1
+     lot — proof this is a genuine fit, not the 0-lot `insufficient_cash` display fallback.
+     Verified end-to-end via `screen_csp_candidates` before and after (see task-3-report.md's
+     fix report for the exact commands/output). This is a deviation from the plan's literal
+     fixture values, not from its production code or its stated intent — the code under test is
+     unchanged by this correction.
 
 ---
 
