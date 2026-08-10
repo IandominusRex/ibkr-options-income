@@ -192,6 +192,7 @@ def screen_csp_candidates(
             prob_otm=round(1 - delta_abs, 4) if delta_abs is not None else None,
             delta=quote.delta,
             iv_rank=iv_stats.iv_rank,
+            current_iv=iv_stats.current_iv,
             vrp=iv_stats.vrp,
             iv_rv_ratio=iv_stats.iv_rv_ratio,
             dte=dte,

@@ -17,7 +17,7 @@ from src.common.schemas import (
     TechnicalStats,
 )
 from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
-from src.strategies.cash_secured_put import generate_csp_candidates
+from src.strategies.cash_secured_put import generate_csp_candidates, screen_csp_candidates
 from src.strategies.covered_call import generate_cc_candidates
 from src.strategies.rolling import generate_roll_candidates
 
@@ -627,3 +627,16 @@ class TestRolling:
         assert len(result) >= 1
         expected_collateral = result[0].strike * 2 * 100
         assert result[0].collateral == pytest.approx(expected_collateral)
+
+
+def test_candidates_carry_current_iv_for_risk_unit_sizing(monkeypatch):
+    """The gate computes risk units from IV, so the generator must record it."""
+    from src.common.schemas import IVStats
+
+    iv_stats = IVStats(symbol="AAPL", current_iv=28.5, iv_rank=55.0, hv_30=22.0)
+    result = screen_csp_candidates(
+        "AAPL", [_put_quote()], _account(), iv_stats, _tech(), _fund()
+    )
+    all_cands = result.passed + [c for c, _ in result.rejected]
+    assert all_cands, "fixture should produce at least one contract"
+    assert all(c.current_iv == 28.5 for c in all_cands)

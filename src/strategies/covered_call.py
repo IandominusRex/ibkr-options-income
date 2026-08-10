@@ -205,6 +205,7 @@ def screen_cc_candidates(
             prob_otm=round(1 - delta, 4) if delta is not None else None,
             delta=quote.delta,
             iv_rank=iv_stats.iv_rank,
+            current_iv=iv_stats.current_iv,
             vrp=iv_stats.vrp,
             iv_rv_ratio=iv_stats.iv_rv_ratio,
             dte=dte,

@@ -348,6 +348,10 @@ class TradeCandidate(BaseModel):
     prob_otm: float | None = None
     delta: float | None = None
     iv_rank: float | None = None
+    # IV level (percent, e.g. 28.5) at scan time — distinct from iv_rank, which is a
+    # percentile. Required by engine/capital.risk_units to size concentration in risk
+    # units rather than raw collateral.
+    current_iv: float | None = None
     vrp: float | None = (
         None  # IV% − HV30% at scan time; positive = options overpriced vs realised vol
     )

@@ -55,7 +55,7 @@ is worse than a stopped one.
 | # | Task | Phase | Status | Date | Commit |
 |---|---|---|---|---|---|
 | 1 | Risk-unit arithmetic and resolved caps | 1 | done | 2026-08-10 | |
-| 2 | Carry IV on the candidate | 1 | pending | | |
+| 2 | Carry IV on the candidate | 1 | done | 2026-08-10 | |
 | 3 | Size CSPs to headroom | 1 | pending | | |
 | 4 | Risk units in the gate | 1 | pending | | |
 | 5 | VRP floor from display to gate | 1 | pending | | |
@@ -103,6 +103,15 @@ know. Empty until the first task runs.
   fields (`AccountSnapshot`, `PositionSnapshot`, `OptionRight`) matched the brief exactly —
   no deviation there. A later task adding more tests against `capital.py` that construct
   `Caps`/`Budgets` directly will need to re-import them.
+
+- **Task 2** — The brief's test calls `_put_chain()`, which does not exist in the test file
+  (helpers: `_account()`, `_tech()`, `_fund()` exist; `_put_chain()` does not). Per the
+  instructions to adapt when helper names differ, the test was rewritten to use
+  `[_put_quote()]` instead, which is the pattern already used throughout existing tests
+  (e.g., `generate_csp_candidates("AAPL", [_put_quote()], …)`). `screen_csp_candidates` was
+  added to the import from `src.strategies.cash_secured_put`. The test now passes and all
+  existing tests remain green. No change needed by later tasks — this is a transparent
+  adaptation within the test layer.
 
 ---
 
