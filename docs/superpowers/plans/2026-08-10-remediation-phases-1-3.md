@@ -26,6 +26,77 @@
 
 ---
 
+## Execution protocol
+
+**Mode: subagent-driven.** One fresh subagent per task, reviewed between tasks. A subagent sees
+only its own task, which is why every task carries an `Interfaces` block naming the exact
+signatures its neighbours rely on.
+
+**This plan is the state of record and updates itself.** Every task ends by writing its own
+completion back into this file, in the same commit as the code. A reader picking this up cold
+must be able to tell what is done from the plan alone, without reading git log.
+
+After each task, before its commit:
+
+1. Tick every `- [ ]` → `- [x]` for the steps actually completed in that task.
+2. Update that task's row in the progress ledger below: status, date, and the commit SHA once
+   known (amend if needed).
+3. Record anything that deviated from the plan in the **Deviations** section. A task that
+   changed an interface, skipped a step, or discovered the plan was wrong MUST write that
+   down — the next subagent has no other way to learn it.
+4. `git add` this plan file alongside the code in the same commit.
+
+If a task cannot be completed as written, do not improvise past it: mark the row `BLOCKED`,
+write why in Deviations, and stop for review. A half-applied task in the deterministic layer
+is worse than a stopped one.
+
+### Progress ledger
+
+| # | Task | Phase | Status | Date | Commit |
+|---|---|---|---|---|---|
+| 1 | Risk-unit arithmetic and resolved caps | 1 | pending | | |
+| 2 | Carry IV on the candidate | 1 | pending | | |
+| 3 | Size CSPs to headroom | 1 | pending | | |
+| 4 | Risk units in the gate | 1 | pending | | |
+| 5 | VRP floor from display to gate | 1 | pending | | |
+| 6 | Wheel cost basis into the CC gate | 1 | pending | | |
+| 7 | IV rank at constant 30-day maturity | 1 | pending | | |
+| 8 | Capacity report + account-size tests | 1 | pending | | |
+| 9 | Phase 1 config and doc sweep | 1 | pending | | |
+| 10 | Loss-side exits | 2 | pending | | |
+| 11 | Mark-based and drawdown kill switches | 2 | pending | | |
+| 12 | Defensive-roll economics + date bug | 2 | pending | | |
+| 13 | Manage at 21 DTE | 2 | pending | | |
+| 14 | Autonomy ladder | 2 | pending | | |
+| 15 | Live paper validation session | 3 | pending | | |
+| 16 | Deletions | 3 | pending | | |
+| 17 | Split `scan.py` | 3 | pending | | |
+| 18 | Phase 1–3 closeout | 3 | pending | | |
+
+Status values: `pending` · `in progress` · `done` · `BLOCKED`.
+
+**Ordering:** Tasks 1–9 are strictly sequential (each consumes the last). Tasks 10–13 are
+independent of each other and may run in any order once Phase 1 is done; Task 14 must come
+after 10 (it moves auto-close onto the new switch). Task 15 needs a live paper session and can
+run in parallel with 16–17. Task 18 is last.
+
+**Two gates that stop the run, not just a task:**
+
+- **Task 8, Step 5** — if fewer than half of `would_own` is tradeable at $300k, stop and
+  re-derive `max_risk_units_per_ticker_pct`. Risk units are ~an order of magnitude smaller
+  than collateral, so the shipped `5.0` may be far too permissive. Carrying it across unexamined
+  would widen concentration several-fold — the mirror image of the bug being fixed.
+- **Task 15, Step 2** — if `greeks_source == "ibkr"` never populates, note it loudly and do not
+  proceed toward live trading until it is resolved or `require_ibkr_greeks_when_live` is
+  deliberately set `false` with a written justification.
+
+### Deviations
+
+Append one entry per deviation: task number, what changed, why, and what a later task needs to
+know. Empty until the first task runs.
+
+---
+
 ## File Structure
 
 **Created:**
