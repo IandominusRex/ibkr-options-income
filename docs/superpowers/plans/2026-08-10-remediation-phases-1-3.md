@@ -57,7 +57,7 @@ is worse than a stopped one.
 | 1 | Risk-unit arithmetic and resolved caps | 1 | done | 2026-08-10 | |
 | 2 | Carry IV on the candidate | 1 | done | 2026-08-10 | |
 | 3 | Size CSPs to headroom | 1 | done | 2026-08-10 | |
-| 4 | Risk units in the gate | 1 | pending | | |
+| 4 | Risk units in the gate | 1 | done | 2026-08-10 | |
 | 5 | VRP floor from display to gate | 1 | pending | | |
 | 6 | Wheel cost basis into the CC gate | 1 | pending | | |
 | 7 | IV rank at constant 30-day maturity | 1 | pending | | |
@@ -186,6 +186,93 @@ know. Empty until the first task runs.
      fix report for the exact commands/output). This is a deviation from the plan's literal
      fixture values, not from its production code or its stated intent — the code under test is
      unchanged by this correction.
+
+- **Task 4** — Production code (`src/engine/risk_engine.py`, `src/notify/formatters.py`)
+  matches the brief's Step 3/5 snippets verbatim. Five deviations, all in the test/config layer:
+  1. **`_account()` needed `net_liq`/`cash` aliases.** Same gap Task 3 hit on its own copy of
+     this helper: the brief's tests call `_account(net_liq=300_000.0, cash=100_000.0)`, but
+     `tests/test_engine.py::_account` was keyword-only with no such params and hardcoded
+     `excess_liquidity=30_000.0`. Extended it with `net_liq`/`cash` (each `None` by default,
+     falling back to the existing hardcoded values), and `cash` overrides `excess_liquidity`
+     — the field `capital.resolve_caps` actually reads as its cash basis, confirmed by hand
+     before writing the test (deployable = 100k − 20% = 80k, well above a $65k META put).
+     Every pre-existing bare `_account()` call site is unaffected.
+  2. **`_csp_candidate`/`_cc_candidate` did not exist.** Added both to `tests/test_engine.py`
+     per the brief, accepting `current_iv`/`dte` and building a valid `TradeCandidate` whose
+     `roc_pct`/`annualized_yield_pct` (2.0/20.0) clear the configured floors (1.0/12.0) so only
+     concentration is under test. Distinct from Task 3's file-local `_csp_candidate` in
+     `test_output_fidelity.py` (that file's note anticipated this).
+  3. **Existing assertions updated for the risk-unit model** (kept each test's original intent,
+     did not delete any): `test_reject_concentration_limit` and
+     `test_concentration_counts_option_positions_by_underlying` — no `current_iv`, so the gate
+     now uses the raw-collateral fallback (10% of NLV) AND-gated with the 25%-of-NLV large
+     ceiling; collateral raised from 3,000 to 26,000 (and `cash=100_000.0` added) so both legs
+     of the fallback trip, matching the fallback's deliberately-conservative AND semantics.
+     `test_reject_buying_power_buffer` and `test_cumulative_buying_power_buffer` — the BP
+     buffer is now `capital.resolve_caps`' deployable cash (excess liquidity minus a reserve),
+     not `account.buying_power` against a flat `min_buying_power_buffer_pct`; re-derived the
+     account fixtures against the new formula. `test_cumulative_concentration_across_same_ticker`
+     and `test_csp_allocation_within_cap_passes`/`_binds_with_existing_puts` — re-derived against
+     risk units / the deployable-cash CSP budget respectively. `test_sector_limit_binds_with_
+     existing_position` renamed to `test_sector_limit_binds_cumulatively_across_new_candidates`
+     and rebuilt: `capital.seed_budgets` cannot seed `sector_risk` from a raw position snapshot
+     (no IV to size a risk-unit charge from — see its docstring), so the old fixture (an
+     existing NVDA position filling the sector cap) no longer binds; replaced with six new
+     same-sector CSP candidates whose cumulative risk units cross the sector cap, preserving the
+     test's intent (a sector cap binds across positions, not just within one ticker).
+     `test_existing_short_put_charged_at_strike_for_concentration` — the N5 existing-short-put-
+     at-strike-collateral behavior it guards now surfaces as `csp_allocation_limit` (the CSP
+     budget), not `concentration_limit` (raw collateral alone no longer feeds a risk-unit
+     charge without IV); updated the assertion and added a negative check that concentration
+     itself does not also fire, with the arithmetic spelled out in the comment.
+  4. **Cascading fixes outside the brief's literal file list, needed to keep the full suite at
+     0 failures** (the brief's Files section names only `risk_engine.py`/`formatters.py`/
+     `test_engine.py`, but two more suites broke on the behavior change):
+     - `tests/test_execution.py::test_process_queued_orders_cumulative_regate_rejects_second`
+       asserted the *old* flat 5%-of-NLV collateral cap (two $4,000 AAPL CSPs, no IV). Under
+       risk units the same two candidates fall to the raw-collateral fallback, whose cap (10%
+       of NLV = 10,000) they no longer breach, so the test's premise (second order cancelled
+       for a cumulative breach) silently stopped holding. Added a `current_iv` param to
+       `_make_candidate` (default `None`, so every other caller is unaffected) and
+       re-parameterized both candidates to $10,000 collateral / 80% IV / 45 DTE (~2,809 risk
+       units each — the same numbers already used by
+       `test_cumulative_concentration_across_same_ticker`), so the cumulative second candidate
+       (~5,618) again cleanly breaches the 5,000 ticker-risk cap. $10,000 sits exactly at (not
+       over) the large-position threshold, so neither consumes the large slot — verified the
+       ticker-risk cap is what binds before editing.
+     - `tests/test_config_keys.py::test_every_risk_limit_key_is_read_or_allowlisted` failed
+       because `risk_engine.py` no longer reads `max_pct_per_sector`, `max_csp_allocation_pct`,
+       or `min_buying_power_buffer_pct` (superseded by `capital.resolve_caps`'s new keys), but
+       those three still sit in `config/risk_limits.yaml` — Task 9 is the one that deletes them
+       from the file (its own `test_retired_collateral_keys_are_gone`). Rather than remove them
+       from config early (explicitly out of scope — see the brief's note on not adding Task 9's
+       *new* keys, which cuts the same way for removing the *old* ones) or leave the suite red,
+       added the three to `_KNOWN_UNENFORCED` with a comment pointing at Task 9, and documented
+       them in `STATUS.md`'s "Not built" table per that test module's own contract
+       ("documented in STATUS.md"). Task 9 should delete both the config keys and this
+       allowlist/STATUS entry together when it lands. (`max_pct_per_ticker`, the fourth retired
+       key, was not in the failure list — it happens to appear inside a quoted docstring example
+       in `src/common/config.py:7`, which satisfies the test's naive string-containment check
+       without being genuinely read; pre-existing, not touched here.)
+  5. **The large-position-slot marginal-vs-cumulative gap, carried forward from Task 1's
+     Deviations entry, was implemented as specified** (`cand.collateral > caps.max_ticker_
+     collateral`, not `budgets.ticker_collateral[symbol] + cand.collateral`) — per instruction,
+     not changed unilaterally. Self-review opinion: **this is a real, narrow gap.**
+     `config/risk_limits.yaml`'s own Task-9 comment states the *intent* is that "a position
+     above `max_collateral_per_ticker_pct` needs a free slot" — not just a single trade whose
+     own collateral clears it alone. On the risk-units mainline path (IV present), several
+     small same-ticker candidates can each individually stay under `max_ticker_collateral`
+     while their sum sails past it, without ever tripping the large-slot check (which only
+     compares each candidate's own collateral) or the ticker-risk cap (a different unit that
+     does not move in lockstep with raw collateral for low-IV/short-DTE trades) — so the
+     "deliberateness" backstop can be silently bypassed by accumulation. Separately, and not
+     explicitly flagged by the brief: the IV-missing fallback block's AND-gated check
+     (`cumulative > max_ticker_collateral AND cand.collateral > large_ticker_collateral`) is
+     *more permissive* than `capital._fits`'s analogous fallback (`cumulative >
+     max_ticker_collateral` alone, no AND clause) for the exact same inputs — a discrepancy
+     between gate and generator on the (rare, defensive-only) IV-missing path, working against
+     this plan's stated goal that "the generator and the gate must now agree." Both are
+     implemented exactly as the brief specifies; flagged for a human call, not fixed here.
 
 ---
 
@@ -1007,7 +1094,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `capital.resolve_caps`, `capital.seed_budgets`, `capital.max_contracts`, `capital.charge`, `capital.risk_units` (Task 1); `TradeCandidate.current_iv` (Task 2).
 - Produces: no new public names. Reason codes `concentration_limit`, `sector_limit`, `csp_allocation_limit`, `buying_power_buffer` keep their existing spellings so `formatters._REJECT_REASON_LABELS` continues to work.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_engine.py — append
@@ -1059,12 +1146,12 @@ def test_covered_calls_still_consume_no_budget():
 
 Add `_csp_candidate` and `_cc_candidate` helpers to `tests/test_engine.py` if they do not already exist, accepting `current_iv` and `dte` and building a valid `TradeCandidate` with `roc_pct`/`annualized_yield_pct` above the configured floors so only the concentration logic is under test.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_engine.py -k "risk_units or high_priced or collateral_when_iv" -q`
 Expected: FAIL — the $65k META candidate is rejected with `concentration_limit`.
 
-- [ ] **Step 3: Rewrite the concentration block**
+- [x] **Step 3: Rewrite the concentration block**
 
 In `src/engine/risk_engine.py`, replace the `_seed_exposures` function entirely with an import:
 
@@ -1150,12 +1237,12 @@ Replace the budget-consumption block (lines 230-239) with:
             )
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS. Existing engine tests that assert the *old* collateral behaviour will fail — update each to the risk-unit expectation, keeping the test's original intent. Do not delete a failing test without replacing its assertion.
 
-- [ ] **Step 5: Add the new reason label**
+- [x] **Step 5: Add the new reason label**
 
 In `src/notify/formatters.py`, `_REJECT_REASON_LABELS`:
 
@@ -1163,12 +1250,12 @@ In `src/notify/formatters.py`, `_REJECT_REASON_LABELS`:
     "large_position_slot_full": "the single large-position slot is already taken",
 ```
 
-- [ ] **Step 6: Lint and type-check**
+- [x] **Step 6: Lint and type-check**
 
 Run: `ruff check . && ruff format . && mypy src`
 Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/engine/risk_engine.py src/notify/formatters.py tests/test_engine.py

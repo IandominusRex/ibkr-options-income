@@ -27,6 +27,7 @@ from src.common.schemas import (
     TradeCandidate,
     Verdict,
 )
+from src.engine.capital import Budgets, charge, resolve_caps, risk_units, seed_budgets
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
@@ -39,46 +40,6 @@ def _strategy_limits(strategy: Strategy) -> dict:
 def _sector_of(symbol: str) -> str | None:
     """Resolve a symbol to its sector via universe.yaml `sectors:`. None if unmapped."""
     return get_config().universe.get("sectors", {}).get(symbol)
-
-
-def _ticker_key(p: PositionSnapshot) -> str:
-    return p.underlying or p.symbol
-
-
-def _seed_exposures(
-    positions: list[PositionSnapshot],
-) -> tuple[dict[str, float], dict[str, float], float]:
-    """Seed per-ticker exposure, per-sector exposure, and existing CSP collateral from
-    current positions.
-
-    Exposure measures the capital a position represents toward the concentration caps. For a
-    short put that is the assignment liability — strike × 100 × |contracts| — NOT the option's
-    tiny |market value| (~1% of notional). Charging it at |MV| (N5) let a ticker with several
-    working short puts read as nearly unexposed and slip past the 5%-per-ticker cap. Counting it
-    at strike collateral matches exactly how a *new* CSP candidate is charged (cand.collateral),
-    so existing and proposed CSPs share one consistent budget. Everything else (long/short stock,
-    short calls) is measured at |MV|; short stock has negative MV, hence abs()."""
-    ticker_exposure: dict[str, float] = {}
-    sector_exposure: dict[str, float] = {}
-    csp_collateral = 0.0
-
-    for p in positions:
-        key = _ticker_key(p)
-        is_short_put = (
-            p.sec_type == "OPT" and p.right == OptionRight.PUT and p.position < 0 and p.strike
-        )
-        if is_short_put:
-            # strike is truthy here (guarded above); mypy-safe via `or 0.0`.
-            exposure = (p.strike or 0.0) * 100.0 * abs(p.position)
-            csp_collateral += exposure
-        else:
-            exposure = abs(p.market_value or 0.0)
-        ticker_exposure[key] = ticker_exposure.get(key, 0.0) + exposure
-        sector = _sector_of(key)
-        if sector:
-            sector_exposure[sector] = sector_exposure.get(sector, 0.0) + exposure
-
-    return ticker_exposure, sector_exposure, csp_collateral
 
 
 def validate_candidates(
@@ -103,21 +64,15 @@ def validate_candidates(
     today = today_et()
 
     net_liq = account.net_liquidation
-    # Account-level flags — computed once, applied to every candidate.
     margin_usage_pct = account.maintenance_margin / net_liq * 100 if net_liq > 0 else 0.0
     margin_exceeded = margin_usage_pct > portfolio.get("max_margin_usage_pct", 50.0)
-    required_bp = net_liq * portfolio.get("min_buying_power_buffer_pct", 15.0) / 100
 
-    max_ticker_value = net_liq * portfolio.get("max_pct_per_ticker", 5.0) / 100
-    max_sector_pct = portfolio.get("max_pct_per_sector")
-    max_csp_pct = portfolio.get("max_csp_allocation_pct")
     min_iv_rank = iv_cfg.get("min_iv_rank")
     blackout_days = events.get("earnings_blackout_days", 0)
 
-    # Running tallies seeded from existing positions; bp_used counts only NEW collateral
-    # (existing positions are already reflected in account.buying_power).
-    ticker_exposure, sector_exposure, csp_collateral = _seed_exposures(positions)
-    bp_used = 0.0
+    caps = resolve_caps(account, risk)
+    sector_of_fn = get_config().universe.get("sectors", {}).get
+    budgets: Budgets = seed_budgets(positions, sector_of_fn)
 
     verdicts: list[RiskVerdict] = []
 
@@ -195,48 +150,58 @@ def validate_candidates(
         if cand.contracts < 1:
             reasons.append("no_contracts")
 
-        # --- Cumulative per-ticker concentration (new-exposure strategies only) ---
+        # --- Cumulative concentration, measured in RISK UNITS (new-exposure strategies only).
+        # Raw collateral encodes share price, which is not a risk measure: a 10-for-1 split
+        # would make a name tradeable overnight with identical risk. Risk units
+        # (collateral x IV x sqrt(DTE/365)) put a $65k META put and a $15k MARA put on the
+        # same scale. When IV is missing we fall back to a stricter raw-collateral cap.
         sector = _sector_of(cand.underlying)
-        proj_ticker = None
-        proj_sector = None
-        proj_csp = None
         if adds_new_exposure:
-            proj_ticker = ticker_exposure.get(cand.underlying, 0.0) + cand.collateral
-            if proj_ticker > max_ticker_value:
-                reasons.append("concentration_limit")
-
-            # --- Cumulative per-sector concentration (only for mapped symbols) ---
-            if sector and max_sector_pct:
-                max_sector_value = net_liq * max_sector_pct / 100
-                proj_sector = sector_exposure.get(sector, 0.0) + cand.collateral
-                if proj_sector > max_sector_value:
+            units = risk_units(cand.collateral, cand.current_iv, cand.dte)
+            if units is None:
+                if (
+                    budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
+                    > caps.max_ticker_collateral
+                    and cand.collateral > caps.large_ticker_collateral
+                ):
+                    reasons.append("concentration_limit")
+            else:
+                if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
+                    reasons.append("concentration_limit")
+                if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
                     reasons.append("sector_limit")
 
-            # --- Cumulative total-CSP collateral cap ---
-            if cand.strategy == Strategy.CASH_SECURED_PUT and max_csp_pct:
-                max_csp_value = net_liq * max_csp_pct / 100
-                proj_csp = csp_collateral + cand.collateral
-                if proj_csp > max_csp_value:
-                    reasons.append("csp_allocation_limit")
+            # Large-position slot: an outsized position must be deliberate and counted.
+            if cand.collateral > caps.max_ticker_collateral:
+                if budgets.large_slots_used >= caps.max_large_positions:
+                    reasons.append("large_position_slot_full")
+                elif cand.collateral > caps.large_ticker_collateral:
+                    reasons.append("concentration_limit")
 
-        # --- Account-level margin (applies to all) + cumulative BP buffer (new exposure only) ---
+            if cand.strategy == Strategy.CASH_SECURED_PUT:
+                if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
+                    reasons.append("csp_allocation_limit")
+            if budgets.cash_used + cand.collateral > caps.deployable_cash:
+                reasons.append("buying_power_buffer")
+
         if margin_exceeded:
             reasons.append("margin_limit")
-        if adds_new_exposure and account.buying_power - bp_used - cand.collateral < required_bp:
-            reasons.append("buying_power_buffer")
 
         verdict = Verdict.PASS if not reasons else Verdict.REJECT
 
         # Consume budget only for accepted, new-exposure candidates so later ones see
         # reduced headroom. Covered calls touch none of these tallies.
         if verdict == Verdict.PASS and adds_new_exposure:
-            if proj_ticker is not None:
-                ticker_exposure[cand.underlying] = proj_ticker
-            if sector and proj_sector is not None:
-                sector_exposure[sector] = proj_sector
-            if proj_csp is not None:
-                csp_collateral = proj_csp
-            bp_used += cand.collateral
+            charge(
+                contracts=cand.contracts,
+                unit_collateral=cand.collateral / max(1, cand.contracts),
+                current_iv=cand.current_iv,
+                dte=cand.dte,
+                symbol=cand.underlying,
+                sector=sector,
+                caps=caps,
+                budgets=budgets,
+            )
 
         verdicts.append(
             RiskVerdict(candidate_id=cand.candidate_id, verdict=verdict, reasons=reasons)

@@ -22,6 +22,13 @@ _SRC = _ROOT / "src"
 _KNOWN_UNENFORCED = {
     "max_correlated_exposure_pct",  # needs a price-correlation engine (deferred)
     "ex_dividend_assignment_guard",  # ex-div guard fires in monitor/triggers without this flag
+    # D1 (Task 4): retired by the risk-units concentration model — risk_engine.py now reads
+    # caps via engine.capital.resolve_caps, not these directly. Still present in
+    # risk_limits.yaml pending Task 9, which deletes them from the file entirely (see
+    # test_retired_collateral_keys_are_gone) and adds their risk-unit replacements.
+    "max_pct_per_sector",
+    "max_csp_allocation_pct",
+    "min_buying_power_buffer_pct",
 }
 
 

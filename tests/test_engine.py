@@ -59,6 +59,7 @@ def _candidate(
     contracts: int = 1,
     collateral: float = 3_000.0,
     iv_rank: float | None = None,
+    current_iv: float | None = None,
 ) -> TradeCandidate:
     return TradeCandidate(
         candidate_id=candidate_id,
@@ -75,6 +76,7 @@ def _candidate(
         breakeven=147.0,
         delta=delta,
         iv_rank=iv_rank,
+        current_iv=current_iv,
         dte=dte,
         scores=scores or _scores(),
     )
@@ -85,14 +87,84 @@ def _account(
     net_liquidation: float = 100_000.0,
     buying_power: float = 50_000.0,
     maintenance_margin: float = 20_000.0,
+    net_liq: float | None = None,
+    cash: float | None = None,
 ) -> AccountSnapshot:
+    """`net_liq`/`cash` are aliases used by the risk-unit tests (Task 4): `net_liq` overrides
+    `net_liquidation`, and `cash` overrides `excess_liquidity` — the cash basis
+    `capital.resolve_caps` reads — and `total_cash`. Every existing default is unchanged, so
+    every pre-existing caller (which never passes these) is unaffected."""
     return AccountSnapshot(
         account="DU123",
-        net_liquidation=net_liquidation,
-        total_cash=50_000.0,
+        net_liquidation=net_liq if net_liq is not None else net_liquidation,
+        total_cash=cash if cash is not None else 50_000.0,
         buying_power=buying_power,
         maintenance_margin=maintenance_margin,
-        excess_liquidity=30_000.0,
+        excess_liquidity=cash if cash is not None else 30_000.0,
+    )
+
+
+def _csp_candidate(
+    *,
+    underlying: str,
+    strike: float,
+    contracts: int = 1,
+    current_iv: float | None = 30.0,
+    dte: int = 30,
+    delta: float = -0.20,
+) -> TradeCandidate:
+    """Build a valid CSP TradeCandidate whose roc/yield clear the configured floors, so only
+    the concentration logic under test can reject it."""
+    collateral = strike * 100.0 * contracts
+    return TradeCandidate(
+        candidate_id=f"{underlying}-csp-{strike}-{contracts}",
+        strategy=Strategy.CASH_SECURED_PUT,
+        underlying=underlying,
+        right=OptionRight.PUT,
+        strike=strike,
+        expiry=date.today() + timedelta(days=dte),
+        contracts=contracts,
+        premium=3.0,
+        collateral=collateral,
+        roc_pct=2.0,
+        annualized_yield_pct=20.0,
+        breakeven=strike - 3.0,
+        delta=delta,
+        current_iv=current_iv,
+        dte=dte,
+        scores=_scores(symbol=underlying),
+    )
+
+
+def _cc_candidate(
+    *,
+    underlying: str,
+    strike: float,
+    contracts: int = 1,
+    current_iv: float | None = 30.0,
+    dte: int = 30,
+    delta: float = 0.28,
+) -> TradeCandidate:
+    """Build a valid CC TradeCandidate whose roc/yield clear the configured floors, so only
+    the concentration logic under test can reject it."""
+    collateral = strike * 100.0 * contracts
+    return TradeCandidate(
+        candidate_id=f"{underlying}-cc-{strike}-{contracts}",
+        strategy=Strategy.COVERED_CALL,
+        underlying=underlying,
+        right=OptionRight.CALL,
+        strike=strike,
+        expiry=date.today() + timedelta(days=dte),
+        contracts=contracts,
+        premium=3.0,
+        collateral=collateral,
+        roc_pct=2.0,
+        annualized_yield_pct=20.0,
+        breakeven=strike + 3.0,
+        delta=delta,
+        current_iv=current_iv,
+        dte=dte,
+        scores=_scores(symbol=underlying),
     )
 
 
@@ -280,7 +352,12 @@ class TestValidateCandidates:
         assert "no_contracts" in verdicts[0].reasons
 
     def test_reject_concentration_limit(self) -> None:
-        # max 5% of 100k = 5000; existing 4000 + collateral 3000 = 7000 > 5000
+        # D1: with no current_iv the gate falls back to the raw-collateral cap (10% of
+        # 100k = 10,000), which only rejects when the CUMULATIVE collateral clears it AND
+        # the new candidate's OWN collateral clears the 25%-of-NLV large-position ceiling
+        # (25,000) — a deliberately conservative fallback, since a raw position snapshot
+        # carries no IV to size a risk-unit charge from. existing 4,000 + new 26,000 =
+        # 30,000 > 10,000, and 26,000 > 25,000, so both legs of the fallback trip.
         pos = PositionSnapshot(
             symbol="AAPL",
             sec_type="STK",
@@ -288,8 +365,10 @@ class TestValidateCandidates:
             avg_cost=100.0,
             market_value=4_000.0,
         )
-        cand = _candidate(collateral=3_000.0, underlying="AAPL")
-        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [pos])
+        cand = _candidate(collateral=26_000.0, underlying="AAPL")
+        verdicts = validate_candidates(
+            [cand], _account(net_liquidation=100_000.0, cash=100_000.0), [pos]
+        )
         assert "concentration_limit" in verdicts[0].reasons
 
     def test_pass_concentration_within_limit(self) -> None:
@@ -299,7 +378,10 @@ class TestValidateCandidates:
         assert "concentration_limit" not in verdicts[0].reasons
 
     def test_concentration_counts_option_positions_by_underlying(self) -> None:
-        # Option position where underlying=="AAPL" but symbol differs
+        # Option position where underlying=="AAPL" but symbol differs — must key off
+        # `underlying`. Same raw-collateral fallback arithmetic as the test above:
+        # cumulative 4,500 + 26,000 = 30,500 > the 10,000 ticker cap, and the new
+        # candidate's own 26,000 > the 25,000 large-position ceiling.
         pos = PositionSnapshot(
             symbol="AAPL  250117P00150000",
             sec_type="OPT",
@@ -308,8 +390,10 @@ class TestValidateCandidates:
             market_value=4_500.0,
             underlying="AAPL",
         )
-        cand = _candidate(collateral=3_000.0, underlying="AAPL")
-        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [pos])
+        cand = _candidate(collateral=26_000.0, underlying="AAPL")
+        verdicts = validate_candidates(
+            [cand], _account(net_liquidation=100_000.0, cash=100_000.0), [pos]
+        )
         assert "concentration_limit" in verdicts[0].reasons
 
     def test_reject_margin_limit(self) -> None:
@@ -321,10 +405,11 @@ class TestValidateCandidates:
         assert "margin_limit" in verdicts[0].reasons
 
     def test_reject_buying_power_buffer(self) -> None:
-        # required = 15% of 100k = 15000; buying_power = 10000 < 15000
-        acc = _account(
-            net_liquidation=100_000.0, buying_power=10_000.0, maintenance_margin=20_000.0
-        )
+        # D1: the BP buffer is now `capital.resolve_caps`' deployable cash — excess
+        # liquidity minus a reserve (20% of excess liquidity by default), not
+        # account.buying_power against min_buying_power_buffer_pct. Deployable =
+        # 1,000 - 200 = 800, less than the 1,000 of new collateral.
+        acc = _account(net_liquidation=100_000.0, cash=1_000.0, maintenance_margin=20_000.0)
         verdicts = validate_candidates([_candidate(collateral=1_000.0)], acc, [])
         assert "buying_power_buffer" in verdicts[0].reasons
 
@@ -351,10 +436,19 @@ class TestValidateCandidates:
     # --- Cumulative / portfolio-aware enforcement (S2) ---
 
     def test_cumulative_concentration_across_same_ticker(self) -> None:
-        # max 5% of 100k = 5000. Three AAPL candidates @ 3000 collateral each: only the
-        # first fits; the next two breach the per-ticker cap cumulatively.
+        # D1: max_ticker_risk = 5% of 100k = 5,000 RISK UNITS. Three AAPL CSPs, each
+        # $10,000 collateral at 80% IV / 45 DTE ~= 2,809 risk units (10000 * 0.80 *
+        # sqrt(45/365)): the first fits (2,809 <= 5,000) and is charged; the next two
+        # each see a cumulative ~5,618 > 5,000 and are rejected (charge() only runs on
+        # PASS, so the rejected ones never raise the running tally further).
         cands = [
-            _candidate(candidate_id=f"c{i}", underlying="AAPL", collateral=3_000.0)
+            _candidate(
+                candidate_id=f"c{i}",
+                underlying="AAPL",
+                collateral=10_000.0,
+                dte=45,
+                current_iv=80.0,
+            )
             for i in range(3)
         ]
         verdicts = validate_candidates(cands, _account(net_liquidation=100_000.0), [])
@@ -365,58 +459,74 @@ class TestValidateCandidates:
         )
 
     def test_cumulative_buying_power_buffer(self) -> None:
-        # bp=20k, required buffer=15% of 100k=15k → only 5k of NEW collateral fits.
-        acc = _account(
-            net_liquidation=100_000.0, buying_power=20_000.0, maintenance_margin=10_000.0
-        )
+        # D1: deployable cash = excess_liquidity(7,500) minus a 20% reserve = 6,000;
+        # only one $4,000 CSP fits before the second breaches the buffer.
+        acc = _account(net_liquidation=100_000.0, cash=7_500.0, maintenance_margin=10_000.0)
         # Use distinct tickers so per-ticker concentration doesn't mask the BP check.
         cands = [
             _candidate(candidate_id="a", underlying="AAPL", collateral=4_000.0),
             _candidate(candidate_id="b", underlying="MSFT", collateral=4_000.0),
         ]
         verdicts = validate_candidates(cands, acc, [])
-        assert verdicts[0].verdict == Verdict.PASS  # 20k-4k=16k >= 15k
-        assert "buying_power_buffer" in verdicts[1].reasons  # 20k-8k=12k < 15k
+        assert verdicts[0].verdict == Verdict.PASS  # cash_used 0 -> 4,000 <= deployable 6,000
+        assert "buying_power_buffer" in verdicts[1].reasons  # cumulative 8,000 > deployable 6,000
 
     # --- Sector concentration (S1) ---
 
     def test_sector_within_cap_passes(self) -> None:
-        # Four "tech" names (AAPL/MSFT/GOOGL/AMZN per universe.yaml) @ 4k each on a 100k
-        # account: each under the 5% ticker cap (5k), tech bucket 16k under the 25% cap (25k).
-        acc = _account(net_liquidation=100_000.0, buying_power=90_000.0, maintenance_margin=0.0)
+        # Four "tech" names (AAPL/MSFT/GOOGL/AMZN per universe.yaml), each $4,000 collateral
+        # at 30% IV / 30 DTE (~344 risk units): every ticker is far under its own 5,000 cap,
+        # and the tech-sector total (~1,377) is far under the sector's 25,000 cap.
+        acc = _account(net_liquidation=100_000.0, cash=90_000.0, maintenance_margin=0.0)
         cands = [
-            _candidate(candidate_id="aapl", underlying="AAPL", collateral=4_000.0),
-            _candidate(candidate_id="msft", underlying="MSFT", collateral=4_000.0),
-            _candidate(candidate_id="googl", underlying="GOOGL", collateral=4_000.0),
-            _candidate(candidate_id="amzn", underlying="AMZN", collateral=4_000.0),
+            _candidate(candidate_id="aapl", underlying="AAPL", collateral=4_000.0, current_iv=30.0),
+            _candidate(candidate_id="msft", underlying="MSFT", collateral=4_000.0, current_iv=30.0),
+            _candidate(
+                candidate_id="googl", underlying="GOOGL", collateral=4_000.0, current_iv=30.0
+            ),
+            _candidate(candidate_id="amzn", underlying="AMZN", collateral=4_000.0, current_iv=30.0),
         ]
         verdicts = validate_candidates(cands, acc, [])
         assert all(v.verdict == Verdict.PASS for v in verdicts)
         assert all("sector_limit" not in v.reasons for v in verdicts)
 
-    def test_sector_limit_binds_with_existing_position(self) -> None:
-        # Existing NVDA (semis) position already fills most of the 25% sector cap (25k of 100k).
-        # A new SMH (also semis) candidate @ 4k tips the semis bucket to 27k > 25k → sector_limit,
-        # while SMH itself stays under the 5% ticker cap.
-        existing = PositionSnapshot(
-            symbol="NVDA", sec_type="STK", position=100.0, avg_cost=230.0, market_value=23_000.0
-        )
-        cand = _candidate(underlying="SMH", collateral=4_000.0)
-        verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing])
-        assert "sector_limit" in verdicts[0].reasons
-        assert "concentration_limit" not in verdicts[0].reasons  # SMH ticker itself is fine
+    def test_sector_limit_binds_cumulatively_across_new_candidates(self) -> None:
+        # D1: sector_risk is a risk-units tally fed only by NEW priced candidates —
+        # `capital.seed_budgets` cannot seed it from an existing raw position, which
+        # carries no IV (see its docstring). Six "tech" CSPs, each $10,000 collateral
+        # (at the 10,000 large-position threshold, so none of them consume the large
+        # slot) at 120% IV / 45 DTE (~4,213 risk units — safely under the 5,000 ticker
+        # cap on its own): the first five sum to ~21,067 (< the 25,000 sector cap) and
+        # all pass; the sixth tips the cumulative to ~25,281 and is rejected for
+        # sector_limit, not its own ticker concentration.
+        tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "PLTR"]
+        cands = [
+            _candidate(candidate_id=t, underlying=t, collateral=10_000.0, dte=45, current_iv=120.0)
+            for t in tickers
+        ]
+        acc = _account(net_liquidation=100_000.0, cash=200_000.0)
+        verdicts = validate_candidates(cands, acc, [])
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["PLTR"].verdict == Verdict.REJECT
+        assert "sector_limit" in vm["PLTR"].reasons
+        assert "concentration_limit" not in vm["PLTR"].reasons
 
     # --- CSP allocation cap (S1/S3) ---
 
     def test_csp_allocation_within_cap_passes(self) -> None:
-        # CSP cap = 60% of 100k = 60k. One small CSP well under it must not trip the cap.
+        # D1: the CSP budget is `capital.resolve_caps`' deployable cash (excess liquidity
+        # minus the reserve), not a flat % of net liquidation. One small CSP well under
+        # it must not trip the cap.
         cand = _candidate(strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20)
         verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [])
         assert "csp_allocation_limit" not in verdicts[0].reasons
 
     def test_csp_allocation_cap_binds_with_existing_puts(self) -> None:
-        # Existing short put ties up 57k of the 60k CSP budget (strike 570 * 100 * 1).
-        # A new 4k CSP on an unmapped ticker tips total CSP collateral to 61k > 60k.
+        # D1: the existing short put alone (57k) already exceeds the deployable-cash-based
+        # CSP budget (24,000 = 30,000 excess liquidity - a 20% reserve), so the cap binds
+        # regardless of the new candidate's size — the point being that it binds AT ALL,
+        # not that the new 4k tips a marginal balance (as it did under the old flat-60%
+        # cap this test predates).
         existing_put = PositionSnapshot(
             symbol="SPYPUT",
             sec_type="OPT",
@@ -433,9 +543,13 @@ class TestValidateCandidates:
         assert "concentration_limit" not in verdicts[0].reasons
 
     def test_existing_short_put_charged_at_strike_for_concentration(self) -> None:
-        # N5: an existing short put must count toward per-ticker concentration at strike
-        # collateral (strike*100*contracts = 60k), not its tiny |market value| (~500). With the
-        # old |MV| seeding this ticker looked nearly unexposed and a new CSP slipped past the cap.
+        # N5 + D1: an existing short put must count toward the CSP budgets at strike
+        # collateral (strike*100*contracts = 60k), not its tiny |market value| (~500).
+        # Under the risk-units model this raw position (no IV) cannot feed `ticker_risk`,
+        # so a small new candidate no longer trips the AND-gated collateral-fallback
+        # `concentration_limit` (see the module docstring) — but the strike-collateral
+        # valuation still correctly blows the cumulative CSP allocation once the short put
+        # is counted at 60k rather than ~500. Previously (pre-N5) it would NOT have.
         existing_put = PositionSnapshot(
             symbol="NVDA",
             sec_type="OPT",
@@ -448,9 +562,11 @@ class TestValidateCandidates:
         cand = _candidate(
             underlying="NVDA", strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20
         )
-        # 5%/ticker cap = 5k of 100k net liq; 60k existing already blows it.
+        # Deployable-cash CSP budget = 24,000 (30,000 excess liquidity - a 20% reserve);
+        # the existing put's true 60k strike collateral blows straight through it.
         verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing_put])
-        assert "concentration_limit" in verdicts[0].reasons
+        assert "csp_allocation_limit" in verdicts[0].reasons
+        assert "concentration_limit" not in verdicts[0].reasons
 
     # --- IV rank gate (S1) ---
 
@@ -529,6 +645,46 @@ class TestValidateCandidates:
         vm = {v.candidate_id: v for v in verdicts}
         assert vm["cc"].verdict == Verdict.PASS
         assert "concentration_limit" not in vm["csp"].reasons
+
+
+# ---------------------------------------------------------------------------
+# risk_engine.py — D1: concentration measured in RISK UNITS, not raw collateral
+# ---------------------------------------------------------------------------
+
+
+class TestConcentrationInRiskUnits:
+    def test_gate_accepts_a_high_priced_name_within_risk_units(self) -> None:
+        """D1: a $65k META put at 35% IV is ~$6.5k of risk units, inside a 5%-of-300k cap."""
+        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=35.0, dte=30)
+        account = _account(net_liq=300_000.0, cash=100_000.0)
+        verdicts = validate_candidates([cand], account, [])
+        assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
+
+    def test_gate_rejects_a_cheap_high_vol_name_that_is_large_in_risk_units(self) -> None:
+        """MARA at 110% IV must be charged for its volatility, not just its collateral."""
+        cand = _csp_candidate(
+            underlying="MARA", strike=15.0, contracts=40, current_iv=110.0, dte=30
+        )  # $60k collateral, ~$19k risk units vs a $15k cap
+        account = _account(net_liq=300_000.0, cash=100_000.0)
+        verdicts = validate_candidates([cand], account, [])
+        assert verdicts[0].verdict.value == "reject"
+        assert "concentration_limit" in verdicts[0].reasons
+
+    def test_gate_falls_back_to_collateral_when_iv_is_missing(self) -> None:
+        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=None, dte=30)
+        account = _account(net_liq=300_000.0, cash=100_000.0)
+        verdicts = validate_candidates([cand], account, [])
+        # $65k > the 10%-of-NLV ($30k) collateral fallback, but the large slot admits one.
+        assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
+
+    def test_covered_calls_still_consume_no_budget(self) -> None:
+        """CCs are written against shares already owned — unchanged by the new model."""
+        cand = _cc_candidate(underlying="AAPL", strike=250.0, contracts=5)
+        assert cand.strategy == Strategy.COVERED_CALL
+        account = _account(net_liq=300_000.0, cash=0.0)  # no cash at all
+        verdicts = validate_candidates([cand], account, [])
+        assert "buying_power_buffer" not in verdicts[0].reasons
+        assert "concentration_limit" not in verdicts[0].reasons
 
 
 # ---------------------------------------------------------------------------

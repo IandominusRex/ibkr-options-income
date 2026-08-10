@@ -43,6 +43,7 @@ def _make_candidate(
     collateral: float = 3_800.0,
     delta: float = -0.25,  # negative for PUT (IBKR convention)
     dte: int = 30,
+    current_iv: float | None = None,
 ) -> TradeCandidate:
     scores = ScoreCard(
         symbol=underlying,
@@ -68,6 +69,7 @@ def _make_candidate(
         prob_otm=0.75,
         delta=delta,
         iv_rank=68.0,
+        current_iv=current_iv,
         dte=dte,
         scores=scores,
         blended_score=77.2,
@@ -803,8 +805,13 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
     monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
-    # net-liq 100k → 5% ticker cap = 5000. Two AAPL CSPs @ 4000 collateral each: first fits,
-    # together (8000) they breach the cap. Use the REAL risk engine (not a monkeypatched stub).
+    # D1: concentration is now measured in RISK UNITS (collateral x IV x sqrt(DTE/365)), not
+    # raw collateral. net-liq 100k -> max_ticker_risk = 5% of 100k = 5,000 risk units. Two
+    # AAPL CSPs @ 10,000 collateral / 80% IV / 45 DTE ~= 2,809 risk units each (10000 * 0.80 *
+    # sqrt(45/365)): the first fits (2,809 <= 5,000) and is charged; the cumulative second
+    # (~5,618) breaches the cap. 10,000 collateral sits exactly AT (not over) the 10,000
+    # large-position threshold (10% of 100k), so neither consumes the large slot — the ticker
+    # risk cap is what binds. Use the REAL risk engine (not a monkeypatched stub).
     account_snap = AccountSnapshot(
         account="DU1",
         net_liquidation=100_000.0,
@@ -825,12 +832,12 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
 
-    c1 = _make_candidate("c1", underlying="AAPL", collateral=4_000.0).model_copy(
-        update={"blended_score": 90.0}
-    )
-    c2 = _make_candidate("c2", underlying="AAPL", collateral=4_000.0).model_copy(
-        update={"blended_score": 80.0}
-    )
+    c1 = _make_candidate(
+        "c1", underlying="AAPL", collateral=10_000.0, current_iv=80.0, dte=45
+    ).model_copy(update={"blended_score": 90.0})
+    c2 = _make_candidate(
+        "c2", underlying="AAPL", collateral=10_000.0, current_iv=80.0, dte=45
+    ).model_copy(update={"blended_score": 80.0})
     with dbmod.session_scope() as session:
         _insert_candidate_row(session, c1)
         _insert_candidate_row(session, c2)
