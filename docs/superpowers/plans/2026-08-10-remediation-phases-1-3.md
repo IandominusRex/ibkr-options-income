@@ -273,6 +273,17 @@ know. Empty until the first task runs.
      between gate and generator on the (rare, defensive-only) IV-missing path, working against
      this plan's stated goal that "the generator and the gate must now agree." Both are
      implemented exactly as the brief specifies; flagged for a human call, not fixed here.
+  6. **Self-review addition (not in the brief's Step 1 list):** none of the brief's four tests
+     exercise the `large_position_slot_full` reason code added in Step 5 — a genuinely new
+     branch in `validate_candidates`, not just a label. Added
+     `test_second_large_position_hits_the_slot_cap` to `TestConcentrationInRiskUnits`: two
+     different (sector-unmapped) tickers, each $40,000 collateral at 20% IV/30 DTE (~2,294 risk
+     units, nowhere near the 15,000 ticker-risk cap) — over the 30,000 ticker-collateral
+     threshold but under the 75,000 large ceiling, so the first consumes the account's one
+     `max_large_positions` slot and passes, and the second — on a different ticker so neither
+     the ticker-risk nor sector caps mask it — finds the slot taken and is rejected for
+     `large_position_slot_full`, not `concentration_limit`. Verified against
+     `capital.resolve_caps` by hand before writing it (see task-4-report.md).
 
 ---
 

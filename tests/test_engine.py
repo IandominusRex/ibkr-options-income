@@ -686,6 +686,28 @@ class TestConcentrationInRiskUnits:
         assert "buying_power_buffer" not in verdicts[0].reasons
         assert "concentration_limit" not in verdicts[0].reasons
 
+    def test_second_large_position_hits_the_slot_cap(self) -> None:
+        """max_large_positions defaults to 1. Two DIFFERENT (unmapped-sector) tickers, each
+        $40,000 collateral at 20% IV / 30 DTE (~2,294 risk units — nowhere near the 15,000
+        ticker-risk cap on its own): $40,000 clears the 30,000 ticker-collateral threshold
+        (10% of 300k) but sits well under the 75,000 large ceiling (25%), so the first
+        candidate consumes the account's one large-position slot and passes; the second,
+        on a different ticker so neither the ticker-risk nor sector caps mask it, finds the
+        slot already taken."""
+        cand_a = _csp_candidate(
+            underlying="ZZZ1", strike=400.0, contracts=1, current_iv=20.0, dte=30
+        )
+        cand_b = _csp_candidate(
+            underlying="ZZZ2", strike=400.0, contracts=1, current_iv=20.0, dte=30
+        )
+        account = _account(net_liq=300_000.0, cash=200_000.0)
+        verdicts = validate_candidates([cand_a, cand_b], account, [])
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm[cand_a.candidate_id].verdict.value == "pass", vm[cand_a.candidate_id].reasons
+        assert vm[cand_b.candidate_id].verdict.value == "reject"
+        assert "large_position_slot_full" in vm[cand_b.candidate_id].reasons
+        assert "concentration_limit" not in vm[cand_b.candidate_id].reasons
+
 
 # ---------------------------------------------------------------------------
 # risk_engine.py — validate_live_quote (send-time second gate, S4)
