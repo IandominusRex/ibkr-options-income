@@ -60,7 +60,7 @@ is worse than a stopped one.
 | 4 | Risk units in the gate | 1 | done | 2026-08-10 | |
 | 5 | VRP floor from display to gate | 1 | done | 2026-08-10 | |
 | 6 | Wheel cost basis into the CC gate | 1 | done | 2026-08-11 | |
-| 7 | IV rank at constant 30-day maturity | 1 | pending | | |
+| 7 | IV rank at constant 30-day maturity | 1 | done | 2026-08-11 | |
 | 8 | Capacity report + account-size tests | 1 | pending | | |
 | 9 | Phase 1 config and doc sweep | 1 | pending | | |
 | 10 | Loss-side exits | 2 | pending | | |
@@ -534,6 +534,70 @@ know. Empty until the first task runs.
   `SETUP.md`'s existing `/campaigns` and `min_strike_vs_basis` rows were checked and remain
   accurate as written (neither claims the basis source is `avg_cost` specifically), so neither
   needed a change.
+
+- **Task 7** — Production code (`src/analytics/iv.py`) matches the brief's Step 3 snippet's
+  logic exactly. Two mechanical corrections to the brief's own code, made before any test ran,
+  per the task owner's explicit instruction not to transcribe them as-is:
+  1. **Wrong annotation on `by_dte`.** The brief declared
+     `by_dte: dict[int, list[float]] = defaultdict(list)` but the loop appends
+     `(abs(q.strike - spot), q.iv)` — a `tuple[float, float]`, not a `float` — and papered over
+     the mismatch with `# type: ignore[arg-type]`. Corrected the annotation to
+     `dict[int, list[tuple[float, float]]]` and deleted the `type: ignore`; `mypy src` is clean
+     with no suppression at that line.
+  2. **`from collections import defaultdict` was inside the function.** Moved it to the module's
+     top-level imports (`src/analytics/iv.py:12`), matching the file's existing convention (every
+     other top-level import in the file is at module scope). `infer_spot_from_quotes` and
+     `_term_structure_slope` each keep their own pre-existing local `from collections import
+     defaultdict` — neither was touched, per the instruction to leave `_term_structure_slope`
+     alone and to change only the new function's import. A function-local import shadowing a
+     module-level one of the same name is legal Python and drew no ruff/mypy complaint (verified:
+     `ruff check .` and `mypy src` both clean).
+  - **Test fixture (`_atm_quotes`), built from scratch per the brief's instruction (no such
+    helper existed):** two strikes (95, 105) bracketing a $100 spot, each carrying a call and a
+    put whose bid=ask mid is set so put-call parity (`strike + call_mid - put_mid`) resolves to
+    exactly 100.0 at *both* strikes independently — 95+6.00-1.00=100 and 105+1.00-6.00=100 — so
+    `infer_spot_from_quotes`'s median-of-parity-estimates returns exactly 100.0 regardless of
+    which strike's pair is picked, and both strikes are equidistant from spot so all 4 quotes
+    enter `_atm_iv_at_30d`'s "nearest 4" average, keeping the per-DTE ATM IV exactly equal to the
+    fixture's input `iv` with no averaging noise. Verified directly (ad hoc `python -c` call
+    before writing the assertions) that `infer_spot_from_quotes` returns 100.0 and does not
+    silently fall to the tightest-spread fallback. `expiry` is built as
+    `today_et() + timedelta(days=dte)` (imported from `src.common.market_hours`), never
+    `date.today()`, per this task's explicit ET-clock instruction — `OptionQuote.dte` is itself
+    computed against `datetime.now(ZoneInfo("America/New_York")).date()`
+    (`src/common/schemas.py:147`), the same definition `today_et()` uses, so the two never drift.
+  - **Interpolation arithmetic sanity-checked by hand before trusting the brief's test:** 21 DTE
+    at 0.20, 49 DTE at 0.30, target 30 → weight = (30-21)/(49-21) = 9/28 ≈ 0.3214,
+    result = 0.20 + 0.3214×0.10 ≈ 0.23214, matching the brief's asserted `pytest.approx(0.2321,
+    abs=0.005)`.
+  - **No existing assertion moved.** Grepped every call site of `get_iv_stats` across `tests/`
+    and `src/`: the only non-mocked callers in the test suite (`tests/test_analytics.py`'s
+    `TestIVStats`/`TestIVRVRatio`) never pass `quotes`, so `_live_atm_iv`/`_atm_iv_at_30d` was
+    never on their path (`live_iv` stays `None`, falling straight to `history[0]`); the only
+    other test-side references (`test_scan_materiality.py`, `test_scan_timeout.py`,
+    `test_scan_review_reuse.py`) monkeypatch `get_iv_stats` itself wholesale and never execute
+    its body. `src/orchestrator/scan.py:886` is the sole production caller that passes real
+    `quotes`, and it takes `get_iv_stats`'s return value as-is with no assertion to move. Full
+    suite went from the stated 1115-test baseline to 1118 (three new, zero moved, zero broken).
+  - **Fraction/percent boundary, traced and confirmed preserved.** `_atm_iv_at_30d` (like the
+    `_live_atm_iv` it replaces) returns whatever unit `OptionQuote.iv` is in — a fraction (0.20 =
+    20%) — because every arithmetic step inside it (the per-DTE ATM average, the DTE-linear
+    interpolation) is a weighted average of `q.iv` values in that same unit; nothing in the
+    function rescales. The single conversion point is unchanged and sits outside this function,
+    at `iv.py:41`/`:62` (`current_iv_pct = round(current_iv * 100, 4)`), which is what
+    `IVStats.current_iv` (a percent) is built from. Confirmed by running the three new tests
+    (which assert `_atm_iv_at_30d` returns `0.2321`/`0.20`/`None`, all fractions) and by the
+    `TestIVStats`/`TestIVRVRatio` tests continuing to pass unchanged (they assert `IVStats.
+    current_iv`/`iv_rank`/`iv_rv_ratio` in percent terms, off the `history[0]` fallback path,
+    which was never touched).
+  - **Doc scope:** only `STATUS.md`'s analytics bullet was touched, per the brief's Step 5 (added
+    the one sentence it specifies, inline in the existing "Analytics" bullet rather than at the
+    bullet's end, to keep it adjacent to the "IV rank/percentile (from `iv_history`)" clause it
+    qualifies). Grepped `ARCHITECTURE.md`/`README.md`/`SETUP.md` for any claim about "nearest
+    expiry" live IV or the old `_live_atm_iv` mechanism that this change would make false — none
+    exists (the `ARCHITECTURE.md` `iv.py` row describes IV rank/VRP/IV-RV-ratio at the
+    `IVStats`-field level, never the live-override's DTE-selection mechanism), so no other doc
+    needed a change.
 
 ---
 
@@ -1819,7 +1883,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `_term_structure_slope` (existing, unchanged).
 - Produces: `_atm_iv_at_30d(quotes: list[OptionQuote]) -> float | None`, replacing `_live_atm_iv` as the `current_iv` source in `get_iv_stats`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_analytics.py — append
@@ -1850,12 +1914,12 @@ Write `_atm_quotes(dte, iv)` as a local helper in the test file returning a pair
 call/put `OptionQuote` list at strikes bracketing a fixed spot, so `infer_spot_from_quotes`
 resolves. Follow the `OptionQuote` construction already used elsewhere in this test file.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_analytics.py -k atm_iv -q`
 Expected: FAIL — `ImportError: cannot import name '_atm_iv_at_30d'`
 
-- [ ] **Step 3: Implement the interpolation**
+- [x] **Step 3: Implement the interpolation**
 
 In `src/analytics/iv.py`, replace `_live_atm_iv` with:
 
@@ -1920,16 +1984,16 @@ In `get_iv_stats`, change line 39:
     live_iv = _atm_iv_at_30d(quotes) if quotes else None
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Update docs**
+- [x] **Step 5: Update docs**
 
 In `STATUS.md`, in the analytics bullet, add a sentence: "The live IV used for IV rank is interpolated to a constant 30-day maturity (`_atm_iv_at_30d`) so it matches the constant-maturity `OPTION_IMPLIED_VOLATILITY` series it is ranked against."
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/analytics/iv.py tests/test_analytics.py STATUS.md

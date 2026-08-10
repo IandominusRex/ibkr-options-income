@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import defaultdict
 
 from sqlalchemy import select
 
@@ -36,7 +37,7 @@ def get_iv_stats(symbol: str, quotes: list[OptionQuote] | None = None) -> IVStat
     # Prefer the LIVE ATM IV (from the chain) over the last stored daily observation so the
     # rank reflects current conditions intraday, not yesterday's close. Falls back to the
     # stored value when no chain is supplied (e.g. analytics-only callers).
-    live_iv = _live_atm_iv(quotes) if quotes else None
+    live_iv = _atm_iv_at_30d(quotes) if quotes else None
     current_iv = live_iv if live_iv is not None else history[0]
 
     sorted_hist = sorted(history)
@@ -176,24 +177,56 @@ def infer_spot_from_quotes(quotes: list[OptionQuote]) -> float | None:
     return min(candidates, key=lambda q: q.spread_pct or 999).strike
 
 
-def _live_atm_iv(quotes: list[OptionQuote]) -> float | None:
-    """Live at-the-money IV from the chain: mean IV of the strikes nearest spot in the
-    nearest expiry. Used as the current point for IV rank/percentile. None if uncomputable."""
+_TARGET_DTE = 30  # matches IBKR's OPTION_IMPLIED_VOLATILITY constant-maturity index
+
+
+def _atm_iv_at_30d(quotes: list[OptionQuote]) -> float | None:
+    """Live ATM IV interpolated to a constant 30-day maturity.
+
+    ``iv_history`` stores IBKR's ``OPTION_IMPLIED_VOLATILITY`` daily bar, which is a ~30-day
+    constant-maturity ATM index. Ranking the *nearest scanned expiry* (~21-25 DTE, since the
+    chain is filtered to the 21-45 DTE window) against that series compares two different
+    measurements: in contango it biases IV rank down, and in backwardation it biases it up —
+    loosening the gate exactly when the term structure inverts (D6). IV rank is both the
+    largest score weight (0.30) and a hard gate, so the two must be the same measurement.
+
+    Linear in DTE between the two expiries bracketing 30 days. With a single expiry, or when
+    30 days sits outside the scanned range, returns that expiry's ATM IV unextrapolated.
+    """
     if not quotes:
         return None
     spot = infer_spot_from_quotes(quotes)
     if spot is None:
         return None
-    near_dte = min((q.dte for q in quotes if q.dte > 0), default=None)
-    if near_dte is None:
+
+    by_dte: dict[int, list[tuple[float, float]]] = defaultdict(list)
+    for q in quotes:
+        if q.dte > 0 and q.iv is not None and q.iv > 0:
+            by_dte[q.dte].append((abs(q.strike - spot), q.iv))
+
+    atm_by_dte: dict[int, float] = {}
+    for dte, entries in by_dte.items():
+        entries.sort(key=lambda e: e[0])  # nearest spot first
+        nearest = entries[: min(4, len(entries))]
+        atm_by_dte[dte] = sum(iv for _, iv in nearest) / len(nearest)
+
+    if not atm_by_dte:
         return None
-    candidates = [q for q in quotes if q.dte == near_dte and q.iv is not None and q.iv > 0]
-    if not candidates:
-        return None
-    # Take the strikes closest to spot (within the ATM band), average their IVs.
-    candidates.sort(key=lambda q: abs(q.strike - spot))
-    nearest = candidates[: min(4, len(candidates))]
-    return sum(q.iv for q in nearest) / len(nearest)  # type: ignore[misc]
+    dtes = sorted(atm_by_dte)
+    if len(dtes) == 1:
+        return atm_by_dte[dtes[0]]
+
+    below = [d for d in dtes if d <= _TARGET_DTE]
+    above = [d for d in dtes if d >= _TARGET_DTE]
+    if not below:
+        return atm_by_dte[above[0]]
+    if not above:
+        return atm_by_dte[below[-1]]
+    lo, hi = below[-1], above[0]
+    if lo == hi:
+        return atm_by_dte[lo]
+    weight = (_TARGET_DTE - lo) / (hi - lo)
+    return atm_by_dte[lo] + weight * (atm_by_dte[hi] - atm_by_dte[lo])
 
 
 def _term_structure_slope(quotes: list[OptionQuote], spot: float) -> float | None:

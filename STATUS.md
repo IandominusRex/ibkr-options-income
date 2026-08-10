@@ -19,8 +19,10 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 
 - **Market data** (`src/ibkr/`) — connection manager with backoff + `AutoReconnect`, batched option
   chains within the line limit, live Greeks/IV, historical IV backfill, portfolio/account snapshots.
-- **Analytics** (`src/analytics/`) — IV rank/percentile (from `iv_history`), term structure & skew,
-  **VRP** (IV% − HV30%, computed in `iv.py`, displayed on every candidate), **VIX** (fetched from
+- **Analytics** (`src/analytics/`) — IV rank/percentile (from `iv_history`). The live IV used for
+  IV rank is interpolated to a constant 30-day maturity (`_atm_iv_at_30d`) so it matches the
+  constant-maturity `OPTION_IMPLIED_VOLATILITY` series it is ranked against. Also: term structure
+  & skew, **VRP** (IV% − HV30%, computed in `iv.py`, displayed on every candidate), **VIX** (fetched from
   yfinance `^VIX` once per scan via `market_conditions.py`, shown in scan completion summary),
   technicals + regime, fundamentals (yfinance), liquidity gates, **composite social + news
   sentiment** (StockTwits self-tags + yfinance news headlines, both keyless, VADER-scored, with

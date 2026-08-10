@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -15,6 +15,7 @@ from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
 from src.analytics.technicals import get_technical_stats
+from src.common.market_hours import today_et
 from src.common.schemas import OptionQuote, OptionRight, Regime
 
 # --------------------------------------------------------------------------- #
@@ -660,3 +661,68 @@ class TestIVRVRatio:
             stats = get_iv_stats("TEST")
         # Empty history → no current_iv → iv_rv_ratio must be None
         assert stats.iv_rv_ratio is None
+
+
+# --------------------------------------------------------------------------- #
+# D6: live IV rank must be measured at the same constant maturity as the
+# stored iv_history series (~30 days), not at whatever DTE the chain scan
+# happens to land on.
+# --------------------------------------------------------------------------- #
+
+
+def _atm_quotes(dte: int, iv: float) -> list[OptionQuote]:
+    """Paired call/put OptionQuote list at two strikes bracketing a $100 spot.
+
+    Strikes 95 and 105 each get a call and a put priced so put-call parity
+    (strike + call_mid - put_mid) resolves to exactly 100.0 at both strikes,
+    letting infer_spot_from_quotes recover the $100 spot deterministically
+    from the median of two independent parity estimates.
+    """
+    expiry = today_et() + timedelta(days=dte)
+    quotes: list[OptionQuote] = []
+    for strike, call_mid, put_mid in ((95.0, 6.00, 1.00), (105.0, 1.00, 6.00)):
+        quotes.append(
+            OptionQuote(
+                underlying="TEST",
+                right=OptionRight.CALL,
+                strike=strike,
+                expiry=expiry,
+                bid=call_mid,
+                ask=call_mid,
+                iv=iv,
+            )
+        )
+        quotes.append(
+            OptionQuote(
+                underlying="TEST",
+                right=OptionRight.PUT,
+                strike=strike,
+                expiry=expiry,
+                bid=put_mid,
+                ask=put_mid,
+                iv=iv,
+            )
+        )
+    return quotes
+
+
+class TestAtmIvAt30d:
+    def test_atm_iv_is_interpolated_to_30_days(self):
+        """D6: history is a 30-day constant-maturity index; the live value must match it."""
+        from src.analytics.iv import _atm_iv_at_30d
+
+        # 21 DTE at 20% and 49 DTE at 30% -> linear in DTE, 30 days sits at ~23.2%
+        quotes = _atm_quotes(dte=21, iv=0.20) + _atm_quotes(dte=49, iv=0.30)
+        result = _atm_iv_at_30d(quotes)
+        assert result == pytest.approx(0.2321, abs=0.005)
+
+    def test_atm_iv_falls_back_to_nearest_expiry_with_one_expiry(self):
+        from src.analytics.iv import _atm_iv_at_30d
+
+        quotes = _atm_quotes(dte=21, iv=0.20)
+        assert _atm_iv_at_30d(quotes) == pytest.approx(0.20, abs=0.001)
+
+    def test_atm_iv_returns_none_without_usable_quotes(self):
+        from src.analytics.iv import _atm_iv_at_30d
+
+        assert _atm_iv_at_30d([]) is None
