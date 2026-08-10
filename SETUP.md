@@ -221,6 +221,26 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 | `automation.max_auto_trades_per_day` | 10 | Max new-exposure entry orders opened per ET trading day (auto or manual). 0 disables. |
 | `automation.daily_loss_halt_pct` | 5.0 | Auto-engage the `/halt` kill switch when today's net realized loss exceeds this % of net liquidation. 0 disables. |
 
+### Checking what's actually tradeable
+
+After tuning the caps above, check their real effect instead of guessing: the capacity report
+prints one row per `would_own` symbol — how many contracts fit at a given account size right now,
+and which constraint (`cash`, `ticker_risk`, `sector_risk`, `csp_budget`, `ticker_collateral`,
+`large_slot`, `large_ceiling`, or blank if it simply hit the per-candidate contract cap) would stop
+the next one.
+
+```bash
+python -m scripts.capacity_report --net-liq 300000 --cash 100000   # hypothetical account size
+python -m scripts.capacity_report                                   # live account via IBKR
+```
+
+Each row is independent — it answers "what could this symbol do on its own," not "what's left
+after other candidates already took their share" (that greedy, shared-budget accounting is what
+the real scan and the risk gate do). It's read-only: it never places, sizes for execution, or gates
+an order. Run it whenever you change a `portfolio.*` cap to make sure a clear majority of your
+`would_own` list is still reachable — a cap tight enough to quietly exclude most of the universe is
+exactly the kind of bug this report exists to catch.
+
 ### `config/scoring_weights.yaml`
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,

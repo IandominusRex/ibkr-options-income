@@ -61,7 +61,7 @@ is worse than a stopped one.
 | 5 | VRP floor from display to gate | 1 | done | 2026-08-10 | |
 | 6 | Wheel cost basis into the CC gate | 1 | done | 2026-08-11 | |
 | 7 | IV rank at constant 30-day maturity | 1 | done | 2026-08-11 | |
-| 8 | Capacity report + account-size tests | 1 | pending | | |
+| 8 | Capacity report + account-size tests | 1 | done | 2026-08-11 | |
 | 9 | Phase 1 config and doc sweep | 1 | pending | | |
 | 10 | Loss-side exits | 2 | pending | | |
 | 11 | Mark-based and drawdown kill switches | 2 | pending | | |
@@ -598,6 +598,125 @@ know. Empty until the first task runs.
     exists (the `ARCHITECTURE.md` `iv.py` row describes IV rank/VRP/IV-RV-ratio at the
     `IVStats`-field level, never the live-override's DTE-selection mechanism), so no other doc
     needed a change.
+
+- **Task 8** — Production code (`build_report`, `CapacityRow`, `format_report`) matches the
+  brief's Step 3 snippet exactly, with three corrections and one addition, all made before any
+  test ran:
+  1. **`from src.ibkr.connection import connect` does not exist.** `src/ibkr/connection.py`
+     exposes `IBKRConnection` (a class supporting both `.connect()`/`.disconnect()` and
+     `with IBKRConnection(role) as ib:`), not a bare `connect()` function. Rewrote the live
+     branch of `main()` to match what `scripts/healthcheck.py` actually does: construct
+     `IBKRConnection("healthcheck")`, use it as a context manager for the `IB` handle, and call
+     `conn.resolve_account()` (same fallback-to-first-managed-account logic `healthcheck.py`
+     uses) rather than reading `cfg.secrets.ibkr_account` directly, which would pass an empty
+     string to `get_account_snapshot` when `IBKR_ACCOUNT` is unset in `.env`. This reuses the
+     existing `"healthcheck"` clientId (19 in `settings.yaml → ibkr.client_ids`) — no new
+     connection or clientId was added, per the task's explicit constraint.
+  2. **`ruff check .` flagged `I001`** on the test file's import block
+     (`from scripts.capacity_report import build_report` before `from src.common.schemas import
+     AccountSnapshot`, alphabetically out of order once both are local-package imports). Ran
+     `ruff check --fix tests/test_account_sizing.py`, which swapped the two lines; no assertion,
+     fixture, or test intent changed.
+  3. **`format_report` docstring/behavior on an empty row list**, checked per the task's mandatory
+     self-review: the brief's snippet does not divide (`f"{tradeable}/{len(rows)}"` is string
+     formatting, not arithmetic), so there is no `ZeroDivisionError` — but an empty list would
+     have printed the misleading `"0/0 symbols tradeable at this account size."` Added an
+     explicit `if not rows:` branch that prints `"0 symbols had price/IV data — no report to
+     show."` instead, and documented it in the docstring.
+  4. **Expanded `build_report`'s docstring** to state explicitly that `seed_budgets` is called
+     fresh *inside* the per-symbol loop by design — each row answers "what could this symbol do
+     on its own," not "what fits after the others already took their share" — per the task
+     context's explicit instruction to keep that behavior and make the docstring say so. The
+     brief's own docstring only hinted at this ("capacity estimate, not a quote"); the added
+     paragraph names the real scan's contrasting greedy/shared-`Budgets` behavior (`engine.
+     capital.charge`) so a reader doesn't mistake the report for double-counting a mistake.
+  - **`README.md`'s "Layout" table doesn't itemize individual scripts** — its `scripts/` row
+    already reads only `"Command-line entrypoints"` (unlike `SETUP.md`/`ARCHITECTURE.md`, which
+    both have a dedicated per-script table). That generic row is already an accurate description
+    of a directory that now also contains `capacity_report.py`, so no line was added — adding a
+    single named-script row would misrepresent the table's own level of granularity relative to
+    the ~15 other scripts it doesn't name individually either. `SETUP.md` gained a new
+    "Checking what's actually tradeable" subsection (in §5, right after the `automation.*`
+    circuit-breaker table, since the report's whole purpose is checking the effect of the
+    `portfolio.*`/`cash_secured_put.*` caps just discussed) and `ARCHITECTURE.md`'s `scripts/`
+    table gained a `capacity_report.py` row, both with the `--net-liq`/`--cash` usage as the
+    brief's Step 6 asked.
+  - **Step 5 (the run-stopping checkpoint) — executed for real, not simulated.** Command:
+    `python -m scripts.capacity_report --net-liq 300000 --cash 100000`. All 46 `would_own`
+    symbols returned real cached price data (via `analytics.technicals.get_technical_stats`,
+    which overlays a live yfinance quote on top of the SQLite `price_history` tail — network
+    access was available in this environment and the run took ~7.4s wall-clock, consistent with
+    46 live fetches, not an instant all-cache hit) and real IV data (via `analytics.iv.
+    get_iv_stats` against the local `iv_history` store) — **zero symbols were skipped for
+    missing data**, so the majority claim is over the full 46, not a subset. Full output:
+
+    ```
+    SYMBOL        SPOT  LOTS   COLLATERAL  BINDING
+    ----------------------------------------------
+    HIMS         31.62    10       28,460  none (hit hard_max)
+    MARA          9.48    10        8,530  none (hit hard_max)
+    RGTI         17.81    10       16,030  none (hit hard_max)
+    SLV          58.83    10       52,950  none (hit hard_max)
+    SOFI         18.18    10       16,360  none (hit hard_max)
+    TLT          82.12    10       73,900  none (hit hard_max)
+    TTD          13.05    10       11,750  none (hit hard_max)
+    UBER         77.24    10       69,520  none (hit hard_max)
+    XLE          59.97    10       53,980  none (hit hard_max)
+    XLF          57.74    10       51,970  none (hit hard_max)
+    XLU          43.28    10       38,960  none (hit hard_max)
+    XLP          84.89     9       68,769  large_ceiling
+    HOOD         94.15     8       67,792  large_ceiling
+    IGV         105.11     7       66,220  large_ceiling
+    RKLB         80.98     7       51,016  ticker_risk
+    WMT         111.91     7       70,504  cash
+    BABA        131.82     6       71,178  cash
+    HACK        119.61     6       64,590  large_ceiling
+    COIN        149.23     5       67,155  cash
+    CRM         197.80     4       71,208  cash
+    PLTR        176.45     4       63,520  large_ceiling
+    XLI         184.97     4       66,588  cash
+    XLK         187.17     4       67,380  cash
+    XLV         167.76     4       60,396  large_ceiling
+    AMZN        276.70     3       74,709  cash
+    CRWD        224.89     3       60,720  cash
+    DDOG        255.53     3       68,994  cash
+    NVDA        218.40     3       58,968  large_ceiling
+    AAPL        306.91     2       55,244  cash
+    GLD         400.26     2       72,046  cash
+    GOOGL       354.30     2       63,774  cash
+    HD          348.16     2       62,668  cash
+    IWM         299.67     2       53,942  cash
+    JPM         357.68     2       64,382  cash
+    NBIS        186.66     2       33,598  ticker_risk
+    NET         304.24     2       54,764  cash
+    SNOW        333.59     2       60,046  cash
+    TSLA        329.44     2       59,300  cash
+    V           360.11     2       64,820  cash
+    AMD         474.91     1       42,742  cash
+    MA          561.82     1       50,564  cash
+    META        593.46     1       53,411  cash
+    MSFT        505.32     1       45,479  cash
+    QQQ         721.12     1       64,901  cash
+    SMH         573.62     1       51,626  cash
+    SPY         772.68     1       69,541  cash
+
+    46/46 symbols tradeable at this account size.
+    ```
+
+    **Binding-reason distribution** (what stops the *next* lot, across all 46 rows — every row
+    already has `contracts >= 1`): `none (hit hard_max)` 11, `cash` 26, `large_ceiling` 7,
+    `ticker_risk` 2, `sector_risk` 0, `csp_budget` 0, `ticker_collateral` 0, `large_slot` 0.
+    46/46 clears the "clear majority" bar decisively — this run needed no escalation, and per
+    the task instructions `max_risk_units_per_ticker_pct` was **not** touched (Task 9 adds the
+    `portfolio:` keys; this run used `resolve_caps`'s in-code defaults: `cash_reserve_pct=20.0`,
+    `cash_reserve_absolute=0.0`, `max_csp_allocation_pct_of_deployable=100.0`,
+    `max_risk_units_per_ticker_pct=5.0`, `max_risk_units_per_sector_pct=25.0`,
+    `max_collateral_per_ticker_pct=10.0`, `max_large_positions=1`,
+    `max_pct_per_ticker_large=25.0`). The two `ticker_risk` bindings (RKLB, NBIS — both high-IV
+    names where risk units, not raw collateral, bind first) are exactly the D2-shaped signal this
+    checkpoint exists to surface, and at 46/46 tradeable they are evidence the default `5.0` is
+    *not* excluding names outright at this account size, though a human should still review it
+    before Task 9 formalizes it into config (per the plan's own binding note above the ledger).
 
 ---
 
@@ -2019,7 +2138,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `capital.resolve_caps`, `capital.max_contracts` (Task 1).
 - Produces: `capacity_report.build_report(account, positions, universe_symbols, iv_by_symbol, price_by_symbol) -> list[CapacityRow]` where `CapacityRow` is a frozen dataclass with `symbol: str`, `spot: float`, `contracts: int`, `binding: str`, `collateral: float`, `nlv_needed_for_one: float`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_account_sizing.py
@@ -2084,12 +2203,12 @@ def test_report_reports_the_nlv_needed_for_one_lot():
     assert rows[0].nlv_needed_for_one > 50_000
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_account_sizing.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.capacity_report'`
 
-- [ ] **Step 3: Implement the report**
+- [x] **Step 3: Implement the report**
 
 ```python
 # scripts/capacity_report.py
@@ -2239,23 +2358,27 @@ if __name__ == "__main__":
 
 Verify `connect()`'s context-manager signature against `src/ibkr/connection.py` before writing the live branch; match the pattern `scripts/healthcheck.py` already uses.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_account_sizing.py -q`
 Expected: PASS (6 tests, counting the parametrize expansion)
 
-- [ ] **Step 5: Run it for real against the target account size**
+- [x] **Step 5: Run it for real against the target account size**
 
 Run: `python -m scripts.capacity_report --net-liq 300000 --cash 100000`
 Expected: a table where a clear majority of `would_own` symbols show `contracts >= 1`. **If fewer than half are tradeable, stop and re-derive `max_risk_units_per_ticker_pct` before continuing** — the spec's calibration note applies here, and the shipped 5.0 is a starting point, not a validated value.
 
-- [ ] **Step 6: Update docs**
+**Result: 46/46 `would_own` symbols tradeable (`contracts >= 1`)**, all with real cached
+price + IV data (no symbol skipped for missing data). Checkpoint passes decisively — see
+the Deviations entry below for the full table and the binding-reason distribution.
+
+- [x] **Step 6: Update docs**
 
 - `README.md` layout table: add `scripts/capacity_report.py`.
 - `SETUP.md` scripts table: add it with the `--net-liq/--cash` usage.
 - `ARCHITECTURE.md`: add to the scripts section.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/capacity_report.py tests/test_account_sizing.py README.md SETUP.md ARCHITECTURE.md
