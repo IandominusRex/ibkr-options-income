@@ -58,7 +58,7 @@ is worse than a stopped one.
 | 2 | Carry IV on the candidate | 1 | done | 2026-08-10 | |
 | 3 | Size CSPs to headroom | 1 | done | 2026-08-10 | |
 | 4 | Risk units in the gate | 1 | done | 2026-08-10 | |
-| 5 | VRP floor from display to gate | 1 | pending | | |
+| 5 | VRP floor from display to gate | 1 | done | 2026-08-10 | |
 | 6 | Wheel cost basis into the CC gate | 1 | pending | | |
 | 7 | IV rank at constant 30-day maturity | 1 | pending | | |
 | 8 | Capacity report + account-size tests | 1 | pending | | |
@@ -323,6 +323,88 @@ know. Empty until the first task runs.
        marginal-only shape. Gate and generator agree; this is a **Task-1-level design gap in
        `capital.py` itself**, parked for the final review (Task 18), not fixed here or in Task
        1's file. `src/engine/capital.py` was not modified by this fix round.
+
+- **Task 5** — Production code (`fair_value.py`, `risk_engine.py`, `_evaluation.py`,
+  `cash_secured_put.py`, `covered_call.py`, `formatters.py`, `risk_limits.yaml`) matches the
+  brief's Steps 3–7/9 verbatim. `covered_call.py`'s VRP gate uses `position.avg_cost` directly
+  as the `cost_basis=` argument rather than introducing a `basis` alias — the brief's "where
+  `basis` is the existing cost-basis variable" reads as "use whatever the file already calls
+  the cost basis," and `position.avg_cost` is that name in this file. Test fallout was larger
+  than "at least" `test_fair_value.py`/`test_engine.py` — lowering `min_roc_pct` 1.0→0.15 and
+  `min_annualized_yield_pct` 12.0→0.0, plus adding the new VRP gate to both generators, broke
+  7 tests total. Every one was a numeric/fixture update preserving the original test's intent;
+  none was deleted. Full arithmetic in task-5-report.md; summary here:
+  1. **`tests/test_engine.py::test_reject_roc_below_minimum`** — `roc_pct=0.5` no longer trips
+     the floor (0.5 ≥ 0.15). Changed to `roc_pct=0.10` (< 0.15).
+  2. **`tests/test_engine.py::test_reject_yield_below_minimum`** — `annualized_yield_pct=5.0`
+     no longer trips the floor (5.0 ≥ 0.0). A real candidate's annualized yield is never
+     negative, so with the new 0.0% noise floor this gate is now only reachable synthetically;
+     changed to `annualized_yield_pct=-1.0` to keep exercising the comparison (the config knob
+     can still be raised back to a live gate by a human, and this proves the comparison works
+     if they do).
+  3. **`tests/test_engine.py::test_multiple_reject_reasons_on_single_candidate`** — same cause
+     as #1/#2 combined (`roc_pct=0.5, annualized_yield_pct=5.0` no longer trips either floor).
+     Re-derived to `roc_pct=0.10, annualized_yield_pct=-1.0` so both income reasons still fire
+     together, preserving the "multiple simultaneous reasons" intent.
+  4. **`tests/test_fair_value.py::test_min_credit_respects_the_roc_and_yield_gates`** — asserted
+     `z.min_credit >= z.strike_anchor * 0.01 - 0.01` (the old 1.0% floor). With HV30≈0.01% the
+     BS-fair-value component is ~0 and `min_roc_pct` (now 0.15%) is what binds; changed the
+     multiplier to `0.0015`. Verified by hand: `strike_anchor=182.8` → floor `≈0.27`, and
+     `182.8*0.0015-0.01=0.2642 ≤ 0.27`. ✓.
+  5. **`tests/test_output_fidelity.py::test_covered_call_credit_floor_uses_cost_basis_not_strike`**
+     — at the fixture's original strike (255.0), Black-Scholes fair value (~$0.53×1.10 edge =
+     ~$0.59) now exceeds *both* ROC floors (cost-basis $198.40×0.15%=$0.30, strike
+     $255×0.15%=$0.38), so the BS floor dominates for both `on_basis` and `on_strike`,
+     collapsing them to the same $0.59 and breaking the `on_basis < on_strike` assertion this
+     test exists to prove. Not a fixture that merely needed a new number at the same strike —
+     the *mechanism under test* (roc_basis choice) stopped being the binding constraint at 255.
+     Moved the strike to 265, where BS fair value is negligible (~$0.12×1.10=~$0.13, below both
+     ROC floors: $198.40×0.15%=$0.30, $265×0.15%=$0.40), restoring `on_basis(0.30) <
+     on_strike(0.40)` and the exact-value assertion (updated to the 0.0015 multiplier). Verified
+     by direct computation against `zone_for_contract` before editing (see task-5-report.md).
+  6. **`tests/test_strategies.py::TestRolling::test_no_roll_credit_filters_candidate`** — this
+     test's own comment claimed `current_mid=3.10, new_mid=2.90 → roll_credit=-0.20`, but the
+     literal fixture (`_roll_new_quote()`, mid=3.50) actually produced `roll_credit=+0.40`
+     (0.20% ROC) — it was passing before this task only because the *old* 1.0% `min_roc_pct`
+     floor in `rolling.py` (untouched by this task; Task 12's territory) filtered it, not the
+     `roll_credit <= 0` branch the test claims to cover. The new 0.15% noise floor no longer
+     catches 0.20% ROC, so the candidate now survives and the test's `result == []` assertion
+     failed. This exposed a **latent, pre-existing mismatch between the test's comment and its
+     own fixture**, not a new defect — rebuilt the new-leg quote directly
+     (`_call_quote(expiry=_EXPIRY_FAR, delta=0.28, bid=2.80, ask=3.00)`, mid=2.90) so the
+     fixture actually matches its documented intent (mid 2.90 < current mid 3.10 →
+     roll_credit=-0.20 ≤ 0), independent of any income-gate config value. **Flagging for Task
+     12 (defensive-roll economics):** `rolling.py` reads the same `income.min_roc_pct`/
+     `min_annualized_yield_pct` keys but was deliberately NOT given the new VRP gate by this
+     task's brief — rolls with near-zero economic edge can now clear the noise floor with
+     nothing else catching them, which may be a live gap worth deciding on explicitly, not
+     assumed away.
+  7. **`tests/test_strategies.py::test_csp_high_priced_name_is_sized_to_one_lot_not_rejected`**
+     — this Task-3 fixture used the file's default `_tech()` spot (185.0) against a 650 strike
+     PUT, which is ~465 deep ITM; its own Black-Scholes fair value (~$462) dwarfs the $8.10
+     mid regardless of contract count, so the new VRP gate now correctly rejects it with
+     `premium_below_fair_value` — a candidate this mispriced should never have cleared a
+     variance-risk-premium check, gate or no gate. This wasn't a case of "update the number,"
+     it required a plausible spot for the strike under test: changed to `_tech(price=700.0)`,
+     making the 650 strike a ~30-delta OTM put (fair value ≈$5.55, floor ≈$6.10 at the required
+     edge) that the $8.10 mid clears with margin, preserving the test's actual intent (sizing
+     trims a high-priced name to the headroom-limited lot count, not the max-affordable count).
+  - **Doc scope called out explicitly, not silently skipped:** per Tasks 1–4's established
+    pattern (their brief's `Files:` lists never named `ARCHITECTURE.md`/`STATUS.md`/
+    `README.md`/`SETUP.md`, and the plan's own File Structure table assigns those to Task 9's
+    dedicated "config and documentation sweep"), this task did not touch the concentration-
+    model prose in `ARCHITECTURE.md`'s `risk_engine.py`/`risk_limits.yaml` rows beyond a
+    narrow, precise addition. It DID fix three now-false "never gates" claims this task
+    directly caused (`ARCHITECTURE.md`'s `ideal_zone:` block row, `fair_value.py` row, and the
+    `IdealZone` schema-table row all previously said the ideal zone / `min_credit` never
+    gates — no longer true since D2), added one clause to the `risk_engine.py` row naming the
+    new primary gate, and updated `SETUP.md`'s `income:` config table (new
+    `require_vrp_edge` row, `min_roc_pct`/`min_annualized_yield_pct` values and framing) plus
+    its `ideal_zone:` intro paragraph. Renamed two stale `_min_credit` references in
+    `STATUS.md`'s existing D1 bug-fix bullet (the rename's own prose fallout, not a new
+    feature writeup). Task 9 should still do its full sweep — this only closed the specific
+    factual holes D2 opened, not the broader concentration-model staleness Task 4 already
+    left pending for Task 9.
 
 ---
 
@@ -1337,7 +1419,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Note:** `min_credit_edge_pct` stays under `ideal_zone` — see "Deliberate simplifications" above.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_engine.py — append
@@ -1377,16 +1459,16 @@ def test_missing_ideal_zone_never_blocks():
     assert "premium_below_fair_value" not in verdicts[0].reasons
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_engine.py -k fair_value -q`
 Expected: FAIL — no such reason code is ever produced.
 
-- [ ] **Step 3: Make `_min_credit` public**
+- [x] **Step 3: Make `_min_credit` public**
 
 In `src/analytics/fair_value.py`, rename `_min_credit` to `min_credit_for` (keep the full docstring). Update its two internal call sites — in `_compute` (line ~226) and in `zone_for_contract` (line ~121).
 
-- [ ] **Step 4: Add the reason code**
+- [x] **Step 4: Add the reason code**
 
 In `src/strategies/_evaluation.py`, after `REASON_YIELD`:
 
@@ -1394,7 +1476,7 @@ In `src/strategies/_evaluation.py`, after `REASON_YIELD`:
 REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
 ```
 
-- [ ] **Step 5: Add the gate**
+- [x] **Step 5: Add the gate**
 
 In `src/engine/risk_engine.py`, inside the per-candidate loop, immediately after the existing ROC/yield checks:
 
@@ -1411,7 +1493,7 @@ In `src/engine/risk_engine.py`, inside the per-candidate loop, immediately after
                 reasons.append("premium_below_fair_value")
 ```
 
-- [ ] **Step 6: Add the same gate to both generators**
+- [x] **Step 6: Add the same gate to both generators**
 
 In `src/strategies/cash_secured_put.py`, after the existing ROC/yield reason appends and after `zone` is computed but before `scores` is built, insert:
 
@@ -1430,7 +1512,7 @@ Make the equivalent change in `src/strategies/covered_call.py`, using
 `zone_for_contract(zone, quote.strike, iv_stats, cost_basis=basis)` (where `basis` is the
 existing cost-basis variable) and importing `REASON_BELOW_FAIR_VALUE`.
 
-- [ ] **Step 7: Lower the ROC floors to noise level**
+- [x] **Step 7: Lower the ROC floors to noise level**
 
 In `config/risk_limits.yaml`, replace the `income:` block:
 
@@ -1449,12 +1531,12 @@ income:
   min_annualized_yield_pct: 0.0
 ```
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS. Tests asserting the old ROC-floor rejections need their expectations updated to the VRP floor.
 
-- [ ] **Step 9: Add the reason label**
+- [x] **Step 9: Add the reason label**
 
 In `src/notify/formatters.py`, `_REJECT_REASON_LABELS`:
 
@@ -1462,7 +1544,7 @@ In `src/notify/formatters.py`, `_REJECT_REASON_LABELS`:
     "premium_below_fair_value": "credit is below fair value for the risk (no variance premium)",
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/analytics/fair_value.py src/engine/risk_engine.py src/strategies/ src/notify/formatters.py config/risk_limits.yaml tests/

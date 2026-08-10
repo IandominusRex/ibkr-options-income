@@ -112,6 +112,7 @@ def _csp_candidate(
     current_iv: float | None = 30.0,
     dte: int = 30,
     delta: float = -0.20,
+    premium: float = 3.0,
 ) -> TradeCandidate:
     """Build a valid CSP TradeCandidate whose roc/yield clear the configured floors, so only
     the concentration logic under test can reject it."""
@@ -124,11 +125,11 @@ def _csp_candidate(
         strike=strike,
         expiry=date.today() + timedelta(days=dte),
         contracts=contracts,
-        premium=3.0,
+        premium=premium,
         collateral=collateral,
         roc_pct=2.0,
         annualized_yield_pct=20.0,
-        breakeven=strike - 3.0,
+        breakeven=strike - premium,
         delta=delta,
         current_iv=current_iv,
         dte=dte,
@@ -320,12 +321,18 @@ class TestValidateCandidates:
         assert verdicts[0].reasons == []
 
     def test_reject_roc_below_minimum(self) -> None:
-        verdicts = validate_candidates([_candidate(roc_pct=0.5)], _account(), [])
+        # D2: min_roc_pct dropped from 1.0% (primary gate) to 0.15% (noise floor only, now
+        # that require_vrp_edge is the primary gate) — 0.5% used to trip it; 0.10% still does.
+        verdicts = validate_candidates([_candidate(roc_pct=0.10)], _account(), [])
         assert "roc_below_minimum" in verdicts[0].reasons
         assert verdicts[0].verdict == Verdict.REJECT
 
     def test_reject_yield_below_minimum(self) -> None:
-        verdicts = validate_candidates([_candidate(annualized_yield_pct=5.0)], _account(), [])
+        # D2: min_annualized_yield_pct dropped from 12.0% to 0.0% (noise floor only). A real
+        # candidate's annualized yield is never negative, so this gate is now only reachable
+        # by a negative value — still worth covering, since a human can raise the config knob
+        # back to a live gate and this proves the comparison itself still works.
+        verdicts = validate_candidates([_candidate(annualized_yield_pct=-1.0)], _account(), [])
         assert "yield_below_minimum" in verdicts[0].reasons
 
     def test_reject_dte_too_low(self) -> None:
@@ -414,7 +421,12 @@ class TestValidateCandidates:
         assert "buying_power_buffer" in verdicts[0].reasons
 
     def test_multiple_reject_reasons_on_single_candidate(self) -> None:
-        cand = _candidate(roc_pct=0.5, annualized_yield_pct=5.0)
+        # D2: min_annualized_yield_pct dropped to 0.0% (noise floor only), so a positive
+        # yield like the old fixture's 5.0 no longer trips it (see test_reject_yield_below_
+        # minimum for why that gate is now only reachable with a negative value). Re-derived
+        # using roc_pct below the new 0.15% floor and annualized_yield_pct below 0.0%, so
+        # both income reasons still fire together — preserving this test's intent.
+        cand = _candidate(roc_pct=0.10, annualized_yield_pct=-1.0)
         verdicts = validate_candidates([cand], _account(), [])
         assert "roc_below_minimum" in verdicts[0].reasons
         assert "yield_below_minimum" in verdicts[0].reasons
@@ -969,3 +981,44 @@ class TestAnnualizedRocScore:
             assert result[1].candidate_id == "low"
         finally:
             cfg.weights["cash_secured_put"] = orig_weights
+
+
+# ---------------------------------------------------------------------------
+# risk_engine.py — D2: variance-risk-premium floor promoted from display to gate
+# ---------------------------------------------------------------------------
+
+
+def test_gate_rejects_premium_below_fair_value():
+    """D2: selling at or below BS-fair-value-at-realised-vol earns no edge."""
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    cand = _csp_candidate(
+        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=30, premium=0.50
+    ).model_copy(update={"ideal": zone})
+    verdicts = validate_candidates([cand], _account(), [])
+    assert "premium_below_fair_value" in verdicts[0].reasons
+
+
+def test_gate_accepts_a_low_iv_name_paying_a_real_edge():
+    """SPY at 13.5% IV was rejected by the flat 1% ROC floor regardless of edge."""
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    zone = IdealZone(symbol="SPY", right=OptionRight.PUT, dte=30, spot=660.0, min_credit=1.80)
+    cand = _csp_candidate(
+        underlying="SPY", strike=640.0, contracts=1, current_iv=13.5, dte=30, premium=2.10
+    ).model_copy(update={"ideal": zone, "roc_pct": 0.33, "annualized_yield_pct": 4.0})
+    verdicts = validate_candidates([cand], _account(net_liq=2_000_000.0, cash=500_000.0), [])
+    assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
+
+
+def test_missing_ideal_zone_never_blocks():
+    """A candidate with no computable zone is data-unavailable, not a rejection."""
+    from src.engine.risk_engine import validate_candidates
+
+    cand = _csp_candidate(underlying="AAPL", strike=200.0, contracts=1, current_iv=28.0, dte=30)
+    assert cand.ideal is None
+    verdicts = validate_candidates([cand], _account(), [])
+    assert "premium_below_fair_value" not in verdicts[0].reasons

@@ -25,10 +25,16 @@ cash_secured_put:
 
 # --- Income quality gates ---
 income:
-  # Minimum return on capital for the trade to be worth it (premium / collateral).
-  min_roc_pct: 1.0
-  # Minimum annualized yield to surface the candidate.
-  min_annualized_yield_pct: 12.0
+  # PRIMARY GATE: require the credit to exceed Black-Scholes fair value priced at *realised*
+  # vol (HV30) by `ideal_zone.min_credit_edge_pct`. This is the variance-risk-premium thesis
+  # made explicit — selling at or below fair value earns no edge for the risk taken.
+  require_vrp_edge: true
+  # Noise floor only. These were previously the primary gate, and max(1.0%, 12% x DTE/365)
+  # acted as a hidden ~25-30% IV floor: SPY at 13.5% IV yields 0.33% ROC at 0.20 delta and
+  # 0.66% at 0.30, so every low-vol diversifier in universe.yaml was unreachable, and the
+  # gate pushed every trade to the aggressive end of the configured delta band.
+  min_roc_pct: 0.15
+  min_annualized_yield_pct: 0.0
 
 # --- Liquidity gates ---
 liquidity:

@@ -26,6 +26,7 @@ from src.common.schemas import (
 )
 from src.strategies._evaluation import (
     REASON_BELOW_BASIS,
+    REASON_BELOW_FAIR_VALUE,
     REASON_DELTA_MISSING,
     REASON_DELTA_RANGE,
     REASON_DTE_RANGE,
@@ -177,6 +178,15 @@ def screen_cc_candidates(
             )
             zones[dte] = zone
 
+        # Re-price the credit floor at this contract's strike (the band itself is shared
+        # across strikes at this DTE) so the card compares like with like, and so the VRP
+        # gate below and the displayed `ideal` agree on the same number.
+        contract_zone = zone_for_contract(zone, quote.strike, iv_stats, cost_basis=position.avg_cost)
+        if income_cfg.get("require_vrp_edge", True):
+            floor = contract_zone.min_credit
+            if floor is not None and floor > 0 and mid < floor:
+                reasons.append(REASON_BELOW_FAIR_VALUE)
+
         scores = ScoreCard(
             symbol=symbol,
             iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else 0.0,
@@ -210,9 +220,7 @@ def screen_cc_candidates(
             iv_rv_ratio=iv_stats.iv_rv_ratio,
             dte=dte,
             next_earnings=fund_stats.next_earnings,
-            # Re-price the credit floor at this contract's strike (the band itself is shared
-            # across strikes at this DTE) so the card compares like with like.
-            ideal=zone_for_contract(zone, quote.strike, iv_stats, cost_basis=position.avg_cost),
+            ideal=contract_zone,
             scores=scores,
             price_source=tech_stats.price_source,
             greeks_source=quote.greeks_source,

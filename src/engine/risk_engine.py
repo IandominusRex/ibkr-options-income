@@ -97,6 +97,17 @@ def validate_candidates(
         if cand.annualized_yield_pct < income.get("min_annualized_yield_pct", 12.0):
             reasons.append("yield_below_minimum")
 
+        # --- Variance-risk-premium floor. The income thesis is that implied vol exceeds
+        # realised vol; selling at or below Black-Scholes fair value priced at HV30 earns
+        # no edge for the risk taken. This replaces the flat ROC floor as the primary gate:
+        # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
+        # low-vol diversifier in the universe and pushed every trade to the top of the
+        # delta band (D2). Missing zone = data unavailable, never a rejection.
+        if income.get("require_vrp_edge", True) and cand.ideal is not None:
+            floor = cand.ideal.min_credit
+            if floor is not None and floor > 0 and cand.premium < floor:
+                reasons.append("premium_below_fair_value")
+
         # --- IV environment: only sell premium when it's relatively expensive.
         # Enforced only when an IV rank is available (missing history is not a capital
         # risk, just lost optimization — rejecting all would silently zero out scans).

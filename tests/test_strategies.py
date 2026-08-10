@@ -573,10 +573,19 @@ class TestRolling:
             assert c.dte > pos_dte
 
     def test_no_roll_credit_filters_candidate(self):
-        # current_mid=3.10, new_mid=2.90 → roll_credit=-0.20 ≤ 0 → no candidate
+        # current_mid=3.10, new_mid=2.90 → roll_credit=-0.20 ≤ 0 → no candidate.
+        # D2 note: the bare `_roll_new_quote()` (mid=3.50) this test previously passed
+        # actually produced roll_credit=+0.40 (0.20% ROC) — it was filtered by the *old*
+        # 1.0% min_roc_pct floor, not by the `roll_credit <= 0` branch this test claims to
+        # cover, and that floor is now a 0.15% noise floor that no longer catches it. Pass an
+        # explicit new-leg quote priced below the current mid so the test actually exercises
+        # the documented negative-credit path regardless of the income-gate config.
         current = _call_quote(expiry=_EXPIRY_NEAR, strike=200.0, bid=3.00, ask=3.20, delta=0.55)
+        # Built directly (not via `_roll_new_quote`, which hardcodes bid/ask) so mid=2.90 < the
+        # current mid=3.10.
+        new_leg = _call_quote(expiry=_EXPIRY_FAR, delta=0.28, bid=2.80, ask=3.00)
         pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30, avg_cost=3.10)
-        result = generate_roll_candidates(pos, [current, _roll_new_quote()], _iv(), _tech())
+        result = generate_roll_candidates(pos, [current, new_leg], _iv(), _tech())
         assert result == []
 
     def test_no_current_quote_returns_empty(self):
@@ -688,8 +697,14 @@ def test_csp_high_priced_name_is_sized_to_one_lot_not_rejected():
     account = _account(net_liq=300_000.0, cash=150_000.0)
     iv_stats = IVStats(symbol="META", current_iv=35.0, iv_rank=60.0, hv_30=28.0)
     quote = _put_quote(strike=650.0, bid=8.00, ask=8.20)  # mid=8.10; roc~1.25%, ann~13.4%
+    # D2: spot must be plausible for a 650 strike now that the VRP gate is live — the
+    # default `_tech()` spot (185.0) made this put ~465 deep ITM, so its own Black-Scholes
+    # fair value (~$462) dwarfed the $8.10 mid and every fixture would fail
+    # `premium_below_fair_value` regardless of the sizing logic under test. spot=700 makes
+    # the 650 strike a plausible ~30-delta OTM put (fair value ~$5.55, floor ~$6.10 at the
+    # required edge), which the $8.10 mid clears with margin.
     result = screen_csp_candidates(
-        "META", [quote], account, iv_stats, _tech(), _fund(), positions=[]
+        "META", [quote], account, iv_stats, _tech(price=700.0), _fund(), positions=[]
     )
     assert result.rejected == [], "should clear every gate at the trimmed size, not be flagged"
     assert len(result.passed) == 1

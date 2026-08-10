@@ -515,6 +515,7 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "dte_out_of_range": "no expiries in the target DTE window",
     "roc_below_minimum": "return-on-capital below floor",
     "yield_below_minimum": "annualized yield below floor",
+    "premium_below_fair_value": "credit is below fair value for the risk (no variance premium)",
     "earnings_blackout": "earnings inside the window",
     "no_contracts": "no contracts at the target strike",
     "negative_bid_sentinel": "no real bid (stale / illiquid quote)",

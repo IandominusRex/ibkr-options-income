@@ -145,13 +145,22 @@ def test_credit_floor_never_rises_as_the_offered_call_strike_rises() -> None:
 
 
 def test_covered_call_credit_floor_uses_cost_basis_not_strike() -> None:
-    """The floor must mirror the gate the candidate actually has to clear."""
+    """The floor must mirror the gate the candidate actually has to clear.
+
+    Strike moved to 265 (from 255) for D2: the noise-floor ROC gate (0.15%, was 1.0%) no
+    longer dominates Black-Scholes fair value at 255 — fair value there (~$0.53 * 1.10 edge
+    = ~$0.59) sits above both ROC floors ($198.40*0.15%=$0.30 on basis, $255*0.15%=$0.38 on
+    strike), collapsing the distinction this test exists to prove. At 265 fair value is
+    negligible (~$0.12 * 1.10 edge = ~$0.13, below both ROC floors), so the ROC/yield
+    component is again what binds and cost basis vs. strike as the denominator is once again
+    visible in the result.
+    """
     zone = _call_zone()
-    on_basis = zone_for_contract(zone, strike=255.0, iv=_iv(), cost_basis=198.40).min_credit
-    on_strike = zone_for_contract(zone, strike=255.0, iv=_iv()).min_credit
+    on_basis = zone_for_contract(zone, strike=265.0, iv=_iv(), cost_basis=198.40).min_credit
+    on_strike = zone_for_contract(zone, strike=265.0, iv=_iv()).min_credit
     assert on_basis is not None and on_strike is not None
     assert on_basis < on_strike
-    assert on_basis == round(198.40 * 0.01, 2)
+    assert on_basis == round(198.40 * 0.0015, 2)
 
 
 def test_zone_for_contract_preserves_the_strike_independent_band() -> None:

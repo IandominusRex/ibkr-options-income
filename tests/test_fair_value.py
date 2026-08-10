@@ -273,11 +273,15 @@ def test_min_credit_clears_black_scholes_fair_value_at_realised_vol() -> None:
 
 
 def test_min_credit_respects_the_roc_and_yield_gates() -> None:
-    """With HV30 near zero the BS floor vanishes; the income gates must still bind."""
+    """With HV30 near zero the BS floor vanishes; the income gates must still bind.
+
+    D2: min_roc_pct dropped from 1.0% (primary gate) to 0.15% (noise floor only, now that
+    require_vrp_edge is the primary gate) — updated the multiplier to match.
+    """
     z = _zone(iv=_iv(current_iv=40.0, hv_30=0.01))
     assert z.min_credit is not None and z.strike_anchor is not None
-    # min_roc_pct 1.0% of the strike is the binding floor here.
-    assert z.min_credit >= z.strike_anchor * 0.01 - 0.01
+    # min_roc_pct 0.15% of the strike is the binding floor here.
+    assert z.min_credit >= z.strike_anchor * 0.0015 - 0.01
     assert any("ROC/yield" in a for a in z.credit_anchors)
 
 

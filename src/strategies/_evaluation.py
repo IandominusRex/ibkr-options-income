@@ -30,6 +30,7 @@ REASON_INSUFFICIENT_CASH = "insufficient_cash"
 REASON_NO_HEADROOM = "no_headroom"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
+REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
 
 
 @dataclass

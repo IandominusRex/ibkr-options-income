@@ -233,11 +233,11 @@ display-only. Regression tests: `tests/test_output_fidelity.py`.
   `fair_value.zone_for_contract(zone, strike, iv, *, cost_basis)` re-prices the floor at the strike
   actually on offer; both generators call it per candidate. The band stays memoized per DTE.
 - **ROC/yield floor used the wrong denominator for covered calls (P0, found while fixing the
-  above):** `_min_credit` divided by *strike* for both strategies, but a CC's gate is
-  `premium/avg_cost` (only a CSP's is `premium/strike`). On a strike above basis — the normal case
-  for a CC — this inflated the floor and made it **rise** with strike while fair value fell, so the
-  floor was non-monotonic. **Fixed:** `_min_credit` takes a `roc_basis`; CC passes cost basis, CSP
-  passes strike.
+  above):** `min_credit_for` (then private, `_min_credit`) divided by *strike* for both
+  strategies, but a CC's gate is `premium/avg_cost` (only a CSP's is `premium/strike`). On a
+  strike above basis — the normal case for a CC — this inflated the floor and made it **rise**
+  with strike while fair value fell, so the floor was non-monotonic. **Fixed:** `min_credit_for`
+  takes a `roc_basis`; CC passes cost basis, CSP passes strike.
 - **"✓ in zone" endorsed at-the-money covered calls (P0):** `_snap_to_level` translated the whole
   band onto a nearby support/resistance level, preserving dollar width. Moneyness is non-linear, so
   that does **not** preserve the delta profile the width encodes. Same AAPL case: resistance at

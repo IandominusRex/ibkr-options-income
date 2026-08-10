@@ -114,11 +114,11 @@ def zone_for_contract(
     the strategy generators.
 
     *cost_basis* is the covered-call share basis, forwarded so the ROC/yield component of the
-    floor divides by the same denominator the CC gate does (see ``_min_credit``). Omit it for
-    a CSP, whose ROC is measured against the strike.
+    floor divides by the same denominator the CC gate does (see ``min_credit_for``). Omit it
+    for a CSP, whose ROC is measured against the strike.
     """
     roc_basis = cost_basis if zone.right == OptionRight.CALL else strike
-    min_credit, anchors = _min_credit(zone.spot, strike, zone.dte, iv, zone.right, roc_basis)
+    min_credit, anchors = min_credit_for(zone.spot, strike, zone.dte, iv, zone.right, roc_basis)
     return zone.model_copy(update={"min_credit": min_credit, "credit_anchors": anchors})
 
 
@@ -223,7 +223,7 @@ def _compute(
     # 7. Credit floor for the band as a whole, priced at the anchor strike. Callers holding a
     #    specific contract should re-price it with `zone_for_contract` — comparing an offered
     #    premium against the anchor's floor mislabels every strike away from the anchor.
-    zone.min_credit, zone.credit_anchors = _min_credit(
+    zone.min_credit, zone.credit_anchors = min_credit_for(
         spot, anchor, dte, iv, right, cost_basis if is_call else anchor
     )
     if zone.min_credit is not None:
@@ -241,7 +241,7 @@ def _compute(
     return zone
 
 
-def _min_credit(
+def min_credit_for(
     spot: float,
     strike: float,
     dte: int,
