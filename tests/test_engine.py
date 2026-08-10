@@ -543,13 +543,16 @@ class TestValidateCandidates:
         assert "concentration_limit" not in verdicts[0].reasons
 
     def test_existing_short_put_charged_at_strike_for_concentration(self) -> None:
-        # N5 + D1: an existing short put must count toward the CSP budgets at strike
-        # collateral (strike*100*contracts = 60k), not its tiny |market value| (~500).
-        # Under the risk-units model this raw position (no IV) cannot feed `ticker_risk`,
-        # so a small new candidate no longer trips the AND-gated collateral-fallback
-        # `concentration_limit` (see the module docstring) — but the strike-collateral
-        # valuation still correctly blows the cumulative CSP allocation once the short put
-        # is counted at 60k rather than ~500. Previously (pre-N5) it would NOT have.
+        # N5 + D1 (Finding 2, human ruling): an existing short put must count toward the
+        # CSP/collateral budgets at strike collateral (strike*100*contracts = 60k), not its
+        # tiny |market value| (~500). This raw position (no IV) cannot feed `ticker_risk`, so
+        # the new candidate is priced on the IV-missing fallback, which now rejects on the
+        # cumulative collateral breach ALONE (mirroring `capital._fits` — no AND with the
+        # large-position ceiling): cumulative 60k existing + 4k new = 64k > the 10k
+        # max_ticker_collateral fallback cap -> concentration_limit. The strike-collateral
+        # valuation ALSO blows the cumulative CSP allocation once the short put is counted at
+        # 60k rather than ~500 -> csp_allocation_limit too. Previously (pre-N5) neither would
+        # have fired.
         existing_put = PositionSnapshot(
             symbol="NVDA",
             sec_type="OPT",
@@ -563,10 +566,11 @@ class TestValidateCandidates:
             underlying="NVDA", strategy=Strategy.CASH_SECURED_PUT, collateral=4_000.0, delta=-0.20
         )
         # Deployable-cash CSP budget = 24,000 (30,000 excess liquidity - a 20% reserve);
-        # the existing put's true 60k strike collateral blows straight through it.
+        # the existing put's true 60k strike collateral blows straight through it. The same
+        # 60k also blows the 10,000 max_ticker_collateral fallback cap once the new 4k is added.
         verdicts = validate_candidates([cand], _account(net_liquidation=100_000.0), [existing_put])
         assert "csp_allocation_limit" in verdicts[0].reasons
-        assert "concentration_limit" not in verdicts[0].reasons
+        assert "concentration_limit" in verdicts[0].reasons
 
     # --- IV rank gate (S1) ---
 
@@ -671,11 +675,16 @@ class TestConcentrationInRiskUnits:
         assert "concentration_limit" in verdicts[0].reasons
 
     def test_gate_falls_back_to_collateral_when_iv_is_missing(self) -> None:
+        """With no IV to size a risk-unit charge from, the gate falls back to the stricter
+        raw-collateral cap and rejects on the cumulative breach alone — mirroring
+        `capital._fits`'s identical fallback, so the gate is never looser than the sizer that
+        feeds it (D1 human ruling, Finding 2)."""
         cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=None, dte=30)
         account = _account(net_liq=300_000.0, cash=100_000.0)
         verdicts = validate_candidates([cand], account, [])
-        # $65k > the 10%-of-NLV ($30k) collateral fallback, but the large slot admits one.
-        assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
+        # $65k cumulative > the 10%-of-NLV ($30k) collateral fallback cap.
+        assert verdicts[0].verdict.value == "reject"
+        assert "concentration_limit" in verdicts[0].reasons
 
     def test_covered_calls_still_consume_no_budget(self) -> None:
         """CCs are written against shares already owned — unchanged by the new model."""

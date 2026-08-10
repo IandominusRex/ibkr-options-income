@@ -162,7 +162,6 @@ def validate_candidates(
                 if (
                     budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
                     > caps.max_ticker_collateral
-                    and cand.collateral > caps.large_ticker_collateral
                 ):
                     reasons.append("concentration_limit")
             else:
@@ -186,6 +185,13 @@ def validate_candidates(
 
         if margin_exceeded:
             reasons.append("margin_limit")
+
+        # Dedupe: independent checks above (e.g. the ticker-risk breach and the large-slot
+        # ceiling) can both append "concentration_limit" for the same candidate. Display
+        # already dedupes and PASS/REJECT is unaffected either way, but
+        # storage.risk_verdicts persists `reasons` verbatim — collapse here, preserving
+        # order and every distinct reason, so a duplicate never reaches the DB.
+        reasons = list(dict.fromkeys(reasons))
 
         verdict = Verdict.PASS if not reasons else Verdict.REJECT
 

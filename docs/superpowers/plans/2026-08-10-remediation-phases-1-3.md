@@ -284,6 +284,45 @@ know. Empty until the first task runs.
      the ticker-risk nor sector caps mask it — finds the slot taken and is rejected for
      `large_position_slot_full`, not `concentration_limit`. Verified against
      `capital.resolve_caps` by hand before writing it (see task-4-report.md).
+  7. **Post-review fix round, two HUMAN RULINGS (2026-08-10) — both plan-mandated findings,
+     both approved by the human partner, neither a fault of the original implementation** (the
+     brief said to implement Step 3 as written, and it was):
+     - **Finding 1 — duplicate `concentration_limit` in the persisted verdict.** The ticker-risk
+       breach (`:169` pre-fix) and the large-slot `elif` (`:175-179` pre-fix) are independent
+       checks that both fire on common paths (reproduced on both the IV-missing fallback and
+       the risk-units mainline). Display dedupes and PASS/REJECT is unaffected, but
+       `storage/risk_verdicts.py:77` persists `reasons` verbatim, landing the duplicate in the
+       DB. RULING: dedupe once, immediately before constructing `RiskVerdict`, via
+       `reasons = list(dict.fromkeys(reasons))` — chosen over guarding the specific `elif` so
+       it also protects against any future double-append. Deviates from the plan's literal
+       Step 3 code (which has no dedupe step); no gate logic changed.
+     - **Finding 2 — the IV-missing fallback was more permissive than `capital._fits`.** The
+       brief's Step 3 code ANDed the cumulative-collateral breach with
+       `cand.collateral > caps.large_ticker_collateral`; `capital._fits`'s analogous fallback
+       (`capital.py` ~line 149) rejects on the cumulative breach alone. Live case in the
+       existing suite: `test_existing_short_put_charged_at_strike_for_concentration` (NVDA,
+       ~60k existing + 4k new = 64k cumulative vs. a 10k `max_ticker_collateral`) — the
+       generator's sizer would have refused it, but the gate (pre-fix) did not flag
+       `concentration_limit`. RULING: drop the AND clause so the fallback matches
+       `capital._fits` exactly — a safety gate must never be looser than the sizer feeding it.
+       **`capital.py` itself was explicitly NOT changed** — the ruling moved the gate toward
+       `capital`, not the reverse. This deviates from the plan's literal Step 3 code AND from
+       its Step 1 test assertion: `test_gate_falls_back_to_collateral_when_iv_is_missing`
+       (asserted PASS with the comment "the large slot admits one") now asserts REJECT with
+       `concentration_limit` ($65k cumulative > the $30k fallback cap), rewritten to describe
+       what it now proves — that the IV-missing fallback matches the generator's sizer.
+       `test_existing_short_put_charged_at_strike_for_concentration` picked up a second
+       assertion (`concentration_limit` now also present, not absent) for the same reason;
+       comment rewritten with the full hand-derivation. Both re-derived by hand against
+       `capital.resolve_caps`/`seed_budgets` before editing (see task-4-report.md's fix-report
+       section for the exact numbers). No other test in the 1108-test suite moved.
+     - **Parked, not fixed, per the reviewer's independent finding:** my self-review Concern #1
+       (large-slot marginal-vs-cumulative — the slot check compares only the new candidate's
+       own collateral, never `budgets.ticker_collateral[symbol] + collateral`) is NOT a
+       gate/generator divergence — `capital._fits` (`capital.py:159`) has the identical
+       marginal-only shape. Gate and generator agree; this is a **Task-1-level design gap in
+       `capital.py` itself**, parked for the final review (Task 18), not fixed here or in Task
+       1's file. `src/engine/capital.py` was not modified by this fix round.
 
 ---
 
