@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
     ApprovalStatus,
@@ -25,7 +26,11 @@ from src.common.schemas import (
 from src.execution.order_builder import build_limit_order
 from src.storage.models import ApprovalRow, FillRow, OrderRow
 
-_TODAY = date.today()
+# The send-time re-gate (src/execution/approval.py) recomputes DTE from `expiry` against
+# today_et() (exchange time), not the local wall-clock date — anchor fixtures there so the
+# cumulative-regate DTE window test holds regardless of local timezone (see "keep expiry
+# consistent with dte at run time" below).
+_TODAY = today_et()
 
 # --------------------------------------------------------------------------- #
 # Shared helpers
@@ -366,7 +371,9 @@ def test_record_outcome_sets_and_does_not_clobber(monkeypatch, tmp_path):
     with session_scope() as s:
         row = s.query(ClaudeMemoryRow).filter_by(candidate_id="cand-x").one()
         assert row.outcome == "filled"
-        assert row.outcome_date == date.today()
+        # record_outcome stamps outcome_date with today_et() (exchange time), not the local
+        # wall-clock date.
+        assert row.outcome_date == today_et()
 
     # A later outcome must NOT clobber the recorded one.
     record_outcome("cand-x", USER_REJECTED)

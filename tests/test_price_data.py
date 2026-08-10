@@ -66,8 +66,11 @@ def test_append_is_idempotent(tmp_path, monkeypatch):
 def test_cold_store_fetches_full_history_and_persists(tmp_path, monkeypatch):
     _db_setup(tmp_path, monkeypatch)
     from src.analytics import price_data
+    from src.common.market_hours import today_et
 
-    today = date.today()
+    # get_ohlcv treats today_et() (exchange time) as "today" when deciding which bar is
+    # still forming — anchor the fixture there so it holds regardless of local timezone.
+    today = today_et()
     fetched = _bars(today, 40)  # includes today (forming) + 39 prior
 
     with patch.object(price_data, "_fetch_yf_bars", return_value=fetched) as mk:
@@ -101,8 +104,11 @@ def test_warm_store_makes_no_fetch(tmp_path, monkeypatch):
 def test_gap_triggers_tail_fetch(tmp_path, monkeypatch):
     _db_setup(tmp_path, monkeypatch)
     from src.analytics import price_data
+    from src.common.market_hours import today_et
 
-    today = date.today()
+    # get_ohlcv excludes bars on/after today_et() (exchange time) as still-forming — anchor
+    # the fixture there so it holds regardless of local timezone.
+    today = today_et()
     # Store is stale (ends well before the last completed session) → a fetch must happen.
     append_bars("AAA", _bars(today - timedelta(days=20), 10))
     tail = _bars(today, 20)

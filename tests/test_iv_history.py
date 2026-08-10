@@ -40,9 +40,13 @@ def test_latest_iv_returns_most_recent(tmp_path, monkeypatch):
 
 def test_stale_symbols_flags_old_and_missing(tmp_path, monkeypatch):
     _db_setup(tmp_path, monkeypatch)
+    from src.common.market_hours import today_et
     from src.storage.iv_history import append_observation, stale_symbols
 
-    today = date.today()
+    # stale_symbols measures age against today_et() (exchange time), not the local
+    # wall-clock date — anchor the fixture there so the exact-age assertion below holds
+    # regardless of local timezone.
+    today = today_et()
     append_observation("FRESH", today, 0.30)
     append_observation("OLD", today - timedelta(days=10), 0.40)
     # MISSING has no rows at all.

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.common.market_hours import today_et
 from src.common.schemas import (
     FundamentalStats,
     OptionQuote,
@@ -143,7 +144,9 @@ def test_delta_drift_uses_abs_delta() -> None:
 
 
 def test_dte_fires_at_threshold() -> None:
-    pos = _make_short_call(expiry=date.today() + timedelta(days=7))
+    # check_dte_threshold computes DTE against today_et() (exchange time), not the local
+    # wall-clock date — anchor the fixture there so this holds regardless of local timezone.
+    pos = _make_short_call(expiry=today_et() + timedelta(days=7))
     alert = check_dte_threshold(pos, dte_threshold=7)
     assert alert is not None
     assert alert.trigger == "dte"
@@ -284,7 +287,9 @@ def test_ex_div_fires_without_quote_backward_compatible() -> None:
 # check_assignment_risk (C4)
 # ---------------------------------------------------------------------------
 
-_EXPIRY_21D = date.today() + timedelta(days=21)
+# check_assignment_risk computes DTE against today_et(), so anchor there rather than the
+# local wall-clock date (which can be a day ahead of ET, e.g. mornings in Asia/Singapore).
+_EXPIRY_21D = today_et() + timedelta(days=21)
 
 
 def test_assignment_risk_fires_deep_itm_near_expiry() -> None:
@@ -326,8 +331,9 @@ def test_assignment_risk_skips_missing_delta() -> None:
 
 
 def test_assignment_risk_fires_exactly_at_thresholds() -> None:
-    pos = _make_short_call(expiry=date.today() + timedelta(days=21))
-    quote = _make_quote(delta=0.70, expiry=date.today() + timedelta(days=21))
+    # Anchored to today_et() — the code under test computes DTE against exchange time.
+    pos = _make_short_call(expiry=today_et() + timedelta(days=21))
+    quote = _make_quote(delta=0.70, expiry=today_et() + timedelta(days=21))
     alert = check_assignment_risk(pos, quote, delta_threshold=0.70, dte_threshold=21)
     assert alert is not None
 
