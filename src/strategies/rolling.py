@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from datetime import date as date_cls
 
+from src.analytics.fair_value import compute_ideal_zone, zone_for_contract
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
 from src.common.profile import get_effective_risk
 from src.common.schemas import (
+    FundamentalStats,
+    IdealZone,
     IVStats,
     OptionQuote,
     OptionRight,
@@ -62,6 +65,9 @@ def generate_roll_candidates(
     underlying = position.underlying or position.symbol
 
     candidates: list[TradeCandidate] = []
+    # The ideal zone depends on (symbol, right, DTE) — not on the strike — so memoize per
+    # expiry rather than recomputing it for every quote, matching the CSP/CC generators.
+    zones: dict[int, IdealZone] = {}
 
     for quote in quotes:
         if quote.right != position.right:
@@ -107,6 +113,31 @@ def generate_roll_candidates(
         if annualized_yield_pct < income_cfg["min_annualized_yield_pct"]:
             continue
 
+        # D2 follow-up: populate `ideal` so the risk engine's variance-risk-premium gate
+        # (which reads `TradeCandidate.ideal.min_credit`, not anything roll-specific) covers
+        # rolls too — without this, `cand.ideal` defaulted to None and the gate could never
+        # fire for a ROLL, leaving the lowered 0.15%/0.0% noise floors as the only check.
+        # No fundamentals are available in this function (no `FundamentalStats` input), so a
+        # minimal symbol-only instance is used — `zone_for_contract`'s min_credit depends only
+        # on `zone.spot`/`zone.dte`/`zone.right` (set from this call's own args, never touched
+        # by `fund`) and the strike passed in below, never on fundamentals.
+        zone = zones.get(new_dte)
+        if zone is None:
+            zone = compute_ideal_zone(
+                symbol=underlying,
+                right=position.right,
+                dte=new_dte,
+                spot=tech_stats.price,
+                tech=tech_stats,
+                iv=iv_stats,
+                fund=FundamentalStats(symbol=underlying),
+            )
+            zones[new_dte] = zone
+        # No cost_basis: this function has no access to the underlying's stock cost basis for
+        # a covered-call roll (same limitation as `roc_basis` above), so `min_credit_for` falls
+        # back to strike for both PUT and CALL rolls, consistent with the ROC treatment above.
+        contract_zone = zone_for_contract(zone, quote.strike, iv_stats)
+
         breakeven = (
             quote.strike - roll_credit
             if position.right == OptionRight.PUT
@@ -142,6 +173,7 @@ def generate_roll_candidates(
                 delta=quote.delta,
                 iv_rank=iv_stats.iv_rank,
                 dte=new_dte,
+                ideal=contract_zone,
                 scores=scores,
                 price_source=tech_stats.price_source,
                 greeks_source=quote.greeks_source,

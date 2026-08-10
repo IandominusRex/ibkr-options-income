@@ -1022,3 +1022,61 @@ def test_missing_ideal_zone_never_blocks():
     assert cand.ideal is None
     verdicts = validate_candidates([cand], _account(), [])
     assert "premium_below_fair_value" not in verdicts[0].reasons
+
+
+# ---------------------------------------------------------------------------
+# risk_engine.py — D2 follow-up: rolls had no edge control at all, because
+# `rolling.py` never set `ideal` (it defaulted to None), so this gate could never
+# fire for a ROLL candidate. rolling.py now populates `ideal` via `zone_for_contract`,
+# so the same gate that covers CSPs/CCs covers rolls too.
+# ---------------------------------------------------------------------------
+
+
+def test_gate_rejects_a_roll_premium_below_fair_value():
+    """A defensive roll collecting less than fair value earns no edge either."""
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    cand = _candidate(strategy=Strategy.ROLL, underlying="MARA", right=OptionRight.PUT).model_copy(
+        update={"premium": 0.50, "ideal": zone}
+    )
+    verdicts = validate_candidates([cand], _account(), [])
+    assert "premium_below_fair_value" in verdicts[0].reasons
+
+
+def test_gate_accepts_a_roll_premium_that_clears_fair_value():
+    """A roll collecting more than fair value clears the gate, same as any other strategy."""
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    cand = _candidate(strategy=Strategy.ROLL, underlying="MARA", right=OptionRight.PUT).model_copy(
+        update={"premium": 2.10, "ideal": zone}
+    )
+    verdicts = validate_candidates([cand], _account(), [])
+    assert "premium_below_fair_value" not in verdicts[0].reasons
+
+
+def test_require_vrp_edge_false_bypasses_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bypass knob genuinely disables the gate, not just defaults it off."""
+    import copy
+
+    import src.engine.risk_engine as risk_engine_module
+    from src.common.profile import get_effective_risk as real_effective_risk
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    def _vrp_disabled() -> dict:
+        risk = copy.deepcopy(real_effective_risk())
+        risk["income"]["require_vrp_edge"] = False
+        return risk
+
+    monkeypatch.setattr(risk_engine_module, "get_effective_risk", _vrp_disabled)
+
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    cand = _csp_candidate(
+        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=30, premium=0.50
+    ).model_copy(update={"ideal": zone})
+    verdicts = validate_candidates([cand], _account(), [])
+    assert "premium_below_fair_value" not in verdicts[0].reasons

@@ -406,6 +406,62 @@ know. Empty until the first task runs.
     factual holes D2 opened, not the broader concentration-model staleness Task 4 already
     left pending for Task 9.
 
+- **Task 5, review-fix round (2026-08-10):** two HUMAN RULINGS plus one required fix, from
+  independent post-commit review of `7809a31`.
+  1. **`SETUP.md`** — already resolved outside this task's review range: the human ruled
+     "commit as-is" on the pre-existing unrelated content this task's report flagged as a
+     concern, and the controller committed it at `ac70694`. No action taken here.
+  2. **VRP-predicate triplication — HUMAN RULING: accept as written, park it.** The reviewer
+     independently verified all three copies (engine gate, CSP generator, CC generator) are
+     identical in default (`require_vrp_edge` defaulting `True`), comparison operator (`<`),
+     null-handling, and units — matching this task's own self-review finding. Per the plan's
+     deliberate design (generator surfaces the reason to the operator, engine enforces it), no
+     shared helper was extracted. Confirmed still true after this round's `rolling.py` change,
+     which reuses the exact same `zone_for_contract(...).min_credit` shape as the other two —
+     now four copies of the same predicate, still not unified, per the same ruling.
+  3. **HUMAN RULING — fix: populate `ideal=` on roll candidates.** Independent review sharpened
+     this task's own Concern #2 (rolling.py shares the lowered noise floors but wasn't given
+     the VRP gate) into a worse finding: `rolling.py` never set `TradeCandidate.ideal` at all,
+     so it defaulted to `None`, and `risk_engine.py`'s VRP check (`cand.ideal is not None`)
+     could **never** fire for a ROLL — rolls had no edge control whatsoever, not just a weaker
+     one. This is a direct consequence of Step 7's config edit (dropping `min_roc_pct`/
+     `min_annualized_yield_pct` to a 0.15%/0.0% noise floor executed the ROC/yield gate as a
+     safety net everywhere it was the *only* gate, which is exactly `rolling.py` since it was
+     never given the VRP gate the brief added to the other two generators) — so fixing it is
+     squarely this task's responsibility to close, even though `rolling.py` is outside Task 5's
+     literal `Files:` list. **Fix, scoped tight per the ruling:** added `ideal=` to the ROLL
+     `TradeCandidate` via `compute_ideal_zone` + `zone_for_contract` (the same two calls the
+     CSP/CC generators already make), memoized per-DTE. Did **not** touch `rolling.py`'s
+     ROC/yield economics block (lines computing `roc_basis`/`roc_pct`/`annualized_yield_pct` and
+     their `continue`s) — that block is unchanged, and remains **Task 12's** ("defensive-roll
+     economics") to rewrite. Verified before writing the fix (file:line evidence in
+     `task-5-report.md`) that fundamentals cannot reach the `min_credit` value the gate reads:
+     `min_credit_for` (`fair_value.py:244`) takes no `fund` parameter at all, and
+     `zone_for_contract` (`fair_value.py:99`) — the function whose output is what's actually
+     attached to `ideal=` — only reads `zone.spot`/`zone.dte`/`zone.right` (set once from
+     `compute_ideal_zone`'s own input args, never reassigned by the earnings/quality/ex-div
+     branches that do read `fund`) plus the caller's own `strike` argument. `fund` only reaches
+     `strike_lo`/`strike_hi`/`buy_below` — display fields the gate never reads. This let the fix
+     use a minimal `FundamentalStats(symbol=underlying)` inside `generate_roll_candidates`
+     without changing its signature, avoiding a collision with Task 12 (which adds a
+     `defensive: bool = False` parameter to the same function). Added 3 tests to
+     `tests/test_engine.py`: a roll below its fair-value floor is rejected
+     (`test_gate_rejects_a_roll_premium_below_fair_value`), a roll clearing it passes
+     (`test_gate_accepts_a_roll_premium_that_clears_fair_value`), and — the reviewer's Minor,
+     cheap enough to fold in — `require_vrp_edge: false` genuinely bypasses the gate
+     (`test_require_vrp_edge_false_bypasses_the_gate`, via `monkeypatch.setattr` on
+     `risk_engine.get_effective_risk`). No cost basis is passed to `zone_for_contract` for
+     covered-call rolls (consistent with the pre-existing `roc_basis = quote.strike` "use strike
+     as a conservative proxy" comment already in that block — the stock cost basis isn't
+     available in this function either way). Full test/lint/mypy evidence in
+     `task-5-report.md`'s fix-report section. **Residual scope, not fixed here (Task 12's):**
+     the ROC/yield component still uses strike as a proxy denominator for CC rolls (unchanged);
+     rolls still don't carry `next_earnings`, so the earnings-blackout gate cannot see roll
+     candidates either — pre-existing, not introduced or worsened by this fix, and out of this
+     round's scope. The specific hole raised ("rolls have no edge control at all") is fully
+     closed: rolls now clear the identical Black-Scholes-at-HV30 VRP gate CSPs/CCs do, degrading
+     the same way (missing zone/vol data → no rejection, never silently blocking).
+
 ---
 
 ## File Structure
