@@ -412,10 +412,10 @@ class TestValidateCandidates:
         assert "margin_limit" in verdicts[0].reasons
 
     def test_reject_buying_power_buffer(self) -> None:
-        # D1: the BP buffer is now `capital.resolve_caps`' deployable cash — excess
-        # liquidity minus a reserve (20% of excess liquidity by default), not
-        # account.buying_power against min_buying_power_buffer_pct. Deployable =
-        # 1,000 - 200 = 800, less than the 1,000 of new collateral.
+        # D1: the BP buffer is now `capital.resolve_caps`' deployable cash. Deployable =
+        # max(0, cash - reserve); reserve = max(cash_reserve_pct% of cash, cash_reserve_absolute).
+        # At cash=$1,000, reserve = max(200, 10,000) = 10,000, so deployable clips to 0.0,
+        # less than the $1,000 of new collateral requested.
         acc = _account(net_liquidation=100_000.0, cash=1_000.0, maintenance_margin=20_000.0)
         verdicts = validate_candidates([_candidate(collateral=1_000.0)], acc, [])
         assert "buying_power_buffer" in verdicts[0].reasons

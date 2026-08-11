@@ -849,7 +849,7 @@ not been exercised against a live TWS/Gateway:
   greeks consistently lag past the window, `entry_iv` stays `None` and the IV-spike baseline is absent).
 - The **async on-loop** market-data and monitor paths under a real event loop (no cross-thread errors).
 - A full **approve → fill → confirm** cycle on paper, including the new cumulative send-time re-gate
-  and the CSP-budget sizing actually producing fills (tighten `max_csp_allocation_pct` to confirm a
+  and the CSP-budget sizing actually producing fills (tighten `max_csp_allocation_pct_of_deployable` to confirm a
   rejection fires).
 - The **roll combo (BAG) pricing convention** in `order_builder.build_combo_roll_order`: a credit roll
   is sent as a single combo BUYing the bag at a *negative* net-debit limit (`lmtPrice = -net_credit`).
