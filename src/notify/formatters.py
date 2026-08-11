@@ -1741,6 +1741,7 @@ def format_live_confirm_request(
 _TRIGGER_LABELS: dict[str, str] = {
     "delta_drift": "delta drift",
     "dte": "nearing expiry",
+    "manage_dte": "management point",
     "iv_spike": "IV spike",
     "ex_div": "ex-dividend",
     "assignment_risk": "assignment risk",

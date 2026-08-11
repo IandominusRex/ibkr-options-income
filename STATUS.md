@@ -85,8 +85,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Execution** (`src/execution/`) — mid-price limit-order builder (tick-aware), executor with fill
   monitoring + live second confirmation, approval→execution bridge.
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
-- **Monitor** (`src/monitor/`) — event-driven intraday watch; all five triggers (delta drift, DTE,
-  IV spike, ex-div, **C4: assignment-risk**) wired end-to-end.
+- **Monitor** (`src/monitor/`) — event-driven intraday watch; all six triggers (delta drift,
+  management point, DTE, IV spike, ex-div, **C4: assignment-risk**) wired end-to-end.
 - **Orchestrators** (`src/orchestrator/`) — EOD report, shared `/scan` pipeline with
   live in-chat progress updates via `_Tracker`, which edits **two** messages: a stage-by-stage
   checklist and a dashboard (progress bar + ETA, current-activity line, and a 🔴-flagged running

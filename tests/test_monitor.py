@@ -179,6 +179,43 @@ def test_dte_skips_missing_expiry() -> None:
 
 
 # ---------------------------------------------------------------------------
+# check_manage_at_dte
+# ---------------------------------------------------------------------------
+
+
+def test_manage_at_dte_fires_inside_the_window() -> None:
+    from datetime import timedelta
+
+    from src.common.market_hours import today_et
+    from src.monitor.triggers import check_manage_at_dte
+
+    pos = _make_short_call(expiry=today_et() + timedelta(days=20))
+    alert = check_manage_at_dte(pos, 21)
+    assert alert is not None
+    assert alert.trigger == "manage_dte"
+
+
+def test_manage_at_dte_silent_outside_the_window() -> None:
+    from datetime import timedelta
+
+    from src.common.market_hours import today_et
+    from src.monitor.triggers import check_manage_at_dte
+
+    pos = _make_short_call(expiry=today_et() + timedelta(days=30))
+    assert check_manage_at_dte(pos, 21) is None
+
+
+def test_manage_at_dte_ignores_long_positions() -> None:
+    from datetime import timedelta
+
+    from src.common.market_hours import today_et
+    from src.monitor.triggers import check_manage_at_dte
+
+    pos = _make_short_call(expiry=today_et() + timedelta(days=10), position=1.0)
+    assert check_manage_at_dte(pos, 21) is None
+
+
+# ---------------------------------------------------------------------------
 # check_iv_spike
 # ---------------------------------------------------------------------------
 

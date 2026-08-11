@@ -66,7 +66,7 @@ is worse than a stopped one.
 | 10 | Loss-side exits | 2 | done | 2026-08-11 | |
 | 11 | Mark-based and drawdown kill switches | 2 | done | 2026-08-11 | |
 | 12 | Defensive-roll economics + date bug | 2 | done | 2026-08-11 | |
-| 13 | Manage at 21 DTE | 2 | pending | | |
+| 13 | Manage at 21 DTE | 2 | done | 2026-08-11 | |
 | 14 | Autonomy ladder | 2 | pending | | |
 | 15 | Live paper validation session | 3 | pending | | |
 | 16 | Deletions | 3 | pending | | |
@@ -934,6 +934,17 @@ know. Empty until the first task runs.
   check when `position.delta` was `None`, letting a defensive roll through unverified; changed to
   fail closed (`if pos_delta_abs is None or ...: continue`) with a new covering test
   `test_defensive_roll_rejects_when_position_delta_is_unknown` — `pytest -q` → 1143 passed.
+
+- **Task 13** — The brief's test code used a helper `_short_position(expiry=..., qty=...)` that
+  does not exist in `tests/test_monitor.py`. The actual existing helper is `_make_short_call(...)`,
+  which uses `position: float` (not `qty`) to represent contract direction: negative values (e.g.,
+  `-1.0`) are short positions, positive values (e.g., `1.0`) are long positions. Adapted both test
+  fixtures accordingly: (1) `_short_position(expiry=today_et() + timedelta(days=20))` →
+  `_make_short_call(expiry=today_et() + timedelta(days=20))` (short is the default); (2)
+  `_short_position(expiry=..., qty=1)` → `_make_short_call(expiry=..., position=1.0)` (long
+  position). The implementation code and trigger logic match the brief exactly. All three new
+  tests pass. `pytest -q` → 1146 passed (1143 baseline + 3 new manage_at_dte tests), `ruff check
+  .` clean, `mypy src` clean (94 source files).
 
 ---
 
@@ -3539,7 +3550,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `MonitorCfg.manage_at_dte` (Task 12).
 - Produces: `triggers.check_manage_at_dte(pos: PositionSnapshot, manage_dte: int) -> RollAlert | None`, wired into `check_all`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_monitor.py — append
@@ -3575,12 +3586,12 @@ def test_manage_at_dte_ignores_long_positions():
     assert check_manage_at_dte(pos, 21) is None
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_monitor.py -k manage_at_dte -q`
 Expected: FAIL — `ImportError: cannot import name 'check_manage_at_dte'`
 
-- [ ] **Step 3: Implement the trigger**
+- [x] **Step 3: Implement the trigger**
 
 In `src/monitor/triggers.py`, after `check_dte_threshold`:
 
@@ -3620,7 +3631,7 @@ In `check_all`, after the `check_dte_threshold` block:
         alerts.append(alert)
 ```
 
-- [ ] **Step 4: Add the trigger label**
+- [x] **Step 4: Add the trigger label**
 
 In `src/notify/formatters.py`, `_TRIGGER_LABELS`:
 
@@ -3628,16 +3639,16 @@ In `src/notify/formatters.py`, `_TRIGGER_LABELS`:
     "manage_dte": "management point",
 ```
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 6: Update docs**
+- [x] **Step 6: Update docs**
 
 `ARCHITECTURE.md` and `STATUS.md`: the monitor now has six triggers, not five. Update both counts and the trigger lists.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/monitor/triggers.py src/notify/formatters.py tests/test_monitor.py ARCHITECTURE.md STATUS.md

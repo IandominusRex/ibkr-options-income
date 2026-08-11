@@ -60,6 +60,33 @@ def check_dte_threshold(
     return None
 
 
+def check_manage_at_dte(
+    pos: PositionSnapshot,
+    manage_dte: int,
+) -> RollAlert | None:
+    """Fire at the mechanical management point, well before the gamma window.
+
+    Entries sit at 21-45 DTE and ``check_dte_threshold`` fires at 7 days — by then the
+    position has little extrinsic left and few good options. This is the decision point where
+    closing, rolling, or explicitly holding are all still available.
+    """
+    if pos.position >= 0 or pos.expiry is None:
+        return None
+    dte = (pos.expiry - today_et()).days
+    if dte > manage_dte:
+        return None
+    return RollAlert(
+        position_symbol=pos.symbol,
+        underlying=pos.underlying or pos.symbol,
+        trigger="manage_dte",
+        detail=(
+            f"{dte} days left — the {manage_dte}-day management point. Close, roll, or "
+            f"decide to hold while extrinsic value still makes all three viable"
+        ),
+        dte=dte,
+    )
+
+
 def check_iv_spike(
     pos: PositionSnapshot,
     quote: OptionQuote,
@@ -186,6 +213,10 @@ def check_all(
         alerts.append(alert)
 
     alert = check_dte_threshold(pos, limits.get("dte_threshold", 7))
+    if alert:
+        alerts.append(alert)
+
+    alert = check_manage_at_dte(pos, limits.get("manage_at_dte", 21))
     if alert:
         alerts.append(alert)
 
