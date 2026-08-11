@@ -1113,22 +1113,31 @@ know. Empty until the first task runs.
 
 - **Task 17** — All five steps completed as written; three deviations, none of which changed the
   shape of the split.
-  1. **The `Interfaces` line's "only module in this trio that imports from `src.notify`" was not
-     fully achievable.** `scan_progress.py` does hold every Telegram *edit*, but `scan.py` itself
-     still imports `send_candidates`, `send_buy_list`, `send_account_snapshot`, `thread_id` and
-     three formatters for the notify stage at the end of `_run_scan_body`. Removing those is
-     blocked by the brief's own harder constraint that `tests/test_scan_*.py` pass **unchanged**:
+  1. **The `Interfaces` line's "only module in this trio that imports from `src.notify`" is met
+     to within three injected names — the rest is a hard test constraint.** Originally shipped
+     with the whole notify stage still in `scan.py`; review flagged it, the human partner chose
+     "fix it", and **fix round 1 (commit `2c2d2a4`) moved the entire end-of-run send stage** —
+     candidate cards, buy list, C7 skip-reasons card, account snapshot, data-provenance summary,
+     and the `notify` stage's tracker transitions — into `scan_progress.send_scan_results()`,
+     along with `thread_id`, `format_assessed_contracts`, `format_skip_reasons` and
+     `format_data_provenance`. **What could not move:** `scan.py`'s import block still names
+     `send_candidates`, `send_buy_list` and `send_account_snapshot`, injected into
+     `send_scan_results` via a frozen `SendDeps` bundle. Those three are pinned by the frozen
+     safety-net tests, which `monkeypatch.setattr(scanmod, …)` them as attributes of
+     `src.orchestrator.scan` — `test_scan_timeout.py:94-95,150-151,211-212`,
+     `test_scan_materiality.py:241-243,384-386,417-419`, `test_scan_review_reuse.py:211-213` —
+     and `test_scan_materiality.py:403,427` additionally asserts on
+     `send_candidates.await_args_list`, so the mock must be the object that actually intercepts.
+     A module-level import in `scan_progress.py` would resolve from the wrong module object, the
+     stubs would silently miss, and the suite would send real Telegram traffic against its fake
+     `bot`/`chat_id` doubles. (`run_ticker_scan` also imports `format_ticker_scan_result`
+     function-locally; that function is out of scope for Task 17 and untouched.) The
+     enforceable, load-bearing half remains test-guarded: `scan_pipeline.py` is free of
+     `src.notify`, checked by
+     `tests/test_eval_skills.py::test_scan_pipeline_does_not_import_the_notify_layer`.
+     **A later task that wants those last three names out of `scan.py` must budget for editing
      `tests/test_scan_timeout.py`, `tests/test_scan_materiality.py` and
-     `tests/test_scan_review_reuse.py` all monkeypatch those names as attributes of
-     `src.orchestrator.scan`, so moving them out silently breaks the stubs and the tests hit live
-     Telegram. Steps 2–5 also only ever instruct moving `_Tracker` and the per-symbol loop. The
-     **enforceable, load-bearing half is done and now test-guarded**: `scan_pipeline.py` is free
-     of `src.notify`, checked by the new
-     `tests/test_eval_skills.py::test_scan_pipeline_does_not_import_the_notify_layer` AST scan —
-     which is the property Phase 5's API actually needs (it can trigger a scan and read a
-     `ScanResult` without the Telegram layer). **A later task that wants `scan.py` itself
-     notify-free must budget for editing those three test files; it cannot be done underneath
-     them.**
+     `tests/test_scan_review_reuse.py` — it cannot be done underneath them.**
   2. **`SymbolDeps` dependency injection in `scan_pipeline.py` is a requirement, not a style
      choice.** Six names are monkeypatched as attributes of `src.orchestrator.scan` by the
      existing tests — `get_option_chain_quotes_async`, `get_iv_stats`, `get_technical_stats`,
