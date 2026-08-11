@@ -63,20 +63,31 @@ a fresh quote.
 
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
-The verdict learning loop (`src/claude/eval/` + `src/claude/skills/`) closes the feedback cycle
-around Claude's reviews: an **outcome ledger** (`verdict_ledger`) logs every verdict alongside the
-signals it saw and the deterministic baseline; a **reconciler** back-fills the realized outcome on
-close; **verdict scoring** measures calibration + EV against held-out periods; and a **skill loop**
-lets Claude draft reasoning playbooks from that labeled history.
+`src/claude/eval/` closes a read-only feedback loop around Claude's reviews: an **outcome ledger**
+(`ledger.py`, `verdict_ledger`) logs every reviewed candidate's signals, verdict, and the
+deterministic baseline; a **reconciler** (`reconcile.py`) back-fills the realized outcome on close;
+**assignment auto-detection** (`assignment.py`) catches assignments the reconciler alone would miss;
+and **score-vs-outcome analysis** (`score_metrics.py`, N22) buckets `blended_score` (and its
+components) against realized win rate/P&L — evidence a human reads to decide, by hand, whether
+`scoring_weights.yaml` should change.
 
-**The fence is absolute:** promoted skills influence **verdict and ranking only**. They reach Claude
-solely through the strategist/roll prompt builders via `render_active_skills()`. The risk engine,
-`scoring_weights.yaml`, `risk_limits.yaml`, and all position sizing remain **human-edited config** —
-nothing in `eval/` or `skills/` is importable from, or reachable by, the engine/execution/sizing
-path. When extending this area: never let a skill, the ledger, or the metrics feed a gate, weight,
-or contract count. The guarantee is enforced by `tests/test_eval_skills.py::test_skills_never_reach_the_engine`
-— keep it green. Skill **promotion is always human-gated** (a `scripts.skills promote` file move);
-the proposer drafts, it never activates.
+**The fence is absolute:** none of this reaches the risk engine, `scoring_weights.yaml`,
+`risk_limits.yaml`, or position sizing, all of which remain **human-edited config** — nothing in
+`eval/` or `skills/` is importable from, or reachable by, the engine/execution/sizing path. When
+extending this area: never let the ledger, the reconciler, or a score-vs-outcome finding feed a
+gate, weight, or contract count directly. The guarantee is enforced by
+`tests/test_eval_skills.py::test_skills_never_reach_the_engine` (checks for `src.claude.eval`/
+`src.claude.skills` imports reaching the engine/execution/strategies path; carries a documented
+one-way exception for `src.claude.memory`'s outcome-recording, which execution writes to but never
+reads a decision from) — keep it green.
+
+**Removed 2026-08-10** (see `STATUS.md` "Removed 2026-08-10"): the skill-proposal loop that used to
+draft reasoning playbooks from this labeled history (`src/claude/skills/`, `scripts/propose_skill.py`,
+`scripts/skills.py`) and verdict-EV scoring (`src/claude/eval/metrics.py`, `scripts/evaluate_verdicts.py`)
+were both deleted — the verdict they measured is deliberately inert in auto mode and needed years of
+closed trades to produce a meaningful held-out score. The outcome ledger and reconciler above were
+kept; they are cheap and still useful. There is no promotion mechanism to gate anymore — everything
+`eval/` produces is read by a human, never auto-applied.
 
 ## Analytics tiers — which signals may influence ranking
 
