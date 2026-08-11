@@ -353,7 +353,22 @@ async def check_loss_exits(
                 log.exception("Failed to send loss-exit error for %s", pos.symbol)
             continue
 
-        # Send result with actual fill information
+        # Check if the order actually filled. status="working" can mean timeout/cancel with zero fill.
+        if result.filled_qty <= 0:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"⚠️ *Loss-exit did not fill* — {label}\n"
+                        f"Order placed but did not fill — check IBKR manually\\."
+                    ),
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                log.exception("Failed to send loss-exit did-not-fill message for %s", pos.symbol)
+            continue
+
+        # Send result with actual fill information (only when filled_qty > 0)
         try:
             await bot.send_message(
                 chat_id=chat_id,

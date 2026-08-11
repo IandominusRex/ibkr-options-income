@@ -131,3 +131,29 @@ async def test_loss_exit_skips_duplicate_close_attempt():
         await check_loss_exits(ib_scan, ib_exec, bot, "chat")
     close.assert_awaited_once()
     bot.send_message.assert_not_awaited()  # No notification for skipped closes
+
+
+@pytest.mark.asyncio
+async def test_loss_exit_alerts_when_order_does_not_fill():
+    """When order times out/cancels with zero fill, alert the operator, not a success message."""
+    from src.execution.profit_take import check_loss_exits
+
+    ib_scan, ib_exec = MagicMock(), MagicMock()
+    bot = AsyncMock()
+    close_result = MagicMock()
+    close_result.status = "working"  # Order timed out
+    close_result.filled_qty = 0.0  # Zero fill — position still open
+    close_result.avg_price = 0.0
+    with (
+        patch("src.ibkr.portfolio.get_positions", return_value=[_short_put()]),
+        patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.50),
+        patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(5.10, 5.30))),
+        patch("src.execution.profit_take.close_short_position", new=AsyncMock(return_value=close_result)) as close,
+    ):
+        await check_loss_exits(ib_scan, ib_exec, bot, "chat")
+    close.assert_awaited_once()
+    bot.send_message.assert_awaited_once()
+    call_args = bot.send_message.call_args
+    text = call_args.kwargs["text"]
+    assert "did not fill" in text.lower()
+    assert "check IBKR manually" in text
