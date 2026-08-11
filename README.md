@@ -5,13 +5,18 @@ holdings and a watchlist every 15 minutes during market hours, scores and ranks 
 cash-secured-put opportunities, gets a plain-English review from Claude, and sends the top candidates
 to your phone via Telegram.
 
-> **Two operating modes.** In **MANUAL** mode (default) every trade requires your explicit Telegram
-> approval before touching the broker. In **AUTOMATED** mode the system executes trades
-> autonomously during RTH and auto-closes positions at 50% profit — toggle with `/mode`.
-> Every order is re-validated by the deterministic risk engine before it executes regardless of mode.
-> In AUTOMATED mode the system trades the **deterministic, gate-passing slate**; Claude's review is
-> shown for the record but never filters or gates what executes (the fence). To raise the AUTO bar,
-> raise `weights.min_candidate_score` — not via Claude.
+> **A four-rung autonomy ladder**, not a binary switch. `OBSERVE` (default, fresh install) proposes
+> only — nothing opens, and Approve/Reject buttons are withheld. `MANUAL` requires your explicit
+> Telegram tap on every trade. `WHITELIST` auto-opens listed symbols and sends everything else to
+> you. `FULL` auto-opens anything that clears the deterministic gates. Change rungs with
+> `/autonomy <level>` — promotion up a rung is refused until the account has demonstrated evidence
+> (>=20 fills, >=60% fill rate, a risk-reducing close having fired); demotion is always allowed.
+> Every order is re-validated by the deterministic risk engine before it executes at every rung.
+> Auto-close (profit-take + loss-exit) is a **separate** switch, `automation.auto_close_enabled`,
+> independent of the autonomy rung. At WHITELIST/FULL the system trades the **deterministic,
+> gate-passing slate**; Claude's review is shown for the record but never filters or gates what
+> executes (the fence). To raise the auto-open bar, raise `weights.min_candidate_score` — not via
+> Claude.
 
 ---
 
@@ -19,7 +24,7 @@ to your phone via Telegram.
 
 | Time | What happens |
 |---|---|
-| **Every 15 min (RTH)** | Intraday loop: checks profit-take targets (50% rule), runs a fresh scan (full sweep on first cycle each session); in AUTOMATED mode executes autonomously, in MANUAL mode sends approval requests |
+| **Every 15 min (RTH)** | Intraday loop: checks profit-take/loss-exit targets, runs a fresh scan (full sweep on first cycle each session); candidates a symbol's autonomy rung clears (WHITELIST/FULL) auto-execute, everything else sends an approval request (buttons withheld at OBSERVE) |
 | **During market hours** | Event-driven monitor watches open positions for delta drift, IV spikes, and early-assignment risk; alerts you to roll when needed |
 | **4:15 PM ET (auto)** | End-of-day report: P&L summary, journal entry, tomorrow's watchlist |
 | **Any time** | Telegram bot commands (see below) — query the system interactively from your phone |
@@ -31,7 +36,8 @@ to your phone via Telegram.
 |---|---|
 | `/scan` | Run a full on-demand pipeline scan (CC/CSP/buy opportunities) — full universe sweep, always reviews fresh. Each strategy thread also gets an **"Assessed — not approved"** block listing the contracts that were priced and set aside, with the gate each failed |
 | `/scan AAPL` | Single-ticker deep-dive: fetch option chain for one symbol, run analytics, show best CC/CSP/buy result with a Claude/Ollama verdict. Holistic context: a **💬 Sentiment** line (composite StockTwits + news + optional Reddit, 0-100 with 1-day trend), a **🌐 Market & Sector** line (VIX regime + how the name's sector / the broad market are trading + relative strength) and a **🧠 Read** — a plain-English synthesis explaining what the IV/VRP/delta/RSI numbers mean together and the overall sentiment; a **🎯 ideal strike zone + minimum credit** beside the contract actually on offer (derived from support/resistance, expected move, earnings timing and Black-Scholes fair value at realised vol — the credit floor is priced at *that* contract's strike, so "clears fair value" compares like with like), the runner-up qualifying strikes, an **"Other contracts considered"** list naming every contract that didn't make it and why, and a **🎯 Levels** block with the share-entry price. When a strategy has no qualifying option it shows the closest failed contract and *why* — never silence |
-| `/mode` | Show current trading mode (MANUAL / AUTOMATED) and toggle between them |
+| `/autonomy` | Show current autonomy rung (OBSERVE/MANUAL/WHITELIST/FULL) and promotion progress toward the next one |
+| `/autonomy <level>` | Change rungs — promotion is refused until the evidence gate (>=20 fills, >=60% fill rate, one risk-reducing close) is met; demotion always succeeds |
 | `/status` | Compact overview: account summary + all active short options sorted by expiry + pending approvals |
 | `/positions` | Live portfolio: stocks and options with market value and unrealized P&L |
 | `/account` | Account balances: net liquidation, buying power, margin, excess liquidity |

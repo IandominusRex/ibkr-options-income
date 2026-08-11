@@ -62,6 +62,19 @@ class OrderState(StrEnum):
     REJECTED = "rejected"
 
 
+class AutonomyLevel(StrEnum):
+    """How much the system may do without a human tap.
+
+    Auto-CLOSE is on from MANUAL upward and is governed separately by
+    ``automation.auto_close_enabled`` — this ladder governs *opening* exposure only.
+    """
+
+    OBSERVE = "observe"  # proposals only; never opens, never closes
+    MANUAL = "manual"  # human tap to open; closes automatically
+    WHITELIST = "whitelist"  # opens whitelisted symbols automatically
+    FULL = "full"  # opens anything that passes the gates
+
+
 # --------------------------------------------------------------------------- #
 # Portfolio / account
 # --------------------------------------------------------------------------- #

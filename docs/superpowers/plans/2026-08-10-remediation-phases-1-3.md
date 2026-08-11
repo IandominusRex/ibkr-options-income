@@ -67,7 +67,7 @@ is worse than a stopped one.
 | 11 | Mark-based and drawdown kill switches | 2 | done | 2026-08-11 | |
 | 12 | Defensive-roll economics + date bug | 2 | done | 2026-08-11 | |
 | 13 | Manage at 21 DTE | 2 | done | 2026-08-11 | |
-| 14 | Autonomy ladder | 2 | pending | | |
+| 14 | Autonomy ladder | 2 | done | 2026-08-11 | |
 | 15 | Live paper validation session | 3 | pending | | |
 | 16 | Deletions | 3 | pending | | |
 | 17 | Split `scan.py` | 3 | pending | | |
@@ -945,6 +945,59 @@ know. Empty until the first task runs.
   position). The implementation code and trigger logic match the brief exactly. All three new
   tests pass. `pytest -q` → 1146 passed (1143 baseline + 3 new manage_at_dte tests), `ruff check
   .` clean, `mypy src` clean (94 source files).
+
+- **Task 14** — The dispatch pre-corrected five stale/wrong spots in the brief; all five were
+  confirmed by re-reading the actual code before implementing, and none required further
+  deviation beyond the corrected text:
+  1. **`tests/conftest.py::use_temp_db` does not exist.** Used the established per-file local
+     `_db_setup(tmp_path, monkeypatch)` helper (same pattern as `tests/test_circuit_breakers.py`)
+     in `tests/test_autonomy.py` instead, per the dispatch's correction.
+  2. **`format_mode_status`, not `format_status`, renders `/mode`'s (now `/autonomy`'s) output.**
+     `format_status` (the `/status` formatter) has no mode line at all — confirmed by reading it.
+     Changed `format_mode_status`'s signature to `(level: AutonomyLevel, *, fills, fill_rate,
+     closed_once, blockers)` and left `format_status` untouched.
+  3. **`approval_service.py`'s four call sites needed design work, not uniform replacement.**
+     `handle_mode_command` (820-833) and `handle_mode_toggle` (870-921) were deleted wholesale and
+     replaced by a new `handle_autonomy_command` + `_autonomy_status_text` helper (accepts an
+     optional `/autonomy <level>` argument, gates promotion through `promotion_blockers`, no
+     confirmation flow — demotion needs none, promotion is either granted or refused with reasons).
+     The intraday-loop log line and the startup-notification block were mechanical swaps to
+     `get_autonomy_level().value`. The `mode:` `CallbackQueryHandler` registration and the
+     `BotCommand("mode", …)` entry were removed; `InlineKeyboardButton`/`InlineKeyboardMarkup`
+     became unused imports as a result and were dropped (`ruff` F401 caught this).
+  4. **`STATUS.md`'s MANUAL/AUTOMATED paragraph (lines 109-119) had already been partially
+     rewritten by Task 10** (the "Loss-side exits are independent of autonomy level" and risk-gate
+     sentences). Re-read the current text before editing; preserved both sentences' substance
+     verbatim inside the new four-rung paragraph rather than reconstructing them from the brief's
+     original (stale) wording.
+  5. **`src/execution/profit_take.py`'s `is_automated_mode()` call was at line 262, not 258** — a
+     one-line drift from the brief, confirmed by grep before editing; the mechanical swap to
+     `cfg.automation.auto_close_enabled` applied at the correct line.
+
+  One further deviation not flagged by the dispatch: **the OBSERVE default broke existing
+  `send_candidates` tests that assumed button-bearing cards.** `system_settings.get_autonomy_level()`
+  defaults to `OBSERVE` for a fresh (unset) DB per the brief's own accessor — but OBSERVE also
+  withholds Approve/Reject buttons (this task's own design requirement), and roughly a dozen
+  `tests/test_notify.py` tests exercise the interactive-card path (`reply_markup`, keyboard
+  contents, approval flow) against a fresh temp DB with no explicit level set. Rather than touch
+  every test individually, `tests/test_notify.py::_db_setup` (the file's single shared DB-init
+  helper) now calls `set_autonomy_level(AutonomyLevel.MANUAL)` after `init_db()`, restoring the
+  pre-ladder assumption those tests were written against; a docstring on the helper explains why.
+  The one test that needs auto-open behavior (`test_auto_queue_creates_order_then_skips_duplicate`,
+  the file's migrated `is_automated_mode` reference) overrides with
+  `set_autonomy_level(AutonomyLevel.FULL)` after `_db_setup`. `tests/test_autonomy.py`'s own tests
+  are unaffected (they use their own local `_db_setup`, without the MANUAL override, so
+  `test_default_level_is_observe` still exercises the true OBSERVE default). Design decision for
+  the `send_candidates` partition: per-candidate split on `may_auto_open(c.underlying)` (auto vs.
+  human path), with a module-level `observe_only = get_autonomy_level() == AutonomyLevel.OBSERVE`
+  flag threaded into `_send_with_session` to drop the inline keyboard and append a "proposal only"
+  footer (built by `format_candidate(..., observe_only=True)`) — the least invasive option since it
+  reuses both existing send paths unchanged and touches only card construction, not the
+  approval/execution pipeline. `pytest -q` → 1154 passed (1146 baseline + 8 new autonomy tests),
+  `ruff check .` clean, `ruff format --check` clean on all touched files, `mypy src` clean (94
+  source files). Full grep confirms zero remaining references to `is_automated_mode`,
+  `set_automated_mode`, `AUTOMATED_MODE_KEY`, `handle_mode_command`, or `handle_mode_toggle`
+  anywhere under `src/`, `tests/`, or `scripts/`.
 
 ---
 
@@ -3678,7 +3731,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `system_settings.may_auto_open(symbol: str) -> bool`.
 - Replaces: `is_automated_mode()` / `set_automated_mode()` — deleted, all call sites migrated.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_autonomy.py
@@ -3761,12 +3814,12 @@ def test_demotion_is_always_allowed():
     assert promotion_blockers(AutonomyLevel.MANUAL) == []
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_autonomy.py -q`
 Expected: FAIL — `ImportError: cannot import name 'AutonomyLevel'`
 
-- [ ] **Step 3: Add the enum**
+- [x] **Step 3: Add the enum**
 
 In `src/common/schemas.py`, beside the other `StrEnum` definitions:
 
@@ -3784,7 +3837,7 @@ class AutonomyLevel(StrEnum):
     FULL = "full"            # opens anything that passes the gates
 ```
 
-- [ ] **Step 4: Add the accessors**
+- [x] **Step 4: Add the accessors**
 
 In `src/storage/system_settings.py`, replace `AUTOMATED_MODE_KEY` and both
 `is_automated_mode`/`set_automated_mode` functions with:
@@ -3835,7 +3888,7 @@ def may_auto_open(symbol: str) -> bool:
 
 Add `from src.common.schemas import AutonomyLevel` to the imports.
 
-- [ ] **Step 5: Migrate every call site**
+- [x] **Step 5: Migrate every call site**
 
 Run `grep -rn "is_automated_mode\|set_automated_mode" src tests scripts` and update each:
 
@@ -3843,7 +3896,7 @@ Run `grep -rn "is_automated_mode\|set_automated_mode" src tests scripts` and upd
 - `src/execution/profit_take.py:258` — replace `if is_automated_mode() and ib_exec is not None:` with `if cfg.automation.auto_close_enabled and ib_exec is not None:`. Closing no longer depends on the ladder.
 - `src/notify/approval_service.py:825, 918, 1217, 1547` — display and routing; use `get_autonomy_level()`.
 
-- [ ] **Step 6: Replace `/mode` with `/autonomy`**
+- [x] **Step 6: Replace `/mode` with `/autonomy`**
 
 In `src/notify/approval_service.py`, rename `handle_mode_command` to `handle_autonomy_command`
 and register it as `CommandHandler("autonomy", handle_autonomy_command)`. Accept an optional
@@ -3897,25 +3950,25 @@ def promotion_blockers(target: AutonomyLevel) -> list[str]:
 `handle_autonomy_command` calls `promotion_blockers(target)` and, when it returns a non-empty
 list, refuses the change and reports each blocker.
 
-- [ ] **Step 7: Show the ladder in `/status`**
+- [x] **Step 7: Show the ladder in `/status`**
 
 In `src/notify/formatters.py`, `format_status`, replace the MANUAL/AUTOMATED line with the
 current rung plus progress toward the next, using the §6.1 criteria: fills recorded, measured
 fill rate, whether a loss exit has fired.
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green. Existing tests referencing `is_automated_mode` must be migrated, not
 deleted.
 
-- [ ] **Step 9: Update docs**
+- [x] **Step 9: Update docs**
 
 - `README.md` and `SETUP.md` Telegram command tables: `/mode` → `/autonomy`.
 - `ARCHITECTURE.md` commands table and `src/storage/` section.
 - `STATUS.md`: replace the "MANUAL / AUTOMATED mode toggle" bullet with the four-rung ladder and its promotion gates.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/common/schemas.py src/storage/system_settings.py src/notify/ src/execution/profit_take.py tests/ README.md SETUP.md ARCHITECTURE.md STATUS.md

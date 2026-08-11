@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo
 
 from ib_async import IB
 from sqlalchemy.exc import IntegrityError
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.claude.memory import USER_REJECTED, record_outcome
@@ -51,7 +51,7 @@ from src.common.market_hours import (
     seconds_until_next_aligned_mark,
     seconds_until_time,
 )
-from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate
+from src.common.schemas import ApprovalStatus, AutonomyLevel, OrderState, TradeCandidate
 from src.execution.approval import process_queued_orders
 from src.execution.executor import resolve_live_confirm
 
@@ -79,12 +79,14 @@ from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
 from src.storage.system_settings import (
+    autonomy_progress,
     get_active_profile,
+    get_autonomy_level,
     get_halt_reason,
-    is_automated_mode,
     is_halted,
+    promotion_blockers,
     set_active_profile,
-    set_automated_mode,
+    set_autonomy_level,
     set_halted,
 )
 
@@ -817,20 +819,69 @@ async def handle_profile_command(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(format_profile_status(name), parse_mode="MarkdownV2")
 
 
-async def handle_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show current trading mode (MANUAL/AUTOMATED) and offer a toggle button."""
-    if not _is_authorized(update) or update.message is None:
-        return
+_AUTONOMY_ORDER = [
+    AutonomyLevel.OBSERVE,
+    AutonomyLevel.MANUAL,
+    AutonomyLevel.WHITELIST,
+    AutonomyLevel.FULL,
+]
+
+
+def _autonomy_status_text(level: AutonomyLevel) -> str:
+    """Build the /autonomy status body: current rung + progress toward the next one."""
     from src.notify.formatters import format_mode_status
 
-    auto = is_automated_mode()
-    text = format_mode_status(auto)
-    toggle_label = "🤖 Switch to AUTOMATED" if not auto else "👤 Switch to MANUAL"
-    toggle_data = "mode:auto_request" if not auto else "mode:manual"
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(toggle_label, callback_data=toggle_data)]]
+    idx = _AUTONOMY_ORDER.index(level)
+    next_level = _AUTONOMY_ORDER[idx + 1] if idx + 1 < len(_AUTONOMY_ORDER) else None
+    blockers = promotion_blockers(next_level) if next_level is not None else []
+    fills, fill_rate, closed_once = autonomy_progress()
+    return format_mode_status(
+        level,
+        fills=fills,
+        fill_rate=fill_rate,
+        closed_once=closed_once,
+        blockers=blockers,
     )
-    await update.message.reply_text(text, reply_markup=keyboard, parse_mode="MarkdownV2")
+
+
+async def handle_autonomy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show or change the autonomy rung (OBSERVE < MANUAL < WHITELIST < FULL).
+
+    With no argument: report the current rung and promotion progress toward the next one.
+    With an argument (``/autonomy whitelist``): attempt to switch rungs. Promotion (moving up)
+    is refused when ``promotion_blockers`` reports unmet evidence criteria — autonomy is arrived
+    at, not switched on. Demotion (moving down, including a same-rung no-op) always succeeds,
+    since reducing autonomy needs no evidence.
+    """
+    if not _is_authorized(update) or update.message is None:
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            _autonomy_status_text(get_autonomy_level()), parse_mode="MarkdownV2"
+        )
+        return
+
+    requested = args[0].strip().lower()
+    try:
+        target = AutonomyLevel(requested)
+    except ValueError:
+        valid = ", ".join(level.value for level in _AUTONOMY_ORDER)
+        await update.message.reply_text(f"Unknown autonomy level {requested!r}. Valid: {valid}.")
+        return
+
+    blockers = promotion_blockers(target)
+    if blockers:
+        lines = "\n".join(f"- {b}" for b in blockers)
+        await update.message.reply_text(
+            f"Promotion to {target.value.upper()} refused — unmet criteria:\n{lines}"
+        )
+        return
+
+    set_autonomy_level(target)
+    logger.warning("Autonomy level changed to %s via /autonomy command", target.value)
+    await update.message.reply_text(_autonomy_status_text(target), parse_mode="MarkdownV2")
 
 
 async def handle_halt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -865,60 +916,6 @@ async def handle_resume_command(update: Update, context: ContextTypes.DEFAULT_TY
         f"✅ Execution RESUMED (was halted: {prior or 'manual'}). "
         "QUEUED orders will be processed on the next poll cycle."
     )
-
-
-async def handle_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle mode:auto_request / mode:auto_confirm / mode:manual / mode:cancel callbacks."""
-    query = update.callback_query
-    if query is None:
-        return
-    await query.answer()
-
-    if not _is_authorized(update):
-        return
-
-    data = query.data or ""
-
-    if data == "mode:auto_request":
-        warning = (
-            "⚠️ *Automated mode will:*\n"
-            "• Execute trades *without your approval*\n"
-            "• Auto\\-close positions at 50% profit\n"
-            "• Run scans every 15 minutes during RTH\n\n"
-            "_Are you sure you want to enable AUTOMATED mode?_"
-        )
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("✅ Yes, enable AUTO", callback_data="mode:auto_confirm"),
-                    InlineKeyboardButton("❌ Cancel", callback_data="mode:cancel"),
-                ]
-            ]
-        )
-        await query.edit_message_text(warning, reply_markup=keyboard, parse_mode="MarkdownV2")
-
-    elif data == "mode:auto_confirm":
-        set_automated_mode(True)
-        await query.edit_message_text(
-            "🤖 *AUTOMATED mode enabled*\n\n"
-            "Trades will execute autonomously during RTH\\.\n"
-            "Use /mode to switch back to MANUAL at any time\\.",
-            parse_mode="MarkdownV2",
-        )
-        logger.warning("Trading mode changed to AUTOMATED by user")
-
-    elif data == "mode:manual":
-        set_automated_mode(False)
-        await query.edit_message_text(
-            "👤 *MANUAL mode enabled*\n\nAll trades require your approval\\.",
-            parse_mode="MarkdownV2",
-        )
-        logger.warning("Trading mode changed to MANUAL by user")
-
-    elif data == "mode:cancel":
-        auto = is_automated_mode()
-        mode_str = "AUTOMATED 🤖" if auto else "MANUAL 👤"
-        await query.edit_message_text(f"Mode unchanged: *{mode_str}*", parse_mode="MarkdownV2")
 
 
 async def handle_campaigns_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1218,11 +1215,11 @@ async def _intraday_scan_loop(
                 else:
                     bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
                     logger.info(
-                        "Intraday scan complete — CC=%d CSP=%d buy=%d mode=%s",
+                        "Intraday scan complete — CC=%d CSP=%d buy=%d autonomy=%s",
                         len(result.cc_candidates),
                         len(result.csp_candidates),
                         len(result.buy_candidates),
-                        "AUTO" if is_automated_mode() else "MANUAL",
+                        get_autonomy_level().value,
                     )
             except Exception:
                 logger.exception("Intraday loop: scan failed")
@@ -1481,7 +1478,6 @@ async def _run_service(token: str, chat_id: str) -> None:
     # Button callbacks
     app.add_handler(CallbackQueryHandler(handle_button, pattern="^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(handle_live_confirm, pattern="^confirm_live:"))
-    app.add_handler(CallbackQueryHandler(handle_mode_toggle, pattern="^mode:"))
 
     # Commands
     app.add_handler(CommandHandler("help", handle_help_command))
@@ -1493,7 +1489,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("pending", handle_pending_command))
     app.add_handler(CommandHandler("fills", handle_fills_command))
     app.add_handler(CommandHandler("expire", handle_expire_command))
-    app.add_handler(CommandHandler("mode", handle_mode_command))
+    app.add_handler(CommandHandler("autonomy", handle_autonomy_command))
     app.add_handler(CommandHandler("halt", handle_halt_command))
     app.add_handler(CommandHandler("resume", handle_resume_command))
     app.add_handler(CommandHandler("calendar", handle_calendar_command))
@@ -1520,7 +1516,9 @@ async def _run_service(token: str, chat_id: str) -> None:
             await app.bot.set_my_commands(
                 [
                     BotCommand("scan", "Full scan, or /scan AAPL for single-ticker"),
-                    BotCommand("mode", "Show/toggle MANUAL ↔ AUTOMATED trading mode"),
+                    BotCommand(
+                        "autonomy", "Show/change autonomy rung (observe/manual/whitelist/full)"
+                    ),
                     BotCommand("halt", "🛑 Kill switch: stop all order transmission now"),
                     BotCommand("resume", "Release the kill switch and resume execution"),
                     BotCommand("status", "Account · shorts · pending approvals"),
@@ -1552,7 +1550,7 @@ async def _run_service(token: str, chat_id: str) -> None:
                 pass
 
             mode = "LIVE" if cfg.is_live else "PAPER"
-            current_mode = "AUTOMATED 🤖" if is_automated_mode() else "MANUAL 👤"
+            current_autonomy = f"{get_autonomy_level().value.upper()} 🪜"
             services = [
                 "Telegram bot (polling)",
                 f"IBKR exec (clientId {exec_id})" + (" — connected" if ib else " — OFFLINE"),
@@ -1561,7 +1559,7 @@ async def _run_service(token: str, chat_id: str) -> None:
                 + (" — active" if ib else " — disabled (no exec connection)"),
                 "Intraday loop (15 min, RTH)"
                 + (" — active" if ib_scan else " — disabled (no scan connection)"),
-                f"Trading mode: {current_mode}",
+                f"Autonomy rung: {current_autonomy}",
             ]
             thread_id_val = thread_id(cfg.secrets.telegram_thread_scan)
             await app.bot.send_message(

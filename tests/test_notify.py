@@ -13,6 +13,7 @@ import pytest
 
 from src.common.schemas import (
     AccountSnapshot,
+    AutonomyLevel,
     BuyCandidate,
     ClaudeReview,
     OptionRight,
@@ -105,14 +106,22 @@ def _make_review(candidate_id: str = "test-001") -> ClaudeReview:
 
 
 def _db_setup(tmp_path, monkeypatch) -> None:
-    """Redirect DB to a temp file and re-initialise the ORM engine."""
+    """Redirect DB to a temp file and re-initialise the ORM engine.
+
+    Defaults the autonomy level to MANUAL rather than leaving the fresh-install OBSERVE
+    default: this file's tests exercise the interactive Approve/Reject card flow, and OBSERVE
+    would additionally withhold the buttons (Task 14) — a behavior these tests aren't about.
+    Tests that specifically cover OBSERVE's card suppression set the level themselves.
+    """
     import src.storage.db as dbmod
     from src.common.config import Config
+    from src.storage.system_settings import set_autonomy_level
 
     monkeypatch.setattr(dbmod, "_engine", None)
     monkeypatch.setattr(dbmod, "_SessionLocal", None)
     monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 't.db'}")
     dbmod.init_db()
+    set_autonomy_level(AutonomyLevel.MANUAL)
 
 
 # --------------------------------------------------------------------------- #
@@ -630,11 +639,13 @@ def test_has_active_order_false_when_absent(tmp_path, monkeypatch):
 
 
 async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monkeypatch, tmp_path):
-    """Automated mode: the deterministic candidate_id must not stack duplicate orders
-    when the 15-min loop re-surfaces the same candidate."""
+    """Auto-open rung (WHITELIST/FULL): the deterministic candidate_id must not stack duplicate
+    orders when the 15-min loop re-surfaces the same candidate."""
     _db_setup(tmp_path, monkeypatch)
     _mock_cfg(monkeypatch)
-    monkeypatch.setattr("src.notify.sender.is_automated_mode", lambda: True)
+    from src.storage.system_settings import set_autonomy_level
+
+    set_autonomy_level(AutonomyLevel.FULL)
     mock_cls, _ = mock_bot_cls
 
     from sqlalchemy import select

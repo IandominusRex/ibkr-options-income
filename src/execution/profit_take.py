@@ -26,7 +26,6 @@ from src.execution.position_manager import close_short_position
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, FillRow
-from src.storage.system_settings import is_automated_mode
 
 log = logging.getLogger(__name__)
 
@@ -202,8 +201,9 @@ async def check_profit_takes(
 ) -> None:
     """Detect short option positions that have reached the profit-take threshold.
 
-    Uses ib_scan for market-data quotes and ib_exec for placing BUY-to-close orders in automated
-    mode; sends a Telegram alert in manual mode.
+    Uses ib_scan for market-data quotes and ib_exec for placing BUY-to-close orders when
+    ``automation.auto_close_enabled`` is on; sends a Telegram alert only when it's off. Closing
+    risk is independent of the autonomy level (that ladder governs *opening* exposure only).
     """
     cfg = get_config()
     threshold = cfg.scheduler.profit_take_pct / 100.0
@@ -259,7 +259,7 @@ async def check_profit_takes(
             profit_pct * 100,
         )
 
-        if is_automated_mode() and ib_exec is not None:
+        if cfg.automation.auto_close_enabled and ib_exec is not None:
             await _auto_close_position(ib_exec, pos, bid, ask, bot, chat_id)
         else:
             await _send_profit_alert(pos, entry_price, mid, profit_pct, bot, chat_id)
@@ -337,9 +337,7 @@ async def check_loss_exits(
         from src.notify.formatters import _md, contract_label
 
         label = _md(
-            contract_label(
-                pos.underlying or pos.symbol, pos.strike, pos.right.value, pos.expiry
-            )
+            contract_label(pos.underlying or pos.symbol, pos.strike, pos.right.value, pos.expiry)
         )
 
         if result.status == "error":

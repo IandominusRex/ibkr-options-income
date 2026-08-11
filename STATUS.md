@@ -102,22 +102,32 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   loss-side exits (`max_loss_multiple` × entry credit), (2) runs a full scan — but new-entry scans
   stop after `scheduler.entry_cutoff` (default 15:00 ET); exit checks (profit + loss) run until
   the close. The whole cycle body is wrapped in a catch-all so
-  one bad cycle cannot kill the loop. Behaviour depends on mode (see below). RTH is now determined
+  one bad cycle cannot kill the loop. Behaviour depends on the autonomy rung (see below). RTH is now determined
   by the shared, **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth
   for both the intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00
   ET early closes are respected, not just weekday + clock.
-- **MANUAL / AUTOMATED mode toggle** (`/mode` Telegram command) — persisted in the `system_settings`
-  SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
-  get Approve/Reject buttons; profit-takes (50% threshold) send alerts only. In **AUTOMATED**
-  mode: candidates are directly queued for execution (no human tap), and profit-takes trigger BUY-to-close
-  orders automatically via `execution/position_manager.close_short_position` — which records an
+- **Four-rung autonomy ladder** (`/autonomy` Telegram command, Task 14) — replaces the old binary
+  MANUAL/AUTOMATED toggle with `AutonomyLevel` (`OBSERVE < MANUAL < WHITELIST < FULL`), persisted
+  in the `system_settings` SQLite table (`autonomy_level`/`autonomy_whitelist` keys) via
+  `src/storage/system_settings.py`. The ladder governs **opening** new exposure only —
+  `send_candidates` partitions each scan's candidates per-candidate: any candidate
+  `may_auto_open(underlying)` clears (WHITELIST's listed symbols; anything at FULL) is queued
+  directly for execution (no human tap); everything else gets an Approve/Reject card. At
+  **OBSERVE** (the default for a fresh install) no candidate ever auto-opens and the
+  Approve/Reject buttons are additionally withheld from every card — that rung proposes only, it
+  never acts, not even on a human tap. **MANUAL** requires a tap on every trade, same as the old
+  default. Promotion up a rung is refused by `system_settings.promotion_blockers()` until the
+  account has demonstrated evidence (>=20 fills, >=60% fill rate, at least one risk-reducing close
+  having fired) — autonomy is arrived at, not switched on; demotion is always permitted.
+  **Loss-side exits (and profit-takes) are independent of autonomy level:** they fire
+  automatically whenever the relevant threshold is reached — 50% premium captured for profit-takes,
+  `max_loss_multiple` × entry credit for loss-exits — gated only by `automation.auto_close_enabled`
+  (default true), not by the autonomy rung — closing risk should never wait for a human tap. Auto-close
+  orders execute via `execution/position_manager.close_short_position` — which records an
   `OrderRow`/`FillRow`, cancels on timeout, and is idempotent at the contract level (SYSTEM_REVIEW
-  F1). **Loss-side exits are independent of autonomy level:** they fire automatically whenever
-  cost-to-close reaches `max_loss_multiple` × entry credit, gated only by `automation.auto_close_enabled`
-  (default true), not by MANUAL/AUTOMATED mode — closing risk should never wait for a human tap.
-  The deterministic risk gate still re-validates every new-exposure order before execution in
-  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
-- **AUTOMATED-mode circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
+  F1). The deterministic risk gate still re-validates every new-exposure order before execution at
+  every rung; buy-to-close (risk-reducing) skips the gate but is still recorded.
+- **Automated-trading circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
   bounds activity; two loss breakers bound *losses* (the risk gate only bounds exposure), and the
   intraday loop halts on whichever trips first (D3). `daily_loss_halt_pct` is enforced by
   `mark_based_loss`, which compares today's summed position `unrealized_pnl` against the prior day's

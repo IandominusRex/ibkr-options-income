@@ -21,6 +21,7 @@ from src.common.config import get_config
 from src.common.schemas import (
     AccountSnapshot,
     ApprovalStatus,
+    AutonomyLevel,
     BuyCandidate,
     ClaudeReview,
     OrderState,
@@ -39,7 +40,13 @@ from src.notify.formatters import (
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow
 from src.storage.orders import has_active_order
-from src.storage.system_settings import get_setting, is_automated_mode, is_halted, set_setting
+from src.storage.system_settings import (
+    get_autonomy_level,
+    get_setting,
+    is_halted,
+    may_auto_open,
+    set_setting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,12 +167,14 @@ async def send_candidates(
 ) -> bool:
     """Send one Telegram message per candidate; persist the message_id to DB.
 
-    In AUTOMATED mode: skips approval buttons, directly creates APPROVED ApprovalRows
-    and QUEUED OrderRows, then sends a single summary notification. The existing
-    _order_poll_loop picks up the QUEUED orders and executes them normally (including
-    the second live-quote re-validation gate).
-
-    In MANUAL mode (default): sends one Approve/Reject message per candidate.
+    Partitions per-candidate on the autonomy ladder (Task 14) rather than switching the whole
+    batch: candidates where ``may_auto_open(underlying)`` is True skip approval buttons entirely
+    — they get an APPROVED ApprovalRow and a QUEUED OrderRow directly, then a single summary
+    notification. The existing _order_poll_loop picks up the QUEUED orders and executes them
+    normally (including the second live-quote re-validation gate). Everything else gets one
+    Approve/Reject message per candidate. At OBSERVE, no candidate ever auto-opens (matching
+    ``may_auto_open``'s own behaviour) and the Approve/Reject buttons are additionally withheld
+    from every card — that rung proposes only, it never acts, not even on a human tap.
 
     Empty candidates: appends a timestamped ``[HH:MM] … no candidates this cycle <reason>`` line
     (plus the closest near-miss) to the thread's persisted status message via ``_append_status``,
@@ -265,31 +274,51 @@ async def send_candidates(
                 logger.exception("Failed to send unchanged digest for %s", label)
             return True
 
-    if is_automated_mode():
-        sent = await _auto_queue_candidates(candidates, cfg, token, str(chat_id), thread_id)
-    elif session is not None:
-        sent = await _send_with_session(
-            session,
-            candidates,
-            reviews,
-            cfg,
-            token,
-            str(chat_id),
-            thread_id,
-            suppress_unchanged,
+    # Autonomy ladder (Task 14): partition per-candidate rather than switching the whole batch.
+    # At WHITELIST, listed symbols auto-queue while everything else still goes to a human; at
+    # OBSERVE/MANUAL every candidate falls through to the human path (`may_auto_open` already
+    # returns False for both); at FULL every candidate auto-queues. OBSERVE additionally strips
+    # the Approve/Reject buttons from the human-path cards — that rung proposes, it never acts,
+    # not even on a tap.
+    auto_candidates: list[TradeCandidate] = []
+    manual_candidates: list[TradeCandidate] = []
+    for c in candidates:
+        (auto_candidates if may_auto_open(c.underlying) else manual_candidates).append(c)
+    observe_only = get_autonomy_level() == AutonomyLevel.OBSERVE
+
+    sent = False
+    if auto_candidates:
+        auto_sent = await _auto_queue_candidates(
+            auto_candidates, cfg, token, str(chat_id), thread_id
         )
-    else:
-        with session_scope() as own_session:
-            sent = await _send_with_session(
-                own_session,
-                candidates,
+        sent = sent or auto_sent
+    if manual_candidates:
+        if session is not None:
+            manual_sent = await _send_with_session(
+                session,
+                manual_candidates,
                 reviews,
                 cfg,
                 token,
                 str(chat_id),
                 thread_id,
                 suppress_unchanged,
+                observe_only=observe_only,
             )
+        else:
+            with session_scope() as own_session:
+                manual_sent = await _send_with_session(
+                    own_session,
+                    manual_candidates,
+                    reviews,
+                    cfg,
+                    token,
+                    str(chat_id),
+                    thread_id,
+                    suppress_unchanged,
+                    observe_only=observe_only,
+                )
+        sent = sent or manual_sent
 
     if sent:
         # Use the caller's session when available to avoid a second SQLite write-lock
@@ -338,7 +367,9 @@ async def _auto_queue_candidates(
     chat_id: str,
     thread_id: int | None,
 ) -> bool:
-    """Automated mode: persist APPROVED approvals + QUEUED orders, send summary notification.
+    """Auto-open path (WHITELIST/FULL): persist APPROVED approvals + QUEUED orders, send summary
+    notification. Callers must pre-filter *candidates* to ones ``may_auto_open`` cleared —
+    this function does not re-check the autonomy level, only the kill switch.
 
     Returns ``True`` if a summary notification was sent (candidates were queued), ``False``
     otherwise (halted, or nothing new to queue this cycle).
@@ -450,6 +481,8 @@ async def _send_with_session(
     chat_id: str,
     thread_id: int | None = None,
     suppress_unchanged: bool = False,
+    *,
+    observe_only: bool = False,
 ) -> bool:
     review_map = {r.candidate_id: r for r in reviews}
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
@@ -489,14 +522,22 @@ async def _send_with_session(
             session.flush()  # populate approval.id
 
             review = review_map.get(candidate.candidate_id)
-            text = format_candidate(candidate, review)
-            keyboard = InlineKeyboardMarkup(
-                [
+            text = format_candidate(candidate, review, observe_only=observe_only)
+            keyboard = (
+                None
+                if observe_only
+                else InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton("✅ Approve", callback_data=f"approve:{approval.id}"),
-                        InlineKeyboardButton("❌ Reject", callback_data=f"reject:{approval.id}"),
+                        [
+                            InlineKeyboardButton(
+                                "✅ Approve", callback_data=f"approve:{approval.id}"
+                            ),
+                            InlineKeyboardButton(
+                                "❌ Reject", callback_data=f"reject:{approval.id}"
+                            ),
+                        ]
                     ]
-                ]
+                )
             )
 
             try:

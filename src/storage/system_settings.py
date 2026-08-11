@@ -1,7 +1,7 @@
 """Runtime key-value system settings backed by the SQLite system_settings table.
 
 Usage:
-    from src.storage.system_settings import is_automated_mode, set_automated_mode
+    from src.storage.system_settings import get_autonomy_level, set_autonomy_level
 """
 
 from __future__ import annotations
@@ -13,12 +13,14 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.common.schemas import AutonomyLevel
 from src.storage.db import session_scope
 from src.storage.models import SystemSettingRow
 
 log = logging.getLogger(__name__)
 
-AUTOMATED_MODE_KEY = "automated_mode"
+AUTONOMY_LEVEL_KEY = "autonomy_level"
+AUTONOMY_WHITELIST_KEY = "autonomy_whitelist"
 HALT_KEY = "execution_halted"
 HALT_REASON_KEY = "execution_halt_reason"
 SCAN_LEASE_KEY = "scan_lease_expiry"
@@ -65,14 +67,109 @@ def set_setting(key: str, value: str, *, session: Session | None = None) -> None
         log.warning("set_setting(%s=%s) failed", key, value, exc_info=True)
 
 
-def is_automated_mode() -> bool:
-    """Return True when the system is in fully-automated execution mode."""
-    return get_setting(AUTOMATED_MODE_KEY, "false").lower() == "true"
+def get_autonomy_level() -> AutonomyLevel:
+    """Current autonomy rung. Defaults to OBSERVE — the safe rung for a fresh install."""
+    raw = get_setting(AUTONOMY_LEVEL_KEY, AutonomyLevel.OBSERVE.value).lower()
+    try:
+        return AutonomyLevel(raw)
+    except ValueError:
+        log.warning("Unknown autonomy level %r — falling back to observe", raw)
+        return AutonomyLevel.OBSERVE
 
 
-def set_automated_mode(enabled: bool) -> None:
-    """Persist the automated/manual mode toggle."""
-    set_setting(AUTOMATED_MODE_KEY, "true" if enabled else "false")
+def set_autonomy_level(level: AutonomyLevel) -> None:
+    set_setting(AUTONOMY_LEVEL_KEY, level.value)
+
+
+def _autonomy_whitelist() -> set[str]:
+    raw = get_setting(AUTONOMY_WHITELIST_KEY, "")
+    return {s.strip().upper() for s in raw.split(",") if s.strip()}
+
+
+def set_autonomy_whitelist(symbols: set[str]) -> None:
+    set_setting(AUTONOMY_WHITELIST_KEY, ",".join(sorted(symbols)))
+
+
+def may_auto_open(symbol: str) -> bool:
+    """True when the system may open new exposure in *symbol* without a human tap.
+
+    The kill switch overrides every rung — closing risk stays permitted while halted, but
+    opening it never is.
+    """
+    if is_halted():
+        return False
+    level = get_autonomy_level()
+    if level in (AutonomyLevel.OBSERVE, AutonomyLevel.MANUAL):
+        return False
+    if level == AutonomyLevel.FULL:
+        return True
+    return symbol.upper() in _autonomy_whitelist()
+
+
+def promotion_blockers(target: AutonomyLevel) -> list[str]:
+    """Unmet criteria for promoting to *target*. Empty list means promotion is allowed.
+
+    Demotion is always permitted — reducing autonomy needs no evidence. Promotion up a rung
+    requires demonstrated evidence: autonomy is arrived at, not switched on.
+    """
+    from sqlalchemy import func, select
+
+    from src.storage.models import FillRow, OrderRow
+
+    order = [
+        AutonomyLevel.OBSERVE,
+        AutonomyLevel.MANUAL,
+        AutonomyLevel.WHITELIST,
+        AutonomyLevel.FULL,
+    ]
+    if order.index(target) <= order.index(get_autonomy_level()):
+        return []
+
+    blockers: list[str] = []
+    try:
+        with session_scope() as s:
+            fills = s.execute(select(func.count()).select_from(FillRow)).scalar_one()
+            attempts = s.execute(select(func.count()).select_from(OrderRow)).scalar_one()
+            closes = s.execute(
+                select(func.count())
+                .select_from(OrderRow)
+                .where(OrderRow.candidate_id.like("close:%"))
+            ).scalar_one()
+    except Exception:
+        return ["could not read fill history"]
+
+    if target in (AutonomyLevel.WHITELIST, AutonomyLevel.FULL):
+        if fills < 20:
+            blockers.append(f"needs >=20 fills, has {fills}")
+        rate = (fills / attempts) if attempts else 0.0
+        if rate < 0.60:
+            blockers.append(f"fill rate {rate:.0%} is below the 60% gate")
+        if closes < 1:
+            blockers.append("no risk-reducing close has fired yet")
+    return blockers
+
+
+def autonomy_progress() -> tuple[int, float, bool]:
+    """(fills, fill_rate, has_closed_once) — the same evidence ``promotion_blockers`` checks,
+    for display in the ``/autonomy`` status text. Read-only; never used to gate anything itself.
+    """
+    from sqlalchemy import func, select
+
+    from src.storage.models import FillRow, OrderRow
+
+    try:
+        with session_scope() as s:
+            fills = s.execute(select(func.count()).select_from(FillRow)).scalar_one()
+            attempts = s.execute(select(func.count()).select_from(OrderRow)).scalar_one()
+            closes = s.execute(
+                select(func.count())
+                .select_from(OrderRow)
+                .where(OrderRow.candidate_id.like("close:%"))
+            ).scalar_one()
+    except Exception:
+        return (0, 0.0, False)
+    rate = (fills / attempts) if attempts else 0.0
+    return (fills, rate, closes >= 1)
 
 
 def is_halted() -> bool:

@@ -17,6 +17,7 @@ from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
     AssessedContract,
+    AutonomyLevel,
     BuyCandidate,
     ClaudeReview,
     EODSummary,
@@ -83,8 +84,15 @@ def _pnl2(v: float) -> str:
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
+    *,
+    observe_only: bool = False,
 ) -> str:
-    """Build the Telegram MarkdownV2 message for one trade candidate."""
+    """Build the Telegram MarkdownV2 message for one trade candidate.
+
+    ``observe_only`` (OBSERVE autonomy rung) marks the card as a proposal with no Approve/Reject
+    action attached — the caller omits the inline keyboard entirely; this just makes the card
+    say so, rather than looking like an ignored approval request.
+    """
     strategy_label = candidate.strategy.value.replace("_", " ").title()
     right_label = "Call" if candidate.right == OptionRight.CALL else "Put"
     contract_value = candidate.premium * 100
@@ -144,6 +152,8 @@ def format_candidate(
             parts.append(f"Rolling: {_md(review.rolling_considerations)}")
 
     footer = f"\n_Sources: {_candidate_sources(candidate)}_"
+    if observe_only:
+        footer += "\n_📋 Proposal only \\— OBSERVE rung: no auto\\-open, no approve/reject\\._"
     text = "\n".join(parts)
     if len(text) > _MAX_MESSAGE_LEN:
         text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
@@ -1266,7 +1276,8 @@ def format_help() -> str:
         "/campaigns open — Only open campaigns",
         "",
         "*Automation*",
-        "/mode — Show current mode \\(MANUAL/AUTOMATED\\) and toggle",
+        "/autonomy — Show current autonomy rung and promotion progress",
+        "/autonomy LEVEL — Promote/demote \\(observe\\|manual\\|whitelist\\|full\\)",
         "/halt — 🛑 Kill switch: stop all order transmission now",
         "/resume — Release the kill switch and resume execution",
         "",
@@ -1281,26 +1292,84 @@ def format_help() -> str:
     return "\n".join(lines)
 
 
-def format_mode_status(is_automated: bool) -> str:
-    """Show the current trading mode and a brief description of what it means."""
-    if is_automated:
-        mode = "🤖 *AUTOMATED*"
-        desc = (
-            "_Trades execute autonomously during RTH\\._\n"
-            "_Positions close automatically at 50% profit\\._\n"
-            "_Scans run every 15 minutes \\— no approval required\\._"
-        )
+_AUTONOMY_ICON = {
+    AutonomyLevel.OBSERVE: "🔭",
+    AutonomyLevel.MANUAL: "👤",
+    AutonomyLevel.WHITELIST: "📋",
+    AutonomyLevel.FULL: "🚀",
+}
+
+_AUTONOMY_DESC = {
+    AutonomyLevel.OBSERVE: (
+        "_Proposal only \\— nothing auto\\-opens, and Approve/Reject buttons are withheld\\._\n"
+        "_Auto\\-close \\(profit\\-take/loss\\-exit\\) is a separate switch: "
+        "automation\\.auto\\_close\\_enabled\\._"
+    ),
+    AutonomyLevel.MANUAL: (
+        "_All new trades require your Approve/Reject tap\\._\n"
+        "_Auto\\-close \\(profit\\-take/loss\\-exit\\) still runs per "
+        "automation\\.auto\\_close\\_enabled\\._"
+    ),
+    AutonomyLevel.WHITELIST: (
+        "_Whitelisted symbols auto\\-open; everything else still needs your tap\\._\n"
+        "_Auto\\-close still runs per automation\\.auto\\_close\\_enabled\\._"
+    ),
+    AutonomyLevel.FULL: (
+        "_Anything that clears the deterministic gates opens automatically\\._\n"
+        "_Auto\\-close still runs per automation\\.auto\\_close\\_enabled\\._"
+    ),
+}
+
+_AUTONOMY_ORDER = [
+    AutonomyLevel.OBSERVE,
+    AutonomyLevel.MANUAL,
+    AutonomyLevel.WHITELIST,
+    AutonomyLevel.FULL,
+]
+
+
+def format_mode_status(
+    level: AutonomyLevel,
+    *,
+    fills: int = 0,
+    fill_rate: float = 0.0,
+    closed_once: bool = False,
+    blockers: list[str] | None = None,
+) -> str:
+    """Show the current autonomy rung and progress toward the next one.
+
+    ``blockers`` is the result of ``system_settings.promotion_blockers(next_rung)`` — empty
+    means the next rung is reachable now, ``None``/non-empty explains what's missing. Promotion
+    is arrived at with evidence (>=20 fills, >=60% fill rate, one risk-reducing close fired), so
+    this always shows the raw counts, not just a verdict.
+    """
+    icon = _AUTONOMY_ICON[level]
+    lines = [f"*Autonomy: {icon} {_md(level.value.upper())}*", "", _AUTONOMY_DESC[level]]
+
+    idx = _AUTONOMY_ORDER.index(level)
+    if idx == len(_AUTONOMY_ORDER) - 1:
+        lines += ["", "_Already at the top rung \\(FULL\\)\\._"]
     else:
-        mode = "👤 *MANUAL*"
-        desc = (
-            "_All trades require your Approve/Reject tap\\._\n"
-            "_Profit targets trigger alerts only \\— no auto\\-close\\._"
-        )
-    return f"*Trading Mode:* {mode}\n\n{desc}"
+        next_level = _AUTONOMY_ORDER[idx + 1]
+        lines += ["", f"*Next rung: {_md(next_level.value.upper())}*"]
+        if blockers:
+            for b in blockers:
+                lines.append(f"🚫 {_md(b)}")
+        else:
+            lines.append(f"_Eligible \\— send /autonomy {_md(next_level.value)} to promote\\._")
+
+    lines += [
+        "",
+        (
+            f"_Evidence: {_md(str(fills))} fills · {_md(f'{fill_rate:.0%}')} fill rate · "
+            f"{'a' if closed_once else 'no'} risk\\-reducing close fired_"
+        ),
+    ]
+    return "\n".join(lines)
 
 
 def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
-    """Summary notification sent when trades are auto-queued in AUTOMATED mode."""
+    """Summary notification sent when trades are auto-queued (WHITELIST/FULL autonomy rungs)."""
     n = len(candidates)
     lines = [f"🤖 *Auto\\-queued {_md(str(n))} trade{'s' if n != 1 else ''}*", ""]
     for c in candidates:
