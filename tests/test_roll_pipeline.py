@@ -4,11 +4,23 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from src.common.schemas import IVStats, OptionQuote, OptionRight, PositionSnapshot, TechnicalStats
+import pytest
+
+from src.common.market_hours import today_et
+from src.common.schemas import (
+    IVStats,
+    OptionQuote,
+    OptionRight,
+    PositionSnapshot,
+    Regime,
+    TechnicalStats,
+)
 
 _TODAY = date.today()
 _NEAR = _TODAY + timedelta(days=10)  # existing short, DTE 10 → triggers roll
 _FAR = _TODAY + timedelta(days=42)  # new leg, in the CC [21, 45] window
+
+_ET_TODAY = today_et()
 
 
 def _db_setup(tmp_path, monkeypatch) -> None:
@@ -21,7 +33,7 @@ def _db_setup(tmp_path, monkeypatch) -> None:
     dbmod.init_db()
 
 
-def _quote(strike, expiry, delta, bid, ask) -> OptionQuote:
+def _pipeline_quote(strike, expiry, delta, bid, ask) -> OptionQuote:
     return OptionQuote(
         underlying="AAPL",
         right=OptionRight.CALL,
@@ -36,7 +48,7 @@ def _quote(strike, expiry, delta, bid, ask) -> OptionQuote:
     )
 
 
-def _short_call() -> PositionSnapshot:
+def _pipeline_short_call() -> PositionSnapshot:
     return PositionSnapshot(
         symbol="AAPL",
         sec_type="OPT",
@@ -53,8 +65,8 @@ def _short_call() -> PositionSnapshot:
 def _quotes() -> list[OptionQuote]:
     # Current short (to infer its live mid) + a new further-dated leg with a net credit.
     return [
-        _quote(200.0, _NEAR, 0.55, 0.05, 0.15),  # current contract, mid ≈ 0.10
-        _quote(205.0, _FAR, 0.28, 3.40, 3.60),  # new leg, mid ≈ 3.50 → credit ≈ 3.40
+        _pipeline_quote(200.0, _NEAR, 0.55, 0.05, 0.15),  # current contract, mid ≈ 0.10
+        _pipeline_quote(205.0, _FAR, 0.28, 3.40, 3.60),  # new leg, mid ≈ 3.50 → credit ≈ 3.40
     ]
 
 
@@ -70,7 +82,7 @@ def test_queue_roll_for_approval_persists_candidate_and_approval(tmp_path, monke
     tech = TechnicalStats(symbol="AAPL", price=198.0, rsi_14=55.0, regime=None)
 
     result = queue_roll_for_approval(
-        _short_call(), _quotes(), iv, tech, chat_id="99999", ttl_minutes=120
+        _pipeline_short_call(), _quotes(), iv, tech, chat_id="99999", ttl_minutes=120
     )
     assert result is not None
     approval_id, cand = result
@@ -94,7 +106,7 @@ def test_queue_roll_returns_none_without_candidates(tmp_path, monkeypatch):
     iv = IVStats(symbol="AAPL", current_iv=30.0, iv_rank=60.0)
     tech = TechnicalStats(symbol="AAPL", price=198.0, rsi_14=55.0, regime=None)
     # A long position never rolls → no candidate, no approval.
-    long_pos = _short_call().model_copy(update={"position": 1.0})
+    long_pos = _pipeline_short_call().model_copy(update={"position": 1.0})
     assert (
         queue_roll_for_approval(long_pos, _quotes(), iv, tech, chat_id="1", ttl_minutes=120) is None
     )
@@ -114,7 +126,7 @@ def test_approving_a_roll_queues_a_roll_order(tmp_path, monkeypatch):
     iv = IVStats(symbol="AAPL", current_iv=30.0, iv_rank=60.0)
     tech = TechnicalStats(symbol="AAPL", price=198.0, rsi_14=55.0, regime=None)
     approval_id, cand = queue_roll_for_approval(  # type: ignore[misc]
-        _short_call(), _quotes(), iv, tech, chat_id="99999", ttl_minutes=120
+        _pipeline_short_call(), _quotes(), iv, tech, chat_id="99999", ttl_minutes=120
     )
 
     found, text, _ = _process_button(approval_id, "approve")
@@ -126,3 +138,105 @@ def test_approving_a_roll_queues_a_roll_order(tmp_path, monkeypatch):
         ).scalar_one()
         assert order.state == "queued"
         assert order.snapshot is not None and order.snapshot["strategy"] == "roll"
+
+
+# --------------------------------------------------------------------------------------- #
+# D4: generate_roll_candidates defensive-vs-income economics + the today_et() date bug.
+# Named `_short_call`/`_quote` below (distinct from `_pipeline_short_call`/`_pipeline_quote`
+# above, which are keyword-positional and shaped for the queue_roll_for_approval tests) since
+# these exercise `src.strategies.rolling.generate_roll_candidates` directly with a keyword-only
+# signature matching the plan brief.
+# --------------------------------------------------------------------------------------- #
+
+
+def _short_call(*, delta: float, strike: float, dte: int) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol="AAPL  CALL",
+        sec_type="OPT",
+        position=-1,
+        avg_cost=100.0,
+        right=OptionRight.CALL,
+        strike=strike,
+        expiry=_ET_TODAY + timedelta(days=dte),
+        underlying="AAPL",
+        delta=delta,
+    )
+
+
+def _quote(*, strike: float, dte: int, mid: float, delta: float) -> OptionQuote:
+    return OptionQuote(
+        underlying="AAPL",
+        right=OptionRight.CALL,
+        strike=strike,
+        expiry=_ET_TODAY + timedelta(days=dte),
+        bid=round(mid - 0.05, 2),
+        ask=round(mid + 0.05, 2),
+        delta=delta,
+        iv=0.30,
+        open_interest=500,
+        volume=100,
+    )
+
+
+def _roll_chain(
+    *, current_mid: float, new_mid: float, new_delta: float, new_dte: int
+) -> list[OptionQuote]:
+    """The position's own contract (so _infer_current_mid resolves) plus one roll target."""
+    return [
+        _quote(strike=100.0, dte=10, mid=current_mid, delta=-0.62),
+        _quote(strike=105.0, dte=new_dte, mid=new_mid, delta=new_delta),
+    ]
+
+
+def _iv() -> IVStats:
+    return IVStats(symbol="AAPL", current_iv=30.0, iv_rank=55.0, hv_30=25.0)
+
+
+def _tech() -> TechnicalStats:
+    return TechnicalStats(symbol="AAPL", price=100.0, regime=Regime.SIDEWAYS)
+
+
+def test_defensive_roll_allows_a_bounded_debit():
+    """D4: a challenged 0.60-delta short cannot be rolled out for a credit."""
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.62, strike=100.0, dte=10)
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=35)
+    cands = generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
+    assert cands, "a defensive roll costing $0.30 must be offered"
+    assert cands[0].premium == pytest.approx(-0.30, abs=0.01)
+
+
+def test_defensive_roll_rejects_a_debit_above_the_cap():
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.62, strike=100.0, dte=10)
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.00, new_delta=-0.30, new_dte=35)
+    assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
+
+
+def test_defensive_roll_requires_delta_reduction():
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.62, strike=100.0, dte=10)
+    quotes = _roll_chain(current_mid=8.00, new_mid=8.20, new_delta=-0.60, new_dte=35)
+    assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
+
+
+def test_income_roll_still_requires_a_credit_and_roc():
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.30, strike=100.0, dte=15)
+    quotes = _roll_chain(current_mid=1.00, new_mid=0.90, new_delta=-0.28, new_dte=40)
+    assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=False)
+
+
+def test_roll_dte_uses_et_not_local_date(monkeypatch):
+    """D4: rolling.py:39 used date.today(), firing a day early in UTC+8."""
+    import src.strategies.rolling as rolling
+
+    called = {}
+    monkeypatch.setattr(rolling, "today_et", lambda: called.setdefault("hit", True) and _ET_TODAY)
+    generate_roll_candidates = rolling.generate_roll_candidates
+    generate_roll_candidates(_short_call(delta=-0.30, strike=100.0, dte=15), [], _iv(), _tech())
+    assert called.get("hit"), "generate_roll_candidates must use today_et()"

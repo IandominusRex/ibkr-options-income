@@ -280,6 +280,18 @@ class MonitorCfg(BaseModel):
     # Targets deep-ITM shorts near expiry where action (roll/close/assign) is required.
     assignment_alert_delta: float = 0.70
     assignment_alert_dte: int = 21
+    # Manage mechanically at this DTE — entries are 21-45 DTE and the roll trigger fires at
+    # dte_threshold (7), which is deep into gamma with no room to manoeuvre.
+    manage_at_dte: int = 21
+    # Defensive-roll economics. A roll that rescues a challenged short is judged on risk
+    # reduction, not yield: it may cost a bounded debit and must reduce |delta| materially.
+    roll_defensive: dict[str, float | bool] = Field(
+        default_factory=lambda: {
+            "max_debit": 0.50,
+            "min_delta_reduction": 0.10,
+            "require_breakeven_improvement": True,
+        }
+    )
 
 
 class AutomationCfg(BaseModel):

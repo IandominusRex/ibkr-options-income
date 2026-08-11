@@ -288,6 +288,38 @@ Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_
   `_term_structure_slope`) before ranking, so numerator and denominator are the same measurement;
   when the chain carries fewer than two expiries it falls back to the stored daily observation
   rather than the nearest-expiry value.
+- **D4 (2026-08-11, Remediation Phase 2, Task 12) — a defensive roll needed economics it could
+  never produce, so the candidate list was empty exactly when the monitor fired.**
+  `generate_roll_candidates` had one economics path — net credit required, plus
+  `income.min_roc_pct`/`min_annualized_yield_pct` — appropriate for an *income* roll (rolling an
+  unchallenged position forward for more premium) but wrong for a *defensive* roll (rescuing a
+  challenged, deep-delta short from an adverse move): a 0.60-delta short usually cannot be rolled
+  to a safer delta for a credit at all, so the roll-candidate list was empty precisely when
+  `should_roll` fired. **Fixed:** the function takes a keyword-only `defensive: bool = False`.
+  `defensive=True` skips the ROC/annualized-yield tests entirely and instead requires the new leg
+  to cut `|delta|` by at least `monitor.roll_defensive.min_delta_reduction` (default `0.10`),
+  permits a bounded net debit up to `max_debit` (default `$0.50`/share), and — when
+  `require_breakeven_improvement` (default `true`) — requires the new strike to improve the
+  breakeven whenever the roll isn't itself a credit. `roll_pipeline.queue_roll_for_approval`
+  (the sole production caller of `generate_roll_candidates`, reached by both the Telegram roll
+  flow and the intraday monitor's `_try_queue_roll`) now passes `defensive=True` unconditionally
+  — every roll it generates originates from a monitor trigger, so income economics never applied
+  there. Income rolls (`defensive=False`, the default) are unchanged and still require a net
+  credit clearing the ROC/yield floor. Both paths already populate `TradeCandidate.ideal`
+  (D2 follow-up, Task 5), so the VRP gate reaches ROLL candidates of either kind unchanged by this
+  task. **Also fixed in the same task:** `rolling.py`'s DTE computation used local
+  `datetime.date.today()` instead of `market_hours.today_et()` — a residual instance of the class
+  of bug the 2026-08-06 output-fidelity audit fixed everywhere else it found it, missed here
+  because `rolling.py` was out of that audit's scope. For an operator running east of US/Eastern
+  (e.g. UTC+8), local `date.today()` can read a calendar day ahead of the exchange, so
+  `should_roll`'s `pos_dte <= 21` trigger could fire a day early. Regression tests:
+  `tests/test_roll_pipeline.py` (`test_defensive_roll_allows_a_bounded_debit`,
+  `test_defensive_roll_rejects_a_debit_above_the_cap`,
+  `test_defensive_roll_requires_delta_reduction`,
+  `test_income_roll_still_requires_a_credit_and_roc`, `test_roll_dte_uses_et_not_local_date`).
+  **Not in scope for this task:** `monitor.manage_at_dte` (added to `MonitorCfg`/`settings.yaml`
+  by this task) is not yet read anywhere — wiring a mechanical close/roll/hold decision point at
+  21 DTE is Task 13.
 
 ## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
 

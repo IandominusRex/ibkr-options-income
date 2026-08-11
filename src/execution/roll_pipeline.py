@@ -50,7 +50,9 @@ def queue_roll_for_approval(
     (idempotent against the monitor re-firing the same trigger). Never raises.
     """
     try:
-        candidates = generate_roll_candidates(position, quotes, iv_stats, tech_stats)
+        candidates = generate_roll_candidates(
+            position, quotes, iv_stats, tech_stats, defensive=True
+        )
         if not candidates:
             return None
         cand = candidates[0]  # generate_roll_candidates sorts by ROC desc

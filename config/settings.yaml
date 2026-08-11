@@ -193,3 +193,11 @@ monitor:
   # Targets deep-ITM shorts near expiry; suggests roll / close / let-assign.
   assignment_alert_delta: 0.70
   assignment_alert_dte: 21
+  # Mechanical management point. Entries are 21-45 DTE; dte_threshold (7) is deep into gamma.
+  manage_at_dte: 21
+  # Defensive rolls are judged on risk reduction, not yield — requiring 1% ROC from a roll
+  # meant the candidate list was empty exactly when the monitor fired.
+  roll_defensive:
+    max_debit: 0.50
+    min_delta_reduction: 0.10
+    require_breakeven_improvement: true

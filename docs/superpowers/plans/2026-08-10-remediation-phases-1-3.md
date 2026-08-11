@@ -65,7 +65,7 @@ is worse than a stopped one.
 | 9 | Phase 1 config and doc sweep | 1 | done | 2026-08-11 | |
 | 10 | Loss-side exits | 2 | done | 2026-08-11 | |
 | 11 | Mark-based and drawdown kill switches | 2 | done | 2026-08-11 | |
-| 12 | Defensive-roll economics + date bug | 2 | pending | | |
+| 12 | Defensive-roll economics + date bug | 2 | done | 2026-08-11 | |
 | 13 | Manage at 21 DTE | 2 | pending | | |
 | 14 | Autonomy ladder | 2 | pending | | |
 | 15 | Live paper validation session | 3 | pending | | |
@@ -898,6 +898,37 @@ know. Empty until the first task runs.
      the `elif dd is not None` branch). Net effect: `pytest -q` → 1137 passed (1133 baseline +
      3 new circuit-breaker tests + 1 net new in `test_execution.py`), `ruff check .` clean,
      `mypy src` clean (94 source files).
+
+- **Task 12** — The dispatch pre-corrected the brief's stale line numbers in
+  `src/strategies/rolling.py` (an earlier task in this plan had already shifted the file); all
+  edits landed at the corrected locations (signature/docstring at the `generate_roll_candidates`
+  def, `pos_dte` at what is now line 51, the economics block at what is now lines 101–132, with
+  Task 5's `ideal=`-population block below it left untouched). One further, smaller correction
+  needed beyond the dispatch's own: `tests/test_roll_pipeline.py` already defined `_short_call()`
+  and `_quote(...)` helpers (used by the file's three pre-existing `queue_roll_for_approval`
+  tests) with signatures incompatible with the brief's new keyword-only `_short_call(*, delta,
+  strike, dte)` / `_quote(*, strike, dte, mid, delta)` helpers — appending the brief's helpers
+  verbatim would have silently shadowed the originals and broken the three existing tests. Fixed
+  by renaming the pre-existing helpers to `_pipeline_short_call`/`_pipeline_quote` (updating their
+  three call sites accordingly) and leaving the brief's new helpers under their original names, so
+  the five new tests match the brief's literal code. Separately, the brief's own
+  `test_roll_dte_uses_et_not_local_date` snippet has two bugs, both fixed in the test as written
+  here rather than questioned: (1) the monkeypatch lambda `called.setdefault("hit", True) or
+  _ET_TODAY` returns `True` (the value `setdefault` just stored, which is truthy — `or` never
+  reaches `_ET_TODAY`), not the stub date, which then blew up `position.expiry - True`; changed
+  `or` to `and` so the lambda returns `_ET_TODAY` once `called["hit"]` is set. (2) the snippet
+  calls `generate_roll_candidates(...)` without importing it into that test's scope (every other
+  new test does `from src.strategies.rolling import generate_roll_candidates` locally); fixed by
+  binding it from the already-imported `rolling` module (`generate_roll_candidates =
+  rolling.generate_roll_candidates`) right after the monkeypatch, preserving the brief's intent
+  (assert `today_et` gets called) without a `NameError`. `src/execution/roll_pipeline.py`'s single
+  production call site for `generate_roll_candidates` (inside `queue_roll_for_approval`) now
+  passes `defensive=True` unconditionally, which resolves the dispatch's flagged concern about
+  `src/monitor/intraday.py:172`'s `_try_queue_roll` for free: that function calls
+  `queue_roll_for_approval`, never `generate_roll_candidates` directly, so it was never a second,
+  independent call site needing its own fix — it inherits `defensive=True` through the one shared
+  path. Net effect: `pytest -q` → 1142 passed (1137 baseline + 5 new roll-economics/date tests),
+  `ruff check .` clean, `mypy src` clean (94 source files).
 
 ---
 
@@ -3230,7 +3261,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `generate_roll_candidates(position, quotes, iv_stats, tech_stats, *, defensive: bool = False)`. When `defensive=True`, ROC and annualized-yield tests are skipped, a bounded net debit is permitted, and the new leg must reduce |delta| by at least `min_delta_reduction`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_roll_pipeline.py — append
@@ -3344,12 +3375,12 @@ Check `OptionQuote`'s required fields in `src/common/schemas.py` before writing 
 `open_interest`/`volume` have different names, match the schema, and ensure the values chosen
 clear `passes_liquidity_gates`.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_roll_pipeline.py -k "defensive or et_not_local" -q`
 Expected: FAIL — `TypeError: generate_roll_candidates() got an unexpected keyword argument 'defensive'`
 
-- [ ] **Step 3: Fix the date bug and add the defensive path**
+- [x] **Step 3: Fix the date bug and add the defensive path**
 
 In `src/strategies/rolling.py`, replace the import `from datetime import date as date_cls` with:
 
@@ -3430,7 +3461,7 @@ Add near the other config reads:
     roll_cfg = get_config().monitor.roll_defensive if defensive else {}
 ```
 
-- [ ] **Step 4: Add the config**
+- [x] **Step 4: Add the config**
 
 In `src/common/config.py`, `MonitorCfg`:
 
@@ -3462,22 +3493,22 @@ In `config/settings.yaml`, under `monitor:`:
     require_breakeven_improvement: true
 ```
 
-- [ ] **Step 5: Pass `defensive=True` from the roll pipeline**
+- [x] **Step 5: Pass `defensive=True` from the roll pipeline**
 
 In `src/execution/roll_pipeline.py`, find the `generate_roll_candidates(` call and pass
 `defensive=True` — every roll originating from a monitor trigger is by definition defensive.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 7: Update docs**
+- [x] **Step 7: Update docs**
 
 - `ARCHITECTURE.md`: document the two roll economics in the `src/strategies/` section.
 - `STATUS.md`: add to the 2026-08-10 bug-fix section — D4 and the residual `date_cls.today()` the 2026-08-06 audit missed.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/strategies/rolling.py src/common/config.py config/settings.yaml src/execution/roll_pipeline.py tests/test_roll_pipeline.py ARCHITECTURE.md STATUS.md
