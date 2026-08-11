@@ -346,7 +346,7 @@ async def check_loss_exits(
             try:
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"⚠️ Loss-exit error for {label} — check IBKR manually\\.",
+                    text=f"⚠️ Loss\\-exit error for {label} — check IBKR manually\\.",
                     parse_mode="MarkdownV2",
                 )
             except Exception:
@@ -359,7 +359,7 @@ async def check_loss_exits(
                 await bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"⚠️ *Loss-exit did not fill* — {label}\n"
+                        f"⚠️ *Loss\\-exit did not fill* — {label}\n"
                         f"Order placed but did not fill — check IBKR manually\\."
                     ),
                     parse_mode="MarkdownV2",
