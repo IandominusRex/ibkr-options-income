@@ -71,7 +71,7 @@ is worse than a stopped one.
 | 15 | Live paper validation session | 3 | in progress | 2026-08-11 | |
 | 16 | Deletions | 3 | done | 2026-08-11 | |
 | 17 | Split `scan.py` | 3 | done | 2026-08-11 | |
-| 18 | Phase 1–3 closeout | 3 | pending | | |
+| 18 | Phase 1–3 closeout | 3 | done | 2026-08-11 | |
 
 Status values: `pending` · `in progress` · `done` · `BLOCKED`.
 
@@ -1170,6 +1170,67 @@ know. Empty until the first task runs.
   task (`scripts/capacity_report.py`, `tests/test_account_sizing.py`, `tests/test_loss_exits.py`)
   and were left that way rather than sweeping unrelated churn into the commits.
   `.tmp.driveupload/` was never staged (all commits used explicit paths).
+
+- **Task 18** — All five steps completed. Four deviations, plus one item this task explicitly could
+  **not** close.
+  1. **Step 1's gate did not start green — `ruff format --check .` failed on three files.**
+     `scripts/capacity_report.py`, `tests/test_account_sizing.py` and `tests/test_loss_exits.py`
+     were left unformatted by Tasks 8/10 and deliberately not swept by Task 17 (see its Deviations
+     entry above). All three are **branch-introduced** files, not pre-existing debt from `main`, and
+     this task's own Step 1 plus the plan's Verification checklist both require
+     `ruff format --check .` clean — so the formatting was applied here rather than handed to the
+     final review. `ruff format --diff` was inspected first and confirmed to be line-wrapping only
+     (four call sites and one `@pytest.mark.parametrize`, zero semantic change); the full suite was
+     re-run afterwards. Committed separately from the doc reconciliation so the mechanical change is
+     reviewable on its own. **Final gate: `pytest -q` → 1115 passed, `ruff check .` clean,
+     `ruff format --check .` clean (157 files), `mypy src` clean (91 source files).**
+  2. **Step 4 was already half-done and the other half was not needed.** The brief asks to "remove
+     the `config/profiles/` reference and the skills-loop paragraph from the fence section" —
+     Task 16's own fix round already did exactly that at commit `7b9e314`, leaving only a dated
+     "**Removed 2026-08-10**" note framed as history. Verified by grep before editing (no
+     `config/profiles` reference and no live skills-loop description survive in `CLAUDE.md`); nothing
+     was removed a second time. Only the `fair_value.py` half was genuinely outstanding, and its
+     rewrite splits what the old text conflated: **`min_credit` gates** (a real risk-engine rejection,
+     reason `premium_below_fair_value`, under `income.require_vrp_edge`) while **`zone_fit` only
+     ranks** and still ships at `0.0` — two different fields of the same `IdealZone` doing two
+     different jobs. The tier constraint is kept and its stakes raised: routing sentiment or macro
+     into `fair_value.py` would now let those signals reject a trade outright, not merely reorder
+     candidates.
+  3. **Step 3 went beyond correcting bullets — the fix record was missing a whole phase.**
+     `STATUS.md`'s remediation section documented D1/D2/D5/D6 (Phase 1) and, later, D4, but Phase 2's
+     D3 existed only as scattered prose in "What is built" plus a correction bullet grafted onto a
+     *2026-06-12* section. Renamed the heading to cover the whole remediation
+     (`## Bugs fixed (2026-08-10/11 — remediation Phases 1–3: capital, income, and loss management)`)
+     and wrote a full **D3** entry (loss exits, `mark_based_loss`/`drawdown_breached`, the 21-DTE
+     management point, the autonomy ladder — Tasks 10, 11, 13, 14) and a full **D7** entry. Other
+     corrections: the "Decision + safety" bullet (still described flat-collateral concentration and
+     an ROC/yield-first income gate), the ideal-zone bullet (still claimed "Display + optional
+     ranking only … the Rules Engine remains the sole gate"), the monitor-trigger bullet (six
+     triggers was numerically right after Task 13 but never named the management point or its config
+     key), the top status banner, the 2026-08-06 audit's "none of them could reach an order" framing
+     (true then, no longer true after D2), and the two default-off rows in the "Not built" table,
+     which now cite the specific live-validation question that gates each.
+  4. **Doc scope was wider than the brief's `git add` list, and the plan file is in it.** Per the
+     Execution protocol (which overrides each task's literal commit command), the plan file is staged
+     with the docs it describes. `README.md` also gained the 21-DTE management point in its
+     "During market hours" row and `capital.py` in its `src/engine/` layout row (a new module from
+     Task 1, which CLAUDE.md's mandatory doc-update table requires the layout table to name).
+     `ARCHITECTURE.md` was audited and **needed no change** — Tasks 5, 9, 13, 14 and 17 had already
+     corrected the `fair_value.py`, `IdealZone`, `risk_engine.py`, `risk_limits.yaml`, `triggers.py`,
+     `system_settings.py` and orchestrator rows; it carries no stale "never gates" or
+     MANUAL/AUTOMATED claim.
+  5. **Task 15 / D7 is NOT closed by this task and was not made to look closed.** The plan's own
+     Verification checklist still has four unticked items that need a live TWS/Telegram session
+     across several real trading days (all five questions answered, a loss exit fired on paper, a
+     circuit breaker tripped deliberately and cleared with `/resume`, autonomy at `manual` with
+     honest `/status` progress). No evidence for any of them was simulated. `STATUS.md` now states
+     this in three places — the status banner, the new D7 entry, and the "Validated by mocked tests
+     only" preamble, which maps four of its items onto specific questions in
+     `docs/live-validation-2026-08.md` — and Checkpoint 2 is restated verbatim in the live-cutover
+     gate: if `greeks_source == "ibkr"` never populates, live income trading is blocked. A new bullet
+     was added to that list for Phase 2's unattended-action paths (loss exit, circuit-breaker trip +
+     `/resume`, autonomy promotion), which are mock-tested only and were not previously named there.
+  `.tmp.driveupload/` was never staged (both commits used explicit paths).
 
 ---
 
@@ -4466,25 +4527,25 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `STATUS.md`, `ARCHITECTURE.md`, `README.md`, `CLAUDE.md`
 
-- [ ] **Step 1: Run the whole gate**
+- [x] **Step 1: Run the whole gate**
 
 Run: `python -m pytest -q && ruff check . && ruff format --check . && mypy src`
 Expected: all green. Record the test count.
 
-- [ ] **Step 2: Re-run the capacity report and record the outcome**
+- [x] **Step 2: Re-run the capacity report and record the outcome**
 
 Run: `python -m scripts.capacity_report --net-liq 300000 --cash 100000`
 
 Paste the output into `STATUS.md` under a "Tradeable capacity at $300k (2026-08)" heading.
 This is the evidence that D1 and D2 are actually fixed, as distinct from the tests passing.
 
-- [ ] **Step 3: Reconcile `STATUS.md` with reality**
+- [x] **Step 3: Reconcile `STATUS.md` with reality**
 
 Walk the whole file. Every bullet describing behaviour changed in Phases 1–3 must be corrected:
 the collateral model, the income gates, the exits, the circuit breakers, the mode toggle, the
 monitor's trigger count, the deleted subsystems, and the resolved live-verification items.
 
-- [ ] **Step 4: Update `CLAUDE.md`**
+- [x] **Step 4: Update `CLAUDE.md`**
 
 The "Analytics tiers" section describes `fair_value.py` as display-plus-optional-ranking. It is
 now a **gate**. Update that paragraph, keeping the tier constraint (it may still read only
@@ -4493,7 +4554,7 @@ technicals, IV, fundamentals, and Black-Scholes) and the reason the constraint m
 Also remove the `config/profiles/` reference and the skills-loop paragraph from the fence
 section, keeping the fence itself.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add STATUS.md ARCHITECTURE.md README.md CLAUDE.md

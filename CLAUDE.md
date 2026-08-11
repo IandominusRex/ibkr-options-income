@@ -100,15 +100,31 @@ kept; they are cheap and still useful. There is no promotion mechanism to gate a
   backdrop). These reach the Telegram cards and the reasoning prompt **only**. They must never be
   imported by `engine/`, `execution/`, or `strategies/`.
 
-The trap: `analytics/fair_value.py` produces the ideal-price zone, which *can* influence ranking via
-the optional `zone_fit` weight in `technical_score`. That places it on the deterministic side — so it
-may read technicals/IV/fundamentals/Black-Scholes and nothing else. Adding a sentiment or macro term
-to it would quietly route news tone and crowd sentiment into candidate scoring. Enforced by
+The trap: `analytics/fair_value.py` produces the ideal-price zone, and its output reaches the
+deterministic layer through **two different fields of the same `IdealZone`, doing two different
+jobs** — keep them straight:
+
+- **`min_credit` gates.** Since D2 (remediation Task 5), `risk_engine.validate_candidates` rejects
+  any candidate whose `premium` falls below `cand.ideal.min_credit` — Black-Scholes fair value at
+  *realised* vol (HV30) plus `ideal_zone.min_credit_edge_pct` — with the reason
+  `premium_below_fair_value`, under `income.require_vrp_edge` (ships `true`). The CSP and CC
+  generators run the same check themselves so the operator sees the reason on the card; roll
+  candidates carry `ideal` and are gated by the engine. A missing zone is data-unavailable and
+  never rejects.
+- **`zone_fit` only ranks, and still ships at `0.0`.** The separate `fair_value.zone_fit_score`
+  hook blends into `technical_score` under the `zone_fit` weight in `scoring_weights.yaml`, which
+  is `0.0` for both strategies — strike placement changes no ranking until a human raises it.
+
+Both put `fair_value.py` firmly on the deterministic side — so it may read technicals, IV,
+fundamentals, and Black-Scholes and nothing else. **That constraint matters more now than it did
+when the zone was display-only:** a sentiment or macro term added to `fair_value.py` would no longer
+merely reorder candidates, it would move `min_credit` and let news tone and crowd sentiment
+**reject a trade outright**. Enforced by
 `tests/test_eval_skills.py::test_fair_value_stays_in_the_deterministic_tier` and
 `::test_macro_never_reaches_the_engine` — keep both green.
 
-The ideal zone itself **never gates**: it is display + optional ranking, and `zone_fit` ships at
-`0.0`. The Rules Engine remains the sole path to an order.
+`fair_value.py` still has no reject path of its own: it computes and returns numbers, and the Rules
+Engine is what refuses the order. The Rules Engine remains the sole path to an order.
 
 ## Reference documentation
 

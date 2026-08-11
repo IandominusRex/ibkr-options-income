@@ -10,6 +10,14 @@ making structural changes.
 > (IBKR mocked). The Streamlit dashboard has been archived to `Archive/dashboard/`.
 > **Not yet validated on a live account.** Live cutover is gated behind
 > `LIVE_TRADING=true` + the live port + a per-order second confirmation (see `SETUP.md` §11).
+>
+> **2026-08 remediation (Phases 1–3) is complete in code.** The capital model now sizes and gates in
+> risk units, the income gate is a variance-risk-premium floor, loss-side exits and mark-to-market
+> kill switches exist, and the MANUAL/AUTOMATED toggle is a four-rung autonomy ladder — defects
+> D1–D6 in `docs/superpowers/specs/2026-08-10-remediation-and-ios-app-design.md` §1. **D7 is still
+> open:** nothing in the execution path has been exercised against a real broker, and
+> `docs/live-validation-2026-08.md` is scaffolded but empty. It needs a human on a live paper
+> session, not another code change.
 
 ---
 
@@ -46,9 +54,20 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Strategies** (`src/strategies/`) — covered call, cash-secured put (would-own allowlist), rolling,
   buy-to-own.
 - **Decision + safety** (`src/engine/`) — score normalization, weighted ranking, and the
-  deterministic, portfolio-aware **Rules Engine** (cumulative concentration / sector / CSP-collateral /
-  buying-power gates + per-candidate ROC/yield/IV-rank/DTE/delta/earnings-blackout) with a second
-  live-quote gate at send time.
+  deterministic, portfolio-aware **Rules Engine**. Cumulative limits resolve through the shared
+  `engine/capital.py` helper (`resolve_caps` / `max_contracts` / `seed_budgets`), which both
+  `cash_secured_put.screen_csp_candidates` and `risk_engine.validate_candidates` call so the
+  generator and the gate can no longer disagree about how big a position may be (D1):
+  deployable-cash feasibility, per-ticker and per-sector concentration measured in **risk units**
+  (`collateral × IV × √(DTE/365)` — share price is not a risk measure; a stricter raw-collateral
+  cap is the fallback when IV is unknown), an explicit **counted large-position slot**
+  (`large_position_slot_full`), and total cash-secured-put collateral against the deployable-cash
+  CSP budget. Per candidate it gates on the **variance-risk-premium floor** (D2 — the primary
+  income gate: `income.require_vrp_edge`, reject when `premium < candidate.ideal.min_credit`,
+  reason `premium_below_fair_value`), the ROC/yield **noise** floors (`min_roc_pct: 0.15` /
+  `min_annualized_yield_pct: 0.0`, no longer the primary gate), IV rank, IV/RV ratio, DTE window,
+  delta (sign and range), contract count, and the earnings blackout — with a second live-quote gate
+  at send time.
 - **Claude** (`src/claude/`) — headless `claude -p` runner, resilient parser, prompt templates, and a
   persistent learning loop (`claude_memory`, all four outcomes recorded). Local-LLM (Ollama)
   backend (`ollama_runner.py`, `config/settings.yaml → claude.backend`): `"cli"` (`claude -p`
@@ -77,8 +96,12 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Execution** (`src/execution/`) — mid-price limit-order builder (tick-aware), executor with fill
   monitoring + live second confirmation, approval→execution bridge.
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
-- **Monitor** (`src/monitor/`) — event-driven intraday watch; all six triggers (delta drift,
-  management point, DTE, IV spike, ex-div, **C4: assignment-risk**) wired end-to-end.
+- **Monitor** (`src/monitor/`) — event-driven intraday watch; all six triggers wired end-to-end:
+  delta drift, the **mechanical management point** (`check_manage_at_dte`, `monitor.manage_at_dte`,
+  default 21 — entries sit at 21–45 DTE and the roll trigger below fires at 7 days, deep into the
+  gamma window with little extrinsic left; 21 DTE is the point where closing, rolling, or
+  explicitly holding are all still available), the DTE threshold (`dte_threshold`, default 7),
+  IV spike, ex-div, and **C4: assignment-risk**.
 - **Orchestrators** (`src/orchestrator/`) — EOD report, plus the shared `/scan` pipeline split
   three ways: `scan.py` orchestrates (and stays the `run_scan`/`ScanResult` entry point),
   `scan_pipeline.py` produces the per-symbol data, and `scan_progress.py` owns all presentation —
@@ -150,9 +173,14 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   approval card and the `/scan TICKER` card, and injected into the reasoning prompt so the model
   reconciles the offered contract against a reference instead of judging it in a vacuum. This is the
   first consumer of `TechnicalStats.support_levels`/`resistance_levels`, which were computed on every
-  scan and read by nothing. **Display + optional ranking only** — `scoring_weights.yaml → zone_fit`
-  ships at `0.0`, so scoring is unchanged until a human raises it; the Rules Engine remains the sole
-  gate. Tunables in `risk_limits.yaml → ideal_zone`.
+  scan and read by nothing. **Two fields, two jobs — do not conflate them.** The strike band and
+  action levels are display + optional ranking only (`scoring_weights.yaml → zone_fit` still ships
+  at `0.0`, so strike placement changes no ranking until a human raises it), but **`min_credit` is a
+  real gate as of D2**: `risk_engine.validate_candidates` rejects a candidate priced below it
+  (`income.require_vrp_edge`, reason `premium_below_fair_value`), and the CC/CSP generators run the
+  same check so the operator sees the reason on the card. `fair_value.py` itself still never rejects
+  anything — it computes numbers and the Rules Engine refuses the order, so the Rules Engine remains
+  the sole path to an order. Tunables in `risk_limits.yaml → ideal_zone` / `income`.
 - **Every scan returns assessed candidates** — the strategy generators (`screen_cc_candidates` /
   `screen_csp_candidates`) now return the contracts they *rejected* alongside the ones they passed,
   each tagged with **every** gate it failed rather than just the first, ranked closest-to-passing.
@@ -215,8 +243,8 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | Item | Status & reason |
 |---|---|
 | **Black-Scholes Greeks fallback** | **Built, then layered IBKR-first (S2, Phase 3).** Greeks are resolved in three tiers: (1) `_ticker_to_quote` reads the first available IBKR per-contract computation (`modelGreeks` → `lastGreeks` → `askGreeks` → `bidGreeks` via `_pick_greeks`) so a lagging model tick still yields genuine IBKR greeks (`greeks_source="ibkr"`); (2) `_enrich_greeks_from_ibkr_iv` BS-fills delta locally from an IBKR IV with no network call; (3) only quotes IBKR could value neither greeks nor IV for fall through to the yfinance Black-Scholes download (`_enrich_greeks_yf`), now **instrumented** (logs how many quotes forced a Yahoo fetch + the elapsed time per symbol). Tiers 2/3 set `greeks_source="black_scholes"` so the F6 live gate still treats them as untrusted. The scan batch requests generic ticks `101,106` to capture the IBKR IV. |
-| **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). **Wired end-to-end (N20):** when `monitor.roll_execution_enabled` is set, a roll trigger generates a candidate (`execution.roll_pipeline.queue_roll_for_approval`) and sends it with Approve/Reject buttons → QUEUED ROLL order → `execute_roll`. Default OFF until the BAG sign is verified on live paper; until then rolls remain alert-only. |
-| **Live limit-order repricing** | **Built (Phase 4 + C5), default OFF.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (false by default) — the `placeOrder` amend is unverified on a live account; see the live-verification list below. |
+| **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). **Wired end-to-end (N20):** when `monitor.roll_execution_enabled` is set, a roll trigger generates a candidate (`execution.roll_pipeline.queue_roll_for_approval`) and sends it with Approve/Reject buttons → QUEUED ROLL order → `execute_roll`. Default OFF until the BAG sign is verified on live paper (D7 — Q3 of `docs/live-validation-2026-08.md`, not yet run); until then rolls remain alert-only. **Defensive rolls are now judged on risk, not yield (D4, Task 12):** `roll_pipeline.queue_roll_for_approval` passes `defensive=True`, which skips the ROC/annualized-yield tests and instead requires a `monitor.roll_defensive.min_delta_reduction` cut in \|delta\| within a bounded `max_debit`. |
+| **Live limit-order repricing** | **Built (Phase 4 + C5), default OFF.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (false by default) — the `placeOrder` amend is unverified on a live account (D7 — Q2 of `docs/live-validation-2026-08.md`, not yet run); see the live-verification list below. |
 | **Unreachable quiet-cycle heartbeat (removed)** | `format_quiet_cycle` / `_send_quiet_heartbeat` could never fire in production: `send_candidates` and `send_buy_list` both return `True` on their *empty* path, so `if not cand_sent and not buy_sent` was never true. Only the mocked tests (which stubbed the return to `False`) ever exercised it. Rather than resurrect it — which would mean two messages per quiet cycle, exactly the flood S6 removed — the heartbeat, `ScanResult.quiet_cycle`, and the likewise orphaned `format_screen_empty` were deleted, and the materiality detail it carried ("N/M names moved <0.5%") now rides on the empty-screen diagnostic that is actually appended. |
 | **`BuyCandidate.rationale`** | A deterministic one-liner built from the screen's own signals (IV richness, VRP, regime, quality, earnings proximity) in `buy_candidates.py` — Claude does **not** review buy-to-own names (only option candidates), by design. The buy-to-own screen applies a score floor + count cap (`scoring_weights.yaml → buy_to_own`, currently 10 names max). The Telegram message (`format_buy_list`) groups candidates by sector (indexes, tech, semis, financials, healthcare, …); all candidate cards are shown inline — the Telegram spoiler wrapping that previously hid each sector behind a "tap to reveal" toggle has been removed. Sectors are sourced from `universe.yaml → sectors` via the `BuyCandidate.sector` field. |
 | **yfinance caching** | **Built, then upgraded to an incremental store.** Daily OHLCV (the 1y history for RSI/MACD/SMAs/ATR/support-resistance/regime **and** HV30) is persisted in the `price_history` table and loaded by `analytics/price_data.get_ohlcv`, which fetches **only the missing tail** from yfinance (or a full year when the store is empty) and is itself `@daily_cached` per calendar day in-process. So scans no longer pull full per-symbol histories every run — steady state makes zero yfinance history calls (the store is current); the 15-min loop reuses the day cache; and a cold process reads settled bars from SQLite instead of re-downloading a year. Seeded by `scripts/backfill_prices.py`, kept fresh by the EOD daily-bar append (mirrors the `iv_history` N4 pattern). `get_fundamental_stats` remains `@daily_cached`. Composite sentiment sources (`sentiment._fetch_stocktwits`, `_fetch_news`, `fetch_sentiment`) are each `@daily_cached` too (S4): each API is hit at most once per calendar day per symbol instead of ~26×/session. VIX is still fetched once per scan (cheap, moves intraday). `TechnicalStats.price` is NOT cached — `technicals._fetch_last_price` makes a separate, uncached `fast_info["lastPrice"]` lookup overlaid as today's bar so the scan-time spot price (N17) stays current; on error it falls back to the last settled close. |
@@ -252,15 +280,19 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
-## Bugs fixed (2026-08-10 — capital & income model)
+## Bugs fixed (2026-08-10/11 — remediation Phases 1–3: capital, income, and loss management)
 
 The 2026-08-10 full-system review (`docs/superpowers/specs/2026-08-10-remediation-and-ios-app-design.md`
 §1) found that the deterministic layer could not trade the universe it was designed for, at the
-account's actual size, for economically correct reasons — two defects in the capital model (D1) and
-the income gate (D2), plus two narrower correctness bugs (D5, D6) discovered while fixing them.
-Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_capital.py`,
+account's actual size, for economically correct reasons — defects in the capital model (D1), the
+income gate (D2), and loss management (D3), plus three narrower correctness bugs (D4, D5, D6)
+discovered alongside them and one open measurement gap (D7). The remediation plan
+(`docs/superpowers/plans/2026-08-10-remediation-phases-1-3.md`) closed **D1–D6** across Phase 1
+(Tasks 1–9) and Phase 2 (Tasks 10–14); **D7 remains open** and is the one item on this list an
+agent could not close — see its entry below. Regression tests: `tests/test_capital.py`,
 `tests/test_account_sizing.py`, `tests/test_engine.py`, `tests/test_covered_call.py`,
-`tests/test_iv.py`.
+`tests/test_iv.py`, `tests/test_loss_exits.py`, `tests/test_circuit_breakers.py`,
+`tests/test_roll_pipeline.py`, `tests/test_monitor.py`, `tests/test_autonomy.py`.
 
 - **D1 — CSP sizing and the concentration gate were never reconciled.** `screen_csp_candidates`
   sized to the *maximum affordable* lot (cash, the old 60% CSP budget, `max_contracts: 10`),
@@ -296,6 +328,33 @@ Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_
   `0.15` and `min_annualized_yield_pct` to `0.0`, both now noise floors only. The gate asks "am I
   being paid more than this risk is worth?" instead of "is the yield big enough?" — the hidden delta
   floor disappears as a side effect.
+- **D3 (2026-08-11, Remediation Phase 2, Tasks 10, 11, 13, 14) — there was no loss management, and
+  the one circuit breaker meant to catch a bad day could not see losses.** The only exits were the
+  50% profit take, expiry, assignment, and *alert-only* roll triggers firing at DTE ≤ 7;
+  `grep -i "stop_loss\|max_loss"` over `src/` and `config/` returned nothing. Short premium's whole
+  risk lives in the left tail, so an unattended 15-minute loop that could only add exposure and
+  harvest winners was the one configuration able to genuinely hurt the account. Compounding it,
+  `circuit_breakers.daily_loss_breached` measured *realized cashflow* (summed `FillRow` credits and
+  debits), so a day that sold premium into a 15% drawdown registered as a **profit** and the kill
+  switch stayed open while the loop opened more shorts into the same move. **Fixed in four parts:**
+  (a) `execution/profit_take.check_loss_exits` (Task 10) buys to close any short whose cost-to-close
+  reaches `automation.max_loss_multiple` × the net entry credit (default `2.0`), running each
+  intraday cycle through `position_manager.close_short_position` and notifying Telegram — including
+  on the failure/partial/no-fill paths, so a close that did not actually happen is never reported as
+  one; (b) `mark_based_loss` (Task 11) replaces the cashflow measure with a genuine mark-to-market
+  one — today's summed position `unrealized_pnl` against the prior day's `position_snapshots` row,
+  tripping at `automation.daily_loss_halt_pct` (3.0) — and the new `drawdown_breached` trips at
+  `automation.drawdown_halt_pct` (10.0) below a trailing net-liquidation high-water mark, catching a
+  slow bleed no single day trips; both are wired into `execution/approval.process_queued_orders`,
+  which auto-engages the persisted `/halt` kill switch on whichever fires first (`daily_loss_breached`
+  and its tests are kept for reference but are no longer called); (c) `check_manage_at_dte` (Task 13)
+  adds the mechanical 21-DTE management point (`monitor.manage_at_dte`) so a position is reviewed
+  while closing, rolling, and holding are all still viable, rather than first at `dte_threshold: 7`;
+  (d) the **four-rung autonomy ladder** (Task 14) replaces the old binary MANUAL/AUTOMATED toggle so
+  unattended *opening* is arrived at through evidence (`OBSERVE < MANUAL < WHITELIST < FULL`,
+  promotion gated by `system_settings.promotion_blockers`), while risk-*reducing* closes run
+  independently of the rung under `automation.auto_close_enabled` — closing risk never waits for a
+  tap. See "What is built" above for the full behaviour of each.
 - **D5 — the wheel's already-collected premium was invisible to the covered-call gate.**
   `campaigns.mark_campaign_assigned` computed `adjusted_cost_basis` (assignment price minus net
   premium per share) on a put assignment, but only the `/campaigns` Telegram formatter read it;
@@ -355,6 +414,99 @@ Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_
   closed: `if pos_delta_abs is None or (pos_delta_abs - delta_abs) < min_reduction: continue` —
   an unknown starting delta now rejects the candidate instead of silently passing it. Covered by
   `test_defensive_roll_rejects_when_position_delta_is_unknown`.
+- **D7 — OPEN, not fixed. Every genuinely uncertain execution behaviour still sits behind a
+  default-off flag and has never been exercised against a real broker.** `execution.reprice_enabled`
+  and `monitor.roll_execution_enabled` are both `false`, and
+  `live_execution.require_ibkr_greeks_when_live` is `true` on a data subscription that has never
+  been observed populating `greeks_source == "ibkr"`. Closing this is **measurement, not code**: it
+  needs a live TWS/IB Gateway paper session on port 4002 during regular trading hours, a human
+  tapping Approve/Reject in Telegram, and ≥ 20 approved orders gathered across multiple sessions —
+  none of which an agent can produce, which is why remediation Task 15 is the one task of the
+  eighteen that is scaffolded rather than done. The record file exists and is empty:
+  **`docs/live-validation-2026-08.md`**, carrying the spec's five questions (mid-limit fill rate by
+  liquidity tier; whether the `reprice_enabled` amend modifies rather than duplicates an order;
+  whether the BAG combo sign convention is right on a real roll; whether `greeks_source == "ibkr"`
+  ever populates; whether Tier 3 names produce candidates end-to-end). **Hard gate, unchanged:** if
+  Question 4 comes back 0%, `require_ibkr_greeks_when_live: true` will silently block 100% of live
+  income trades — do not proceed toward live trading until that is resolved, or the flag is
+  deliberately set `false` with the justification written into that file. Everything below under
+  "Validated by mocked tests only" is the same gap seen from the other direction.
+
+### Tradeable capacity at $300k (2026-08)
+
+`scripts/capacity_report.py` is the regression check the unit suite structurally cannot be: the
+1,115 tests ask "does the gate reject what it says it rejects" and never "what can this system
+trade today," which is why D1 and D2 both passed CI for as long as they did. One row per `would_own`
+symbol: how many contracts the account can support right now, and which constraint stops the next
+one. Raw output of `python -m scripts.capacity_report --net-liq 300000 --cash 100000`, re-run
+2026-08-11 at the close of the remediation against the committed `risk_limits.yaml` (spot prices
+come from live quotes, so the exact figures drift run to run; the binding reasons do not):
+
+```
+SYMBOL        SPOT  LOTS   COLLATERAL  BINDING
+----------------------------------------------
+HIMS         31.75    10       28,570  none (hit hard_max)
+MARA          9.70    10        8,730  none (hit hard_max)
+RGTI         18.08    10       16,270  none (hit hard_max)
+SLV          58.74    10       52,870  none (hit hard_max)
+SOFI         18.17    10       16,350  none (hit hard_max)
+TLT          82.29    10       74,060  none (hit hard_max)
+TTD          13.68    10       12,310  none (hit hard_max)
+UBER         78.79    10       70,910  none (hit hard_max)
+XLE          60.80    10       54,720  none (hit hard_max)
+XLF          57.92    10       52,120  none (hit hard_max)
+XLU          43.28    10       38,950  none (hit hard_max)
+XLP          84.37     9       68,337  large_ceiling
+HOOD         94.29     8       67,888  large_ceiling
+IGV         104.24     7       65,674  large_ceiling
+RKLB         78.62     7       49,532  ticker_risk
+WMT         112.40     7       70,812  cash
+BABA        128.53     6       69,408  cash
+HACK        119.08     6       64,302  large_ceiling
+COIN        148.80     5       66,960  cash
+CRM         198.29     4       71,384  cash
+PLTR        174.90     4       62,964  large_ceiling
+XLI         185.88     4       66,916  cash
+XLK         186.67     4       67,200  cash
+XLV         168.03     4       60,492  large_ceiling
+AMZN        272.95     3       73,695  cash
+CRWD        223.15     3       60,249  cash
+DDOG        252.44     3       68,160  cash
+NVDA        218.88     3       59,097  large_ceiling
+AAPL        306.18     2       55,112  cash
+GLD         402.85     2       72,514  cash
+GOOGL       351.76     2       63,316  cash
+HD          355.46     2       63,984  cash
+IWM         301.17     2       54,212  cash
+JPM         360.90     2       64,962  cash
+NBIS        189.83     2       34,170  ticker_risk
+NET         311.40     2       56,052  cash
+SNOW        336.82     2       60,626  cash
+TSLA        333.78     2       60,080  cash
+V           363.87     2       65,496  cash
+AMD         469.93     1       42,294  cash
+MA          565.59     1       50,903  cash
+META        606.83     1       54,615  cash
+MSFT        502.73     1       45,246  cash
+QQQ         720.26     1       64,823  cash
+SMH         574.72     1       51,725  cash
+SPY         772.69     1       69,542  cash
+
+46/46 symbols tradeable at this account size.
+Coverage: 46/46 requested symbols had usable price/IV data (0 skipped for missing data).
+```
+
+**Read it as the D1/D2 evidence, distinct from the tests passing.** Every one of the 46 `would_own`
+symbols gets at least one lot — including SPY at $772, META at $606, QQQ at $720 and MSFT at $502,
+none of which could clear the old `max_pct_per_ticker: 5.0` gate at this account size (a 1-lot CSP
+used to require `NLV ≥ 2000 × strike`). The `Coverage:` line is load-bearing: it is computed from
+the pre-filter requested population, so a data outage that silently dropped symbols would show up
+as a shrinking numerator instead of a still-100%-looking fraction. Binding distribution: `cash` 26,
+`none (hit hard_max)` 11, `large_ceiling` 7, `ticker_risk` 2 (RKLB, NBIS — the two high-IV names
+where risk units bind before raw collateral, exactly the D2-shaped signal), `ticker_collateral` 0,
+`sector_risk` 0, `csp_budget` 0, `large_slot` 0. Low-IV names being cash-bound rather than
+concentration-bound is the model working as designed. Re-run this after any change to
+`risk_limits.yaml → portfolio` or `income`.
 
 ## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
 
@@ -363,8 +515,10 @@ The notification layer itself held up well — quiet 15-min cycles emit **zero**
 per-thread status message is edited in place), empty states are all specific, and the source
 footers are honest. The defects were concentrated in the **ideal-zone analytics** feeding the most
 prominent block on every card, plus raw internals leaking into two alerts that fire on live
-positions. None of them could reach an order: `zone_fit` ships at `0.0`, so all four were
-display-only. Regression tests: `tests/test_output_fidelity.py`.
+positions. None of them could reach an order **at that time**: `zone_fit` shipped (and still ships)
+at `0.0`, so all four were display-only. That is no longer the whole story — D2 (2026-08-10) later
+promoted the zone's `min_credit` to a real risk-engine gate, so an ideal-zone defect of this kind
+*would* now be able to reject a trade. Regression tests: `tests/test_output_fidelity.py`.
 
 - **Ideal credit compared the wrong two numbers (P0):** `compute_ideal_zone` priced `min_credit` at
   the band's **anchor** strike, and the card then rendered it against the **offered** contract's
@@ -929,8 +1083,24 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 ## Validated by mocked tests only — verify on a live paper session before live cutover
 
 These behaviours are correct in unit tests (IBKR mocked) but their real-world timing/recovery has
-not been exercised against a live TWS/Gateway:
+not been exercised against a live TWS/Gateway. **This list is D7 (see the remediation section
+above), and it is still open.** The remediation plan's Task 15 scaffolded the record file —
+**`docs/live-validation-2026-08.md`** — with the five questions and the method for each, but the
+measurement itself is a human operator's job: it needs paper TWS/Gateway on port 4002 during regular
+trading hours, real Telegram Approve/Reject taps, and ≥ 20 approved orders across several sessions.
+Four items below map straight onto that file's questions — **approve → fill → confirm** is Q1 (fill
+rate by liquidity tier), **limit-order repricing** is Q2, the **roll combo (BAG) sign convention** is
+Q3, and **layered IBKR-first greeks** is Q4 (the hard gate) — so record the raw observation there
+and then clear the corresponding item here. Nothing in this list has been cleared yet.
 
+- **The Phase 2 unattended-action paths (D3), all of which fire without a human tap.** A **loss exit**
+  actually firing on paper at `max_loss_multiple × entry credit` and the Telegram notice being
+  observed — including the failure branches, since a close that partially fills or is rejected must
+  not report as a completed stop. A **circuit breaker** tripped deliberately (`daily_loss_halt_pct`
+  or `drawdown_halt_pct`) auto-engaging the kill switch, and `/resume` clearing it. The **autonomy
+  ladder** sitting at `manual` with `/autonomy` reporting honest progress toward `whitelist` against
+  real fill counts. All three are covered by unit tests with IBKR and Telegram mocked; none has been
+  seen against a live paper account.
 - **`AutoReconnect`** actually recovering a dropped socket and the monitor re-subscribing market data.
 - The executor's **greeks-wait** capturing `entry_iv` / a live delta on real OPRA tick timing (if
   greeks consistently lag past the window, `entry_iv` stays `None` and the IV-spike baseline is absent).
@@ -975,3 +1145,11 @@ Do not flip `LIVE_TRADING=true` until **≥ 10–20 successful paper cycles** ha
 back to Telegram. The full checklist is in `SETUP.md` §11. The three-layer guard
 (`LIVE_TRADING=true` + live port + per-order `[CONFIRM LIVE]` second tap) and the loud startup banner
 must both be verified on the first live run with a single small position.
+
+**Additionally, as of the 2026-08 remediation, D7 gates this.** `docs/live-validation-2026-08.md`
+must be filled in from a real paper session before live cutover, and its Question 4 is a hard stop:
+if `greeks_source == "ibkr"` never populates on this data subscription, `require_ibkr_greeks_when_live:
+true` will silently block 100% of live income trades. Resolve it, or set that flag `false`
+deliberately with the justification written into that file — do not discover it in production.
+Autonomy should be at `manual` (not `whitelist`/`full`) through the whole paper-validation period;
+the ladder's own promotion gate will refuse to move until the fill evidence exists.

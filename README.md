@@ -25,7 +25,7 @@ to your phone via Telegram.
 | Time | What happens |
 |---|---|
 | **Every 15 min (RTH)** | Intraday loop: checks profit-take/loss-exit targets, runs a fresh scan (full sweep on first cycle each session); candidates a symbol's autonomy rung clears (WHITELIST/FULL) auto-execute, everything else sends an approval request (buttons withheld at OBSERVE) |
-| **During market hours** | Event-driven monitor watches open positions for delta drift, IV spikes, and early-assignment risk; alerts you to roll when needed |
+| **During market hours** | Event-driven monitor watches open positions for delta drift, IV spikes, ex-dividend and early-assignment risk, and the mechanical **21-DTE management point** (while closing, rolling, or holding are all still viable — not first at 7 days, deep in the gamma window); alerts you to roll when needed |
 | **4:15 PM ET (auto)** | End-of-day report: P&L summary, journal entry, tomorrow's watchlist |
 | **Any time** | Telegram bot commands (see below) — query the system interactively from your phone |
 | **When you approve** | Execution engine re-validates, builds a limit order at mid-price, places it, and confirms the fill back to Telegram |
@@ -117,7 +117,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
 | `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive) |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation. The CC/CSP screens return the contracts they **rejected** alongside those they passed (`_evaluation.py`), each tagged with every gate it failed — so a scan that approves nothing still shows what it looked at and why |
-| `src/engine/` | Scoring, decision ranking, deterministic risk gate |
+| `src/engine/` | Scoring, decision ranking, deterministic risk gate; `capital.py` is the shared capital model (`resolve_caps` / `max_contracts` / `seed_budgets`) that both the CSP generator and the risk gate call, so the two can never disagree about how big a position may be — concentration is measured in **risk units** (`collateral × IV × √(DTE/365)`), not raw collateral |
 | `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |
 | `src/claude/eval/` | Outcome ledger, close reconciler, and score-vs-outcome analysis (does `blended_score` predict realized P&L) |
 | `src/execution/` | Order building and execution via IBKR |
