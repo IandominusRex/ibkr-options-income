@@ -68,7 +68,7 @@ is worse than a stopped one.
 | 12 | Defensive-roll economics + date bug | 2 | done | 2026-08-11 | |
 | 13 | Manage at 21 DTE | 2 | done | 2026-08-11 | |
 | 14 | Autonomy ladder | 2 | done | 2026-08-11 | |
-| 15 | Live paper validation session | 3 | pending | | |
+| 15 | Live paper validation session | 3 | in progress | 2026-08-11 | |
 | 16 | Deletions | 3 | pending | | |
 | 17 | Split `scan.py` | 3 | pending | | |
 | 18 | Phase 1–3 closeout | 3 | pending | | |
@@ -1008,6 +1008,19 @@ know. Empty until the first task runs.
   documents, rather than asserts against, the deliberate PENDING `ApprovalRow` the S6 dedup logic
   needs (pushed back on the review's literal "no ApprovalRow" phrasing with reasoning in the
   report; see task-14-report.md for detail). `pytest -q` → 1156 passed, `ruff`/`mypy` clean.
+
+- **Task 15** — Not agent-executable, as the plan itself anticipated ("this task is measurement,
+  not code"). It requires a live TWS/IB Gateway paper session on port 4002 during regular trading
+  hours, real Telegram Approve/Reject interaction, and 20+ approved orders gathered across
+  multiple sessions — none of which a subagent can produce. Completed only Step 1 (created
+  `docs/live-validation-2026-08.md` from the brief's template verbatim, with an added status
+  banner marking it not-yet-run and restating Checkpoint 2 inline). Steps 2-8 — including
+  answering all five questions, editing `config/settings.yaml`'s default-off flags, and updating
+  `STATUS.md`'s "needs live verification" list — are left for the human operator. Progress-ledger
+  row set to `in progress`, not `done`; only Step 1's checkbox is ticked. **Checkpoint 2 stands:**
+  if Question 4 (`greeks_source == "ibkr"`) comes back 0%, live income trading is blocked until
+  resolved or `require_ibkr_greeks_when_live` is deliberately set `false` with written
+  justification.
 
 ---
 
@@ -4009,7 +4022,7 @@ silently block 100% of live trades.
 **Prerequisite:** TWS or IB Gateway running on the paper port (4002) with the API enabled, during
 regular trading hours.
 
-- [ ] **Step 1: Create the record file**
+- [x] **Step 1: Create the record file**
 
 ```markdown
 # Live paper validation — August 2026
