@@ -72,6 +72,29 @@ def test_fair_value_stays_in_the_deterministic_tier() -> None:
     assert not offenders, f"fence violated — fair_value imports enrichment-tier: {offenders}"
 
 
+def test_scan_pipeline_does_not_import_the_notify_layer() -> None:
+    """The Phase 5 API triggers scans; it must not drag Telegram in.
+
+    `src/orchestrator/` is split three ways: `scan_progress.py` renders progress, `scan.py`
+    orchestrates and sends, and `scan_pipeline.py` produces data only. Keeping the last of
+    those free of `src.notify` is what lets a non-Telegram caller run a scan and read a
+    `ScanResult` without pulling in the bot.
+    """
+    import ast
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "src" / "orchestrator" / "scan_pipeline.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+        elif isinstance(node, ast.Import):
+            imported.extend(a.name for a in node.names)
+    offenders = [m for m in imported if m.startswith("src.notify") or m == "telegram"]
+    assert not offenders, f"scan_pipeline must not import the notify layer: {offenders}"
+
+
 def test_macro_never_reaches_the_engine() -> None:
     """The macro backdrop (VIX term, rates, headline tone) is enrichment: it may reach the
     prompt and the Telegram card, never the gate, the weights, or sizing."""

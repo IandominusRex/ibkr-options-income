@@ -19,7 +19,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,7 +47,6 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     SectorContext,
-    SentimentDetail,
     TechnicalStats,
     TradeCandidate,
 )
@@ -63,6 +61,7 @@ from src.notify.formatters import (
     format_skip_reasons,
 )
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
+from src.orchestrator.scan_pipeline import ChainStatus, SymbolDeps, scan_symbol
 from src.orchestrator.scan_progress import _ProgressCB, _Tracker
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
@@ -75,7 +74,6 @@ from src.storage.system_settings import (
     renew_scan_lease,
     set_setting,
 )
-from src.strategies._evaluation import ScreenResult
 from src.strategies.buy_candidates import generate_buy_candidates
 from src.strategies.cash_secured_put import screen_csp_candidates
 from src.strategies.covered_call import screen_cc_candidates
@@ -598,22 +596,6 @@ def _near_misses(
     return shown, max(0, len(rejected) - len(shown))
 
 
-def _apply_sentiment(screen: ScreenResult, detail: SentimentDetail | None) -> None:
-    """Stamp composite sentiment onto every contract a screen produced, passed or rejected.
-
-    ``overall`` drives scoring; the per-source detail is enrichment for the card and the
-    prompt. Rejected contracts are rendered on the same cards, so they carry it too.
-    """
-    if detail is None:
-        return
-    for cand in screen.passed:
-        cand.scores.sentiment_score = detail.overall
-        cand.scores.sentiment_detail = detail
-    for cand, _ in screen.rejected:
-        cand.scores.sentiment_score = detail.overall
-        cand.scores.sentiment_detail = detail
-
-
 def _no_candidates_reason(
     result: ScanResult,
     all_count: int,
@@ -884,6 +866,16 @@ async def _run_scan_body(
     consecutive_chain_timeouts = 0
     max_consecutive_timeouts = cfg.market_data.max_consecutive_chain_timeouts
 
+    # The collaborators the per-symbol pipeline calls out to. Bound here, from this module's
+    # namespace, so the orchestrator stays in charge of which implementation runs.
+    deps = SymbolDeps(
+        fetch_chain=get_option_chain_quotes_async,
+        fetch_analytics=_fetch_analytics,
+        score_sentiment=sentiment.score,
+        screen_cc=screen_cc_candidates,
+        screen_csp=screen_csp_candidates,
+    )
+
     await tracker.tick("market_data", "⏳", f"0/{n} symbols")
     for i, symbol in enumerate(all_symbols):
         log.info("scan: processing %s", symbol)
@@ -894,123 +886,62 @@ async def _run_scan_body(
         # lease there's nothing to renew (we keep going; release will no-op safely).
         renew_scan_lease(lease_token)
 
-        # Option chain — IB calls run on the loop thread (async), NOT in a worker thread.
-        # Chain fetches stay sequential per symbol to respect the ~100 market-data line cap.
-        # Bounded by symbol_timeout_seconds: an IBKR call that never responds (pacing
-        # violation, competing-session lockout) must not hang the whole scan — skip the
-        # symbol (quotes=[]) and move on so the remaining symbols and the Telegram send
-        # step still run.
-        symbol_start = time.monotonic()
-        quotes: list[OptionQuote]
-        did_fetch = symbol in material_symbols
-        if not did_fetch:
-            # Intraday gate (S1): immaterial this cycle (not held, spot unmoved, didn't clear
-            # the floor last cycle). Skip the dominant option-chain fetch; analytics below still
-            # run (cheap/day-cached) so the buy-to-own list stays complete.
-            quotes = []
-            result.provenance.chain_skipped += 1
-            log.debug("scan: skipping option chain for %s (immaterial this intraday cycle)", symbol)
-        else:
-            try:
-                quotes = await asyncio.wait_for(
-                    get_option_chain_quotes_async(ib, symbol),
-                    timeout=cfg.market_data.symbol_timeout_seconds,
-                )
-            except TimeoutError:
-                elapsed = time.monotonic() - symbol_start
-                log.error(
-                    "scan: option chain for %s exceeded symbol_timeout_seconds=%.0f "
-                    "(ran %.1fs) — skipping this symbol",
-                    symbol,
-                    cfg.market_data.symbol_timeout_seconds,
-                    elapsed,
-                )
-                quotes = []
-                result.provenance.chain_failed += 1
-                # The timeout cancelled the chain fetch mid-flight; reclaim any market-data
-                # lines it left open so they don't eat into the next symbol's ~100-line budget.
-                drain_market_data_lines(ib)
-                await tracker.add_error(f"{symbol} — option chain timed out, skipped")
-                # Circuit breaker: a run of back-to-back timeouts means the socket is dead, not
-                # that this one symbol is slow. Bail before grinding the rest of the universe.
-                consecutive_chain_timeouts += 1
-                if (
-                    max_consecutive_timeouts > 0
-                    and consecutive_chain_timeouts >= max_consecutive_timeouts
-                ):
-                    log.error(
-                        "scan: %d consecutive chain timeouts — aborting run, socket appears "
-                        "half-dead (processed %d/%d symbols)",
-                        consecutive_chain_timeouts,
-                        i + 1,
-                        n,
-                    )
-                    result.aborted_unhealthy = True
-                    await tracker.add_error(
-                        f"socket half-dead — aborted after {consecutive_chain_timeouts} "
-                        f"consecutive timeouts"
-                    )
-                    break
-            except Exception:
-                log.exception("scan: option chain failed for %s", symbol)
-                quotes = []
-                result.provenance.chain_failed += 1
-                drain_market_data_lines(ib)
-                await tracker.add_error(f"{symbol} — option chain failed, skipped")
-                # An error (vs a timeout) means the socket answered — reset the breaker.
-                consecutive_chain_timeouts = 0
-            else:
-                # The fetch returned, so the data farm is alive — reset the breaker.
-                consecutive_chain_timeouts = 0
-                if quotes:
-                    result.provenance.chain_ibkr += 1
-                    for q in quotes:
-                        if q.greeks_source == "black_scholes":
-                            result.provenance.greeks_yfinance += 1
-                        else:
-                            result.provenance.greeks_ibkr += 1
-                else:
-                    result.provenance.chain_failed += 1
-                elapsed = time.monotonic() - symbol_start
-                if elapsed > cfg.market_data.symbol_timeout_seconds / 3:
-                    log.warning(
-                        "scan: option chain for %s took %.1fs (%d quotes)",
-                        symbol,
-                        elapsed,
-                        len(quotes),
-                    )
-                else:
-                    log.debug(
-                        "scan: option chain for %s took %.1fs (%d quotes)",
-                        symbol,
-                        elapsed,
-                        len(quotes),
-                    )
-        # Spot price (N17 follow-up): prefer the IBKR chain's put-call-parity spot over
-        # yfinance fast_info when we just paid for the chain fetch.
-        spot_override = infer_spot_from_quotes(quotes) if quotes else None
-        # For symbols that skipped the chain (S1), reuse the materiality probe's fast_info
-        # price instead of letting get_technical_stats fetch it again from scratch.
-        cached_yf_price = probed_spots.get(symbol)
-
-        # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
-        # concurrently in the default executor to cut per-symbol latency.
-        analytics_res, sentiment_res = await asyncio.gather(
-            loop.run_in_executor(
-                None, _fetch_analytics, symbol, quotes, spot_override, cached_yf_price
-            ),
-            loop.run_in_executor(None, sentiment.score, symbol),
-            return_exceptions=True,
+        # All the per-symbol I/O and screening lives in scan_pipeline: it returns data, never
+        # touching the tracker or the run-level accumulators below.
+        outcome = await scan_symbol(
+            ib,
+            symbol,
+            material=symbol in material_symbols,
+            account=account,
+            positions=positions,
+            would_own=would_own,
+            # For symbols that skipped the chain (S1), reuse the materiality probe's fast_info
+            # price instead of letting get_technical_stats fetch it again from scratch.
+            probed_spot=probed_spots.get(symbol),
+            symbol_timeout_seconds=cfg.market_data.symbol_timeout_seconds,
+            deps=deps,
         )
-        if isinstance(analytics_res, BaseException):
-            log.exception("scan: analytics failed for %s", symbol, exc_info=analytics_res)
-            await tracker.add_error(f"{symbol} — analytics failed, skipped")
-            continue
-        iv_stats, tech_stats, fund_stats = analytics_res
-        # SentimentScorer.score() returns a SentimentDetail (or None from the test stub / on error).
-        sentiment_detail = None if isinstance(sentiment_res, BaseException) else sentiment_res
 
-        analytics_map[symbol] = (iv_stats, tech_stats, fund_stats)
+        # Chain + Greeks provenance for this symbol.
+        if outcome.chain_status is ChainStatus.SKIPPED:
+            result.provenance.chain_skipped += 1
+        elif outcome.chain_status is ChainStatus.FETCHED:
+            result.provenance.chain_ibkr += 1
+            result.provenance.greeks_ibkr += outcome.greeks_ibkr
+            result.provenance.greeks_yfinance += outcome.greeks_yfinance
+        else:  # EMPTY / TIMEOUT / ERROR — nothing usable came back
+            result.provenance.chain_failed += 1
+
+        for message in outcome.errors:
+            await tracker.add_error(message)
+
+        # Circuit breaker: a run of back-to-back timeouts means the socket is dead, not that
+        # this one symbol is slow. A SKIPPED symbol asked nothing of the socket, so it neither
+        # advances nor clears the count; any other outcome proves the socket answered.
+        if outcome.chain_status is ChainStatus.TIMEOUT:
+            consecutive_chain_timeouts += 1
+        elif outcome.chain_status is not ChainStatus.SKIPPED:
+            consecutive_chain_timeouts = 0
+        if max_consecutive_timeouts > 0 and consecutive_chain_timeouts >= max_consecutive_timeouts:
+            # Bail before grinding the rest of the universe; this symbol's results are dropped.
+            log.error(
+                "scan: %d consecutive chain timeouts — aborting run, socket appears "
+                "half-dead (processed %d/%d symbols)",
+                consecutive_chain_timeouts,
+                i + 1,
+                n,
+            )
+            result.aborted_unhealthy = True
+            await tracker.add_error(
+                f"socket half-dead — aborted after {consecutive_chain_timeouts} "
+                f"consecutive timeouts"
+            )
+            break
+
+        if outcome.analytics is None:
+            continue  # analytics failed — nothing to accumulate for this symbol
+        _iv_stats, tech_stats, _fund_stats = outcome.analytics
+        analytics_map[symbol] = outcome.analytics
 
         # Spot-price provenance (S1 follow-up): track which source produced the price Claude
         # and the strategies see for this symbol this cycle.
@@ -1024,52 +955,12 @@ async def _run_scan_body(
 
         # Record the live spot at this fetch as the next cycle's materiality baseline (S1/S10).
         # Only fetched symbols update their baseline so slow drift accrues from the last *fetch*.
-        if did_fetch and tech_stats.price:
+        if outcome.did_fetch and tech_stats.price:
             fetched_spots[symbol] = tech_stats.price
 
-        # CC candidates for held stock positions
-        stock_pos = next(
-            (
-                p
-                for p in positions
-                if (p.underlying or p.symbol) == symbol and p.sec_type == "STK" and p.position > 0
-            ),
-            None,
-        )
-        if stock_pos and quotes:
-            # Calls already written against this underlying — netted out of CC sizing so
-            # a re-scan never proposes calls on top of already-covered shares.
-            existing_short_calls = sum(
-                int(abs(p.position))
-                for p in positions
-                if (p.underlying or p.symbol) == symbol
-                and p.sec_type == "OPT"
-                and p.right == OptionRight.CALL
-                and p.position < 0
-            )
-            cc_screen = screen_cc_candidates(
-                symbol,
-                quotes,
-                stock_pos,
-                iv_stats,
-                tech_stats,
-                fund_stats,
-                existing_short_calls=existing_short_calls,
-            )
-            # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches).
-            # Rejected contracts get it too — they are shown on the same cards.
-            _apply_sentiment(cc_screen, sentiment_detail)
-            cc_candidates.extend(cc_screen.passed)
-            generator_rejects.extend(cc_screen.rejected)
-
-        # CSP candidates for would_own symbols
-        if symbol in would_own and quotes:
-            csp_screen = screen_csp_candidates(
-                symbol, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
-            )
-            _apply_sentiment(csp_screen, sentiment_detail)
-            csp_candidates.extend(csp_screen.passed)
-            generator_rejects.extend(csp_screen.rejected)
+        cc_candidates.extend(outcome.cc_passed)
+        csp_candidates.extend(outcome.csp_passed)
+        generator_rejects.extend(outcome.rejected)
 
     await tracker.tick("market_data", "✅", f"{n}/{n} symbols")
 
