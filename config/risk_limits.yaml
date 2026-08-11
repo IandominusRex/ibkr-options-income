@@ -57,9 +57,18 @@ iv:
   realized_vol_window: 20
 
 # --- Ideal-price zone (analytics/fair_value.py) ---
-# DISPLAY + OPTIONAL RANKING ONLY. Nothing here rejects a candidate — the Rules Engine
-# (risk_engine.py) remains the sole gate. These knobs shape the "ideal strike / ideal credit /
-# action level" shown on every card and injected into the reasoning prompt.
+# TWO KINDS OF KNOB IN THIS BLOCK — do not assume it is all inert.
+#   * The strike-band and action-level knobs (em_lo_mult, em_hi_mult, earnings_widen_mult,
+#     support_pull_pct, buy_margin_of_safety_pct) are DISPLAY + OPTIONAL RANKING ONLY: they
+#     shape the "ideal strike / action level" shown on every card and injected into the
+#     reasoning prompt, and feed scoring only through scoring_weights.yaml's `zone_fit`,
+#     which ships at 0.0 (off).
+#   * `min_credit_edge_pct` DOES reject candidates. Since D2 it sets IdealZone.min_credit,
+#     which risk_engine.validate_candidates compares the offered premium against under
+#     `income.require_vrp_edge` (ships true) — reason `premium_below_fair_value`. Raising it
+#     tightens a live gate, not a display number.
+# fair_value.py itself still has no reject path of its own; it computes and returns numbers,
+# and the Rules Engine (risk_engine.py) remains the sole path to an order.
 ideal_zone:
   # The strike band, expressed in expected moves (1σ = spot · IV · √(DTE/365)).
   # Calibrated against the delta bands the generators actually screen — NOT picked by feel.

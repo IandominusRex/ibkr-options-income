@@ -1232,6 +1232,40 @@ know. Empty until the first task runs.
      `/resume`, autonomy promotion), which are mock-tested only and were not previously named there.
   `.tmp.driveupload/` was never staged (both commits used explicit paths).
 
+- **Task 18, review-fix round 1 (2026-08-11)** — 1 Important + 2 Minor, no human ruling needed.
+  The Important finding: `config/risk_limits.yaml`'s `ideal_zone:` header still read
+  *"DISPLAY + OPTIONAL RANKING ONLY. Nothing here rejects a candidate"* — the same claim Task 18
+  had just corrected in `CLAUDE.md` and `STATUS.md`, sitting directly above the very knob
+  (`min_credit_edge_pct`) that feeds `risk_engine.py:107`'s rejection. Outside the brief's file
+  list, but fixed anyway on the reviewer's recommendation: an operator tuning that knob while
+  reading that header would believe it inert.
+  **The grep that verification step called for turned up four more copies the review had not
+  flagged, all corrected in the same commit:**
+  1. `src/common/schemas.py` — `IdealZone`'s own class docstring ("Display + optional ranking only
+     — this never rejects a candidate").
+  2. `src/common/schemas.py` — the `TradeCandidate.ideal` **field comment**, "Never a gate." This
+     is the field `risk_engine` actually reads (`cand.ideal.min_credit`), so it was the most
+     directly misleading copy in the tree.
+  3. `src/analytics/fair_value.py` — the module docstring's "**Never a gate.** … Nothing here
+     rejects a candidate; it only describes and (optionally) ranks." Rewritten as "**No reject path
+     of its own**", and its tier note now states *why* the deterministic-tier constraint is
+     load-bearing rather than formal (a sentiment term added here would refuse trades, not reorder
+     them) — the first thing anyone editing this file reads.
+  4. `config/scoring_weights.yaml` — "The ideal zone is never a gate — raising this only reorders
+     the slate." True of `zone_fit`, false of the zone; rescoped.
+  All five edits are **comment/docstring-only**: no key, value, default, or line of logic changed,
+  confirmed by `yaml.safe_load` on both config files (`zone_fit` still `0.0`/`0.0`, `ideal_zone`
+  and `income` blocks byte-identical in value) and by the suite. Checked and left alone as
+  genuinely accurate: `src/analytics/fundamentals.py:66` ("target_* … never a gate" — verified,
+  `min_credit_for` takes no `fund` parameter, so those fields reach only the display-only
+  `buy_below` level), `ARCHITECTURE.md:93`/`:405` (already correctly split by Task 5), and
+  `SETUP.md:211-222` (already correct, and its `min_credit_edge_pct` row already says "**Feeds the
+  primary income gate**"). The two Minors: `STATUS.md`'s D2 entry cited `income.min_credit_edge_pct`
+  — wrong namespace, the key is `ideal_zone.min_credit_edge_pct` (`risk_limits.yaml:81`); and N12's
+  "in AUTOMATED mode … applies to both modes" predated the four-rung ladder, reframed as auto-open
+  semantics with a dated note that Task 14 renamed the state without changing the semantics.
+  Gate re-run: 1115 passed, `ruff check .` / `ruff format --check .` / `mypy src` all clean.
+
 ---
 
 ## File Structure

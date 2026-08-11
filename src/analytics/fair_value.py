@@ -13,14 +13,20 @@ answers both, deterministically:
   * **action_price / buy_below** — the underlying level that makes the write attractive, and
     the level at which acquiring shares is sensible.
 
-**Tier: deterministic.** ``zone_fit`` can optionally feed ``technical_score``, so this module
-may read technicals, IV, fundamentals and Black-Scholes — and nothing else. It must never
-import ``sentiment``, ``sector_context``, ``market_conditions`` or anything under
-``src.claude``: those are enrichment-tier and may not influence ranking. Asserted by
+**Tier: deterministic — and since D2 this is load-bearing, not a formality.** ``min_credit``
+is read by ``engine/risk_engine.py``'s variance-risk-premium gate under
+``income.require_vrp_edge`` (ships ``true``), so a number computed here can *reject a trade*;
+``zone_fit`` additionally feeds ``technical_score`` (ships at ``0.0``). This module may
+therefore read technicals, IV, fundamentals and Black-Scholes — and nothing else. It must
+never import ``sentiment``, ``sector_context``, ``market_conditions`` or anything under
+``src.claude``: those are enrichment-tier, and routing them in here would no longer merely
+reorder candidates, it would let news tone and crowd sentiment refuse one. Asserted by
 ``tests/test_eval_skills.py``.
 
-**Never a gate.** The Rules Engine (``engine/risk_engine.py``) remains the sole path to an
-order. Nothing here rejects a candidate; it only describes and (optionally) ranks.
+**No reject path of its own.** Nothing in this module raises, refuses, or filters — it
+computes and returns numbers, and callers decide what to do with them. The Rules Engine
+(``engine/risk_engine.py``) remains the sole path to an order. That is *not* the same as
+saying the output is inert: see the tier note above.
 
 Fail-soft throughout: every input is optional, every field degrades to ``None`` independently,
 and ``IdealZone.confidence`` reports how much of the derivation actually had data.

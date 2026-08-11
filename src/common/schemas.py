@@ -315,8 +315,16 @@ class IdealZone(BaseModel):
         and the level at which acquiring shares is sensible.
 
     Every field is optional: each input degrades independently and ``confidence`` reports how
-    much of the derivation actually had data. Display + optional ranking only — this never
-    rejects a candidate (the deterministic Rules Engine remains the sole gate).
+    much of the derivation actually had data.
+
+    **Two kinds of field — do not assume the whole zone is inert.** The strike band and the
+    action levels are display + optional ranking only (they reach scoring solely through
+    ``scoring_weights.yaml``'s ``zone_fit``, which ships at ``0.0``). ``min_credit`` is
+    different: since D2 it is a real gate — ``risk_engine.validate_candidates`` rejects a
+    candidate whose ``premium`` falls below it under ``income.require_vrp_edge`` (ships
+    ``true``), reason ``premium_below_fair_value``. A ``None`` zone never blocks.
+    ``fair_value.py`` still has no reject path of its own, so the deterministic Rules Engine
+    remains the sole path to an order.
     """
 
     symbol: str
@@ -373,8 +381,11 @@ class TradeCandidate(BaseModel):
     next_earnings: date | None = (
         None  # earnings date within the option's life → blackout (risk engine)
     )
-    # Where this contract *should* sit vs where it does — enrichment for the card and the
-    # reasoning layer, plus an optional (default-off) `zone_fit` ranking term. Never a gate.
+    # Where this contract *should* sit vs where it does. The band and action levels are
+    # enrichment for the card and the reasoning layer, plus an optional (default-off)
+    # `zone_fit` ranking term — but `ideal.min_credit` is read by risk_engine's
+    # variance-risk-premium gate (`income.require_vrp_edge`), so this field can reject a
+    # candidate. Leaving it None is safe: a missing zone never blocks.
     ideal: IdealZone | None = None
     # Provenance
     scores: ScoreCard

@@ -323,7 +323,7 @@ agent could not close — see its entry below. Regression tests: `tests/test_cap
   D1 the emergent strategy was short puts on cheap, high-IV, speculative names only — the opposite
   of the documented Tier-1 core-income intent. **Fixed:** the variance-risk-premium floor already
   computed in `analytics/fair_value.py` (Black-Scholes fair value at *realised* vol HV30, plus
-  `income.min_credit_edge_pct`) was promoted from display to a real gate
+  `ideal_zone.min_credit_edge_pct`) was promoted from display to a real gate
   (`income.require_vrp_edge: true`, reason `premium_below_fair_value`); `min_roc_pct` dropped to
   `0.15` and `min_annualized_yield_pct` to `0.0`, both now noise floors only. The gate asks "am I
   being paid more than this risk is worth?" instead of "is the yield big enough?" — the hidden delta
@@ -732,13 +732,16 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   (outcomes first); `_persist_memory` upserts one `claude_memory` row per (symbol, strategy,
   day) — refreshed with the best-ranked candidate's verdict — instead of one row per candidate
   per 15-min cycle. A recorded outcome is never clobbered.
-- **N12 AUTOMATED-mode semantics documented (design decision):** in AUTOMATED mode the system
-  trades the **deterministic, gate-passing slate**; Claude's review is enrichment shown for the
-  record but does **not** filter, gate, or reorder what executes — a "skip / confidence 0.9"
-  verdict changes nothing. This is required by the fence (Claude must never gate an order). To
-  raise the AUTO bar, raise `weights.min_candidate_score` (applies to both modes) — never route
-  it through Claude's verdict. `_auto_queue_candidates` queues the slate; the execution-time
-  Rules-Engine re-gate and circuit breakers remain the only deterministic guards.
+- **N12 auto-open semantics documented (design decision):** whenever the system opens a position
+  without a human tap, it trades the **deterministic, gate-passing slate**; Claude's review is
+  enrichment shown for the record but does **not** filter, gate, or reorder what executes — a
+  "skip / confidence 0.9" verdict changes nothing. This is required by the fence (Claude must never
+  gate an order). To raise the auto-open bar, raise `weights.min_candidate_score` (which applies at
+  every rung) — never route it through Claude's verdict. `_auto_queue_candidates` queues the slate;
+  the execution-time Rules-Engine re-gate and circuit breakers remain the only deterministic guards.
+  *(Written when auto-open was the binary AUTOMATED half of a MANUAL/AUTOMATED toggle; Task 14
+  replaced that with the four-rung ladder, so "auto-open" now means WHITELIST's listed symbols and
+  anything at FULL. The semantics above are unchanged by that — only the name of the state is.)*
 - **N17 Hardcoded universe prices would rot:** `strategist._UNIVERSE_CONTEXT` carries Jun-2026
   prices/IV ranks; over months Claude would anchor on wrong levels with high confidence.
   **Fixed:** the static block now opens with a STALE banner (figures are coarse qualitative

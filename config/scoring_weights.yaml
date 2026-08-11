@@ -6,7 +6,9 @@
 # alignment with how well the strike sits in the ideal band computed by
 # analytics/fair_value.py (expected move snapped to support/resistance). 0.0 = regime only
 # (identical to the behaviour before the ideal-zone feature); 1.0 = strike placement only.
-# The ideal zone is never a gate — raising this only reorders the slate.
+# `zone_fit` itself never gates — raising it only reorders the slate. Do not read that as
+# "the ideal zone is inert": the same zone's `min_credit` IS a gate (risk_limits.yaml →
+# income.require_vrp_edge). Different field, different job.
 
 covered_call:
   iv: 0.30            # higher IV rank = richer premium = better
