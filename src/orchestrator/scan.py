@@ -55,14 +55,19 @@ from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
 from src.ibkr.market_data import drain_market_data_lines, get_option_chain_quotes_async
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
-from src.notify.formatters import (
-    format_assessed_contracts,
-    format_data_provenance,
-    format_skip_reasons,
-)
-from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates, thread_id
+
+# The only names this module still takes from src.notify. They are held here — rather than in
+# scan_progress, which owns every other Telegram call — because tests/test_scan_timeout.py,
+# tests/test_scan_materiality.py and tests/test_scan_review_reuse.py monkeypatch them as
+# attributes of this module. They are injected into send_scan_results via SendDeps.
+from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates
 from src.orchestrator.scan_pipeline import ChainStatus, SymbolDeps, scan_symbol
-from src.orchestrator.scan_progress import _ProgressCB, _Tracker
+from src.orchestrator.scan_progress import (
+    SendDeps,
+    _ProgressCB,
+    _Tracker,
+    send_scan_results,
+)
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.risk_verdicts import record_assessments
@@ -1180,138 +1185,44 @@ async def _run_scan_body(
     record_assessments(result.run_id, result.assessed)
 
     # --- 10. Send to Telegram ---
-    # send_candidates manages its own short DB transactions (no session held across the
-    # Telegram network sends — that would block other processes writing the same SQLite DB).
-    await tracker.tick("notify", "⏳")
-    try:
-        cfg_s = get_config().secrets
-        # The full "assessed but not approved" listing goes out on manual /scan and full
-        # sweeps only. The 15-min intraday loop keeps the compact one-line near-miss digest
-        # (`near_misses` below) so this can't reintroduce ~26 extra messages a day (S6).
-        cc_assessed_text = (
-            format_assessed_contracts(
-                result.assessed, strategy="covered_call", max_rows=_ASSESSED_LIMIT
-            )
-            if not intraday
-            else None
-        )
-        csp_assessed_text = (
-            format_assessed_contracts(
-                result.assessed, strategy="cash_secured_put", max_rows=_ASSESSED_LIMIT
-            )
-            if not intraday
-            else None
-        )
-        await send_candidates(
-            result.cc_candidates,
-            result.reviews,
-            thread_id=thread_id(cfg_s.telegram_thread_cc),
-            label="Covered Calls",
-            icon="🔵",
-            hash_key="last_cc_hash",
-            time_key="last_cc_time",
-            empty_reason=_no_candidates_reason(
-                result,
-                len(cc_candidates),
-                strategy="covered_call",
-                positions=positions,
-                rejection_tally=cc_rejection_tally,
-                symbol_count=len({c.underlying for c in cc_candidates}),
-                intraday=intraday,
-            ),
-            suppress_unchanged=intraday,
-            near_misses=cc_near_misses,
-            near_miss_more=cc_near_miss_more,
-            assessed_text=cc_assessed_text,
-        )
-        await send_candidates(
-            result.csp_candidates,
-            result.reviews,
-            thread_id=thread_id(cfg_s.telegram_thread_csp),
-            label="Cash-Secured Puts",
-            icon="🟣",
-            hash_key="last_csp_hash",
-            time_key="last_csp_time",
-            empty_reason=_no_candidates_reason(
-                result,
-                len(csp_candidates),
-                strategy="cash_secured_put",
-                rejection_tally=csp_rejection_tally,
-                symbol_count=len({c.underlying for c in csp_candidates}),
-                intraday=intraday,
-            ),
-            suppress_unchanged=intraday,
-            near_misses=csp_near_misses,
-            near_miss_more=csp_near_miss_more,
-            assessed_text=csp_assessed_text,
-        )
-        await send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
-
-        # C7: skip-reasons card — send on full sweeps (manual /scan) when any symbols
-        # were fully rejected. Omitted for intraday cycles (would fire ~26× per session).
-        if not intraday and per_symbol_skip and bot is not None and chat_id:
-            skip_text = format_skip_reasons(per_symbol_skip)
-            if skip_text:
-                try:
-                    await bot.send_message(  # type: ignore[attr-defined]
-                        chat_id=chat_id,
-                        message_thread_id=thread_id(cfg_s.telegram_thread_scan),
-                        text=skip_text,
-                        parse_mode="MarkdownV2",
-                    )
-                except Exception:
-                    log.warning("scan: failed to send skip-reasons card", exc_info=True)
-
-        # S6 note: an intraday cycle that surfaces nothing is NOT silent. `send_candidates`
-        # appends a timestamped `[HH:MM] … no candidates this cycle <reason>` line (plus the
-        # closest near-miss) to the persisted per-thread status message, and `_no_candidates_
-        # reason` now carries the materiality clause explaining *why* chains weren't re-fetched.
-        # A separate heartbeat message used to exist for this but could never fire — both send
-        # functions return True on their empty path — and reinstating it would mean two
-        # messages per quiet cycle, which is exactly the flood S6 removed.
-    except Exception:
-        log.exception("scan: failed to send Telegram messages")
-        await tracker.error("notify", "send failed")
-    else:
-        await tracker.complete(
-            len(result.cc_candidates),
-            len(result.csp_candidates),
-            len(result.buy_candidates),
-            vix=result.market_conditions.vix,
-        )
-
-    # Best-effort account snapshot after every cycle (intraday + full sweep).
-    try:
-        await send_account_snapshot(account, positions)
-    except Exception:
-        log.warning("scan: failed to send account snapshot", exc_info=True)
-
-    # Full sweep (manual /scan): close out with a provenance summary so the
-    # operator can see at a glance which data sources were live vs. fell back this run.
-    # Best-effort — a failure here must not affect the notify stage's success status above.
-    if not intraday and bot is not None and chat_id:
-        prov = result.provenance
-        cfg_s = get_config().secrets
-        try:
-            await bot.send_message(  # type: ignore[attr-defined]
-                chat_id=chat_id,
-                message_thread_id=thread_id(cfg_s.telegram_thread_scan),
-                text=format_data_provenance(
-                    total_symbols=result.total_symbols,
-                    chain_ibkr=prov.chain_ibkr,
-                    chain_failed=prov.chain_failed,
-                    chain_skipped=prov.chain_skipped,
-                    spot_ibkr=prov.spot_ibkr,
-                    spot_yfinance=prov.spot_yfinance,
-                    spot_unavailable=prov.spot_unavailable,
-                    greeks_ibkr=prov.greeks_ibkr,
-                    greeks_yfinance=prov.greeks_yfinance,
-                    vix=result.market_conditions.vix if result.market_conditions else None,
-                ),
-                parse_mode="MarkdownV2",
-            )
-        except Exception:
-            log.warning("scan: failed to send data-provenance summary", exc_info=True)
+    # Presentation lives in scan_progress; this module only supplies the finished result plus the
+    # three sender coroutines (held here because the scan tests monkeypatch them on this module).
+    await send_scan_results(
+        tracker,
+        result,
+        bot=bot,
+        chat_id=chat_id,
+        intraday=intraday,
+        account=account,
+        positions=positions,
+        cc_empty_reason=_no_candidates_reason(
+            result,
+            len(cc_candidates),
+            strategy="covered_call",
+            positions=positions,
+            rejection_tally=cc_rejection_tally,
+            symbol_count=len({c.underlying for c in cc_candidates}),
+            intraday=intraday,
+        ),
+        csp_empty_reason=_no_candidates_reason(
+            result,
+            len(csp_candidates),
+            strategy="cash_secured_put",
+            rejection_tally=csp_rejection_tally,
+            symbol_count=len({c.underlying for c in csp_candidates}),
+            intraday=intraday,
+        ),
+        cc_near_misses=cc_near_misses,
+        cc_near_miss_more=cc_near_miss_more,
+        csp_near_misses=csp_near_misses,
+        csp_near_miss_more=csp_near_miss_more,
+        per_symbol_skip=per_symbol_skip,
+        sends=SendDeps(
+            send_candidates=send_candidates,
+            send_buy_list=send_buy_list,
+            send_account_snapshot=send_account_snapshot,
+        ),
+    )
 
     log.info(
         "scan complete — run_id=%s CC=%d CSP=%d buy=%d reviews=%d",

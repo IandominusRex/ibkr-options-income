@@ -1,13 +1,26 @@
-"""Scan progress reporting — the two Telegram messages a scan edits in place.
+"""Scan presentation — everything a scan shows a human, and the only third of the trio that
+talks to ``src.notify``.
 
-Split out of ``scan.py`` so that progress *presentation* lives apart from the scan's data
-production (``scan_pipeline.py``). Nothing here decides anything: the tracker only renders
-MarkdownV2 and pushes it through the two async callbacks it was handed, either of which may be
-``None`` (the 15-min daemon loop runs a scan silently).
+Two surfaces live here:
 
-The callbacks are supplied by the caller — this module never imports ``src.notify`` or the
-telegram SDK itself, so a non-Telegram front-end (the dashboard, a future HTTP API) can reuse
-the same tracker by passing its own sinks.
+* ``_Tracker`` — the two messages a ``/scan`` edits *in place* while it runs: a stage checklist
+  and a progress dashboard. It renders MarkdownV2 and pushes it through two async callbacks
+  supplied by the caller, either of which may be ``None`` (the 15-min daemon loop runs silently),
+  so the tracker itself needs no Telegram SDK and a non-Telegram front-end can reuse it.
+* ``send_scan_results`` — the end-of-run send stage: the CC/CSP candidate cards, the buy list,
+  the C7 skip-reasons card, the account snapshot, and the full-sweep data-provenance summary,
+  together with the ``notify`` stage's tracker transitions.
+
+Split out of ``scan.py`` so that presentation lives apart from the scan's data production
+(``scan_pipeline.py``, which imports nothing from ``src.notify`` at all — enforced by a test) and
+from orchestration. Nothing here decides anything: it reports what the scan already produced.
+
+``send_candidates`` / ``send_buy_list`` / ``send_account_snapshot`` are *injected* via
+:class:`SendDeps` rather than imported here, for the same reason ``scan_pipeline.SymbolDeps``
+injects its screens: the scan tests monkeypatch those three names as attributes of
+``src.orchestrator.scan``, so that module has to stay the one holding the reference. Everything
+else this module needs from ``src.notify`` (``thread_id`` and the three formatters) is imported
+directly.
 """
 
 from __future__ import annotations
@@ -15,10 +28,29 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from src.common.config import get_config
+from src.common.schemas import AccountSnapshot, PositionSnapshot, TradeCandidate
+from src.notify.formatters import (
+    format_assessed_contracts,
+    format_data_provenance,
+    format_skip_reasons,
+)
+from src.notify.sender import thread_id
+
+if TYPE_CHECKING:  # a presenter renders the orchestrator's result type; runtime import-free
+    from src.orchestrator.scan import ScanResult
 
 log = logging.getLogger(__name__)
 
 _ProgressCB = Callable[[str], Awaitable[None]]
+
+# Max assessed-but-not-approved contracts to list per strategy on a *manual* /scan or a full
+# sweep. The 15-min intraday loop never renders this block (it keeps the one-line digest
+# above), so this bound only shapes the deliberate, human-requested view.
+_ASSESSED_LIMIT = 8
 
 _STAGE_ORDER = ["account", "market_data", "scoring", "claude", "notify"]
 _STAGE_LABELS = {
@@ -181,3 +213,174 @@ class _Tracker:
         self._pct = 1.0
         self._status = f"Done — {cc} CC · {csp} CSP · {buy} buy{vix_str}"
         await self._push(force=True)
+
+
+# ---------------------------------------------------------------------------
+# End-of-run send stage
+# ---------------------------------------------------------------------------
+
+# Every sender returns True/False (sent / suppressed); none of them raise on a Telegram failure
+# they can handle themselves. Typed loosely because each takes a different keyword surface.
+AsyncSend = Callable[..., Awaitable[bool]]
+
+
+@dataclass(frozen=True)
+class SendDeps:
+    """The three ``src.notify.sender`` coroutines :func:`send_scan_results` calls out to.
+
+    Injected rather than imported because ``tests/test_scan_timeout.py``,
+    ``tests/test_scan_materiality.py`` and ``tests/test_scan_review_reuse.py`` monkeypatch these
+    names as attributes of ``src.orchestrator.scan``. A module-level import here would resolve
+    from *this* module's globals and silently bypass those stubs, sending real Telegram traffic
+    from the test suite.
+    """
+
+    send_candidates: AsyncSend
+    send_buy_list: AsyncSend
+    send_account_snapshot: AsyncSend
+
+
+async def send_scan_results(
+    tracker: _Tracker,
+    result: ScanResult,
+    *,
+    bot: object,
+    chat_id: str,
+    intraday: bool,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+    cc_empty_reason: str,
+    csp_empty_reason: str,
+    cc_near_misses: list[tuple[TradeCandidate, list[str]]],
+    cc_near_miss_more: int,
+    csp_near_misses: list[tuple[TradeCandidate, list[str]]],
+    csp_near_miss_more: int,
+    per_symbol_skip: dict[str, list[str]],
+    sends: SendDeps,
+) -> None:
+    """Send a finished scan's results and drive the ``notify`` stage of the tracker.
+
+    Never raises: the candidate sends are wrapped so a Telegram failure marks the stage failed
+    rather than aborting the scan, and the account snapshot + provenance summary are each
+    independently best-effort so neither can affect the stage's success status.
+
+    *cc_empty_reason* / *csp_empty_reason* are pre-rendered by the caller (they read
+    ``ScanResult`` plus the per-strategy rejection tallies, which is orchestration state).
+    """
+    # send_candidates manages its own short DB transactions (no session held across the
+    # Telegram network sends — that would block other processes writing the same SQLite DB).
+    await tracker.tick("notify", "⏳")
+    try:
+        cfg_s = get_config().secrets
+        # The full "assessed but not approved" listing goes out on manual /scan and full
+        # sweeps only. The 15-min intraday loop keeps the compact one-line near-miss digest
+        # (`near_misses` below) so this can't reintroduce ~26 extra messages a day (S6).
+        cc_assessed_text = (
+            format_assessed_contracts(
+                result.assessed, strategy="covered_call", max_rows=_ASSESSED_LIMIT
+            )
+            if not intraday
+            else None
+        )
+        csp_assessed_text = (
+            format_assessed_contracts(
+                result.assessed, strategy="cash_secured_put", max_rows=_ASSESSED_LIMIT
+            )
+            if not intraday
+            else None
+        )
+        await sends.send_candidates(
+            result.cc_candidates,
+            result.reviews,
+            thread_id=thread_id(cfg_s.telegram_thread_cc),
+            label="Covered Calls",
+            icon="🔵",
+            hash_key="last_cc_hash",
+            time_key="last_cc_time",
+            empty_reason=cc_empty_reason,
+            suppress_unchanged=intraday,
+            near_misses=cc_near_misses,
+            near_miss_more=cc_near_miss_more,
+            assessed_text=cc_assessed_text,
+        )
+        await sends.send_candidates(
+            result.csp_candidates,
+            result.reviews,
+            thread_id=thread_id(cfg_s.telegram_thread_csp),
+            label="Cash-Secured Puts",
+            icon="🟣",
+            hash_key="last_csp_hash",
+            time_key="last_csp_time",
+            empty_reason=csp_empty_reason,
+            suppress_unchanged=intraday,
+            near_misses=csp_near_misses,
+            near_miss_more=csp_near_miss_more,
+            assessed_text=csp_assessed_text,
+        )
+        await sends.send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
+
+        # C7: skip-reasons card — send on full sweeps (manual /scan) when any symbols
+        # were fully rejected. Omitted for intraday cycles (would fire ~26× per session).
+        if not intraday and per_symbol_skip and bot is not None and chat_id:
+            skip_text = format_skip_reasons(per_symbol_skip)
+            if skip_text:
+                try:
+                    await bot.send_message(  # type: ignore[attr-defined]
+                        chat_id=chat_id,
+                        message_thread_id=thread_id(cfg_s.telegram_thread_scan),
+                        text=skip_text,
+                        parse_mode="MarkdownV2",
+                    )
+                except Exception:
+                    log.warning("scan: failed to send skip-reasons card", exc_info=True)
+
+        # S6 note: an intraday cycle that surfaces nothing is NOT silent. `send_candidates`
+        # appends a timestamped `[HH:MM] … no candidates this cycle <reason>` line (plus the
+        # closest near-miss) to the persisted per-thread status message, and `_no_candidates_
+        # reason` now carries the materiality clause explaining *why* chains weren't re-fetched.
+        # A separate heartbeat message used to exist for this but could never fire — both send
+        # functions return True on their empty path — and reinstating it would mean two
+        # messages per quiet cycle, which is exactly the flood S6 removed.
+    except Exception:
+        log.exception("scan: failed to send Telegram messages")
+        await tracker.error("notify", "send failed")
+    else:
+        await tracker.complete(
+            len(result.cc_candidates),
+            len(result.csp_candidates),
+            len(result.buy_candidates),
+            vix=result.market_conditions.vix,
+        )
+
+    # Best-effort account snapshot after every cycle (intraday + full sweep).
+    try:
+        await sends.send_account_snapshot(account, positions)
+    except Exception:
+        log.warning("scan: failed to send account snapshot", exc_info=True)
+
+    # Full sweep (manual /scan): close out with a provenance summary so the
+    # operator can see at a glance which data sources were live vs. fell back this run.
+    # Best-effort — a failure here must not affect the notify stage's success status above.
+    if not intraday and bot is not None and chat_id:
+        prov = result.provenance
+        cfg_s = get_config().secrets
+        try:
+            await bot.send_message(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                message_thread_id=thread_id(cfg_s.telegram_thread_scan),
+                text=format_data_provenance(
+                    total_symbols=result.total_symbols,
+                    chain_ibkr=prov.chain_ibkr,
+                    chain_failed=prov.chain_failed,
+                    chain_skipped=prov.chain_skipped,
+                    spot_ibkr=prov.spot_ibkr,
+                    spot_yfinance=prov.spot_yfinance,
+                    spot_unavailable=prov.spot_unavailable,
+                    greeks_ibkr=prov.greeks_ibkr,
+                    greeks_yfinance=prov.greeks_yfinance,
+                    vix=result.market_conditions.vix if result.market_conditions else None,
+                ),
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            log.warning("scan: failed to send data-provenance summary", exc_info=True)
