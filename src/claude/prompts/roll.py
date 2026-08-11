@@ -5,20 +5,6 @@ from __future__ import annotations
 from src.common.schemas import OptionQuote, PositionSnapshot, RollAlert
 
 
-def _active_skills_block() -> str:
-    """Human-promoted reasoning skills for injection (verdict/ranking only). Fail-soft → ''."""
-    from src.common.config import get_config
-
-    if not get_config().claude.skills_enabled:
-        return ""
-    try:
-        from src.claude.skills.registry import render_active_skills
-
-        return render_active_skills()
-    except Exception:
-        return ""
-
-
 def build_roll_prompt(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> str:
     """Return the prompt string for a single-position roll/hold/close decision."""
     right_label = pos.right.value if pos.right else "?"
@@ -29,9 +15,6 @@ def build_roll_prompt(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuot
         f"short {strategy} position. Evaluate whether to roll, hold, or close.",
         "",
     ]
-    skills_block = _active_skills_block()
-    if skills_block:
-        lines += [skills_block, ""]
     lines += [
         "=== POSITION ===",
         f"Symbol:     {pos.symbol}",

@@ -1,4 +1,4 @@
-"""Tests for the enrichment-layer evaluation: ledger, baseline, reconciler, metrics.
+"""Tests for the enrichment-layer evaluation: ledger, baseline, reconciler, score-vs-outcome.
 
 DB tests use tmp_path + SQLite so they never touch production state (same pattern as
 test_execution). No IBKR, no Claude CLI.
@@ -319,59 +319,6 @@ def test_reconcile_user_rejected(tmp_path, monkeypatch) -> None:
     counts = reconcile()
     assert counts.get("user_rejected") == 1
     assert load_records()[0].outcome == VerdictOutcome.USER_REJECTED
-
-
-# --------------------------------------------------------------------------- #
-# Metrics
-# --------------------------------------------------------------------------- #
-def _closed(cid: str, *, claude: str, pnl: float, conf: float) -> VerdictRecord:
-    r = _record(cid, claude=claude, confidence=conf, expiry_days=-1)
-    r.filled = True
-    r.outcome = VerdictOutcome.EXPIRED_WORTHLESS if pnl > 0 else VerdictOutcome.CLOSED_EARLY
-    r.realized_pnl = pnl
-    r.outcome_date = date.today()
-    return r
-
-
-def test_metrics_edge_and_calibration() -> None:
-    from src.claude.eval.metrics import evaluate
-
-    # Claude said sell on the two winners and wait on the loser → its filter should beat
-    # the baseline (which trades all three).
-    records = [
-        _closed("w1", claude="sell", pnl=200.0, conf=0.8),
-        _closed("w2", claude="sell", pnl=100.0, conf=0.8),
-        _closed("l1", claude="wait", pnl=-300.0, conf=0.2),
-    ]
-    ev = evaluate(records)
-
-    assert ev.n_closed == 3
-    assert ev.baseline.n_trades == 3
-    assert ev.follow_claude.n_trades == 2
-    assert ev.baseline.mean_pnl == pytest.approx((200 + 100 - 300) / 3)
-    assert ev.follow_claude.mean_pnl == pytest.approx(150.0)
-    assert ev.edge_per_trade > 0  # Claude's skip avoided the loser
-    assert ev.brier_score is not None
-
-
-def test_metrics_empty_is_not_zero_skill() -> None:
-    from src.claude.eval.metrics import evaluate
-
-    ev = evaluate([])
-    assert ev.n_closed == 0
-    assert ev.edge_per_trade is None
-    assert any("empty" in n.lower() for n in ev.notes)
-
-
-def test_metrics_by_period_groups_by_month() -> None:
-    from src.claude.eval.metrics import evaluate_by_period
-
-    r1 = _closed("a", claude="sell", pnl=100.0, conf=0.7)
-    r1.outcome_date = date(2026, 4, 15)
-    r2 = _closed("b", claude="sell", pnl=50.0, conf=0.7)
-    r2.outcome_date = date(2026, 5, 20)
-    periods = dict(evaluate_by_period([r1, r2]))
-    assert set(periods) == {"2026-04", "2026-05"}
 
 
 # --------------------------------------------------------------------------- #

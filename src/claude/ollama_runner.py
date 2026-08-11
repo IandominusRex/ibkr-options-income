@@ -19,7 +19,6 @@ from src.claude.parser import (
     parse_ollama_journal_output,
     parse_ollama_review_output,
     parse_ollama_roll_output,
-    parse_ollama_skill_proposal,
 )
 from src.claude.prompts.eod import build_eod_prompt
 from src.claude.prompts.roll import build_roll_prompt
@@ -36,7 +35,6 @@ from src.common.schemas import (
     PositionSnapshot,
     RollAlert,
     RollReview,
-    SkillProposal,
     TechnicalStats,
     TradeCandidate,
 )
@@ -251,33 +249,3 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
     else:
         _record_success()
     return narrative
-
-
-def propose_skill(prompt: str) -> SkillProposal | None:
-    """Local-model equivalent of the CLI skill-proposal path. Returns None on any failure.
-
-    `prompt` is pre-built by `proposer.build_proposal_prompt` — identical regardless of
-    backend. Unlike the CLI path there's no outer `{"result": ...}` envelope to unwrap.
-    """
-    cfg = get_config().claude
-
-    if not cfg.enabled:
-        log.info("ollama: disabled by config — skipping skill proposal")
-        return None
-
-    if _circuit_open:
-        log.debug("ollama: circuit open — skipping skill proposal")
-        return None
-
-    raw = _generate(prompt, cfg)
-    if raw is None:
-        _record_failure()
-        return None
-
-    proposal = parse_ollama_skill_proposal(raw)
-    if proposal is None:
-        log.warning("ollama skills: unparseable output")
-        _record_failure()
-    else:
-        _record_success()
-    return proposal

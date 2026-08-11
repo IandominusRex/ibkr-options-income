@@ -120,24 +120,6 @@ def _format_history(memory: list[ClaudeMemoryRow]) -> list[str]:
     return lines
 
 
-def _active_skills_block() -> str:
-    """Render the human-promoted reasoning skills for prompt injection.
-
-    Gated by config (`claude.skills_enabled`) and fail-soft: any error → empty string, so a
-    bad skill file can never break a review. This is the sole injection point for skills.
-    """
-    from src.common.config import get_config
-
-    if not get_config().claude.skills_enabled:
-        return ""
-    try:
-        from src.claude.skills.registry import render_active_skills
-
-        return render_active_skills()
-    except Exception:
-        return ""
-
-
 def _backtest_line(cand: TradeCandidate) -> str:
     """Compact on-demand backtest for one candidate, gated by `claude.backtest_in_prompt` (C11).
 
@@ -393,12 +375,6 @@ def build_prompt(
     # Single-ticker deep-dive: the sector/market backdrop so the model judges the name in context.
     if single_ticker and sector_context:
         lines += [sector_context, ""]
-
-    # Human-promoted reasoning skills (verdict + ranking only — never gates). Enrichment, and
-    # the only path a skill reaches Claude; the engine never sees this text.
-    skills_block = _active_skills_block()
-    if skills_block:
-        lines += [skills_block, ""]
 
     lines += [
         "=== MARKET CONTEXT ===",

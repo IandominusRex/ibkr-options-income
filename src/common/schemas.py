@@ -588,46 +588,6 @@ class VerdictRecord(BaseModel):
     contracts: int | None = None
 
 
-class CalibrationBucket(BaseModel):
-    """One confidence band of the reliability curve: how Claude's stated confidence compares
-    to the realized win rate of the trades it expressed that confidence on."""
-
-    lower: float  # band lower bound (e.g. 0.6)
-    upper: float  # band upper bound (e.g. 0.8)
-    n: int
-    mean_confidence: float
-    win_rate: float  # realized fraction of profitable trades in the band
-
-
-class PolicyStats(BaseModel):
-    """Realized performance of one decision policy over the evaluated trades."""
-
-    label: str  # "follow_claude" | "baseline"
-    n_trades: int
-    win_rate: float
-    mean_pnl: float
-    total_pnl: float
-
-
-class VerdictEvaluation(BaseModel):
-    """Held-out scoring of Claude's verdicts: calibration + EV vs the deterministic baseline.
-
-    Computed on *closed* trades only (realized outcomes), optionally restricted to a held-out
-    date window so the score reflects out-of-sample skill, not the last trade's luck.
-    """
-
-    n_closed: int
-    period_start: date | None = None
-    period_end: date | None = None
-    brier_score: float | None = None  # mean squared (confidence − win); lower is better
-    calibration: list[CalibrationBucket] = Field(default_factory=list)
-    follow_claude: PolicyStats
-    baseline: PolicyStats
-    edge_per_trade: float | None = None  # follow_claude.mean_pnl − baseline.mean_pnl
-    agreement_rate: float | None = None  # fraction where Claude and baseline agreed
-    notes: list[str] = Field(default_factory=list)
-
-
 class ScoreBucket(BaseModel):
     """Realized performance of the closed trades whose signal value fell in one band.
 
@@ -670,17 +630,3 @@ class ScoreOutcomeReport(BaseModel):
     component_buckets: list[ScoreBucket] = Field(default_factory=list)
     signal_correlations: list[SignalCorrelation] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-
-
-class SkillProposal(BaseModel):
-    """A Claude-drafted reasoning skill, awaiting human review before promotion.
-
-    Skills are playbooks injected into the *strategist/roll* prompts only. They shape verdict
-    and ranking — never gates, weights, or sizing (those stay human-edited config).
-    """
-
-    name: str  # kebab-case slug → filename
-    description: str  # one-line; shown in the prompt's skill index
-    body: str  # the markdown playbook injected into the reasoning prompt
-    rationale: str = ""  # why Claude proposed it (not injected; for the human reviewer)
-    supporting_stats: dict = Field(default_factory=dict)  # ledger evidence behind the proposal

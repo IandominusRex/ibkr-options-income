@@ -15,7 +15,7 @@ import re
 
 from pydantic import ValidationError
 
-from src.common.schemas import ClaudeReview, RollReview, SkillProposal
+from src.common.schemas import ClaudeReview, RollReview
 
 log = logging.getLogger(__name__)
 
@@ -207,22 +207,3 @@ def parse_ollama_journal_output(raw: str) -> str | None:
         return None
     payload = _parse_dict_payload(_strip_fences(raw), "ollama eod")
     return None if payload is None else _extract_narrative(payload, "ollama eod")
-
-
-def parse_ollama_skill_proposal(raw: str) -> SkillProposal | None:
-    """Parse Ollama's `response` text → SkillProposal. Returns None on any failure.
-
-    Unlike the CLI proposer (`_parse_proposal` in `proposer.py`), there is no outer
-    `{"result": "..."}` envelope to unwrap — `raw` is the model's response text directly.
-    """
-    if not raw or not raw.strip():
-        log.warning("ollama skills: empty output")
-        return None
-    payload = _parse_dict_payload(_strip_fences(raw), "ollama skills")
-    if payload is None:
-        return None
-    try:
-        return SkillProposal.model_validate(payload)
-    except (ValidationError, TypeError) as exc:
-        log.warning("ollama skills: validation failed: %s — payload=%s", exc, payload)
-        return None
