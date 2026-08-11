@@ -98,16 +98,35 @@ events:
   earnings_blackout_days: 14     # no new short premium within N days of earnings
   ex_dividend_assignment_guard: true   # flag ITM short calls before ex-div
 
-# --- Portfolio concentration / sizing ---
+# --- Portfolio: three constraints, each in its proper unit ---
+# `max_pct_per_ticker` used to answer three unrelated questions at once, which is why any
+# CSP above a ~$150 strike was unreachable at $300k NLV. Split:
+#   1. feasibility  -> cash
+#   2. concentration -> RISK UNITS (collateral x IV x sqrt(DTE/365))
+#   3. deliberateness -> an explicit, counted large-position slot
 portfolio:
-  max_pct_per_ticker: 5.0        # of net liquidation (enforced, cumulative)
-  max_pct_per_sector: 25.0       # of net liquidation; uses universe.yaml `sectors:` map (enforced, cumulative)
-  max_correlated_exposure_pct: 35.0  # NOT YET ENFORCED — needs a price-correlation engine (see STATUS.md, deferred)
+  # 1. Feasibility. The reserve comes off FIRST; the CSP budget is a % of what remains.
+  #    Order is fixed in code (engine/capital.resolve_caps) so the two can't contradict.
+  cash_reserve_pct: 20.0
+  cash_reserve_absolute: 10000
+  max_csp_allocation_pct_of_deployable: 100.0
+
+  # 2. Concentration, in risk units. CALIBRATION WARNING: these values are NOT comparable to
+  #    the old collateral-based percentages. Risk units are collateral scaled by
+  #    IV x sqrt(DTE/365) (typically 0.05-0.30), so 5.0 here is far more permissive than 5.0
+  #    was before. Re-derive with `python -m scripts.capacity_report` before trusting them.
+  max_risk_units_per_ticker_pct: 5.0
+  max_risk_units_per_sector_pct: 25.0
+  # Fallback cap used when IV is unavailable (strictly more conservative than risk units).
+  max_collateral_per_ticker_pct: 10.0
+
+  # 3. Deliberateness. A position above max_collateral_per_ticker_pct needs a free slot and
+  #    must still sit under the hard ceiling. Without this, a high-priced name is either
+  #    impossible or unbounded — one number cannot express a third option.
+  max_large_positions: 1
+  max_pct_per_ticker_large: 25.0
+
   max_margin_usage_pct: 50.0
-  max_csp_allocation_pct: 60.0   # total CASH collateral tied up across all CSPs, as % of net liq (enforced cumulatively)
-  # Always keep this much buying power free as a buffer.
-  min_buying_power_buffer_pct: 15.0
-  # Max NEW positions a single morning scan may propose.
   max_new_positions_per_run: 10
 
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml

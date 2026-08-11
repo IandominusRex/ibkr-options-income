@@ -62,7 +62,7 @@ is worse than a stopped one.
 | 6 | Wheel cost basis into the CC gate | 1 | done | 2026-08-11 | |
 | 7 | IV rank at constant 30-day maturity | 1 | done | 2026-08-11 | |
 | 8 | Capacity report + account-size tests | 1 | done | 2026-08-11 | |
-| 9 | Phase 1 config and doc sweep | 1 | pending | | |
+| 9 | Phase 1 config and doc sweep | 1 | done | 2026-08-11 | |
 | 10 | Loss-side exits | 2 | pending | | |
 | 11 | Mark-based and drawdown kill switches | 2 | pending | | |
 | 12 | Defensive-roll economics + date bug | 2 | pending | | |
@@ -771,6 +771,83 @@ know. Empty until the first task runs.
   - No config keys were added or changed. `max_risk_units_per_ticker_pct` was not touched — the
     human ruling (relayed by the reviewer) keeps it at `5.0`; Task 9 writes it into
     `risk_limits.yaml`. No new IBKR connection was added.
+
+- **Task 9** — Production config/test edits (`config/risk_limits.yaml`'s `portfolio:` block,
+  `tests/test_config_keys.py`'s two new tests) match the brief's Step 1/3 snippets verbatim,
+  including `max_risk_units_per_ticker_pct: 5.0` per the standing human ruling — not touched.
+  Five deviations, all discovered by running the tests and the full gate rather than assumed:
+  1. **A stale-allowlist trap the brief flagged explicitly.** `_KNOWN_UNENFORCED` in
+     `tests/test_config_keys.py` held `max_correlated_exposure_pct`, `max_pct_per_sector`,
+     `max_csp_allocation_pct`, and `min_buying_power_buffer_pct` from Task 4, with a comment
+     pointing at this task. All four are deleted from `risk_limits.yaml` by the Step 3 block
+     replacement (the brief's snippet doesn't carry them forward), so all four were removed from
+     `_KNOWN_UNENFORCED` in the same commit — only `ex_dividend_assignment_guard` remains.
+     `test_allowlist_stays_accurate` alone would not have caught leaving them in (it only checks
+     that allowlisted keys stay *unread in src/*, not that they still exist in the YAML), so a new
+     test, `test_allowlist_entries_exist_in_config`, was added: it diffs `_KNOWN_UNENFORCED`
+     against `risk_limits.yaml`'s actual leaf keys and fails if any allowlisted key is no longer
+     present. Verified by hand in addition to the test: `grep` for each of the four retired names
+     across `config/risk_limits.yaml` returns nothing, and `ex_dividend_assignment_guard` is
+     confirmed present under `events:`.
+  2. **A pre-existing test asserted the retired `max_pct_per_ticker` key directly.**
+     `tests/test_foundation.py::test_config_loads_and_sections_present` had
+     `assert "max_pct_per_ticker" in cfg.risk["portfolio"]`, which the Step 3 YAML change breaks
+     (this key isn't in the brief's `_KNOWN_UNENFORCED`/retired list because it was never
+     allowlisted — Task 4 apparently didn't need to allowlist it, but nothing had updated this
+     assertion either). Changed to assert `"max_risk_units_per_ticker_pct"` instead — same intent
+     (a portfolio key is present), now pointed at a key that actually exists.
+  3. **`tests/test_engine.py::test_cumulative_buying_power_buffer` broke on the first full-suite
+     run after the YAML change** — the exact small-account effect the task brief warned about.
+     The fixture used `cash=7_500.0`; with `cash_reserve_absolute: 10000` now live (previously an
+     implicit in-code default of `0.0`), the reserve becomes `max(7500×0.20, 10000) = 10000`,
+     clipping deployable cash to `max(0, 7500−10000) = 0` and rejecting even the first candidate
+     the test expected to pass. This is not a bug — it's `cash_reserve_absolute` doing exactly
+     what §3.3 of the design spec says, and it is the concrete proof that the config change is
+     **not** inert below roughly $50k cash (only NOT inert at $100k, where 20% already exceeds the
+     $10,000 floor). **Fixed** by moving the fixture from `cash=7_500.0` to `cash=16_000.0`,
+     preserving the test's original numbers exactly: at $16,000 the $10,000 absolute floor still
+     dominates the $3,200 percentage reserve, giving the same deployable=$6,000 the test's
+     comments already described, so only the fixture value and its explanatory comment changed —
+     no assertion or intent changed.
+  4. **Three files outside the brief's file list carried stale references to the just-retired key
+     names and were updated for consistency**, all discovered by grepping the repo for the five
+     retired key names before considering the task done:
+     - `src/common/config.py`'s module docstring example, `cfg.risk.portfolio["max_pct_per_ticker"]`
+       — changed to `cfg.risk.portfolio["max_risk_units_per_ticker_pct"]`. (This docstring line is
+       also *why* `max_pct_per_ticker` never needed a `_KNOWN_UNENFORCED` entry: the guard test
+       matches on the quoted substring appearing anywhere in `src/`, and this docstring example
+       satisfied it — a second, milder instance of the same "looks read but isn't" pattern this
+       task's allowlist cleanup targets.)
+     - `config/universe.yaml`'s three prose comments referencing `max_pct_per_ticker` (Tier 2/3
+       notes) and `max_pct_per_sector` (sector-tag section header) — updated to
+       `max_risk_units_per_ticker_pct` / `max_risk_units_per_sector_pct` respectively so the
+       watchlist file doesn't point at config keys that no longer exist.
+     - `SETUP.md`'s `config/risk_limits.yaml` settings table (§ "Key settings to review") still
+       documented the three retired keys with their old meanings and defaults (5.0/25.0/60.0) —
+       this predates Task 9 and was never updated by Tasks 1–8. Replaced with a table of all eight
+       new `portfolio:` keys grouped by job (feasibility/concentration/deliberateness), and removed
+       a now-false `> Note: portfolio.max_correlated_exposure_pct is present but not enforced`
+       callout a few lines below it. This is beyond the brief's literal "note the calibration step"
+       instruction but is the same table Step 5 asks to touch, and leaving it stale would mean
+       `SETUP.md` actively lied about which keys exist — judged in scope under this project's
+       standing doc-consistency rule (CLAUDE.md's mandatory doc-update table) rather than as scope
+       creep.
+     `src/engine/capital.py`'s own docstring line 4 (`one percentage (`max_pct_per_ticker`) was
+     previously asked to answer all three at once`) was deliberately left unchanged — it's correct
+     historical framing (matches the brief's own YAML comment, which also references the retired
+     key in past tense), not a stale live reference.
+  5. **Config-change neutrality was verified, not assumed**, per the task's explicit instruction.
+     `python -m scripts.capacity_report --net-liq 300000 --cash 100000` was re-run after the Step 3
+     YAML edit and again after all doc edits: **46/46 symbols tradeable** both times, `Coverage:
+     46/46 requested symbols had usable price/IV data (0 skipped for missing data)` — unchanged
+     from Task 8's baseline. This confirms the config values chosen (20.0/10000/100.0/5.0/25.0/
+     10.0/1/25.0) reproduce `resolve_caps`'s prior in-code defaults exactly at this account size,
+     as intended — the only observed behavior change is the small-account
+     `cash_reserve_absolute` effect in deviation 3 above, which is by design and account-size-
+     dependent, not a $300k/$100k regression.
+  - **Full gate, final state:** `pytest -q` → 1127 passed (1124 baseline + 3 new: the two brief
+    tests plus `test_allowlist_entries_exist_in_config`), `ruff check .` clean, `mypy src` clean
+    (94 source files). `max_risk_units_per_ticker_pct` confirmed still `5.0` in the committed YAML.
 
 ---
 
@@ -2455,7 +2532,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `ARCHITECTURE.md`, `STATUS.md`, `SETUP.md`
 - Test: `tests/test_config_keys.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_config_keys.py — append
@@ -2485,12 +2562,12 @@ def test_retired_collateral_keys_are_gone():
         assert key not in p, f"retired key still present: {key}"
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `python -m pytest tests/test_config_keys.py -k portfolio -q`
 Expected: FAIL
 
-- [ ] **Step 3: Replace the portfolio block**
+- [x] **Step 3: Replace the portfolio block**
 
 In `config/risk_limits.yaml`, replace the entire `portfolio:` block:
 
@@ -2527,18 +2604,18 @@ portfolio:
   max_new_positions_per_run: 10
 ```
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 5: Update the docs**
+- [x] **Step 5: Update the docs**
 
 - `ARCHITECTURE.md` config section: document every new key and the fixed order of application; add `src/engine/capital.py` to the `src/engine/` folder guide.
 - `STATUS.md`: add a "Bugs fixed (2026-08-10 — capital & income model)" section covering D1, D2, D5, D6 with the measured numbers from §1 of the spec. Remove `max_correlated_exposure_pct` from the "Not built" table.
 - `SETUP.md`: note the calibration step (run `capacity_report` after changing account size).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add config/risk_limits.yaml ARCHITECTURE.md STATUS.md SETUP.md tests/test_config_keys.py

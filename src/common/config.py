@@ -4,7 +4,7 @@ Usage:
     from src.common.config import get_config
     cfg = get_config()
     cfg.ibkr.host
-    cfg.risk.portfolio["max_pct_per_ticker"]
+    cfg.risk.portfolio["max_risk_units_per_ticker_pct"]
     cfg.secrets.telegram_bot_token
 """
 

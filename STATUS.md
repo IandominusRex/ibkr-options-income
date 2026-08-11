@@ -196,8 +196,6 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Black-Scholes Greeks fallback** | **Built, then layered IBKR-first (S2, Phase 3).** Greeks are resolved in three tiers: (1) `_ticker_to_quote` reads the first available IBKR per-contract computation (`modelGreeks` → `lastGreeks` → `askGreeks` → `bidGreeks` via `_pick_greeks`) so a lagging model tick still yields genuine IBKR greeks (`greeks_source="ibkr"`); (2) `_enrich_greeks_from_ibkr_iv` BS-fills delta locally from an IBKR IV with no network call; (3) only quotes IBKR could value neither greeks nor IV for fall through to the yfinance Black-Scholes download (`_enrich_greeks_yf`), now **instrumented** (logs how many quotes forced a Yahoo fetch + the elapsed time per symbol). Tiers 2/3 set `greeks_source="black_scholes"` so the F6 live gate still treats them as untrusted. The scan batch requests generic ticks `101,106` to capture the IBKR IV. |
 | **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). **Wired end-to-end (N20):** when `monitor.roll_execution_enabled` is set, a roll trigger generates a candidate (`execution.roll_pipeline.queue_roll_for_approval`) and sends it with Approve/Reject buttons → QUEUED ROLL order → `execute_roll`. Default OFF until the BAG sign is verified on live paper; until then rolls remain alert-only. |
 | **Live limit-order repricing** | **Built (Phase 4 + C5), default OFF.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (false by default) — the `placeOrder` amend is unverified on a live account; see the live-verification list below. |
-| **`max_correlated_exposure_pct`** | Configured in `risk_limits.yaml` but **not enforced** — needs a price-correlation engine. The per-ticker and per-sector caps *are* enforced. |
-| **`max_pct_per_sector`, `max_csp_allocation_pct`, `min_buying_power_buffer_pct`** | **Retired, awaiting removal from config (D1, Task 4).** `risk_engine.py`'s concentration gate now resolves caps via `engine.capital.resolve_caps` — risk units per ticker/sector (`max_risk_units_per_ticker_pct` / `max_risk_units_per_sector_pct`), a deployable-cash CSP budget (`max_csp_allocation_pct_of_deployable`), and a cash reserve (`cash_reserve_pct`) — none of which read these three keys. They still sit in `risk_limits.yaml`, temporarily allowlisted in `tests/test_config_keys.py`, until the config sweep (Task 9) deletes them from the file and formalizes the new keys. |
 | **Unreachable quiet-cycle heartbeat (removed)** | `format_quiet_cycle` / `_send_quiet_heartbeat` could never fire in production: `send_candidates` and `send_buy_list` both return `True` on their *empty* path, so `if not cand_sent and not buy_sent` was never true. Only the mocked tests (which stubbed the return to `False`) ever exercised it. Rather than resurrect it — which would mean two messages per quiet cycle, exactly the flood S6 removed — the heartbeat, `ScanResult.quiet_cycle`, and the likewise orphaned `format_screen_empty` were deleted, and the materiality detail it carried ("N/M names moved <0.5%") now rides on the empty-screen diagnostic that is actually appended. |
 | **`option_quotes` table reads** | `option_quotes` is written every scan (one row per symbol/run) as an audit trail. No production code reads from it; it is write-only. The EOD run now prunes rows older than 14 days via `storage.maintenance.purge_old_option_quotes`, so it no longer grows unboundedly. |
 | **`BuyCandidate.rationale`** | A deterministic one-liner built from the screen's own signals (IV richness, VRP, regime, quality, earnings proximity) in `buy_candidates.py` — Claude does **not** review buy-to-own names (only option candidates), by design. The buy-to-own screen applies a score floor + count cap (`scoring_weights.yaml → buy_to_own`, currently 10 names max). The Telegram message (`format_buy_list`) groups candidates by sector (indexes, tech, semis, financials, healthcare, …); all candidate cards are shown inline — the Telegram spoiler wrapping that previously hid each sector behind a "tap to reveal" toggle has been removed. Sectors are sourced from `universe.yaml → sectors` via the `BuyCandidate.sector` field. |
@@ -214,6 +212,70 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. |
 
 ---
+
+## Bugs fixed (2026-08-10 — capital & income model)
+
+The 2026-08-10 full-system review (`docs/superpowers/specs/2026-08-10-remediation-and-ios-app-design.md`
+§1) found that the deterministic layer could not trade the universe it was designed for, at the
+account's actual size, for economically correct reasons — two defects in the capital model (D1) and
+the income gate (D2), plus two narrower correctness bugs (D5, D6) discovered while fixing them.
+Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_capital.py`,
+`tests/test_account_sizing.py`, `tests/test_engine.py`, `tests/test_covered_call.py`,
+`tests/test_iv.py`.
+
+- **D1 — CSP sizing and the concentration gate were never reconciled.** `screen_csp_candidates`
+  sized to the *maximum affordable* lot (cash, the old 60% CSP budget, `max_contracts: 10`),
+  knowing nothing about `max_pct_per_ticker: 5.0`; `validate_candidates` then **rejected rather
+  than trimmed**. A single 1-lot CSP required `NLV >= 2000 x strike`, so at $300k NLV every strike
+  above $150 was unreachable — excluding META, GOOGL, MSFT, and most of the Tier-1 core book.
+  **Fixed:** `max_pct_per_ticker` was split into three constraints in their proper units —
+  feasibility in cash, concentration in **risk units** (`collateral x IV x sqrt(DTE/365)`, so share
+  price is no longer a risk measure), and deliberateness via an explicit counted large-position
+  slot — behind one shared `engine/capital.py` helper (`resolve_caps` / `max_contracts` /
+  `seed_budgets`) that both `cash_secured_put.screen_csp_candidates` and
+  `risk_engine.validate_candidates` call, so the generator and the gate can no longer disagree
+  about how big a position may be. **Measured:** `scripts/capacity_report.py` (Task 8, re-verified
+  after this task's config change) shows **46/46 `would_own` symbols tradeable** at $300k NLV /
+  $100k cash, including META (1 lot), MSFT, QQQ, and SPY, none of which could clear the old gate at
+  that account size. `max_risk_units_per_ticker_pct` ships at `5.0`; the capacity report's
+  per-symbol collateral column shows AMD's single lot alone consumes 3.06% of NLV in risk units
+  (SMH 2.85%, NBIS 1.89%, QQQ 1.78%, META 1.77%) — the floor below which AMD becomes unreachable
+  again, leaving only a 3.1–5.0 viable band. `5.0` is therefore a deliberate, human-reviewed choice
+  at the *permissive* end of that band, not an inherited or arbitrary number — see
+  `config/risk_limits.yaml`'s `CALIBRATION WARNING` comment.
+- **D2 — the income floor was a hidden IV floor of roughly 25–30%.** `min_roc_pct: 1.0` combined
+  with `min_annualized_yield_pct: 12.0` produced a binding floor of `max(1.0%, 12% x DTE/365)`.
+  Verified with Black-Scholes at 30 DTE: SPY at 13.5% IV yielded 0.33% ROC at 0.20Δ and 0.66% at
+  0.30Δ — rejected at every admissible delta; AAPL at 28% IV was rejected at 0.20Δ (0.71%) and
+  passed only at 0.30Δ (1.62%). Every defensive diversifier deliberately added to `universe.yaml`
+  (GLD, TLT, XLP, XLU, XLV, XLI, SPY, V, MA, WMT, COST) could never produce a CSP, and composed with
+  D1 the emergent strategy was short puts on cheap, high-IV, speculative names only — the opposite
+  of the documented Tier-1 core-income intent. **Fixed:** the variance-risk-premium floor already
+  computed in `analytics/fair_value.py` (Black-Scholes fair value at *realised* vol HV30, plus
+  `income.min_credit_edge_pct`) was promoted from display to a real gate
+  (`income.require_vrp_edge: true`, reason `premium_below_fair_value`); `min_roc_pct` dropped to
+  `0.15` and `min_annualized_yield_pct` to `0.0`, both now noise floors only. The gate asks "am I
+  being paid more than this risk is worth?" instead of "is the yield big enough?" — the hidden delta
+  floor disappears as a side effect.
+- **D5 — the wheel's already-collected premium was invisible to the covered-call gate.**
+  `campaigns.mark_campaign_assigned` computed `adjusted_cost_basis` (assignment price minus net
+  premium per share) on a put assignment, but only the `/campaigns` Telegram formatter read it;
+  `screen_cc_candidates` used IBKR's raw `avg_cost`, so `min_strike_vs_basis: 1.00` compared against
+  the assignment price rather than the true, premium-reduced basis. **Fixed:** `covered_call.py`
+  resolves cost basis via `campaigns.adjusted_cost_basis_for(symbol)` (falling back to IBKR's raw
+  `avg_cost` when no open assigned campaign exists) and uses it for the `min_strike_vs_basis` gate,
+  ROC, breakeven, and the ideal-zone cost basis — a wheel that collected premium on assignment can
+  now write strikes below the assignment price without the gate reading that as locking in a loss.
+- **D6 — IV rank compared two different measurements against each other.** `iv_history` stores
+  IBKR's `OPTION_IMPLIED_VOLATILITY` daily bar (a ~30-day constant-maturity ATM index) while
+  `current_iv` was overridden intraday by `_live_atm_iv` — the mean IV of the four strikes nearest
+  spot in the nearest *scanned* expiry (~21–25 DTE). In contango this biased IV rank down; in
+  backwardation, up — loosening `iv.min_iv_rank: 30` (a hard gate) exactly when the term structure
+  inverted. **Fixed:** the live chain IV is now interpolated to a constant 30-day maturity
+  (`_atm_iv_at_30d`, reusing the term-structure slope already computed by
+  `_term_structure_slope`) before ranking, so numerator and denominator are the same measurement;
+  when the chain carries fewer than two expiries it falls back to the stored daily observation
+  rather than the nearest-expiry value.
 
 ## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
 

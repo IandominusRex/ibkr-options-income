@@ -177,11 +177,22 @@ scope immediately (otherwise the IV-scaled band fills in once the backfill/EOD h
 
 Conservative defaults are pre-configured. Key settings to review:
 
+**`portfolio:` block (D1, Task 9) — three constraints, each in its own unit.** The order of
+application is fixed in code (`engine/capital.resolve_caps`), not configurable: the cash reserve
+comes off `excess_liquidity` first, and the CSP budget is a percentage of what's left
+("deployable cash") — expressing both against gross cash would let the two knobs contradict each
+other.
+
 | Setting (YAML path) | Default | What it means |
 |---|---|---|
-| `portfolio.max_pct_per_ticker` | 5.0 | Max % of net liquidation in one ticker |
-| `portfolio.max_pct_per_sector` | 25.0 | Max % per sector (uses the `sectors:` map in `universe.yaml`) |
-| `portfolio.max_csp_allocation_pct` | 60.0 | Max total cash collateral tied up across all CSPs (% of net liq). **New live users should start at 30–40%** and increase after validating the pipeline. |
+| `portfolio.cash_reserve_pct` | 20.0 | Job 1 (feasibility). Reserve held free at all times, as a % of available cash (`excess_liquidity`). The reserve is the **greater** of this and `cash_reserve_absolute` — subtracted first, before anything else. |
+| `portfolio.cash_reserve_absolute` | 10000 | Job 1. Absolute-dollar floor on the reserve. At $100k cash it's inert (20% = $20,000 already exceeds it); on a smaller account it dominates — e.g. at $16k cash the 20% reserve would be $3,200, but the $10,000 floor wins. |
+| `portfolio.max_csp_allocation_pct_of_deployable` | 100.0 | Job 1. Total CSP collateral as a % of **deployable cash** (cash minus the reserve above) — not of net liq, not of gross cash. Lower it to hold room for share purchases (Phase 4). |
+| `portfolio.max_risk_units_per_ticker_pct` | 5.0 | Job 2 (concentration), % of net liq, measured in **risk units** (`collateral × IV × √(DTE/365)`) rather than raw collateral — share price is not a risk measure. **Not comparable to the old collateral-based percentage** (risk units are typically 0.05–0.30× collateral). Examined via `scripts/capacity_report.py`: AMD's single lot alone costs ~3.06% of NLV in risk units at $300k/$100k, the floor below which AMD becomes unreachable — 5.0 is a deliberate, human-reviewed choice near the permissive end of the viable 3.1–5.0 range, not an inherited number. |
+| `portfolio.max_risk_units_per_sector_pct` | 25.0 | Job 2, same unit, per sector (uses the `sectors:` map in `universe.yaml`). |
+| `portfolio.max_collateral_per_ticker_pct` | 10.0 | Job 2 fallback: raw-collateral cap used only when IV is unavailable (strictly more conservative than the risk-unit cap). |
+| `portfolio.max_large_positions` | 1 | Job 3 (deliberateness). How many concurrent positions may exceed `max_collateral_per_ticker_pct` via the large-position slot. |
+| `portfolio.max_pct_per_ticker_large` | 25.0 | Job 3. Hard ceiling for a large-slot position, raw collateral as % of net liq. |
 | `portfolio.max_new_positions_per_run` | 10 | Max new positions a single scan may propose. New live users should start at 1–3. |
 | `covered_call.delta_min` / `delta_max` | 0.20 / 0.35 | Delta range for covered-call strikes |
 | `covered_call.min_strike_vs_basis` | 1.00 | Reject CC if strike is below cost basis (prevents locking in a loss on the shares) |
@@ -211,9 +222,6 @@ is on (the default) — **is** the primary income gate (see the `income:` table 
 | `ideal_zone.min_credit_edge_pct` | 10.0 | **Feeds the primary income gate.** Premium demanded over Black-Scholes fair value priced at *realised* vol (HV30). The floor is priced at **that contract's own strike** (not the band's anchor) and is never below the `income.min_roc_pct` / `min_annualized_yield_pct` noise floors, so "clears fair value" means the credit beats all three. When `income.require_vrp_edge` is true (default), a candidate whose premium falls below this floor is rejected with `premium_below_fair_value` — raise to insist on a richer entry, at the cost of fewer candidates. |
 | `ideal_zone.buy_margin_of_safety_pct` | 8.0 | Discount applied to the analyst mean target when placing the "buy shares below" level |
 
-> Note: `portfolio.max_correlated_exposure_pct` is present but **not enforced** (needs a correlation
-> engine — see `STATUS.md`). The per-ticker and per-sector caps are the active concentration gates.
-
 The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation`:
 
 | Setting (YAML path) | Default | What it means |
@@ -240,6 +248,15 @@ the real scan and the risk gate do). It's read-only: it never places, sizes for 
 an order. Run it whenever you change a `portfolio.*` cap to make sure a clear majority of your
 `would_own` list is still reachable — a cap tight enough to quietly exclude most of the universe is
 exactly the kind of bug this report exists to catch.
+
+**Also re-run it whenever your account size changes materially**, not just when you edit a cap.
+Every `portfolio:` percentage is relative to net liq or deployable cash (D1, Task 9), so the same
+config can behave very differently at a different account size — `cash_reserve_absolute: 10000` in
+particular is inert at $100k cash (the 20% percentage reserve already exceeds it) but becomes the
+binding reserve well below that, shrinking deployable cash faster than the percentage alone would
+suggest. Re-derive with `--net-liq`/`--cash` set to the new figures before trusting the caps; this
+run's own baseline (46/46 `would_own` symbols tradeable at $300k NLV / $100k cash, 0 skipped for
+missing data) is the number to compare against.
 
 The final line always states its own coverage — `Coverage: N/M requested symbols had usable
 price/IV data (K skipped for missing data)` — so a data outage (no cached IV/price for a symbol)

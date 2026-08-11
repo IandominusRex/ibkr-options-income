@@ -19,16 +19,15 @@ _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src"
 
 # Keys deliberately present-but-unenforced. Each must be documented in STATUS.md.
+# NOTE: `max_correlated_exposure_pct`, `max_pct_per_sector`, `max_csp_allocation_pct`, and
+# `min_buying_power_buffer_pct` (D1, Task 4) were retired by the risk-units concentration
+# model (Task 9) and deleted from risk_limits.yaml entirely — see
+# test_retired_collateral_keys_are_gone. Do not re-add a key here without also adding it back
+# to the YAML: test_allowlist_entries_exist_in_config asserts every entry below is a real,
+# present leaf key, so a retired key left in this set would be caught rather than silently
+# lying about what's still configurable.
 _KNOWN_UNENFORCED = {
-    "max_correlated_exposure_pct",  # needs a price-correlation engine (deferred)
     "ex_dividend_assignment_guard",  # ex-div guard fires in monitor/triggers without this flag
-    # D1 (Task 4): retired by the risk-units concentration model — risk_engine.py now reads
-    # caps via engine.capital.resolve_caps, not these directly. Still present in
-    # risk_limits.yaml pending Task 9, which deletes them from the file entirely (see
-    # test_retired_collateral_keys_are_gone) and adds their risk-unit replacements.
-    "max_pct_per_sector",
-    "max_csp_allocation_pct",
-    "min_buying_power_buffer_pct",
 }
 
 
@@ -71,6 +70,23 @@ def test_allowlist_stays_accurate() -> None:
     )
 
 
+def test_allowlist_entries_exist_in_config() -> None:
+    """Catches the mirror-image bug: a key deleted from the YAML but left allowlisted.
+
+    `test_allowlist_stays_accurate` only checks that allowlisted keys stay unread in src/ — it
+    says nothing about whether they still exist in risk_limits.yaml at all. A retired key
+    removed from the YAML but forgotten here would satisfy that test forever while quietly
+    lying about what's actually configurable (Task 9's config sweep).
+    """
+    limits = yaml.safe_load((_ROOT / "config" / "risk_limits.yaml").read_text(encoding="utf-8"))
+    present = _leaf_keys(limits)
+    stale = _KNOWN_UNENFORCED - present
+    assert not stale, (
+        f"_KNOWN_UNENFORCED entries no longer present in risk_limits.yaml: {sorted(stale)}. "
+        "Remove them from the allowlist (and their STATUS.md notes)."
+    )
+
+
 # settings.yaml keys map to Pydantic fields (attribute access), not quoted dict lookups, so the
 # detection is a whole-word identifier match. This catches an orphan key — a typo or a key with
 # no schema field that silently does nothing (N15 extends the guard to settings.yaml). The
@@ -95,3 +111,34 @@ def test_market_data_line_budget_enforced() -> None:
     MarketDataCfg(chain_batch_size=40, max_concurrent_lines=90)  # within budget — ok
     with pytest.raises(ValidationError):
         MarketDataCfg(chain_batch_size=120, max_concurrent_lines=90)
+
+
+def test_portfolio_block_has_the_risk_unit_keys() -> None:
+    from src.common.config import get_config
+
+    p = get_config().risk["portfolio"]
+    for key in (
+        "cash_reserve_pct",
+        "cash_reserve_absolute",
+        "max_csp_allocation_pct_of_deployable",
+        "max_risk_units_per_ticker_pct",
+        "max_risk_units_per_sector_pct",
+        "max_collateral_per_ticker_pct",
+        "max_large_positions",
+        "max_pct_per_ticker_large",
+    ):
+        assert key in p, f"missing risk_limits.yaml portfolio key: {key}"
+
+
+def test_retired_collateral_keys_are_gone() -> None:
+    from src.common.config import get_config
+
+    p = get_config().risk["portfolio"]
+    for key in (
+        "max_pct_per_ticker",
+        "max_pct_per_sector",
+        "max_csp_allocation_pct",
+        "min_buying_power_buffer_pct",
+        "max_correlated_exposure_pct",
+    ):
+        assert key not in p, f"retired key still present: {key}"

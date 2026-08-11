@@ -147,10 +147,10 @@ would_own:
   - DDOG
   - COIN
 
-  # Tier 2 — conditional; ADR risk; keep position small via max_pct_per_ticker
+  # Tier 2 — conditional; ADR risk; keep position small via max_risk_units_per_ticker_pct
   - BABA
 
-  # Tier 3 — speculative CSPs; the risk engine's max_contracts + max_pct_per_ticker
+  # Tier 3 — speculative CSPs; the risk engine's max_contracts + max_risk_units_per_ticker_pct
   # caps ensure these stay small. Remove if assignment feels uncomfortable.
   - MARA
   - RGTI
@@ -158,7 +158,7 @@ would_own:
 
 # ── Sector tags (for concentration limits in risk_engine.py) ─────────────────
 
-# max_pct_per_sector: 25% of net liq (set in risk_limits.yaml)
+# max_risk_units_per_sector_pct: 25% of net liq, in risk units (set in risk_limits.yaml)
 # Note: "tech" will likely hit the cap first — that is intentional; let the
 # risk engine enforce the cap rather than pruning names here.
 sectors:

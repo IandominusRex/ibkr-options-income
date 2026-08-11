@@ -471,9 +471,12 @@ class TestValidateCandidates:
         )
 
     def test_cumulative_buying_power_buffer(self) -> None:
-        # D1: deployable cash = excess_liquidity(7,500) minus a 20% reserve = 6,000;
-        # only one $4,000 CSP fits before the second breaches the buffer.
-        acc = _account(net_liquidation=100_000.0, cash=7_500.0, maintenance_margin=10_000.0)
+        # D1 + Task 9: deployable cash = excess_liquidity(16,000) minus the reserve. Task 9
+        # formalized `cash_reserve_absolute: 10000` in risk_limits.yaml, so at this account size
+        # the absolute floor (10,000) dominates the 20% percentage reserve (16,000 x 20% =
+        # 3,200) -> reserve = 10,000, deployable = 6,000; only one $4,000 CSP fits before the
+        # second breaches the buffer.
+        acc = _account(net_liquidation=100_000.0, cash=16_000.0, maintenance_margin=10_000.0)
         # Use distinct tickers so per-ticker concentration doesn't mask the BP check.
         cands = [
             _candidate(candidate_id="a", underlying="AAPL", collateral=4_000.0),

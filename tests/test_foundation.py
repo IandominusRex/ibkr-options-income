@@ -21,7 +21,7 @@ from src.common.schemas import (
 def test_config_loads_and_sections_present():
     cfg = get_config()
     assert cfg.ibkr.host == "127.0.0.1"
-    assert "max_pct_per_ticker" in cfg.risk["portfolio"]
+    assert "max_risk_units_per_ticker_pct" in cfg.risk["portfolio"]
     assert "watchlist" in cfg.universe
     assert "covered_call" in cfg.weights
 
