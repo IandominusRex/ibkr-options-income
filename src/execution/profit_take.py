@@ -328,8 +328,12 @@ async def check_loss_exits(
             mid / entry,
         )
         result = await close_short_position(ib_exec, pos, bid, ask)
+
         if result.status == "skipped":
+            # A close is already working for this contract — no duplicate, no extra message.
+            log.info("Loss-exit skipped for %s (%s)", pos.symbol, result.detail)
             continue
+
         from src.notify.formatters import _md, contract_label
 
         label = _md(
@@ -337,15 +341,28 @@ async def check_loss_exits(
                 pos.underlying or pos.symbol, pos.strike, pos.right.value, pos.expiry
             )
         )
+
+        if result.status == "error":
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"⚠️ Loss-exit error for {label} — check IBKR manually\\.",
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                log.exception("Failed to send loss-exit error for %s", pos.symbol)
+            continue
+
+        # Send result with actual fill information
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    f"🛑 *Loss exit* — {label}\n"
-                    f"Entry credit {_md(f'${entry:.2f}')}, cost to close "
-                    f"{_md(f'${mid:.2f}')} \\({mid / entry:.1f}×\\)\\."
+                    f"🛑 *Loss exit closed* — {label}\n"
+                    f"Entry credit {_md(f'${entry:.2f}')}, closed at "
+                    f"{_md(f'${result.avg_price:.2f}')} · {result.filled_qty} filled"
                 ),
                 parse_mode="MarkdownV2",
             )
         except Exception:
-            log.exception("Failed to send loss-exit notice for %s", pos.symbol)
+            log.exception("Failed to send loss-exit result for %s", pos.symbol)

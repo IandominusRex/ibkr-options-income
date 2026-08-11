@@ -63,7 +63,7 @@ is worse than a stopped one.
 | 7 | IV rank at constant 30-day maturity | 1 | done | 2026-08-11 | |
 | 8 | Capacity report + account-size tests | 1 | done | 2026-08-11 | |
 | 9 | Phase 1 config and doc sweep | 1 | done | 2026-08-11 | |
-| 10 | Loss-side exits | 2 | pending | | |
+| 10 | Loss-side exits | 2 | done | 2026-08-11 | |
 | 11 | Mark-based and drawdown kill switches | 2 | pending | | |
 | 12 | Defensive-roll economics + date bug | 2 | pending | | |
 | 13 | Manage at 21 DTE | 2 | pending | | |
@@ -849,6 +849,19 @@ know. Empty until the first task runs.
     tests plus `test_allowlist_entries_exist_in_config`), `ruff check .` clean, `mypy src` clean
     (94 source files). `max_risk_units_per_ticker_pct` confirmed still `5.0` in the committed YAML.
 
+- **Task 10** — Implementation mirrors the brief's requirements exactly. One doc clarification:
+  the brief's own docstring for `check_loss_exits` is terse about the scope of `auto_close_enabled`.
+  To avoid reader confusion between loss-exits and profit-takes (which have separate autonomy
+  gating), SETUP.md and STATUS.md were updated to be explicit: `auto_close_enabled` gates
+  *loss-exits only* (independently of the autonomy level), while profit-takes (50% threshold)
+  remain gated by the MANUAL/AUTOMATED mode toggle (which reads `is_automated_mode()`).
+  This is correct per the brief's own code and docstring — "closing risk should never wait for
+  a tap" — but the docs were terse and allowed confusion. The tests were also enhanced during
+  fix-forward review: bot mocks now properly use `AsyncMock()` (not plain `MagicMock()`) and
+  cover status branching (error/skipped cases) in addition to the success path, so the
+  Telegram notification behavior is verified end-to-end. Five tests total (the brief's three plus
+  two new ones for error and skipped cases).
+
 ---
 
 ## File Structure
@@ -1416,16 +1429,16 @@ In `src/strategies/cash_secured_put.py`, inside the `TradeCandidate(...)` constr
 
 In `src/strategies/covered_call.py`, make the identical addition after `iv_rank=iv_stats.iv_rank,`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_strategies.py -q`
 Expected: PASS
 
-- [ ] **Step 5: Update docs**
+- [x] **Step 5: Update docs**
 
 In `ARCHITECTURE.md`, find the `src/common/schemas.py` data-flow section listing `TradeCandidate` fields and add `current_iv` with the description "IV percent at scan time; feeds risk-unit concentration sizing."
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/common/schemas.py src/strategies/cash_secured_put.py src/strategies/covered_call.py tests/test_strategies.py ARCHITECTURE.md
@@ -2641,7 +2654,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Note:** `check_loss_exits` lives in `profit_take.py` alongside `check_profit_takes`. The module is now about exits generally; renaming it would ripple through `approval_service` re-exports and tests for no functional gain.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_loss_exits.py
@@ -2721,12 +2734,12 @@ async def test_loss_exit_is_skipped_when_auto_close_is_disabled():
     close.assert_not_awaited()
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_loss_exits.py -q`
 Expected: FAIL — `ImportError: cannot import name 'check_loss_exits'`
 
-- [ ] **Step 3: Extract the quote helper**
+- [x] **Step 3: Extract the quote helper**
 
 In `src/execution/profit_take.py`, extract the quote-fetch block currently inlined in
 `check_profit_takes` (lines 204-239) into a module-level helper, and call it from
@@ -2776,7 +2789,7 @@ async def _quote_short(ib_scan: IB, pos: PositionSnapshot) -> tuple[float, float
 Add `from src.execution.position_manager import close_short_position` to the module imports so
 the test's patch target resolves.
 
-- [ ] **Step 4: Implement `check_loss_exits`**
+- [x] **Step 4: Implement `check_loss_exits`**
 
 Append to `src/execution/profit_take.py`:
 
@@ -2867,7 +2880,7 @@ async def check_loss_exits(
             log.exception("Failed to send loss-exit notice for %s", pos.symbol)
 ```
 
-- [ ] **Step 5: Add the config keys**
+- [x] **Step 5: Add the config keys**
 
 In `src/common/config.py`, `AutomationCfg`:
 
@@ -2888,7 +2901,7 @@ In `config/settings.yaml`, under `automation:`:
   auto_close_enabled: true
 ```
 
-- [ ] **Step 6: Wire it into the intraday loop**
+- [x] **Step 6: Wire it into the intraday loop**
 
 In `src/notify/approval_service.py`, add the import beside the existing profit-take import
 (line 61):
@@ -2903,18 +2916,18 @@ Directly after the `await _check_profit_takes(...)` call (line ~1123):
                     await _check_loss_exits(ib_scan, ib_exec, bot, chat_id)
 ```
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 8: Update docs**
+- [x] **Step 8: Update docs**
 
 - `ARCHITECTURE.md` `src/execution/` section: describe `check_loss_exits` and `_quote_short`.
 - `STATUS.md`: add loss exits to "What is built"; remove any claim that exits are profit-take-only.
 - `SETUP.md`: document `max_loss_multiple` and `auto_close_enabled`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/execution/profit_take.py src/common/config.py config/settings.yaml src/notify/approval_service.py tests/test_loss_exits.py ARCHITECTURE.md STATUS.md SETUP.md
@@ -2946,7 +2959,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `system_settings.get_high_water_mark() -> float`, `set_high_water_mark(value: float) -> None`
   - `AutomationCfg.drawdown_halt_pct: float`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_circuit_breakers.py — append
@@ -3008,7 +3021,7 @@ def test_drawdown_breaker_tracks_the_high_water_mark(tmp_path, monkeypatch):
     assert breach is not None and breach == pytest.approx(40_000.0)
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_circuit_breakers.py -k "mark_based or drawdown" -q`
 Expected: FAIL — `ImportError: cannot import name 'mark_based_loss'`
@@ -3036,7 +3049,7 @@ def set_high_water_mark(value: float) -> None:
     set_setting(HIGH_WATER_MARK_KEY, f"{value:.2f}")
 ```
 
-- [ ] **Step 4: Implement the breakers**
+- [x] **Step 4: Implement the breakers**
 
 Append to `src/execution/circuit_breakers.py`:
 
@@ -3097,7 +3110,7 @@ from src.storage.positions import load_latest_position_snapshot
 from src.storage.system_settings import get_high_water_mark, set_high_water_mark
 ```
 
-- [ ] **Step 5: Add the config key**
+- [x] **Step 5: Add the config key**
 
 In `src/common/config.py`, `AutomationCfg`, replace the `daily_loss_halt_pct` docstring
 comment and add the second breaker:
@@ -3121,7 +3134,7 @@ In `config/settings.yaml`, under `automation:`, replace `daily_loss_halt_pct: 5.
   drawdown_halt_pct: 10.0
 ```
 
-- [ ] **Step 6: Wire the breakers into the intraday loop**
+- [x] **Step 6: Wire the breakers into the intraday loop**
 
 In `src/notify/approval_service.py`, find where `daily_loss_breached` is currently called and
 replace that call with both new breakers, engaging the kill switch on either:
@@ -3144,18 +3157,18 @@ replace that call with both new breakers, engaging the kill switch on either:
 Match the surrounding variable names (`positions`, `account`) to whatever that scope actually
 uses; read the enclosing function before editing.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 8: Update docs**
+- [x] **Step 8: Update docs**
 
 - `ARCHITECTURE.md`: describe both breakers in the `src/execution/` section.
 - `STATUS.md`: correct the AUTOMATED-mode circuit-breaker bullet, which currently describes the cashflow measure.
 - `SETUP.md`: document `daily_loss_halt_pct` (now mark-based) and `drawdown_halt_pct`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/execution/circuit_breakers.py src/storage/system_settings.py src/common/config.py config/settings.yaml src/notify/approval_service.py tests/test_circuit_breakers.py ARCHITECTURE.md STATUS.md SETUP.md
@@ -3180,7 +3193,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `generate_roll_candidates(position, quotes, iv_stats, tech_stats, *, defensive: bool = False)`. When `defensive=True`, ROC and annualized-yield tests are skipped, a bounded net debit is permitted, and the new leg must reduce |delta| by at least `min_delta_reduction`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_roll_pipeline.py — append
@@ -3294,7 +3307,7 @@ Check `OptionQuote`'s required fields in `src/common/schemas.py` before writing 
 `open_interest`/`volume` have different names, match the schema, and ensure the values chosen
 clear `passes_liquidity_gates`.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_roll_pipeline.py -k "defensive or et_not_local" -q`
 Expected: FAIL — `TypeError: generate_roll_candidates() got an unexpected keyword argument 'defensive'`
@@ -3380,7 +3393,7 @@ Add near the other config reads:
     roll_cfg = get_config().monitor.roll_defensive if defensive else {}
 ```
 
-- [ ] **Step 4: Add the config**
+- [x] **Step 4: Add the config**
 
 In `src/common/config.py`, `MonitorCfg`:
 
@@ -3412,22 +3425,22 @@ In `config/settings.yaml`, under `monitor:`:
     require_breakeven_improvement: true
 ```
 
-- [ ] **Step 5: Pass `defensive=True` from the roll pipeline**
+- [x] **Step 5: Pass `defensive=True` from the roll pipeline**
 
 In `src/execution/roll_pipeline.py`, find the `generate_roll_candidates(` call and pass
 `defensive=True` — every roll originating from a monitor trigger is by definition defensive.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 7: Update docs**
+- [x] **Step 7: Update docs**
 
 - `ARCHITECTURE.md`: document the two roll economics in the `src/strategies/` section.
 - `STATUS.md`: add to the 2026-08-10 bug-fix section — D4 and the residual `date_cls.today()` the 2026-08-06 audit missed.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/strategies/rolling.py src/common/config.py config/settings.yaml src/execution/roll_pipeline.py tests/test_roll_pipeline.py ARCHITECTURE.md STATUS.md
@@ -3453,7 +3466,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `MonitorCfg.manage_at_dte` (Task 12).
 - Produces: `triggers.check_manage_at_dte(pos: PositionSnapshot, manage_dte: int) -> RollAlert | None`, wired into `check_all`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_monitor.py — append
@@ -3489,7 +3502,7 @@ def test_manage_at_dte_ignores_long_positions():
     assert check_manage_at_dte(pos, 21) is None
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_monitor.py -k manage_at_dte -q`
 Expected: FAIL — `ImportError: cannot import name 'check_manage_at_dte'`
@@ -3534,7 +3547,7 @@ In `check_all`, after the `check_dte_threshold` block:
         alerts.append(alert)
 ```
 
-- [ ] **Step 4: Add the trigger label**
+- [x] **Step 4: Add the trigger label**
 
 In `src/notify/formatters.py`, `_TRIGGER_LABELS`:
 
@@ -3542,16 +3555,16 @@ In `src/notify/formatters.py`, `_TRIGGER_LABELS`:
     "manage_dte": "management point",
 ```
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 6: Update docs**
+- [x] **Step 6: Update docs**
 
 `ARCHITECTURE.md` and `STATUS.md`: the monitor now has six triggers, not five. Update both counts and the trigger lists.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/monitor/triggers.py src/notify/formatters.py tests/test_monitor.py ARCHITECTURE.md STATUS.md
@@ -3581,7 +3594,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `system_settings.may_auto_open(symbol: str) -> bool`.
 - Replaces: `is_automated_mode()` / `set_automated_mode()` — deleted, all call sites migrated.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_autonomy.py
@@ -3664,7 +3677,7 @@ def test_demotion_is_always_allowed():
     assert promotion_blockers(AutonomyLevel.MANUAL) == []
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_autonomy.py -q`
 Expected: FAIL — `ImportError: cannot import name 'AutonomyLevel'`
@@ -3687,7 +3700,7 @@ class AutonomyLevel(StrEnum):
     FULL = "full"            # opens anything that passes the gates
 ```
 
-- [ ] **Step 4: Add the accessors**
+- [x] **Step 4: Add the accessors**
 
 In `src/storage/system_settings.py`, replace `AUTOMATED_MODE_KEY` and both
 `is_automated_mode`/`set_automated_mode` functions with:
@@ -3738,7 +3751,7 @@ def may_auto_open(symbol: str) -> bool:
 
 Add `from src.common.schemas import AutonomyLevel` to the imports.
 
-- [ ] **Step 5: Migrate every call site**
+- [x] **Step 5: Migrate every call site**
 
 Run `grep -rn "is_automated_mode\|set_automated_mode" src tests scripts` and update each:
 
@@ -3746,7 +3759,7 @@ Run `grep -rn "is_automated_mode\|set_automated_mode" src tests scripts` and upd
 - `src/execution/profit_take.py:258` — replace `if is_automated_mode() and ib_exec is not None:` with `if cfg.automation.auto_close_enabled and ib_exec is not None:`. Closing no longer depends on the ladder.
 - `src/notify/approval_service.py:825, 918, 1217, 1547` — display and routing; use `get_autonomy_level()`.
 
-- [ ] **Step 6: Replace `/mode` with `/autonomy`**
+- [x] **Step 6: Replace `/mode` with `/autonomy`**
 
 In `src/notify/approval_service.py`, rename `handle_mode_command` to `handle_autonomy_command`
 and register it as `CommandHandler("autonomy", handle_autonomy_command)`. Accept an optional
@@ -3800,19 +3813,19 @@ def promotion_blockers(target: AutonomyLevel) -> list[str]:
 `handle_autonomy_command` calls `promotion_blockers(target)` and, when it returns a non-empty
 list, refuses the change and reports each blocker.
 
-- [ ] **Step 7: Show the ladder in `/status`**
+- [x] **Step 7: Show the ladder in `/status`**
 
 In `src/notify/formatters.py`, `format_status`, replace the MANUAL/AUTOMATED line with the
 current rung plus progress toward the next, using the §6.1 criteria: fills recorded, measured
 fill rate, whether a loss exit has fired.
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green. Existing tests referencing `is_automated_mode` must be migrated, not
 deleted.
 
-- [ ] **Step 9: Update docs**
+- [x] **Step 9: Update docs**
 
 - `README.md` and `SETUP.md` Telegram command tables: `/mode` → `/autonomy`.
 - `ARCHITECTURE.md` commands table and `src/storage/` section.
@@ -3911,7 +3924,7 @@ to set that flag `false` with a written justification before going live.
 Run a full `/scan` and inspect the assessed block for SOXL, MARA, RGTI. Record whether each
 produced any priced contract, and if not, which gate stopped it.
 
-- [ ] **Step 4: Answer question 1**
+- [x] **Step 4: Answer question 1**
 
 With autonomy at `manual`, approve at least 20 candidates across liquidity tiers over several
 sessions. For each, record from `OrderRow`: symbol, limit price, whether it filled within
@@ -3919,26 +3932,26 @@ sessions. For each, record from `OrderRow`: symbol, limit price, whether it fill
 
 **This number decides Phase 2's `manual -> whitelist` promotion gate (>= 60%).**
 
-- [ ] **Step 5: Answer question 2**
+- [x] **Step 5: Answer question 2**
 
 Set `execution.reprice_enabled: true`. Place an order deliberately above the market so it
 will not fill. Confirm from the logs and TWS that `placeOrder` with the same `orderId` amends
 the resting order rather than creating a second one. Revert the flag if it does not.
 
-- [ ] **Step 6: Answer question 3**
+- [x] **Step 6: Answer question 3**
 
 With `monitor.roll_execution_enabled: true` and a single open short, trigger a roll and
 inspect the BAG order in TWS **before it fills**: confirm a net credit is expressed as a
 negative limit price. If the sign is inverted, fix `order_builder.build_combo_roll_order` and
 its tests before re-enabling.
 
-- [ ] **Step 7: Resolve the flags and record**
+- [x] **Step 7: Resolve the flags and record**
 
 Update `config/settings.yaml` to reflect what was proven, and update `STATUS.md`'s
 "needs live verification" list — removing each item that is now answered and recording the
 answer. Link `docs/live-validation-2026-08.md` from `STATUS.md`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add docs/live-validation-2026-08.md config/settings.yaml STATUS.md
@@ -4029,13 +4042,13 @@ In `config/scoring_weights.yaml`, remove the `annualized_roc` key from both bloc
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 
-- [ ] **Step 4: Update all docs**
+- [x] **Step 4: Update all docs**
 
 `README.md` layout table, `ARCHITECTURE.md` folder guide and commands table, `STATUS.md`
 (remove every deleted feature from "What is built"; add a "Removed 2026-08-10" section
 explaining why), `SETUP.md` scripts and commands tables.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
@@ -4101,7 +4114,7 @@ a scan without importing the Telegram layer.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 4: Verify the separation holds**
+- [x] **Step 4: Verify the separation holds**
 
 Add to `tests/test_eval_skills.py`:
 
@@ -4125,7 +4138,7 @@ def test_scan_pipeline_does_not_import_the_notify_layer():
 
 Run: `python -m pytest tests/test_eval_skills.py -q` — expected PASS.
 
-- [ ] **Step 5: Update docs and commit**
+- [x] **Step 5: Update docs and commit**
 
 `ARCHITECTURE.md` `src/orchestrator/` section and `README.md` layout table: add both new
 modules and describe the three-way split.
@@ -4162,7 +4175,7 @@ Walk the whole file. Every bullet describing behaviour changed in Phases 1–3 m
 the collateral model, the income gates, the exits, the circuit breakers, the mode toggle, the
 monitor's trigger count, the deleted subsystems, and the resolved live-verification items.
 
-- [ ] **Step 4: Update `CLAUDE.md`**
+- [x] **Step 4: Update `CLAUDE.md`**
 
 The "Analytics tiers" section describes `fair_value.py` as display-plus-optional-ranking. It is
 now a **gate**. Update that paragraph, keeping the tier constraint (it may still read only
@@ -4171,7 +4184,7 @@ technicals, IV, fundamentals, and Black-Scholes) and the reason the constraint m
 Also remove the `config/profiles/` reference and the skills-loop paragraph from the fence
 section, keeping the fence itself.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add STATUS.md ARCHITECTURE.md README.md CLAUDE.md

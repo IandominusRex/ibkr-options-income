@@ -108,13 +108,15 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   ET early closes are respected, not just weekday + clock.
 - **MANUAL / AUTOMATED mode toggle** (`/mode` Telegram command) — persisted in the `system_settings`
   SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
-  get Approve/Reject buttons; exits (profit-takes and loss-closes) send alerts only. In **AUTOMATED**
-  mode: candidates are directly queued for execution (no human tap), and exits trigger BUY-to-close
+  get Approve/Reject buttons; profit-takes (50% threshold) send alerts only. In **AUTOMATED**
+  mode: candidates are directly queued for execution (no human tap), and profit-takes trigger BUY-to-close
   orders automatically via `execution/position_manager.close_short_position` — which records an
   `OrderRow`/`FillRow`, cancels on timeout, and is idempotent at the contract level (SYSTEM_REVIEW
-  F1). The deterministic risk gate still re-validates every new-exposure order before execution in
-  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded. Loss-exits run
-  independently of autonomy level via the `automation.auto_close_enabled` switch.
+  F1). **Loss-side exits are independent of autonomy level:** they fire automatically whenever
+  cost-to-close reaches `max_loss_multiple` × entry credit, gated only by `automation.auto_close_enabled`
+  (default true), not by MANUAL/AUTOMATED mode — closing risk should never wait for a human tap.
+  The deterministic risk gate still re-validates every new-exposure order before execution in
+  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
 - **AUTOMATED-mode circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
   and `daily_loss_halt_pct` bound activity and losses (the risk gate only bounds exposure). A persisted
   `/halt` kill switch (auto-engaged on a daily-loss breach) stops all transmission while still allowing
