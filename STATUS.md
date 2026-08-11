@@ -79,11 +79,15 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
 - **Monitor** (`src/monitor/`) — event-driven intraday watch; all six triggers (delta drift,
   management point, DTE, IV spike, ex-div, **C4: assignment-risk**) wired end-to-end.
-- **Orchestrators** (`src/orchestrator/`) — EOD report, shared `/scan` pipeline with
-  live in-chat progress updates via `_Tracker`, which edits **two** messages: a stage-by-stage
-  checklist and a dashboard (progress bar + ETA, current-activity line, and a 🔴-flagged running
-  error log). Per-symbol dashboard edits are throttled to respect Telegram's edit-rate limits. VIX
-  is fetched at scan start and shown in the completion message.
+- **Orchestrators** (`src/orchestrator/`) — EOD report, plus the shared `/scan` pipeline split
+  three ways: `scan.py` orchestrates (and stays the `run_scan`/`ScanResult` entry point),
+  `scan_pipeline.py` produces the per-symbol data, and `scan_progress.py` renders progress.
+  `scan_pipeline.py` imports nothing from `src/notify/` (enforced by a test), so a caller that
+  only wants a `ScanResult` never acquires a Telegram dependency. Live in-chat progress comes from
+  `_Tracker`, which edits **two** messages: a stage-by-stage checklist and a dashboard (progress
+  bar + ETA, current-activity line, and a 🔴-flagged running error log). Per-symbol dashboard edits
+  are throttled to respect Telegram's edit-rate limits. VIX is fetched at scan start and shown in
+  the completion message.
 - **15-minute intraday loop** — runs inside the approval_service daemon every 15 minutes during
   RTH, **clock-aligned to ET quarter-hour marks** (9:30, 9:45, 10:00, ... via
   `src/common/market_hours.seconds_until_next_aligned_mark`) rather than process-start-relative,
