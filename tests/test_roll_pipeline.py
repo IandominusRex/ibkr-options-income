@@ -223,6 +223,22 @@ def test_defensive_roll_requires_delta_reduction():
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
 
 
+def test_defensive_roll_rejects_when_position_delta_is_unknown():
+    """Fail-closed (code review finding, fix-round-1): the delta-reduction safety check must not
+    be silently skipped just because the position snapshot carries no delta reading.
+    `PositionSnapshot.delta` is `float | None`, and a monitor snapshot with no live delta must not
+    let a defensive roll through unverified — the Interfaces spec requires the new leg to reduce
+    |delta| by at least `min_delta_reduction` unconditionally, not only when delta is known.
+    Otherwise identical to test_defensive_roll_allows_a_bounded_debit, which *would* qualify if
+    delta were known — proving the rejection is specifically about the missing delta, not the
+    debit or DTE."""
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.62, strike=100.0, dte=10).model_copy(update={"delta": None})
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=35)
+    assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
+
+
 def test_income_roll_still_requires_a_credit_and_roc():
     from src.strategies.rolling import generate_roll_candidates
 

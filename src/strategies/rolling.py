@@ -108,7 +108,7 @@ def generate_roll_candidates(
             require_be = bool(roll_cfg.get("require_breakeven_improvement", True))
             if roll_credit < -max_debit:
                 continue
-            if pos_delta_abs is not None and (pos_delta_abs - delta_abs) < min_reduction:
+            if pos_delta_abs is None or (pos_delta_abs - delta_abs) < min_reduction:
                 continue
             if require_be and position.strike is not None:
                 improves = (

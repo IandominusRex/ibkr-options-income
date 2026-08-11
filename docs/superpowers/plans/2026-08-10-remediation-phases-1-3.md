@@ -929,6 +929,11 @@ know. Empty until the first task runs.
   independent call site needing its own fix — it inherits `defensive=True` through the one shared
   path. Net effect: `pytest -q` → 1142 passed (1137 baseline + 5 new roll-economics/date tests),
   `ruff check .` clean, `mypy src` clean (94 source files).
+  **Fix-round-1 (code review):** the brief's own delta-reduction guard (`if pos_delta_abs is not
+  None and (pos_delta_abs - delta_abs) < min_reduction: continue`) silently skipped the safety
+  check when `position.delta` was `None`, letting a defensive roll through unverified; changed to
+  fail closed (`if pos_delta_abs is None or ...: continue`) with a new covering test
+  `test_defensive_roll_rejects_when_position_delta_is_unknown` — `pytest -q` → 1143 passed.
 
 ---
 

@@ -319,7 +319,15 @@ Remediation Phase 1 (Tasks 1–9) fixed all four. Regression tests: `tests/test_
   `test_income_roll_still_requires_a_credit_and_roc`, `test_roll_dte_uses_et_not_local_date`).
   **Not in scope for this task:** `monitor.manage_at_dte` (added to `MonitorCfg`/`settings.yaml`
   by this task) is not yet read anywhere — wiring a mechanical close/roll/hold decision point at
-  21 DTE is Task 13.
+  21 DTE is Task 13. **Correction (2026-08-11, code review, fix-round-1):** the delta-reduction
+  check as first written (`if pos_delta_abs is not None and (pos_delta_abs - delta_abs) <
+  min_reduction: continue`) silently skipped the whole safety check when the position snapshot
+  carried no delta reading (`PositionSnapshot.delta` is `float | None`), letting a defensive roll
+  through with zero verified delta reduction — a fail-*open* bug directly contradicting this
+  task's own "must reduce \|delta\| by at least `min_delta_reduction`" spec. Changed to fail
+  closed: `if pos_delta_abs is None or (pos_delta_abs - delta_abs) < min_reduction: continue` —
+  an unknown starting delta now rejects the candidate instead of silently passing it. Covered by
+  `test_defensive_roll_rejects_when_position_delta_is_unknown`.
 
 ## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
 
