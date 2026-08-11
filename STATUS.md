@@ -118,10 +118,18 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   The deterministic risk gate still re-validates every new-exposure order before execution in
   both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
 - **AUTOMATED-mode circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
-  and `daily_loss_halt_pct` bound activity and losses (the risk gate only bounds exposure). A persisted
-  `/halt` kill switch (auto-engaged on a daily-loss breach) stops all transmission while still allowing
-  profit-take closes. A cross-process scan lease prevents concurrent scans from breaching the
-  market-data line cap. Nightly `data/backups/` snapshots protect the system of record.
+  bounds activity; two loss breakers bound *losses* (the risk gate only bounds exposure), and the
+  intraday loop halts on whichever trips first (D3). `daily_loss_halt_pct` is enforced by
+  `mark_based_loss`, which compares today's summed position `unrealized_pnl` against the prior day's
+  snapshot — a genuine mark-to-market measure. It replaced the older `daily_loss_breached`, which
+  summed FillRow credits/debits and so read a real drawdown as a *profit* on a day the system sold
+  premium (that function and its tests are kept but no longer wired into `process_queued_orders`).
+  `drawdown_halt_pct` is enforced by `drawdown_breached`, which trips when net liquidation falls below
+  a trailing high-water mark (`system_settings.get_high_water_mark`/`set_high_water_mark`) — catching a
+  slow bleed no single day's loss trips. A persisted `/halt` kill switch (auto-engaged on either breach)
+  stops all transmission while still allowing profit-take closes. A cross-process scan lease prevents
+  concurrent scans from breaching the market-data line cap. Nightly `data/backups/` snapshots protect
+  the system of record.
 - **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
 - **Named trading profiles** (`src/common/profile.py` + `config/profiles/`) — `default`, `conservative`, `balanced`, `aggressive` YAML overlays deep-merge onto `risk_limits.yaml`/`scoring_weights.yaml`. Activated via `/profile [name]` Telegram command (persisted in `system_settings`). Each scan loads the active profile at start so risk gate, CC/CSP filters, and score floor all reflect the selected preset without touching config files.
 - **Ideal-price zones** (`src/analytics/fair_value.py`) — every contract now carries an `IdealZone`:
@@ -436,10 +444,18 @@ findings are sequenced in `IMPROVEMENT_PLAN.md`.
   missing-greeks behaviour.
 - **AUTOMATED-mode circuit breakers + kill switch:** new `src/execution/circuit_breakers.py` enforces
   `automation.max_auto_trades_per_day` (cap on new-exposure entry orders per ET day, enforced in
-  `process_queued_orders`) and `automation.daily_loss_halt_pct` (auto-engages the kill switch on a
-  daily realized-loss breach). The `/halt` and `/resume` Telegram commands flip a persisted
-  `execution_halted` switch checked by the order-poll loop, the auto-queue path, and the intraday loop;
-  profit-take closes still run while halted (closing risk is always allowed).
+  `process_queued_orders`), `automation.daily_loss_halt_pct` (auto-engages the kill switch when today's
+  mark-to-market P&L, via `mark_based_loss`, drops this % of net liquidation vs. the prior position
+  snapshot), and `automation.drawdown_halt_pct` (auto-engages when net liquidation, via
+  `drawdown_breached`, falls this % below its trailing high-water mark). The `/halt` and `/resume`
+  Telegram commands flip a persisted `execution_halted` switch checked by the order-poll loop, the
+  auto-queue path, and the intraday loop; profit-take closes still run while halted (closing risk is
+  always allowed). **Correction (2026-08-11, D3):** the loss breaker originally measured *realized
+  cashflow* (`daily_loss_breached`/`realized_cashflow_today`, summed FillRow credits/debits), which
+  reads a day the system sold premium into a real drawdown as a profit — the kill switch never tripped
+  while new short positions kept opening into the same adverse move. `mark_based_loss` (and the new
+  `drawdown_breached` slow-bleed catch) replace it in the wiring; the old function and its tests remain
+  for reference but are no longer called from `process_queued_orders`.
 - **F5 Cross-process concurrent scans:** a persisted scan lease (`system_settings.acquire_scan_lease`/
   `release_scan_lease`, wrapped around `run_scan`) serialises full scans across processes so concurrent
   `/scan` commands can't compete for the ~100 market-data line cap. The morning cron was removed — the

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from src.common.schemas import OrderState
 from src.storage.models import FillRow, OrderRow
 
@@ -210,3 +212,90 @@ def test_daily_loss_disabled_when_pct_zero(tmp_path, monkeypatch) -> None:
 
     with session_scope() as s:
         assert daily_loss_breached(s, 100_000.0) is None
+
+
+# --------------------------------------------------------------------------- #
+# mark_based_loss / drawdown_breached (D3: mark-to-market kill switches)
+# --------------------------------------------------------------------------- #
+
+
+def test_mark_based_loss_sees_a_drawdown_that_cashflow_misses(tmp_path, monkeypatch):
+    """D3: selling premium into a 15% drawdown reads as a PROFIT to the cashflow breaker."""
+    from datetime import date, timedelta
+
+    from src.common.schemas import PositionSnapshot
+    from src.execution.circuit_breakers import mark_based_loss
+    from src.storage.positions import save_position_snapshot
+
+    _db_setup(tmp_path, monkeypatch)  # existing helper in this file
+    yesterday = [
+        PositionSnapshot(
+            symbol="AAPL",
+            sec_type="STK",
+            position=100,
+            avg_cost=200.0,
+            underlying="AAPL",
+            unrealized_pnl=0.0,
+        )
+    ]
+    save_position_snapshot(date.today() - timedelta(days=1), yesterday)
+
+    today = [
+        PositionSnapshot(
+            symbol="AAPL",
+            sec_type="STK",
+            position=100,
+            avg_cost=200.0,
+            underlying="AAPL",
+            unrealized_pnl=-12_000.0,
+        )
+    ]
+    loss = mark_based_loss(today, net_liquidation=300_000.0)
+    assert loss is not None and loss == pytest.approx(12_000.0)
+
+
+def test_mark_based_loss_returns_none_below_the_threshold(tmp_path, monkeypatch):
+    from datetime import date, timedelta
+
+    from src.common.schemas import PositionSnapshot
+    from src.execution.circuit_breakers import mark_based_loss
+    from src.storage.positions import save_position_snapshot
+
+    _db_setup(tmp_path, monkeypatch)
+    save_position_snapshot(
+        date.today() - timedelta(days=1),
+        [
+            PositionSnapshot(
+                symbol="AAPL",
+                sec_type="STK",
+                position=100,
+                avg_cost=200.0,
+                underlying="AAPL",
+                unrealized_pnl=0.0,
+            )
+        ],
+    )
+    today = [
+        PositionSnapshot(
+            symbol="AAPL",
+            sec_type="STK",
+            position=100,
+            avg_cost=200.0,
+            underlying="AAPL",
+            unrealized_pnl=-1_000.0,
+        )
+    ]
+    assert mark_based_loss(today, net_liquidation=300_000.0) is None
+
+
+def test_drawdown_breaker_tracks_the_high_water_mark(tmp_path, monkeypatch):
+    from src.execution.circuit_breakers import drawdown_breached
+    from src.storage.system_settings import get_high_water_mark
+
+    _db_setup(tmp_path, monkeypatch)
+    assert drawdown_breached(300_000.0) is None  # first call seeds the HWM
+    assert get_high_water_mark() == pytest.approx(300_000.0)
+    assert drawdown_breached(310_000.0) is None  # new high
+    assert get_high_water_mark() == pytest.approx(310_000.0)
+    breach = drawdown_breached(270_000.0)  # -12.9% from 310k, cap 10%
+    assert breach is not None and breach == pytest.approx(40_000.0)

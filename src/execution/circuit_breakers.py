@@ -4,12 +4,20 @@ The cumulative risk gate bounds *exposure*; these bound *activity* and *losses* 
 standard kit for any auto-trading loop. They are deterministic and read-only except for
 auto-tripping the persisted kill switch (`system_settings.set_halted`).
 
-Two breakers, both configured under `automation:` in settings.yaml:
+Breakers, all configured under `automation:` in settings.yaml:
   * ``max_auto_trades_per_day`` — refuse to open more than N new-exposure entry orders
     per ET trading day (auto or manual). Buy-to-close orders (`close:` candidate ids)
     don't count — closing risk is always allowed.
-  * ``daily_loss_halt_pct`` — auto-engage the kill switch when today's net realized
-    cashflow is a loss exceeding N% of net liquidation.
+  * ``daily_loss_halt_pct`` — auto-engage the kill switch when today's MARK-TO-MARKET
+    loss (``mark_based_loss``, today's summed ``unrealized_pnl`` vs. the prior position
+    snapshot's) exceeds N% of net liquidation. An income desk always shows a positive
+    *cashflow* on a day it sells premium, so the older ``daily_loss_breached``/
+    ``realized_cashflow_today`` cashflow measure read a real drawdown as a profit (D3) —
+    it's kept only for its existing tests and is no longer wired into the intraday loop.
+  * ``drawdown_halt_pct`` — auto-engage the kill switch when net liquidation falls N%
+    below its trailing high-water mark (``drawdown_breached`` / `system_settings`'s
+    ``get_high_water_mark``/``set_high_water_mark``). Catches the slow bleed that no
+    single day's loss trips.
 
 Nothing here feeds the risk engine, scoring, or sizing — it only gates whether the
 order machinery runs, so it stays clear of "the fence" around the deterministic layer.
@@ -25,8 +33,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.common.config import get_config
-from src.common.schemas import OrderState
+from src.common.schemas import OrderState, PositionSnapshot
 from src.storage.models import FillRow, OrderRow
+from src.storage.positions import load_latest_position_snapshot
+from src.storage.system_settings import get_high_water_mark, set_high_water_mark
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +104,11 @@ def daily_loss_breached(session: Session, net_liquidation: float) -> float | Non
     """Return the loss amount (positive number) if today's realized loss breaches the cap.
 
     Returns ``None`` when the breaker is disabled, net liq is unknown, or no breach.
+
+    Superseded by ``mark_based_loss`` as the breaker wired into the intraday loop (D3):
+    this sums FillRow credits/debits, so a day that sells premium into a real drawdown
+    reads as a *profit* here and the kill switch never trips. Kept for its existing tests;
+    not called from `process_queued_orders` anymore.
     """
     pct = get_config().automation.daily_loss_halt_pct
     if not pct or net_liquidation <= 0:
@@ -105,3 +120,49 @@ def daily_loss_breached(session: Session, net_liquidation: float) -> float | Non
     if loss >= (pct / 100.0) * net_liquidation:
         return loss
     return None
+
+
+def mark_based_loss(positions: list[PositionSnapshot], net_liquidation: float) -> float | None:
+    """Today's mark-to-market loss if it breaches ``daily_loss_halt_pct``, else None.
+
+    ``realized_cashflow_today`` sums FillRow credits and debits, so a day that sells premium
+    into a 15% drawdown registers as a *profit* and the kill switch stays open while the
+    15-minute loop opens more shorts into the same move (D3). This measures what actually
+    happened to the book: today's summed ``unrealized_pnl`` against the prior snapshot's.
+
+    Returns the loss as a positive number, or None when the breaker is disabled, no baseline
+    exists, or no breach occurred.
+    """
+    pct = get_config().automation.daily_loss_halt_pct
+    if not pct or net_liquidation <= 0:
+        return None
+    baseline_positions = load_latest_position_snapshot(before=datetime.now(_ET).date())
+    if not baseline_positions:
+        return None  # no baseline yet — cannot measure a delta
+    baseline = sum(p.unrealized_pnl or 0.0 for p in baseline_positions)
+    current = sum(p.unrealized_pnl or 0.0 for p in positions)
+    delta = current - baseline
+    if delta >= 0:
+        return None
+    loss = -delta
+    return loss if loss >= (pct / 100.0) * net_liquidation else None
+
+
+def drawdown_breached(net_liquidation: float) -> float | None:
+    """Drawdown from the trailing net-liquidation high-water mark, if it breaches the cap.
+
+    Catches the slow bleed no single day trips. Advances the high-water mark on a new high
+    as a side effect, so the first call after a fresh install simply seeds it.
+    """
+    pct = getattr(get_config().automation, "drawdown_halt_pct", 0.0)
+    if not pct or net_liquidation <= 0:
+        return None
+    hwm = get_high_water_mark()
+    if net_liquidation > hwm:
+        set_high_water_mark(net_liquidation)
+        return None
+    if hwm <= 0:
+        set_high_water_mark(net_liquidation)
+        return None
+    drawdown = hwm - net_liquidation
+    return drawdown if drawdown >= (pct / 100.0) * hwm else None

@@ -896,13 +896,16 @@ async def test_process_queued_orders_skips_when_halted(monkeypatch, tmp_path):
         assert s.get(OrderRow, order_id).state == OrderState.QUEUED  # untouched, resumes on /resume
 
 
-async def test_process_queued_orders_auto_trips_halt_on_daily_loss(monkeypatch, tmp_path):
-    """A daily realized-loss breach auto-engages the kill switch and skips execution."""
+async def test_process_queued_orders_auto_trips_halt_on_mark_based_loss(monkeypatch, tmp_path):
+    """D3: a mark-to-market loss vs. yesterday's snapshot auto-engages the kill switch and
+    skips execution — the wiring now uses ``mark_based_loss``, not FillRow cashflow (a day
+    that sells premium into a real drawdown used to read as a profit and never trip)."""
     _db_setup(tmp_path, monkeypatch)
 
     import src.storage.db as dbmod
-    from src.storage.models import FillRow
-    from src.storage.system_settings import is_halted
+    from src.common.schemas import PositionSnapshot
+    from src.storage.positions import save_position_snapshot
+    from src.storage.system_settings import get_halt_reason, is_halted
 
     mock_cfg = MagicMock()
     mock_cfg.secrets.ibkr_account = ""
@@ -910,7 +913,8 @@ async def test_process_queued_orders_auto_trips_halt_on_daily_loss(monkeypatch, 
     monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
     monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
 
-    # Net liq 100k, default 5% loss floor = $5,000. A $6,000 buy-to-close debit today breaches it.
+    # Net liq 100k, real config default 3% mark-to-market loss floor = $3,000. A $6,000
+    # unrealized-P&L drop vs. yesterday's snapshot breaches it even though no fill occurred.
     account_snap = AccountSnapshot(
         account="DU1",
         net_liquidation=100_000.0,
@@ -918,6 +922,83 @@ async def test_process_queued_orders_auto_trips_halt_on_daily_loss(monkeypatch, 
         buying_power=90_000.0,
         maintenance_margin=0.0,
         excess_liquidity=90_000.0,
+    )
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
+    )
+    today_positions = [
+        PositionSnapshot(
+            symbol="AAPL",
+            sec_type="STK",
+            position=100,
+            avg_cost=200.0,
+            underlying="AAPL",
+            unrealized_pnl=-6_000.0,
+        )
+    ]
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: today_positions)
+
+    save_position_snapshot(
+        date.today() - timedelta(days=1),
+        [
+            PositionSnapshot(
+                symbol="AAPL",
+                sec_type="STK",
+                position=100,
+                avg_cost=200.0,
+                underlying="AAPL",
+                unrealized_pnl=0.0,
+            )
+        ],
+    )
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    candidate = _make_candidate()
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU1"]
+    await process_queued_orders(mock_ib, AsyncMock(), "99999")
+
+    assert executed == []
+    assert is_halted()
+    assert "mark-to-market loss" in get_halt_reason()
+
+
+async def test_process_queued_orders_auto_trips_halt_on_drawdown(monkeypatch, tmp_path):
+    """D3: a slow bleed below the trailing high-water mark also auto-engages the kill switch,
+    via ``drawdown_breached`` — this is the "no single day trips it" case."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.storage.system_settings import get_halt_reason, is_halted, set_high_water_mark
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+
+    # Seed a high-water mark of 200k; today's net liq of 170k is a 15% drawdown vs. the real
+    # config's 10% cap — no single day's mark-to-market delta needs to trip for this to fire.
+    set_high_water_mark(200_000.0)
+    account_snap = AccountSnapshot(
+        account="DU1",
+        net_liquidation=170_000.0,
+        total_cash=170_000.0,
+        buying_power=150_000.0,
+        maintenance_margin=0.0,
+        excess_liquidity=150_000.0,
     )
     monkeypatch.setattr(
         "src.execution.approval.get_account_snapshot_async", AsyncMock(return_value=account_snap)
@@ -935,9 +1016,6 @@ async def test_process_queued_orders_auto_trips_halt_on_daily_loss(monkeypatch, 
     with dbmod.session_scope() as session:
         _insert_candidate_row(session, candidate)
         _insert_queued_order(session, candidate.candidate_id)
-        session.add(
-            FillRow(order_id=99, candidate_id="x", action="BUY", filled_qty=100, avg_price=0.60)
-        )
 
     from src.execution.approval import process_queued_orders
 
@@ -947,6 +1025,7 @@ async def test_process_queued_orders_auto_trips_halt_on_daily_loss(monkeypatch, 
 
     assert executed == []
     assert is_halted()
+    assert "high-water mark" in get_halt_reason()
 
 
 async def test_execute_candidate_no_greeks_entry_iv_none(monkeypatch, tmp_path):

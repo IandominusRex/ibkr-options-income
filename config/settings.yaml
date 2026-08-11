@@ -166,9 +166,9 @@ automation:
   # these bound activity + losses). The /halt Telegram command is a separate kill switch.
   # Max NEW-exposure entry orders opened per ET trading day (auto or manual). 0 disables.
   max_auto_trades_per_day: 10
-  # Auto-trip the kill switch when today's net realized cashflow is a loss exceeding this
-  # % of net liquidation. 0 disables. (Conservative proxy — see config.py AutomationCfg.)
-  daily_loss_halt_pct: 5.0
+  # Mark-to-market, not fill cashflow. See config.py AutomationCfg.
+  daily_loss_halt_pct: 3.0
+  drawdown_halt_pct: 10.0
   # Buy to close when cost-to-close reaches this multiple of the entry credit. 0 disables.
   max_loss_multiple: 2.0
   # Risk-reducing closes (profit takes AND loss exits) run independently of autonomy level.

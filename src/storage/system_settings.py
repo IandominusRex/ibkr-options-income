@@ -23,6 +23,7 @@ HALT_KEY = "execution_halted"
 HALT_REASON_KEY = "execution_halt_reason"
 SCAN_LEASE_KEY = "scan_lease_expiry"
 ACTIVE_PROFILE_KEY = "active_profile"
+HIGH_WATER_MARK_KEY = "nlv_high_water_mark"
 
 # Sortable UTC timestamp (zero-padded) so lexicographic string comparison == chronological.
 _LEASE_TS_FMT = "%Y%m%dT%H%M%S.%f"
@@ -104,6 +105,18 @@ def get_active_profile() -> str:
 def set_active_profile(name: str) -> None:
     """Persist the active trading profile name."""
     set_setting(ACTIVE_PROFILE_KEY, name)
+
+
+def get_high_water_mark() -> float:
+    """Highest net liquidation seen, used by the drawdown circuit breaker."""
+    try:
+        return float(get_setting(HIGH_WATER_MARK_KEY, "0") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def set_high_water_mark(value: float) -> None:
+    set_setting(HIGH_WATER_MARK_KEY, f"{value:.2f}")
 
 
 def _lease_value(expiry_str: str, owner: str) -> str:

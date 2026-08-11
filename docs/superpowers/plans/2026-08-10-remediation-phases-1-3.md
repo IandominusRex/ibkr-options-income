@@ -64,7 +64,7 @@ is worse than a stopped one.
 | 8 | Capacity report + account-size tests | 1 | done | 2026-08-11 | |
 | 9 | Phase 1 config and doc sweep | 1 | done | 2026-08-11 | |
 | 10 | Loss-side exits | 2 | done | 2026-08-11 | |
-| 11 | Mark-based and drawdown kill switches | 2 | pending | | |
+| 11 | Mark-based and drawdown kill switches | 2 | done | 2026-08-11 | |
 | 12 | Defensive-roll economics + date bug | 2 | pending | | |
 | 13 | Manage at 21 DTE | 2 | pending | | |
 | 14 | Autonomy ladder | 2 | pending | | |
@@ -861,6 +861,43 @@ know. Empty until the first task runs.
   cover status branching (error/skipped cases) in addition to the success path, so the
   Telegram notification behavior is verified end-to-end. Five tests total (the brief's three plus
   two new ones for error and skipped cases).
+
+- **Task 11** — Two corrections to the brief, both in the test/wiring layer; the breaker
+  functions themselves (`mark_based_loss`, `drawdown_breached`, the `system_settings`
+  accessors, the config keys) match the brief exactly.
+  1. **Step 6 named the wrong file.** The brief says "In `src/notify/approval_service.py`,
+     find where `daily_loss_breached` is currently called and replace that call..." —
+     `daily_loss_breached` is not called anywhere in `approval_service.py`. The actual call
+     site is `src/execution/approval.py`'s `process_queued_orders`, around line 100 (verified
+     by direct grep before starting). `process_queued_orders` is itself invoked from
+     `approval_service.py`'s intraday loop, so the brief's *intent* — wire the breakers into
+     the intraday loop — was right; only the literal file name was wrong. The edit was made in
+     `src/execution/approval.py`: the import swapped `daily_loss_breached` for `drawdown_breached`
+     + `mark_based_loss` (alongside the untouched `remaining_entry_allowance`); `loss` and `dd`
+     are now computed before opening the session (neither new breaker takes a `Session` — only
+     `remaining_entry_allowance` still does), the halt reason uses the brief's own message
+     formats verbatim (`f"Daily mark-to-market loss ${loss:,.0f}"` /
+     `f"Drawdown ${dd:,.0f} from high-water mark"`), and the surrounding notification/
+     `log.critical`/`return` behavior is unchanged. `daily_loss_breached` and its existing tests
+     in `tests/test_circuit_breakers.py` were left in place per the dispatch instruction — it's
+     dead code outside its own tests now, and deleting it is Task 16's job, not this task's.
+  2. **The brief's test snippet calls a helper, `_use_temp_db(tmp_path, monkeypatch)`, that does
+     not exist anywhere in the repo** (confirmed by grep) — the existing helper in
+     `tests/test_circuit_breakers.py` is `_db_setup(tmp_path, monkeypatch)`, functionally
+     identical. All three of the brief's new tests were transcribed with `_db_setup` in place of
+     `_use_temp_db`; no other change to the brief's test bodies/assertions.
+  3. **Wiring the new breakers into `process_queued_orders` broke one existing integration
+     test** (not itself a brief error — a direct consequence of Step 6's intended change):
+     `tests/test_execution.py::test_process_queued_orders_auto_trips_halt_on_daily_loss` drove
+     the old cashflow breaker via a `FillRow` BUY debit; that mechanism no longer trips anything
+     since the wired-in breakers read position snapshots / net-liq high-water-mark instead. It
+     was replaced with `test_process_queued_orders_auto_trips_halt_on_mark_based_loss` (asserts
+     a halt from a position-snapshot mark-to-market delta, no fill involved — the exact D3 gap
+     this task closes) plus a new `test_process_queued_orders_auto_trips_halt_on_drawdown`
+     (asserts a halt from a seeded high-water mark with no daily-loss delta at all, exercising
+     the `elif dd is not None` branch). Net effect: `pytest -q` → 1137 passed (1133 baseline +
+     3 new circuit-breaker tests + 1 net new in `test_execution.py`), `ruff check .` clean,
+     `mypy src` clean (94 source files).
 
 ---
 
@@ -2959,7 +2996,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `system_settings.get_high_water_mark() -> float`, `set_high_water_mark(value: float) -> None`
   - `AutomationCfg.drawdown_halt_pct: float`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_circuit_breakers.py — append
@@ -3021,12 +3058,12 @@ def test_drawdown_breaker_tracks_the_high_water_mark(tmp_path, monkeypatch):
     assert breach is not None and breach == pytest.approx(40_000.0)
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `python -m pytest tests/test_circuit_breakers.py -k "mark_based or drawdown" -q`
 Expected: FAIL — `ImportError: cannot import name 'mark_based_loss'`
 
-- [ ] **Step 3: Add the high-water-mark accessors**
+- [x] **Step 3: Add the high-water-mark accessors**
 
 In `src/storage/system_settings.py`, after `ACTIVE_PROFILE_KEY`:
 
@@ -3049,7 +3086,7 @@ def set_high_water_mark(value: float) -> None:
     set_setting(HIGH_WATER_MARK_KEY, f"{value:.2f}")
 ```
 
-- [ ] **Step 4: Implement the breakers**
+- [x] **Step 4: Implement the breakers**
 
 Append to `src/execution/circuit_breakers.py`:
 
@@ -3110,7 +3147,7 @@ from src.storage.positions import load_latest_position_snapshot
 from src.storage.system_settings import get_high_water_mark, set_high_water_mark
 ```
 
-- [ ] **Step 5: Add the config key**
+- [x] **Step 5: Add the config key**
 
 In `src/common/config.py`, `AutomationCfg`, replace the `daily_loss_halt_pct` docstring
 comment and add the second breaker:
@@ -3134,7 +3171,7 @@ In `config/settings.yaml`, under `automation:`, replace `daily_loss_halt_pct: 5.
   drawdown_halt_pct: 10.0
 ```
 
-- [ ] **Step 6: Wire the breakers into the intraday loop**
+- [x] **Step 6: Wire the breakers into the intraday loop**
 
 In `src/notify/approval_service.py`, find where `daily_loss_breached` is currently called and
 replace that call with both new breakers, engaging the kill switch on either:
@@ -3157,18 +3194,18 @@ replace that call with both new breakers, engaging the kill switch on either:
 Match the surrounding variable names (`positions`, `account`) to whatever that scope actually
 uses; read the enclosing function before editing.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 8: Update docs**
+- [x] **Step 8: Update docs**
 
 - `ARCHITECTURE.md`: describe both breakers in the `src/execution/` section.
 - `STATUS.md`: correct the AUTOMATED-mode circuit-breaker bullet, which currently describes the cashflow measure.
 - `SETUP.md`: document `daily_loss_halt_pct` (now mark-based) and `drawdown_halt_pct`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/execution/circuit_breakers.py src/storage/system_settings.py src/common/config.py config/settings.yaml src/notify/approval_service.py tests/test_circuit_breakers.py ARCHITECTURE.md STATUS.md SETUP.md

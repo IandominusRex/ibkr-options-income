@@ -227,7 +227,8 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 | Setting (YAML path) | Default | What it means |
 |---|---|---|
 | `automation.max_auto_trades_per_day` | 10 | Max new-exposure entry orders opened per ET trading day (auto or manual). 0 disables. |
-| `automation.daily_loss_halt_pct` | 5.0 | Auto-engage the `/halt` kill switch when today's net realized loss exceeds this % of net liquidation. 0 disables. |
+| `automation.daily_loss_halt_pct` | 3.0 | Auto-engage the `/halt` kill switch when today's **mark-to-market** loss exceeds this % of net liquidation — measured from the prior EOD position snapshot's summed `unrealized_pnl`, not fill cashflow (D3: a day the system sells premium into a real drawdown always shows a positive *cashflow*, so the old cashflow-based measure never caught it). 0 disables. |
+| `automation.drawdown_halt_pct` | 10.0 | Auto-engage the `/halt` kill switch when net liquidation falls this % below its trailing high-water mark (`system_settings.get_high_water_mark`). Catches a slow bleed that no single day's loss trips. 0 disables. |
 | `automation.max_loss_multiple` | 2.0 | Buy to close any short whose cost-to-close has reached this multiple of its entry credit. 0 disables. Runs every 15 minutes during the intraday loop. |
 | `automation.auto_close_enabled` | true | Enable risk-reducing loss-side exits (buy-to-close at max_loss_multiple × entry credit). Runs independently of the autonomy level — that governs opening exposure; closing risk should never wait. Profit-takes (50% threshold) are separately gated by the autonomy level (MANUAL vs AUTOMATED mode). |
 
@@ -743,8 +744,10 @@ These are wired into the code but **review the defaults before you flip the flag
 - [ ] **Live greeks required (F6):** `risk_limits.yaml → live_execution.require_ibkr_greeks_when_live`
       (default `true`) — in LIVE mode the delta gate requires IBKR-sourced greeks, never the paper
       yfinance fallback. Keep this `true` for live trading.
-- [ ] **Circuit breakers:** `settings.yaml → automation.max_auto_trades_per_day` (default 10) and
-      `automation.daily_loss_halt_pct` (default 5.0). The loss breaker auto-engages `/halt`.
+- [ ] **Circuit breakers:** `settings.yaml → automation.max_auto_trades_per_day` (default 10),
+      `automation.daily_loss_halt_pct` (default 3.0, mark-to-market vs. the prior position snapshot —
+      not fill cashflow), and `automation.drawdown_halt_pct` (default 10.0, vs. the trailing
+      high-water mark). Either loss breaker auto-engages `/halt`.
 - [ ] **Kill switch:** know that `/halt` stops everything instantly and `/resume` re-enables it; the
       halt persists across restarts.
 - [ ] **DB backups:** the EOD run writes a rotated snapshot to `data/backups/` — confirm it is being

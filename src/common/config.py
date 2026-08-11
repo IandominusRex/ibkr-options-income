@@ -292,11 +292,14 @@ class AutomationCfg(BaseModel):
     # Max NEW-exposure entry orders the system may open per ET trading day (auto or manual).
     # 0 disables the cap.
     max_auto_trades_per_day: int = 10
-    # Auto-trip the kill switch when today's net realized cashflow is a loss exceeding this
-    # fraction of net liquidation. 0 disables. NOTE: for an income desk this is a conservative
-    # proxy — it sums signed FillRows (credits − debits) for the day, so it trips on net debit
-    # days (large buy-to-close losses), not full mark-to-market P&L.
-    daily_loss_halt_pct: float = 5.0
+    # Auto-trip the kill switch when today's MARK-TO-MARKET loss exceeds this % of net liq.
+    # Measured from the prior position snapshot's unrealized P&L, NOT from fill cashflow —
+    # an income desk always has positive cashflow on a day it sells premium, so the old
+    # cashflow-based measure read a drawdown as a profit.
+    daily_loss_halt_pct: float = 3.0
+    # Auto-trip when net liquidation falls this % below its trailing high-water mark. Catches
+    # the slow bleed that no single day trips. 0 disables.
+    drawdown_halt_pct: float = 10.0
     # Buy to close when cost-to-close reaches this multiple of the entry credit. 0 disables.
     max_loss_multiple: float = 2.0
     # Risk-REDUCING actions run on this switch, independent of the autonomy level — that

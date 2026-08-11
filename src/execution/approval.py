@@ -22,7 +22,11 @@ from src.common.config import get_config
 from src.common.market_hours import is_rth
 from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
-from src.execution.circuit_breakers import daily_loss_breached, remaining_entry_allowance
+from src.execution.circuit_breakers import (
+    drawdown_breached,
+    mark_based_loss,
+    remaining_entry_allowance,
+)
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.db import session_scope
@@ -94,14 +98,22 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         return
 
     # ------------------------------------------------------------------ #
-    # Circuit breaker: auto-trip the kill switch on a daily realized-loss  #
-    # breach, then stop. (SYSTEM_REVIEW Phase 2)                           #
+    # Circuit breaker: auto-trip the kill switch on a mark-to-market daily #
+    # loss or a drawdown from the high-water mark, then stop. (D3 fixes    #
+    # the old cashflow-based breaker, which read a drawdown as a profit    #
+    # on a day the system sold premium.) (SYSTEM_REVIEW Phase 2)           #
     # ------------------------------------------------------------------ #
+    loss = mark_based_loss(positions, account_snap.net_liquidation)
+    dd = drawdown_breached(account_snap.net_liquidation)
     with session_scope() as _s:
-        loss = daily_loss_breached(_s, account_snap.net_liquidation)
         cap_remaining = remaining_entry_allowance(_s)
     if loss is not None:
-        reason = f"daily realized loss ${loss:,.0f} exceeded the configured loss limit"
+        reason = f"Daily mark-to-market loss ${loss:,.0f}"
+    elif dd is not None:
+        reason = f"Drawdown ${dd:,.0f} from high-water mark"
+    else:
+        reason = None
+    if reason is not None:
         set_halted(True, reason)
         log.critical("Circuit breaker tripped — %s. Execution halted.", reason)
         try:
