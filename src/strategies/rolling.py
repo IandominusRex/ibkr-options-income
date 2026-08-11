@@ -6,7 +6,6 @@ from src.analytics.fair_value import compute_ideal_zone, zone_for_contract
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
 from src.common.config import get_config
 from src.common.market_hours import today_et
-from src.common.profile import get_effective_risk
 from src.common.schemas import (
     FundamentalStats,
     IdealZone,
@@ -55,7 +54,7 @@ def generate_roll_candidates(
     if not should_roll:
         return []
 
-    risk = get_effective_risk()
+    risk = get_config().risk
     leg_cfg = (
         risk["covered_call"] if position.right == OptionRight.CALL else risk["cash_secured_put"]
     )

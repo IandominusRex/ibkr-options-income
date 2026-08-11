@@ -11,7 +11,6 @@ from src.analytics.liquidity import (
     volume_gate_active,
 )
 from src.common.config import get_config
-from src.common.profile import get_effective_risk
 from src.common.schemas import (
     AccountSnapshot,
     FundamentalStats,
@@ -93,7 +92,7 @@ def screen_csp_candidates(
         result.skipped = "not_in_would_own"
         return result
 
-    risk = get_effective_risk()
+    risk = get_config().risk
     csp_cfg = risk["cash_secured_put"]
     income_cfg = risk["income"]
 

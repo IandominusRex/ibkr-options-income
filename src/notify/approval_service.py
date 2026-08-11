@@ -80,12 +80,10 @@ from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
 from src.storage.system_settings import (
     autonomy_progress,
-    get_active_profile,
     get_autonomy_level,
     get_halt_reason,
     is_halted,
     promotion_blockers,
-    set_active_profile,
     set_autonomy_level,
     set_halted,
 )
@@ -791,34 +789,6 @@ async def handle_calendar_command(update: Update, context: ContextTypes.DEFAULT_
         )
 
 
-async def handle_profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show or set the active trading profile (conservative / balanced / aggressive / default)."""
-    if not _is_authorized(update) or update.message is None:
-        return
-
-    from src.common.profile import VALID_PROFILES
-    from src.notify.formatters import format_profile_status
-
-    args = context.args or []
-    if not args:
-        name = get_active_profile()
-        await update.message.reply_text(format_profile_status(name), parse_mode="MarkdownV2")
-        return
-
-    name = args[0].lower()
-    if name not in VALID_PROFILES:
-        valid = ", ".join(sorted(VALID_PROFILES))
-        await update.message.reply_text(
-            f"Unknown profile *{name}*\\. Valid options: {valid}\\.",
-            parse_mode="MarkdownV2",
-        )
-        return
-
-    set_active_profile(name)
-    logger.info("Trading profile changed to %r via /profile command", name)
-    await update.message.reply_text(format_profile_status(name), parse_mode="MarkdownV2")
-
-
 _AUTONOMY_ORDER = [
     AutonomyLevel.OBSERVE,
     AutonomyLevel.MANUAL,
@@ -1493,7 +1463,6 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("halt", handle_halt_command))
     app.add_handler(CommandHandler("resume", handle_resume_command))
     app.add_handler(CommandHandler("calendar", handle_calendar_command))
-    app.add_handler(CommandHandler("profile", handle_profile_command))
     app.add_handler(CommandHandler("campaigns", handle_campaigns_command))
 
     stop_event = asyncio.Event()

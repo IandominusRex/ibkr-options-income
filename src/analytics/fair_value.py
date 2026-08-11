@@ -33,8 +33,8 @@ import math
 from datetime import date, timedelta
 
 from src.analytics.black_scholes import bs_price
+from src.common.config import get_config
 from src.common.market_hours import today_et
-from src.common.profile import get_effective_risk
 from src.common.schemas import (
     FundamentalStats,
     IdealZone,
@@ -263,7 +263,7 @@ def min_credit_for(
     call, and made the floor *rise* with strike while fair value fell.
     """
     anchors: list[str] = []
-    risk = get_effective_risk()
+    risk = get_config().risk
     edge = 1.0 + _num(_zone_cfg()["min_credit_edge_pct"]) / 100.0
     basis = roc_basis if roc_basis is not None and roc_basis > 0 else strike
 
@@ -385,12 +385,12 @@ def zone_fit_score(strike: float, zone: IdealZone | None) -> float | None:
 
 
 def _zone_cfg() -> dict[str, float]:
-    raw = get_effective_risk().get("ideal_zone", {}) or {}
+    raw = get_config().risk.get("ideal_zone", {}) or {}
     return {k: _num(raw.get(k, default)) for k, default in _DEFAULTS.items()}
 
 
 def _min_strike_vs_basis() -> float:
-    cc = get_effective_risk().get("covered_call", {}) or {}
+    cc = get_config().risk.get("covered_call", {}) or {}
     return _num(cc.get("min_strike_vs_basis", 1.0))
 
 

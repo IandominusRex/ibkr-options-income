@@ -36,8 +36,6 @@ from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
 from src.common.config import get_config
 from src.common.market_hours import today_et
-from src.common.profile import activate as activate_profile
-from src.common.profile import get_effective_weights
 from src.common.schemas import (
     AccountSnapshot,
     AssessedContract,
@@ -76,7 +74,6 @@ from src.storage.risk_verdicts import record_assessments
 from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
-    get_active_profile,
     get_setting,
     release_scan_lease,
     renew_scan_lease,
@@ -966,9 +963,6 @@ async def _run_scan_body(
     result = ScanResult()
     tracker = _Tracker(progress_callback, dashboard_callback)
 
-    # Sync the in-process profile from the DB before any risk/scoring calls (C9).
-    activate_profile(get_active_profile())
-
     # --- 0. Market conditions (VIX) — fetched once, off-thread ---
     loop = asyncio.get_running_loop()
     try:
@@ -1336,7 +1330,7 @@ async def _run_scan_body(
                         if r not in bucket:
                             bucket.append(r)
             # Score floor: only surface candidates above the configured quality bar.
-            min_score = get_effective_weights().get("min_candidate_score", 0)
+            min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [c for c in gate_passed if c.blended_score >= min_score]
             # Remove any symbol that has at least one passing candidate from the skip map —
             # we only surface symbols where *every* candidate was rejected (C7).
@@ -1756,7 +1750,7 @@ async def run_ticker_scan(
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
             verdicts = validate_candidates(scored, account, positions)
             verdict_map = {v.candidate_id: v for v in verdicts}
-            min_score = get_effective_weights().get("min_candidate_score", 0)
+            min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [
                 c
                 for c in scored

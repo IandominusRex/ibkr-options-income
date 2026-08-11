@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from src.common.config import get_config
 from src.common.market_hours import today_et
-from src.common.profile import get_effective_risk
 from src.common.schemas import (
     AccountSnapshot,
     OptionQuote,
@@ -33,8 +32,8 @@ _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
 
 def _strategy_limits(strategy: Strategy) -> dict:
-    """Return the strategy-specific limits dict, merged with any active profile overlay."""
-    return get_effective_risk().get(strategy.value, {})
+    """Return the strategy-specific limits dict from `config/risk_limits.yaml`."""
+    return get_config().risk.get(strategy.value, {})
 
 
 def _sector_of(symbol: str) -> str | None:
@@ -56,7 +55,7 @@ def validate_candidates(
     if not candidates:
         return []
 
-    risk = get_effective_risk()
+    risk = get_config().risk
     income = risk.get("income", {})
     portfolio = risk.get("portfolio", {})
     iv_cfg = risk.get("iv", {})
@@ -250,7 +249,7 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
         # produce a wildly wrong mid-price (e.g. mid = (-1 + 2) / 2 = $0.50).
         reasons.append("negative_bid_sentinel")
 
-    live_cfg = get_effective_risk().get("live_execution", {}) or {}
+    live_cfg = get_config().risk.get("live_execution", {}) or {}
     is_income = candidate.strategy in _INCOME_STRATEGIES
     cfg = get_config()
 

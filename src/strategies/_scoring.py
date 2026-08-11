@@ -6,7 +6,7 @@ import hashlib
 from datetime import date
 
 from src.analytics.fair_value import zone_fit_score
-from src.common.profile import get_effective_weights
+from src.common.config import get_config
 from src.common.schemas import (
     FundamentalStats,
     IdealZone,
@@ -94,7 +94,7 @@ def _zone_fit_weight(right: OptionRight) -> float:
     """
     block = "covered_call" if right == OptionRight.CALL else "cash_secured_put"
     try:
-        raw = get_effective_weights().get(block, {}).get("zone_fit", 0.0)
+        raw = get_config().weights.get(block, {}).get("zone_fit", 0.0)
         return max(0.0, min(1.0, float(raw)))
     except (TypeError, ValueError):
         return 0.0

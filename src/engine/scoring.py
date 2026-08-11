@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.common.profile import get_effective_weights
+from src.common.config import get_config
 from src.common.schemas import Strategy, TradeCandidate
 
 _EQUAL_WEIGHTS: dict[str, float] = {
@@ -24,7 +24,7 @@ _NON_COMPONENT_KEYS = frozenset({"zone_fit"})
 
 def _get_weights(strategy: Strategy) -> dict[str, float]:
     """Return normalized weights for a strategy, falling back to equal weights."""
-    block: dict[str, float] = get_effective_weights().get(strategy.value, {})
+    block: dict[str, float] = get_config().weights.get(strategy.value, {})
     raw = {k: v for k, v in block.items() if k not in _NON_COMPONENT_KEYS}
     if not raw:
         return _EQUAL_WEIGHTS.copy()

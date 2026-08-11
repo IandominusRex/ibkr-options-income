@@ -1063,19 +1063,15 @@ def test_gate_accepts_a_roll_premium_that_clears_fair_value():
 
 def test_require_vrp_edge_false_bypasses_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """The bypass knob genuinely disables the gate, not just defaults it off."""
-    import copy
-
     import src.engine.risk_engine as risk_engine_module
-    from src.common.profile import get_effective_risk as real_effective_risk
+    from src.common.config import get_config
     from src.common.schemas import IdealZone, OptionRight
     from src.engine.risk_engine import validate_candidates
 
-    def _vrp_disabled() -> dict:
-        risk = copy.deepcopy(real_effective_risk())
-        risk["income"]["require_vrp_edge"] = False
-        return risk
+    patched_cfg = get_config().model_copy(deep=True)
+    patched_cfg.risk["income"]["require_vrp_edge"] = False
 
-    monkeypatch.setattr(risk_engine_module, "get_effective_risk", _vrp_disabled)
+    monkeypatch.setattr(risk_engine_module, "get_config", lambda: patched_cfg)
 
     zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
     cand = _csp_candidate(

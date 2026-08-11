@@ -24,7 +24,6 @@ AUTONOMY_WHITELIST_KEY = "autonomy_whitelist"
 HALT_KEY = "execution_halted"
 HALT_REASON_KEY = "execution_halt_reason"
 SCAN_LEASE_KEY = "scan_lease_expiry"
-ACTIVE_PROFILE_KEY = "active_profile"
 HIGH_WATER_MARK_KEY = "nlv_high_water_mark"
 
 # Sortable UTC timestamp (zero-padded) so lexicographic string comparison == chronological.
@@ -192,16 +191,6 @@ def set_halted(enabled: bool, reason: str = "") -> None:
 def get_halt_reason() -> str:
     """Human-readable reason the kill switch is engaged (empty when not halted)."""
     return get_setting(HALT_REASON_KEY, "")
-
-
-def get_active_profile() -> str:
-    """Return the active trading profile name (default: 'default')."""
-    return get_setting(ACTIVE_PROFILE_KEY, "default")
-
-
-def set_active_profile(name: str) -> None:
-    """Persist the active trading profile name."""
-    set_setting(ACTIVE_PROFILE_KEY, name)
 
 
 def get_high_water_mark() -> float:

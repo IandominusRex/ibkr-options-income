@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.common.profile import get_effective_risk
+from src.common.config import get_config
 from src.common.schemas import TradeCandidate
 
 
@@ -52,7 +52,7 @@ def select_top_candidates_detailed(
     that simply ran out of room.
     """
     if n is None:
-        n = get_effective_risk()["portfolio"]["max_new_positions_per_run"]
+        n = get_config().risk["portfolio"]["max_new_positions_per_run"]
 
     seen: set[tuple[str, str]] = set()
     deduped: list[TradeCandidate] = []

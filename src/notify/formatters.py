@@ -1243,18 +1243,6 @@ def format_pnl_calendar(rows: list[dict], *, days: int = 30) -> str:
     return "\n".join(parts)
 
 
-def format_profile_status(name: str) -> str:
-    """MarkdownV2 message showing the active trading profile and what it means."""
-    _DESCRIPTIONS = {
-        "default": "Base config — risk\\_limits\\.yaml and scoring\\_weights\\.yaml as written\\.",
-        "conservative": "Tighter delta/DTE windows, higher IV/score floors \\(fewer, safer trades\\)\\.",
-        "balanced": "Matches the base config defaults — no overrides applied\\.",
-        "aggressive": "Wider delta/DTE windows, lower IV/score floors \\(more, riskier trades\\)\\.",
-    }
-    desc = _DESCRIPTIONS.get(name, _md(name))
-    return f"📐 *Active profile: {_md(name)}*\n{desc}"
-
-
 def format_help() -> str:
     """List all available bot commands."""
     lines = [
@@ -1280,10 +1268,6 @@ def format_help() -> str:
         "/autonomy LEVEL — Promote/demote \\(observe\\|manual\\|whitelist\\|full\\)",
         "/halt — 🛑 Kill switch: stop all order transmission now",
         "/resume — Release the kill switch and resume execution",
-        "",
-        "*Profile*",
-        "/profile — Show active trading profile",
-        "/profile conservative|balanced|aggressive|default — Switch profile",
         "",
         "*System*",
         "/health — Connections, DB, last scan, open orders",

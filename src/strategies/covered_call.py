@@ -11,7 +11,7 @@ from src.analytics.liquidity import (
     score_liquidity,
     volume_gate_active,
 )
-from src.common.profile import get_effective_risk
+from src.common.config import get_config
 from src.common.schemas import (
     FundamentalStats,
     IdealZone,
@@ -106,7 +106,7 @@ def screen_cc_candidates(
     # profitable on the campaign. Falls back to avg_cost for shares bought outright.
     basis = adjusted_cost_basis_for(symbol) or position.avg_cost
 
-    risk = get_effective_risk()
+    risk = get_config().risk
     cc_cfg = risk["covered_call"]
     income_cfg = risk["income"]
 
