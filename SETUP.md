@@ -228,6 +228,8 @@ The AUTOMATED-mode circuit breakers live in `config/settings.yaml → automation
 |---|---|---|
 | `automation.max_auto_trades_per_day` | 10 | Max new-exposure entry orders opened per ET trading day (auto or manual). 0 disables. |
 | `automation.daily_loss_halt_pct` | 5.0 | Auto-engage the `/halt` kill switch when today's net realized loss exceeds this % of net liquidation. 0 disables. |
+| `automation.max_loss_multiple` | 2.0 | Buy to close any short whose cost-to-close has reached this multiple of its entry credit. 0 disables. Runs every 15 minutes during the intraday loop. |
+| `automation.auto_close_enabled` | true | Enable risk-reducing auto-closes (both profit-takes at 50% and loss-exits at max_loss_multiple). Runs independently of the autonomy level — that governs opening exposure; closing risk should never wait. |
 
 ### Checking what's actually tradeable
 

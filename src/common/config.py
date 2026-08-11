@@ -297,6 +297,11 @@ class AutomationCfg(BaseModel):
     # proxy — it sums signed FillRows (credits − debits) for the day, so it trips on net debit
     # days (large buy-to-close losses), not full mark-to-market P&L.
     daily_loss_halt_pct: float = 5.0
+    # Buy to close when cost-to-close reaches this multiple of the entry credit. 0 disables.
+    max_loss_multiple: float = 2.0
+    # Risk-REDUCING actions run on this switch, independent of the autonomy level — that
+    # governs opening exposure. Closing risk should never wait for a tap.
+    auto_close_enabled: bool = True
 
 
 class Config(BaseModel):

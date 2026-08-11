@@ -58,6 +58,7 @@ from src.execution.executor import resolve_live_confirm
 # Profit-take orchestration lives in src/execution/ (N23 — trading control flow is not the notify
 # layer's job). Imported under their historical private names so the intraday loop and existing
 # tests keep working; the Telegram sends go through the passed bot.
+from src.execution.profit_take import check_loss_exits as _check_loss_exits
 from src.execution.profit_take import check_profit_takes as _check_profit_takes
 from src.execution.profit_take import (
     net_entry_credit_per_share as _net_entry_credit_per_share,  # noqa: F401  (re-exported for tests)
@@ -1123,6 +1124,13 @@ async def _intraday_scan_loop(
                     await _check_profit_takes(ib_scan, ib_exec, bot, chat_id)
                 except Exception:
                     logger.exception("Intraday loop: profit-take check failed")
+
+            # 1a. Loss-exit check (closes shorts that reach max_loss_multiple x entry credit)
+            if ib_scan.isConnected():
+                try:
+                    await _check_loss_exits(ib_scan, ib_exec, bot, chat_id)
+                except Exception:
+                    logger.exception("Intraday loop: loss-exit check failed")
 
             # 1b. Periodic reconciliation (SYSTEM_REVIEW F7): recover entry fills missed during a
             #     mid-session reconnect, and record manual buy-to-closes done in TWS.

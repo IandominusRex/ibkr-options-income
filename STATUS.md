@@ -98,21 +98,23 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   so cycle times are predictable and consistent across restarts. Each cycle starts by sending a
   short "🔄 Scan started · HH:MM ET" Telegram message (`src/common/market_hours.now_et_hhmm`) so an
   operator can see the schedule is firing on time even before any candidates/heartbeat are sent.
-  Each cycle then: (1) checks short option positions for 50% profit-take threshold, (2) runs a
-  full scan — but new-entry scans stop after `scheduler.entry_cutoff` (default 15:00 ET);
-  profit-take checks still run until the close. The whole cycle body is wrapped in a catch-all so
+  Each cycle then: (1) checks short option positions for 50% profit-take threshold and
+  loss-side exits (`max_loss_multiple` × entry credit), (2) runs a full scan — but new-entry scans
+  stop after `scheduler.entry_cutoff` (default 15:00 ET); exit checks (profit + loss) run until
+  the close. The whole cycle body is wrapped in a catch-all so
   one bad cycle cannot kill the loop. Behaviour depends on mode (see below). RTH is now determined
   by the shared, **holiday-aware** `src/common/market_hours.is_rth` (the single source of truth
   for both the intraday loop and the order-transmission gate) — full-day NYSE holidays and 13:00
   ET early closes are respected, not just weekday + clock.
 - **MANUAL / AUTOMATED mode toggle** (`/mode` Telegram command) — persisted in the `system_settings`
   SQLite table via `src/storage/system_settings.py`. In **MANUAL** mode (default): scan candidates
-  get Approve/Reject buttons; profit takes send alerts only. In **AUTOMATED** mode: candidates are
-  directly queued for execution (no human tap), profit-take targets trigger BUY-to-close orders
-  automatically via `execution/position_manager.close_short_position` — which records an
+  get Approve/Reject buttons; exits (profit-takes and loss-closes) send alerts only. In **AUTOMATED**
+  mode: candidates are directly queued for execution (no human tap), and exits trigger BUY-to-close
+  orders automatically via `execution/position_manager.close_short_position` — which records an
   `OrderRow`/`FillRow`, cancels on timeout, and is idempotent at the contract level (SYSTEM_REVIEW
   F1). The deterministic risk gate still re-validates every new-exposure order before execution in
-  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded.
+  both modes; buy-to-close (risk-reducing) skips the gate but is still recorded. Loss-exits run
+  independently of autonomy level via the `automation.auto_close_enabled` switch.
 - **AUTOMATED-mode circuit breakers** (`src/execution/circuit_breakers.py`) — `max_auto_trades_per_day`
   and `daily_loss_halt_pct` bound activity and losses (the risk gate only bounds exposure). A persisted
   `/halt` kill switch (auto-engaged on a daily-loss breach) stops all transmission while still allowing
