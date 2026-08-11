@@ -70,7 +70,7 @@ is worse than a stopped one.
 | 14 | Autonomy ladder | 2 | done | 2026-08-11 | |
 | 15 | Live paper validation session | 3 | in progress | 2026-08-11 | |
 | 16 | Deletions | 3 | done | 2026-08-11 | |
-| 17 | Split `scan.py` | 3 | pending | | |
+| 17 | Split `scan.py` | 3 | done | 2026-08-11 | |
 | 18 | Phase 1–3 closeout | 3 | pending | | |
 
 Status values: `pending` · `in progress` · `done` · `BLOCKED`.
@@ -1110,6 +1110,57 @@ know. Empty until the first task runs.
   zero remaining references to any deleted name in `src/`, `scripts/`, `config/`, or `tests/`.
   `.tmp.driveupload/` was never staged in any of the three commits (`git show --stat` confirmed on
   all three).
+
+- **Task 17** — All five steps completed as written; three deviations, none of which changed the
+  shape of the split.
+  1. **The `Interfaces` line's "only module in this trio that imports from `src.notify`" was not
+     fully achievable.** `scan_progress.py` does hold every Telegram *edit*, but `scan.py` itself
+     still imports `send_candidates`, `send_buy_list`, `send_account_snapshot`, `thread_id` and
+     three formatters for the notify stage at the end of `_run_scan_body`. Removing those is
+     blocked by the brief's own harder constraint that `tests/test_scan_*.py` pass **unchanged**:
+     `tests/test_scan_timeout.py`, `tests/test_scan_materiality.py` and
+     `tests/test_scan_review_reuse.py` all monkeypatch those names as attributes of
+     `src.orchestrator.scan`, so moving them out silently breaks the stubs and the tests hit live
+     Telegram. Steps 2–5 also only ever instruct moving `_Tracker` and the per-symbol loop. The
+     **enforceable, load-bearing half is done and now test-guarded**: `scan_pipeline.py` is free
+     of `src.notify`, checked by the new
+     `tests/test_eval_skills.py::test_scan_pipeline_does_not_import_the_notify_layer` AST scan —
+     which is the property Phase 5's API actually needs (it can trigger a scan and read a
+     `ScanResult` without the Telegram layer). **A later task that wants `scan.py` itself
+     notify-free must budget for editing those three test files; it cannot be done underneath
+     them.**
+  2. **`SymbolDeps` dependency injection in `scan_pipeline.py` is a requirement, not a style
+     choice.** Six names are monkeypatched as attributes of `src.orchestrator.scan` by the
+     existing tests — `get_option_chain_quotes_async`, `get_iv_stats`, `get_technical_stats`,
+     `get_fundamental_stats`, `screen_cc_candidates`, `screen_csp_candidates`. A plain
+     module-level import inside `scan_pipeline.py` resolves from *its own* globals and would
+     never receive those patches. Passing them through a frozen `SymbolDeps` built inside
+     `_run_scan_body` (after monkeypatch has run) keeps the single existing seam working with
+     zero test edits. Same reasoning kept `_fetch_analytics` in `scan.py` rather than moving it
+     alongside the loop — it is the seam for the three analytics stubs, and `run_ticker_scan`
+     (deliberately untouched) still calls it. `_apply_sentiment` *did* move, as
+     `scan_pipeline.apply_sentiment`. **Anything later that adds a collaborator to the per-symbol
+     path should extend `SymbolDeps` rather than importing it into `scan_pipeline.py` directly.**
+  3. **Two nil-state behaviour deltas, both accepted deliberately.** (a) The half-dead-socket
+     circuit breaker now trips *after* `scan_symbol` returns rather than inside the
+     `except TimeoutError:` block, so the aborting symbol pays one wasted analytics+sentiment
+     round trip. Final state is byte-identical — the `break` still precedes the fold into
+     `analytics_map` / provenance / `fetched_spots`, and a timed-out symbol has `quotes == []` so
+     it could produce no candidates. Preserving the old ordering would have required passing
+     breaker state into the pipeline, which is exactly what the split forbids;
+     `test_consecutive_timeouts_abort_the_scan` still asserts `len(calls) == 2`. (b) The
+     chain-fetch log lines (including "exceeded symbol_timeout_seconds") moved from logger
+     `src.orchestrator.scan` to `src.orchestrator.scan_pipeline`;
+     `test_timeout_logs_error_and_continues` still passes because its `caplog` handler sits on the
+     root logger and the ERROR record propagates. **Anything grepping logs by logger name for the
+     per-symbol chain/analytics messages must now look for `scan_pipeline`.**
+  `run_ticker_scan` was left entirely alone (not consolidated onto the new pipeline — speculative
+  scope this task did not ask for); `run_scan`, `ScanResult`, `run_ticker_scan` and
+  `TickerNotFoundError` all remain importable from `src.orchestrator.scan` for
+  `src/notify/approval_service.py`. Three files were already unformatted on this branch before the
+  task (`scripts/capacity_report.py`, `tests/test_account_sizing.py`, `tests/test_loss_exits.py`)
+  and were left that way rather than sweeping unrelated churn into the commits.
+  `.tmp.driveupload/` was never staged (all commits used explicit paths).
 
 ---
 
@@ -4327,12 +4378,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 Telegram layer. Doing this after the API exists means the API grows a Telegram dependency it
 can never shed.
 
-- [ ] **Step 1: Confirm the safety net**
+- [x] **Step 1: Confirm the safety net**
 
 Run: `python -m pytest tests/test_scan_memory.py tests/test_scan_materiality.py tests/test_scan_timeout.py tests/test_scan_tracker.py tests/test_scan_review_reuse.py tests/test_ticker_scan_format.py -q`
 Expected: PASS. These are the behaviour contract; they must not be modified during this task.
 
-- [ ] **Step 2: Extract the progress tracker**
+- [x] **Step 2: Extract the progress tracker**
 
 Move `_Tracker` and its helpers into `src/orchestrator/scan_progress.py`. Import it back into
 `scan.py`. Change nothing else.
@@ -4345,7 +4396,7 @@ git add -A && git commit -m "refactor(orchestrator): extract scan progress track
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 3: Extract the per-symbol pipeline**
+- [x] **Step 3: Extract the per-symbol pipeline**
 
 Move the per-symbol loop body (chain fetch, spot resolution, analytics, sentiment, CC/CSP
 screening) into `scan_pipeline.py` as a function taking explicit inputs and returning
@@ -4363,7 +4414,7 @@ a scan without importing the Telegram layer.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 4: Verify the separation holds**
+- [x] **Step 4: Verify the separation holds**
 
 Add to `tests/test_eval_skills.py`:
 
@@ -4387,7 +4438,7 @@ def test_scan_pipeline_does_not_import_the_notify_layer():
 
 Run: `python -m pytest tests/test_eval_skills.py -q` — expected PASS.
 
-- [ ] **Step 5: Update docs and commit**
+- [x] **Step 5: Update docs and commit**
 
 `ARCHITECTURE.md` `src/orchestrator/` section and `README.md` layout table: add both new
 modules and describe the three-way split.
