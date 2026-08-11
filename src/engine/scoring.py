@@ -12,7 +12,6 @@ _EQUAL_WEIGHTS: dict[str, float] = {
     "liquidity": 0.2,
     "assignment_risk": 0.2,
     "sentiment": 0.0,  # off by default; enabled when sentiment weight is in config
-    "annualized_roc": 0.0,  # off by default (C2); enable in scoring_weights.yaml to rank by yield
 }
 
 
@@ -49,7 +48,6 @@ def score_candidates(candidates: list[TradeCandidate]) -> list[TradeCandidate]:
             + s.liquidity_score * w.get("liquidity", 0.2)
             + s.assignment_safety_score * w.get("assignment_risk", 0.2)
             + sentiment * w.get("sentiment", 0.0)
-            + s.annualized_roc_score * w.get("annualized_roc", 0.0)
         )
         result.append(c.model_copy(update={"blended_score": round(blended, 4)}))
     result.sort(key=lambda c: c.blended_score, reverse=True)

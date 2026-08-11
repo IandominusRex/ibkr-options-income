@@ -297,7 +297,6 @@ class ScoreCard(BaseModel):
     sentiment_score: float | None = None  # 0-100, 50=neutral; None = not fetched
     # Per-source breakdown behind sentiment_score (enrichment for Claude/Telegram, not scoring).
     sentiment_detail: SentimentDetail | None = None
-    annualized_roc_score: float = 0.0  # capped annualized ROC normalized to 0-100 (C2)
 
 
 class IdealZone(BaseModel):

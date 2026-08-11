@@ -15,7 +15,6 @@ covered_call:
   liquidity: 0.15
   assignment_risk: 0.20   # lower assignment likelihood scores higher (we keep shares)
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
-  annualized_roc: 0.0 # C2: off by default; raise to rank by normalized annualized yield
   zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
 
 cash_secured_put:
@@ -25,7 +24,6 @@ cash_secured_put:
   liquidity: 0.15
   assignment_risk: 0.10   # assignment is acceptable here (we'd own it), so low weight
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
-  annualized_roc: 0.0 # C2: off by default; raise to rank by normalized annualized yield
   zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
 
 # Minimum blended score (0-100) to surface a candidate to Claude / Telegram.

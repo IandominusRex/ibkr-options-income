@@ -40,7 +40,6 @@ from src.strategies._evaluation import (
     rank_rejects,
 )
 from src.strategies._scoring import (
-    annualized_roc_score,
     fundamental_score,
     make_candidate_id,
     technical_score,
@@ -202,7 +201,6 @@ def screen_cc_candidates(
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
             assignment_safety_score=(1 - delta) * 100 if delta is not None else 0.0,
-            annualized_roc_score=annualized_roc_score(annualized_yield_pct),
         )
 
         candidate = TradeCandidate(

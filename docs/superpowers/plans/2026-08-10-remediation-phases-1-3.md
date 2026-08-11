@@ -69,7 +69,7 @@ is worse than a stopped one.
 | 13 | Manage at 21 DTE | 2 | done | 2026-08-11 | |
 | 14 | Autonomy ladder | 2 | done | 2026-08-11 | |
 | 15 | Live paper validation session | 3 | in progress | 2026-08-11 | |
-| 16 | Deletions | 3 | pending | | |
+| 16 | Deletions | 3 | done | 2026-08-11 | |
 | 17 | Split `scan.py` | 3 | pending | | |
 | 18 | Phase 1–3 closeout | 3 | pending | | |
 
@@ -1021,6 +1021,95 @@ know. Empty until the first task runs.
   if Question 4 (`greeks_source == "ibkr"`) comes back 0%, live income trading is blocked until
   resolved or `require_ibkr_greeks_when_live` is deliberately set `false` with written
   justification.
+
+- **Task 16** — Production code matches the brief's Step 1–3 intent exactly; several deletions
+  went one layer deeper than the brief's literal file list because the brief's own subsystems
+  had orphans it didn't name. All were verified dead (zero remaining importers) before removal,
+  not assumed.
+  1. **`config/skills/` (the skill-file storage dir — `active/`, `proposed/`, `rejected/`,
+     `README.md`) was deleted too**, alongside `src/claude/skills/`. Not in the brief's file
+     list, but it is data storage owned entirely by `registry.py`, which the brief does delete;
+     leaving an empty, orphaned config directory behind would be debris, not caution.
+  2. **`ollama_runner.propose_skill()` and `parser.parse_ollama_skill_proposal()` removed.**
+     These are the Ollama-backend's implementation of the skill-proposal loop's CLI counterpart
+     (`proposer.py::_propose_skill_cli`) — same subsystem, different backend, not named in the
+     brief's file list because the brief only lists `src/claude/skills/` (the CLI/dispatch side).
+     Left in place they would have been immediately orphaned (only callers were the deleted
+     `proposer.py` and their own tests). Six tests in `tests/test_ollama_runner.py` covering
+     `parse_ollama_skill_proposal` / `ollama_runner.propose_skill` / the `proposer.py` dispatch
+     tests were deleted with them, since they imported `src.claude.skills.proposer` directly and
+     would otherwise fail with `ModuleNotFoundError`.
+  3. **`SkillProposal`, `VerdictEvaluation`, `CalibrationBucket`, `PolicyStats` removed from
+     `src/common/schemas.py`.** Not named by the brief's Step 1 file list (which never mentions
+     `schemas.py`), but these four Pydantic classes became fully orphaned once
+     `metrics.py`/`proposer.py`/`registry.py` were gone — `VerdictEvaluation`/`CalibrationBucket`/
+     `PolicyStats` *are* "verdict EV scoring," the exact thing the Step 1 commit message says is
+     being removed. Kept: `ScoreBucket`/`SignalCorrelation`/`ScoreOutcomeReport` (score-vs-outcome,
+     N22 — a different, kept module).
+  4. **`format_profile_status()` removed from `src/notify/formatters.py`**, plus its two `/profile`
+     lines in `format_help()`'s command list. Not named by the brief, but it existed solely to
+     serve `handle_profile_command` (deleted by Step 2) and had no other caller.
+  5. **The rewritten `test_skills_never_reach_the_engine` is narrower than the brief's literal
+     correction text.** The dispatch's correction said to check for any `src.claude` import
+     broadly; doing that literally turns up `from src.claude.memory import ... record_outcome` in
+     `src/execution/executor.py` and `src/execution/approval.py` — a pre-existing, legitimate,
+     one-way write (execution records a fill/rejection outcome for *later scans* to read back
+     into prompts; `src/claude/memory.py`'s own docstring calls it a "Neutral module ... so
+     executor / approval / approval_service can all call it without import cycles"). That is
+     execution informing Claude, never Claude influencing execution, so it is not a fence
+     violation. CLAUDE.md's own fence text is narrower than the dispatch's paraphrase too:
+     "nothing in `eval/` or `skills/` is importable from ... the engine/execution/sizing path" —
+     scoped to those two packages, not all of `src/claude/`. The rewritten test checks for
+     `src.claude.eval` / `src.claude.skills` import prefixes specifically, which (a) matches
+     CLAUDE.md's actual invariant, (b) still catches a real regression (nothing in the target
+     files imports either prefix, confirmed by grep before and after), and (c) does not false-flag
+     the sanctioned `memory.py` pattern. Documented at length in the test's own docstring for the
+     next person who touches it.
+  6. **`tests/test_eval.py`'s three `metrics.py` tests deleted** (`test_metrics_edge_and_calibration`,
+     `test_metrics_empty_is_not_zero_skill`, `test_metrics_by_period_groups_by_month`, plus the
+     `_closed` helper they alone used) — not named by the brief, but unavoidable once
+     `src/claude/eval/metrics.py` is `git rm`'d; the brief's own "Test: `tests/test_eval_skills.py`
+     and others" anticipates this. The separate, unrelated `score_metrics.py` (N22) tests in the
+     same file are untouched.
+  7. **`tests/test_phase3.py`'s entire C9 section deleted** (deep_merge / activate·active /
+     `get_effective_risk`·`get_effective_weights` / `format_profile_status` — 17 tests), keeping
+     the unrelated C7 (skip-reasons) and C8 (P&L calendar, order notifications) sections and the
+     module docstring's task list intact minus "C9."
+  8. **`tests/test_engine.py::test_require_vrp_edge_false_bypasses_the_gate` rewritten**, not just
+     re-pointed: it monkeypatched `risk_engine_module.get_effective_risk` with a function wrapping
+     the real `get_effective_risk()`; since `risk_engine.py` now calls `get_config().risk`
+     directly, it now monkeypatches `risk_engine_module.get_config` to return
+     `get_config().model_copy(deep=True)` with `risk["income"]["require_vrp_edge"]` flipped —
+     same test intent (prove the bypass knob actually disables the gate), mechanically adapted
+     entry point.
+  9. **`tests/test_scan_review_reuse.py`: removed one `monkeypatch.setattr(scanmod,
+     "persist_chain_quotes", ...)` line.** `scan.py` no longer imports that name at all after
+     Step 3, so the line would raise `AttributeError` (monkeypatch's default `raising=True`);
+     deleting it is the correct fix, not a workaround.
+  10. **Stale doc-comment cross-references fixed as encountered, beyond the brief's named
+      files:** `src/storage/risk_verdicts.py`'s docstring ("mirrors
+      `maintenance.purge_old_option_quotes`"), `src/storage/models.py`'s `RiskVerdictRow`
+      docstring ("pruned ... exactly like `option_quotes`"), and `src/orchestrator/scan.py`'s
+      comment claiming `persist_chain_quotes` was "the substrate for the later S6 diff" — verified
+      false before removing (grepped: S1/S10 intraday materiality is served entirely by the
+      separate `scan_state` table; `option_quotes` had zero readers, confirming the brief's own
+      "write-only, no readers" framing).
+  11. **`config/settings.yaml` never actually had a `claude.skills_enabled` key** — `ClaudeCfg`'s
+      `skills_enabled: bool = True` was a Pydantic default never overridden in the YAML (grepped
+      and confirmed absent). The brief's instruction to remove it "from `config/settings.yaml`"
+      was a no-op there; only the field on `ClaudeCfg` in `src/common/config.py` needed removal.
+  12. **Step 4 doc-scope held to exactly the four files the dispatch named** (README.md,
+      ARCHITECTURE.md, STATUS.md, SETUP.md) — `CLAUDE.md`'s "the fence" section (which still
+      describes `render_active_skills()` and the skill loop as if they exist) was deliberately
+      left untouched, since the dispatch's Step 4 instructions enumerated only those four docs and
+      CLAUDE.md is not in the brief's Files list either. This is a known residual inconsistency in
+      CLAUDE.md for a human or a later task to address, not fixed here — flagged explicitly in the
+      task report rather than silently expanding scope into the file every future agent reads
+      first.
+  Self-review re-ran every grep from the corrections at the end of Step 3 and again after Step 4;
+  zero remaining references to any deleted name in `src/`, `scripts/`, `config/`, or `tests/`.
+  `.tmp.driveupload/` was never staged in any of the three commits (`git show --stat` confirmed on
+  all three).
 
 ---
 
@@ -4137,7 +4226,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Do this as three separate commits** — the profile removal touches many files and must be
 independently revertible.
 
-- [ ] **Step 1: Remove the skills loop and verdict EV**
+- [x] **Step 1: Remove the skills loop and verdict EV**
 
 ```bash
 git rm -r src/claude/skills
@@ -4164,7 +4253,7 @@ outcome ledger and reconciler are kept — they are cheap and useful.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 2: Remove named profiles**
+- [x] **Step 2: Remove named profiles**
 
 ```bash
 git rm -r config/profiles src/common/profile.py
@@ -4191,7 +4280,7 @@ Four parameter overlays on a system that has not validated one set live.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 3: Remove the dead table and weights**
+- [x] **Step 3: Remove the dead table and weights**
 
 Drop `OptionQuoteRow` from `src/storage/models.py`, `persist_chain_quotes` from wherever it is
 defined, its call site in `src/orchestrator/scan.py` (~line 1170), and
@@ -4202,13 +4291,13 @@ In `config/scoring_weights.yaml`, remove the `annualized_roc` key from both bloc
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 
-- [ ] **Step 4: Update all docs**
+- [x] **Step 4: Update all docs**
 
 `README.md` layout table, `ARCHITECTURE.md` folder guide and commands table, `STATUS.md`
 (remove every deleted feature from "What is built"; add a "Removed 2026-08-10" section
 explaining why), `SETUP.md` scripts and commands tables.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

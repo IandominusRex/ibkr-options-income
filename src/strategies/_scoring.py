@@ -100,16 +100,6 @@ def _zone_fit_weight(right: OptionRight) -> float:
         return 0.0
 
 
-_ANNUALIZED_ROC_CAP = 100.0  # % — prevents tiny-DTE blow-up in score normalization (C2)
-
-
-def annualized_roc_score(annualized_yield_pct: float) -> float:
-    """Normalize annualized ROC to 0-100, capped at _ANNUALIZED_ROC_CAP to prevent
-    tiny-DTE candidates from dominating purely on inflated annualized yield math."""
-    capped = min(annualized_yield_pct, _ANNUALIZED_ROC_CAP)
-    return round((capped / _ANNUALIZED_ROC_CAP) * 100.0, 4)
-
-
 def fundamental_score(fund: FundamentalStats) -> float:
     if fund.quality_flag is True:
         score = 70.0

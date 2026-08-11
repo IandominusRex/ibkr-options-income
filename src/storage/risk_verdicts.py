@@ -43,8 +43,8 @@ def record_assessments(run_id: str, assessed: list[AssessedContract]) -> int:
 def purge_old_risk_verdicts(days: int = 14) -> int:
     """Delete assessment rows older than *days*. Returns the number deleted.
 
-    Mirrors ``maintenance.purge_old_option_quotes``: a scan writes hundreds of rows per run
-    and ~26 runs a day, so without pruning this table would dominate the database.
+    A scan writes hundreds of rows per run and ~26 runs a day, so without pruning this table
+    would dominate the database.
     """
     cutoff = datetime.now(UTC) - timedelta(days=days)
     try:

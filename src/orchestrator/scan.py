@@ -56,11 +56,7 @@ from src.common.schemas import (
 from src.engine.decision_engine import select_top_candidates_detailed
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
-from src.ibkr.market_data import (
-    drain_market_data_lines,
-    get_option_chain_quotes_async,
-    persist_chain_quotes,
-)
+from src.ibkr.market_data import drain_market_data_lines, get_option_chain_quotes_async
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.notify.formatters import (
     format_assessed_contracts,
@@ -1158,15 +1154,6 @@ async def _run_scan_body(
                         elapsed,
                         len(quotes),
                     )
-                # Persist the snapshot so later cycles have a store to diff against (S10).
-                if quotes:
-                    try:
-                        await loop.run_in_executor(
-                            None, persist_chain_quotes, symbol, quotes, result.run_id
-                        )
-                    except Exception:
-                        log.warning("scan: persist_chain_quotes failed for %s", symbol)
-
         # Spot price (N17 follow-up): prefer the IBKR chain's put-call-parity spot over
         # yfinance fast_info when we just paid for the chain fetch.
         spot_override = infer_spot_from_quotes(quotes) if quotes else None

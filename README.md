@@ -47,8 +47,6 @@ to your phone via Telegram.
 | `/campaigns` | Wheel campaigns per symbol: CSP→assignment→CC chain with cumulative net premium and adjusted cost basis |
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only |
 | `/expire` | Expire all pending approvals (clears the queue without executing) |
-| `/profile` | Show the active trading profile (conservative / balanced / aggressive / default) |
-| `/profile conservative` | Switch to the named profile — overlays delta/DTE/IV/score-floor onto base config |
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
 | `/help` | List all commands |
 
@@ -116,14 +114,12 @@ python -m pytest               # all tests pass without IB Gateway
 | Path | Purpose |
 |---|---|
 | `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
-| `config/skills/` | Human-promoted reasoning skills (active/proposed/rejected) injected into review prompts |
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
 | `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive) |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation. The CC/CSP screens return the contracts they **rejected** alongside those they passed (`_evaluation.py`), each tagged with every gate it failed — so a scan that approves nothing still shows what it looked at and why |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate |
 | `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |
-| `src/claude/eval/` | Outcome ledger, close reconciler, and verdict scoring (calibration + EV vs baseline) |
-| `src/claude/skills/` | Skill loop: propose from labeled history, human-gated promotion, prompt injection |
+| `src/claude/eval/` | Outcome ledger, close reconciler, and score-vs-outcome analysis (does `blended_score` predict realized P&L) |
 | `src/execution/` | Order building and execution via IBKR |
 | `src/notify/` | Telegram messaging and approval service |
 | `src/monitor/` | Event-driven intraday position monitoring |

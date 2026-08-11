@@ -62,7 +62,7 @@ class RiskVerdictRow(Base):
     read without recomputing the zone from analytics that have since moved.
 
     Written best-effort by ``storage.risk_verdicts.record_assessments`` and pruned to 14 days
-    by the EOD run, exactly like ``option_quotes``.
+    by the EOD run.
     """
 
     __tablename__ = "risk_verdicts"
@@ -169,18 +169,6 @@ class PriceHistoryRow(Base):
     close: Mapped[float] = mapped_column(Float)
     volume: Mapped[float] = mapped_column(Float, default=0.0)
     source: Mapped[str] = mapped_column(String(16), default="yfinance")
-
-
-class OptionQuoteRow(Base):
-    """Option chain snapshot: one row per (run_id, symbol) with all quotes as JSON."""
-
-    __tablename__ = "option_quotes"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[str] = mapped_column(String(40), index=True)
-    symbol: Mapped[str] = mapped_column(String(16), index=True)
-    payload: Mapped[list] = mapped_column(JSON)  # list[OptionQuote.model_dump()]
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class ScanStateRow(Base):

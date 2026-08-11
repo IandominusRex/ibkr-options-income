@@ -1,8 +1,4 @@
-"""Periodic DB maintenance: prune write-only audit tables and back up the system of record.
-
-`option_quotes` is written once per symbol per scan as an audit trail and never read by
-production code. In the 15-minute automated loop that is tens of thousands of rows a week.
-:func:`purge_old_option_quotes` is invoked from the EOD run to keep a bounded window.
+"""Periodic DB maintenance: back up the system of record.
 
 `data/income_system.db` is the system of record — orders, fills, and the entire labeled
 learning history. :func:`backup_database` (SYSTEM_REVIEW Phase 2) takes a consistent online
@@ -14,16 +10,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.common.config import get_config
-from src.storage.db import session_scope
-from src.storage.models import OptionQuoteRow
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_RETENTION_DAYS = 14
 _DEFAULT_BACKUP_KEEP = 7
 
 
@@ -70,21 +63,3 @@ def backup_database(keep: int = _DEFAULT_BACKUP_KEEP) -> Path | None:
         log.exception("DB backup rotation failed")
 
     return dest
-
-
-def purge_old_option_quotes(retention_days: int = _DEFAULT_RETENTION_DAYS) -> int:
-    """Delete option_quotes rows older than *retention_days*. Returns the row count deleted."""
-    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-    try:
-        with session_scope() as s:
-            deleted = (
-                s.query(OptionQuoteRow)
-                .filter(OptionQuoteRow.created_at < cutoff)
-                .delete(synchronize_session=False)
-            )
-        if deleted:
-            log.info("Pruned %d option_quotes row(s) older than %d days", deleted, retention_days)
-        return int(deleted or 0)
-    except Exception:
-        log.exception("option_quotes purge failed")
-        return 0

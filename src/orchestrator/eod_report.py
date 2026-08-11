@@ -401,12 +401,11 @@ async def run() -> None:
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
 
-    # 8. Prune the write-only audit tables so SQLite stays bounded. Both are forensics-only —
-    # no production code reads them back, so a bounded window costs nothing operationally.
-    from src.storage.maintenance import backup_database, purge_old_option_quotes
+    # 8. Prune the write-only audit table so SQLite stays bounded. Forensics-only — no
+    # production code reads it back, so a bounded window costs nothing operationally.
+    from src.storage.maintenance import backup_database
     from src.storage.risk_verdicts import purge_old_risk_verdicts
 
-    purge_old_option_quotes()
     purge_old_risk_verdicts()
 
     # 9. Nightly backup of the system of record (orders, fills, learning history).

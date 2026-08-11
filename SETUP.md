@@ -412,8 +412,6 @@ Once the approval service is running, you can interact with the system from your
 | `/campaigns` | Wheel campaigns for all symbols: the CSP→assignment→CC→close chain per ticker, with cumulative net premium collected and adjusted cost basis after assignment. |
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only. |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
-| `/profile` | Shows the active trading profile (default / conservative / balanced / aggressive) and its description. |
-| `/profile conservative` | Switches to the named profile — overlays tighter delta/DTE/IV/score-floor settings onto the base config for the current and future scans. Valid names: `default`, `conservative`, `balanced`, `aggressive`. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
 
@@ -758,9 +756,9 @@ These are wired into the code but **review the defaults before you flip the flag
 
 ## 13. The verdict learning loop (optional)
 
-Once scans have run and trades have closed, the system can score how good Claude's reviews
-actually were and grow a library of human-approved reasoning skills. Nothing here can place,
-size, or gate a trade — it shapes Claude's verdict and ranking only.
+Once scans have run and trades have closed, the system can measure how good Claude's reviews
+actually were, and whether the scoring weights are earning their keep. Nothing here can place,
+size, or gate a trade — it observes and measures only.
 
 **How it accumulates on its own:**
 
@@ -775,13 +773,6 @@ size, or gate a trade — it shapes Claude's verdict and ranking only.
   python -m scripts.reconcile_outcomes --assigned <candidate_id>
   ```
 
-**Score the verdicts** (read-only; calibration + EV vs the baseline, held-out + per month):
-
-```bash
-python -m scripts.evaluate_verdicts
-python -m scripts.evaluate_verdicts --since 2026-05-01   # held-out tail only
-```
-
 **Score-vs-outcome** (read-only; does `blended_score` actually predict realized P&L? — use it to
 decide, by hand, whether `config/scoring_weights.yaml` should change):
 
@@ -789,21 +780,6 @@ decide, by hand, whether `config/scoring_weights.yaml` should change):
 python -m scripts.evaluate_scores
 python -m scripts.evaluate_scores --since 2026-05-01 --json
 ```
-
-**Grow reasoning skills** (human-gated):
-
-```bash
-python -m scripts.propose_skill                 # Claude drafts one skill from labeled history
-python -m scripts.skills list                   # see active + proposed
-python -m scripts.skills show <name>            # read a draft's body, rationale, and stats
-python -m scripts.skills promote <name>         # activate it → injected into future review prompts
-python -m scripts.skills reject <name>          # archive a draft
-python -m scripts.skills retire <name>          # stop injecting an active skill
-```
-
-Only skills in `config/skills/active/` are injected. Promotion is always a manual file move you
-control (visible in git). Set `claude.skills_enabled: false` in `config/settings.yaml` to disable
-injection entirely. See `config/skills/README.md` for the file format and the fence.
 
 **Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
 unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
@@ -867,11 +843,8 @@ strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.co
 
 **This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
 access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
-against a local `qwen3:8b` model. The one exception is `scripts.propose_skill` (the
-skill-proposal step of the verdict learning loop, §13), which shells out to `claude -p` directly
-regardless of `claude.backend` — without CLI access it fails soft (logs a warning, writes no
-proposal). The rest of the learning loop (ledger, reconciliation, verdict scoring, promotion) is
-unaffected since it doesn't call Claude at all.
+against a local `qwen3:8b` model. The verdict learning loop (§13 — ledger, reconciliation,
+score-vs-outcome analysis) is unaffected since it doesn't call Claude at all.
 
 **1. Install Ollama and pull a model:**
 
@@ -911,21 +884,6 @@ hybrid-reasoning `<think>` traces don't fight the `format: "json"` output. Alter
 - **`phi4:14b`** — similar ~9GB footprint, strong structured-output/instruction-following, and
   (not being a hybrid-reasoning model) has no thinking-mode/JSON interaction to worry about — a
   simpler, more predictable choice if `qwen3`'s output proves flaky.
-
-**3. Active reasoning skills and the skill-proposal loop work unchanged.**
-`config/skills/active/*.md` is injected into the prompt text regardless of backend — no extra
-configuration needed. The verdict learning loop (Section 13) is also backend-agnostic: ledger
-rows, reconciliation, verdict scoring, and `scripts.propose_skill` all dispatch on
-`claude.backend` the same way `review_candidates`/`review_roll` do — with `backend: "ollama"`,
-`scripts.propose_skill` drafts its proposal via the local model too (`ollama_runner.propose_skill`,
-same `format: "json"` / `think: false` / `num_ctx: 8192` handling). Promotion (`scripts.skills
-promote`) is always a human-gated file move regardless of which backend drafted the proposal.
-
-Expect skill drafting to be a harder task for a local model than reviewing candidates — it has to
-find patterns across dozens of labeled trade outcomes and write a coherent, falsifiable playbook
-from scratch, rather than synthesize pre-computed signals. A weak or generic draft just gets
-rejected (`scripts.skills reject <name>`) — low risk, but review proposals from `qwen3:8b` more
-critically than you would from `claude -p`.
 
 **Expectations:** a small local model is noticeably less reliable at nuanced multi-signal judgment
 than Claude — expect more conservative (`wait`) verdicts and occasional validation failures (which

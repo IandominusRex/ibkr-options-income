@@ -2,7 +2,6 @@
 
 Public surface:
   get_option_chain_quotes(ib, symbol) -> list[OptionQuote]
-  persist_chain_quotes(symbol, quotes, run_id) -> None
 
 Internal helpers are module-private (_prefix) but importable by tests.
 """
@@ -33,8 +32,6 @@ from src.ibkr.contracts import (
     qualify_stock,
     qualify_stock_async,
 )
-from src.storage.db import session_scope
-from src.storage.models import OptionQuoteRow
 
 log = get_logger(__name__)
 
@@ -767,11 +764,3 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     await loop.run_in_executor(None, _enrich_greeks_yf, symbol, spot, quotes)
     log.info("get_option_chain_quotes_async: %d quotes for %s", len(quotes), symbol)
     return quotes
-
-
-def persist_chain_quotes(symbol: str, quotes: list[OptionQuote], run_id: str) -> None:
-    """Write the option chain snapshot to SQLite (one row per symbol/run)."""
-    payload = [q.model_dump(mode="json") for q in quotes]
-    with session_scope() as s:
-        s.add(OptionQuoteRow(run_id=run_id, symbol=symbol, payload=payload))
-    log.debug("persisted %d option quotes for %s (run_id=%s)", len(quotes), symbol, run_id)

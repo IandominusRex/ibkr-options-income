@@ -174,7 +174,6 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
         return [SimpleNamespace(mid=None, greeks_source="ibkr")]  # non-empty so CSP generation runs
 
     monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _chain)
-    monkeypatch.setattr(scanmod, "persist_chain_quotes", lambda *a, **k: None)
     monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
         scanmod,
