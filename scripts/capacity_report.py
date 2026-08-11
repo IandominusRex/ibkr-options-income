@@ -111,7 +111,9 @@ def build_report(
                 contracts=n,
                 binding=binding,
                 collateral=unit * n,
-                nlv_needed_for_one=_nlv_needed_for_one_lot(unit, iv_by_symbol.get(symbol), dte, risk),
+                nlv_needed_for_one=_nlv_needed_for_one_lot(
+                    unit, iv_by_symbol.get(symbol), dte, risk
+                ),
             )
         )
     return rows
@@ -140,7 +142,9 @@ def format_report(rows: list[CapacityRow], *, total_requested: int | None = None
     lines.append("")
     if not rows:
         if total_requested:
-            lines.append(f"0 of {total_requested} requested symbols had usable price/IV data — no report to show.")
+            lines.append(
+                f"0 of {total_requested} requested symbols had usable price/IV data — no report to show."
+            )
         else:
             lines.append("0 symbols had price/IV data — no report to show.")
         return "\n".join(lines)

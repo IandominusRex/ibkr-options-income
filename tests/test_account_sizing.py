@@ -28,7 +28,9 @@ PRICES = {"SPY": 660.0, "META": 700.0, "AAPL": 230.0, "XLF": 52.0, "SOFI": 18.0}
 IVS = {"SPY": 13.5, "META": 35.0, "AAPL": 28.0, "XLF": 20.0, "SOFI": 60.0}
 
 
-@pytest.mark.parametrize("net_liq,cash", [(50_000, 25_000), (300_000, 100_000), (1_000_000, 400_000)])
+@pytest.mark.parametrize(
+    "net_liq,cash", [(50_000, 25_000), (300_000, 100_000), (1_000_000, 400_000)]
+)
 def test_tradeable_set_is_never_empty(net_liq, cash):
     rows = build_report(_account(net_liq, cash), [], list(PRICES), IVS, PRICES)
     tradeable = [r for r in rows if r.contracts >= 1]

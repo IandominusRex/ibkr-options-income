@@ -41,7 +41,10 @@ async def test_loss_exit_fires_at_the_configured_multiple():
         patch("src.ibkr.portfolio.get_positions", return_value=[_short_put()]),
         patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.50),
         patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(5.10, 5.30))),
-        patch("src.execution.profit_take.close_short_position", new=AsyncMock(return_value=close_result)) as close,
+        patch(
+            "src.execution.profit_take.close_short_position",
+            new=AsyncMock(return_value=close_result),
+        ) as close,
     ):
         await check_loss_exits(ib_scan, ib_exec, bot, "chat")
     close.assert_awaited_once()
@@ -102,7 +105,10 @@ async def test_loss_exit_sends_error_notification_on_close_failure():
         patch("src.ibkr.portfolio.get_positions", return_value=[_short_put()]),
         patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.50),
         patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(5.10, 5.30))),
-        patch("src.execution.profit_take.close_short_position", new=AsyncMock(return_value=close_result)) as close,
+        patch(
+            "src.execution.profit_take.close_short_position",
+            new=AsyncMock(return_value=close_result),
+        ) as close,
     ):
         await check_loss_exits(ib_scan, ib_exec, bot, "chat")
     close.assert_awaited_once()
@@ -126,7 +132,10 @@ async def test_loss_exit_skips_duplicate_close_attempt():
         patch("src.ibkr.portfolio.get_positions", return_value=[_short_put()]),
         patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.50),
         patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(5.10, 5.30))),
-        patch("src.execution.profit_take.close_short_position", new=AsyncMock(return_value=close_result)) as close,
+        patch(
+            "src.execution.profit_take.close_short_position",
+            new=AsyncMock(return_value=close_result),
+        ) as close,
     ):
         await check_loss_exits(ib_scan, ib_exec, bot, "chat")
     close.assert_awaited_once()
@@ -148,7 +157,10 @@ async def test_loss_exit_alerts_when_order_does_not_fill():
         patch("src.ibkr.portfolio.get_positions", return_value=[_short_put()]),
         patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.50),
         patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(5.10, 5.30))),
-        patch("src.execution.profit_take.close_short_position", new=AsyncMock(return_value=close_result)) as close,
+        patch(
+            "src.execution.profit_take.close_short_position",
+            new=AsyncMock(return_value=close_result),
+        ) as close,
     ):
         await check_loss_exits(ib_scan, ib_exec, bot, "chat")
     close.assert_awaited_once()
