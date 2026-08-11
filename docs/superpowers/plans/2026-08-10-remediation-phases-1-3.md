@@ -999,6 +999,16 @@ know. Empty until the first task runs.
   `set_automated_mode`, `AUTOMATED_MODE_KEY`, `handle_mode_command`, or `handle_mode_toggle`
   anywhere under `src/`, `tests/`, or `scripts/`.
 
+  **Fix round 1 (post-review):** fixed a stale `AutonomyLevel` docstring/comment in
+  `schemas.py` that still claimed OBSERVE "never closes" (contradicted by `profit_take.py`
+  gating auto-close solely on `automation.auto_close_enabled` with no level check); added two
+  `tests/test_notify.py` tests covering the `send_candidates` partition (a mixed WHITELIST batch
+  splits one call into an auto-queued order and an interactive card) and OBSERVE's keyboard/order
+  suppression — the latter asserts no `OrderRow` is ever created (the real safety property) and
+  documents, rather than asserts against, the deliberate PENDING `ApprovalRow` the S6 dedup logic
+  needs (pushed back on the review's literal "no ApprovalRow" phrasing with reasoning in the
+  report; see task-14-report.md for detail). `pytest -q` → 1156 passed, `ruff`/`mypy` clean.
+
 ---
 
 ## File Structure

@@ -63,14 +63,15 @@ class OrderState(StrEnum):
 
 
 class AutonomyLevel(StrEnum):
-    """How much the system may do without a human tap.
+    """How much the system may do without a human tap to OPEN new exposure.
 
-    Auto-CLOSE is on from MANUAL upward and is governed separately by
-    ``automation.auto_close_enabled`` — this ladder governs *opening* exposure only.
+    This ladder governs opening only. Auto-CLOSE (profit-takes and loss-exits) is governed
+    entirely by ``automation.auto_close_enabled`` and runs at every rung, including OBSERVE, when
+    that switch is on (the default) — closing risk should never wait for a human tap.
     """
 
-    OBSERVE = "observe"  # proposals only; never opens, never closes
-    MANUAL = "manual"  # human tap to open; closes automatically
+    OBSERVE = "observe"  # never opens automatically; a human tap can't act on it either
+    MANUAL = "manual"  # human tap required to open
     WHITELIST = "whitelist"  # opens whitelisted symbols automatically
     FULL = "full"  # opens anything that passes the gates
 

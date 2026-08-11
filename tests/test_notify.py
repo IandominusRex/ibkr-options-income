@@ -673,6 +673,117 @@ async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monke
     assert len(approvals) == 1
 
 
+async def test_send_candidates_partitions_mixed_whitelist_batch(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """WHITELIST: one batch, one call, two outcomes — the whitelisted underlying auto-queues,
+    the rest gets an interactive Approve/Reject card. Verifies the *partition* itself, not just
+    each path in isolation."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    from src.storage.system_settings import set_autonomy_level, set_autonomy_whitelist
+
+    set_autonomy_level(AutonomyLevel.WHITELIST)
+    set_autonomy_whitelist({"AAPL"})
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    auto_cand = _make_candidate("auto-001", underlying="AAPL")
+    manual_cand = _make_candidate("manual-001", underlying="TSLA")
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates([auto_cand, manual_cand], [], **_cc_kwargs())
+
+    with dbmod.session_scope() as s:
+        auto_orders = (
+            s.execute(select(OrderRow).where(OrderRow.candidate_id == "auto-001")).scalars().all()
+        )
+        manual_orders = (
+            s.execute(select(OrderRow).where(OrderRow.candidate_id == "manual-001")).scalars().all()
+        )
+        auto_approvals = (
+            s.execute(select(ApprovalRow).where(ApprovalRow.candidate_id == "auto-001"))
+            .scalars()
+            .all()
+        )
+        manual_approvals = (
+            s.execute(select(ApprovalRow).where(ApprovalRow.candidate_id == "manual-001"))
+            .scalars()
+            .all()
+        )
+
+    # Whitelisted symbol: queued directly, no human tap.
+    assert len(auto_orders) == 1
+    assert auto_orders[0].state == "queued"
+    assert len(auto_approvals) == 1
+    assert auto_approvals[0].status == "approved"
+
+    # Everything else: an interactive card, no order until a human taps Approve.
+    assert len(manual_orders) == 0
+    assert len(manual_approvals) == 1
+    assert manual_approvals[0].status == "pending"
+
+    # Exactly one of the two Telegram sends carried an Approve/Reject keyboard.
+    keyboard_calls = [
+        c
+        for c in mock_instance.send_message.call_args_list
+        if c.kwargs.get("reply_markup") is not None
+    ]
+    assert len(keyboard_calls) == 1
+    buttons = keyboard_calls[0].kwargs["reply_markup"].inline_keyboard[0]
+    assert buttons[0].callback_data.startswith("approve:")
+    assert buttons[1].callback_data.startswith("reject:")
+
+
+async def test_send_candidates_observe_withholds_buttons_and_orders(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """OBSERVE: the card goes out with no Approve/Reject keyboard and no order can ever be
+    tapped into existence for it — there is no button to tap. An ApprovalRow is still written
+    (PENDING, no attached callback) purely so the S6 unchanged-screen digest can recognise the
+    same proposal on the next cycle instead of re-sending the full card every 15 minutes; it is
+    inert with respect to execution, since nothing in the system can promote a PENDING approval
+    to an OrderRow except a button tap (`handle_button`) or the auto-queue path, and OBSERVE
+    reaches neither."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    from src.storage.system_settings import set_autonomy_level
+
+    set_autonomy_level(AutonomyLevel.OBSERVE)
+    mock_cls, mock_instance = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    cand = _make_candidate("obs-001", underlying="AAPL")
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        sent = await send_candidates([cand], [], **_cc_kwargs())
+
+    assert sent is True
+    call_kwargs = mock_instance.send_message.call_args.kwargs
+    assert call_kwargs.get("reply_markup") is None
+    assert "Proposal only" in call_kwargs["text"]
+
+    with dbmod.session_scope() as s:
+        orders = (
+            s.execute(select(OrderRow).where(OrderRow.candidate_id == "obs-001")).scalars().all()
+        )
+        approvals = (
+            s.execute(select(ApprovalRow).where(ApprovalRow.candidate_id == "obs-001"))
+            .scalars()
+            .all()
+        )
+
+    assert orders == []  # no button was ever sent, so nothing could tap one into existence
+    assert len(approvals) == 1
+    assert approvals[0].status == "pending"  # bookkeeping only — never actionable, see docstring
+
+
 async def test_manual_approve_skips_duplicate_when_active_order_exists(monkeypatch, tmp_path):
     """A candidate surfaced by two scans (two approvals) must not create two orders."""
     _db_setup(tmp_path, monkeypatch)
