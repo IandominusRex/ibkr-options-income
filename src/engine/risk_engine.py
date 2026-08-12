@@ -198,12 +198,13 @@ def validate_candidates(
                 if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
                     reasons.append("sector_limit")
 
-            # Large-position slot: outsized CUMULATIVE exposure in one name must be deliberate
-            # and counted. This is also the raw-collateral backstop on every path that cannot
+            # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
+            # slot is free. This is also the raw-collateral backstop on every path that cannot
             # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
             # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
-            # `max_pct_per_ticker_large`, and anything past `max_collateral_per_ticker_pct`
-            # still consumes the one counted slot, whatever the candidate's own IV says.
+            # `max_pct_per_ticker_large`, whatever the candidate's own IV says. NOTE: this check
+            # is cumulative but `capital.charge`'s slot-consumption bookkeeping is still
+            # marginal — see that function's docstring for the known, non-blocking gap.
             if cum_collateral > caps.max_ticker_collateral:
                 if budgets.large_slots_used >= caps.max_large_positions:
                     reasons.append("large_position_slot_full")

@@ -315,8 +315,10 @@ introduced.
   Cumulative is what makes this pair the backstop for the three un-threaded callers above:
   whatever they know about a candidate's own IV, one ticker can never exceed
   `max_pct_per_ticker_large` (25% of NLV) in raw collateral, and anything past
-  `max_collateral_per_ticker_pct` (10%) still consumes the single counted slot. **What it
-  deliberately does NOT do** is make the 10% cap unconditional: a first large lot in an empty name
+  `max_collateral_per_ticker_pct` (10%) is refused unless a slot is free. (`capital.charge`'s own
+  slot-*consumption* bookkeeping is still marginal, not cumulative — a known, non-blocking gap;
+  see "Remaining known issues" below.) **What it deliberately does NOT do** is make the 10% cap
+  unconditional: a first large lot in an empty name
   (a $65k META put at $300k NLV) still reaches the slot and still trades, so D1's headline result
   is untouched — verified by re-running `scripts/capacity_report.py`, which is unchanged at 46/46
   with an identical binding distribution. An unconditional 10% check, measured on the same live
@@ -508,7 +510,7 @@ agent could not close — see its entry below. Regression tests: `tests/test_cap
 ### Tradeable capacity at $300k (2026-08)
 
 `scripts/capacity_report.py` is the regression check the unit suite structurally cannot be: the
-1,128 tests ask "does the gate reject what it says it rejects" and never "what can this system
+1,129 tests ask "does the gate reject what it says it rejects" and never "what can this system
 trade today," which is why D1 and D2 both passed CI for as long as they did. One row per `would_own`
 symbol: how many contracts the account can support right now, and which constraint stops the next
 one. Raw output of `python -m scripts.capacity_report --net-liq 300000 --cash 100000`, re-run
@@ -1135,6 +1137,19 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   still monitor `/status` after a TWS restart during an active order.
 - **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
   blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
+- **Large-position slot: the check is cumulative, `charge`'s consumption of it is not.** Found by
+  the 2026-08-12 final-review re-review, after the fix above shipped. `capital._fits` and
+  `validate_candidates` now correctly *require* a free slot whenever a ticker's cumulative
+  collateral (existing book + the new lot) crosses `max_collateral_per_ticker_pct` — but
+  `capital.charge` still marks a slot **used** only when the accepted candidate's own *marginal*
+  collateral crosses that same threshold. A candidate admitted purely because of cumulative
+  exposure does not itself consume a slot, so more than `max_large_positions` tickers can end up
+  cumulatively over the 10%-of-NLV line. No dollar cap is breached by this on any dimension — the
+  25%-of-NLV `max_pct_per_ticker_large` ceiling, cash, the CSP budget and the risk-unit caps are
+  all still enforced cumulatively per candidate — and it is strictly safer than the pre-2026-08-12
+  behaviour, which was marginal on both the check and the charge. Fixing it properly needs a
+  below-to-above-threshold transition check in `charge`, not a one-line change; deferred rather
+  than rushed into the same commit. See `capital.charge`'s docstring.
 
 **Addressed SYSTEM_REVIEW.md findings (see `IMPROVEMENT_PLAN.md`):**
 - **F7 (fixed):** `src/execution/reconciliation.py` runs **periodically** from the intraday loop (not

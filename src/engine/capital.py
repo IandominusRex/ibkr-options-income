@@ -188,12 +188,13 @@ def _fits(
             return "sector_risk"
 
     # Large-position slot: cumulative exposure in one name above the standard collateral cap
-    # needs a free slot and must still sit under the hard large-position ceiling. Measuring it
-    # cumulatively is also the raw-collateral backstop for every caller that cannot seed the
-    # risk-unit tallies (no `iv_of` — the order-approval re-gate, the single-ticker deep-dive,
-    # the CSP generator's sizer): whatever those paths know about a candidate's IV, cumulative
-    # per-ticker collateral can never exceed `max_pct_per_ticker_large`, and anything past
-    # `max_collateral_per_ticker_pct` still has to consume the one counted slot.
+    # is refused unless a free slot is available, and must still sit under the hard
+    # large-position ceiling. Measuring it cumulatively is also the raw-collateral backstop for
+    # every caller that cannot seed the risk-unit tallies (no `iv_of` — the order-approval
+    # re-gate, the single-ticker deep-dive, the CSP generator's sizer): whatever those paths
+    # know about a candidate's IV, cumulative per-ticker collateral can never exceed
+    # `max_pct_per_ticker_large`. NOTE: this check is cumulative but `charge()` below still
+    # marks the slot used based on the candidate's own MARGINAL collateral — see its docstring.
     if cum_collateral > caps.max_ticker_collateral:
         if budgets.large_slots_used >= caps.max_large_positions:
             return "large_slot"
@@ -254,6 +255,19 @@ def charge(
 
     Mutates *budgets* in place. Mirrors the greedy consumption the risk engine has always
     done, extended to the risk-unit tallies and the large-position slot.
+
+    KNOWN LIMITATION: the large-position slot is marked used only when *this candidate's own*
+    collateral exceeds ``max_ticker_collateral`` — matching the pre-cumulative-check behaviour,
+    not the cumulative comparison ``_fits``/``validate_candidates`` now use to *require* a free
+    slot. A candidate admitted only because cumulative exposure (existing book + this lot)
+    crossed the cap, while its own marginal collateral did not, is correctly refused when no
+    slot is free but does not itself consume a slot when accepted — so more than
+    ``max_large_positions`` tickers can end up cumulatively over the 10%-of-NLV threshold. No
+    dollar cap is breached by this (the 25%-of-NLV `max_pct_per_ticker_large` ceiling, cash, the
+    CSP budget, and the risk-unit caps are all still enforced cumulatively per candidate) — it
+    is strictly safer than the pre-fix behaviour, which was marginal on both the check and the
+    charge. A correct fix needs a below-to-above-threshold transition check here, not a
+    one-line change; tracked in STATUS.md rather than fixed inline.
     """
     collateral = unit_collateral * contracts
     budgets.cash_used += collateral
@@ -264,5 +278,5 @@ def charge(
         budgets.ticker_risk[symbol] = budgets.ticker_risk.get(symbol, 0.0) + units
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
-    if collateral > caps.max_ticker_collateral:
+    if collateral > caps.max_ticker_collateral:  # marginal, not cumulative — see docstring
         budgets.large_slots_used += 1
