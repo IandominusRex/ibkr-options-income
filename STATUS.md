@@ -280,6 +280,58 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-08-12 — final whole-branch review of the remediation branch)
+
+The last pass over `remediation-phases-1-3` before merge, reviewing the branch as a whole rather
+than task by task. Five defects and one dead constant; the first is a regression the branch itself
+introduced.
+
+- **Existing positions counted as ZERO against the risk-unit concentration caps.** D1 replaced the
+  raw-collateral concentration cap with risk units (`collateral x IV x sqrt(DTE/365)`), but
+  `capital.seed_budgets` only ever filled `ticker_collateral`: `ticker_risk` was never populated at
+  all and `sector_risk` was only `setdefault`-ed to `0.0`. Both `capital._fits` and
+  `risk_engine.validate_candidates` measure a candidate against those risk-unit tallies whenever
+  the candidate's own `current_iv` is known — the normal path since Task 2 — so the per-ticker and
+  per-sector caps only ever constrained a batch's candidates *against each other*, never against
+  the book the account already held. `main`'s pre-branch `_seed_exposures` had seeded and checked
+  both `ticker_exposure` and `sector_exposure` cumulatively, so this was a weakening of an existing
+  control. **Fixed** by giving `seed_budgets` an optional `iv_of` lookup (default `None` = the old
+  behaviour exactly): supplied, option positions charge `ticker_risk`/`sector_risk` at their own
+  DTE; stock positions never do (no natural DTE), and neither does an expired or IV-less option.
+  `validate_candidates` takes a matching optional `iv_by_symbol`, passed by the full scan sweep
+  (from the analytics map it already built) and by `scripts/capacity_report.py` (from the IV map
+  already in scope) — no new fetches on either. **Deliberately not threaded:** the order-approval
+  re-validation gate (`execution/approval.py`) and the single-ticker `/scan SYM` deep-dive, both of
+  which would need a new network round-trip on a latency-sensitive path; on those two paths existing
+  exposure still reaches the caps only through `ticker_collateral`. Regression tests:
+  `tests/test_capital.py` (6 new), `tests/test_engine.py::TestConcentrationInRiskUnits` (2 new).
+- **Every ROLL was structurally rejected at the approval-queue re-gate.** The ROC floor, the
+  annualized-yield floor and the D2 variance-risk-premium floor applied to all strategies. A
+  defensive roll books `roc_pct = 0.0` by construction and pays a premium deliberately below the
+  new strike's fair value — that is what a repair costs — so `validate_candidates` rejected every
+  one of them on the second pass, *after* the operator had approved the card. **Fixed** by scoping
+  those three gates to `_INCOME_STRATEGIES`. A roll's economics stay bounded by
+  `strategies/rolling.py`'s own `monitor.roll_defensive` knobs (`max_debit`,
+  `min_delta_reduction`, `require_breakeven_improvement`), which are untouched; `cand.ideal`
+  remains populated on roll cards as display/audit.
+- **`monitor.manage_at_dte` was configured but never read.** The key existed in `MonitorCfg` and
+  `settings.yaml`, and `triggers.check_all` read `limits["manage_at_dte"]`, but `intraday.py`'s
+  `limits` dict never carried it — so editing the key had zero effect and every management-point
+  alert used the hardcoded 21-day fallback. **Fixed** (one line), with a test that fails without it.
+- **The fence test had stopped covering the engine path.** `tests/test_eval_skills.py` checked a
+  hand-maintained list of six modules that never gained `engine/capital.py` (position sizing and the
+  concentration caps), `execution/circuit_breakers.py`, `profit_take.py` or `roll_pipeline.py`. It
+  now globs `src/engine`, `src/execution` and `src/strategies` — the pattern the strategies
+  directory already used — covering 19 modules, so the fence cannot silently stop covering new code.
+- **`IVStats.current_iv` had no test with real quotes.** Every `get_iv_stats` test omitted `quotes`
+  and every scan-pipeline test monkeypatched it wholesale, so `_atm_iv_at_30d`'s constant-maturity
+  interpolation — which feeds position sizing, the concentration caps, `IdealZone.min_credit` and
+  the IV/RV gate — had no coverage of its real code path. **Added** a three-expiry chain with
+  distinct IVs (40/60/80% around a parity-recoverable $100 spot) asserting the 30-day interpolation
+  lands at 47.5%, then feeding that `IVStats` into `capital.max_contracts`.
+- **Dead duplicate constant.** `orchestrator/scan.py`'s `_ASSESSED_LIMIT` was left behind by the
+  Task 17 orchestrator split; the live copy is `orchestrator/scan_progress.py:53`. Deleted.
+
 ## Bugs fixed (2026-08-10/11 — remediation Phases 1–3: capital, income, and loss management)
 
 The 2026-08-10 full-system review (`docs/superpowers/specs/2026-08-10-remediation-and-ios-app-design.md`
@@ -405,7 +457,9 @@ agent could not close — see its entry below. Regression tests: `tests/test_cap
   `test_income_roll_still_requires_a_credit_and_roc`, `test_roll_dte_uses_et_not_local_date`).
   **Not in scope for this task:** `monitor.manage_at_dte` (added to `MonitorCfg`/`settings.yaml`
   by this task) is not yet read anywhere — wiring a mechanical close/roll/hold decision point at
-  21 DTE is Task 13. **Correction (2026-08-11, code review, fix-round-1):** the delta-reduction
+  21 DTE is Task 13. (Task 13 added the trigger; the config key itself only became load-bearing in
+  the 2026-08-12 final-review fix wave, which threaded it through `intraday.py`'s limits dict — see
+  that section above.) **Correction (2026-08-11, code review, fix-round-1):** the delta-reduction
   check as first written (`if pos_delta_abs is not None and (pos_delta_abs - delta_abs) <
   min_reduction: continue`) silently skipped the whole safety check when the position snapshot
   carried no delta reading (`PositionSnapshot.delta` is `float | None`), letting a defensive roll
@@ -435,77 +489,81 @@ agent could not close — see its entry below. Regression tests: `tests/test_cap
 ### Tradeable capacity at $300k (2026-08)
 
 `scripts/capacity_report.py` is the regression check the unit suite structurally cannot be: the
-1,115 tests ask "does the gate reject what it says it rejects" and never "what can this system
+1,128 tests ask "does the gate reject what it says it rejects" and never "what can this system
 trade today," which is why D1 and D2 both passed CI for as long as they did. One row per `would_own`
 symbol: how many contracts the account can support right now, and which constraint stops the next
 one. Raw output of `python -m scripts.capacity_report --net-liq 300000 --cash 100000`, re-run
-2026-08-11 at the close of the remediation against the committed `risk_limits.yaml` (spot prices
+2026-08-12 after the final-review fix wave against the committed `risk_limits.yaml` (spot prices
 come from live quotes, so the exact figures drift run to run; the binding reasons do not):
 
 ```
 SYMBOL        SPOT  LOTS   COLLATERAL  BINDING
 ----------------------------------------------
-HIMS         31.75    10       28,570  none (hit hard_max)
-MARA          9.70    10        8,730  none (hit hard_max)
-RGTI         18.08    10       16,270  none (hit hard_max)
-SLV          58.74    10       52,870  none (hit hard_max)
-SOFI         18.17    10       16,350  none (hit hard_max)
-TLT          82.29    10       74,060  none (hit hard_max)
-TTD          13.68    10       12,310  none (hit hard_max)
-UBER         78.79    10       70,910  none (hit hard_max)
-XLE          60.80    10       54,720  none (hit hard_max)
-XLF          57.92    10       52,120  none (hit hard_max)
-XLU          43.28    10       38,950  none (hit hard_max)
-XLP          84.37     9       68,337  large_ceiling
-HOOD         94.29     8       67,888  large_ceiling
-IGV         104.24     7       65,674  large_ceiling
-RKLB         78.62     7       49,532  ticker_risk
-WMT         112.40     7       70,812  cash
-BABA        128.53     6       69,408  cash
-HACK        119.08     6       64,302  large_ceiling
-COIN        148.80     5       66,960  cash
-CRM         198.29     4       71,384  cash
-PLTR        174.90     4       62,964  large_ceiling
-XLI         185.88     4       66,916  cash
-XLK         186.67     4       67,200  cash
-XLV         168.03     4       60,492  large_ceiling
-AMZN        272.95     3       73,695  cash
-CRWD        223.15     3       60,249  cash
-DDOG        252.44     3       68,160  cash
-NVDA        218.88     3       59,097  large_ceiling
-AAPL        306.18     2       55,112  cash
-GLD         402.85     2       72,514  cash
-GOOGL       351.76     2       63,316  cash
-HD          355.46     2       63,984  cash
-IWM         301.17     2       54,212  cash
-JPM         360.90     2       64,962  cash
-NBIS        189.83     2       34,170  ticker_risk
-NET         311.40     2       56,052  cash
-SNOW        336.82     2       60,626  cash
-TSLA        333.78     2       60,080  cash
-V           363.87     2       65,496  cash
-AMD         469.93     1       42,294  cash
-MA          565.59     1       50,903  cash
-META        606.83     1       54,615  cash
-MSFT        502.73     1       45,246  cash
-QQQ         720.26     1       64,823  cash
-SMH         574.72     1       51,725  cash
-SPY         772.69     1       69,542  cash
+HIMS         30.51    10       27,460  none (hit hard_max)
+MARA          9.68    10        8,710  none (hit hard_max)
+RGTI         18.09    10       16,280  none (hit hard_max)
+SLV          58.55    10       52,690  none (hit hard_max)
+SOFI         17.98    10       16,180  none (hit hard_max)
+TLT          82.19    10       73,970  none (hit hard_max)
+TTD          13.56    10       12,200  none (hit hard_max)
+UBER         78.54    10       70,690  none (hit hard_max)
+XLE          60.93    10       54,840  none (hit hard_max)
+XLF          57.80    10       52,020  none (hit hard_max)
+XLU          43.63    10       39,270  none (hit hard_max)
+XLP          84.69     9       68,598  large_ceiling
+HOOD         94.38     8       67,952  large_ceiling
+IGV         103.92     8       74,824  cash
+HACK        118.80     7       74,844  cash
+RKLB         80.01     7       50,407  ticker_risk
+WMT         113.26     7       71,351  cash
+BABA        127.85     6       69,036  cash
+COIN        148.58     5       66,860  cash
+CRM         197.47     4       71,088  cash
+PLTR        174.94     4       62,980  large_ceiling
+XLI         185.70     4       66,852  cash
+XLK         186.09     4       66,992  cash
+XLV         168.01     4       60,484  large_ceiling
+AMZN        272.27     3       73,512  cash
+CRWD        221.90     3       59,913  large_ceiling
+DDOG        246.78     3       66,630  cash
+NVDA        217.50     3       58,725  large_ceiling
+AAPL        304.91     2       54,884  cash
+GLD         400.96     2       72,172  cash
+GOOGL       343.80     2       61,884  cash
+HD          354.48     2       63,806  cash
+IWM         300.99     2       54,178  cash
+JPM         362.04     2       65,168  cash
+NBIS        193.23     2       34,782  ticker_risk
+NET         306.97     2       55,254  cash
+SNOW        334.14     2       60,146  cash
+TSLA        332.81     2       59,906  cash
+V           362.82     2       65,308  cash
+AMD         474.32     1       42,689  cash
+MA          561.44     1       50,530  cash
+META        599.12     1       53,921  cash
+MSFT        503.81     1       45,343  cash
+QQQ         718.45     1       64,661  cash
+SMH         572.93     1       51,564  cash
+SPY         770.56     1       69,350  cash
 
 46/46 symbols tradeable at this account size.
 Coverage: 46/46 requested symbols had usable price/IV data (0 skipped for missing data).
 ```
 
 **Read it as the D1/D2 evidence, distinct from the tests passing.** Every one of the 46 `would_own`
-symbols gets at least one lot — including SPY at $772, META at $606, QQQ at $720 and MSFT at $502,
+symbols gets at least one lot — including SPY at $770, META at $599, QQQ at $718 and MSFT at $503,
 none of which could clear the old `max_pct_per_ticker: 5.0` gate at this account size (a 1-lot CSP
 used to require `NLV ≥ 2000 × strike`). The `Coverage:` line is load-bearing: it is computed from
 the pre-filter requested population, so a data outage that silently dropped symbols would show up
-as a shrinking numerator instead of a still-100%-looking fraction. Binding distribution: `cash` 26,
-`none (hit hard_max)` 11, `large_ceiling` 7, `ticker_risk` 2 (RKLB, NBIS — the two high-IV names
+as a shrinking numerator instead of a still-100%-looking fraction. Binding distribution: `cash` 27,
+`none (hit hard_max)` 11, `large_ceiling` 6, `ticker_risk` 2 (RKLB, NBIS — the two high-IV names
 where risk units bind before raw collateral, exactly the D2-shaped signal), `ticker_collateral` 0,
 `sector_risk` 0, `csp_budget` 0, `large_slot` 0. Low-IV names being cash-bound rather than
-concentration-bound is the model working as designed. Re-run this after any change to
+concentration-bound is the model working as designed. The shift versus the 2026-08-11 run
+(`cash` 26 -> 27, `large_ceiling` 7 -> 6) is spot drift, not a rule change — IGV, HACK and CRWD
+moved across the 25%-of-NLV ceiling as their prices moved — and the 2026-08-12 fix wave's
+risk-unit seeding cannot move this table at all, because the hypothetical `--net-liq/--cash`
+branch runs with an empty position list. Re-run this after any change to
 `risk_limits.yaml → portfolio` or `income`.
 
 ## Bugs fixed (2026-08-06 — output-fidelity audit: every user-facing surface rendered and reviewed)
