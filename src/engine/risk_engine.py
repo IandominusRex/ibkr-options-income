@@ -183,14 +183,14 @@ def validate_candidates(
         # would make a name tradeable overnight with identical risk. Risk units
         # (collateral x IV x sqrt(DTE/365)) put a $65k META put and a $15k MARA put on the
         # same scale. When IV is missing we fall back to a stricter raw-collateral cap.
+        # Mirrors `capital._fits` exactly — the gate must never be looser than the sizer.
         sector = _sector_of(cand.underlying)
         if adds_new_exposure:
+            # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
+            cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
             units = risk_units(cand.collateral, cand.current_iv, cand.dte)
             if units is None:
-                if (
-                    budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
-                    > caps.max_ticker_collateral
-                ):
+                if cum_collateral > caps.max_ticker_collateral:
                     reasons.append("concentration_limit")
             else:
                 if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
@@ -198,11 +198,16 @@ def validate_candidates(
                 if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
                     reasons.append("sector_limit")
 
-            # Large-position slot: an outsized position must be deliberate and counted.
-            if cand.collateral > caps.max_ticker_collateral:
+            # Large-position slot: outsized CUMULATIVE exposure in one name must be deliberate
+            # and counted. This is also the raw-collateral backstop on every path that cannot
+            # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
+            # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
+            # `max_pct_per_ticker_large`, and anything past `max_collateral_per_ticker_pct`
+            # still consumes the one counted slot, whatever the candidate's own IV says.
+            if cum_collateral > caps.max_ticker_collateral:
                 if budgets.large_slots_used >= caps.max_large_positions:
                     reasons.append("large_position_slot_full")
-                elif cand.collateral > caps.large_ticker_collateral:
+                elif cum_collateral > caps.large_ticker_collateral:
                     reasons.append("concentration_limit")
 
             if cand.strategy == Strategy.CASH_SECURED_PUT:

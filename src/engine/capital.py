@@ -7,12 +7,19 @@ Three constraints, each in its proper unit — this module exists because one pe
   * **Concentration** — is this too much of one name? Measured in *risk units*
     (``collateral x IV x sqrt(DTE/365)``), because share price is not a risk measure: a
     10-for-1 split would otherwise make a name tradeable overnight with identical risk.
-  * **Deliberateness** — is this an outsized bet? Measured by an explicit, counted slot.
+  * **Deliberateness** — is this an outsized bet? Measured by an explicit, counted slot,
+    against *cumulative* per-ticker collateral (the book plus the new lot, never the new lot
+    alone). Cumulative is also what makes this the raw-collateral backstop for callers that
+    cannot seed the risk-unit tallies from live IV.
 
-Pure functions, no I/O, no config reads (callers pass the resolved ``risk`` dict). Both
-``strategies/cash_secured_put.py`` and ``engine/risk_engine.py`` call ``max_contracts`` so
-the generator and the gate can never disagree about how big a position may be — that
-disagreement was the root cause of every CSP above a ~$150 strike being unreachable.
+Pure functions, no I/O, no config reads (callers pass the resolved ``risk`` dict).
+``strategies/cash_secured_put.py`` sizes with ``max_contracts`` and
+``engine/risk_engine.py`` gates with the same ``resolve_caps``/``seed_budgets``/``charge``
+arithmetic and an inline copy of ``_fits``'s checks, so the generator and the gate can never
+disagree about how big a position may be — that disagreement was the root cause of every CSP
+above a ~$150 strike being unreachable. **Keep the two in step:** a change to ``_fits`` that
+is not mirrored in ``risk_engine.validate_candidates`` (or vice versa) re-opens exactly that
+gap.
 """
 
 from __future__ import annotations
@@ -159,6 +166,10 @@ def _fits(
 ) -> str:
     """Return the name of the first constraint ``n`` contracts would breach, or ""."""
     collateral = unit_collateral * n
+    # Per-ticker collateral is CUMULATIVE: this lot on top of whatever the account already
+    # holds in the same name. Comparing the marginal lot alone made both ticker-level brakes
+    # blind to the book — a name already at the ceiling looked empty to every new candidate.
+    cum_collateral = budgets.ticker_collateral.get(symbol, 0.0) + collateral
 
     if budgets.cash_used + collateral > caps.deployable_cash:
         return "cash"
@@ -168,7 +179,7 @@ def _fits(
     units = risk_units(collateral, current_iv, dte)
     if units is None:
         # No IV: fall back to the stricter raw-collateral cap.
-        if budgets.ticker_collateral.get(symbol, 0.0) + collateral > caps.max_ticker_collateral:
+        if cum_collateral > caps.max_ticker_collateral:
             return "ticker_collateral"
     else:
         if budgets.ticker_risk.get(symbol, 0.0) + units > caps.max_ticker_risk:
@@ -176,12 +187,17 @@ def _fits(
         if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
             return "sector_risk"
 
-    # Large-position slot: a position exceeding the standard collateral cap needs a free slot
-    # and must still sit under the hard large-position ceiling.
-    if collateral > caps.max_ticker_collateral:
+    # Large-position slot: cumulative exposure in one name above the standard collateral cap
+    # needs a free slot and must still sit under the hard large-position ceiling. Measuring it
+    # cumulatively is also the raw-collateral backstop for every caller that cannot seed the
+    # risk-unit tallies (no `iv_of` — the order-approval re-gate, the single-ticker deep-dive,
+    # the CSP generator's sizer): whatever those paths know about a candidate's IV, cumulative
+    # per-ticker collateral can never exceed `max_pct_per_ticker_large`, and anything past
+    # `max_collateral_per_ticker_pct` still has to consume the one counted slot.
+    if cum_collateral > caps.max_ticker_collateral:
         if budgets.large_slots_used >= caps.max_large_positions:
             return "large_slot"
-        if collateral > caps.large_ticker_collateral:
+        if cum_collateral > caps.large_ticker_collateral:
             return "large_ceiling"
     return ""
 

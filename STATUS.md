@@ -301,10 +301,29 @@ introduced.
   `validate_candidates` takes a matching optional `iv_by_symbol`, passed by the full scan sweep
   (from the analytics map it already built) and by `scripts/capacity_report.py` (from the IV map
   already in scope) — no new fetches on either. **Deliberately not threaded:** the order-approval
-  re-validation gate (`execution/approval.py`) and the single-ticker `/scan SYM` deep-dive, both of
-  which would need a new network round-trip on a latency-sensitive path; on those two paths existing
-  exposure still reaches the caps only through `ticker_collateral`. Regression tests:
-  `tests/test_capital.py` (6 new), `tests/test_engine.py::TestConcentrationInRiskUnits` (2 new).
+  re-validation gate (`execution/approval.py`), the single-ticker `/scan SYM` deep-dive and the CSP
+  generator's own sizer, all of which would need a new network round-trip on a latency-sensitive
+  path. Those three are covered instead by the **cumulative raw-collateral backstop** below.
+- **The large-position slot compared the candidate's marginal collateral, not the account's
+  cumulative exposure in that ticker.** `_fits` and `validate_candidates` both tested
+  `cand.collateral > max_collateral_per_ticker_pct`, so a name already sitting at the ceiling
+  looked empty to every new candidate — the same blindness as the risk-unit bug above, in the one
+  check that was supposed to be the raw-collateral brake. (This was parked during Task 1 as a
+  separate finding; it is closed here.) **Fixed** by comparing
+  `budgets.ticker_collateral[symbol] + collateral` in both the IV-missing fallback and the
+  large-slot/large-ceiling checks, in `capital._fits` and in `validate_candidates`'s inline copy.
+  Cumulative is what makes this pair the backstop for the three un-threaded callers above:
+  whatever they know about a candidate's own IV, one ticker can never exceed
+  `max_pct_per_ticker_large` (25% of NLV) in raw collateral, and anything past
+  `max_collateral_per_ticker_pct` (10%) still consumes the single counted slot. **What it
+  deliberately does NOT do** is make the 10% cap unconditional: a first large lot in an empty name
+  (a $65k META put at $300k NLV) still reaches the slot and still trades, so D1's headline result
+  is untouched — verified by re-running `scripts/capacity_report.py`, which is unchanged at 46/46
+  with an identical binding distribution. An unconditional 10% check, measured on the same live
+  snapshot, would have cut that to 33/46 with 13 symbols at zero lots and `large_ceiling`/
+  `large_slot` never firing again. Regression tests: `tests/test_capital.py` (6 new),
+  `tests/test_engine.py::TestConcentrationInRiskUnits` (3 new, including the no-`iv_by_symbol`
+  order-approval shape).
 - **Every ROLL was structurally rejected at the approval-queue re-gate.** The ROC floor, the
   annualized-yield floor and the D2 variance-risk-premium floor applied to all strategies. A
   defensive roll books `roc_pct = 0.0` by construction and pays a premium deliberately below the

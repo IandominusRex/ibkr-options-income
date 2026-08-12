@@ -186,10 +186,13 @@ def test_existing_position_consumes_the_new_candidates_ticker_risk_budget():
     assert n == 0
     assert binding == "ticker_risk"
 
-    # The same call with the position invisible to the risk-unit tallies is the bug's shape:
-    # the sizer sees an empty per-ticker budget and grants the full hard_max.
+    # ...and the caller that cannot supply an IV lookup at all (the order-approval re-gate, the
+    # single-ticker deep-dive, the CSP generator's sizer) is caught by the cumulative
+    # raw-collateral backstop instead: $75,000 already held + $1,500 new is past the 25%-of-NLV
+    # large-position ceiling, so the lot is refused on `large_ceiling` rather than waved through.
+    # Without the cumulative comparison this call returned the full hard_max of 10.
     unseeded = seed_budgets(positions, lambda s: "crypto")
-    n_blind, _ = max_contracts(
+    n_blind, binding_blind = max_contracts(
         unit_collateral=1_500.0,
         current_iv=70.0,
         dte=30,
@@ -199,7 +202,7 @@ def test_existing_position_consumes_the_new_candidates_ticker_risk_budget():
         budgets=unseeded,
         hard_max=10,
     )
-    assert n_blind > n
+    assert (n_blind, binding_blind) == (0, "large_ceiling")
 
 
 def test_max_contracts_trims_to_the_binding_constraint_instead_of_rejecting():

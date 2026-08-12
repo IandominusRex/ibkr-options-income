@@ -129,9 +129,14 @@ portfolio:
   # Fallback cap used when IV is unavailable (strictly more conservative than risk units).
   max_collateral_per_ticker_pct: 10.0
 
-  # 3. Deliberateness. A position above max_collateral_per_ticker_pct needs a free slot and
-  #    must still sit under the hard ceiling. Without this, a high-priced name is either
-  #    impossible or unbounded — one number cannot express a third option.
+  # 3. Deliberateness. CUMULATIVE per-ticker collateral (what is already held in the name plus
+  #    the new lot) above max_collateral_per_ticker_pct needs a free slot and must still sit
+  #    under the hard ceiling. Without this, a high-priced name is either impossible or
+  #    unbounded — one number cannot express a third option. Measured cumulatively, this pair
+  #    is also the raw-collateral backstop on the paths that cannot seed the risk-unit tallies
+  #    from live IV (the order-approval re-gate, the single-ticker deep-dive, the CSP sizer):
+  #    whatever those paths know about a candidate's IV, one name can never exceed
+  #    max_pct_per_ticker_large in raw collateral.
   max_large_positions: 1
   max_pct_per_ticker_large: 25.0
 

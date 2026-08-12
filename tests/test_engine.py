@@ -735,6 +735,39 @@ class TestConcentrationInRiskUnits:
         assert verdicts[0].verdict.value == "reject"
         assert "concentration_limit" in verdicts[0].reasons
 
+    def test_existing_exposure_binds_the_gate_without_an_iv_map(self) -> None:
+        """The backstop for the callers that cannot supply `iv_by_symbol` — the order-approval
+        re-validation gate and the single-ticker deep-dive, both of which would need a new
+        network round-trip to get one.
+
+        With `ticker_risk` unseeded, the candidate's own risk units ($301) sit far under the
+        $15,000 cap and say nothing about the book. The cumulative raw-collateral comparison in
+        the large-position check is what catches it: $75,000 already held + $1,500 new is past
+        the 25%-of-NLV ceiling. Comparing the candidate's marginal $1,500 alone (as it did
+        before) skipped the check entirely."""
+        existing = PositionSnapshot(
+            symbol="MARA  260918P00015000",
+            sec_type="OPT",
+            position=-50.0,
+            avg_cost=100.0,
+            right=OptionRight.PUT,
+            strike=15.0,
+            expiry=date.today() + timedelta(days=30),
+            underlying="MARA",
+            market_value=-2_000.0,
+        )
+        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=30)
+        account = _account(net_liq=300_000.0, cash=300_000.0)
+
+        verdicts = validate_candidates([cand], account, [existing])  # no iv_by_symbol
+        assert verdicts[0].verdict.value == "reject"
+        assert "concentration_limit" in verdicts[0].reasons
+
+        # The same candidate against an empty book still passes — it is the existing exposure
+        # that binds, not the candidate's own size (D1: one large lot stays reachable).
+        clean = validate_candidates([cand], account, [])
+        assert clean[0].verdict.value == "pass", clean[0].reasons
+
     def test_seeded_sector_risk_binds_across_the_existing_book(self) -> None:
         """The same seeding feeds the SECTOR tally, which `seed_budgets` previously only ever
         `setdefault`-ed to 0.0 — so a sector could never be full before this scan started."""
