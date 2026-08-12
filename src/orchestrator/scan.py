@@ -1010,7 +1010,21 @@ async def _run_scan_body(
     try:
         if all_option_candidates:
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
-            verdicts = validate_candidates(scored, account, positions)
+            # Hand the gate this sweep's per-symbol IV so existing option positions can charge
+            # the RISK-UNIT concentration budgets, not just the raw-collateral one. The data is
+            # already in `analytics_map` — no extra fetch. (The single-ticker deep-dive in
+            # `run_ticker_scan` deliberately does NOT do this: it would have to fetch IV for
+            # every other held position just to answer a one-symbol question.)
+            verdicts = validate_candidates(
+                scored,
+                account,
+                positions,
+                iv_by_symbol={
+                    sym: iv.current_iv
+                    for sym, (iv, _tech, _fund) in analytics_map.items()
+                    if iv.current_iv is not None
+                },
+            )
             verdict_map = {v.candidate_id: v for v in verdicts}
             gate_passed = [
                 c

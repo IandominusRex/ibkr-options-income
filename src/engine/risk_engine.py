@@ -45,12 +45,21 @@ def validate_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
     positions: list[PositionSnapshot],
+    iv_by_symbol: dict[str, float] | None = None,
 ) -> list[RiskVerdict]:
     """Gate each candidate against hard limits. One RiskVerdict per candidate.
 
     Candidates should be pre-sorted by priority (blended_score desc). Cumulative
     limits are consumed greedily in that order: an accepted candidate's collateral is
     added to the running tallies so later candidates see the reduced headroom.
+
+    *iv_by_symbol* (optional) lets an existing option position charge the RISK-UNIT tallies,
+    not just the raw-collateral one. Without it `budgets.ticker_risk` starts empty, so a
+    candidate whose own IV is known is measured against a per-ticker/per-sector budget that
+    counts nothing already held. Callers that already have IV for the whole portfolio in hand
+    pass it (the full scan sweep); callers on a latency-sensitive path where it would cost a
+    fresh network round-trip — the order-approval re-validation gate, a single-ticker
+    deep-dive — deliberately do not, and rely on the raw-collateral tally instead.
     """
     if not candidates:
         return []
@@ -71,7 +80,9 @@ def validate_candidates(
 
     caps = resolve_caps(account, risk)
     sector_of_fn = get_config().universe.get("sectors", {}).get
-    budgets: Budgets = seed_budgets(positions, sector_of_fn)
+    budgets: Budgets = seed_budgets(
+        positions, sector_of_fn, iv_by_symbol.get if iv_by_symbol else None
+    )
 
     verdicts: list[RiskVerdict] = []
 

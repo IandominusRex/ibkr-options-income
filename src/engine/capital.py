@@ -21,6 +21,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
 
 
@@ -94,7 +95,9 @@ def resolve_caps(account: AccountSnapshot, risk: dict) -> Caps:
 
 
 def seed_budgets(
-    positions: list[PositionSnapshot], sector_of: Callable[[str], str | None]
+    positions: list[PositionSnapshot],
+    sector_of: Callable[[str], str | None],
+    iv_of: Callable[[str], float | None] | None = None,
 ) -> Budgets:
     """Seed running tallies from current positions.
 
@@ -103,9 +106,18 @@ def seed_budgets(
     existing and proposed positions share one consistent budget (N5). Everything else is
     measured at |market value|.
 
-    Risk units cannot be seeded from a position snapshot (it carries no IV), so existing
-    positions charge the raw-collateral tally only. This is conservative: it can refuse a new
-    position, never wrongly admit one.
+    Risk units ARE seeded — for **option** positions, and only when the caller supplies
+    *iv_of*, a per-symbol IV lookup (percent, e.g. 28.5). Without it the risk-unit tallies
+    would stay empty while `_fits`/`validate_candidates` measured new candidates against
+    them, so existing exposure would count for nothing on the (common) path where the
+    candidate's own IV is known. Callers that already hold IV for the whole portfolio (the
+    full scan sweep, the capacity report) pass it; callers that would have to buy it with a
+    new network round-trip on a latency-sensitive path (the order-approval re-validation
+    gate, a single-ticker deep-dive) do not, and lean on the raw-collateral tally below.
+
+    Stock positions get no risk-unit seeding — they have no natural DTE — and neither does an
+    option whose IV can't be resolved or whose expiry has passed. Those, and every caller that
+    omits *iv_of*, are covered by ``ticker_collateral``, which is always seeded.
     """
     budgets = Budgets()
     for p in positions:
@@ -119,9 +131,19 @@ def seed_budgets(
         else:
             exposure = abs(p.market_value or 0.0)
         budgets.ticker_collateral[key] = budgets.ticker_collateral.get(key, 0.0) + exposure
+
+        if iv_of is None or p.sec_type != "OPT" or p.expiry is None:
+            continue
+        dte = (p.expiry - today_et()).days
+        if dte <= 0:
+            continue
+        units = risk_units(exposure, iv_of(key), dte)
+        if units is None:
+            continue
+        budgets.ticker_risk[key] = budgets.ticker_risk.get(key, 0.0) + units
         sector = sector_of(key)
         if sector:
-            budgets.sector_risk.setdefault(sector, 0.0)
+            budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
     return budgets
 
 

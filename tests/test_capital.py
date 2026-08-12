@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
+from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
 from src.engine.capital import (
     max_contracts,
@@ -84,6 +87,119 @@ def test_seed_budgets_charges_short_puts_at_strike_collateral():
     budgets = seed_budgets(positions, lambda s: "tech")
     assert budgets.csp_collateral == pytest.approx(40_000.0)
     assert budgets.ticker_collateral["AAPL"] == pytest.approx(40_000.0)
+
+
+def _short_put(
+    symbol: str = "MARA",
+    strike: float = 15.0,
+    contracts: int = 50,
+    days_out: int = 30,
+) -> PositionSnapshot:
+    """An existing short put: `contracts` lots at `strike`, expiring `days_out` days out."""
+    return PositionSnapshot(
+        symbol=f"{symbol} OPT",
+        sec_type="OPT",
+        position=-float(contracts),
+        avg_cost=100.0,
+        right=OptionRight.PUT,
+        strike=strike,
+        expiry=today_et() + timedelta(days=days_out),
+        underlying=symbol,
+        market_value=-2_000.0,
+    )
+
+
+def test_seed_budgets_charges_risk_units_when_an_iv_lookup_is_supplied():
+    """The concentration caps are measured in risk units, so existing option positions have
+    to be seeded in risk units too — otherwise every held position counts as zero against the
+    per-ticker / per-sector cap on the (common) path where the candidate's own IV is known."""
+    positions = [_short_put()]  # $75,000 collateral, 30 DTE
+    budgets = seed_budgets(positions, lambda s: "crypto", lambda s: 70.0)
+    # 75,000 x 0.70 x sqrt(30/365) = ~15,054 risk units
+    assert budgets.ticker_risk["MARA"] == pytest.approx(15_054.0, abs=5.0)
+    assert budgets.sector_risk["crypto"] == pytest.approx(15_054.0, abs=5.0)
+    assert budgets.ticker_collateral["MARA"] == pytest.approx(75_000.0)
+
+
+def test_seed_budgets_leaves_risk_units_unseeded_without_an_iv_lookup():
+    """Omitting `iv_of` must preserve the previous behaviour exactly — the raw-collateral
+    tally alone — for callers that cannot cheaply resolve IV (the order-approval re-gate,
+    the single-ticker deep-dive)."""
+    positions = [_short_put()]
+    budgets = seed_budgets(positions, lambda s: "crypto")
+    assert budgets.ticker_risk.get("MARA", 0.0) == 0.0
+    assert budgets.sector_risk.get("crypto", 0.0) == 0.0
+    assert budgets.ticker_collateral["MARA"] == pytest.approx(75_000.0)
+
+
+def test_seed_budgets_skips_risk_units_when_iv_is_unresolvable():
+    """An `iv_of` that returns None for this symbol is data-unavailable, not zero risk."""
+    positions = [_short_put()]
+    budgets = seed_budgets(positions, lambda s: "crypto", lambda s: None)
+    assert budgets.ticker_risk.get("MARA", 0.0) == 0.0
+    assert budgets.ticker_collateral["MARA"] == pytest.approx(75_000.0)
+
+
+def test_seed_budgets_gives_stock_positions_no_risk_units():
+    """Stock has no natural DTE, so it stays on the raw-collateral tally (deliberate)."""
+    positions = [
+        PositionSnapshot(
+            symbol="AAPL",
+            sec_type="STK",
+            position=100.0,
+            avg_cost=200.0,
+            market_value=20_000.0,
+        )
+    ]
+    budgets = seed_budgets(positions, lambda s: "tech", lambda s: 28.0)
+    assert budgets.ticker_risk.get("AAPL", 0.0) == 0.0
+    assert budgets.ticker_collateral["AAPL"] == pytest.approx(20_000.0)
+
+
+def test_seed_budgets_skips_an_expired_option():
+    """DTE <= 0 has no risk-unit meaning (sqrt of a non-positive horizon)."""
+    positions = [_short_put(days_out=0)]
+    budgets = seed_budgets(positions, lambda s: "crypto", lambda s: 70.0)
+    assert budgets.ticker_risk.get("MARA", 0.0) == 0.0
+
+
+def test_existing_position_consumes_the_new_candidates_ticker_risk_budget():
+    """Regression (final-review Critical): an account already holding $75,000 of MARA short
+    puts at 70% IV / 30 DTE is at ~15,054 risk units — over the $15,000 per-ticker cap (5% of
+    $300k NLV) on its own. A further MARA lot must not fit. Before risk-unit seeding, the
+    existing position charged `ticker_risk` nothing, so the sizer happily returned the full
+    hard_max of 10 more lots."""
+    caps = resolve_caps(_account(cash=300_000.0), RISK)
+    positions = [_short_put()]
+
+    seeded = seed_budgets(positions, lambda s: "crypto", lambda s: 70.0)
+    n, binding = max_contracts(
+        unit_collateral=1_500.0,
+        current_iv=70.0,
+        dte=30,
+        symbol="MARA",
+        sector="crypto",
+        caps=caps,
+        budgets=seeded,
+        hard_max=10,
+    )
+    assert n == 0
+    assert binding == "ticker_risk"
+
+    # The same call with the position invisible to the risk-unit tallies is the bug's shape:
+    # the sizer sees an empty per-ticker budget and grants the full hard_max.
+    unseeded = seed_budgets(positions, lambda s: "crypto")
+    n_blind, _ = max_contracts(
+        unit_collateral=1_500.0,
+        current_iv=70.0,
+        dte=30,
+        symbol="MARA",
+        sector="crypto",
+        caps=caps,
+        budgets=unseeded,
+        hard_max=10,
+    )
+    assert n_blind > n
 
 
 def test_max_contracts_trims_to_the_binding_constraint_instead_of_rejecting():

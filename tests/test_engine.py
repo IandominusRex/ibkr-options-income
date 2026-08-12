@@ -506,9 +506,9 @@ class TestValidateCandidates:
         assert all("sector_limit" not in v.reasons for v in verdicts)
 
     def test_sector_limit_binds_cumulatively_across_new_candidates(self) -> None:
-        # D1: sector_risk is a risk-units tally fed only by NEW priced candidates —
-        # `capital.seed_budgets` cannot seed it from an existing raw position, which
-        # carries no IV (see its docstring). Six "tech" CSPs, each $10,000 collateral
+        # D1: sector_risk is a risk-units tally. This test passes NO existing positions, so it
+        # is fed only by the NEW priced candidates below (seeding it from the book requires the
+        # caller to supply an IV lookup — see `seed_budgets`). Six "tech" CSPs, each $10,000
         # (at the 10,000 large-position threshold, so none of them consume the large
         # slot) at 120% IV / 45 DTE (~4,213 risk units — safely under the 5,000 ticker
         # cap on its own): the first five sum to ~21,067 (< the 25,000 sector cap) and
@@ -708,6 +708,58 @@ class TestConcentrationInRiskUnits:
         account = _account(net_liq=300_000.0, cash=0.0)  # no cash at all
         verdicts = validate_candidates([cand], account, [])
         assert "buying_power_buffer" not in verdicts[0].reasons
+        assert "concentration_limit" not in verdicts[0].reasons
+
+    def test_existing_option_position_charges_the_ticker_risk_budget(self) -> None:
+        """Final-review Critical: concentration is measured in risk units, so an existing
+        option position has to be *seeded* in risk units — otherwise it counts as zero against
+        the per-ticker cap on the common path where the candidate's own IV is known, and the
+        cap only ever constrains candidates against each other, never against the book.
+
+        50 MARA 15-strike puts = $75,000 collateral at 70% IV / 30 DTE = ~15,054 risk units,
+        already past the $15,000 cap (5% of $300k NLV): one more lot must not fit."""
+        existing = PositionSnapshot(
+            symbol="MARA  260918P00015000",
+            sec_type="OPT",
+            position=-50.0,
+            avg_cost=100.0,
+            right=OptionRight.PUT,
+            strike=15.0,
+            expiry=date.today() + timedelta(days=30),
+            underlying="MARA",
+            market_value=-2_000.0,
+        )
+        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=30)
+        account = _account(net_liq=300_000.0, cash=300_000.0)
+        verdicts = validate_candidates([cand], account, [existing], iv_by_symbol={"MARA": 70.0})
+        assert verdicts[0].verdict.value == "reject"
+        assert "concentration_limit" in verdicts[0].reasons
+
+    def test_seeded_sector_risk_binds_across_the_existing_book(self) -> None:
+        """The same seeding feeds the SECTOR tally, which `seed_budgets` previously only ever
+        `setdefault`-ed to 0.0 — so a sector could never be full before this scan started."""
+        held = [
+            PositionSnapshot(
+                symbol=f"{sym} PUT",
+                sec_type="OPT",
+                position=-10.0,
+                avg_cost=100.0,
+                right=OptionRight.PUT,
+                strike=150.0,
+                expiry=date.today() + timedelta(days=30),
+                underlying=sym,
+                market_value=-2_000.0,
+            )
+            for sym in ("AAPL", "MSFT")
+        ]  # 2 x $150,000 collateral at 100% IV / 30 DTE = ~$86,000 of "tech" risk units
+        cand = _csp_candidate(underlying="GOOGL", strike=100.0, contracts=1, current_iv=30.0)
+        account = _account(net_liq=300_000.0, cash=500_000.0)
+        verdicts = validate_candidates(
+            [cand], account, held, iv_by_symbol={"AAPL": 100.0, "MSFT": 100.0}
+        )
+        # tech sector cap = 25% of $300k = $75,000 risk units; the book alone is already past it,
+        # while GOOGL's own ticker budget (~$860 of $15,000) is untouched.
+        assert "sector_limit" in verdicts[0].reasons
         assert "concentration_limit" not in verdicts[0].reasons
 
     def test_second_large_position_hits_the_slot_cap(self) -> None:

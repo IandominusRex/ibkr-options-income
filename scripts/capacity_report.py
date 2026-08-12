@@ -93,7 +93,7 @@ def build_report(
             continue
         strike = round(spot * 0.90, 2)
         unit = strike * 100
-        budgets = seed_budgets(positions, sector_of)
+        budgets = seed_budgets(positions, sector_of, iv_by_symbol.get)
         n, binding = max_contracts(
             unit_collateral=unit,
             current_iv=iv_by_symbol.get(symbol),

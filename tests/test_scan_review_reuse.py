@@ -199,7 +199,7 @@ def _stub_pipeline(scanmod, monkeypatch, review_counter):
     monkeypatch.setattr(
         scanmod,
         "validate_candidates",
-        lambda scored, account, positions: [
+        lambda scored, account, positions, **kwargs: [
             SimpleNamespace(candidate_id=c.candidate_id, verdict=SimpleNamespace(value="pass"))
             for c in scored
         ],
