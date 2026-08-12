@@ -101,11 +101,6 @@ _REVIEW_HASH_KEY = "last_review_hash"
 # trailing "…and N more" line. One "closest" per strategy keeps each quiet-cycle line compact.
 _NEAR_MISS_LIMIT = 1
 
-# Max assessed-but-not-approved contracts to list per strategy on a *manual* /scan or a full
-# sweep. The 15-min intraday loop never renders this block (it keeps the one-line digest
-# above), so this bound only shapes the deliberate, human-requested view.
-_ASSESSED_LIMIT = 8
-
 
 @dataclass
 class ProvenanceCounts:

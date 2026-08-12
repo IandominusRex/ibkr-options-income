@@ -205,6 +205,74 @@ def test_manage_at_dte_silent_outside_the_window() -> None:
     assert check_manage_at_dte(pos, 21) is None
 
 
+def test_check_all_uses_the_configured_manage_at_dte() -> None:
+    """`manage_at_dte` must be load-bearing, not defaulted.
+
+    A 25-DTE short is OUTSIDE the hardcoded 21-day fallback, so this only fires if the
+    configured 30 actually reaches `check_manage_at_dte` through `check_all`'s limits dict.
+    """
+    from datetime import timedelta
+
+    from src.common.market_hours import today_et
+    from src.monitor.triggers import check_all
+
+    pos = _make_short_call(expiry=today_et() + timedelta(days=25))
+    quote = _make_quote(delta=0.20)
+
+    fired = check_all(pos, quote, entry_iv=None, fund_stats=None, limits={"manage_at_dte": 30})
+    assert any(a.trigger == "manage_dte" for a in fired)
+
+    silent = check_all(pos, quote, entry_iv=None, fund_stats=None, limits={})
+    assert not any(a.trigger == "manage_dte" for a in silent)
+
+
+async def test_intraday_monitor_passes_manage_at_dte_from_config() -> None:
+    """The regression this closes: `monitor.manage_at_dte` was in config and in the trigger,
+    but `intraday.py`'s limits dict never carried it — so editing the key did nothing and
+    every alert used the hardcoded 21-day fallback."""
+    from src.common.schemas import OptionRight, PositionSnapshot
+
+    monitor, _mock_ib = _make_monitor()
+    monitor._cfg.monitor.manage_at_dte = 30
+    monitor._cfg.monitor.assignment_alert_delta = 0.70
+    monitor._cfg.monitor.assignment_alert_dte = 21
+
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=today_et() + timedelta(days=25),  # outside the 21-day fallback, inside 30
+        underlying="AAPL",
+    )
+    monitor._subscriptions[pos.symbol] = (pos, MagicMock())
+
+    ticker = MagicMock()
+    ticker.contract.localSymbol = pos.symbol
+    ticker.bid, ticker.ask, ticker.last, ticker.volume = 1.0, 1.2, 1.1, 10
+    ticker.modelGreeks = None
+
+    captured: dict = {}
+
+    def _capture(pos_, quote_, entry_iv, fund_stats, limits):
+        captured.update(limits)
+        from src.monitor.triggers import check_all as real_check_all
+
+        return real_check_all(pos_, quote_, entry_iv, fund_stats, limits)
+
+    with (
+        patch("src.monitor.intraday.check_all", side_effect=_capture),
+        patch("src.monitor.intraday.fire_alerts", new=AsyncMock()) as fire,
+    ):
+        await monitor._on_pending_tickers([ticker])
+
+    assert captured["manage_at_dte"] == 30
+    fired = fire.await_args.args[0]
+    assert any(a.trigger == "manage_dte" for a in fired)
+
+
 def test_manage_at_dte_ignores_long_positions() -> None:
     from datetime import timedelta
 

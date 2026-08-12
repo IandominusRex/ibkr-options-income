@@ -393,6 +393,7 @@ class IntradayMonitor:
             limits = {
                 "delta_ceiling": self._cfg.monitor.delta_ceiling,
                 "dte_threshold": self._cfg.monitor.dte_threshold,
+                "manage_at_dte": self._cfg.monitor.manage_at_dte,
                 "iv_spike_pct": self._cfg.monitor.iv_spike_pct,
                 "ex_div_days_ahead": self._cfg.monitor.ex_div_days_ahead,
                 "assignment_alert_delta": self._cfg.monitor.assignment_alert_delta,

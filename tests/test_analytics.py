@@ -16,7 +16,8 @@ from src.analytics.iv import get_iv_stats
 from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
 from src.analytics.technicals import get_technical_stats
 from src.common.market_hours import today_et
-from src.common.schemas import OptionQuote, OptionRight, Regime
+from src.common.schemas import AccountSnapshot, OptionQuote, OptionRight, Regime
+from src.engine.capital import Budgets
 
 # --------------------------------------------------------------------------- #
 # iv.py tests
@@ -121,6 +122,120 @@ class TestIVStats:
         ):
             stats = get_iv_stats("TEST")
         assert stats.hv_30 == 18.5
+
+
+class TestLiveATMIVInterpolation:
+    """`IVStats.current_iv` computed from real quotes, end to end — no monkeypatched IV.
+
+    This one number is the most load-bearing on the deterministic path: it sizes positions
+    and seeds the concentration caps (`engine.capital.risk_units`), sets the variance-risk-
+    premium floor (`fair_value.compute_ideal_zone` -> `IdealZone.min_credit`), and forms the
+    `iv_rv_ratio` gate. Every other `get_iv_stats` test omits `quotes`, and the scan-pipeline
+    tests monkeypatch `get_iv_stats` wholesale, so `_atm_iv_at_30d`'s constant-maturity
+    interpolation had no test exercising it with a realistic multi-expiry chain.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_realized_vol_network(self):
+        with patch("src.analytics.iv.compute_realized_vol", return_value=None):
+            yield
+
+    @staticmethod
+    def _chain() -> list[OptionQuote]:
+        """Three expiries straddling 30 DTE around a $100 spot, with DISTINCT IV per expiry.
+
+        Mids are set so put-call parity recovers spot = 100 exactly at every strike
+        (`call_mid - put_mid == 100 - strike`), which is how `infer_spot_from_quotes` finds
+        the ATM band. IV is flat within an expiry so the ATM average is exactly that expiry's
+        IV, and the three expiries differ (40% / 60% / 80%) so a broken interpolation — taking
+        the nearest expiry, or averaging all of them — lands on a different number.
+        """
+        quotes: list[OptionQuote] = []
+        for days, iv in ((21, 0.40), (45, 0.60), (60, 0.80)):
+            expiry = today_et() + timedelta(days=days)
+            for strike in (90.0, 95.0, 100.0, 105.0, 110.0):
+                call_mid = max(0.0, 100.0 - strike) + 2.0
+                put_mid = max(0.0, strike - 100.0) + 2.0
+                for right, mid in ((OptionRight.CALL, call_mid), (OptionRight.PUT, put_mid)):
+                    quotes.append(
+                        OptionQuote(
+                            underlying="TEST",
+                            right=right,
+                            strike=strike,
+                            expiry=expiry,
+                            bid=mid - 0.05,
+                            ask=mid + 0.05,
+                            iv=iv,
+                            volume=250,
+                            open_interest=1_000,
+                        )
+                    )
+        return quotes
+
+    def test_current_iv_is_interpolated_to_a_constant_30_day_maturity(self):
+        history = [0.30, 0.25, 0.20, 0.15, 0.10]
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+        ):
+            stats = get_iv_stats("TEST", self._chain())
+
+        # 30 DTE sits between the 21d (40%) and 45d (60%) expiries:
+        # 40 + (30-21)/(45-21) x (60-40) = 47.5%. Not 40 (nearest expiry), not 60 (the mean
+        # of all three), not the stored history's 30% (which the live value must override).
+        assert stats.current_iv == pytest.approx(47.5, abs=0.25)
+        # The live value, not the last stored observation, is what ranks.
+        assert stats.iv_rank == 100.0
+
+    def test_the_interpolated_iv_produces_a_sane_position_size(self):
+        """The same number, consumed by the deterministic sizer it actually feeds."""
+        from src.engine.capital import max_contracts, resolve_caps, risk_units
+
+        history = [0.30, 0.25, 0.20, 0.15, 0.10]
+        with (
+            patch("src.analytics.iv.session_scope", _mock_session_scope(history)),
+            patch("src.analytics.iv._compute_hv30", return_value=None),
+        ):
+            stats = get_iv_stats("TEST", self._chain())
+
+        assert stats.current_iv is not None
+        # $9,000 of collateral (90 strike x 100) at ~47.5% IV over 30 days.
+        units = risk_units(9_000.0, stats.current_iv, 30)
+        assert units == pytest.approx(9_000.0 * 0.475 * (30 / 365) ** 0.5, rel=0.01)
+
+        risk = {
+            "portfolio": {
+                "cash_reserve_pct": 20.0,
+                "cash_reserve_absolute": 10_000,
+                "max_csp_allocation_pct_of_deployable": 100.0,
+                "max_risk_units_per_ticker_pct": 5.0,
+                "max_risk_units_per_sector_pct": 25.0,
+                "max_collateral_per_ticker_pct": 10.0,
+                "max_large_positions": 1,
+                "max_pct_per_ticker_large": 25.0,
+            }
+        }
+        account = AccountSnapshot(
+            account="DU1",
+            net_liquidation=300_000.0,
+            total_cash=100_000.0,
+            buying_power=100_000.0,
+            maintenance_margin=0.0,
+            excess_liquidity=100_000.0,
+        )
+        n, _binding = max_contracts(
+            unit_collateral=9_000.0,
+            current_iv=stats.current_iv,
+            dte=30,
+            symbol="TEST",
+            sector="tech",
+            caps=resolve_caps(account, risk),
+            budgets=Budgets(),
+            hard_max=10,
+        )
+        # 15,000 risk-unit cap / ~1,225 units per lot -> a real, bounded, non-zero size.
+        assert n >= 1
+        assert n * units <= 15_000.0
 
 
 class TestHV30LogReturns:

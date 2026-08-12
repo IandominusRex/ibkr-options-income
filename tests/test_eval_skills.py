@@ -10,14 +10,25 @@ from pathlib import Path
 # --------------------------------------------------------------------------- #
 # The fence — src/claude/ influences verdict + ranking ONLY
 # --------------------------------------------------------------------------- #
-_ENGINE_PATH_MODULES = [
-    "src/engine/risk_engine.py",
-    "src/engine/scoring.py",
-    "src/engine/decision_engine.py",
-    "src/execution/order_builder.py",
-    "src/execution/executor.py",
-    "src/execution/approval.py",
-]
+
+
+def _engine_path_modules() -> list[str]:
+    """Every module on the engine / execution / sizing path, by directory.
+
+    Globbed rather than listed: the hand-maintained list this replaces went stale the moment
+    the path grew a module (it never gained `engine/capital.py` — position sizing and the
+    concentration caps — or `execution/circuit_breakers.py`, `profit_take.py`,
+    `roll_pipeline.py`), and a fence test that silently stops covering new code is worse than
+    no fence test. `src/strategies/` was already globbed here for exactly this reason.
+    """
+    root = Path(__file__).resolve().parents[1]
+    dirs = ("engine", "execution", "strategies")
+    return [
+        str(p.relative_to(root))
+        for d in dirs
+        for p in sorted((root / "src" / d).glob("*.py"))
+        if p.name != "__init__.py"
+    ]
 
 
 def test_skills_never_reach_the_engine() -> None:
@@ -39,9 +50,7 @@ def test_skills_never_reach_the_engine() -> None:
     """
     root = Path(__file__).resolve().parents[1]
     # All strategy files participate in sizing (contracts/collateral) too.
-    targets = list(_ENGINE_PATH_MODULES) + [
-        str(p.relative_to(root)) for p in (root / "src" / "strategies").glob("*.py")
-    ]
+    targets = _engine_path_modules()
     forbidden_prefixes = ("src.claude.eval", "src.claude.skills")
     offenders = []
     for rel in targets:
@@ -99,9 +108,7 @@ def test_macro_never_reaches_the_engine() -> None:
     """The macro backdrop (VIX term, rates, headline tone) is enrichment: it may reach the
     prompt and the Telegram card, never the gate, the weights, or sizing."""
     root = Path(__file__).resolve().parents[1]
-    targets = list(_ENGINE_PATH_MODULES) + [
-        str(p.relative_to(root)) for p in (root / "src" / "strategies").glob("*.py")
-    ]
+    targets = _engine_path_modules()
     offenders = [
         rel for rel in targets if "market_conditions" in (root / rel).read_text(encoding="utf-8")
     ]
