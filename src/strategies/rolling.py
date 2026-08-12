@@ -136,10 +136,13 @@ def generate_roll_candidates(
         # roll the underlying's actual cost basis is not available in this function.
         collateral = quote.strike * contracts * 100
 
-        # D2 follow-up: populate `ideal` so the risk engine's variance-risk-premium gate
-        # (which reads `TradeCandidate.ideal.min_credit`, not anything roll-specific) covers
-        # rolls too — without this, `cand.ideal` defaulted to None and the gate could never
-        # fire for a ROLL, leaving the lowered 0.15%/0.0% noise floors as the only check.
+        # D2 follow-up: populate `ideal` so a roll card shows the same fair-value context every
+        # other candidate carries. It is DISPLAY/AUDIT for a roll — the risk engine's
+        # variance-risk-premium gate is scoped to the income strategies, because a defensive
+        # roll pays a debit to move a challenged short and is priced under the new strike's
+        # fair value by design; leaving it inside that gate rejected every defensive roll at
+        # the approval-queue re-gate. The defensive bounds above (max_debit /
+        # min_delta_reduction / require_breakeven_improvement) are a roll's real economics.
         # No fundamentals are available in this function (no `FundamentalStats` input), so a
         # minimal symbol-only instance is used — `zone_for_contract`'s min_credit depends only
         # on `zone.spot`/`zone.dte`/`zone.right` (set from this call's own args, never touched

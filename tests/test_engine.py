@@ -1007,24 +1007,48 @@ def test_missing_ideal_zone_never_blocks():
 
 
 # ---------------------------------------------------------------------------
-# risk_engine.py — D2 follow-up: rolls had no edge control at all, because
-# `rolling.py` never set `ideal` (it defaulted to None), so this gate could never
-# fire for a ROLL candidate. rolling.py now populates `ideal` via `zone_for_contract`,
-# so the same gate that covers CSPs/CCs covers rolls too.
+# risk_engine.py — the income gates (ROC floor, annualized-yield floor, and the D2
+# variance-risk-premium floor) are scoped to the INCOME strategies. A defensive roll
+# is a repair, not an income trade: it books roc_pct = 0.0 by construction and pays a
+# premium deliberately under the new strike's fair value, so leaving it inside those
+# gates rejected every defensive roll at the approval-queue re-gate — after the
+# operator had already approved it. `strategies/rolling.py`'s own max_debit /
+# min_delta_reduction bounds are the real economic control for a roll; `cand.ideal`
+# stays populated and visible on the card, it just no longer rejects.
 # ---------------------------------------------------------------------------
 
 
-def test_gate_rejects_a_roll_premium_below_fair_value():
-    """A defensive roll collecting less than fair value earns no edge either."""
+def test_defensive_roll_is_not_rejected_by_the_income_gates():
+    """A defensive roll (zero ROC, premium under the zone's min_credit) must pass."""
     from src.common.schemas import IdealZone, OptionRight
     from src.engine.risk_engine import validate_candidates
 
     zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
     cand = _candidate(strategy=Strategy.ROLL, underlying="MARA", right=OptionRight.PUT).model_copy(
-        update={"premium": 0.50, "ideal": zone}
+        update={"premium": 0.50, "ideal": zone, "roc_pct": 0.0, "annualized_yield_pct": 0.0}
     )
     verdicts = validate_candidates([cand], _account(), [])
+    assert verdicts[0].verdict == Verdict.PASS, verdicts[0].reasons
+    assert "premium_below_fair_value" not in verdicts[0].reasons
+    assert "roc_below_minimum" not in verdicts[0].reasons
+    assert "yield_below_minimum" not in verdicts[0].reasons
+
+
+def test_the_same_income_gates_still_bite_a_csp():
+    """The scoping is per-strategy, not a global bypass: an identical CSP is still rejected."""
+    from src.common.schemas import IdealZone, OptionRight
+    from src.engine.risk_engine import validate_candidates
+
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    cand = _candidate(
+        strategy=Strategy.CASH_SECURED_PUT, underlying="MARA", right=OptionRight.PUT
+    ).model_copy(
+        update={"premium": 0.50, "ideal": zone, "roc_pct": 0.0, "annualized_yield_pct": 0.0}
+    )
+    verdicts = validate_candidates([cand], _account(), [])
+    assert verdicts[0].verdict == Verdict.REJECT
     assert "premium_below_fair_value" in verdicts[0].reasons
+    assert "roc_below_minimum" in verdicts[0].reasons
 
 
 def test_gate_accepts_a_roll_premium_that_clears_fair_value():

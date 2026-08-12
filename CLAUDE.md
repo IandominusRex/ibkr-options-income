@@ -108,9 +108,12 @@ jobs** — keep them straight:
   any candidate whose `premium` falls below `cand.ideal.min_credit` — Black-Scholes fair value at
   *realised* vol (HV30) plus `ideal_zone.min_credit_edge_pct` — with the reason
   `premium_below_fair_value`, under `income.require_vrp_edge` (ships `true`). The CSP and CC
-  generators run the same check themselves so the operator sees the reason on the card; roll
-  candidates carry `ideal` and are gated by the engine. A missing zone is data-unavailable and
-  never rejects.
+  generators run the same check themselves so the operator sees the reason on the card. **Rolls
+  are scoped out of this gate** (with the ROC and annualized-yield floors): a defensive roll books
+  `roc_pct = 0.0` and deliberately pays under the new strike's fair value, so the gate rejected
+  every one of them at the approval-queue re-gate — `strategies/rolling.py`'s own `max_debit` /
+  `min_delta_reduction` bounds are a roll's real economic control, and its `ideal` stays populated
+  for the card but no longer rejects. A missing zone is data-unavailable and never rejects.
 - **`zone_fit` only ranks, and still ships at `0.0`.** The separate `fair_value.zone_fit_score`
   hook blends into `technical_score` under the `zone_fit` weight in `scoring_weights.yaml`, which
   is `0.0` for both strategies — strike placement changes no ranking until a human raises it.

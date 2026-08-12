@@ -320,9 +320,12 @@ class IdealZone(BaseModel):
     **Two kinds of field — do not assume the whole zone is inert.** The strike band and the
     action levels are display + optional ranking only (they reach scoring solely through
     ``scoring_weights.yaml``'s ``zone_fit``, which ships at ``0.0``). ``min_credit`` is
-    different: since D2 it is a real gate — ``risk_engine.validate_candidates`` rejects a
-    candidate whose ``premium`` falls below it under ``income.require_vrp_edge`` (ships
-    ``true``), reason ``premium_below_fair_value``. A ``None`` zone never blocks.
+    different: since D2 it is a real gate — ``risk_engine.validate_candidates`` rejects an
+    **income** candidate (CC/CSP) whose ``premium`` falls below it under
+    ``income.require_vrp_edge`` (ships ``true``), reason ``premium_below_fair_value``. On a
+    ``Strategy.ROLL`` it is display/audit only: a defensive roll pays under fair value by
+    design, so rolls are scoped out of that gate and bounded by ``monitor.roll_defensive``
+    (``max_debit`` / ``min_delta_reduction``) instead. A ``None`` zone never blocks.
     ``fair_value.py`` still has no reject path of its own, so the deterministic Rules Engine
     remains the sole path to an order.
     """

@@ -101,22 +101,29 @@ def validate_candidates(
         # strategies that create NEW exposure (CSPs, via assignment) consume these budgets.
         adds_new_exposure = cand.strategy not in (Strategy.COVERED_CALL, Strategy.ROLL)
 
-        # --- Income quality gates ---
-        if cand.roc_pct < income.get("min_roc_pct", 1.0):
-            reasons.append("roc_below_minimum")
-        if cand.annualized_yield_pct < income.get("min_annualized_yield_pct", 12.0):
-            reasons.append("yield_below_minimum")
+        # --- Income quality gates. Scoped to the income strategies: a ROLL is a defensive
+        # repair, not an income trade. A roll that pays a debit to move a challenged short
+        # out and down has roc_pct = 0.0 by construction and a premium deliberately below
+        # the new strike's fair value, so both floors below reject EVERY defensive roll —
+        # structurally, at the approval-queue re-gate, after the operator already approved
+        # it. Rolls carry their own purpose-built economics in `strategies/rolling.py`
+        # (max_debit + min_delta_reduction), which remain the real control for them.
+        if cand.strategy in _INCOME_STRATEGIES:
+            if cand.roc_pct < income.get("min_roc_pct", 1.0):
+                reasons.append("roc_below_minimum")
+            if cand.annualized_yield_pct < income.get("min_annualized_yield_pct", 12.0):
+                reasons.append("yield_below_minimum")
 
-        # --- Variance-risk-premium floor. The income thesis is that implied vol exceeds
-        # realised vol; selling at or below Black-Scholes fair value priced at HV30 earns
-        # no edge for the risk taken. This replaces the flat ROC floor as the primary gate:
-        # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
-        # low-vol diversifier in the universe and pushed every trade to the top of the
-        # delta band (D2). Missing zone = data unavailable, never a rejection.
-        if income.get("require_vrp_edge", True) and cand.ideal is not None:
-            floor = cand.ideal.min_credit
-            if floor is not None and floor > 0 and cand.premium < floor:
-                reasons.append("premium_below_fair_value")
+            # --- Variance-risk-premium floor. The income thesis is that implied vol exceeds
+            # realised vol; selling at or below Black-Scholes fair value priced at HV30 earns
+            # no edge for the risk taken. This replaces the flat ROC floor as the primary gate:
+            # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
+            # low-vol diversifier in the universe and pushed every trade to the top of the
+            # delta band (D2). Missing zone = data unavailable, never a rejection.
+            if income.get("require_vrp_edge", True) and cand.ideal is not None:
+                floor = cand.ideal.min_credit
+                if floor is not None and floor > 0 and cand.premium < floor:
+                    reasons.append("premium_below_fair_value")
 
         # --- IV environment: only sell premium when it's relatively expensive.
         # Enforced only when an IV rank is available (missing history is not a capital
