@@ -229,6 +229,94 @@ def test_near_miss_absent_falls_back_to_reason_line() -> None:
     assert "Rejected:" in text
 
 
+def test_near_miss_renders_its_own_ideal_zone() -> None:
+    near = _candidate(candidate_id="csp-near")
+    near.ideal = IdealZone(
+        symbol="NVDA",
+        right=OptionRight.PUT,
+        dte=30,
+        spot=210.69,
+        strike_lo=190.0,
+        strike_hi=198.0,
+        min_credit=4.10,
+        strike_anchors=["25% vol → 1σ ±$10.00 over 30d"],
+    )
+    text = format_ticker_scan_result(
+        ticker="NVDA",
+        iv_stats=_iv(),
+        tech_stats=_tech(),
+        fund_stats=_fund(),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        csp_near_miss=near,
+        csp_reject_reasons=["premium_below_fair_value"],
+    )
+    assert "Ideal strike" in text
+    assert "Fair credit" not in text  # near-miss uses _ideal_lines, not the hypothetical wording
+    assert "Ideal credit" in text
+
+
+# ---------------------------------------------------------------------------
+# #3b Hypothetical fair value (no contract priced at all — off would_own / not held)
+# ---------------------------------------------------------------------------
+
+
+def _soxl_zone(right: OptionRight) -> IdealZone:
+    return IdealZone(
+        symbol="SOXL",
+        right=right,
+        dte=33,
+        spot=144.67,
+        strike_lo=130.0 if right == OptionRight.PUT else 155.0,
+        strike_hi=138.0 if right == OptionRight.PUT else 165.0,
+        strike_anchor=134.0 if right == OptionRight.PUT else 160.0,
+        min_credit=3.25,
+        strike_anchors=["48% vol → 1σ ±$9.80 over 33d"],
+        buy_below=132.0,
+        buy_anchors=["support $132.00"],
+    )
+
+
+def test_csp_hypothetical_zone_renders_when_off_would_own() -> None:
+    text = format_ticker_scan_result(
+        ticker="SOXL",
+        iv_stats=_iv(symbol="SOXL"),
+        tech_stats=_tech(symbol="SOXL", price=144.67),
+        fund_stats=_fund(symbol="SOXL"),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        csp_skip_reason="not_in_would_own",
+        csp_hypothetical=_soxl_zone(OptionRight.PUT),
+    )
+    assert "would\\-own list" in text
+    assert "Informational fair value" in text
+    assert "Fair credit" in text
+    assert "Buy shares below" in text  # Levels section picks up buy_below from the hypothetical
+
+
+def test_no_hypothetical_block_when_zone_has_no_data() -> None:
+    empty_zone = IdealZone(symbol="XYZ", right=OptionRight.PUT, dte=30, spot=10.0)
+    text = format_ticker_scan_result(
+        ticker="XYZ",
+        iv_stats=_iv(symbol="XYZ"),
+        tech_stats=_tech(symbol="XYZ", price=10.0),
+        fund_stats=_fund(symbol="XYZ"),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        csp_hypothetical=empty_zone,
+    )
+    assert "Informational fair value" not in text
+
+
 # ---------------------------------------------------------------------------
 # #4 Honest sources footer
 # ---------------------------------------------------------------------------

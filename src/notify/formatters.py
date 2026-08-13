@@ -22,6 +22,7 @@ from src.common.schemas import (
     ClaudeReview,
     EODSummary,
     FundamentalStats,
+    IdealZone,
     IVStats,
     MarketConditions,
     OptionQuote,
@@ -668,7 +669,33 @@ def _near_miss_lines(cand: TradeCandidate, reasons: list[str] | None) -> list[st
     reject_line = _reject_reason_line(reasons)
     if reject_line is not None:
         lines.append(reject_line)
+    lines.extend(_ideal_lines(cand))
     return lines
+
+
+def _hypothetical_zone_lines(zone: IdealZone) -> list[str]:
+    """Fair-value numbers for a zone with no live contract behind it — informational only.
+
+    Unlike `_ideal_lines`, there is no strike or premium on offer to compare against (the
+    symbol never reached a single quote), so this renders the zone's own numbers plus a label
+    making clear it isn't a recommendation. Returns [] when the zone carried no data — a
+    degenerate ``IdealZone`` (e.g. missing spot/vol) should fall back silently, same as
+    `_ideal_lines`.
+    """
+    lines: list[str] = []
+    if zone.strike_lo is not None and zone.strike_hi is not None:
+        lines.append(
+            f"  🎯 Ideal strike \\${_md(f'{zone.strike_lo:.2f}')}"
+            f"–\\${_md(f'{zone.strike_hi:.2f}')} at ~{_md(str(zone.dte))}d"
+        )
+    if zone.min_credit is not None:
+        at = f" at \\${_md(f'{zone.strike_anchor:.2f}')} strike" if zone.strike_anchor else ""
+        lines.append(f"  💰 Fair credit ≥ \\${_md(f'{zone.min_credit:.2f}')}/sh{at}")
+    if zone.strike_anchors:
+        lines.append(f"  _{_md(' · '.join(zone.strike_anchors[:3]))}_")
+    if not lines:
+        return []
+    return ["  _Informational fair value — not a recommendation:_", *lines]
 
 
 def _ideal_lines(cand: TradeCandidate, *, indent: str = "  ") -> list[str]:
@@ -876,6 +903,9 @@ def format_ticker_scan_result(
     csp_reject_reasons: list[str] | None = None,
     cc_near_miss: TradeCandidate | None = None,
     csp_near_miss: TradeCandidate | None = None,
+    csp_skip_reason: str | None = None,
+    cc_hypothetical: IdealZone | None = None,
+    csp_hypothetical: IdealZone | None = None,
     greeks_fallback: bool = False,
     market_conditions: MarketConditions | None = None,
     sector_context: SectorContext | None = None,
@@ -907,6 +937,14 @@ def format_ticker_scan_result(
             no candidate qualified — surfaced so the operator sees *why* it was empty.
         cc_near_miss / csp_near_miss: the best-scoring contract that *failed* the gate for the
             strategy; rendered as a "closest contract" block when nothing qualified.
+        csp_skip_reason: set when the CSP screen never reached a single quote for this symbol
+            (e.g. ``"not_in_would_own"``) — surfaced as a plain-English note distinguishing
+            "screened and found nothing" from "not eligible for this strategy at all".
+        cc_hypothetical / csp_hypothetical: a fair-value zone computed straight from
+            technicals/IV/fundamentals with no option chain or candidate behind it — the
+            fallback when there is no qualifying contract *and* no near-miss to hang `_ideal_lines`
+            off of (off the would_own allowlist, shares not held, or an empty chain for that
+            right). Purely informational: never gates, scores, or implies a recommendation.
         greeks_fallback: True when any option Greeks fell back to yfinance Black-Scholes (footer).
         assessed: every contract this scan priced and what became of it, ranked closest-to-
             approved first. Drives the "Other contracts considered" block and supplies the
@@ -1021,6 +1059,8 @@ def format_ticker_scan_result(
             reject_line = _reject_reason_line(cc_reject_reasons)
             if reject_line is not None:
                 lines.append(reject_line)
+            if cc_hypothetical is not None:
+                lines.extend(_hypothetical_zone_lines(cc_hypothetical))
     lines.append("")
 
     # --- Cash-Secured Put ---
@@ -1054,6 +1094,13 @@ def format_ticker_scan_result(
             reject_line = _reject_reason_line(csp_reject_reasons)
             if reject_line is not None:
                 lines.append(reject_line)
+            if csp_skip_reason == "not_in_would_own":
+                lines.append(
+                    "  _Not on the would\\-own list — no live recommendation is generated"
+                    " for this name_"
+                )
+            if csp_hypothetical is not None:
+                lines.extend(_hypothetical_zone_lines(csp_hypothetical))
     lines.append("")
 
     # --- Alternatives considered ---
@@ -1073,6 +1120,10 @@ def format_ticker_scan_result(
     )
     if action is None and assessed:
         action = next((a.candidate.ideal for a in assessed if a.candidate.ideal is not None), None)
+    # Nothing above ever priced a contract at all (off would_own, shares not held, empty
+    # chain) — fall back to the informational zone so buy_below/action_price still surface.
+    if action is None:
+        action = csp_hypothetical or cc_hypothetical
     # The action level is already printed under a qualifying contract, so only repeat it here
     # when nothing qualified — otherwise this block carries the share-entry level alone.
     shown_under_candidate = bool(cc_candidates or csp_candidates)

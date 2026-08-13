@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 
 from ib_async import IB
 
+from src.analytics.fair_value import compute_ideal_zone
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats, infer_spot_from_quotes
 from src.analytics.market_conditions import get_market_conditions
@@ -41,6 +42,7 @@ from src.common.schemas import (
     BuyCandidate,
     ClaudeReview,
     FundamentalStats,
+    IdealZone,
     IVStats,
     MarketConditions,
     OptionQuote,
@@ -1359,12 +1361,14 @@ async def run_ticker_scan(
 
     # 6. CSP candidates — always attempt (the screen filters by would_own).
     csp_candidates: list[TradeCandidate] = []
+    csp_skip_reason: str | None = None
     if quotes:
         csp_screen = screen_csp_candidates(
             ticker, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
         )
         csp_candidates = csp_screen.passed
         ticker_rejects.extend(csp_screen.rejected)
+        csp_skip_reason = csp_screen.skipped
 
     # 7. Scoring + risk gate on CC+CSP.
     all_option_candidates = cc_candidates + csp_candidates
@@ -1460,6 +1464,41 @@ async def run_ticker_scan(
     if not csp_passed:
         csp_near_miss, csp_reject_reasons = _closest("cash_secured_put")
 
+    # 7b. Hypothetical fair value — informational only, never scored or gated. Runs only when
+    # nothing above already carries a real `.ideal` zone to show: no qualifying contract *and*
+    # no near-miss either, which happens when the symbol never reached a single quote (off the
+    # would_own allowlist for a CSP, or shares not held for a CC) or the chain had no contracts
+    # of that right at all. Priced at the strategy's own configured mid-DTE since there is no
+    # actual contract's DTE to anchor to.
+    def _mid_dte(cfg_key: str) -> int:
+        strat_cfg = get_config().risk.get(cfg_key, {})
+        return int(((strat_cfg.get("dte_min") or 21) + (strat_cfg.get("dte_max") or 45)) / 2)
+
+    csp_hypothetical: IdealZone | None = None
+    if not csp_passed and csp_near_miss is None and tech_stats.price:
+        csp_hypothetical = compute_ideal_zone(
+            symbol=ticker,
+            right=OptionRight.PUT,
+            dte=_mid_dte("cash_secured_put"),
+            spot=tech_stats.price,
+            tech=tech_stats,
+            iv=iv_stats,
+            fund=fund_stats,
+        )
+
+    cc_hypothetical: IdealZone | None = None
+    if not cc_passed and cc_near_miss is None and tech_stats.price:
+        cc_hypothetical = compute_ideal_zone(
+            symbol=ticker,
+            right=OptionRight.CALL,
+            dte=_mid_dte("covered_call"),
+            spot=tech_stats.price,
+            tech=tech_stats,
+            iv=iv_stats,
+            fund=fund_stats,
+            cost_basis=stock_pos.avg_cost if stock_pos else None,
+        )
+
     # 8. Buy candidate for this single ticker.
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {
         ticker: (iv_stats, tech_stats, fund_stats)
@@ -1539,6 +1578,9 @@ async def run_ticker_scan(
         csp_reject_reasons=csp_reject_reasons,
         cc_near_miss=cc_near_miss,
         csp_near_miss=csp_near_miss,
+        csp_skip_reason=csp_skip_reason,
+        cc_hypothetical=cc_hypothetical,
+        csp_hypothetical=csp_hypothetical,
         greeks_fallback=greeks_fallback,
         market_conditions=market_conditions,
         sector_context=sector_ctx,

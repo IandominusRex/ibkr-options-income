@@ -181,6 +181,20 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   same check so the operator sees the reason on the card. `fair_value.py` itself still never rejects
   anything — it computes numbers and the Rules Engine refuses the order, so the Rules Engine remains
   the sole path to an order. Tunables in `risk_limits.yaml → ideal_zone` / `income`.
+- **Hypothetical fair value for off-list / not-held tickers** (`run_ticker_scan`,
+  `format_ticker_scan_result`) — `/scan TICKER` used to go silent on fair value whenever a
+  strategy never priced a single contract: a CSP on a symbol outside `would_own` (e.g. `SOXL`,
+  excluded as a leveraged ETF) short-circuits before the quote loop, and a CC with no shares held
+  never runs the generator at all, so neither the near-miss path nor the "🎯 Levels" block had
+  anything to show. Both cases now compute a standalone `IdealZone` via
+  `fair_value.compute_ideal_zone` straight from `tech_stats`/`iv_stats`/`fund_stats` — no option
+  chain required — at the strategy's configured mid-DTE, and render it as "_Informational fair
+  value — not a recommendation:_" (`cc_hypothetical`/`csp_hypothetical`, rendered by
+  `_hypothetical_zone_lines`). A `not_in_would_own` skip is additionally named on the card so the
+  absence of a live CSP recommendation reads as a deliberate policy exclusion, not a gap. Purely
+  display — never scored, gated, or fed back into the allowlist. Along the way, `_near_miss_lines`
+  was also fixed to render `_ideal_lines` for a real near-miss candidate: previously a contract
+  rejected with `premium_below_fair_value` never showed what fair value actually was.
 - **Every scan returns assessed candidates** — the strategy generators (`screen_cc_candidates` /
   `screen_csp_candidates`) now return the contracts they *rejected* alongside the ones they passed,
   each tagged with **every** gate it failed rather than just the first, ranked closest-to-passing.
