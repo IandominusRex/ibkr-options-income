@@ -31,6 +31,7 @@ import logging
 import signal
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from ib_async import IB
@@ -87,6 +88,9 @@ from src.storage.system_settings import (
     set_autonomy_level,
     set_halted,
 )
+
+if TYPE_CHECKING:
+    from src.orchestrator.scan import ScanResult
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +356,50 @@ def _md_escape(text: str) -> str:
     return text
 
 
+async def _notify_manual_scan_outcome(
+    bot: object, chat_id: str, prog_msg_id: int, result: ScanResult, ib_scan: IB
+) -> None:
+    """Edit the /scan progress message when the run didn't complete as a full, clean sweep.
+
+    `run_scan` always sends whatever candidates it found regardless of how the run ended, so a
+    lease-contention skip or a mid-scan half-dead-socket abort (`aborted_unhealthy`) otherwise
+    looks identical to a normal completion — the operator sees an empty/short results screen with
+    no indication some of the universe was never fetched. Mirrors the intraday loop's
+    `_notify_scan_blocked` for the same abort, but edits the existing progress message instead of
+    sending a new one, and is not throttled (rare and actionable, same as `_notify_scan_blocked`).
+    A normal completion leaves the progress message as `run_scan`'s dashboard callback last
+    rendered it — this is a no-op in that case.
+    """
+    if result.lease_skipped:
+        await bot.edit_message_text(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            message_id=prog_msg_id,
+            text="🔍 *Scan skipped*\n\nAnother scan is already running — try again shortly\\.",
+            parse_mode="MarkdownV2",
+        )
+    elif result.aborted_unhealthy:
+        processed = (
+            result.provenance.chain_ibkr
+            + result.provenance.chain_failed
+            + result.provenance.chain_skipped
+        )
+        try:
+            await bot.edit_message_text(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                message_id=prog_msg_id,
+                text=(
+                    "\U0001f6d1 *Scan blocked mid\\-run*\n\n"
+                    f"IBKR data farm stopped responding \\(half\\-dead socket\\) after "
+                    f"{processed}/{result.total_symbols} symbols — results below are "
+                    f"partial\\. Forcing a reconnect; try again in a moment\\."
+                ),
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            logger.exception("/scan: failed to send mid-run abort notice")
+        await _force_scan_reconnect(ib_scan)
+
+
 async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Trigger a full live pipeline scan, or a single-ticker scan when a symbol is given.
 
@@ -428,13 +476,7 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 progress_callback=_update_progress,
                 dashboard_callback=_update_dashboard,
             )
-            if result.lease_skipped:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=prog_msg_id,
-                    text="🔍 *Scan skipped*\n\nAnother scan is already running — try again shortly\\.",
-                    parse_mode="MarkdownV2",
-                )
+            await _notify_manual_scan_outcome(context.bot, chat_id, prog_msg_id, result, ib_scan)
         except Exception:
             logger.exception("Scan failed")
             try:
@@ -1024,7 +1066,7 @@ async def _notify_scan_blocked(bot: object, chat_id: str, reason: str, detail: s
             message_thread_id=thread_id(cfg_s.telegram_thread_scan),
             text=(
                 f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
-                f"*{reason}*\n{detail}\n\n"
+                f"*{_md_escape(reason)}*\n{detail}\n\n"
                 f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
             ),
             parse_mode="MarkdownV2",
@@ -1045,6 +1087,69 @@ async def _force_scan_reconnect(ib_scan: IB) -> None:
         ib_scan.disconnect()
     except Exception:
         logger.exception("Intraday loop: forced disconnect failed")
+
+
+async def _run_intraday_scan(
+    ib_scan: IB, bot: object, chat_id: str, bot_data: dict
+) -> None:
+    """Run one intraday scan and handle its outcome, off the scheduling loop's own task.
+
+    Spawned via ``asyncio.create_task`` from ``_intraday_scan_loop`` instead of being awaited
+    inline: a full, materiality-gated-off sweep (e.g. right after a restart, before any symbol
+    has a ``scan_state`` baseline — 2026-08-13 01:15 ET) can legitimately run past the 15-min
+    mark on a perfectly healthy connection. Because the loop used to ``await`` this call
+    directly, it could not return to its own ``while True`` top to hit the *next* aligned mark
+    until this one finished — later cycles (profit-takes, loss-exits, the health probe, skip
+    notifications) were silently never attempted, with no log line and no operator-visible
+    signal. Running the scan as its own task lets the loop keep hitting every 15-min mark
+    regardless of how long a previous scan is still taking; ``bot_data["scan_running"]`` (set by
+    the caller before spawning this) is the same lease manual ``/scan`` already checks, so the
+    two still can't run concurrently — a still-running scan just makes the *next* aligned mark
+    log/notify a skip and try again 15 minutes later, instead of vanishing silently.
+    """
+    try:
+        from src.orchestrator.scan import run_scan
+
+        result = await run_scan(ib_scan, bot, chat_id, intraday=True)
+        if result.lease_skipped:
+            # S9: another process (e.g. a concurrent /scan) held the scan lease — skipped.
+            await _note_intraday_skip(bot_data, bot, chat_id, "another process holds the scan lease")
+        elif result.aborted_unhealthy:
+            # Circuit breaker fired mid-sweep: the socket went half-dead after the
+            # pre-scan probe passed. Notify and force a reconnect (same recovery path).
+            threshold = get_config().market_data.max_consecutive_chain_timeouts
+            await _notify_scan_blocked(
+                bot,
+                chat_id,
+                "IBKR data farm stopped responding mid-scan (half-dead socket)",
+                f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
+                f"run was aborted instead of grinding the rest of the universe\\.",
+            )
+            await _force_scan_reconnect(ib_scan)
+            await _note_intraday_skip(
+                bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
+            )
+        else:
+            bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
+            logger.info(
+                "Intraday scan complete — CC=%d CSP=%d buy=%d autonomy=%s",
+                len(result.cc_candidates),
+                len(result.csp_candidates),
+                len(result.buy_candidates),
+                get_autonomy_level().value,
+            )
+    except Exception:
+        logger.exception("Intraday loop: scan failed")
+    finally:
+        bot_data["scan_running"] = False
+
+    # Update thread-58 notifications for any SUBMITTED (pending-fill) orders with the
+    # latest underlying and option mid prices from this scan cycle.
+    if ib_scan.isConnected():
+        try:
+            await _update_pending_order_notifications(ib_scan)
+        except Exception:
+            logger.exception("Intraday loop: pending order price update failed")
 
 
 async def _intraday_scan_loop(
@@ -1157,52 +1262,12 @@ async def _intraday_scan_loop(
                 )
                 continue
 
+            # Spawned rather than awaited: a legitimately slow full sweep must not block this
+            # loop from returning to `asyncio.sleep` for the *next* aligned mark (see
+            # `_run_intraday_scan`'s docstring — 2026-08-13). `scan_running` is set here,
+            # synchronously, so the very next iteration's check above sees it immediately.
             bot_data["scan_running"] = True
-            try:
-                from src.orchestrator.scan import run_scan
-
-                result = await run_scan(ib_scan, bot, chat_id, intraday=True)
-                if result.lease_skipped:
-                    # S9: another process (e.g. a concurrent /scan) held the scan lease — skipped.
-                    await _note_intraday_skip(
-                        bot_data, bot, chat_id, "another process holds the scan lease"
-                    )
-                elif result.aborted_unhealthy:
-                    # Circuit breaker fired mid-sweep: the socket went half-dead after the
-                    # pre-scan probe passed. Notify and force a reconnect (same recovery path).
-                    threshold = get_config().market_data.max_consecutive_chain_timeouts
-                    await _notify_scan_blocked(
-                        bot,
-                        chat_id,
-                        "IBKR data farm stopped responding mid-scan (half-dead socket)",
-                        f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
-                        f"run was aborted instead of grinding the rest of the universe\\.",
-                    )
-                    await _force_scan_reconnect(ib_scan)
-                    await _note_intraday_skip(
-                        bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
-                    )
-                else:
-                    bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
-                    logger.info(
-                        "Intraday scan complete — CC=%d CSP=%d buy=%d autonomy=%s",
-                        len(result.cc_candidates),
-                        len(result.csp_candidates),
-                        len(result.buy_candidates),
-                        get_autonomy_level().value,
-                    )
-            except Exception:
-                logger.exception("Intraday loop: scan failed")
-            finally:
-                bot_data["scan_running"] = False
-
-            # Update thread-58 notifications for any SUBMITTED (pending-fill) orders
-            # with the latest underlying and option mid prices from this scan cycle.
-            if ib_scan.isConnected():
-                try:
-                    await _update_pending_order_notifications(ib_scan)
-                except Exception:
-                    logger.exception("Intraday loop: pending order price update failed")
+            asyncio.create_task(_run_intraday_scan(ib_scan, bot, chat_id, bot_data))
         except Exception:
             logger.exception("Intraday loop: unexpected error — continuing to next cycle")
 

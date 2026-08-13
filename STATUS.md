@@ -280,6 +280,86 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-08-13 — intraday scan loop: scheduling and notification gaps)
+
+- **Every 🛑 *Scan blocked* Telegram message since the 2026-06-24 fix (above) failed to send,
+  swallowed by its own `except Exception` — the operator only ever saw the terser, throttled
+  "cycle skipped" nuisance warning, never the detailed explanation.** `_notify_scan_blocked`
+  interpolates its `reason` argument straight into a `parse_mode="MarkdownV2"` message
+  (`f"*{reason}*\n{detail}\n\n..."`) without escaping it, but both real call sites in
+  `_intraday_scan_loop` pass a plain-English reason containing literal parentheses —
+  `"IBKR data farm not responding (half-dead socket)"` and `"IBKR data farm stopped responding
+  mid-scan (half-dead socket)"`. Telegram's MarkdownV2 parser rejects unescaped `(`/`)` with
+  `telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped
+  with the preceding '\'`, so `bot.send_message` raised on every call, was caught, and logged only
+  as `Intraday loop: failed to send scan-blocked notice` — never surfaced to Telegram. Observed
+  2026-08-13 00:00 ET: the SPY health probe correctly detected the half-dead socket and forced a
+  reconnect, but the operator's only notification was `⚠️ Intraday scan cycle skipped:
+  data-farm health probe failed (half-dead socket)...`, with no mention of *why* or that a
+  reconnect was already in flight. The existing regression tests
+  (`test_notify_scan_blocked_always_sends_with_detail`) used a mocked `bot.send_message` that
+  doesn't validate MarkdownV2 syntax, so the bug shipped silently for seven weeks. **Fixed:**
+  `_notify_scan_blocked` now escapes `reason` with the file's existing `_md_escape` helper (already
+  used for `/scan TICKER` error text and the `/status` halt banner) before interpolating it.
+  `detail` was already hand-escaped at both call sites and is unaffected.
+  - Regression test: `tests/test_notify.py::test_notify_scan_blocked_escapes_reason_for_markdownv2`
+    — asserts the real `"(half-dead socket)"` reason text is escaped in the outgoing text, not
+    merely that `send_message` was called.
+
+- **A manual `/scan` truncated mid-run by the half-dead-socket circuit breaker (`aborted_unhealthy`)
+  looked identical to a normal, complete sweep — the operator had no way to tell, short of reading
+  logs, that only part of the universe was actually fetched.** Unlike `_intraday_scan_loop`, which
+  reads `ScanResult.aborted_unhealthy` and tells the operator (the fix above), `handle_scan_command`
+  only ever checked `result.lease_skipped` — `run_scan` still sends whatever candidates it found
+  regardless of how the run ended, so an early circuit-breaker abort produced a normal-looking
+  results screen with no indication anything was cut short. Observed 2026-08-13 00:31–00:59 ET: a
+  manual `/scan` hit three consecutive full `symbol_timeout_seconds` (150s) timeouts on SPY, TLT,
+  and TSLA with zero IBKR response (no error code logged, unlike the Error-10197
+  competing-live-session blocks earlier that session) — the circuit breaker correctly aborted after
+  processing 35/46 symbols, but the operator only saw an ordinary "0 CC / 0 CSP / 10 buy candidates"
+  result. **Fixed:** `_notify_manual_scan_outcome` (mirrors `_notify_scan_blocked`) now edits the
+  `/scan` progress message on `aborted_unhealthy` with the processed/total symbol count and forces
+  the same reconnect (`_force_scan_reconnect`) the intraday loop uses; the existing `lease_skipped`
+  edit was folded into the same helper.
+  - `src/notify/approval_service.py`: new `_notify_manual_scan_outcome`, called from
+    `handle_scan_command`'s `_run_and_notify` in place of the old inline `lease_skipped` check.
+  - Regression tests: `tests/test_notify.py::test_notify_manual_scan_outcome_*` (normal completion
+    is a no-op, lease-skip still edits the message, an aborted run reports the partial count and
+    reconnects, and a Telegram send failure doesn't block the reconnect).
+
+- **A legitimately slow full sweep (not a dead socket) silently starved every later 15-min cycle —
+  no log line, no skip notice, nothing.** `_intraday_scan_loop` `await`ed `run_scan(...)` directly
+  inline, so it could not return to `while True`'s top to check the *next* aligned mark until the
+  current scan finished. This is distinct from the 2026-06-24 half-dead-socket stall (above): that
+  one only happens when the connection is actually dead, and the circuit breaker bails after 3
+  consecutive timeouts specifically so this can't happen. A *healthy* connection fetching real data
+  slowly trips no circuit breaker and previously blocked just the same. Observed 2026-08-13
+  01:15–01:34+ ET: right after a service restart, no symbol had a `scan_state` baseline yet, so the
+  S1 materiality gate saw the entire 46-symbol universe as material (`intraday materiality gate —
+  46/46 symbols material`) instead of the usual filtered subset; several large chains (SMH, SNOW,
+  RGTI, RKLB, TLT, TSLA, UBER) each took 50–60s fetching real quotes (Yahoo Greeks-fallback
+  downloads), and the cumulative sweep was still processing symbol 39/46 at `01:34` — the `01:30`
+  ET-13:30 cycle was never even attempted; no `RTH cycle starting` log line exists for it. **Fixed:**
+  the scan is now spawned as its own task (`asyncio.create_task`) from a new `_run_intraday_scan`
+  helper instead of being awaited inline, guarded by the same `bot_data["scan_running"]` lease
+  manual `/scan` already uses (so the two still can't run concurrently) — the loop itself keeps
+  running its per-mark checks (profit-takes, loss-exits, reconciliation, the health probe)
+  synchronously and quickly every 15 minutes regardless of how long a previously-spawned scan is
+  still taking; a still-running scan now correctly logs/notifies "previous scan still running" on
+  the next mark instead of vanishing.
+  - `src/notify/approval_service.py`: new `_run_intraday_scan` (extracted from the old inline block
+    — `run_scan` call, `lease_skipped`/`aborted_unhealthy`/success handling, and the post-scan
+    pending-order-notification update); `_intraday_scan_loop` now sets the lease and calls
+    `asyncio.create_task(_run_intraday_scan(...))` instead of awaiting the equivalent block inline.
+  - Regression tests: `tests/test_notify.py::test_run_intraday_scan_*` (the extracted helper's
+    success/exception paths) and
+    `test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running` — drives the real loop
+    with a `run_scan` that blocks on an `asyncio.Event` and asserts the profit-take check fires
+    again on a later mark while that scan is still in flight (fails against the old inline-`await`
+    code, which never reaches a second mark until the fake scan is released).
+
+---
+
 ## Bugs fixed (2026-08-12 — final whole-branch review of the remediation branch)
 
 The last pass over `remediation-phases-1-3` before merge, reviewing the branch as a whole rather

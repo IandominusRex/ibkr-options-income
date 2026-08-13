@@ -6,6 +6,8 @@ DB tests use tmp_path to avoid touching real state.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1611,6 +1613,27 @@ async def test_notify_scan_blocked_swallows_send_failure():
     await _notify_scan_blocked(bot, "123", "reason", "detail")
 
 
+async def test_notify_scan_blocked_escapes_reason_for_markdownv2():
+    """`reason` is plain English chosen by the caller and is interpolated into a MarkdownV2
+    message unescaped — both real call sites pass a reason containing literal parentheses
+    (e.g. "IBKR data farm not responding (half-dead socket)"), which Telegram's MarkdownV2
+    parser rejects with BadRequest unless '(' and ')' are backslash-escaped. That send failure
+    is swallowed, so the operator silently never receives the "Scan blocked" explanation and
+    only ever sees the terser plain-text cycle-skipped nuisance warning."""
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = AsyncMock()
+    await _notify_scan_blocked(
+        bot,
+        "123",
+        "IBKR data farm not responding (half-dead socket)",
+        "detail",
+    )
+    text = bot.send_message.call_args.kwargs["text"]
+    assert "(half-dead socket)" not in text
+    assert r"\(half\-dead socket\)" in text
+
+
 async def test_force_scan_reconnect_disconnects_and_swallows():
     from src.notify.approval_service import _force_scan_reconnect
 
@@ -1621,6 +1644,173 @@ async def test_force_scan_reconnect_disconnects_and_swallows():
     # A disconnect that itself raises must not propagate (best-effort recovery).
     ib.disconnect.side_effect = RuntimeError("already gone")
     await _force_scan_reconnect(ib)
+
+
+async def test_notify_manual_scan_outcome_normal_completion_is_noop():
+    """A clean run (neither flag set) must not touch the progress message or the socket —
+    `run_scan`'s own dashboard callback already rendered the final state."""
+    from src.notify.approval_service import _notify_manual_scan_outcome
+    from src.orchestrator.scan import ScanResult
+
+    bot = AsyncMock()
+    ib_scan = MagicMock()
+    result = ScanResult()
+    await _notify_manual_scan_outcome(bot, "123", 42, result, ib_scan)
+    bot.edit_message_text.assert_not_called()
+    ib_scan.disconnect.assert_not_called()
+
+
+async def test_notify_manual_scan_outcome_lease_skipped():
+    from src.notify.approval_service import _notify_manual_scan_outcome
+    from src.orchestrator.scan import ScanResult
+
+    bot = AsyncMock()
+    ib_scan = MagicMock()
+    result = ScanResult(lease_skipped=True)
+    await _notify_manual_scan_outcome(bot, "123", 42, result, ib_scan)
+    bot.edit_message_text.assert_called_once()
+    assert bot.edit_message_text.call_args.kwargs["message_id"] == 42
+    assert "already running" in bot.edit_message_text.call_args.kwargs["text"]
+    ib_scan.disconnect.assert_not_called()
+
+
+async def test_notify_manual_scan_outcome_aborted_unhealthy_reports_partial_progress():
+    """A mid-scan circuit-breaker abort must not look like a clean, complete sweep — the
+    operator needs to know results are partial and how far the scan got, and the socket
+    should be forced to reconnect (same recovery as the intraday loop's own abort path)."""
+    from src.notify.approval_service import _notify_manual_scan_outcome
+    from src.orchestrator.scan import ProvenanceCounts, ScanResult
+
+    bot = AsyncMock()
+    ib_scan = MagicMock()
+    result = ScanResult(
+        aborted_unhealthy=True,
+        total_symbols=46,
+        provenance=ProvenanceCounts(chain_ibkr=30, chain_failed=3, chain_skipped=2),
+    )
+    await _notify_manual_scan_outcome(bot, "123", 42, result, ib_scan)
+    bot.edit_message_text.assert_called_once()
+    text = bot.edit_message_text.call_args.kwargs["text"]
+    assert "35/46" in text
+    assert "partial" in text
+    ib_scan.disconnect.assert_called_once()
+
+
+async def test_notify_manual_scan_outcome_swallows_send_failure():
+    from src.notify.approval_service import _notify_manual_scan_outcome
+    from src.orchestrator.scan import ScanResult
+
+    bot = AsyncMock()
+    bot.edit_message_text.side_effect = RuntimeError("telegram down")
+    ib_scan = MagicMock()
+    result = ScanResult(aborted_unhealthy=True, total_symbols=46)
+    # Must not raise, and the reconnect must still fire despite the failed send.
+    await _notify_manual_scan_outcome(bot, "123", 42, result, ib_scan)
+    ib_scan.disconnect.assert_called_once()
+
+
+async def test_run_intraday_scan_success_clears_lease_and_updates_pending_orders():
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data: dict = {}
+
+    with (
+        patch("src.orchestrator.scan.run_scan", AsyncMock(return_value=ScanResult())),
+        patch(
+            "src.notify.approval_service._update_pending_order_notifications", AsyncMock()
+        ) as mock_update,
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert bot_data["scan_running"] is False
+    assert bot_data["intraday_scans_run"] == 1
+    mock_update.assert_called_once_with(ib_scan)
+
+
+async def test_run_intraday_scan_clears_lease_on_exception():
+    """A scan failure must still release the lease — otherwise every later cycle would see
+    `scan_running=True` forever and skip indefinitely."""
+    from src.notify.approval_service import _run_intraday_scan
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = False
+    bot = AsyncMock()
+    bot_data = {"scan_running": True}
+
+    with patch("src.orchestrator.scan.run_scan", AsyncMock(side_effect=RuntimeError("boom"))):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert bot_data["scan_running"] is False
+
+
+async def test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running():
+    """Regression for 2026-08-13: a full, legitimately slow sweep (e.g. right after a restart,
+    before any symbol has a scan_state baseline) used to be `await`ed inline, so the loop could
+    not return to check the *next* aligned mark until it finished — profit-take/loss-exit checks
+    and skip notifications for every later mark were silently never attempted. The scan must now
+    run as its own task so the loop keeps hitting later marks (observed here via the profit-take
+    check firing again) while the first scan is still in flight."""
+    from types import SimpleNamespace
+
+    import src.notify.approval_service as approval_service
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    app = SimpleNamespace(bot=bot, bot_data={})
+
+    scan_gate = asyncio.Event()
+    profit_take_calls = 0
+
+    async def _blocking_run_scan(*args, **kwargs):
+        await scan_gate.wait()
+        from src.orchestrator.scan import ScanResult
+
+        return ScanResult()
+
+    async def _count_profit_takes(*args, **kwargs):
+        nonlocal profit_take_calls
+        profit_take_calls += 1
+
+    with (
+        patch.object(approval_service, "is_rth", return_value=True),
+        patch.object(approval_service, "is_halted", return_value=False),
+        patch.object(approval_service, "is_new_entry_window", return_value=True),
+        patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
+        patch.object(approval_service, "_check_profit_takes", _count_profit_takes),
+        patch.object(approval_service, "_check_loss_exits", AsyncMock()),
+        patch.object(approval_service, "_update_pending_order_notifications", AsyncMock()),
+        patch("src.ibkr.market_data.probe_market_data_health", AsyncMock(return_value=True)),
+        patch("src.orchestrator.scan.run_scan", _blocking_run_scan),
+    ):
+        loop_task = asyncio.create_task(
+            approval_service._intraday_scan_loop(app, ib_scan, None, "123")
+        )
+        try:
+            for _ in range(200):
+                if profit_take_calls >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert profit_take_calls >= 2, (
+                "intraday loop did not reach a later aligned mark while the first scan was "
+                "still in flight — it may be blocking on run_scan again"
+            )
+            # The first scan is still running (gated on scan_gate) — proves the *second*
+            # mark's profit-take check above ran concurrently with it, not after it.
+            assert app.bot_data.get("scan_running") is True
+        finally:
+            scan_gate.set()
+            for _ in range(200):
+                if app.bot_data.get("scan_running") is False:
+                    break
+                await asyncio.sleep(0.01)
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task
 
 
 # --------------------------------------------------------------------------- #
