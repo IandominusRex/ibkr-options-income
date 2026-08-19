@@ -300,6 +300,31 @@ def test_csp_hypothetical_zone_renders_when_off_would_own() -> None:
     assert "Buy shares below" in text  # Levels section picks up buy_below from the hypothetical
 
 
+def test_hypothetical_zone_has_no_unescaped_markdownv2_chars() -> None:
+    """Regression: the "Ideal strike ... at ~Nd" line once emitted a bare '~', which Telegram
+    MarkdownV2 reads as an unpaired strikethrough delimiter and rejects the whole message with
+    BadRequest — silently freezing /scan for every off-would_own or not-held ticker (SOXL,
+    LABU, TSLL, DPST, or any name not currently owned)."""
+    text = format_ticker_scan_result(
+        ticker="SOXL",
+        iv_stats=_iv(symbol="SOXL"),
+        tech_stats=_tech(symbol="SOXL", price=144.67),
+        fund_stats=_fund(symbol="SOXL"),
+        cc_candidates=[],
+        csp_candidates=[],
+        buy_candidate=None,
+        is_held=False,
+        quotes_available=True,
+        csp_skip_reason="not_in_would_own",
+        csp_hypothetical=_soxl_zone(OptionRight.PUT),
+    )
+    reserved = set(r"[]()~`>#+-=|{}.!")
+    unescaped = [
+        (i, c) for i, c in enumerate(text) if c in reserved and (i == 0 or text[i - 1] != "\\")
+    ]
+    assert not unescaped, f"unescaped MarkdownV2 chars in card: {unescaped}"
+
+
 def test_no_hypothetical_block_when_zone_has_no_data() -> None:
     empty_zone = IdealZone(symbol="XYZ", right=OptionRight.PUT, dte=30, spot=10.0)
     text = format_ticker_scan_result(

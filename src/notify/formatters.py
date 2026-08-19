@@ -686,7 +686,7 @@ def _hypothetical_zone_lines(zone: IdealZone) -> list[str]:
     if zone.strike_lo is not None and zone.strike_hi is not None:
         lines.append(
             f"  🎯 Ideal strike \\${_md(f'{zone.strike_lo:.2f}')}"
-            f"–\\${_md(f'{zone.strike_hi:.2f}')} at ~{_md(str(zone.dte))}d"
+            f"–\\${_md(f'{zone.strike_hi:.2f}')} at \\~{_md(str(zone.dte))}d"
         )
     if zone.min_credit is not None:
         at = f" at \\${_md(f'{zone.strike_anchor:.2f}')} strike" if zone.strike_anchor else ""

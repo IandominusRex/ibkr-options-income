@@ -73,3 +73,113 @@ def bs_price(
     else:
         price = strike * discount * float(norm.cdf(-d2)) - spot * float(norm.cdf(-d1))
     return max(price, 0.0)
+
+
+def bs_gamma(
+    spot: float,
+    strike: float,
+    dte: int,
+    iv: float,
+    right: str,
+    r: float = 0.05,
+) -> float | None:
+    """Black-Scholes gamma for a European option.
+
+    Returns the second derivative of price w.r.t. spot. Positive for both calls and puts.
+    """
+    if spot <= 0 or strike <= 0 or dte <= 0 or iv <= 0:
+        return None
+    t = dte / 365.0
+    try:
+        sqrt_t = math.sqrt(t)
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / (iv * sqrt_t)
+    except (ValueError, ZeroDivisionError):
+        return None
+    # gamma = N'(d1) / (S * sigma * sqrt(T))
+    pdf = float(norm.pdf(d1))
+    gamma = pdf / (spot * iv * sqrt_t)
+    return gamma
+
+
+def bs_vega(
+    spot: float,
+    strike: float,
+    dte: int,
+    iv: float,
+    right: str,
+    r: float = 0.05,
+) -> float | None:
+    """Black-Scholes vega for a European option.
+
+    Sensitivity to volatility (per 1.0 change, i.e., not per 1%).
+    """
+    if spot <= 0 or strike <= 0 or dte <= 0 or iv <= 0:
+        return None
+    t = dte / 365.0
+    try:
+        sqrt_t = math.sqrt(t)
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / (iv * sqrt_t)
+    except (ValueError, ZeroDivisionError):
+        return None
+    vega = spot * float(norm.pdf(d1)) * sqrt_t
+    return vega
+
+
+def bs_theta(
+    spot: float,
+    strike: float,
+    dte: int,
+    iv: float,
+    right: str,
+    r: float = 0.05,
+) -> float | None:
+    """Black-Scholes theta for a European option (per year).
+
+    Returns time decay (negative for both calls and puts)."""
+    if spot <= 0 or strike <= 0 or dte <= 0 or iv <= 0:
+        return None
+    t = dte / 365.0
+    try:
+        sqrt_t = math.sqrt(t)
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / (iv * sqrt_t)
+        d2 = d1 - iv * sqrt_t
+    except (ValueError, ZeroDivisionError):
+        return None
+    pdf = float(norm.pdf(d1))
+    if right == "C":
+        theta = -spot * pdf * iv / (2 * sqrt_t) - r * strike * math.exp(-r * t) * float(
+            norm.cdf(d2)
+        )
+    else:
+        theta = -spot * pdf * iv / (2 * sqrt_t) + r * strike * math.exp(-r * t) * float(
+            norm.cdf(-d2)
+        )
+    return theta
+
+
+def bs_rho(
+    spot: float,
+    strike: float,
+    dte: int,
+    iv: float,
+    right: str,
+    r: float = 0.05,
+) -> float | None:
+    """Black-Scholes rho for a European option.
+
+    Sensitivity to risk-free rate.
+    """
+    if spot <= 0 or strike <= 0 or dte <= 0 or iv <= 0:
+        return None
+    t = dte / 365.0
+    try:
+        sqrt_t = math.sqrt(t)
+        d1 = (math.log(spot / strike) + (r + 0.5 * iv * iv) * t) / (iv * sqrt_t)
+        d2 = d1 - iv * sqrt_t
+    except (ValueError, ZeroDivisionError):
+        return None
+    if right == "C":
+        rho = strike * t * math.exp(-r * t) * float(norm.cdf(d2))
+    else:
+        rho = -strike * t * math.exp(-r * t) * float(norm.cdf(-d2))
+    return rho

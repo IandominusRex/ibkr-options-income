@@ -19,7 +19,7 @@ from typing import Any
 import yfinance as yf
 from ib_async import IB, Option
 
-from src.analytics.black_scholes import bs_delta
+from src.analytics.black_scholes import bs_delta, bs_gamma, bs_theta, bs_vega
 from src.analytics.price_data import get_ohlcv
 from src.common.config import get_config
 from src.common.logging import get_logger
@@ -93,7 +93,8 @@ def drain_market_data_lines(ib: IB) -> int:
 
 
 def _enrich_greeks_from_ibkr_iv(symbol: str, spot: float, quotes: list[OptionQuote]) -> int:
-    """Black-Scholes-fill delta from the **IBKR-quoted IV** for quotes missing a delta (S2).
+    """Black-Scholes-fill missing Greeks from the **IBKR-quoted IV** for quotes missing
+    a delta (S2).
 
     Runs *before* the yfinance fallback: whenever a quote already carries an IBKR implied vol
     (per-contract ``OptionComputation.impliedVol``, captured by ``_ticker_to_quote`` even when
@@ -108,18 +109,43 @@ def _enrich_greeks_from_ibkr_iv(symbol: str, spot: float, quotes: list[OptionQuo
     """
     enriched = 0
     for q in quotes:
-        if q.delta is not None or q.iv is None or q.iv <= 0:
+        # Skip if we already have any greek or no IV to compute.
+        if (
+            (
+                q.delta is not None
+                and q.gamma is not None
+                and q.theta is not None
+                and q.vega is not None
+            )
+            or q.iv is None
+            or q.iv <= 0
+        ):
             continue
         right_key = "C" if q.right == OptionRight.CALL else "P"
-        delta = bs_delta(spot, q.strike, q.dte, q.iv, right_key)
-        if delta is None:
-            continue
-        q.delta = round(delta, 4)
-        q.greeks_source = "black_scholes"
-        enriched += 1
+        # Compute missing greeks individually.
+        if q.delta is None:
+            delta = bs_delta(spot, q.strike, q.dte, q.iv, right_key)
+            if delta is not None:
+                q.delta = round(delta, 4)
+        if q.gamma is None:
+            gamma = bs_gamma(spot, q.strike, q.dte, q.iv, right_key)
+            if gamma is not None:
+                q.gamma = round(gamma, 8)
+        if q.theta is None:
+            theta = bs_theta(spot, q.strike, q.dte, q.iv, right_key)
+            if theta is not None:
+                q.theta = round(theta, 8)
+        if q.vega is None:
+            vega = bs_vega(spot, q.strike, q.dte, q.iv, right_key)
+            if vega is not None:
+                q.vega = round(vega, 8)
+        # If we filled any greek, count as enriched.
+        if any(v is not None for v in (q.delta, q.gamma, q.theta, q.vega)):
+            q.greeks_source = "black_scholes"
+            enriched += 1
     if enriched:
         log.info(
-            "greeks: filled %d/%d delta(s) for %s from IBKR IV — no Yahoo fetch needed (S2)",
+            "greeks: filled %d/%d greek(s) for %s from IBKR IV — no Yahoo fetch needed (S2)",
             enriched,
             sum(1 for q in quotes if q.greeks_source != "ibkr" or q.delta is None) + enriched,
             symbol,
@@ -176,6 +202,19 @@ def _enrich_greeks_yf(symbol: str, spot: float, quotes: list[OptionQuote]) -> No
                 q.delta = round(delta, 4)
                 if q.iv is None:
                     q.iv = round(iv, 6)
+                # Compute remaining greeks via Black‑Scholes if missing.
+                if q.gamma is None:
+                    gamma = bs_gamma(spot, q.strike, q.dte, iv, right_key)
+                    if gamma is not None:
+                        q.gamma = round(gamma, 8)
+                if q.theta is None:
+                    theta = bs_theta(spot, q.strike, q.dte, iv, right_key)
+                    if theta is not None:
+                        q.theta = round(theta, 8)
+                if q.vega is None:
+                    vega = bs_vega(spot, q.strike, q.dte, iv, right_key)
+                    if vega is not None:
+                        q.vega = round(vega, 8)
                 q.greeks_source = "black_scholes"
                 enriched += 1
 
@@ -252,11 +291,24 @@ async def _await_ready(predicate: Callable[[], bool], ceiling: float) -> None:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 
-def _quote_ready(ticker: Any) -> bool:
-    """True once a ticker carries a usable quote (a non-sentinel bid or an ask)."""
-    return _clean_bid(getattr(ticker, "bid", None)) is not None or (
+def _quote_ready(ticker: Any, right: str | None = None) -> bool:
+    """True once a ticker carries a usable quote (a non-sentinel bid or an ask).
+
+    When *right* ('C' or 'P') is given, also requires that side's open-interest tick
+    (genericTick 101) to have arrived. OI streams in after the initial bid/ask tick, so
+    without this a batch races ahead as soon as bid/ask populate and cancels the line before
+    OI ever ticks — leaving ``open_interest`` ``None`` on most quotes even on a healthy
+    connection. ``passes_liquidity_gates`` treats a missing OI as an automatic fail (a
+    deliberate conservative default), so that gap alone was rejecting near-100% of quotes as
+    "illiquid" regardless of how liquid the option actually was.
+    """
+    has_market = _clean_bid(getattr(ticker, "bid", None)) is not None or (
         _safe(getattr(ticker, "ask", None)) is not None
     )
+    if not has_market or right is None:
+        return has_market
+    oi = ticker.callOpenInterest if right == "C" else ticker.putOpenInterest
+    return _safe(oi) is not None
 
 
 def _spot_ready(ticker: Any) -> bool:
@@ -588,12 +640,20 @@ async def _batch_quotes_async(
     """Async variant of _batch_quotes — runs on the ib_async event loop thread.
 
     Uses an event-driven wait instead of ``ib.sleep``/a fixed floor: ``reqMktData`` is
-    non-blocking and ticks populate via the loop, so we await only until every ticker in
-    the batch carries a usable bid/ask, bounded by the old 2s as a *ceiling* (S7). A
-    well-behaved batch returns in ~0.2-0.5s. Greeks are not waited on — they're absent on
-    delayed/paper data and the yfinance Black-Scholes fallback fills them; blocking on them
-    would forfeit the speedup on exactly the target account. Same batching + cancel
-    discipline as the sync version.
+    non-blocking and ticks populate via the loop, so we await until every ticker in the batch
+    carries a usable bid/ask *and* its open-interest tick, bounded by the old 2s as a
+    *ceiling* (S7). A well-behaved batch still returns early once both arrive. Greeks are not
+    waited on — they're absent on delayed/paper data and the yfinance Black-Scholes fallback
+    fills them; blocking on them would forfeit the speedup on exactly the target account.
+    Same batching + cancel discipline as the sync version.
+
+    OI (tick 101) was originally not part of the readiness check — only bid/ask — so a batch
+    would race ahead and cancel the line the instant a quote appeared, before OI had a chance
+    to stream in. That left ``open_interest`` ``None`` on most quotes, which
+    ``passes_liquidity_gates`` treats as an automatic fail: near-100% of quotes were being
+    marked illiquid regardless of real liquidity. Waiting on OI too (still bounded by the same
+    ceiling) fixes that at the cost of some batches now using the full ceiling instead of
+    returning at ~0.2-0.5s.
     """
     quotes: list[OptionQuote] = []
     ceiling = max(throttle, 2.0)
@@ -607,9 +667,10 @@ async def _batch_quotes_async(
             for c in batch
         ]
         try:
-            # Bind the current batch's tickers (not the loop variable) for the readiness check.
-            def _batch_ready(ts: list[Any] = tickers) -> bool:
-                return all(_quote_ready(t) for t in ts)
+            # Bind the current batch's contracts/tickers (not the loop variables) for the
+            # readiness check — each contract's `right` picks which OI field to wait on.
+            def _batch_ready(cs: list[Option] = batch, ts: list[Any] = tickers) -> bool:
+                return all(_quote_ready(t, right=c.right) for c, t in zip(cs, ts, strict=True))
 
             await _await_ready(_batch_ready, ceiling)
             for c, ticker in zip(batch, tickers, strict=True):

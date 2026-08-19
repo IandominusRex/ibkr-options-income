@@ -10,6 +10,7 @@ All ib_async calls are mocked. Tests verify:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -518,6 +519,55 @@ def test_drain_market_data_lines_noop_when_clean():
     ib.cancelMktData.assert_not_called()
 
 
+async def test_batch_quotes_async_waits_for_open_interest(monkeypatch):
+    """Regression: the readiness check once only waited for bid/ask, so the batch cancelled
+    the line the instant a quote appeared — before OI (tick 101) had a chance to stream in.
+    That left open_interest None on nearly every quote in production tonight (2026-08-14),
+    which passes_liquidity_gates treats as an automatic "illiquid" fail regardless of how
+    liquid the option actually is. OI now arrives 2 poll ticks after bid/ask; the batch must
+    wait for it rather than returning as soon as bid/ask alone are present."""
+    from src.ibkr.market_data import _batch_quotes_async
+
+    real_sleep = asyncio.sleep
+    ticker = _make_ticker(bid=2.0, ask=2.4, call_oi=None)
+    calls = {"n": 0}
+
+    async def _fast_sleep(_):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            ticker.callOpenInterest = 500.0  # OI tick "arrives" after bid/ask already did
+        await real_sleep(0)  # yield without actually waiting out the test
+
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", _fast_sleep)
+
+    ib = MagicMock()
+    ib.reqMktData.return_value = ticker
+    contracts = [_make_option_contract(strike=400.0, right="C")]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert calls["n"] >= 2  # didn't return on the first bid/ask-only check
+    assert quotes[0].open_interest == 500
+
+
+async def test_batch_quotes_async_times_out_when_oi_never_arrives(monkeypatch):
+    """OI staying missing for the whole ceiling must not hang the batch — it should return
+    with open_interest=None (exactly as the old bid/ask-only wait did on timeout), leaving the
+    liquidity gate to reject it rather than the fetch stalling."""
+    from src.ibkr.market_data import _batch_quotes_async
+
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", AsyncMock())
+    ib = MagicMock()
+    ib.reqMktData.return_value = _make_ticker(bid=2.0, ask=2.4, call_oi=None, put_oi=None)
+    contracts = [_make_option_contract(strike=400.0, right="C")]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert len(quotes) == 1
+    assert quotes[0].open_interest is None
+    assert ib.cancelMktData.call_count == 1
+
+
 async def test_batch_quotes_async_leaves_no_open_lines(monkeypatch):
     """The happy path must register and then deregister every line — no leak after a clean batch."""
     from src.ibkr import market_data as md
@@ -859,6 +909,29 @@ class TestAwaitReady:
     def test_quote_ready_false_when_bid_is_sentinel_and_no_ask(self):
         assert _quote_ready(SimpleNamespace(bid=-1.0, ask=float("nan"))) is False
 
+    def test_quote_ready_false_when_right_given_and_oi_missing(self):
+        """Regression: without the OI check, a batch would race ahead the instant bid/ask
+        populated and cancel the line before the OI tick (101) arrived — leaving
+        open_interest None on most quotes and failing the liquidity gate near-universally."""
+        ticker = SimpleNamespace(bid=2.0, ask=2.4, callOpenInterest=None, putOpenInterest=None)
+        assert _quote_ready(ticker, right="C") is False
+
+    def test_quote_ready_true_when_right_given_and_oi_present(self):
+        ticker = SimpleNamespace(bid=2.0, ask=2.4, callOpenInterest=500.0, putOpenInterest=None)
+        assert _quote_ready(ticker, right="C") is True
+
+    def test_quote_ready_checks_matching_side_oi(self):
+        """A call's OI tick populating must not satisfy readiness for a put on the same
+        ticker, and vice versa."""
+        ticker = SimpleNamespace(bid=2.0, ask=2.4, callOpenInterest=500.0, putOpenInterest=None)
+        assert _quote_ready(ticker, right="P") is False
+
+    def test_quote_ready_ignores_oi_when_no_market_yet(self):
+        ticker = SimpleNamespace(
+            bid=float("nan"), ask=float("nan"), callOpenInterest=500.0, putOpenInterest=600.0
+        )
+        assert _quote_ready(ticker, right="C") is False
+
     def test_spot_ready_true_with_marketprice(self):
         assert _spot_ready(_make_spot_ticker(market_price=100.0)) is True
 
@@ -946,11 +1019,27 @@ class TestEnrichGreeksFromIbkrIv:
         _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
         assert q.delta is not None and q.delta < 0.0
 
-    def test_skips_quotes_with_existing_delta(self):
+    def test_skips_quotes_with_all_greeks(self):
+        """Phase 1: a quote carrying delta AND gamma AND theta AND vega is left untouched —
+        nothing left to compute from the IBKR IV."""
         q = self._quote(iv=0.30, delta=0.25)
+        q.gamma = 0.01
+        q.theta = -5.0
+        q.vega = 0.2
         n = _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
         assert n == 0
         assert q.greeks_source == "ibkr"  # untouched
+
+    def test_fills_missing_greeks_when_delta_present(self):
+        """Phase 1: a quote with delta but missing gamma/theta/vega gets those filled from
+        the IBKR IV via Black-Scholes (enriched), rather than being skipped as before."""
+        q = self._quote(iv=0.30, delta=0.25)
+        n = _enrich_greeks_from_ibkr_iv("AAPL", 200.0, [q])
+        assert n == 1
+        assert q.gamma is not None
+        assert q.theta is not None
+        assert q.vega is not None
+        assert q.greeks_source == "black_scholes"
 
     def test_skips_quotes_without_iv(self):
         q = self._quote(iv=None)
