@@ -8,6 +8,8 @@ break a scan, because macro is enrichment and the deterministic pipeline must no
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from src.analytics import market_conditions as mc_mod
@@ -80,21 +82,24 @@ def test_every_source_failing_still_returns_a_snapshot(monkeypatch) -> None:
     assert mc.vix is None and mc.ten_year_yield is None and mc.macro_headline_count == 0
 
 
-def test_index_level_returns_none_when_yfinance_raises(monkeypatch) -> None:
-    class _Boom:
-        def __init__(self, *a, **k):
-            raise RuntimeError("network down")
+def test_index_level_returns_none_when_provider_raises(monkeypatch) -> None:
+    provider = MagicMock()
+    provider.get_last_price.side_effect = RuntimeError("network down")
+    provider.get_ohlcv.side_effect = RuntimeError("network down")
+    from src.data import factory as data_factory
 
-    monkeypatch.setitem(__import__("sys").modules, "yfinance", type("M", (), {"Ticker": _Boom}))
+    data_factory.get_price_provider.cache_clear()
+    monkeypatch.setattr("src.data.factory.get_price_provider", lambda: provider)
     assert mc_mod._fetch_index_level("^VIX") is None
 
 
-def test_ten_year_returns_none_when_yfinance_raises(monkeypatch) -> None:
-    class _Boom:
-        def __init__(self, *a, **k):
-            raise RuntimeError("network down")
+def test_ten_year_returns_none_when_provider_raises(monkeypatch) -> None:
+    provider = MagicMock()
+    provider.get_ohlcv.side_effect = RuntimeError("network down")
+    from src.data import factory as data_factory
 
-    monkeypatch.setitem(__import__("sys").modules, "yfinance", type("M", (), {"Ticker": _Boom}))
+    data_factory.get_price_provider.cache_clear()
+    monkeypatch.setattr("src.data.factory.get_price_provider", lambda: provider)
     assert mc_mod._fetch_ten_year() == (None, None)
 
 

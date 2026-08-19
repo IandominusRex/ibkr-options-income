@@ -276,11 +276,13 @@ class TestFetchStockTwits:
 
 class TestFetchNews:
     def _patch_news(self, monkeypatch: pytest.MonkeyPatch, items: list[dict]) -> None:
-        ticker = MagicMock()
-        ticker.news = items
-        fake_yf = MagicMock()
-        fake_yf.Ticker.return_value = ticker
-        monkeypatch.setitem(__import__("sys").modules, "yfinance", fake_yf)
+        from src.data import factory as data_factory
+
+        provider = MagicMock()
+        provider.get_headlines.return_value = items
+        # Clear the lru_cache before patching so the new mock takes effect.
+        data_factory.get_news_provider.cache_clear()
+        monkeypatch.setattr("src.data.factory.get_news_provider", lambda: provider)
 
     def test_positive_headlines_score_high(self, monkeypatch: pytest.MonkeyPatch) -> None:
         clear_all()

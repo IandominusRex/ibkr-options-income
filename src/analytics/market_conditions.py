@@ -68,17 +68,21 @@ def get_market_conditions() -> MarketConditions:
 
 
 def _fetch_index_level(symbol: str) -> float | None:
-    """Latest level for a yfinance index symbol (e.g. ``^VIX``), or None."""
-    try:
-        import yfinance as yf
+    """Latest level for an index symbol (e.g. ``^VIX``), or None.
 
-        ticker = yf.Ticker(symbol)
-        price = getattr(ticker.fast_info, "last_price", None)
+    Tries the price provider's ``get_last_price`` first (cheap live quote); falls back to
+    the last settled close from the provider's OHLCV history. Never raises.
+    """
+    try:
+        from src.data.factory import get_price_provider
+
+        provider = get_price_provider()
+        price = provider.get_last_price(symbol)
         if price is not None and float(price) > 0:
             return round(float(price), 2)
         # Fallback: last close from history
-        hist = ticker.history(period="1d")
-        if not hist.empty:
+        hist = provider.get_ohlcv(symbol, lookback_days=5)
+        if hist is not None and not hist.empty:
             return round(float(hist["Close"].iloc[-1]), 2)
     except Exception as exc:
         log.warning("market_conditions: %s fetch failed — %s", symbol, exc)
@@ -94,10 +98,10 @@ def _fetch_ten_year() -> tuple[float | None, float | None]:
     move equity vol and correlation together.
     """
     try:
-        import yfinance as yf
+        from src.data.factory import get_price_provider
 
-        hist = yf.Ticker("^TNX").history(period="1mo")
-        if hist.empty:
+        hist = get_price_provider().get_ohlcv("^TNX", lookback_days=30)
+        if hist is None or hist.empty:
             return None, None
         closes = hist["Close"].dropna()
         if closes.empty:

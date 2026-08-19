@@ -53,6 +53,43 @@ row that matches:
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
 
+## Running this repo in opencode
+
+Sessions run in either **Claude Code** or **opencode** (the fallback when Claude usage limits are
+hit, against Ollama Cloud models). opencode's instruction loader looks for `AGENTS.md`, then
+`CLAUDE.md`, then `CONTEXT.md` at each directory level and stops at the first match it finds — so
+this file is first-class there, not a workaround. **Never add an `AGENTS.md` anywhere in this
+repo** — one anywhere in the walk-up chain would silently blank this file (and every invariant
+above) for any opencode session started at or below it. **Do not run opencode's `/init` here** — it
+writes an `AGENTS.md`, which at the root would do exactly that.
+
+| File | Role |
+|---|---|
+| `opencode.json` | Ollama Cloud provider config (`:cloud`-tagged models, routed to Ollama's datacenter), the `instructions` list, `git push` / `reset --hard` / `clean` gated behind a confirmation prompt |
+| `.opencode/ibkr-flow.md` | The operating-protocol delta for opencode — loaded into every session via `instructions`; this file (`CLAUDE.md`) remains authoritative on what the invariants *are* |
+| `.opencode/agent/ibkr.md` | Primary agent (`temperature: 0.1`) restating the core invariant, the fence, and the analytics-tier split so a fresh opencode session can't drift from them |
+| `.opencode/plugin/session-checks.js` | Mirrors the `PostToolUse` hook below via `tool.execute.after` — same reminder, same non-test-`.py` file match, still advisory only |
+
+**Don't confuse this with the production Ollama backend.** `src/claude/ollama_runner.py`
+(`config/settings.yaml → claude.backend: "ollama"`, see `SETUP.md` §14) runs a small **local** model
+(`qwen3:8b`/`14b`, no `:cloud` tag) as the trading pipeline's own strategist reviewer at runtime —
+an entirely different concern from opencode's Ollama Cloud models. Both talk to the same
+`ollama serve` daemon on `localhost:11434`, but the local pulled models serve production review
+calls; the `:cloud` models in `opencode.json` exist only for interactive coding sessions and require
+`ollama signin` separately from anything the trading pipeline uses.
+
+**What does not carry over is enforcement, though there is little to lose.** The `PostToolUse` hook
+in `.claude/settings.json` fires after every Write/Edit of a non-test `.py` file and injects a
+reminder to check the doc-update trigger table above — it only ever adds context, it cannot block
+task completion, in Claude Code either. So opencode's lack of a hook mechanism here costs less than
+it would in a repo whose enforcement is a blocking `Stop` hook: `.opencode/plugin/
+session-checks.js` reproduces the same reminder, but either way, nothing in either harness can force
+the update — run the pytest/ruff/mypy commands in `## Change workflow` and re-check the trigger
+table yourself before calling a task done.
+
+opencode loads config once at startup and does not hot-reload it; restart the session after editing
+`opencode.json` or any file under `.opencode/`.
+
 ## Core invariant — never violate
 
 **The Rules Engine (`src/engine/risk_engine.py`) is the only path to order execution, and it is
@@ -162,6 +199,14 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
   (20) and dashboard (21) use their own. Never reuse an id across concurrent processes.
 - Money/quantities are explicit; option premiums are **per share** (×100 for contract value).
 - Type-hint everything; keep modules small and single-purpose matching the `src/` layout.
+- **analytics/strategies/engine never call `yfinance.*` directly; they go through `src/data/`**
+  (Phase 2 provider abstraction). The factories in `src/data/factory.py` read
+  `config/settings.yaml → data.*` to pick the active backend and cache it process-wide. A
+  future FMP/Polygon swap is a config change, not a rewrite of every analytics module. IBKR is
+  *not* a provider — it's the broker + execution path (`src/ibkr/`) and stays untouched (the
+  IBKR greeks fallback in `src/ibkr/market_data.py` still calls `yfinance` directly, by design).
+  The `src/backtest/` harness is also out of scope — it's an offline tool, not the live
+  pipeline.
 
 ## Safety
 

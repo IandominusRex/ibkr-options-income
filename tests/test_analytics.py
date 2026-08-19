@@ -352,15 +352,17 @@ class TestTechnicalStats:
     def test_fetch_last_price_reads_fast_info(self):
         from src.analytics.technicals import _fetch_last_price
 
-        ticker = MagicMock()
-        ticker.fast_info = {"lastPrice": 123.45}
-        with patch("src.analytics.technicals.yf.Ticker", return_value=ticker):
+        provider = MagicMock()
+        provider.get_last_price.return_value = 123.45
+        with patch("src.analytics.technicals.get_price_provider", return_value=provider):
             assert _fetch_last_price("AAPL") == 123.45
 
     def test_fetch_last_price_returns_none_on_error(self):
         from src.analytics.technicals import _fetch_last_price
 
-        with patch("src.analytics.technicals.yf.Ticker", side_effect=Exception("network")):
+        provider = MagicMock()
+        provider.get_last_price.side_effect = Exception("network")
+        with patch("src.analytics.technicals.get_price_provider", return_value=provider):
             assert _fetch_last_price("AAPL") is None
 
     def test_regime_high_vol(self):
@@ -414,17 +416,24 @@ class TestTechnicalStats:
 # --------------------------------------------------------------------------- #
 
 
-def _mock_ticker(info: dict, calendar: dict | None = None):
-    t = MagicMock()
-    t.info = info
-    t.calendar = calendar or {}
-    return t
+def _mock_provider(info: dict, calendar: dict | None = None):
+    """A FundamentalsProvider-shaped mock returning the given info/calendar dicts."""
+    p = MagicMock()
+    p.get_info.return_value = info
+    p.get_calendar.return_value = calendar or {}
+    return p
+
+
+def _patch_fundamentals(provider: MagicMock):
+    # fundamentals.py does `from src.data.factory import get_fundamentals_provider`,
+    # so the bound name lives in that module — patch there, not at the factory.
+    return patch("src.analytics.fundamentals.get_fundamentals_provider", return_value=provider)
 
 
 class TestFundamentalStats:
     def test_etf_shortcut(self):
-        ticker = _mock_ticker({"quoteType": "ETF"})
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker):
+        provider = _mock_provider({"quoteType": "ETF"})
+        with _patch_fundamentals(provider):
             stats = get_fundamental_stats("SPY")
         assert stats.quality_flag is True
         assert stats.pe_ratio is None
@@ -438,8 +447,7 @@ class TestFundamentalStats:
             "dividendYield": 0.02,
             "payoutRatio": 0.30,
         }
-        ticker = _mock_ticker(info)
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker):
+        with _patch_fundamentals(_mock_provider(info)):
             stats = get_fundamental_stats("AAPL")
         assert stats.quality_flag is True
         assert stats.dividend_safe is True
@@ -451,32 +459,32 @@ class TestFundamentalStats:
             "freeCashflow": -1_000_000,
             "debtToEquity": 50.0,
         }
-        ticker = _mock_ticker(info)
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker):
+        with _patch_fundamentals(_mock_provider(info)):
             stats = get_fundamental_stats("BAD")
         assert stats.quality_flag is False
 
     def test_missing_fields_do_not_raise(self):
-        ticker = _mock_ticker({"quoteType": "EQUITY"})
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker):
+        with _patch_fundamentals(_mock_provider({"quoteType": "EQUITY"})):
             stats = get_fundamental_stats("SPARSE")
         assert stats.symbol == "SPARSE"
         assert stats.pe_ratio is None
         assert stats.quality_flag is None
 
-    def test_yfinance_exception_returns_bare_stats(self):
-        with patch("src.analytics.fundamentals.yf.Ticker", side_effect=Exception("network")):
+    def test_provider_exception_returns_bare_stats(self):
+        provider = MagicMock()
+        provider.get_info.side_effect = Exception("network")
+        with _patch_fundamentals(provider):
             stats = get_fundamental_stats("ERR")
         assert stats.symbol == "ERR"
         assert stats.pe_ratio is None
 
     def test_next_earnings_future_date(self):
         future = pd.Timestamp("2030-12-31")
-        ticker = _mock_ticker(
+        provider = _mock_provider(
             {"quoteType": "EQUITY"},
             calendar={"Earnings Date": [future]},
         )
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker):
+        with _patch_fundamentals(provider):
             stats = get_fundamental_stats("AAPL")
         assert stats.next_earnings == date(2030, 12, 31)
 
@@ -639,12 +647,11 @@ class TestBsDelta:
 
 class TestDailyCaching:
     def test_fundamentals_cached_per_day(self):
-        ticker = MagicMock()
-        ticker.info = {"quoteType": "ETF"}
-        with patch("src.analytics.fundamentals.yf.Ticker", return_value=ticker) as mk:
+        provider = _mock_provider({"quoteType": "ETF"})
+        with _patch_fundamentals(provider) as mk:
             get_fundamental_stats("ZZZ")
             get_fundamental_stats("ZZZ")
-        # Second call served from the daily cache — yfinance hit only once.
+        # Second call served from the daily cache — provider hit only once.
         assert mk.call_count == 1
 
     # HV30 and the technical OHLCV history now share the incremental price_data.get_ohlcv

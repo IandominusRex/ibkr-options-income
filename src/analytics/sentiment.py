@@ -161,9 +161,9 @@ def _fetch_news(symbol: str) -> tuple[float | None, int, str | None]:
     shape and the newer ``{"content": {...}}`` nesting yfinance returns.
     """
     try:
-        import yfinance as yf
+        from src.data.factory import get_news_provider
 
-        items = yf.Ticker(symbol.upper()).news or []
+        items = get_news_provider().get_headlines(symbol) or []
     except Exception as exc:
         logger.debug("News fetch failed for %s: %s", symbol, exc)
         return None, 0, None

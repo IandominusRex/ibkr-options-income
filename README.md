@@ -463,6 +463,7 @@ python -m pytest               # all tests pass without IB Gateway
 |---|---|
 | `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
+| `src/data/` | Provider abstraction layer between the analytics layer and external market-data backends (yfinance today; FMP/Polygon later). `protocols.py` defines the `PriceProvider`/`FundamentalsProvider`/`NewsProvider` interfaces; `factory.py` picks the active backend from `config/settings.yaml → data.*` and caches it process-wide; `yfinance_backend.py` is the active backend (literally the existing yfinance calls wrapped in a class — no behaviour change); `fmp_backend.py` is a documented-but-unwired stub. Analytics/strategies/engine never call `yfinance.*` directly — they go through `src/data/`. IBKR is *not* a provider (it's the broker + execution path, untouched) |
 | `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive); `black_scholes.py` (full Greeks — delta/gamma/theta/vega/rho) and `american_option.py` (Cox-Ross-Rubinstein American pricer + early-exercise premium, Phase 1) |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation. The CC/CSP screens return the contracts they **rejected** alongside those they passed (`_evaluation.py`), each tagged with every gate it failed — so a scan that approves nothing still shows what it looked at and why |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate; `capital.py` is the shared capital model (`resolve_caps` / `max_contracts` / `seed_budgets`) that both the CSP generator and the risk gate call, so the two can never disagree about how big a position may be — concentration is measured in **risk units** (`collateral × IV × √(DTE/365)`), not raw collateral |
@@ -477,7 +478,6 @@ python -m pytest               # all tests pass without IB Gateway
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |
 | `scripts/` | Command-line entrypoints, including `capacity_report.py` — a read-only account-sizing diagnostic: one row per `would_own` symbol showing how many contracts the account can actually support right now and which constraint would stop the next one |
 | `tests/` | pytest suite (IBKR mocked; no TWS needed) |
-| `fix_indentation.py` | Standalone desktop utility, unrelated to the trading pipeline: cleans up text copied from VS Code/terminal (strips stray leading whitespace, rejoins soft-wrapped lines into single paragraphs) before pasting into a `.txt`/`.md`/`.docx` file. Run `python fix_indentation.py <input> [output]`; the cleaned file is written next to this script. See the docstring in the file for details. |
 
 ---
 

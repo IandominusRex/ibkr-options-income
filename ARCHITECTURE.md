@@ -81,6 +81,28 @@ Handles everything that talks directly to Interactive Brokers via the `ib_async`
 
 ---
 
+### `src/data/` — The data abstraction layer
+
+A thin provider abstraction between the analytics layer and the external market-data backends
+(yfinance today; FMP/Polygon later). Analytics/strategies/engine never call ``yfinance.*``
+directly — they go through the factories here, which read ``config/settings.yaml → data.*``
+to pick the active backend and cache the instance process-wide. A future FMP/Polygon swap is a
+config change, not a rewrite of every analytics module.
+
+**IBKR is *not* a "provider" here** — it is the broker + execution path (``src/ibkr/``) and stays
+untouched. This layer abstracts only the keyless external reads (prices, fundamentals, news
+headlines) that the enrichment/deterministic analytics tiers share. The IBKR greeks fallback
+in ``src/ibkr/market_data.py`` still calls ``yfinance`` directly and is out of scope by design.
+
+| File | What it does |
+|---|---|
+| `protocols.py` | ``typing.Protocol`` classes (structural subtyping) every backend must implement: ``PriceProvider`` (``get_ohlcv``, ``get_last_price``), ``FundamentalsProvider`` (``get_info``, ``get_calendar``), ``NewsProvider`` (``get_headlines``). The Protocols return the *same* shapes the existing yfinance call sites consumed (``pd.DataFrame``, ``dict``, ``list[dict]``) — wrapping the existing code, not redesigning its output. |
+| `factory.py` | ``get_price_provider()`` / ``get_fundamentals_provider()`` / ``get_news_provider()`` factories. Read ``config/settings.yaml → data.*`` to pick the backend, instantiate it, and cache it via ``lru_cache`` for the life of the process. Tests that need to swap a backend monkeypatch the factory (or ``cache_clear()`` it). |
+| `yfinance_backend.py` | The active backend: ``YFinancePriceProvider``, ``YFinanceFundamentalsProvider``, ``YFinanceNewsProvider``. Each method wraps the exact yfinance call the analytics layer used to make directly (``yf.Ticker(...).info`` / ``.history`` / ``.news`` / ``.fast_info``). **No behaviour change** — the wrapper is the existing code in a class. |
+| `fmp_backend.py` | FMP (Financial Modeling Prep) stub classes raising ``NotImplementedError``. Documents the swap path; **not wired in Phase 2**. The *interface* is the deliverable — a future FMP/Polygon integration is a new backend implementing the Protocols plus a factory branch. |
+
+---
+
 ### `src/analytics/` — The analysis layer
 
 Computes signals that determine whether a trade is worth taking.

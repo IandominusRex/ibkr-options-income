@@ -18,10 +18,10 @@ import logging
 from datetime import date
 
 import pandas as pd
-import yfinance as yf
 
 from src.common.cache import daily_cached
 from src.common.market_hours import previous_session, today_et
+from src.data.factory import get_price_provider
 from src.storage.price_history import Bar, append_bars, load_bars
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
 
 def _period_for_gap(last: date | None, target: date) -> str:
-    """Smallest yfinance period that covers the gap from *last* settled bar to *target*."""
+    """Smallest lookback window that covers the gap from *last* settled bar to *target*."""
     if last is None:
         return "1y"
     gap = (target - last).days
@@ -45,12 +45,42 @@ def _period_for_gap(last: date | None, target: date) -> str:
     return "1y"
 
 
+def _lookback_days_for_gap(last: date | None, target: date) -> int:
+    """Calendar-day equivalent of :func:`_period_for_gap` for the provider's lookback_days arg."""
+    if last is None:
+        return 365
+    gap = (target - last).days
+    if gap <= 5:
+        return 5
+    if gap <= 25:
+        return 25
+    if gap <= 80:
+        return 80
+    if gap <= 170:
+        return 170
+    return 365
+
+
 def _fetch_yf_bars(symbol: str, period: str) -> list[Bar]:
-    """Pull daily bars from yfinance and map to Bar objects (settled + forming)."""
+    """Pull daily bars via the active price provider and map to Bar objects (settled + forming).
+
+    *period* is the yfinance-style period string (``"1y"``/``"3mo"``/…) retained for
+    backwards-compatible call sites; it is translated to a ``lookback_days`` hint for the
+    provider. The provider returns yfinance's ``history`` frame (today's forming bar
+    included); this helper preserves the prior behaviour of mapping every row.
+    """
+    lookback_map = {
+        "5d": 5,
+        "1mo": 25,
+        "3mo": 80,
+        "6mo": 170,
+        "1y": 365,
+    }
+    lookback = lookback_map.get(period, 365)
     try:
-        df = yf.Ticker(symbol).history(period=period)
+        df = get_price_provider().get_ohlcv(symbol, lookback_days=lookback)
     except Exception:
-        log.warning("price_data: yfinance history failed for %s", symbol, exc_info=True)
+        log.warning("price_data: provider history failed for %s", symbol, exc_info=True)
         return []
     if df is None or df.empty:
         return []
@@ -58,6 +88,8 @@ def _fetch_yf_bars(symbol: str, period: str) -> list[Bar]:
     bars: list[Bar] = []
     for idx, row in df.iterrows():
         d = idx.date() if hasattr(idx, "date") else idx
+        if not isinstance(d, date):
+            continue
         try:
             close = float(row["Close"])
         except (KeyError, TypeError, ValueError):

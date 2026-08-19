@@ -8,11 +8,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-import yfinance as yf
-
 from src.common.cache import daily_cached
 from src.common.market_hours import today_et
 from src.common.schemas import FundamentalStats
+from src.data.factory import get_fundamentals_provider
 
 _PAYOUT_RATIO_SAFE = 0.60
 _MAX_DEBT_TO_EQUITY = 150.0
@@ -26,8 +25,8 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
     intraday loop doesn't re-hit yfinance for the whole universe every cycle.
     """
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info or {}
+        provider = get_fundamentals_provider()
+        info = provider.get_info(symbol) or {}
     except Exception:
         return FundamentalStats(symbol=symbol)
 
@@ -41,7 +40,7 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
             fifty_two_week_low=_safe_float(info.get("fiftyTwoWeekLow")),
         )
 
-    next_earnings = _next_earnings_date(ticker)
+    next_earnings = _next_earnings_date(provider.get_calendar(symbol))
     pe_ratio = _safe_float(info.get("trailingPE"))
     free_cash_flow = _safe_float(info.get("freeCashflow"))
     debt_to_equity = _safe_float(info.get("debtToEquity"))
@@ -78,12 +77,11 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
 # --------------------------------------------------------------------------- #
 
 
-def _next_earnings_date(ticker: yf.Ticker) -> date | None:
+def _next_earnings_date(calendar: dict) -> date | None:
     try:
-        cal = ticker.calendar
-        if not cal:
+        if not calendar:
             return None
-        earnings_dates = cal.get("Earnings Date", [])
+        earnings_dates = calendar.get("Earnings Date", [])
         if not earnings_dates:
             return None
         today = today_et()

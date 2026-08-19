@@ -279,6 +279,15 @@ Two extra knobs control what gets surfaced:
   non-held, non-bearish watchlist name (e.g. 46/46 over a weekend); raise `min_score` to be pickier
   or `max_candidates` to see more names.
 
+### `config/settings.yaml` — the `data:` block
+
+Selects the active backend for the `src/data/` provider abstraction layer (Phase 2). Each key
+names the backend for one of the three Protocols (`price_provider`, `fundamentals_provider`,
+`news_provider`). Phase 2 ships only the `yfinance` backend; `fmp` is accepted (the stub exists
+in `src/data/fmp_backend.py`) but raises `NotImplementedError` on use — the swap path is
+documented but not wired. You can leave these at the `yfinance` defaults; swapping to FMP/Polygon
+later is a config change here, not a code change.
+
 ---
 
 ## 6. Set up the daemons

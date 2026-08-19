@@ -41,11 +41,11 @@ _ONE_WEEK_SESSIONS = 5
 
 @daily_cached
 def _sector_industry(symbol: str) -> tuple[str | None, str | None]:
-    """(sector, industry) from yfinance. ETFs/indices return (None, None). Never raises."""
+    """(sector, industry) from the active fundamentals provider. ETFs/indices return (None, None). Never raises."""
     try:
-        import yfinance as yf
+        from src.data.factory import get_fundamentals_provider
 
-        info = yf.Ticker(symbol).info or {}
+        info = get_fundamentals_provider().get_info(symbol) or {}
     except Exception as exc:
         log.debug("sector_context: info lookup failed for %s: %s", symbol, exc)
         return None, None

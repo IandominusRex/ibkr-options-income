@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from src.analytics.price_data import get_ohlcv
 from src.common.market_hours import today_et
 from src.common.schemas import Regime, TechnicalStats
+from src.data.factory import get_price_provider
 
 _HIGH_VOL_ATR_RATIO = 0.025  # ATR/close > this → HIGH_VOL
 _LOW_VOL_ATR_RATIO = 0.008  # ATR/close < this → LOW_VOL
@@ -124,12 +124,12 @@ def _working_frame(symbol: str, live_price: float | None) -> pd.DataFrame:
 
 
 def _fetch_last_price(symbol: str) -> float | None:
-    """Cheap live quote via yfinance's fast_info — NOT cached, so it stays current across every
-    scan regardless of whether the settled OHLCV history was served from the day cache / store.
+    """Cheap live quote via the active price provider's ``get_last_price`` — NOT cached, so
+    it stays current across every scan regardless of whether the settled OHLCV history was
+    served from the day cache / store.
     """
     try:
-        last = yf.Ticker(symbol).fast_info["lastPrice"]
-        return float(last) if last is not None else None
+        return get_price_provider().get_last_price(symbol)
     except Exception:
         return None
 

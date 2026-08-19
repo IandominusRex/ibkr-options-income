@@ -233,6 +233,20 @@ class ClaudeCfg(BaseModel):
     ollama_temperature: float = 0.2
 
 
+class DataCfg(BaseModel):
+    """Backend selection for the ``src/data/`` provider abstraction layer.
+
+    Each key names the active backend for one of the three Protocols in
+    :mod:`src.data.protocols`. Phase 2 ships only the ``yfinance`` backend; ``fmp`` is
+    accepted (the stub exists in :mod:`src.data.fmp_backend`) but raises
+    ``NotImplementedError`` on use, so the swap path is documented but not wired.
+    """
+
+    price_provider: str = "yfinance"
+    fundamentals_provider: str = "yfinance"
+    news_provider: str = "yfinance"
+
+
 class StorageCfg(BaseModel):
     db_url: str = "sqlite:///data/income_system.db"
     iv_history_parquet: str = "data/iv_history.parquet"
@@ -329,6 +343,7 @@ class Config(BaseModel):
     execution: ExecutionCfg
     monitor: MonitorCfg
     automation: AutomationCfg
+    data: DataCfg = Field(default_factory=DataCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -378,6 +393,7 @@ def get_config() -> Config:
         execution=ExecutionCfg(**settings.get("execution", {})),
         monitor=MonitorCfg(**settings.get("monitor", {})),
         automation=AutomationCfg(**settings.get("automation", {})),
+        data=DataCfg(**settings.get("data", {})),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),

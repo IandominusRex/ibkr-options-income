@@ -174,6 +174,16 @@ automation:
   # Risk-reducing closes (profit takes AND loss exits) run independently of autonomy level.
   auto_close_enabled: true
 
+# Backend selection for the src/data/ provider abstraction layer (Phase 2).
+# Each key names the active backend for one of the three Protocols in src/data/protocols.py.
+# Phase 2 ships only the "yfinance" backend; "fmp" is accepted (the stub exists in
+# src/data/fmp_backend.py) but raises NotImplementedError on use — the swap path is
+# documented but not wired. Swap a value to switch that provider's backend.
+data:
+  price_provider: yfinance
+  fundamentals_provider: yfinance
+  news_provider: yfinance
+
 monitor:
   # Short option delta drift: roll if |delta| exceeds this ceiling.
   delta_ceiling: 0.45
