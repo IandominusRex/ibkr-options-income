@@ -496,6 +496,29 @@ def _cap_strikes(strikes: list[float], spot: float, max_strikes: int) -> list[fl
     return sorted(nearest)
 
 
+def _build_chain_contracts(
+    symbol: str, expirations: Iterable[str], strikes: Iterable[float], spot: float
+) -> list[Option]:
+    """Cartesian of *expirations* x in-band *strikes*, OTM side only per right.
+
+    Builds calls only at strikes >= spot and puts only at strikes <= spot instead of both
+    rights across the whole band. ``covered_call.py`` only ever keeps calls with delta in
+    ``0.20-0.35`` (OTM by construction) and ``cash_secured_put.py`` only ever keeps puts with
+    ``|delta|`` in ``0.15-0.30`` (also OTM by construction) — so the ITM half of the band was
+    always qualified, quoted, and discarded. Skipping it here roughly halves the
+    qualify/quote batch count per symbol, and therefore the wall-clock fetch time, since
+    ``_batch_quotes``/``_batch_quotes_async`` cost is linear in contract count.
+    """
+    strikes = list(strikes)
+    return [
+        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)
+        for e in expirations
+        for st in strikes
+        for right in ("C", "P")
+        if (right == "C" and st >= spot) or (right == "P" and st <= spot)
+    ]
+
+
 def _strike_band_pct(symbol: str, dte_days: int) -> float:
     """IV-scaled strike band for *symbol* (N6).
 
@@ -734,12 +757,7 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
         band_pct * 100,
     )
 
-    raw: list[Option] = [
-        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)
-        for e in expirations
-        for st in strikes
-        for right in ("C", "P")
-    ]
+    raw: list[Option] = _build_chain_contracts(symbol, expirations, strikes, spot)
 
     qualified = qualify_options(ib, raw)
     if not qualified:
@@ -796,12 +814,7 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
         band_pct * 100,
     )
 
-    raw: list[Option] = [
-        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)
-        for e in expirations
-        for st in strikes
-        for right in ("C", "P")
-    ]
+    raw: list[Option] = _build_chain_contracts(symbol, expirations, strikes, spot)
 
     qualified = await qualify_options_async(
         ib,

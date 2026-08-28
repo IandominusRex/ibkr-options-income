@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "glm-5.2:cloud": {
+          "name": "GLM-5.2 (Ollama cloud) — codebase critique/edit"
+        },
+        "kimi-k2.7-code:cloud": {
+          "name": "Kimi K2.7 Code (Ollama cloud) — agentic/iOS build"
+        },
+        "gpt-oss:120b-cloud": {
+          "name": "GPT-OSS 120B (Ollama cloud) — fast/cheap default"
+        }
+      }
+    }
+  },
+  "instructions": [
+    ".opencode/ibkr-flow.md",
+    "CLAUDE.md"
+  ],
+  "permission": {
+    "bash": {
+      "git *": "allow",
+      "git push*": "ask",
+      "git reset --hard*": "ask",
+      "git clean*": "ask"
+    }
+  }
+}

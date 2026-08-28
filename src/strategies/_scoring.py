@@ -34,8 +34,27 @@ def make_candidate_id(
     return hashlib.sha1(key.encode()).hexdigest()[:16]
 
 
+def relative_strength_score(rs: float | None) -> float:
+    """Linear mapping of relative‑strength (RS) to a 0‑100 score.
+
+    ``rs`` is the annualised slope from ``technicals.relative_strength``. The mapping is:
+    - ``-0.3`` → 0
+    - ``0.0`` → 50
+    - ``+0.3`` → 100
+    Values outside ``[-0.3, 0.3]`` are clipped.
+    """
+    if rs is None:
+        return 50.0
+    # Clamp to range.
+    clamped = max(-0.3, min(0.3, rs))
+    # Linear transform: map -0.3 -> 0, 0 -> 50, 0.3 -> 100.
+    return float((clamped + 0.3) / 0.6 * 100)
+
+
 def technical_score(
-    quote: OptionQuote, tech: TechnicalStats, zone: IdealZone | None = None
+    quote: OptionQuote,
+    tech: TechnicalStats,
+    zone: IdealZone | None = None,
 ) -> float:
     """Regime alignment for **short** premium (we are *selling* these options).
 

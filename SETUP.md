@@ -148,6 +148,120 @@ When `claude.backend` is `ollama` or `cli_then_ollama`, the healthcheck also pri
 LLM enrichment is optional and the pipeline runs deterministically without it. Fix a WARN by
 starting Ollama (the Ollama.app, or `ollama serve`) and running `ollama pull <model>`.
 
+### Automating Gateway login with IBC (recommended for unattended operation)
+
+Gateway forces a full re-login roughly every 24 hours, and until that happens it just sits
+disconnected — the intraday loop's own reconnect logic can't help, because there's no one to
+click through the login screen. A 2026-08-27 log investigation found exactly this: real
+`Error 1100` ("half-dead socket") incidents during actual RTH, plus a 5+ hour disconnected
+stretch after one nightly restart because the operator wasn't awake to re-authenticate. This is
+a Gateway-uptime problem, not a market-data-subscription problem — a bigger data plan doesn't
+fix it.
+
+[IBC](https://github.com/IbcAlpha/IBC) automates the login screen and the restart dialogs so a
+human doesn't have to. **What it can't do:** if your account uses IBKR Mobile push-notification
+2FA, IBC cannot tap "approve" on your phone for you — that's a deliberate security control, not a
+gap in IBC. What it changes in practice:
+
+- **Daily restart** — set an Auto Restart time (below) and Gateway restarts itself each day
+  *without* a fresh login, because it reuses the current session's credentials. No 2FA tap needed
+  for this one.
+- **A missed/timed-out 2FA prompt** — IBC re-triggers the login sequence automatically
+  (`ReloginAfterSecondFactorAuthenticationTimeout=yes` + `TWOFA_TIMEOUT_ACTION=restart`) so a
+  fresh push is always waiting whenever you next pick up your phone, instead of requiring you to
+  notice, open Gateway, and click through the login screen yourself.
+- **Once a week**, IBKR requires a full cold restart (Sunday, credentials from auto-restart don't
+  carry across it) — you'll still need to tap one push notification then.
+
+**Install** (already done on this machine if you're reading this after the 2026-08-27 setup;
+steps below are for a fresh machine):
+
+1. Download the macOS build from the [IBC releases page](https://github.com/IbcAlpha/IBC/releases)
+   and unzip it to `~/Applications/ibc`.
+2. The repo ships a pre-configured `config.ini` you copy over the extracted one — see below for
+   what's set and why. Version-pin note: `scripts/ibc/start_gateway.sh` defaults
+   `TWS_MAJOR_VRSN=10.47` — update it (or export `TWS_MAJOR_VRSN` before running) if your
+   installed Gateway version differs (**Help → About IB Gateway** in the app).
+
+**`~/Applications/ibc/config.ini` — settings changed from the shipped defaults**, all
+login/session-flow only; nothing order- or trade-related was touched (`AllowBlindTrading`,
+`ConfirmCryptoCurrencyOrders`, etc. are left at their shipped defaults):
+
+| Setting | Value | Why |
+|---|---|---|
+| `IbLoginId` / `IbPassword` | *(blank)* | Supplied at launch from `.env` via `scripts/ibc/start_gateway.sh`, never written to this file |
+| `TradingMode` | `paper` | Fallback default if the wrapper script isn't used; the wrapper itself derives this from `.env`'s `LIVE_TRADING` so Gateway's mode can never drift from the app's own live-trading gate |
+| `ExistingSessionDetectedAction` | `primary` | Unattended-safe: our session keeps running rather than hanging on a manual prompt |
+| `AcceptNonBrokerageAccountWarning` | `yes` | Auto-confirms the paper-account disclaimer dialog (login-flow only) |
+| `AcceptIncomingConnectionAction` | `reject` | IBC's own recommended setting — matches this system's existing behavior, since local (127.0.0.1) API connections already don't trigger this dialog on this setup |
+| `ReloginAfterSecondFactorAuthenticationTimeout` | `yes` | Auto-retries the login sequence on a missed 2FA push instead of exiting |
+| `SecondFactorAuthenticationExitInterval` | `60` | Seconds IBC waits for login to finish after you tap approve |
+| `AutoRestartTime` | *(blank — see step below)* | Left to Gateway's own GUI-configured value; more reliable than guessing a time blind |
+
+**One-time GUI step:** open Gateway → **Configure → Settings → Lock and Exit**, and set **Auto
+restart** (not *Auto logoff*) to a time a little before your account's nightly forced-restart
+window (commonly ~23:45–00:45 ET, but this varies — watch the first day's `logs/system.log` for
+`Error 1100` timing if you're not sure, and adjust). This is what lets the daily restart skip
+2FA. If you ever see a "Trusted IPs" dialog block a local connection, add `127.0.0.1` under
+**Configure → Settings → API → Settings** — not needed on this setup today, but the fallback if
+`AcceptIncomingConnectionAction=reject` ever behaves differently after a Gateway update.
+
+**Credentials:** add to `.env` (see `.env.example`):
+
+```bash
+IBKR_LOGIN_ID=your_ibkr_username
+IBKR_LOGIN_PASSWORD=your_ibkr_password
+```
+
+**Manual dry run first** — don't skip this:
+
+```bash
+./scripts/ibc/start_gateway.sh
+```
+
+Watch for the push notification and approve it, then confirm Gateway comes up and
+`python -m scripts.healthcheck` connects normally. Only once this works should you wire it into
+launchd for unattended auto-start.
+
+**Auto-start with launchd:** create `~/Library/LaunchAgents/com.ibkr.gateway.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ibkr.gateway</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/IBKR Investments/scripts/ibc/start_gateway.sh</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/path/to/ibc/logs/launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/path/to/ibc/logs/launchd.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.ibkr.gateway.plist
+```
+
+To stop it: `launchctl unload ~/Library/LaunchAgents/com.ibkr.gateway.plist`. Load this
+*alongside* `com.ibkr.start.plist` (§6) — the Python daemons' own `connect_with_retry` backoff
+already tolerates Gateway not being up yet at boot, so load order between the two doesn't matter.
+
 ---
 
 ## 5. Configure your universe and risk limits
@@ -161,6 +275,24 @@ Add the tickers you want the system to scan for covered calls and cash-secured p
 The `would_own` list is the set of stocks you are genuinely happy to be assigned (i.e. own at the
 strike price if the put is exercised). The `indexes:` list is scanned for CC opportunities; CSPs
 are only generated for symbols that also appear in `would_own`.
+
+**`actively_wheeling:`** (2026-08-27) is a subset of `would_own` — the core names scanned every
+15-min cycle the way all of `would_own` used to be (gated by `market_data.intraday_rescan_move_pct`,
+see below). Everything in `would_own` but *not* in `actively_wheeling` is "dip-watch": not scanned
+every cycle at all, only pulled into a scan once its live spot has **dropped** past
+`market_data.dip_pull_in_pct` (default 3%) since its last fetch — a rally is never a reason to sell
+a new put on a name outside the core rotation. Keep `would_own` broad (anything you'd genuinely
+accept assignment on) and `actively_wheeling` narrow (what you actually want checked constantly) —
+a large `would_own` with a small `actively_wheeling` costs almost nothing extra per cycle, since
+dip-watch names are cheap price-only probes, not option-chain fetches.
+
+Note that holding a name does not move it out of its bucket: a held `actively_wheeling` name keeps
+its 0.5% either-way gate *and* gains the 2%-rally trigger, and a held dip-watch name keeps its 3%
+dip trigger and gains the same. The rules add up rather than replacing each other (2026-08-28).
+
+Tickers you've decided you'll never trade don't need to stay in `universe.yaml` at all — move them
+to `config/universe_archive.yaml` instead (reference-only, never loaded by the application) so the
+reasoning is easy to find later instead of just disappearing.
 
 **Adding a new ticker:** After adding a symbol to `universe.yaml`, run the IV and price
 backfills to seed one year of history for it — otherwise IV Rank will be unavailable (IV score
@@ -198,7 +330,7 @@ other.
 | `covered_call.min_strike_vs_basis` | 1.00 | Reject CC if strike is below cost basis (prevents locking in a loss on the shares) |
 | `cash_secured_put.delta_min` / `delta_max` | 0.15 / 0.30 | Delta range for cash-secured-put strikes |
 | `cash_secured_put.max_contracts` | 10 | Hard cap on contracts per single CSP candidate |
-| `<strategy>.dte_min` / `dte_max` | 21 / 45 | Days-to-expiry range for new positions |
+| `<strategy>.dte_min` / `dte_max` | 7 / 28 | Days-to-expiry range for new positions |
 | `events.earnings_blackout_days` | 14 | Reject candidates that live through / open within N days of earnings |
 | `income.require_vrp_edge` | true | **Primary income gate for covered calls and cash-secured puts.** Reject a candidate whose credit doesn't clear Black-Scholes fair value priced at *realised* vol (HV30) plus `ideal_zone.min_credit_edge_pct` — the variance-risk-premium thesis made explicit. Reason code `premium_below_fair_value`. Missing ideal-zone data is never a rejection, only a missed optimization. **Rolls are exempt** (along with the ROC/yield floors below) — a defensive roll deliberately pays under the new strike's fair value, so `strategies/rolling.py`'s own `max_debit`/`min_delta_reduction` bounds are a roll's real economic control, not this gate. |
 | `income.min_roc_pct` | 0.15 | Noise floor only (the primary gate above replaced it). The old default of 1.0 was a hidden ~25–30% IV floor that made every low-vol name (SPY, GLD, TLT, sector ETFs) unreachable regardless of the actual variance-risk-premium edge. |
@@ -259,7 +391,9 @@ particular is inert at $100k cash (the 20% percentage reserve already exceeds it
 binding reserve well below that, shrinking deployable cash faster than the percentage alone would
 suggest. Re-derive with `--net-liq`/`--cash` set to the new figures before trusting the caps; this
 run's own baseline (46/46 `would_own` symbols tradeable at $300k NLV / $100k cash, 0 skipped for
-missing data) is the number to compare against.
+missing data) is the number to compare against — though note that baseline predates the 2026-08-27
+universe restructure (see STATUS.md's "Tradeable capacity" section): the count is unchanged but the
+composition isn't, so re-run this against the current `universe.yaml` before trusting it verbatim.
 
 The final line always states its own coverage — `Coverage: N/M requested symbols had usable
 price/IV data (K skipped for missing data)` — so a data outage (no cached IV/price for a symbol)
@@ -300,14 +434,55 @@ Two processes must stay running during market hours:
 | Intraday monitor | 12 | Watches open positions for roll alerts |
 
 > The approval service re-runs the scan every `scheduler.intraday_loop_minutes` (default 15) during
-> market hours. To cut cost, that intraday loop only re-fetches an option chain for a `would_own`
-> name once its spot has moved past `market_data.intraday_rescan_move_pct` (default 0.5%) since its
-> last fetch — held positions and names that just cleared the score floor always refresh, and a full
-> sweep is forced every `market_data.force_full_scan_minutes` (default 90). Leave these at the
-> defaults unless you want the loop more or less eager. Manual `/scan` always sweeps the full
-> universe regardless. If a scan ever overruns the interval (or loses the scan lease),
-> the loop counts the skipped cycle and sends a throttled warning; `/status` shows the per-session
-> "🔁 N run · ⚠️ M skipped" tally so you can see intended (~26) vs actual scan count.
+> market hours. To cut cost, that intraday loop uses three thresholds (2026-08-27) instead of
+> unconditionally refreshing everything: an `actively_wheeling` name (`universe.yaml`) re-fetches
+> its option chain once its spot has moved past `market_data.intraday_rescan_move_pct` (default
+> 0.5%) since its last fetch; a held stock position re-fetches once it's **risen** past
+> `market_data.held_position_move_pct` (default 2%, up only — this used to be unconditional every
+> cycle regardless of direction, previously the single biggest fixed cost in the loop; up-only
+> because a new CC candidate needs the room a rally creates, and existing-position risk is
+> handled continuously by the separate intraday monitor daemon, not this gate — a drop is still
+> caught by the staleness check below); a `would_own` name outside `actively_wheeling`
+> ("dip-watch") is skipped every cycle and only pulled in once it **drops** past
+> `market_data.dip_pull_in_pct` (default 3%) — a rally never triggers it. Names that just cleared
+> the score floor always refresh.
+>
+> **These three thresholds are combined, not chosen between (2026-08-28).** A symbol that is in
+> more than one bucket — a name you hold *and* actively wheel, say — is tested against every rule
+> that applies to it, and any one firing is enough. Holding shares therefore never *reduces* how
+> often a name is scanned; it only adds the rally trigger. (Before this, `held` won outright, so
+> owning shares of an `actively_wheeling` name silently dropped it from the 0.5% either-way gate
+> to 2%-up-only — shrinking the core rotation to just the names you *didn't* hold. The CSP screen
+> runs for every `would_own` name whether you hold it or not, so a held wheel name genuinely has
+> a CSP reason to refetch on a dip that the CC-oriented held rule cannot see.)
+>
+> An `actively_wheeling`/held name is also force-fetched once
+> **its own** last fetch exceeds `market_data.force_full_scan_minutes` (default 120) — checked
+> per symbol, not as one synchronized sweep of the whole core, so refreshes for quiet names
+> spread out over time on their own instead of bursting together (never dip-watch — that timer
+> doesn't apply to it at all) — as well as unconditionally on the first cycle after every service
+> (re)start. Each fetched symbol records **its own** fetch timestamp (2026-08-28) rather than one
+> shared run-level stamp, so the cohort from a long sweep goes stale spread across the span that
+> sweep took instead of all in one later cycle.
+>
+> **The per-cycle fetch budget (2026-08-28).** `market_data.chain_fetch_budget_seconds` (default
+> 600) caps how long one intraday cycle may spend on option-chain fetches. The materiality gate
+> keeps a normal cycle tiny, but in a broad sell-off every `would_own` name crosses its bar at
+> once — ~23 minutes of fetching inside a 15-minute cycle — and an overrun sets `scan_running`,
+> which skips the *next* cycle's scan entirely (profit-take and loss-exit checks still run). When
+> the budget runs out the remaining symbols are skipped for chains only (analytics still run) and
+> retried first next cycle, so a cluster drains over consecutive on-time cycles. Do not raise this
+> without also raising `scheduler.intraday_loop_minutes` — and note the coupling runs the opposite
+> way to intuition: **shortening the cycle lowers hourly fetch throughput**, because the ~56s of
+> fixed per-cycle work and the 150s overshoot margin are paid every cycle regardless of length
+> (206s fixed = 23% of a 15-min cycle, 34% of a 10-min one, 69% of a 5-min one). Leave these at the defaults unless you want the loop more or less eager. Manual
+> `/scan` always sweeps the full universe regardless (dip_watch names seed-only unless they
+> gapped ≥3% overnight — see `How the scan works.md`). A full sweep (which can still happen all at
+> once on a cold start) currently costs 15-25 minutes (IBKR option-chain qualification
+> overhead), so it can itself overrun the interval — see `/status`. If a scan ever overruns the
+> interval (or loses the scan lease), the loop counts the skipped cycle and sends a throttled
+> warning; `/status` shows the per-session "🔁 N run · ⚠️ M skipped" tally so you can see intended
+> (~26) vs actual scan count.
 >
 > `market_data.strike_band_max_pct` (default `0.40`) caps how wide the *auto* IV-scaled strike band
 > can get, so an extreme-IV leveraged ETF doesn't generate a runaway option-chain fetch. An explicit
@@ -316,11 +491,14 @@ Two processes must stay running during market hours:
 > `market_data.max_strikes_per_symbol` (default `80`, `0` disables) and `qualify_timeout_seconds`
 > (default `20`) are the qualification-storm guards. Even within the band cap, a high-IV name with
 > dense ($2.50) strike spacing can leave 120+ in-band strikes; the full `strikes × expirations × 2`
-> cartesian then becomes a several-hundred-contract qualification burst of mostly-nonexistent weekly
-> strikes that floods IBKR with `reqContractDetails` and trips a session-wedging pacing lockout (this
-> stalled the 2026-06-22 scan on SMH). The cap keeps only the N strikes nearest spot, and
-> qualification is chunked/paced/per-chunk-timeout-bounded so a stuck chunk yields partial results
-> instead of hanging the symbol. Leave these at the defaults unless a specific name still storms.
+> cartesian used to become a several-hundred-contract qualification burst of mostly-nonexistent
+> weekly strikes that flooded IBKR with `reqContractDetails` and tripped a session-wedging pacing
+> lockout (this stalled the 2026-06-22 scan on SMH). `_build_chain_contracts` now builds that
+> cartesian OTM-side-only per right (calls ≥ spot, puts ≤ spot) instead of both rights across the
+> whole band, roughly halving it before the cap even applies. The cap keeps only the N strikes
+> nearest spot, and qualification is chunked/paced/per-chunk-timeout-bounded so a stuck chunk
+> yields partial results instead of hanging the symbol. Leave these at the defaults unless a
+> specific name still storms.
 
 ### Option A — single launcher (recommended)
 
@@ -332,6 +510,14 @@ python -m scripts.start
 
 Logs are written to `logs/approval.log` and `logs/monitor.log`. Stop with Ctrl-C.
 Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval service.
+
+> **Clean stop, guaranteed:** Ctrl-C/SIGTERM sends every daemon SIGTERM, waits up to 10s, then
+> SIGKILLs anything still alive — a hung shutdown can no longer leave an orphaned survivor behind
+> (2026-08-27: one did, kept polling Telegram for 30+ minutes, and fought the next restart over
+> both the bot token and its clientIds). On startup, before launching anything, the launcher also
+> scans for and kills any *other* process still running one of this project's own daemon modules
+> — whatever the cause (a crash, a laptop sleep, a second `scripts.start` started by accident),
+> a restart always starts from a clean slate.
 
 > **Ollama check at startup:** when `claude.backend` uses Ollama, the launcher probes the local
 > model on start and logs a loud `WARNING` if it's unreachable or not pulled. This is a warning,
@@ -926,10 +1112,13 @@ an 8B model, depending on prompt length and memory pressure.
 | Every symbol from one point on times out (`option chain for X exceeded symbol_timeout_seconds`), and the logs show an `Error 200, No security definition has been found` storm just before it | A high-IV name built a several-hundred-contract qualification burst of mostly-nonexistent weekly strikes, tripping an IBKR pacing lockout that wedged the session (the 2026-06-22 SMH stall). This is now guarded: `market_data.max_strikes_per_symbol` caps the strike count, qualification is chunked/paced/timeout-bounded, and `drain_market_data_lines` reclaims leaked lines after each failed symbol | If you still hit it, lower `market_data.max_strikes_per_symbol` (default 80) or `qualify_timeout_seconds`, and restart the process to clear any session-level pacing lockout |
 | `/scan` progress reaches "Sending results" but nothing arrives | The follow-up message threw an unhandled exception (e.g. malformed MarkdownV2) | Check `logs/approval.log` for `telegram.error.BadRequest` around the scan's completion time; the scan itself likely succeeded — check `scan complete — run_id=... CC=... CSP=... buy=...` in the same log |
 | `/scan TICKER` freezes at "🔍 Scanning NVDA…" and never shows a result, but `logs/approval.log` shows `ticker_scan complete — NVDA CC=… CSP=… buy=…` | The single-ticker result card failed to render as MarkdownV2 (Telegram `BadRequest: Can't parse entities`) and the edit error was swallowed. **Fixed (2026-06-24):** the honest-sources footer now escapes its parentheses (`(parity)`/`(fallback)`), and `_ticker_edit_msg` logs the failure at `WARNING` instead of `debug` so a future render bug is visible | On an unpatched build, look for `ticker_scan: failed to edit message` (now WARNING) and a `telegram.error.BadRequest` in `logs/approval.log`; the scan succeeded, only the message render failed |
-| IBKR daemons stop reconnecting after a TWS/Gateway restart (`reconnect failed after 20 attempts — giving up`) | TWS/Gateway's nightly restart (~midnight ET) outlasted the 20-attempt reconnect window | Restart TWS/Gateway, then restart `python -m scripts.start` (or just the affected daemon) — the reconnect loop only runs once per process lifetime |
+| After stopping and restarting `scripts.start`, `/status` says "IBKR connection unavailable", `🔁 0 intraday scans run` even minutes later, and `logs/system.log` shows `Error 326 client id is already in use` → `Peer closed connection` → `Could not connect IBKR scan connection` right after startup | A prior `run_approval_service` didn't actually exit when stopped — `_stop_all` used to `SIGTERM` + immediately `sys.exit(0)` with no check that the child died, so a hung shutdown left an orphan still holding clientIds 14/15 and still polling Telegram (`telegram.error.Conflict: terminated by other getUpdates request`). The new process's *one-shot* startup connect then lost the clientId race, exhausted its bounded retries, and — unlike the persistent post-connect `AutoReconnect` — never retries again for the rest of that process's life, so `/status`/`/scan`/`/positions`/`/account` and the intraday loop's `ib_scan.isConnected()` guard stay dark until you restart. **Fixed (2026-08-27):** see "Clean stop, guaranteed" above — shutdown now force-kills stragglers and startup kills any it still finds | On a patched build this shouldn't happen; if it still does, `ps aux \| grep scripts.run_approval_service` for more than one PID and kill the extra one, then restart `python -m scripts.start` |
+| IBKR daemons stop reconnecting after a TWS/Gateway restart (`reconnect failed after 20 attempts — giving up`) | TWS/Gateway's nightly restart (~midnight ET) outlasted the 20-attempt reconnect window — commonly because nobody was available to click through the login/2FA screen for hours. Set up §4 "Automating Gateway login with IBC" so Gateway restarts and reconnects on its own instead | Restart TWS/Gateway, then restart `python -m scripts.start` (or just the affected daemon) — the reconnect loop only runs once per process lifetime |
 | The 15-min intraday scan never fires after a restart — `logs/system.log` shows `Approval service running` but no `Intraday loop started`, and the startup happened during a TWS connectivity drop (`Error 1100`) | The approval service started against a half-dead TWS socket (handshake succeeded, but data requests time out). Startup fill-reconciliation called `reqExecutions`, which hung waiting for an event that never arrived, blocking the intraday-scan task from being created. **Fixed (2026-06-23):** `reqExecutions` is now timeout-bounded and the scan loop is armed before startup reconciliation | If you see this on an unpatched build, restart `python -m scripts.start` once TWS connectivity is restored. After the fix it self-recovers (the reconcile pass is skipped and logged) |
 | After a restart, `/account` / `/status` / `/scan` / `/positions` say "IBKR account unavailable", and the logs show `Error 326` ("client id is already in use") → `Peer closed connection. clientId 15 already in use?` → `Could not connect IBKR scan connection` | The restart was fast enough that IB Gateway still held the previous session's clientId when the new scan connection tried to grab it. **Fixed (2026-06-24):** `connect_with_retry` retries with backoff so Gateway can release the id, and the launcher waits `STARTUP_GRACE_SECONDS` before starting daemons | Self-recovers within the retry window. If it persists, wait 30–60s before restarting, or restart IB Gateway to clear the stuck clientId. Exec (orders) and monitor connect on their own client IDs, so order execution is unaffected |
-| A 🛑 *Scan blocked* message arrives on Telegram, every symbol in the prior cycle timed out (`option chain for X exceeded symbol_timeout_seconds`), and the logs show `Error 1100` flapping beforehand | The scan socket went **half-dead** mid-session — `isConnected()` still reports connected (TCP handshake up) but TWS has lost its IBKR data farm, so every chain request times out. Left unguarded, one cycle grinds for ~2h and blocks every later 15-min cycle. **Fixed (2026-06-24):** a pre-scan `probe_market_data_health` snapshot and a consecutive-timeout circuit breaker detect the dead farm, notify you with the exact reason, and force a reconnect | Self-recovers — the cycle is skipped and `ib_scan.disconnect()` triggers `AutoReconnect`; the next 15-min cycle should run normally. If blocks persist, restart `python -m scripts.start` once TWS shows all data farms connected. Tune `market_data.health_probe_timeout_seconds` / `max_consecutive_chain_timeouts` if needed |
+| A 🛑 *Scan blocked* message arrives on Telegram, every symbol in the prior cycle timed out (`option chain for X exceeded symbol_timeout_seconds`), and the logs show `Error 1100` flapping beforehand | The scan socket went **half-dead** mid-session — `isConnected()` still reports connected (TCP handshake up) but TWS has lost its IBKR data farm, so every chain request times out. Left unguarded, one cycle grinds for ~2h and blocks every later 15-min cycle. **Fixed (2026-06-24):** a pre-scan `probe_market_data_health` snapshot and a consecutive-timeout circuit breaker detect the dead farm, notify you with the exact reason, and force a reconnect. **Extended (2026-08-28):** the message now also names which symbols never got reached this run and confirms they're queued for the next cycle (`pending_retry_symbols`) — see `How the scan works.md` §4, "The retry queue" | Self-recovers — the cycle is skipped, `ib_scan.disconnect()` triggers `AutoReconnect`, and the queued symbols are forced through the gate on the next 15-min cycle regardless of whether they've moved, so nothing is silently stranded. If blocks persist, restart `python -m scripts.start` once TWS shows all data farms connected. Tune `market_data.health_probe_timeout_seconds` / `max_consecutive_chain_timeouts` if needed |
+| The scan thread is silent for the full ~15–25 min of a full sweep or multi-symbol retry, with no sense of progress until results (or a block) finally arrive | Before 2026-08-28 the intraday loop ran `run_scan` with no progress callbacks — the `_Tracker` progress-bar renderer already existed for manual `/scan` but was never wired up for the 15-min loop. **Fixed:** `_run_intraday_scan` now sends its own live-updating "🔍 Scanning…" message (progress bar + current symbol, e.g. `⚙️ Option chain — SOFI (31/46)`) before every spawned cycle, edited in place (throttled to ~1 edit/2s) as the scan progresses, same renderer `/scan` uses | Nothing to do — the message appears automatically on every spawned cycle (including quick 1–2 symbol ones, which just flash through 0%→100%) |
+| `/status` is sent during a half-dead-socket episode (see the 🛑 *Scan blocked* row above) and never gets any reply at all — not even an error | `isConnected()` only reflects the TCP/exec-socket handshake, which stays up through the half-dead-socket state, so `handle_status_command` took the "IBKR connected" branch and awaited `get_account_snapshot_async` (`accountSummaryAsync`) with no timeout — it hung forever waiting on a data-farm response that never arrived, so the coroutine never reached `reply_text`. **Fixed (2026-08-27):** the account-snapshot fetch is now bounded by `market_data.health_probe_timeout_seconds` (same budget as the scan loop's own health probe); on timeout it logs a warning and replies with the rest of `/status` (positions, pending approvals, open orders) minus the account section | Self-recovers on a patched build — you still get a reply, just without the account-totals line, within `health_probe_timeout_seconds`. On an unpatched build, wait for TWS to show all data farms connected and retry `/status` |
 | Only the terse `⚠️ Intraday scan cycle skipped: data-farm health probe failed (half-dead socket)...` warning arrives — the detailed 🛑 *Scan blocked* message above never shows up, and `logs/approval.log` has `Intraday loop: failed to send scan-blocked notice` followed by a `telegram.error.BadRequest: Can't parse entities: character '(' is reserved...` traceback | The 🛑 *Scan blocked* send itself was broken: it interpolated the plain-English block reason (which contains literal parentheses, e.g. `(half-dead socket)`) into a MarkdownV2 message without escaping it, so Telegram rejected the whole message and the failure was swallowed. This affected every block since the 2026-06-24 fix above shipped — the "notify you with the exact reason" behavior never actually worked. **Fixed (2026-08-13):** the reason is now escaped with `_md_escape` before being sent | Self-recovers on a patched build — you'll get both the 🛑 detail message and the ⚠️ skip warning going forward. On an unpatched build the skip warning alone is enough to know a reconnect is in progress; check `logs/approval.log` for the specific block reason |
 | A manual `/scan` finishes and shows an ordinary (often empty) results screen, but `logs/approval.log` shows `N consecutive chain timeouts — aborting run, socket appears half-dead (processed X/46 symbols)` with `X` well short of the universe size | The half-dead-socket circuit breaker fired mid-scan and `run_scan` sent whatever partial results it had gathered — with no indication anything was cut short. `handle_scan_command` only checked `result.lease_skipped`, never `result.aborted_unhealthy` (the intraday loop already checked it). **Fixed (2026-08-13):** the `/scan` progress message is now edited to report `processed/total` symbols and that results are partial, and a reconnect is forced the same way the intraday loop does | Self-recovers — a forced reconnect fires automatically. On a patched build just re-run `/scan` once the reconnect completes (a few seconds). On an unpatched build, check `logs/approval.log` for the "consecutive chain timeouts" line to know whether a short results screen is a real empty scan or a truncated one |
 | A 15-min intraday cycle you expected (e.g. `13:30 ET`) never shows a `🔄 Scan started` message and `logs/approval.log` has no `Intraday loop: RTH cycle starting` line for it at all — not even a skip warning — while the *previous* cycle's `scan: processing <TICKER>` lines are still advancing past the 15-min mark | The prior cycle's scan was legitimately slow on a perfectly healthy connection (not a dead socket — no circuit breaker involved) and ran past 15 minutes, most commonly right after a restart: with no `scan_state` history yet, the S1 materiality gate treats the entire universe as material (`intraday materiality gate — 46/46 symbols material`) instead of the usual filtered subset, and several large chains can each take 50–60s. **Fixed (2026-08-13):** the scan now runs as its own task (`_run_intraday_scan`, spawned via `asyncio.create_task`) instead of being awaited inline, so the loop keeps hitting every 15-min mark (and its profit-take/loss-exit checks) regardless of how long a previous scan is still taking; an overrun now correctly logs/notifies "previous scan still running" on the next mark instead of vanishing | Self-recovers — this is expected for the first cycle or two after a restart while `scan_state` warms up; later cycles narrow back to the materiality-gated subset and finish well under 15 minutes. On an unpatched build, no action self-corrects the missing cycle — the next mark after the slow scan finishes will just resume normally |

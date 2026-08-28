@@ -47,6 +47,13 @@ class _NoiseFilter(logging.Filter):
     _PREFIX_LEN = 120
     _SUPPRESS_AFTER = 2
     _DIGITS = re.compile(r"\d+")
+    # "Unknown contract"/"No security definition" callbacks fire once per (strike, right)
+    # combo in a chain probe, alternating right='C'/'P' every other line — since that token
+    # sits inside the 120-char prefix and digit-normalisation doesn't touch it, consecutive
+    # call/put lines never share a key and the run-length suppression above never engages,
+    # letting a single symbol's chain fetch emit hundreds of un-suppressed lines. Normalise
+    # it out too so calls and puts for the same contract-shape collapse into one run.
+    _OPTION_RIGHT = re.compile(r"right='[CP]'")
 
     def __init__(self) -> None:
         super().__init__()
@@ -63,6 +70,7 @@ class _NoiseFilter(logging.Filter):
 
         msg = record.getMessage()
         normalised = self._DIGITS.sub("#", msg)
+        normalised = self._OPTION_RIGHT.sub("right='#'", normalised)
         key = (record.name, normalised[: self._PREFIX_LEN])
 
         if key == self._last_key:
@@ -121,7 +129,14 @@ def setup_logging() -> None:
     cfg = get_config()
     level = getattr(logging, cfg.logging.level.upper(), logging.INFO)
 
-    log_path = ROOT / cfg.logging.file
+    # pytest imports the `pytest` package before collecting any test module, so this is set
+    # before any src module (and its module-level get_logger() call) is imported — reliably
+    # routing test runs to their own file. Without this, mocked failure-injection in the test
+    # suite (RuntimeError("boom") etc.) interleaves with real production incidents in
+    # logs/system.log, which made a past incident investigation briefly mistake a burst of
+    # synthetic test errors for a live crash loop.
+    log_file = "logs/test.log" if "pytest" in sys.modules else cfg.logging.file
+    log_path = ROOT / log_file
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger()

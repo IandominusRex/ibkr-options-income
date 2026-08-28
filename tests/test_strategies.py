@@ -21,19 +21,21 @@ from src.strategies.cash_secured_put import generate_csp_candidates, screen_csp_
 from src.strategies.covered_call import generate_cc_candidates
 from src.strategies.rolling import generate_roll_candidates
 
-# Expiries within the [21, 45] DTE window; computed relative to today so tests
+# Expiries within the [7, 28] DTE window; computed relative to today so tests
 # stay green regardless of when they run.
 #
 # Spread/premium budget to clear ALL three gates for avg_cost=175 stock:
 #   spread_pct < 10%  → (ask-bid)/mid < 0.10
 #   roc_pct >= 1.0%   → premium >= 1.75
-#   ann_yield >= 12%  → premium >= 175 * (12/100) * (34/365) ≈ 1.96
+#   ann_yield >= 12%  → premium >= 175 * (12/100) * (24/365) ≈ 1.38
 #
-# Default bid=2.10 / ask=2.30 gives mid=2.20, spread_pct≈9.1%, roc≈1.26%, ann≈13.5%.
+# Default bid=2.10 / ask=2.30 gives mid=2.20, spread_pct≈9.1%, roc≈1.26%, ann≈19.1%.
 
 _TODAY = date.today()
-_EXPIRY = _TODAY + timedelta(days=34)  # 34 DTE — mid of [21, 45] window
-_EXPIRY_FAR = _TODAY + timedelta(days=42)  # 42 DTE — used as roll new-leg expiry
+_EXPIRY = _TODAY + timedelta(days=24)  # 24 DTE — inside [7, 28] and > the hardcoded
+# pos_dte<=21 roll trigger in rolling.py, so it also serves as a "no roll" position expiry.
+_EXPIRY_FAR = _TODAY + timedelta(days=27)  # 27 DTE — roll new-leg expiry: > _EXPIRY (so it
+# clears the "further out" check) with a day of margin below the dte_max=28 window edge.
 _EXPIRY_NEAR = _TODAY + timedelta(days=10)  # 10 DTE — triggers dte<=21 roll condition
 
 
@@ -494,7 +496,7 @@ def _short_put_position(
 # With the P1-01 ROC fix (credit/strike, not credit/entry_premium):
 #   roll_credit = 3.50 - 0.10 = 3.40
 #   strike = 200  →  ROC = (3.40/200)*100 = 1.70%  (passes min_roc_pct=1.0%)
-#   annualized = 1.70 * (365/42+) ≈ 14.8%+  (passes min_ann=12.0% with ample margin)
+#   annualized = 1.70 * (365/27) ≈ 23.0%  (passes min_ann=12.0% with ample margin)
 #
 # _infer_current_mid requires a live quote for the current contract — tests must
 # include both quotes so the function can find the existing contract's market price.
@@ -508,7 +510,7 @@ def _roll_current_quote(
 
 def _roll_new_quote(**kwargs) -> OptionQuote:
     # Higher premium gives ample margin above the min_annualized_yield_pct=12% gate
-    # across the range of actual DTE values (42-51 days depending on when tests run).
+    # across the range of actual DTE values (26-27 days depending on when tests run).
     return _call_quote(expiry=_EXPIRY_FAR, delta=0.28, bid=3.40, ask=3.60, **kwargs)
 
 
@@ -547,7 +549,7 @@ class TestRolling:
         assert result == []
 
     def test_no_roll_when_dte_far_and_delta_safe(self):
-        # _EXPIRY is 34 DTE (>21), delta=0.30 (<0.40) → should_roll=False
+        # _EXPIRY is 24 DTE (>21), delta=0.30 (<0.40) → should_roll=False
         pos = _short_call_position(expiry=_EXPIRY, delta=0.30)
         result = generate_roll_candidates(pos, _roll_quotes(), _iv(), _tech())
         assert result == []
@@ -559,7 +561,7 @@ class TestRolling:
         assert len(result) >= 1
 
     def test_rolls_when_delta_drifted(self):
-        # delta=0.45 > 0.40 triggers roll even with DTE=34; current contract is at _EXPIRY
+        # delta=0.45 > 0.40 triggers roll even with DTE=24; current contract is at _EXPIRY
         pos = _short_call_position(expiry=_EXPIRY, delta=0.45)
         result = generate_roll_candidates(pos, _roll_quotes(current_expiry=_EXPIRY), _iv(), _tech())
         assert len(result) >= 1
@@ -640,7 +642,7 @@ class TestRolling:
     def test_roll_put_collateral(self):
         # PUT roll: collateral = new_strike * contracts * 100.
         # roll_credit = 4.90 - 0.10 = 4.80, strike=165
-        # ROC = (4.80/165)*100 = 2.91% ≥ 1.0%, ann = 2.91*(365/50) ≈ 21.2% ≥ 12.0%
+        # ROC = (4.80/165)*100 = 2.91% ≥ 1.0%, ann = 2.91*(365/27) ≈ 39.3% ≥ 12.0%
         pos = _short_put_position(expiry=_EXPIRY_NEAR, delta=-0.25, contracts=2)
         put_new = _put_quote(strike=165.0, delta=-0.22, bid=4.80, ask=5.00, expiry=_EXPIRY_FAR)
         put_current = _put_quote(strike=170.0, delta=-0.55, bid=0.05, ask=0.15, expiry=_EXPIRY_NEAR)
@@ -696,12 +698,12 @@ def test_csp_high_priced_name_is_sized_to_one_lot_not_rejected():
 
     account = _account(net_liq=300_000.0, cash=150_000.0)
     iv_stats = IVStats(symbol="META", current_iv=35.0, iv_rank=60.0, hv_30=28.0)
-    quote = _put_quote(strike=650.0, bid=8.00, ask=8.20)  # mid=8.10; roc~1.25%, ann~13.4%
+    quote = _put_quote(strike=650.0, bid=8.00, ask=8.20)  # mid=8.10; roc~1.25%, ann~18.9%
     # D2: spot must be plausible for a 650 strike now that the VRP gate is live — the
     # default `_tech()` spot (185.0) made this put ~465 deep ITM, so its own Black-Scholes
     # fair value (~$462) dwarfed the $8.10 mid and every fixture would fail
     # `premium_below_fair_value` regardless of the sizing logic under test. spot=700 makes
-    # the 650 strike a plausible ~30-delta OTM put (fair value ~$5.55, floor ~$6.10 at the
+    # the 650 strike a plausible ~30-delta OTM put (fair value ~$3.46, floor ~$3.81 at the
     # required edge), which the $8.10 mid clears with margin.
     result = screen_csp_candidates(
         "META", [quote], account, iv_stats, _tech(price=700.0), _fund(), positions=[]

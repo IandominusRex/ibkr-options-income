@@ -33,6 +33,13 @@ class OptionRight(StrEnum):
     PUT = "P"
 
 
+class Phase(StrEnum):
+    BASE = "base"
+    UPTREND = "uptrend"
+    DISTRIBUTION = "distribution"
+    DOWNTREND = "downtrend"
+
+
 class Regime(StrEnum):
     BULLISH = "bullish"
     BEARISH = "bearish"
@@ -217,9 +224,9 @@ class TechnicalStats(BaseModel):
     # Named honestly (N16): the old `trend_strength` label implied ADX, which this never was.
     atr_ratio: float | None = None
     regime: Regime | None = None
-    # Where `price` came from this scan: "ibkr" (put-call-parity spot inferred from the live
-    # option chain) or "yfinance" (fast_info fallback, used when no chain was fetched/inferrable).
-    price_source: str = "yfinance"
+    relative_strength: float | None = None
+    price_source: str = "yfinance"  # "ibkr" (live) or "yfinance" (fallback)
+    phase: Phase | None = None
 
 
 class SectorContext(BaseModel):
@@ -294,8 +301,8 @@ class ScoreCard(BaseModel):
     assignment_safety_score: float = (
         0.0  # 0-100; higher = SAFER (less assignment risk, e.g. lower delta)
     )
+    relative_strength: float | None = None  # 0-100, 50=neutral; None = not fetched
     sentiment_score: float | None = None  # 0-100, 50=neutral; None = not fetched
-    # Per-source breakdown behind sentiment_score (enrichment for Claude/Telegram, not scoring).
     sentiment_detail: SentimentDetail | None = None
 
 
@@ -510,7 +517,8 @@ class BuyCandidate(BaseModel):
     sector: str | None = None  # from universe.yaml sectors map
     iv_rank: float | None = None  # high IV rank = better future CC premium
     quality_flag: bool | None = None
-    technical_regime: str | None = None  # from Regime enum value
+    technical_regime: Regime | str | None = None  # from Regime enum value (legacy string allowed)
+
     rationale: str = ""  # deterministic one-liner from the analytics (see buy_candidates.py)
 
     # --- Analysis context (populated from the per-symbol analytics, all optional) ---

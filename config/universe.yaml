@@ -1,12 +1,43 @@
-# The scan universe and the CSP "would-own" allowlist.
-# The system will ONLY recommend cash-secured puts on names in `would_own`.
+# The scan universe, the CSP "would-own" allowlist, and the "actively wheeling" core.
 #
-# Tiers (for reference — all tiers scan for CCs):
-#   Tier 1 — Core income: liquid, stable, fund-manager grade (SPY/QQQ/AAPL/MSFT/GOOGL/NVDA/JPM/GLD)
-#   Tier 2 — Active income: elevated IV, real fundamentals (AMZN/AMD/META/PLTR/SOFI/HOOD/HIMS/BABA)
-#   Tier 3 — Speculative / High-IV: premium income only, assignment is a risk event
-#             Leveraged ETFs (SOXL/LABU/TSLL/DPST) — NEVER in would_own (daily-reset decay)
-#             Individual speculative names (MARA/RGTI/CRCL) — CSP only with hard position limits
+# Three concepts, not one:
+#   `indexes` / `watchlist` — the full documented universe (CC candidates when held; daily
+#       IV-history/price bookkeeping). Scanned lightly (analytics only) every intraday cycle,
+#       but NOT option-chain-fetched unless also in `would_own` and material this cycle.
+#   `would_own` — stocks/ETFs you are genuinely comfortable being assigned (owning long term).
+#       CSP candidates are filtered to this set — the system will ONLY recommend cash-secured
+#       puts on names in `would_own`. Keep it honest.
+#   `actively_wheeling` — a SUBSET of `would_own`: the core names you're actively running the
+#       wheel on. These get the full per-cycle materiality treatment (0.5% move gate, 120-min
+#       forced sweep — see `market_data.intraday_rescan_move_pct` / `force_full_scan_minutes`).
+#       Everything in `would_own` but NOT in `actively_wheeling` is "dip-watch": not scanned
+#       every cycle at all, only pulled into that cycle's option-chain scan when its live spot
+#       has *dropped* ≥ `market_data.dip_pull_in_pct` (3%) since its last fetch — a rally is
+#       never a CSP entry signal, so this check is directional, unlike the 0.5% gate above.
+#       Dip-watch names are also excluded from the 120-min forced sweep (event-triggered only,
+#       and the 120-min sweep is per symbol, not "the whole core at once" — see settings.yaml).
+#   Currently-held stock positions are eligible for a CC-candidate refresh regardless of which
+#   (if any) of the lists above they're in, gated at `market_data.held_position_move_pct` (2%,
+#   UP only — a new CC strike needs room a rally creates, not a drop; existing-position risk is
+#   handled by the separate event-driven monitor) instead of unconditionally every cycle.
+#   That held rule is ADDED to whichever list rule already applies, never substituted for it
+#   (2026-08-28): a name you hold *and* actively wheel keeps its 0.5% either-way gate and gains
+#   the 2% rally trigger; a held dip-watch name keeps its 3% dip trigger and gains the same.
+#   Holding shares never narrows coverage — the CSP screen runs for every would_own symbol
+#   whether or not it is held, so a held wheel name has a live CSP reason to refetch on a dip
+#   that the CC-oriented held rule alone cannot see.
+#
+# Risk tiers (for reference — organizational only, all tiers scan for CCs):
+#   safe_bets — core income: liquid, stable, fund-manager grade (SPY/QQQ/GOOGL/NVDA/JPM)
+#   moderate  — active income: elevated IV, real fundamentals (META/PLTR/HOOD/SOFI/HIMS)
+#   risky     — speculative / high-IV: premium income only, assignment is a risk event
+#             Leveraged ETFs (LABU/TSLL/DPST) — CC-only, NEVER in would_own (daily-reset decay)
+#             TQQQ/UPRO/SOXL — leveraged, but a DELIBERATE would_own exception (confirmed
+#             2026-08-27: decay risk on assignment is accepted for these three specifically)
+#             Individual speculative names (MARA/RGTI/ASTS/RKLB) — CSP only, hard position limits
+#
+# Archived tickers (things you've decided you'll never trade) live in
+# `config/universe_archive.yaml` — reference-only, never loaded by the application.
 #
 # Symbol rule: one ticker string feeds BOTH yfinance and IBKR, so only names with a single
 # clean symbol belong here. Class shares like Berkshire-B (yfinance "BRK-B" vs IBKR "BRK B")
@@ -14,35 +45,31 @@
 
 # ── ETFs ──────────────────────────────────────────────────────────────────────
 
-# Tier 1 — core ETF backbone
+# safe_bets — core ETF backbone
 indexes:
   - SPY          # S&P 500; 0.8–2.5%/mo at 0.30Δ; most liquid
   - QQQ          # Nasdaq-100; slightly higher IV than SPY
   - IWM          # Russell 2000; better premiums, higher vol
   - SMH          # Semiconductor sector proxy; good OI
-  - GLD          # Gold; decorrelates from equity drawdowns
+  - MAGS         # Roundhill Magnificent Seven ETF; equal-weight AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA
+                 # NOTE: heavily overlaps GOOGL/NVDA/AMZN below — same tech-sector bucket
 
-  # Tier 1 — sector / diversifier ETFs (broaden away from the tech/growth/crypto tilt)
-  - XLF          # Financials sector; strong options liquidity
-  - XLK          # Technology sector
-  - XLE          # Energy sector; commodity-linked, decorrelates from growth
-  - XLV          # Healthcare sector; defensive
-  - XLP          # Consumer staples; low-beta defensive
-  - XLU          # Utilities; rate-sensitive defensive, decorrelates from tech
-  - XLI          # Industrials; cyclical diversifier
-  - TLT          # Long-duration Treasuries; rates/bond diversification (low IV — few signals)
-  - SLV          # Silver; higher IV than GLD, commodity diversifier
+  # safe_bets — sector / diversifier ETFs (broaden away from the tech/growth/crypto tilt)
+  - XLV          # Healthcare sector; defensive — LOW IV, thin premium; would_own-eligible but
+                 # rarely worth chasing for CSP (dip-watch only, not actively_wheeling)
+  - XLP          # Consumer staples; very low IV — often below min_iv_rank; dip-watch only
+  - TLT          # Long-duration Treasuries; very low IV — hedge sleeve, rarely signals; dip-watch only
 
-  # Tier 2 — sector/thematic ETFs
+  # moderate — sector/thematic ETFs
   - HACK         # Cybersecurity ETF
   - IGV          # Software ETF
 
-  # Tier 3 — elevated-IV thematic ETFs (CC-only — NOT in would_own)
-  - ARKK         # Innovation basket; elevated IV
-  - BITO         # Bitcoin futures ETF; high premiums; futures-roll decay → CC-only
+  # risky — leveraged, DELIBERATE would_own exception (confirmed 2026-08-27)
+  - TQQQ         # 3× Nasdaq-100; daily-reset decay accepted for CSP/CC
+  - UPRO         # 3× S&P 500; daily-reset decay accepted for CSP/CC
+  - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily-reset decay accepted
 
-  # Tier 3 — CC-only leveraged ETFs; NEVER add to would_own
-  - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily NAV decay
+  # risky — CC-only leveraged ETFs; NEVER add to would_own
   - LABU         # 3× Biotech; binary FDA gap risk on top of leverage decay
   - TSLL         # 2× TSLA; affordable entry; high IV
   - DPST         # 3× Regional Banks; interest-rate sensitive; good CC premiums
@@ -50,111 +77,109 @@ indexes:
 # ── Individual stocks ─────────────────────────────────────────────────────────
 
 watchlist:
-  # Tier 1 — mega-cap, fund-manager grade
-  - NVDA         # AI leader; IV 40–65; highest-premium Tier 1 name
-  - AAPL         # Most liquid single-stock options; IV 22–35
-  - MSFT         # Solid fundamentals; consistent premium; IV 22–32
-  - GOOGL        # Liquid chains; search + AI moat; IV 25–38
-  - AMZN         # Strong FCF; ~$205/sh; IV 28–42
-  - JPM          # Best-in-class bank; financials diversifier; IV 22–35
-  - V            # Visa; payments network moat; liquid options; lower IV (~20–28)
-  - MA           # Mastercard; payments network moat; lower IV (~20–28)
-  - WMT          # Walmart; defensive consumer staple; ~$120/sh; liquid options
-  - HD           # Home Depot; quality retail; ~$327/sh; liquid options
-  - COST         # Costco; defensive compounder — CC-focused (~$975/sh, large collateral)
-  - LLY          # Eli Lilly; pharma leader — CC-focused (~$1,150/sh, large collateral)
+  # safe_bets — mega-cap, fund-manager grade
+  - NVDA         # AI leader; IV 40–65; highest-premium safe-bet name; actively_wheeling
+  - AAPL         # Most liquid single-stock options; IV 22–35; dip-watch only
+  - MSFT         # Solid fundamentals; consistent premium; IV 22–32; dip-watch only
+  - GOOGL        # Liquid chains; search + AI moat; IV 25–38; actively_wheeling
+  - AMZN         # Strong FCF; ~$205/sh; IV 28–42; actively_wheeling
+  - JPM          # Best-in-class bank; financials diversifier; IV 22–35; dip-watch only
+  - V            # Visa; payments network moat; liquid options; lower IV (~20–28); dip-watch only
+  - WMT          # Walmart; defensive consumer staple; ~$120/sh; liquid options; dip-watch only
 
-  # Tier 2 — elevated IV, real fundamentals, assignment acceptable
-  - TSLA         # Top single-stock income name; deepest liquidity after AAPL; IV 40–70
-  - AMD          # Semiconductor peer; popular wheel stock; IV 40–60
-  - META         # Exceptional premiums since 2023 recovery; IV 30–50
-  - PLTR         # AI/defense; real revenue; IV rank ~47; ~$158/sh
-  - SOFI         # Fintech turnaround; up 32% in 2026; ~$18/sh; IV 55–80
-  - HOOD         # Retail brokerage; active options; ~$90/sh; IV 50–80
-  - HIMS         # Telehealth growth; ±16% implied earnings move; IV 60–90
-  - BABA         # Alibaba ADR; IV 40–55; NOTE: ADR delisting risk — size conservatively
-  - NBIS         # Nebius Group; AI infrastructure/cloud; elevated IV
-  - CRM          # Salesforce; enterprise software leader
-  - UBER         # Mobility + delivery platform; liquid options
-  - NET          # Cloudflare; cybersecurity and edge computing
-  - CRWD         # CrowdStrike; cybersecurity leader
-  - SNOW         # Snowflake; cloud data platform
-  - TTD          # Trade Desk; digital advertising platform
-  - DDOG         # Datadog; cloud monitoring and observability
-  - TEM          # Tempus AI; healthcare AI platform
+  # moderate — elevated IV, real fundamentals, assignment acceptable
+  - TSLA         # Top single-stock income name; deepest liquidity after AAPL; IV 40–70; dip-watch only
+  - META         # Exceptional premiums since 2023 recovery; IV 30–50; actively_wheeling
+  - PLTR         # AI/defense; real revenue; IV rank ~47; ~$158/sh; actively_wheeling
+  - SOFI         # Fintech turnaround; up 32% in 2026; ~$18/sh; IV 55–80; actively_wheeling
+  - HOOD         # Retail brokerage; active options; ~$90/sh; IV 50–80; actively_wheeling
+  - HIMS         # Telehealth growth; ±16% implied earnings move; IV 60–90; actively_wheeling
+  - BABA         # Alibaba ADR; IV 40–55; NOTE: ADR delisting risk — size conservatively; dip-watch only
+  - NBIS         # Nebius Group; AI infrastructure/cloud; elevated IV; actively_wheeling
+  - UBER         # Mobility + delivery platform; liquid options; dip-watch only
+  - CRWD         # CrowdStrike; cybersecurity leader; dip-watch only
+  - TEM          # Tempus AI; healthcare AI platform; CC-only (not in would_own)
 
-  # Tier 3 — speculative / high-IV; position size controlled by risk engine limits
-  - MARA         # Bitcoin miner proxy; IV 90–130; BTC correlation = gap risk
-  - RGTI         # Quantum computing; speculative; IV mean ~86; early stage
-  - CRCL         # Circle/stablecoin IPO; IV ~170; down 57% from ATH; thin option liquidity
-  - COIN         # Coinbase; liquid crypto-equity; high IV (cleaner expression than miners)
-  - MSTR         # Strategy (MicroStrategy); leveraged-BTC proxy; very high IV — CC-only
-  - RKLB         # Rocket Lab; space launch and satellite systems
-  - ASTS         # AST SpaceMobile; satellite communications
-  - IONQ         # Quantum computing
+  # risky — speculative / high-IV; position size controlled by risk engine limits
+  - MARA         # Bitcoin miner proxy; IV 90–130; BTC correlation = gap risk; actively_wheeling
+  - RGTI         # Quantum computing; speculative; IV mean ~86; early stage; actively_wheeling
+  - RKLB         # Rocket Lab; space launch and satellite systems; actively_wheeling
+  - ASTS         # AST SpaceMobile; satellite communications; actively_wheeling
+  - IONQ         # Quantum computing; CC-only (not in would_own)
+
+# ── The core wheel rotation (subset of would_own below) ───────────────────────
+
+# Scanned every intraday cycle via the standard materiality gate (0.5% move → re-fetch chain;
+# held names use market_data.held_position_move_pct; forced full sweep every
+# market_data.force_full_scan_minutes). Confirmed 2026-08-27.
+actively_wheeling:
+  # safe_bets
+  - GOOGL
+  - NVDA
+  - AMZN
+  - MAGS
+  # moderate
+  - META
+  - PLTR
+  - HOOD
+  - SOFI
+  - HIMS
+  - NBIS
+  # risky
+  - ASTS
+  - RKLB
+  - RGTI
+  - MARA
+  # risky — leveraged, deliberate would_own exception
+  - TQQQ
+  - UPRO
+  - SOXL
 
 # ── CSP allowlist ─────────────────────────────────────────────────────────────
 
 # Stocks/ETFs you are genuinely comfortable being assigned (owning long term).
 # CSP candidates are filtered to this set. Keep it honest.
-# Leveraged ETFs are intentionally excluded — assignment = owning a decaying 3× product.
+# = `actively_wheeling` (above) ∪ the "dip-watch" names below (pulled into a scan cycle only on
+# a ≥3% drop — see market_data.dip_pull_in_pct — not scanned every cycle like actively_wheeling).
+# Leveraged CC-only ETFs (LABU/TSLL/DPST) are intentionally excluded — assignment = owning a
+# decaying 3× product with no offsetting exception.
 would_own:
-  # Tier 1 ETFs
+  # actively_wheeling (see block above) — always CSP-eligible, always the core rotation
+
+  - GOOGL
+  - NVDA
+  - AMZN
+  - MAGS
+  - META
+  - PLTR
+  - HOOD
+  - SOFI
+  - HIMS
+  - NBIS
+  - ASTS
+  - RKLB
+  - RGTI
+  - MARA
+  - TQQQ
+  - UPRO
+  - SOXL
+
+  # dip-watch — would_own-eligible, but only scanned on a ≥3% drop (market_data.dip_pull_in_pct)
   - SPY
   - QQQ
   - IWM
   - SMH
-  - GLD
-  - XLF
-  - XLK
-  - XLE
-  - XLV
-  - XLP
-  - XLU
-  - XLI
-  - TLT
-  - SLV
   - HACK
   - IGV
-
-  # Tier 1 stocks
-  - NVDA
   - AAPL
   - MSFT
-  - GOOGL
-  - AMZN
   - JPM
   - V
-  - MA
   - WMT
-  - HD
-
-  # Tier 2 stocks
   - TSLA
-  - AMD
-  - META
-  - PLTR
-  - SOFI
-  - HOOD
-  - HIMS
-  - NBIS
-  - CRM
-  - UBER
-  - NET
-  - CRWD
-  - SNOW
-  - TTD
-  - DDOG
-  - COIN
-
-  # Tier 2 — conditional; ADR risk; keep position small via max_risk_units_per_ticker_pct
   - BABA
-
-  # Tier 3 — speculative CSPs; the risk engine's max_contracts + max_risk_units_per_ticker_pct
-  # caps ensure these stay small. Remove if assignment feels uncomfortable.
-  - MARA
-  - RGTI
-  - RKLB
+  - UBER
+  - CRWD
 
 # ── Sector tags (for concentration limits in risk_engine.py) ─────────────────
 
@@ -167,22 +192,16 @@ sectors:
   QQQ: index
   IWM: index
   SMH: semis
-  GLD: commodities
+  MAGS: tech
+  TQQQ: index
+  UPRO: index
 
   # Sector / diversifier ETFs
-  XLF: financials
-  XLK: tech
-  XLE: energy
   XLV: healthcare
   XLP: consumer
-  XLU: utilities
-  XLI: industrials
   TLT: bonds
-  SLV: commodities
   HACK: tech
   IGV: tech
-  ARKK: tech
-  BITO: crypto
 
   # Leveraged ETFs
   SOXL: semis
@@ -190,7 +209,7 @@ sectors:
   TSLL: consumer
   DPST: financials
 
-  # Tier 1 stocks
+  # safe_bets stocks
   NVDA: semis
   AAPL: tech
   MSFT: tech
@@ -198,15 +217,10 @@ sectors:
   AMZN: tech
   JPM: financials
   V: financials
-  MA: financials
   WMT: consumer
-  HD: consumer
-  COST: consumer
-  LLY: healthcare
 
-  # Tier 2 stocks
+  # moderate stocks
   TSLA: consumer
-  AMD: semis
   META: tech
   PLTR: tech
   SOFI: financials
@@ -214,21 +228,13 @@ sectors:
   HIMS: healthcare
   BABA: tech
   NBIS: tech
-  CRM: tech
   UBER: consumer
-  NET: tech
   CRWD: tech
-  SNOW: tech
-  TTD: tech
-  DDOG: tech
   TEM: healthcare
 
-  # Tier 3 speculative
+  # risky stocks
   MARA: crypto
   RGTI: tech
-  CRCL: crypto
-  COIN: crypto
-  MSTR: crypto
   RKLB: aerospace
   ASTS: telecom
   IONQ: tech
@@ -245,9 +251,9 @@ strike_bands:
   LABU: 0.50
   TSLL: 0.45
   DPST: 0.40
+  TQQQ: 0.45
+  UPRO: 0.45
   MARA: 0.45
-  CRCL: 0.50
-  MSTR: 0.45
   RGTI: 0.45
   IONQ: 0.45
   ASTS: 0.45

@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Container
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -33,7 +34,7 @@ from src.analytics.sector_context import get_sector_context, render_sector_conte
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.runner import review_candidates
-from src.common.config import get_config
+from src.common.config import Config, get_config
 from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
@@ -73,7 +74,7 @@ from src.orchestrator.scan_progress import (
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.risk_verdicts import record_assessments
-from src.storage.scan_state import bulk_upsert_scan_state, get_scan_state
+from src.storage.scan_state import ScanState, bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
     acquire_scan_lease,
     get_setting,
@@ -140,6 +141,12 @@ class ScanResult:
     # rest of the universe at symbol_timeout_seconds each the scan bails. The caller (intraday
     # loop) reads this to notify the operator and force a reconnect.
     aborted_unhealthy: bool = False
+    # Symbols never reached this run because of an ``aborted_unhealthy`` abort — the symbol that
+    # tipped the circuit breaker plus everything after it in iteration order. Empty on a clean
+    # run. The caller (intraday loop) carries this forward as next cycle's forced-include set so
+    # a partial abort doesn't silently strand symbols outside the materiality gate's normal
+    # triggers (2026-08-28).
+    unreached_symbols: list[str] = field(default_factory=list)
     # Intraday telemetry (S1/S5): how many symbols were fetched this cycle vs the universe
     # size, and whether the Claude review was reused. `material_count` also feeds the
     # "N/M names moved <X%" clause appended to a quiet cycle's empty-screen diagnostic.
@@ -476,67 +483,280 @@ def _persist_candidates(
 # ---------------------------------------------------------------------------
 
 
+# Priority bands for `_fetch_priority`. Real move ratios are ~1.0-20.0, so the sentinels sit
+# clear of them at both ends.
+_RETRY_PRIORITY = 1e9
+_FLOOR_PRIORITY = 1e6
+_STALE_PRIORITY = 0.5
+
+
+def _move_ratio(
+    symbol: str,
+    price: float,
+    last_spot: float,
+    *,
+    holdings: Container[str],
+    aw_set: Container[str],
+    dip_set: Container[str],
+    cfg: Config,
+) -> float:
+    """How far *symbol* moved past its own bar, as a multiple of that bar.
+
+    ``>= 1.0`` means material; ``2.0`` means it moved twice as far as its threshold requires.
+    Buckets are **unioned** — a symbol in more than one bucket takes the max across all of them,
+    so holding shares can never lower a name's ratio (2026-08-28).
+
+    This is the single source of truth for the move gate. ``_compute_material_symbols`` uses it
+    as a boolean (``>= 1.0``); the intraday fetch budget re-uses the same number to *rank* which
+    material symbols are worth spending the cycle on first. Expressing both in "multiples of its
+    own bar" is what makes the ranking comparable across buckets: a dip-watch name down 6% (2.0x
+    its 3% bar) outranks an actively_wheeling name down 0.6% (1.2x its 0.5% bar), which is the
+    right economics — in a sell-off the deepest drops are the best CSP entries. Keeping one
+    implementation means the gate and the ranker cannot disagree about what "moved" means.
+    """
+    if last_spot <= 0:
+        return 0.0
+    up = (price - last_spot) / last_spot
+    ratios: list[float] = []
+    if symbol in holdings:  # (a) up only — a new CC strike needs a rally's room
+        ratios.append(up / cfg.market_data.held_position_move_pct)
+    if symbol in aw_set:  # (b) either way — core rotation
+        ratios.append(abs(up) / cfg.market_data.intraday_rescan_move_pct)
+    if symbol in dip_set:  # (c) drop only — opportunistic CSP entry
+        ratios.append(-up / cfg.market_data.dip_pull_in_pct)
+    return max(ratios, default=0.0)
+
+
+def _fetch_priority(
+    material: set[str],
+    probed_spots: dict[str, float],
+    states: dict[str, ScanState],
+    *,
+    holdings: Container[str],
+    aw_set: Container[str],
+    dip_set: Container[str],
+    must_include: set[str] | None,
+    cfg: Config,
+) -> dict[str, float]:
+    """Rank the material symbols so a capped cycle spends its budget on the best fetches first.
+
+    Only meaningful alongside ``market_data.chain_fetch_budget_seconds``: when every material
+    symbol fits in the cycle the order is irrelevant, and when it doesn't, *which* ones get
+    dropped is the whole question. Highest first:
+
+    ``_RETRY_PRIORITY``   symbols a previous cycle ran out of budget (or socket) before reaching.
+                          Unconditionally first, otherwise a name at the back of a big queue can
+                          starve indefinitely while fresher movers keep jumping ahead of it.
+    ``_FLOOR_PRIORITY``   cleared the risk gate *and* score floor on its last fetch — a live,
+                          tradeable candidate whose price is going stale. Repricing an actionable
+                          contract beats discovering a new one.
+    move ratio            how many multiples of its own bar the symbol moved (see
+                          ``_move_ratio``). Comparable across buckets, so in a sell-off the
+                          deepest drops are bought first.
+    ``_STALE_PRIORITY``   material only because its 120-min staleness timer expired. Below every
+                          real mover by construction: it is quiet, which is exactly why nothing
+                          else fired for it.
+
+    Immaterial symbols are absent from the result; the caller treats a missing key as lowest.
+    """
+    priority: dict[str, float] = {}
+    for sym in material:
+        if must_include and sym in must_include:
+            priority[sym] = _RETRY_PRIORITY
+            continue
+        st = states.get(sym)
+        if st is not None and st.cleared_floor:
+            priority[sym] = _FLOOR_PRIORITY
+            continue
+        price = probed_spots.get(sym)
+        ratio = (
+            _move_ratio(
+                sym,
+                price,
+                st.last_spot,
+                holdings=holdings,
+                aw_set=aw_set,
+                dip_set=dip_set,
+                cfg=cfg,
+            )
+            if price is not None and st is not None and st.last_spot
+            else 0.0
+        )
+        # A material symbol that didn't move is here on the staleness timer (or has no baseline).
+        priority[sym] = ratio if ratio >= 1.0 else _STALE_PRIORITY
+    return priority
+
+
 async def _compute_material_symbols(
     all_symbols: list[str],
     holdings_symbols: set[str],
-    would_own: list[str],
+    actively_wheeling: list[str],
+    dip_watch: list[str],
+    *,
+    force_full_sweep: bool = False,
+    must_include: set[str] | None = None,
 ) -> tuple[set[str], dict[str, float]]:
     """Decide which symbols need a fresh option-chain fetch this intraday cycle (S1).
 
     Returns ``(material, probed_spots)``:
-      - ``material`` is the subset of *all_symbols* that are *material*:
-          (a) every held stock position — CC / profit-take / roll need fresh quotes;
-          (b) every ``would_own`` name whose live spot has drifted ≥
+      - ``material`` is the subset of *all_symbols* that are *material*. Rules (a)-(c) are the
+        per-bucket move gates, and they are **UNIONed, not selected between** (2026-08-28): a
+        symbol that sits in two buckets is tested against both, and any one of them firing is
+        enough. Holding shares must never *reduce* a name's coverage, which is exactly what the
+        old ``if held / elif dip_watch / else`` chain did — an ``actively_wheeling`` name you
+        owned silently dropped from (b) to (a)-only, shrinking the core rotation to just the
+        names you *don't* hold. The buckets answer different questions about the same fetch —
+        (a) "is there room for a new covered call?", (b)/(c) "is this a CSP entry?" — and the
+        CSP screen runs for every ``would_own`` symbol whether or not it is held, so a held
+        wheel name genuinely has both reasons:
+          (a) every held stock position whose live spot has *risen* ≥
+              ``market_data.held_position_move_pct`` from the spot at its last fetch —
+              directional (2026-08-27): a new CC candidate needs room to sell an OTM strike,
+              which only opens up on a rally; a drop doesn't create that opportunity, and
+              existing-position risk (delta drift, assignment, rolls) is handled continuously by
+              the separate event-driven monitor (`src/monitor/intraday.py`), not this gate. For a
+              held name that is *only* held (not in ``would_own``) this is the whole story, and a
+              drop is still caught within `force_full_scan_minutes` by (f) below;
+          (b) every ``actively_wheeling`` name — held or not — whose live spot has drifted ≥
               ``market_data.intraday_rescan_move_pct`` from the spot at its last fetch;
-          (c) every name that cleared the score floor last cycle.
-        Plus a periodic full sweep when the oldest fetched symbol is older than
-        ``force_full_scan_minutes`` (or when no state exists yet, e.g. the first intraday cycle).
-      - ``probed_spots`` is the live yfinance price fetched while checking (b), keyed by
+          (c) every ``dip_watch`` name — held or not — whose live spot has *dropped* ≥
+              ``market_data.dip_pull_in_pct`` from the spot at its last fetch — directional,
+              since a rally is never a CSP entry signal for a name outside the core rotation;
+          (d) every name that cleared the score floor last cycle;
+          (e) any symbol with no usable baseline yet (new position, or first time seen) — always
+              fetched once to establish one;
+          (f) every ``actively_wheeling``/held name individually stale beyond
+              ``force_full_scan_minutes`` since ITS OWN last fetch (never ``dip_watch`` — that
+              would defeat the point of keeping dip-watch off the per-cycle rotation). This is
+              deliberately **per symbol**, not "sweep the whole core the moment the single
+              stalest one goes over the line" — under that old rule, one quiet name (e.g. GLD on
+              a slow week) would drag all 19 into a synchronized burst together every time its
+              own clock expired. Per-symbol staleness means each name's clock starts ticking
+              from *its own* last fetch, so cheap/frequent fetches (a volatile name tripping (a)
+              or (b) often) and rare ones (a quiet name relying on this fallback) desynchronize
+              naturally — the periodic refreshes spread out over time instead of bunching, with
+              no explicit batch/rotation schedule needed to get that effect. Since 2026-08-28 the
+              stamps this reads are also written per symbol (see ``_persist_scan_state``), so a
+              sweep's cohort no longer shares one identical clock and expires spread across the
+              same span the sweep took, rather than all inside one later cycle.
+        The very first intraday cycle (no `scan_state` at all yet) sweeps everything to seed it,
+        as does *force_full_sweep* — with one exception: dip_watch names get seed-only (see the
+        ``force_full_sweep`` branch below).
+      - ``probed_spots`` is the live yfinance price fetched while checking (a)-(c), keyed by
         symbol. Immaterial symbols skip the option chain and therefore have no chain-derived
         spot — the caller reuses this probe price as ``spot_override`` so
         ``get_technical_stats`` doesn't pay for a second identical ``fast_info`` fetch (S1
         follow-up).
 
+    *must_include* forces exactly the named symbols into ``material`` regardless of the rules
+    above — the intraday loop's own retry queue for symbols an aborted sweep never reached last
+    cycle (2026-08-28). Unlike *force_full_sweep* this doesn't widen anything else: an unrelated
+    unmoved symbol is still gated normally, so a retry costs only what it needs to.
+
     Only ever *narrows* the set — callers in full-sweep mode (manual ``/scan``)
     must not call this and instead fetch every symbol. Pure read; never raises.
     """
     cfg = get_config()
+
+    aw_set = set(actively_wheeling)
+    dip_set = set(dip_watch)
+
+    # Full-sweep mode (the first cycle since process start, or a manual /scan) overrides the
+    # materiality gate — with one exception (2026-08-28): dip_watch names don't get an
+    # unconditional IBKR chain fetch. A dip_watch name has only one CSP-entry reason to be
+    # fetched — a real drop — and at startup there's no *intraday* drift to measure yet, only an
+    # overnight gap from yesterday's persisted baseline. That gap is checked bidirectionally
+    # against ``dip_pull_in_pct`` (a rally is a legitimate CSP setup at the open via an IV
+    # expansion / gap-up, even though a small intraday rally is never a CSP entry later); names
+    # with no material overnight gap (or no baseline to compare against — the first-ever run)
+    # get seed-only: the caller persists the yfinance probe price as ``last_spot`` and skips the
+    # chain fetch. This keeps the per-cycle rule (c) drop-only gate working from cycle 1 onward,
+    # sourced end-to-end from yfinance (no IBKR/yfinance mismatch), at the cost of forgoing the
+    # first-cycle IV/Greeks set for quiet dip_watch names — acceptable, since a dip_watch name
+    # that hasn't gapped overnight isn't a candidate anyway.
+    if force_full_sweep:
+        # Everything except pure-dip_watch names is material unconditionally.
+        material: set[str] = {s for s in all_symbols if s not in dip_set or s in holdings_symbols}
+        # Probe only the dip_watch names (those not already in material) to either fetch them
+        # (overnight gap ≥ dip_pull_in_pct) or seed-only (quiet overnight / no baseline).
+        to_probe_dip = [s for s in dip_watch if s not in material and s in set(all_symbols)]
+        states = get_scan_state(to_probe_dip) if to_probe_dip else {}
+        dip_pct = cfg.market_data.dip_pull_in_pct
+        loop = asyncio.get_running_loop()
+        prices = await asyncio.gather(
+            *(loop.run_in_executor(None, _fetch_last_price, s) for s in to_probe_dip),
+            return_exceptions=True,
+        )
+        probed_spots: dict[str, float] = {}
+        for sym, price in zip(to_probe_dip, prices, strict=True):
+            if not isinstance(price, BaseException) and price is not None:
+                probed_spots[sym] = price
+            st = states.get(sym)
+            # No baseline → seed-only (per design: accept no overnight detection on the first
+            # day for a brand-new ticker; rule (c) drop-only works from cycle 1 onward).
+            if (
+                isinstance(price, BaseException)
+                or price is None
+                or st is None
+                or not st.last_spot
+                or st.last_spot <= 0
+            ):
+                continue  # seed-only: stays out of material, probe price in probed_spots
+            # Bidirectional overnight-move check — a gap in either direction is a legitimate
+            # CSP setup at the open (gap-up = IV expansion / news; gap-down = the dip rule).
+            if abs(price - st.last_spot) / st.last_spot >= dip_pct:
+                material.add(sym)
+        if must_include:
+            material |= must_include & set(all_symbols)
+        return material, probed_spots
+
     states = get_scan_state(all_symbols)
 
     # No baseline yet (first intraday cycle after a cold start) → sweep everything to seed it.
     if not states:
         return set(all_symbols), {}
 
-    # Periodic safety-net full sweep: if the stalest fetched symbol is too old, refresh all.
+    material = {sym for sym, st in states.items() if st.cleared_floor}  # (d)
+
+    # (f) Per-symbol safety-net staleness — scoped to actively_wheeling ∪ held only. dip_watch
+    # names are event-triggered by a genuine drop, never swept on a timer.
     force_minutes = cfg.market_data.force_full_scan_minutes
     if force_minutes > 0:
-        stamps = [s.last_scanned_at for s in states.values() if s.last_scanned_at]
-        oldest = min(stamps) if stamps else None
-        # SQLite drops tzinfo on round-trip; last_scanned_at was stored as datetime.now(UTC),
-        # so a naive value here is UTC — reattach tzinfo before comparing.
-        if oldest is not None and oldest.tzinfo is None:
-            oldest = oldest.replace(tzinfo=UTC)
-        if oldest is None or (datetime.now(UTC) - oldest).total_seconds() > force_minutes * 60:
-            return set(all_symbols), {}
+        now = datetime.now(UTC)
+        for sym in set(actively_wheeling) | holdings_symbols:
+            stamp = states[sym].last_scanned_at if sym in states else None
+            # SQLite drops tzinfo on round-trip; last_scanned_at was stored as datetime.now(UTC),
+            # so a naive value here is UTC — reattach tzinfo before comparing.
+            if stamp is not None and stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            if stamp is None or (now - stamp).total_seconds() > force_minutes * 60:
+                material.add(sym)
 
-    material: set[str] = set(holdings_symbols)  # (a)
-    material |= {sym for sym, st in states.items() if st.cleared_floor}  # (c)
+    # A symbol can belong to more than one bucket (a name you hold *and* actively wheel). The
+    # rules below are UNIONed, not selected between — see the loop. ``aw_set``/``dip_set`` are
+    # defined above the force_full_sweep branch so it can reuse them.
+    # fast_info is a cheap single quote (no option chain); fan out so the materiality probe
+    # stays sub-second. The three lists below only control probe *ordering* and de-duplication
+    # (each symbol is probed exactly once, held names first) — they do not pick which threshold
+    # applies. That is decided per rule in the loop.
+    to_probe_held = [s for s in holdings_symbols if s not in material]
+    to_probe_core = [
+        s for s in actively_wheeling if s not in material and s not in holdings_symbols
+    ]
+    to_probe_dip = [s for s in dip_watch if s not in material and s not in holdings_symbols]
+    to_probe = to_probe_held + to_probe_core + to_probe_dip
 
-    # (b) would_own names whose live spot moved past the threshold. fast_info is a cheap
-    # single quote (no option chain); fan out so the materiality probe stays sub-second.
-    move_pct = cfg.market_data.intraday_rescan_move_pct
-    to_probe = [s for s in would_own if s not in material]
     loop = asyncio.get_running_loop()
     prices = await asyncio.gather(
         *(loop.run_in_executor(None, _fetch_last_price, s) for s in to_probe),
         return_exceptions=True,
     )
-    probed_spots: dict[str, float] = {}
+    probed_spots = {}
     for sym, price in zip(to_probe, prices, strict=True):
         if not isinstance(price, BaseException) and price is not None:
             probed_spots[sym] = price
         st = states.get(sym)
-        # No baseline, no price, or a non-positive last_spot → fetch to (re)establish one.
+        # No baseline, no price, or a non-positive last_spot → fetch to (re)establish one. (e)
         if (
             isinstance(price, BaseException)
             or price is None
@@ -546,24 +766,83 @@ async def _compute_material_symbols(
         ):
             material.add(sym)
             continue
-        if abs(price - st.last_spot) / st.last_spot >= move_pct:
+        # Union, not if/elif (2026-08-28). A symbol in two buckets is tested against BOTH: these
+        # used to be mutually exclusive with `holdings_symbols` winning, which meant holding
+        # shares of a name *reduced* its coverage — an actively_wheeling name you owned dropped
+        # from +-intraday_rescan_move_pct either way to held_position_move_pct up only, silently
+        # shrinking the core rotation to just the names you don't hold. Since the CSP screen runs
+        # for every would_own symbol regardless of whether it is held (see
+        # `strategies/cash_secured_put.py`), a held wheel name has a live CSP reason to be
+        # refetched on a dip that the held (CC) rule alone can never see. `_move_ratio` owns the
+        # union so the fetch-budget ranker uses the identical definition of "moved".
+        if (
+            _move_ratio(
+                sym,
+                price,
+                st.last_spot,
+                holdings=holdings_symbols,
+                aw_set=aw_set,
+                dip_set=dip_set,
+                cfg=cfg,
+            )
+            >= 1.0
+        ):
             material.add(sym)
+
+    if must_include:
+        material |= must_include & set(all_symbols)
 
     return material, probed_spots
 
 
 def _persist_scan_state(
-    fetched_spots: dict[str, float],
+    fetched: dict[str, tuple[float, datetime]],
     cleared_floor_symbols: set[str],
-    scanned_at: datetime,
 ) -> None:
-    """Write the per-symbol materiality baseline for every fetched symbol (S1/S10). Off-thread."""
+    """Write the per-symbol materiality baseline for every fetched symbol (S1/S10). Off-thread.
+
+    *fetched* maps symbol → (spot at fetch, the moment **that symbol's** chain was fetched).
+    The timestamp is per symbol, not one shared run-level stamp (2026-08-28): a run-level stamp
+    recorded every symbol in a sweep as having been fetched when the *whole run* finished, which
+    (i) overstated the freshness of everything fetched early by up to the sweep's duration, and
+    (ii) gave the entire cohort one identical staleness clock, so they all expired together in a
+    single later cycle. Per-symbol stamps spread a sweep's expiry across the same span the sweep
+    itself took — which matters because a burst longer than ``intraday_loop_minutes`` overruns
+    the cycle and costs the next one entirely (``scan_running``). This is what makes the
+    per-symbol staleness check in ``_compute_material_symbols`` (f) actually per symbol: that
+    check already read each symbol's own stamp, but every stamp in a sweep used to be identical.
+    """
     bulk_upsert_scan_state(
         {
-            symbol: (spot, scanned_at, symbol in cleared_floor_symbols)
-            for symbol, spot in fetched_spots.items()
+            symbol: (spot, stamp, symbol in cleared_floor_symbols)
+            for symbol, (spot, stamp) in fetched.items()
         }
     )
+
+
+def _persist_seed_only_baselines(
+    probed_spots: dict[str, float],
+    material: set[str],
+) -> None:
+    """Persist yfinance probe prices as ``last_spot`` baselines for symbols that were *not*
+    fetched this cycle (2026-08-28).
+
+    In a full-sweep cycle (startup, manual /scan), dip_watch names that didn't gap overnight
+    are skipped — no IBKR chain fetch — but their yfinance probe price is the baseline the
+    per-cycle rule (c) gate will compare against from cycle 1 onward. Without persisting it
+    here, rule (e) (no baseline → fetch to establish one) would fire on the very next cycle for
+    every seed-only name, defeating the optimization. ``last_scanned_at`` is left NULL (no chain
+    was fetched — distinguishes these from real fetches in the staleness log) and
+    ``cleared_floor`` is False (a name never chain-fetched can't have cleared the score floor).
+
+    Only symbols in *probed_spots* but not in *material* are seeded: a name that *was* fetched
+    gets its baseline written by ``_persist_scan_state`` at end-of-run with the chain's spot and
+    a real timestamp, which is the authoritative value. Pure write; never raises.
+    """
+    seed_only = {sym: spot for sym, spot in probed_spots.items() if sym not in material}
+    if not seed_only:
+        return
+    bulk_upsert_scan_state({sym: (spot, None, False) for sym, spot in seed_only.items()})
 
 
 def _rank_assessed(assessed: list[AssessedContract]) -> list[AssessedContract]:
@@ -674,14 +953,18 @@ def _empty_screen_base(
 
 
 def _materiality_clause(result: ScanResult, intraday: bool) -> str:
-    """ " · N/M names moved <X% (chain re-fetch skipped)" for a gated intraday cycle, else ""."""
+    """ " · N/M names moved too little (chain re-fetch skipped)" for a gated intraday cycle.
+
+    No single percentage applies any more — held names, actively_wheeling, and dip-watch names
+    each use a different threshold (held_position_move_pct / intraday_rescan_move_pct /
+    dip_pull_in_pct) — so the clause names the count, not a specific figure.
+    """
     if not intraday or result.total_symbols <= 0:
         return ""
     skipped = max(0, result.total_symbols - result.material_count)
     if skipped <= 0:
         return ""
-    pct = f"{get_config().market_data.intraday_rescan_move_pct * 100:g}"
-    return f" · {skipped}/{result.total_symbols} names moved <{pct}% (chain re-fetch skipped)"
+    return f" · {skipped}/{result.total_symbols} names moved too little (chain re-fetch skipped)"
 
 
 def _fetch_analytics(
@@ -713,13 +996,37 @@ async def run_scan(
     dashboard_callback: _ProgressCB | None = None,
     *,
     intraday: bool = False,
+    force_full_sweep: bool = False,
+    must_include_symbols: set[str] | None = None,
+    include_buy_list: bool = True,
 ) -> ScanResult:
     """Run the full pipeline under a cross-process scan lease (SYSTEM_REVIEW F5).
 
-    ``intraday=True`` (the 15-min loop) enables the S1 materiality gate: only held positions,
-    materially-moved ``would_own`` names, and names that cleared the score floor last cycle get
-    a fresh option-chain fetch; everything else is skipped this cycle. Manual ``/scan``
-    leaves it ``False`` and always sweeps the full universe.
+    ``intraday=True`` (the 15-min loop) enables the S1 materiality gate: only held positions that
+    moved ≥2%, ``actively_wheeling`` names that moved ≥0.5%, ``would_own``-but-not-
+    ``actively_wheeling`` ("dip-watch") names that *dropped* ≥3%, and names that cleared the
+    score floor last cycle get a fresh option-chain fetch; everything else is skipped this
+    cycle. Manual ``/scan`` (``intraday=False``) runs the full-sweep path: actively_wheeling ∪
+    held names are fetched unconditionally, and dip_watch names are seed-only unless they gapped
+    ≥3% overnight (see ``_compute_material_symbols``'s force_full_sweep branch, 2026-08-28).
+
+    ``force_full_sweep=True`` overrides the materiality gate for the 15-min loop's first eligible
+    cycle after every process start (see ``_intraday_scan_loop``) — actively_wheeling ∪ held names
+    are fetched unconditionally, and dip_watch names get the same seed-only / overnight-gap
+    treatment as a manual ``/scan``. No effect when ``intraday=False`` (already a full sweep).
+
+    ``must_include_symbols`` forces just the named symbols through the gate regardless of
+    movement — the intraday loop's retry queue for symbols a previous ``aborted_unhealthy`` run
+    never reached (see ``ScanResult.unreached_symbols``, 2026-08-28). Unlike
+    ``force_full_sweep`` this doesn't widen the fetch to everything else, so a retry costs only
+    what it needs to; already-cached symbols stay gated normally. No effect when
+    ``intraday=False``.
+
+    ``include_buy_list=False`` skips only the Telegram send of the buy-to-own screen —
+    ``result.buy_candidates`` is still scored (it's cheap: reuses analytics already fetched for
+    CC/CSP). The 15-min intraday loop sets this ``False`` on every cycle after the first one
+    that completes each day, so the buy list fires once daily rather than every 15 minutes.
+    Manual ``/scan`` leaves it ``True``.
 
     A full chain scan consumes most of the account-level ~100 market-data line cap, so two
     concurrent full scans (e.g. two simultaneous ``/scan`` commands, in separate processes)
@@ -746,6 +1053,9 @@ async def run_scan(
             dashboard_callback=dashboard_callback,
             lease_token=lease_token,
             intraday=intraday,
+            force_full_sweep=force_full_sweep,
+            must_include_symbols=must_include_symbols,
+            include_buy_list=include_buy_list,
         )
     finally:
         # Compare-and-swap release: only clears the lease if we still hold it, so a scan that
@@ -761,6 +1071,9 @@ async def _run_scan_body(
     dashboard_callback: _ProgressCB | None = None,
     lease_token: str | None = None,
     intraday: bool = False,
+    force_full_sweep: bool = False,
+    must_include_symbols: set[str] | None = None,
+    include_buy_list: bool = True,
 ) -> ScanResult:
     """Run the full pipeline. Returns ScanResult even on partial failures.
 
@@ -800,6 +1113,8 @@ async def _run_scan_body(
 
     # --- 2. Symbol universe ---
     would_own: list[str] = cfg.universe.get("would_own", [])
+    actively_wheeling: list[str] = cfg.universe.get("actively_wheeling", [])
+    dip_watch: list[str] = sorted(set(would_own) - set(actively_wheeling))
     holdings_symbols: set[str] = {
         p.underlying or p.symbol for p in positions if p.sec_type == "STK" and p.position > 0
     }
@@ -807,10 +1122,12 @@ async def _run_scan_body(
     n = len(all_symbols)
     result.total_symbols = n
     log.info(
-        "scan: %d symbols to scan (%d holdings, %d universe)",
+        "scan: %d symbols to scan (%d holdings, %d would_own [%d actively_wheeling, %d dip-watch])",
         n,
         len(holdings_symbols),
         len(would_own),
+        len(actively_wheeling),
+        len(dip_watch),
     )
 
     # N15: any symbol missing from universe.yaml `sectors:` silently escapes the per-sector
@@ -833,22 +1150,94 @@ async def _run_scan_body(
     )
 
     # --- 3b. Intraday materiality gate (S1) ---
-    # Full-sweep mode (manual /scan) fetches every symbol; the 15-min loop fetches
-    # only material ones and skips the rest, sparing the dominant option-chain cost.
+    # Full-sweep mode (manual /scan, or the first cycle since process start) now skips the
+    # IBKR chain fetch for dip_watch names that didn't gap overnight — see
+    # ``_compute_material_symbols``'s force_full_sweep branch (2026-08-28). The 15-min loop
+    # fetches only material ones and skips the rest, sparing the dominant option-chain cost.
     if intraday:
         material_symbols, probed_spots = await _compute_material_symbols(
-            all_symbols, holdings_symbols, would_own
+            all_symbols,
+            holdings_symbols,
+            actively_wheeling,
+            dip_watch,
+            force_full_sweep=force_full_sweep,
+            must_include=must_include_symbols,
         )
         log.info(
-            "scan: intraday materiality gate — %d/%d symbols material: %s",
+            "scan: intraday materiality gate — %d/%d symbols material%s: %s",
+            len(material_symbols),
+            n,
+            " (forced full sweep — first cycle since process start)" if force_full_sweep else "",
+            sorted(material_symbols),
+        )
+    else:
+        # Manual /scan: reuse the full-sweep branch so dip_watch names get seed-only too
+        # (quiet overnight → yfinance baseline, no chain fetch; gapped → fetched). Holding
+        # this gate against manual /scan is fine because /scan TICKER still force-fetches a
+        # single named ticker on demand, and the operator can always inspect one name that way.
+        material_symbols, probed_spots = await _compute_material_symbols(
+            all_symbols,
+            holdings_symbols,
+            actively_wheeling,
+            dip_watch,
+            force_full_sweep=True,
+        )
+        log.info(
+            "scan: full sweep — %d/%d symbols material (dip_watch seed-only): %s",
             len(material_symbols),
             n,
             sorted(material_symbols),
         )
-    else:
-        material_symbols = set(all_symbols)
-        probed_spots = {}
     result.material_count = len(material_symbols)
+
+    # --- 3c. Intraday fetch budget (2026-08-28) ---
+    # Order the sweep so the cycle's chain-fetch budget is spent on the highest-value symbols
+    # first, and cut it off before the run overruns the interval. Without this the gate is the
+    # only throttle, and it stops throttling exactly when it matters: in a broad sell-off every
+    # would_own name crosses its bar at once (measured: 5 of 66 real runs already exceeded the
+    # 15-min cycle, up to 30.1 min), and an overrun sets `scan_running`, costing the NEXT
+    # cycle's scan outright. Symbols cut are carried to `unreached_symbols` -> next cycle's
+    # `must_include`, where they rank first — so a big cluster drains over consecutive cycles
+    # that each finish on time instead of one burst that eats the following cycle.
+    budget_seconds = cfg.market_data.chain_fetch_budget_seconds if intraday else 0.0
+    if budget_seconds > 0 and material_symbols:
+        priority = _fetch_priority(
+            material_symbols,
+            probed_spots,
+            get_scan_state(sorted(material_symbols)),
+            holdings=holdings_symbols,
+            aw_set=set(actively_wheeling),
+            dip_set=set(dip_watch),
+            must_include=must_include_symbols,
+            cfg=cfg,
+        )
+        # Material first (best-ranked first), then everything else. Immaterial symbols still run
+        # analytics + sentiment — they feed the buy-to-own screen and the Claude prompt — but
+        # they cost no chain time, so their order is irrelevant.
+        scan_order = sorted(all_symbols, key=lambda sym: (-priority.get(sym, -1.0), sym))
+    else:
+        priority = {}
+        scan_order = all_symbols
+
+    # Persist the seed-only dip_watch baselines (probe prices for names that didn't gap
+    # overnight) so the per-cycle rule (c) gate has a yfinance-sourced baseline to compare
+    # against from cycle 1 onward. Full-sweep chains fetched below are persisted by
+    # ``_persist_scan_state`` at the end of the run; this only seeds the names that were *not*
+    # fetched this cycle. ``last_scanned_at`` is left NULL (no chain was fetched) and
+    # ``cleared_floor`` is False (a name never chain-fetched can't have cleared the floor).
+    #
+    # Scoped to an actual full sweep ONLY (2026-08-28 fix) — a normal intraday-gated cycle's
+    # ``probed_spots`` holds every probed symbol regardless of bucket (held/actively_wheeling/
+    # dip_watch), most of which are probed-but-immaterial on any quiet cycle. Calling this
+    # unconditionally used to null out a real ``last_scanned_at`` on every such symbol every
+    # quiet cycle, which (a) defeated the sticky-``last_spot`` drift-accumulation invariant
+    # (each cycle rebased to itself instead of comparing against the last real fetch) and (b)
+    # made the very next cycle's per-symbol ``force_full_scan_minutes`` staleness check (f) see
+    # ``stamp is None`` and force an immediate real refetch — an actively_wheeling/held name
+    # ended up force-refetched roughly every other cycle (~30 min) instead of every 120 min,
+    # the opposite of what the gate exists to do.
+    if probed_spots and (force_full_sweep or not intraday):
+        _persist_seed_only_baselines(probed_spots, material_symbols)
 
     # --- 4. Per-symbol: market data + analytics + strategy candidates ---
     cc_candidates: list[TradeCandidate] = []
@@ -858,7 +1247,8 @@ async def _run_scan_body(
     # aggregate log counter — so a symbol whose whole chain failed produced nothing to show.
     generator_rejects: list[tuple[TradeCandidate, list[str]]] = []
     analytics_map: dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]] = {}
-    fetched_spots: dict[str, float] = {}  # symbols whose chain we fetched → scan_state baseline
+    # symbol → (spot at fetch, when THIS symbol was fetched); the scan_state baseline.
+    fetched: dict[str, tuple[float, datetime]] = {}
     # Half-dead-socket circuit breaker (N-fix 2026-06-24): count consecutive chain-fetch
     # timeouts. A live socket that hangs on one symbol (pacing, a non-existent weekly chain)
     # recovers on the next; a socket that has lost its IBKR data farm times out on *every*
@@ -879,9 +1269,27 @@ async def _run_scan_body(
     )
 
     await tracker.tick("market_data", "⏳", f"0/{n} symbols")
-    for i, symbol in enumerate(all_symbols):
+    chain_deadline = (
+        asyncio.get_running_loop().time() + budget_seconds if budget_seconds > 0 else None
+    )
+    over_budget: list[str] = []
+    for i, symbol in enumerate(scan_order):
         log.info("scan: processing %s", symbol)
         await tracker.mark_symbol(i + 1, n, symbol)
+
+        # Budget check. Only ever *demotes* a symbol to immaterial (analytics still run, chain
+        # skipped) — never aborts the run, so the cycle still produces a complete picture from
+        # everything already fetched. Checked between symbols because a fetch in flight can't be
+        # preempted; `chain_fetch_budget_seconds` is sized to leave one `symbol_timeout_seconds`
+        # of headroom for the overshoot that allows.
+        fetch_this = symbol in material_symbols
+        if (
+            fetch_this
+            and chain_deadline is not None
+            and asyncio.get_running_loop().time() >= chain_deadline
+        ):
+            fetch_this = False
+            over_budget.append(symbol)
 
         # Heartbeat: extend the scan lease each iteration so a full ~60-symbol scan can't
         # outlive the TTL and let a second scan start mid-run (N7). CAS — if we've lost the
@@ -893,7 +1301,7 @@ async def _run_scan_body(
         outcome = await scan_symbol(
             ib,
             symbol,
-            material=symbol in material_symbols,
+            material=fetch_this,
             account=account,
             positions=positions,
             would_own=would_own,
@@ -934,6 +1342,12 @@ async def _run_scan_body(
                 n,
             )
             result.aborted_unhealthy = True
+            # Every symbol in the triggering consecutive-timeout run failed for the same root
+            # cause (dead socket), not its own issue — back up to where that run started, then
+            # everything from there to the end of the universe was either dropped or never
+            # attempted. The caller carries this forward as next cycle's forced-include set.
+            run_start = i - consecutive_chain_timeouts + 1
+            result.unreached_symbols = scan_order[run_start:]
             await tracker.add_error(
                 f"socket half-dead — aborted after {consecutive_chain_timeouts} "
                 f"consecutive timeouts"
@@ -957,14 +1371,33 @@ async def _run_scan_body(
 
         # Record the live spot at this fetch as the next cycle's materiality baseline (S1/S10).
         # Only fetched symbols update their baseline so slow drift accrues from the last *fetch*.
+        # The timestamp is taken here, per symbol, rather than once for the whole run — see
+        # `_persist_scan_state`.
         if outcome.did_fetch and tech_stats.price:
-            fetched_spots[symbol] = tech_stats.price
+            fetched[symbol] = (tech_stats.price, datetime.now(UTC))
 
         cc_candidates.extend(outcome.cc_passed)
         csp_candidates.extend(outcome.csp_passed)
         generator_rejects.extend(outcome.rejected)
 
     await tracker.tick("market_data", "✅", f"{n}/{n} symbols")
+
+    # Symbols the budget cut join anything an aborted socket never reached: both are "material
+    # this cycle but not fetched", and both are carried forward as next cycle's must_include,
+    # where `_fetch_priority` ranks them first so a long queue can't starve its tail.
+    if over_budget:
+        result.unreached_symbols = sorted(set(result.unreached_symbols) | set(over_budget))
+        log.warning(
+            "scan: chain-fetch budget (%.0fs) exhausted — %d of %d material symbols deferred "
+            "to next cycle: %s",
+            budget_seconds,
+            len(over_budget),
+            result.material_count,
+            sorted(over_budget),
+        )
+        await tracker.add_error(
+            f"fetch budget reached — {len(over_budget)} symbol(s) deferred to the next cycle"
+        )
 
     # --- 5. Buy-to-own recommendations ---
     result.buy_candidates = generate_buy_candidates(would_own, holdings_symbols, analytics_map)
@@ -1127,14 +1560,12 @@ async def _run_scan_body(
     # names that cleared the score floor so the next cycle always re-checks them. Runs in both
     # modes so the first intraday cycle (full sweep, no prior baselines) seeds the gate.
     cleared_floor_symbols = {c.underlying for c in passed}
-    if fetched_spots:
-        scanned_at = datetime.now(UTC)
+    if fetched:
         await loop.run_in_executor(
             None,
             _persist_scan_state,
-            fetched_spots,
+            fetched,
             cleared_floor_symbols,
-            scanned_at,
         )
 
     # --- 7. Load prior Claude memory for history injection ---
@@ -1233,6 +1664,7 @@ async def _run_scan_body(
             send_buy_list=send_buy_list,
             send_account_snapshot=send_account_snapshot,
         ),
+        include_buy_list=include_buy_list,
     )
 
     log.info(
@@ -1301,7 +1733,9 @@ async def run_ticker_scan(
         drain_market_data_lines(ib)
 
     # 3. Analytics (yfinance) — blocking, run off-thread.
-    spot_override = infer_spot_from_quotes(quotes) if quotes else None
+    # require_parity — see `infer_spot_from_quotes`; a strike-quantized spot must never reach
+    # TechnicalStats.price, which is persisted as the materiality baseline.
+    spot_override = infer_spot_from_quotes(quotes, require_parity=True) if quotes else None
     try:
         iv_stats, tech_stats, fund_stats = await loop.run_in_executor(
             None, _fetch_analytics, ticker, quotes, spot_override, None

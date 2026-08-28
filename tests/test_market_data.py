@@ -28,6 +28,7 @@ from src.ibkr.contracts import (
 from src.ibkr.market_data import (
     _await_ready,
     _batch_quotes,
+    _build_chain_contracts,
     _cap_strikes,
     _enrich_greeks_from_ibkr_iv,
     _enrich_greeks_yf,
@@ -223,6 +224,30 @@ def test_cap_strikes_noop_when_under_cap():
 def test_cap_strikes_disabled_when_zero():
     strikes = [float(i) for i in range(200)]
     assert _cap_strikes(strikes, spot=100.0, max_strikes=0) == strikes
+
+
+# ---------------------------------------------------------------------------
+# _build_chain_contracts — OTM-only cartesian (skips the ITM half of the band)
+# ---------------------------------------------------------------------------
+
+
+def test_build_chain_contracts_keeps_only_otm_calls_and_puts():
+    result = _build_chain_contracts("AAPL", ["20261219"], [90.0, 100.0, 110.0], spot=100.0)
+    rights_strikes = {(c.right, c.strike) for c in result}
+    # Calls only at/above spot (OTM); puts only at/below spot (OTM). The ITM call@90 and
+    # ITM put@110 must never be built — covered_call/cash_secured_put discard them anyway.
+    assert rights_strikes == {("C", 100.0), ("C", 110.0), ("P", 90.0), ("P", 100.0)}
+
+
+def test_build_chain_contracts_cartesian_over_expirations():
+    result = _build_chain_contracts("AAPL", ["20261219", "20270116"], [110.0], spot=100.0)
+    expiries = {c.lastTradeDateOrContractMonth for c in result}
+    assert expiries == {"20261219", "20270116"}
+    assert all(c.right == "C" for c in result)  # 110 is OTM for calls only, no puts built
+
+
+def test_build_chain_contracts_empty_strikes_returns_empty():
+    assert _build_chain_contracts("AAPL", ["20261219"], [], spot=100.0) == []
 
 
 # ---------------------------------------------------------------------------

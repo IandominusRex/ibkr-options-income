@@ -241,7 +241,10 @@ async def scan_symbol(
 
     # Spot price (N17 follow-up): prefer the IBKR chain's put-call-parity spot over yfinance
     # fast_info when we just paid for the chain fetch.
-    spot_override = infer_spot_from_quotes(quotes) if quotes else None
+    # require_parity: a strike-quantized fallback would land in TechnicalStats.price and from
+    # there become this symbol's materiality baseline — see `infer_spot_from_quotes`. None here
+    # falls through to `probed_spot` (yfinance), the same source the next cycle's gate probe uses.
+    spot_override = infer_spot_from_quotes(quotes, require_parity=True) if quotes else None
 
     # Analytics (yfinance) and sentiment (Reddit) are independent external I/O — run them
     # concurrently in the default executor to cut per-symbol latency.

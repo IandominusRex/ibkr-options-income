@@ -18,7 +18,7 @@ from src.common.schemas import (
 
 _TODAY = date.today()
 _NEAR = _TODAY + timedelta(days=10)  # existing short, DTE 10 → triggers roll
-_FAR = _TODAY + timedelta(days=42)  # new leg, in the CC [21, 45] window
+_FAR = _TODAY + timedelta(days=26)  # new leg, in the CC [7, 28] window
 
 _ET_TODAY = today_et()
 
@@ -201,7 +201,7 @@ def test_defensive_roll_allows_a_bounded_debit():
     from src.strategies.rolling import generate_roll_candidates
 
     pos = _short_call(delta=-0.62, strike=100.0, dte=10)
-    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=35)
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=20)
     cands = generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
     assert cands, "a defensive roll costing $0.30 must be offered"
     assert cands[0].premium == pytest.approx(-0.30, abs=0.01)
@@ -211,7 +211,7 @@ def test_defensive_roll_rejects_a_debit_above_the_cap():
     from src.strategies.rolling import generate_roll_candidates
 
     pos = _short_call(delta=-0.62, strike=100.0, dte=10)
-    quotes = _roll_chain(current_mid=8.00, new_mid=7.00, new_delta=-0.30, new_dte=35)
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.00, new_delta=-0.30, new_dte=20)
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
 
 
@@ -219,7 +219,7 @@ def test_defensive_roll_requires_delta_reduction():
     from src.strategies.rolling import generate_roll_candidates
 
     pos = _short_call(delta=-0.62, strike=100.0, dte=10)
-    quotes = _roll_chain(current_mid=8.00, new_mid=8.20, new_delta=-0.60, new_dte=35)
+    quotes = _roll_chain(current_mid=8.00, new_mid=8.20, new_delta=-0.60, new_dte=20)
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
 
 
@@ -235,7 +235,7 @@ def test_defensive_roll_rejects_when_position_delta_is_unknown():
     from src.strategies.rolling import generate_roll_candidates
 
     pos = _short_call(delta=-0.62, strike=100.0, dte=10).model_copy(update={"delta": None})
-    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=35)
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=20)
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
 
 
@@ -243,7 +243,7 @@ def test_income_roll_still_requires_a_credit_and_roc():
     from src.strategies.rolling import generate_roll_candidates
 
     pos = _short_call(delta=-0.30, strike=100.0, dte=15)
-    quotes = _roll_chain(current_mid=1.00, new_mid=0.90, new_delta=-0.28, new_dte=40)
+    quotes = _roll_chain(current_mid=1.00, new_mid=0.90, new_delta=-0.28, new_dte=22)
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=False)
 
 

@@ -89,6 +89,67 @@ market_data:
   health_probe_symbol: "SPY"
   health_probe_timeout_seconds: 15
   max_consecutive_chain_timeouts: 3
+  # S1 safety net: force a full option-chain fetch for a symbol once it hasn't been refreshed in
+  # this many minutes. 0 disables it. Checked PER SYMBOL (2026-08-27), not "sweep the whole core
+  # together the moment the single stalest one crosses the line" — that old rule let one quiet
+  # name drag every actively_wheeling name into a synchronized burst each time its clock
+  # expired. Per-symbol staleness spreads refreshes out over time naturally, since names that
+  # move often (and so already refetch via the move gate below) and names that stay quiet
+  # desynchronize on their own — no explicit batch/rotation schedule needed. A full sweep of
+  # everything still costs 15-25 min at current per-symbol qualify cost (2026-08-21) if it ever
+  # does happen all at once (cold start, or force_full_sweep on the first cycle after a
+  # restart) — was 90, raised to 120 for the same reason. Each fetched symbol carries its OWN
+  # fetch timestamp (2026-08-28) instead of one run-level stamp, so a sweep's cohort expires
+  # spread across the span the sweep itself took rather than all inside one later cycle — which
+  # matters because a burst longer than `scheduler.intraday_loop_minutes` overruns the cycle and
+  # costs the next one entirely. The intraday loop separately forces
+  # one full sweep unconditionally on its first eligible cycle after every process start,
+  # regardless of this timer (see `_intraday_scan_loop`'s `startup_full_sweep_done` bot_data
+  # flag). Only scoped to `actively_wheeling` ∪ held names — dip-watch names below are excluded.
+  force_full_scan_minutes: 120
+  # Held stock positions used to be fetched unconditionally every intraday cycle — the single
+  # biggest fixed IBKR chain-fetch cost, since it ignored movement entirely. Now gated, and
+  # directional (2026-08-27, up only): refetched only once the live spot has *risen* >= this
+  # fraction from its last-fetch baseline — a new CC candidate needs room to sell an OTM strike,
+  # which only a rally creates; existing-position risk is handled continuously by the separate
+  # event-driven monitor, not this gate. A drop is still caught by force_full_scan_minutes above.
+  # UNIONed, not overriding (2026-08-28): a held name that is also actively_wheeling or would_own
+  # keeps that bucket's rule and merely *gains* this rally trigger, so holding shares can never
+  # reduce how often a name is scanned. Up-only is the whole story only for a held name that is
+  # in no other bucket.
+  held_position_move_pct: 0.02
+  # would_own names outside universe.yaml's `actively_wheeling` are opportunistic, not part of
+  # the core rotation — they're pulled into a scan cycle only when the live spot has *dropped*
+  # at least this fraction from its last-fetch baseline (a rally is never a CSP entry signal).
+  # Never subject to force_full_scan_minutes. Applies whether or not the name is also held.
+  # At startup / manual /scan, the same threshold is checked bidirectionally against the
+  # persisted baseline — a gap (up or down) ≥3% is a legitimate CSP setup at the open; a quiet
+  # overnight name gets seed-only (yfinance baseline persisted, no chain fetch) — 2026-08-28.
+  dip_pull_in_pct: 0.03
+  # Per-cycle wall-clock ceiling on option-chain fetching in the 15-min intraday loop
+  # (2026-08-28). 0 disables. The materiality gate keeps a normal cycle tiny — measured over 125
+  # real cycles: median 1 material symbol, mean 3.8 — but its filtering collapses when
+  # correlation goes to 1. A broad -3% day makes every would_own name material at once, and at a
+  # measured ~37s mean per fetch (n=385: p50 35s, p75 46s, p90 58s) that is a ~28-min sweep
+  # inside a 15-min cycle. 5 of 66 real runs already overran, up to 30.1 min — and an overrun
+  # sets `scan_running`, so the NEXT cycle's scan is skipped entirely (profit-take and loss-exit
+  # checks still run; they precede the scan). Symbols cut by the budget are carried to
+  # `ScanResult.unreached_symbols` -> next cycle's `must_include_symbols`, where they rank first,
+  # so a cluster drains over consecutive on-time cycles instead of one burst that eats the next.
+  # Sizing, from a least-squares fit over 19 real full-universe cycles in this deployment:
+  #     scan duration = 56s + 29.9s x (material symbols)
+  # The 56s intercept is fixed per-cycle work (analytics + sentiment run for EVERY symbol,
+  # material or not, because they feed the buy-to-own screen and the Claude prompt; plus VIX,
+  # account, scoring, review, Telegram). So: 900s cycle - 56s overhead - 150s
+  # (`symbol_timeout_seconds`) of overshoot headroom, since the budget can only be checked
+  # between symbols and a fetch in flight can't be preempted => 694s, rounded DOWN to 600s
+  # (~20 fetches). 600 is the largest round value that still cannot overrun: 600 + 150 + 56 =
+  # 806s < 900s even if the final symbol starts one tick under the deadline and then times out.
+  # Coupled to `scheduler.intraday_loop_minutes` - do not change one without the other. Note the
+  # coupling is counter-intuitive: SHORTENING the cycle *lowers* hourly fetch throughput, because
+  # the 56s overhead and the 150s margin are both paid per cycle regardless of its length (206s
+  # of every cycle is fixed = 23% at 15 min, 34% at 10 min, 69% at 5 min).
+  chain_fetch_budget_seconds: 600
 
 claude:
   cli_command: "claude"

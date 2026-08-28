@@ -814,9 +814,9 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
 
     # D1: concentration is now measured in RISK UNITS (collateral x IV x sqrt(DTE/365)), not
     # raw collateral. net-liq 100k -> max_ticker_risk = 5% of 100k = 5,000 risk units. Two
-    # AAPL CSPs @ 10,000 collateral / 80% IV / 45 DTE ~= 2,809 risk units each (10000 * 0.80 *
-    # sqrt(45/365)): the first fits (2,809 <= 5,000) and is charged; the cumulative second
-    # (~5,618) breaches the cap. 10,000 collateral sits exactly AT (not over) the 10,000
+    # AAPL CSPs @ 10,000 collateral / 100% IV / 28 DTE ~= 2,770 risk units each (10000 * 1.00 *
+    # sqrt(28/365)): the first fits (2,770 <= 5,000) and is charged; the cumulative second
+    # (~5,540) breaches the cap. 10,000 collateral sits exactly AT (not over) the 10,000
     # large-position threshold (10% of 100k), so neither consumes the large slot — the ticker
     # risk cap is what binds. Use the REAL risk engine (not a monkeypatched stub).
     account_snap = AccountSnapshot(
@@ -840,10 +840,10 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
 
     c1 = _make_candidate(
-        "c1", underlying="AAPL", collateral=10_000.0, current_iv=80.0, dte=45
+        "c1", underlying="AAPL", collateral=10_000.0, current_iv=100.0, dte=28
     ).model_copy(update={"blended_score": 90.0})
     c2 = _make_candidate(
-        "c2", underlying="AAPL", collateral=10_000.0, current_iv=80.0, dte=45
+        "c2", underlying="AAPL", collateral=10_000.0, current_iv=100.0, dte=28
     ).model_copy(update={"blended_score": 80.0})
     with dbmod.session_scope() as session:
         _insert_candidate_row(session, c1)

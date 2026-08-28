@@ -32,10 +32,12 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   constant-maturity `OPTION_IMPLIED_VOLATILITY` series it is ranked against. Also: term structure
   & skew, **VRP** (IV% − HV30%, computed in `iv.py`, displayed on every candidate), **VIX** (fetched from
   yfinance `^VIX` once per scan via `market_conditions.py`, shown in scan completion summary),
-  technicals + regime, fundamentals (yfinance), liquidity gates, **composite social + news
-  sentiment** (StockTwits self-tags + yfinance news headlines, both keyless, VADER-scored, with
-  optional Reddit; see `sentiment.py`),
-  Black-Scholes **full Greeks** fallback (`black_scholes.py` — delta/gamma/theta/vega/rho) for quotes missing IBKR model Greeks, plus an **American-option pricer** (`american_option.py`, Cox-Ross-Rubinstein binomial tree) exposing `american_price` and `early_exercise_premium` (Phase 1).
+  technicals + regime + **Phase 3** `Phase` enum / `relative_strength` / `TechnicalStats.phase` (see below), fundamentals (yfinance),
+  liquidity gates, **composite social + news sentiment** (StockTwits self-tags + yfinance news headlines, both keyless,
+  VADER-scored, with optional Reddit; see `sentiment.py`), Black-Scholes **full Greeks** fallback
+  (`black_scholes.py` — delta/gamma/theta/vega/rho) for quotes missing IBKR model Greeks, plus an
+  **American-option pricer** (`american_option.py`, Cox-Ross-Rubinstein binomial tree) exposing `american_price`
+  and `early_exercise_premium` (Phase 1).
   **C1 (IV/RV richness gate):** `realized_vol.compute_realized_vol` (configurable 20d window) feeds
   `IVStats.iv_rv_ratio` = current_iv / realized_vol; the risk engine gates on `min_iv_rv_ratio` (default
   1.05) and the ratio is displayed on every Telegram approval card. Missing ratio is treated as data
@@ -51,13 +53,13 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   settled bars from SQLite and fetch only the missing tail from yfinance, instead of pulling a full
   1y/3mo history per symbol every run. Fundamentals are day-cached (`src/common/cache.py`); the live
   price is fetched fresh each call so it stays current.
-- **Data abstraction layer** (`src/data/`) — a thin provider abstraction (Phase 2) between the
+- **Data abstraction layer** (`src/data/`) — a thin provider abstraction **(Phase 2, complete)** between the
   analytics layer and external market-data backends. `protocols.py` defines
   `PriceProvider`/`FundamentalsProvider`/`NewsProvider` interfaces; `factory.py` picks the active
   backend from `config/settings.yaml → data.*` and caches it process-wide; `yfinance_backend.py`
   is the active backend (the existing yfinance calls wrapped in a class — no behaviour change);
-  `fmp_backend.py` is a stub raising `NotImplementedError` that documents the swap path. Analytics,
-  strategies, and the engine never call `yfinance.*` directly — they go through `src/data/`. A
+  `fmp_backend.py` is a stub raising `NotImplementedError` on use — the swap path is
+  documented but not wired. Analytics, strategies, and the engine never call `yfinance.*` directly — they go through `src/data/`. A
   future FMP/Polygon swap is a config change, not a rewrite of every analytics module. IBKR is
   *not* a provider — it's the broker + execution path and stays untouched.
 - **Strategies** (`src/strategies/`) — covered call, cash-secured put (would-own allowlist), rolling,
@@ -105,11 +107,34 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Execution** (`src/execution/`) — mid-price limit-order builder (tick-aware), executor with fill
   monitoring + live second confirmation, approval→execution bridge.
 - **Notify** (`src/notify/`) — stateless sender + long-running approval/command daemon (Telegram).
+- **Phase classification + relative strength** (`src/analytics/technicals.py::classify_phase`/
+  `_annualized_slope`, `src/common/schemas.py::Phase`) — a Minervini/Weinstein 4-stage classifier
+  (`BASE`/`UPTREND`/`DISTRIBUTION`/`DOWNTREND`) computed from price vs. 50/200-day SMA, each SMA's
+  own 21-bar annualized slope, and RSI; populates `TechnicalStats.phase`. **Deviates from the
+  `docs/modernization/phase-3-phase-rs.md` design in one respect worth flagging:** that plan
+  specified relative strength as the stock's return *relative to SPY's* (`stock_return /
+  spy_return`); what shipped, `TechnicalStats.relative_strength`, is the stock's own 21-bar
+  annualized price slope with no SPY comparison at all — a momentum measure, not a relative-strength
+  one, despite the name and the `ScoreCard.relative_strength` field it feeds via
+  `_scoring.relative_strength_score`. Both the phase gate and the score are inert today: `cash_
+  secured_put.py`'s optional reject (`REASON_PHASE_DOWNTREND`, on `DOWNTREND` phase) is off by
+  default (`risk_limits.yaml → cash_secured_put.reject_downtrend: false`), and `relative_strength`
+  ships at weight `0.0` in `scoring_weights.yaml` alongside `zone_fit` — so today this only
+  populates a display field, it changes no ranking and rejects nothing. **No test coverage**: the
+  phase doc calls for a new `tests/test_technicals_phase.py` (phase classification across synthetic
+  price series, RS boundary values, `reject_downtrend` on/off) and `TEM`/CSP/buy-candidate test
+  extensions; none of that landed — `classify_phase`, `_annualized_slope`, and
+  `REASON_PHASE_DOWNTREND` currently have zero direct test references anywhere in `tests/`. Safe
+  to leave in this state only as long as both gates stay off/zero; write the tests (and settle
+  whether `relative_strength` should actually compare to SPY) before raising either.
+- **Buy-to-own recommendations** (`src/strategies/buy_candidates.py`) — still the pre-Phase-4 3-factor model (IV rank 40% / fundamental quality 30% / technical regime 30%); surfaced with score floor + count cap so only the strongest few names are shown, each carrying a deterministic rationale. **Phase 4 (the planned 6-factor rewrite adding Piotroski score, analyst-target upside, growth, beta, and the Phase 3 `relative_strength`/`phase` inputs — see `docs/modernization/phase-4-buy-recommendations.md`) has not been started**: none of those fields exist on `FundamentalStats`/`BuyCandidate` yet, despite `docs/modernization/README.md`'s phase index having briefly marked it complete.
 - **Monitor** (`src/monitor/`) — event-driven intraday watch; all six triggers wired end-to-end:
   delta drift, the **mechanical management point** (`check_manage_at_dte`, `monitor.manage_at_dte`,
-  default 21 — entries sit at 21–45 DTE and the roll trigger below fires at 7 days, deep into the
-  gamma window with little extrinsic left; 21 DTE is the point where closing, rolling, or
-  explicitly holding are all still available), the DTE threshold (`dte_threshold`, default 7),
+  default 21 — entries now sit at 7–28 DTE (tightened from 21–45), so a fresh entry can open as
+  close as 7 DTE and be immediately past this management point; the roll trigger below fires at
+  7 days, deep into the gamma window with little extrinsic left; 21 DTE is nominally the point
+  where closing, rolling, or explicitly holding are all still available, though a short-dated
+  entry now skips straight past it), the DTE threshold (`dte_threshold`, default 7),
   IV spike, ex-div, and **C4: assignment-risk**.
 - **Orchestrators** (`src/orchestrator/`) — EOD report, plus the shared `/scan` pipeline split
   three ways: `scan.py` orchestrates (and stays the `run_scan`/`ScanResult` entry point),
@@ -172,7 +197,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   stops all transmission while still allowing profit-take closes. A cross-process scan lease prevents
   concurrent scans from breaching the market-data line cap. Nightly `data/backups/` snapshots protect
   the system of record.
-- **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration.
+- **Storage** (`src/storage/`) — SQLite + SQLAlchemy, WAL mode, lightweight column migration. Also hosts the Phase 5 disk cache tables (`fundamental_cache`, `sentiment_cache`) and the assessment audit trail (`risk_verdicts`).
 - **Ideal-price zones** (`src/analytics/fair_value.py`) — every contract now carries an `IdealZone`:
   the strike band the technicals + IV imply (expected move, snapped to the symbol's own
   support/resistance, anchored to a 50d/200d SMA, widened for earnings/quality risk, floored at cost
@@ -247,7 +272,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 |---|---|---|
 | Broker / data | **`ib_async`** | Maintained successor to `ib_insync`. Real-time + historical. Import as `from ib_async import ...` — never add the legacy `ib_insync`. |
 | Numerics | `pandas`, `numpy`, `scipy` | Scoring and stats. Black-Scholes full Greeks (delta/gamma/theta/vega/rho) via `scipy.stats.norm` (`src/analytics/black_scholes.py`); American-option pricer via a Cox-Ross-Rubinstein binomial tree (`src/analytics/american_option.py`, Phase 1). |
-| Fundamentals | `yfinance` | FCF, debt, earnings/ex-div dates (supplemental only). |
+| Fundamentals | `yfinance` | FCF, debt, earnings/ex-div dates (supplemental only). Cached to SQLite via `FundamentalCacheRow` (Phase 5) with earnings-aware invalidation. |
+| Sentiment | `vaderSentiment` + `curl_cffi` + optional `praw` | Composite social/news sentiment; cached to SQLite via `SentimentCacheRow` (Phase 5). |
 | Schemas | `pydantic` v2 | Typed contracts between modules (`src/common/schemas.py`). |
 | Storage | **SQLite + SQLAlchemy** | Postgres is a config change away; not migrated. |
 | Scheduling | **`scripts.start`** spawns the EOD one-shot at the configured ET time (last-run persisted to `data/eod_scheduler_state.json`); `asyncio` for the daemons | The launcher is a plain process supervisor with no `ib_async` loop and runs the EOD job as a subprocess — so the "never run a threaded scheduler in the same process as an `ib_async` loop" invariant holds. No cron job required. |
@@ -273,20 +299,21 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 | Item | Status & reason |
 |---|---|
-| **Black-Scholes Greeks fallback** | **Built, then layered IBKR-first (S2, Phase 3); full Greeks added (Phase 1).** Greeks are resolved in three tiers: (1) `_ticker_to_quote` reads the first available IBKR per-contract computation (`modelGreeks` → `lastGreeks` → `askGreeks` → `bidGreeks` via `_pick_greeks`) so a lagging model tick still yields genuine IBKR greeks (`greeks_source="ibkr"`); (2) `_enrich_greeks_from_ibkr_iv` BS-fills delta locally from an IBKR IV with no network call — Phase 1 extended this to fill **gamma/theta/vega** alongside delta (skipping only when all four greeks are already present); (3) only quotes IBKR could value neither greeks nor IV for fall through to the yfinance Black-Scholes download (`_enrich_greeks_yf`), now **instrumented** (logs how many quotes forced a Yahoo fetch + the elapsed time per symbol) and also filling gamma/theta/vega. Tiers 2/3 set `greeks_source="black_scholes"` so the F6 live gate still treats them as untrusted. The scan batch requests generic ticks `101,106` to capture the IBKR IV. **Phase 1 also added** `src/analytics/american_option.py` (Cox-Ross-Rubinstein binomial-tree American pricer + `early_exercise_premium`) and `bs_gamma`/`bs_theta`/`bs_vega`/`bs_rho` to `black_scholes.py` — the foundation for economic (non-heuristic) assignment triggers. |
+| **Phase 1 extended Greeks + American pricer** | **Built.** Greeks are resolved in three tiers: (1) `_ticker_to_quote` reads the first available IBKR per-contract computation (`modelGreeks` → `lastGreeks` → `askGreeks` → `bidGreeks` via `_pick_greeks`) so a lagging model tick still yields genuine IBKR greeks (`greeks_source="ibkr"`); (2) `_enrich_greeks_from_ibkr_iv` BS-fills delta locally from an IBKR IV with no network call — Phase 1 extended this to fill **gamma/theta/vega** alongside delta (skipping only when all four greeks are already present); (3) only quotes IBKR could value neither greeks nor IV for fall through to the yfinance Black-Scholes download (`_enrich_greeks_yf`), now **instrumented** (logs how many quotes forced a Yahoo fetch + the elapsed time per symbol) and also filling gamma/theta/vega. Tiers 2/3 set `greeks_source="black_scholes"` so the F6 live gate still treats them as untrusted. The scan batch requests generic ticks `101,106` to capture the IBKR IV. **Phase 1 also added** `src/analytics/american_option.py` (Cox-Ross-Rubinstein binomial-tree American pricer + `early_exercise_premium`) and `bs_gamma`/`bs_theta`/`bs_vega`/`bs_rho` to `black_scholes.py` — the foundation for economic (non-heuristic) assignment triggers. |
 | **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). **Wired end-to-end (N20):** when `monitor.roll_execution_enabled` is set, a roll trigger generates a candidate (`execution.roll_pipeline.queue_roll_for_approval`) and sends it with Approve/Reject buttons → QUEUED ROLL order → `execute_roll`. Default OFF until the BAG sign is verified on live paper (D7 — Q3 of `docs/live-validation-2026-08.md`, not yet run); until then rolls remain alert-only. **Defensive rolls are now judged on risk, not yield (D4, Task 12):** `roll_pipeline.queue_roll_for_approval` passes `defensive=True`, which skips the ROC/annualized-yield tests and instead requires a `monitor.roll_defensive.min_delta_reduction` cut in \|delta\| within a bounded `max_debit`. |
 | **Live limit-order repricing** | **Built (Phase 4 + C5), default OFF.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (false by default) — the `placeOrder` amend is unverified on a live account (D7 — Q2 of `docs/live-validation-2026-08.md`, not yet run); see the live-verification list below. |
-| **Unreachable quiet-cycle heartbeat (removed)** | `format_quiet_cycle` / `_send_quiet_heartbeat` could never fire in production: `send_candidates` and `send_buy_list` both return `True` on their *empty* path, so `if not cand_sent and not buy_sent` was never true. Only the mocked tests (which stubbed the return to `False`) ever exercised it. Rather than resurrect it — which would mean two messages per quiet cycle, exactly the flood S6 removed — the heartbeat, `ScanResult.quiet_cycle`, and the likewise orphaned `format_screen_empty` were deleted, and the materiality detail it carried ("N/M names moved <0.5%") now rides on the empty-screen diagnostic that is actually appended. |
+| **Unreachable quiet-cycle heartbeat (removed)** | `format_quiet_cycle` / `_send_quiet_heartbeat` could never fire in production: `send_candidates` and `send_buy_list` both return `True` on their *empty* path, so `if not cand_sent and not buy_sent` was never true. Only the mocked tests (which stubbed the return to `False`) ever exercised it. Rather than resurrect it — which would mean two messages per quiet cycle, exactly the flood S6 removed — the heartbeat, `ScanResult.quiet_cycle`, and the likewise orphaned `format_screen_empty` were deleted, and the materiality detail it carried (originally "N/M names moved <0.5%"; reworded 2026-08-27 to "N/M names moved too little" once three different thresholds applied — see the S1 row) now rides on the empty-screen diagnostic that is actually appended. |
 | **`BuyCandidate.rationale`** | A deterministic one-liner built from the screen's own signals (IV richness, VRP, regime, quality, earnings proximity) in `buy_candidates.py` — Claude does **not** review buy-to-own names (only option candidates), by design. The buy-to-own screen applies a score floor + count cap (`scoring_weights.yaml → buy_to_own`, currently 10 names max). The Telegram message (`format_buy_list`) groups candidates by sector (indexes, tech, semis, financials, healthcare, …); all candidate cards are shown inline — the Telegram spoiler wrapping that previously hid each sector behind a "tap to reveal" toggle has been removed. Sectors are sourced from `universe.yaml → sectors` via the `BuyCandidate.sector` field. |
 | **yfinance caching** | **Built, then upgraded to an incremental store.** Daily OHLCV (the 1y history for RSI/MACD/SMAs/ATR/support-resistance/regime **and** HV30) is persisted in the `price_history` table and loaded by `analytics/price_data.get_ohlcv`, which fetches **only the missing tail** from yfinance (or a full year when the store is empty) and is itself `@daily_cached` per calendar day in-process. So scans no longer pull full per-symbol histories every run — steady state makes zero yfinance history calls (the store is current); the 15-min loop reuses the day cache; and a cold process reads settled bars from SQLite instead of re-downloading a year. Seeded by `scripts/backfill_prices.py`, kept fresh by the EOD daily-bar append (mirrors the `iv_history` N4 pattern). `get_fundamental_stats` remains `@daily_cached`. Composite sentiment sources (`sentiment._fetch_stocktwits`, `_fetch_news`, `fetch_sentiment`) are each `@daily_cached` too (S4): each API is hit at most once per calendar day per symbol instead of ~26×/session. VIX is still fetched once per scan (cheap, moves intraday). `TechnicalStats.price` is NOT cached — `technicals._fetch_last_price` makes a separate, uncached `fast_info["lastPrice"]` lookup overlaid as today's bar so the scan-time spot price (N17) stays current; on error it falls back to the last settled close. |
 | **Scan spot-snapshot + per-batch sleeps (S3/S7)** | **Optimized (Phase 1); OI-wait bug fixed 2026-08-14.** The async chain fetch no longer issues a dedicated `reqMktData(snapshot=True)` + 2s `quote_sleep_seconds` per symbol when a cached daily close exists: `_resolve_spot_async` centres the strike band on `price_data.get_ohlcv`'s latest close and only falls back to the live snapshot (the `46a21bf` no-tick chain, preserved) for symbols without one. Per-batch quote waits and the fallback spot wait are **event-driven** (`_await_ready`), bounded by the old fixed wait as a *ceiling*. **`_quote_ready` originally only waited for bid/ask** — since the batch also requests generic tick `101` (open interest), which typically streams in *after* bid/ask, this let a batch cancel its line before OI ever arrived, leaving `open_interest` `None` on most quotes; `passes_liquidity_gates` treats a missing OI as an automatic fail, so this was silently rejecting ~97% of quotes as "illiquid" universe-wide (even AAPL/SPY/META) — see the 2026-08-14 session investigation. Fixed: `_quote_ready(ticker, right=...)` now also waits for that side's OI tick, still bounded by the same ceiling — a well-behaved batch still returns early once both bid/ask and OI arrive, otherwise it uses the full ceiling instead of racing ahead at ~0.2–0.5s. Greeks are still not blocked on (absent on delayed/paper data; the Black-Scholes fallback fills them). Cancel-between-batches line-cap discipline is unchanged. The yfinance greeks double-fetch (S2) is a separate, later phase of `SCAN_EFFICIENCY_PLAN.md`. |
-| **Intraday materiality gate (S1/S10)** | **Built (Phase 2).** The 15-min loop calls `run_scan(intraday=True)`, which gates the dominant per-symbol option-chain fetch via `_compute_material_symbols`: it fetches held stock positions, `would_own` names whose live `fast_info` spot drifted ≥ `market_data.intraday_rescan_move_pct` (default 0.5%) from the spot at their last fetch, and names that cleared the score floor last cycle; a `force_full_scan_minutes` timer (default 90) forces a periodic full sweep, and the very first cycle (no baselines) sweeps everything. Immaterial names skip the chain fetch (analytics still run, so the buy-to-own list stays complete); the `fast_info` price fetched by the materiality probe for each `would_own` symbol is also reused as `get_technical_stats`'s `cached_yf_price`, so an immaterial symbol's analytics don't pay for a second identical yfinance quote. The per-symbol baseline (`last_spot`/`last_scanned_at`/`cleared_floor`) lives in the new `scan_state` table (`storage/scan_state.py`), written for every fetched symbol — the first intraday cycle (no baselines) sweeps everything and seeds the gate. Manual `/scan` leaves `intraday=False` and always sweeps + sends in full. The store is best-effort: a read/write failure degrades to "treat as material" (full fetch), never a wrong decision. |
-| **LLM-skip + output suppression (S5/S6)** | **Built (Phase 4).** Both apply only to `run_scan(intraday=True)` (the 15-min loop); manual `/scan` always reviews fresh and sends in full. **S5:** `_candidates_review_hash` hashes the top candidates' `candidate_id` + signal vectors; when unchanged from the prior cycle (`last_review_hash` system setting) the `claude -p` subprocess is skipped and the persisted `ClaudeReview`s are reused via `_load_prior_reviews`. Enrichment-only — the risk gate already ran, so it never affects gating (the fence; `test_skills_never_reach_the_engine` stays green). **S6:** `send_candidates` collapses a CC/CSP candidate that still has a live, same-score-band PENDING approval into one compact "unchanged" digest (its original card buttons stay actionable), and `send_buy_list` replaces an unchanged buy-to-own screen with a one-line "unchanged since HH:MM" digest — cutting ~26 near-identical card/buy-list blasts/day to one small digest on quiet cycles. An intraday cycle that surfaces *nothing* is still not silent: `send_candidates` appends a timestamped `[HH:MM] … no candidates this cycle <reason>` line plus the closest near-miss to the thread's persisted status message, and the reason now carries the materiality clause ("N/M names moved <0.5% (chain re-fetch skipped)"). A separate `format_quiet_cycle` heartbeat existed for this but could never fire — both send functions return `True` on their empty path — and has been removed rather than resurrected (see "Unreachable quiet-cycle heartbeat" above). |
+| **Intraday materiality gate (S1/S10)** | **Built (Phase 2); extended 2026-08-27, corrected 2026-08-28.** The 15-min loop calls `run_scan(intraday=True)`, which gates the dominant per-symbol option-chain fetch via `_compute_material_symbols`. As of 2026-08-27, three separate thresholds apply instead of one: **held stock positions** are fetched only once their live `fast_info` spot has *risen* ≥ `market_data.held_position_move_pct` (default 2%, **directional — up only**) from their last-fetch baseline — previously unconditional every cycle regardless of direction, which was the single biggest fixed IBKR chain-fetch cost in the loop; up-only because a new CC candidate needs the room a rally creates (a drop doesn't open one), and existing-position risk (delta drift, assignment, rolls) is handled continuously by the separate event-driven monitor (`src/monitor/intraday.py`), not this gate — a dropping held name is still caught by the per-symbol staleness check below; **`actively_wheeling`** names (`universe.yaml`, the core rotation) are fetched once they drift ≥ `market_data.intraday_rescan_move_pct` (default 0.5%), same as before; **`would_own`-but-not-`actively_wheeling`** ("dip-watch") names are fetched only once their spot *drops* ≥ `market_data.dip_pull_in_pct` (default 3%, directional — a rally never counts, since it's never a CSP entry signal for a name outside the core rotation) — and dip-watch names are excluded from the periodic full-sweep safety net entirely. **The bucket rules are UNIONed, not selected between (2026-08-28):** a symbol in more than one bucket is tested against every rule that applies to it and any one firing is enough, so holding shares can never *reduce* a name's coverage — it only adds the rally trigger. (The old `if held / elif dip_watch / else` chain let `held` win outright, which silently demoted every held `actively_wheeling` name from the 0.5% either-way gate to 2%-up-only, shrinking the core rotation to just the names the operator didn't hold; the CSP screen runs for every `would_own` name regardless of holding, so a held wheel name has a live CSP reason to refetch on a dip that the CC-oriented held rule cannot see.) Each fetched symbol also records **its own** fetch timestamp rather than one shared run-level stamp, so a long sweep's cohort goes stale spread over the span the sweep took instead of all inside one later cycle — a burst longer than `intraday_loop_minutes` overruns the cycle and costs the next one. A per-cycle ceiling, `market_data.chain_fetch_budget_seconds` (600s, 2026-08-28), caps how long one cycle may spend fetching chains: the gate's filtering collapses when correlation goes to 1 (a broad sell-off makes every `would_own` name material at once, ~23 min of fetching inside a 15-min cycle), and an overrun sets `scan_running`, skipping the NEXT cycle's scan outright. Over-budget symbols are demoted to immaterial (analytics still run) and carried in `ScanResult.unreached_symbols` to the next cycle's `must_include_symbols`, where `_fetch_priority` ranks them first — so a cluster drains over consecutive on-time cycles. Spending order is retry > cleared-floor > movers by multiple of their own bar (`_move_ratio`, the same function the gate uses as its boolean, so the two cannot drift) > staleness-only. Sized from a measured fit, `duration = 56s + 29.9s x fetches`: 900 - 56 - 150 (`symbol_timeout_seconds` of un-preemptable overshoot) = 694, rounded down to 600. Never applies to a manual /scan. **Spot-baseline guard (2026-08-28):** the OTM-only chain builder removed every both-rights strike, making put-call parity structurally impossible, so `infer_spot_from_quotes` silently fell back to a strike-quantized value (~0.8% error on a $150/$2.50-increment name) that flowed into `TechnicalStats.price` and became the materiality baseline — larger than the 0.5% gate it feeds. `require_parity=True` at the two `spot_override` call sites now returns None instead, falling through to the yfinance probe so baseline and probe share one source; `iv.py`'s own distance-ranking callers keep the loose fallback. Names that cleared the score floor last cycle are always material. A `force_full_scan_minutes` timer (default 120, raised from 90 on 2026-08-21) force-fetches an `actively_wheeling`/held name once **its own** last fetch exceeds that many minutes — checked **per symbol** (2026-08-27), not "sweep the whole core together the instant the single stalest name crosses the line": that old rule let one quiet name (e.g. MSFT on a slow week) drag every other `actively_wheeling` name into a synchronized burst together each time. Per-symbol staleness means a name's clock runs from its own last fetch, so frequently-moving names (already refreshing via the move gate) and rarely-moving ones naturally desynchronize — periodic refreshes spread out over time on their own, with no explicit batch/rotation schedule needed to get that effect. Dip-watch is never covered by this timer. The very first cycle (no baselines) sweeps everything; separately, `_intraday_scan_loop` also forces an unconditional full sweep on the first cycle it spawns after every process start (`bot_data["startup_full_sweep_done"]`), regardless of that timer — see "Bugs fixed (2026-08-21…)" below. Immaterial names skip the chain fetch (analytics still run for every name in `would_own` ∪ holdings, so the buy-to-own list stays complete); the `fast_info` price fetched by the materiality probe is also reused as `get_technical_stats`'s `cached_yf_price`, so an immaterial symbol's analytics don't pay for a second identical yfinance quote. The per-symbol baseline (`last_spot`/`last_scanned_at`/`cleared_floor`) lives in the `scan_state` table (`storage/scan_state.py`), written for every fetched symbol — the first intraday cycle (no baselines) sweeps actively_wheeling ∪ held names and seeds the gate. **Dip_watch seed-only at startup / manual /scan (2026-08-28):** the full-sweep path (the first cycle since process start, and manual `/scan`) no longer unconditionally chain-fetches dip_watch names. Each gets a yfinance probe; names that gapped ≥3% overnight (bidirectional — a gap-up is a legitimate CSP setup at the open via IV expansion / news; a gap-down is the dip rule) are fetched; quiet names and names with no persisted baseline (first-ever run) are seed-only — the probe price is persisted as `last_spot` with `last_scanned_at=NULL`, so the per-cycle rule (c) drop gate works from cycle 1 onward against a yfinance-sourced baseline, with no IBKR/yfinance mismatch. Manual `/scan` leaves `intraday=False` and runs the same full-sweep path; `/scan TICKER` still force-fetches a single named ticker on demand. The store is best-effort: a read/write failure degrades to "treat as material" (full fetch), never a wrong decision. |
+| **LLM-skip + output suppression (S5/S6)** | **Built (Phase 4).** Both apply only to `run_scan(intraday=True)` (the 15-min loop); manual `/scan` always reviews fresh and sends in full. **S5:** `_candidates_review_hash` hashes the top candidates' `candidate_id` + signal vectors; when unchanged from the prior cycle (`last_review_hash` system setting) the `claude -p` subprocess is skipped and the persisted `ClaudeReview`s are reused via `_load_prior_reviews`. Enrichment-only — the risk gate already ran, so it never affects gating (the fence; `test_skills_never_reach_the_engine` stays green). **S6:** `send_candidates` collapses a CC/CSP candidate that still has a live, same-score-band PENDING approval into one compact "unchanged" digest (its original card buttons stay actionable), and `send_buy_list` replaces an unchanged buy-to-own screen with a one-line "unchanged since HH:MM" digest — cutting ~26 near-identical card/buy-list blasts/day to one small digest on quiet cycles. **Buy-to-own sent once per day (2026-08-28):** on top of S6, `_intraday_scan_loop` now forwards `include_buy_list=True` into `run_scan` only on the first cycle each ET calendar day that completes cleanly — `send_scan_results` skips the `send_buy_list` call entirely on every other cycle that day (the screen is still scored every cycle; only the Telegram send is gated). A cycle that errors, aborts, or loses the scan lease doesn't mark the day "done," so the gate retries next cycle rather than silently skipping the day. Manual `/scan` is unaffected (`include_buy_list` defaults `True`). An intraday cycle that surfaces *nothing* is still not silent: `send_candidates` appends a timestamped `[HH:MM] … no candidates this cycle <reason>` line plus the closest near-miss to the thread's persisted status message, and the reason now carries the materiality clause ("N/M names moved too little (chain re-fetch skipped)" — reworded 2026-08-27, see the S1 row above for why no single percentage applies any more). A separate `format_quiet_cycle` heartbeat existed for this but could never fire — both send functions return `True` on their empty path — and has been removed rather than resurrected (see "Unreachable quiet-cycle heartbeat" above). |
 | **Scan observability + band cap (S8/S9)** | **Built (Phase 5).** **S9:** when the intraday loop loses a cycle to an overrun (prior scan still running) or scan-lease contention, `_note_intraday_skip` increments a per-session skipped counter and sends a throttled (≤ once/30 min) Telegram warning; successful cycles increment a run counter, and both are shown in `/status` (`format_status` `scans_run`/`scans_skipped`) so intended (~26) vs actual is visible. **S8:** the IV-scaled strike band is now clamped to `[strike_band_pct, strike_band_max_pct]` (default cap 0.40) in `_strike_band_pct`, so an extreme-IV ETF can't generate a runaway qualified-strike/batch count; an explicit per-symbol override is exempt. A config validator rejects a cap below the floor. |
-| **Telegram multi-thread routing** | **Complete. Phases 1–11 ✅.** Phases 1–9 (thread IDs, formatters, per-thread routing, LLM-skip integration, S6 suppression, premarket snapshot, system_settings keys, doc sweep, test stubs) are complete as previously documented. **Phase 10 (accumulated status messages):** "no candidates" and "unchanged" quiet cycles now *append* a `[HH:MM] …` timestamped line to a single persisted Telegram message (edited in-place via `_append_status`) instead of replacing it — so 4 quiet cycles in a row build a tidy timestamped log in one message rather than 4 separate messages. Body text is stored alongside the message-id in a `{key}_body` system_settings key; when the body exceeds 3800 chars the slate is wiped. A real candidate/buy-list send clears both keys so the next quiet cycle starts a fresh message. The old `_edit_or_send` is replaced by `_append_status`. **Phase 11 (order notifications to topic 58):** `send_order_notification` in `sender.py` and `format_order_notification` in `formatters.py` send/edit plain-text order-status messages to `telegram_thread_account` (topic 58); each order gets one persistent message keyed by `order_notification_{order_id}_msg_id`. `executor.py` calls it on order placed, filled, live re-gate failure, IB rejection, and timeout; `approval.py` calls it for TTL-expiry, re-validation failure, and daily-trade-cap cancellations. The intraday scan loop calls `_update_pending_order_notifications` after each scan to push live underlying-price and option-mid updates to every SUBMITTED order's thread-58 message. |
+| **Telegram multi-thread routing** | **Complete. Phases 1–11 ✅.** Phases 1–9 (thread IDs, formatters, per-thread routing, LLM-skip integration, S6 suppression, premarket snapshot, system_settings keys, doc sweep, test stubs) are complete as previously documented. **Phase 10 (accumulated status messages):** "no candidates" and "unchanged" quiet cycles now *append* a `[HH:MM] …` timestamped line to a single persisted Telegram message (edited in-place via `_append_status`) instead of replacing it — so 4 quiet cycles in a row build a tidy timestamped log in one message rather than 4 separate messages. Body text is stored alongside the message-id in a `{key}_body` system_settings key; when the body exceeds 3800 chars the slate is wiped. A real candidate/buy-list send clears both keys so the next quiet cycle starts a fresh message. The old `_edit_or_send` is replaced by `_append_status`. **New-day rollover (2026-08-28):** the same wipe-and-resend now also triggers on the first quiet cycle of a new ET calendar day (tracked in a `{key}_date` system_settings key), regardless of body length, so a quiet cycle on a new trading day always starts its own message rather than appending to a message left over from a previous day — applies to all three screens (CC, CSP, buy-to-own) since they share `_append_status`. **Phase 11 (order notifications to topic 58):** `send_order_notification` in `sender.py` and `format_order_notification` in `formatters.py` send/edit plain-text order-status messages to `telegram_thread_account` (topic 58); each order gets one persistent message keyed by `order_notification_{order_id}_msg_id`. `executor.py` calls it on order placed, filled, live re-gate failure, IB rejection, and timeout; `approval.py` calls it for TTL-expiry, re-validation failure, and daily-trade-cap cancellations. The intraday scan loop calls `_update_pending_order_notifications` after each scan to push live underlying-price and option-mid updates to every SUBMITTED order's thread-58 message. |
 | **Ledger assignment detection** | **Auto-detected (Phase 4).** The EOD run diffs the prior day's position snapshot (`position_snapshots` table) against current positions: a vanished short whose underlying stock moved ~100×contracts in the assignment direction is flagged `assigned` and fed to `reconcile(assigned_candidate_ids=…)` (`src/claude/eval/assignment.py`). The manual `scripts.reconcile_outcomes --assigned <id>` override still exists for corrections. Two residuals remain: (a) the `assigned` realized P&L is the option-leg premium only — stock-leg P&L is still not modelled in the ledger; (b) covered-call assignment needs a prior snapshot showing the held shares, so it isn't detected on the very first EOD run before any snapshot exists. |
 | **Backtesting engine** | **Built (Phase 4); v2 added (N21); C10/C11 added (Competitive Phase 5).** `src/backtest/` simulates CC/CSP income over historical prices. **v1** synthesises premiums with Black-Scholes from trailing 30-day HV (a fair-value IV proxy → expected edge ≈ 0 by construction — it validates plumbing, not the edge). **v2** (`--use-stored-iv`) prices the entry premium from the symbol's stored daily IV (`iv_history`), so the run measures the variance-risk premium (IV−HV, reported as `mean_vrp_pct`); `--profit-take 0.5` simulates the 50% take rule and `--min-iv-rank` gates entries by IV rank, so the strategy hypothesis can be tested with/without gating. Reports premium, net P&L, win/assignment/profit-take rate, return on capital, annualized, buy-&-hold benchmark, and max drawdown via `scripts.backtest`. **C10** `src/backtest/earnings.py` adds earnings-cycle segmentation: `simulate_earnings_cycles` segments the price series by historical earnings dates (loaded via `data.load_earnings_dates` from yfinance), evaluates the strategy across each inter-earnings window (gating when the window is too narrow for the DTE), and optionally adds a vol-crush follow-on entry right after earnings. **C11** `scripts/backtest_candidate.py` adds an on-demand per-candidate CLI: `--compact` outputs a 4-line summary suitable for Claude injection; `--earnings` enables the earnings-cycle mode. **Phase 6** extracted the reusable core into `src/backtest/on_demand.py` (`params_from_candidate`, `run_backtest`, `summarize`, `backtest_candidate`) — the CLI is now a thin wrapper, and the **Claude-invocable action** is delivered: `strategist.build_prompt` injects a per-candidate backtest line when `claude.backtest_in_prompt` is enabled (default OFF). `report.compact_report` and `report.format_earnings_cycle_report` are the matching renderers. All still an approximation (no spread/slippage; daily marks for the profit-take walk) and fully isolated from the live broker/risk path (the fence — `on_demand.py` is never imported by `engine/`, `execution/`, or sizing). |
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − net_premium/100` per share for share-acquiring (put) assignments. **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads it via `campaigns.adjusted_cost_basis_for(symbol)` and uses it — falling back to IBKR's raw `avg_cost` when no open assigned campaign exists — for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
+| **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
 
 ---
@@ -308,6 +335,250 @@ removed.
 
 Behavior is unchanged for every account currently running the `default` profile (i.e. all of
 them) — this cleanup removes dead code paths, not live functionality.
+
+---
+
+## Built (2026-08-28 — option-chain fetch: tightened DTE window + OTM-only cartesian)
+
+Prompted by a "why does fetching a symbol take so long" investigation into
+`src/ibkr/market_data.py`. Two independent changes:
+
+- **`covered_call`/`cash_secured_put` `dte_min`/`dte_max` tightened from 21/45 to 7/28**
+  (`config/risk_limits.yaml`). These keys are shared by the strategy screens' entry window and
+  `risk_engine.validate_candidates`'s `dte_out_of_range` gate, so both narrow to the same
+  shorter-dated focus. **Interacts with the monitor's `manage_at_dte` (default 21, see the
+  Monitor bullet in "What is built" above):** a fresh entry can now open as close as 7 DTE,
+  already past that 21-DTE management checkpoint on day one — worth a human look at whether
+  `manage_at_dte` should come down too, not changed here since it's a separate, deliberate
+  monitor-alert threshold.
+- **`_build_chain_contracts` (`src/ibkr/market_data.py`)** replaces the inline
+  `expirations × strikes × ("C", "P")` cartesian in `get_option_chain_quotes`/
+  `get_option_chain_quotes_async` with an OTM-side-only cartesian: calls only at strikes ≥ spot,
+  puts only at strikes ≤ spot. `covered_call.py`/`cash_secured_put.py` only ever keep OTM
+  contracts (delta 0.20–0.35 / |delta| 0.15–0.30), so the ITM half of every (expiration, strike)
+  pair was always qualified, quoted, and discarded downstream regardless. This is lossless —
+  nothing that used to survive the strategy filters is dropped — and roughly halves the
+  qualify/quote batch count (and therefore wall-clock fetch time, since `_batch_quotes`/
+  `_batch_quotes_async` cost is linear in contract count) per symbol. **Does not address** the
+  larger, already-known qualification waste from `reqSecDefOptParams`'s per-symbol strike union
+  (see "Bugs fixed 2026-08-21" below) — that still needs a per-expiration `reqContractDetails`
+  lookup to fix properly.
+
+---
+
+## Bugs fixed (2026-08-28 — quiet-cycle seed-only persistence clobbered real fetch timestamps)
+
+Found in review before this branch of work was declared done. `_run_scan_body` called
+`_persist_seed_only_baselines(probed_spots, material_symbols)` unconditionally, right after
+computing `material_symbols` — outside the `if intraday: / else:` split. That helper was written
+for the full-sweep dip_watch case only ("names that didn't gap overnight get seed-only, no chain
+fetch"), but the unconditional call site meant a normal 15-min gated cycle (`force_full_sweep`
+false) hit it too, for *every* probed-but-immaterial symbol regardless of bucket — not just
+dip_watch. On any quiet cycle (the common case — that's the point of the gate), a probed
+`actively_wheeling`/held symbol that didn't cross its move threshold had its real
+`last_scanned_at` overwritten to `NULL` and `last_spot` rebased to that cycle's probe price.
+
+Two consequences, both the opposite of what S1 exists to do:
+
+- **Sticky-`last_spot` drift accumulation broke.** The gate's whole premise is that a small
+  per-cycle move (e.g. −0.2%) accumulates against the *last real fetch* until it crosses the
+  threshold. Rebasing to the current probe every quiet cycle meant each comparison was only ever
+  against the immediately-prior cycle, so slow drift never accumulated to a fire.
+- **The 120-min staleness net (rule f) fired every other cycle instead.** With `last_scanned_at`
+  nulled, the *next* cycle's per-symbol staleness check saw `stamp is None` and force-refetched
+  immediately — confirmed by tracing a quiet `actively_wheeling` name through repeated cycles:
+  real fetch → probed-quiet (nulled) → forced refetch next cycle (stale) → probed-quiet (nulled)
+  → forced refetch → … roughly a real chain fetch every ~30 min instead of every 120 min, a ~4x
+  amplification of exactly the fixed cost this whole S1/dip-watch effort was cutting.
+
+No existing test caught it: the only coverage of `_persist_seed_only_baselines` was unit-level
+with hand-picked args, and nothing ran two consecutive `run_scan(intraday=True)` cycles checking
+`scan_state` afterward. Reproduced directly against a real sqlite `scan_state` row before the fix,
+then fixed by scoping the call site to an actual full sweep:
+`if probed_spots and (force_full_sweep or not intraday):`. Regression test added:
+`test_quiet_gated_cycle_does_not_null_a_real_fetch_timestamp`
+(`tests/test_scan_materiality.py`) — seeds a real `last_scanned_at` via `bulk_upsert_scan_state`,
+runs one gated `run_scan(intraday=True)` cycle with the symbol probed-but-unmoved, and asserts
+the timestamp and `last_spot` are unchanged afterward (reading real persisted state, not a
+mocked `get_scan_state`).
+
+---
+
+## Built (2026-08-28 — scan-abort retry queue + intraday live progress)
+
+Direct follow-up to the 2026-08-27 half-dead-socket incident below: when the circuit breaker
+aborted the 09:30 forced full sweep at 38/46 symbols, the 8 never-reached names (all dip-watch —
+no `actively_wheeling`/held 120-min staleness net covers them) had no path back into the scan set
+short of a 3% drop or another process restart. Two changes close that gap and make a slow/aborted
+run visible while it's happening, instead of just after:
+
+- **`ScanResult.unreached_symbols`** (`src/orchestrator/scan.py`): populated at the circuit
+  breaker's abort point as `all_symbols[run_start:]`, where `run_start` backs up to the first
+  symbol of the consecutive-timeout run that tripped the breaker — every symbol that failed for
+  the shared root cause (dead socket), not just the one that happened to cross the threshold,
+  plus everything genuinely never attempted after it.
+- **`_compute_material_symbols(..., must_include=...)`** and `run_scan(...,
+  must_include_symbols=...)`: force specific named symbols through the S1 materiality gate
+  regardless of movement, without widening the fetch to anything else — cheaper than
+  `force_full_sweep`, since everything else that cycle is already fresh in `scan_state`.
+- **`_run_intraday_scan`** carries `bot_data["pending_retry_symbols"]` forward each cycle:
+  passed as `must_include_symbols`, then fully replaced (not merged) from the new
+  `result.unreached_symbols` afterward — symbols that get through drop out, newly-missed ones
+  take their place. A `lease_skipped` cycle (another process held the scan lease) leaves the
+  queue untouched rather than clearing it, since it produced no real result. Scoped to the
+  intraday loop only — a manual `/scan` doesn't read or clear it (see `How the scan works.md`
+  §4, "The retry queue," for the full mechanics and the known edge case this leaves).
+- **🛑 *Scan blocked* now names the queued symbols** (`_notify_scan_blocked`'s new
+  `retry_symbols` param) instead of just reporting that a block happened.
+- **Live progress for the intraday loop**: `_run_intraday_scan` now sends its own
+  "🔍 Scanning…" dashboard message and wires it as `run_scan`'s `dashboard_callback` — the same
+  progress-bar-plus-current-symbol renderer (`_Tracker`) manual `/scan` already used, previously
+  never wired up for the 15-min loop, which ran it with `dashboard_callback=None` (silent) by
+  design. `_make_editor` (the message-editing closure) is now a shared module-level helper in
+  `src/notify/approval_service.py` instead of duplicated per call site.
+
+**Known limitation, not addressed here:** a symbol that individually times out *without*
+tripping the 3-in-a-row breaker is not added to the retry queue — that's the older, separate
+per-symbol-timeout behavior (the run continues normally), out of scope for this fix.
+
+---
+
+## Bugs fixed & operational mitigation (2026-08-27 — Gateway connectivity investigation)
+
+Investigated a "data always feels stale/slow" report. A live diagnostic probe ruled out market
+data entitlements — real-time stock quotes, IBKR-computed option greeks/IV/open-interest, and
+zero subscription-error codes (354/10090/10091/10167/10197) came back cleanly. The real cause,
+found by filtering `logs/system.log` down to one cleanly-bounded real process window: genuine
+`Error 1100` ("half-dead socket") incidents during actual Friday RTH, plus a 5+ hour disconnected
+stretch after Gateway's nightly forced restart, consistent with nobody being available (SGT
+daytime = US pre-market/overnight for this account) to re-authenticate.
+
+- **`pytest` runs were writing into the same `logs/system.log` as production**, discovered when a
+  burst of ~200 near-simultaneous "RTH cycle starting" lines was initially mistaken for a crash
+  loop before a `unittest/mock.py` frame in the traceback gave away that it was test
+  failure-injection (`RuntimeError("boom")`, `RuntimeError("telegram down")`), not a real
+  incident. **Fixed:** `src/common/logging.py`'s `setup_logging()` now routes the file handler to
+  `logs/test.log` whenever `"pytest" in sys.modules` — pytest imports itself before collecting
+  any test module, so this reliably separates the two before any module-level `get_logger()` call
+  fires. Console output is unaffected.
+- **Operational mitigation (not a code change): IBC-automated Gateway login.** The half-dead-socket
+  detection/recovery already built into the intraday loop (see the 2026-06-23/06-24 entries below)
+  is a complementary, later-stage layer — it recovers *during* a scan once Gateway is reachable
+  again, but can't help while Gateway is sitting fully logged out for hours. `scripts/ibc/
+  start_gateway.sh` (new) wraps [IBC](https://github.com/IbcAlpha/IBC) to automate the login
+  screen and, once `AutoRestartTime` is set in Gateway's own Lock-and-Exit config, the daily
+  restart without a fresh login/2FA. It cannot auto-approve an IBKR Mobile push-notification 2FA
+  prompt — a human tap is still needed at minimum once a week (the mandatory Sunday cold restart).
+  See `SETUP.md` §4 "Automating Gateway login with IBC".
+- **Follow-up incident, same day:** a genuine `Error 1100` half-dead-socket episode hit during
+  the 09:30 ET forced full sweep (3 consecutive symbol-level chain timeouts on TSLA/TTD/UBER
+  aborted the run at 38/46 symbols, correctly producing the 🛑 *Scan blocked* Telegram message —
+  see the 2026-06-24 half-dead-socket entry below; this was the circuit breaker working as
+  designed, not a bug). Two real gaps surfaced while investigating it:
+  - **`_NoiseFilter`'s consecutive-repeat suppression didn't fire for chain-probe noise.**
+    `reqSecDefOptParams` returns strikes as the union across *all* expirations, so the
+    expiration × strike × right cross-product in `get_option_chain_quotes[_async]` inevitably
+    fires "Unknown contract" / "No security definition" for many combos that don't exist —
+    expected noise the filter exists to collapse. But those "Unknown contract" lines alternate
+    `right='C'`/`right='P'` every other line, and that token sat inside the filter's 120-char
+    dedup key untouched by digit-normalisation, so consecutive lines never shared a key and the
+    run-length suppression never engaged — a single symbol's chain fetch could emit hundreds of
+    un-suppressed lines. **Fixed:** `_NoiseFilter` now normalises `right='[CP]'` before keying,
+    same as it already does for digits.
+  - **`/status` could hang forever with no reply during a half-dead socket.**
+    `isConnected()` only reflects the TCP/exec-socket handshake, which the half-dead state
+    leaves up — so `handle_status_command` took the "IBKR connected" branch and awaited
+    `get_account_snapshot_async` (`accountSummaryAsync`) with no timeout, unlike every other
+    live IBKR call site (`probe_market_data_health`, fill reconciliation, chain fetch) which
+    already guards against exactly this state. **Fixed:** bounded by
+    `market_data.health_probe_timeout_seconds`; on timeout it logs a warning and still replies
+    with positions/pending-approvals/open-orders, just without the account-totals line. See the
+    new `SETUP.md` troubleshooting row.
+  - Also observed 3× `Error 10197` ("No market data during competing live session") during this
+    incident — the existing `SETUP.md` troubleshooting row already covers it (check for another
+    logged-in IBKR session/device on the same account); not a new gap, just confirmed live.
+- **Second follow-up incident, same day: a stop/restart left an orphaned `run_approval_service`
+  that starved the new session of both its clientIds and its Telegram polling.** `scripts/
+  start.py`'s `_stop_all` sent `SIGTERM` to each child and called `sys.exit(0)` immediately, with
+  no check that the child actually exited — a hung shutdown (mechanism not fully diagnosed;
+  didn't respond to a manual `SIGTERM` either 30+ minutes later, only `SIGKILL`) left a survivor
+  that kept polling Telegram (`telegram.error.Conflict: terminated by other getUpdates request`)
+  and, transiently, held clientIds 14/15. The next `scripts.start` invocation's exec/scan
+  connections lost the clientId race, exhausted `connect_with_retry`'s bounded attempts (~30s),
+  and gave up — critically, **`AutoReconnect` is only ever attached after a connection succeeds
+  once**, so a startup-connect failure has no retry path at all for the rest of that process's
+  life. Symptom: `/status` → "IBKR connection unavailable" and `🔁 0 intraday scans run`
+  indefinitely, even long after IB Gateway itself was healthy again (confirmed by the
+  **monitor's** independent connection, which reconnected fine via its own persistent
+  `AutoReconnect` loop) — because the intraday loop's `if not ib_scan.isConnected(): continue`
+  guard silently skipped every cycle, including the forced full sweep that's supposed to fire on
+  the first cycle after a restart. **Fixed:** `_stop_all` now waits up to `STOP_GRACE_SECONDS`
+  (10s) for each child and SIGKILLs any that don't exit; `scripts.start` also now scans for and
+  kills any *other* process running one of this project's own daemon modules before launching new
+  ones, so a stray survivor — however it was orphaned — can no longer contest the new session.
+  Live-validated the same day: on the very next restart the new startup scan caught and killed a
+  leftover process before the daemons launched, and exec/scan/monitor all connected cleanly. See
+  the new `SETUP.md` "Clean stop, guaranteed" note and troubleshooting row.
+  - **Known limitation, not addressed by this fix:** the underlying startup-connect-failure gap
+    (no retry once `connect_with_retry` exhausts its bounded attempts) is still there in
+    principle — this fix prevents the clientId collision that triggers it in the stop/restart
+    case, but a `/status` that fails to connect for some *other* reason at startup (e.g. Gateway
+    still mid-restart) would still need a manual restart to recover. Worth a follow-up: retry the
+    initial connect in the background instead of giving up permanently.
+
+---
+
+## Bugs fixed (2026-08-21 — intraday full-sweep guarantee + overrun frequency)
+
+- **A full 46-symbol intraday sweep routinely takes 15–25 minutes — longer than the 15-min
+  cadence itself — because per-symbol option-chain qualification wastes most of its round trips
+  on (strike, expiration, right) combinations that don't exist.** Investigated after a repeat of
+  the "previous scan still running (overran the interval)" warning (first fixed structurally
+  2026-08-13, above — this is about *why* full sweeps are slow enough to trigger it in the first
+  place, not the scheduling bug itself). `reqSecDefOptParams` returns strikes as a union across
+  *all* expirations for the underlying, not per-expiration, so `get_option_chain_quotes_async`'s
+  `strikes × expirations × 2 rights` cartesian submits many contracts to `qualifyContractsAsync`
+  that IBKR reports back as `Error 200: No security definition has been found`. Traced one
+  instance: AAPL alone submitted ~300 candidate contracts and took ~24s of wall-clock qualify time
+  before a single quote returned, almost entirely spent on doomed round trips. Across a 46-symbol
+  universe that's 15–25 minutes for a full sweep — already at or past `scheduler.intraday_loop_minutes`
+  (15) before profit-take/loss-exit/reconciliation are even counted. This qualification waste is
+  not fixed here (would mean replacing the blind cartesian with a per-expiration
+  `reqContractDetails` lookup in `src/ibkr/market_data.py` — a larger change; the "Built
+  2026-08-28 — option-chain fetch" entry above trims the same cartesian's OTM-vs-ITM waste, a
+  smaller, complementary cut that leaves this per-expiration-existence waste untouched); what
+  changed here is when and how often the full sweep that pays this cost gets triggered:
+  - `market_data.force_full_scan_minutes` raised from 90 to 120 minutes — fewer full sweeps per
+    session means fewer chances to collide with the 15-min cadence, at the cost of a slightly
+    longer staleness ceiling for quiet-but-drifting symbols.
+  - **The full sweep at process start was previously incidental, not guaranteed:** it only
+    happened because the overnight (or, as observed 2026-08-21, a 6-day idle) gap since the last
+    fetch always happens to exceed the staleness timer — nothing enforced it directly, so a
+    same-day restart shortly after a full sweep could fall straight into a narrow
+    materiality-gated cycle with a stale full picture. `_compute_material_symbols` now accepts
+    `force_full_sweep: bool`, which bypasses the staleness/materiality logic entirely.
+    `_intraday_scan_loop` tracks `bot_data["startup_full_sweep_done"]` (in-memory — unset on every
+    process restart) and passes `force_full_sweep=True` into the first cycle it actually gets to
+    spawn a scan; a cycle that `continue`s earlier for an unrelated reason (halted, past
+    `entry_cutoff`, unhealthy data-farm probe, or a still-running previous scan) leaves the flag
+    unset, so the next eligible cycle forces it instead — the flag is only set at the point a scan
+    is actually spawned, mirroring the existing `scan_running` lease pattern. A manual `/scan`
+    already sweeps everything, so `handle_scan_command` sets the same flag to spare the next
+    intraday cycle a redundant forced sweep.
+  - `src/orchestrator/scan.py`: `_compute_material_symbols`, `run_scan`, `_run_scan_body` all gain
+    a `force_full_sweep` parameter.
+  - `src/notify/approval_service.py`: `_run_intraday_scan` gains `force_full_sweep`; the
+    `startup_full_sweep_done` decision lives in `_intraday_scan_loop`; `handle_scan_command` sets
+    the flag after a successful manual sweep.
+  - `config/settings.yaml`: `market_data.force_full_scan_minutes: 120` (previously an unset code
+    default of 90 in `src/common/config.py`, now explicit).
+  - Regression tests: `tests/test_scan_materiality.py::test_force_full_sweep_bypasses_gate_entirely`,
+    `tests/test_notify.py::test_run_intraday_scan_forwards_force_full_sweep` and
+    `::test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle`.
+  - **Known limitation, unchanged by this fix:** a full sweep can still overrun 15 minutes and
+    cost one skipped cycle — this only guarantees *when* the mandatory full sweep happens
+    (session start) and reduces *how often* it recurs (120 vs 90 min), it does not make any single
+    full sweep faster. The qualification-waste root cause above remains open.
 
 ---
 
@@ -626,7 +897,14 @@ trade today," which is why D1 and D2 both passed CI for as long as they did. One
 symbol: how many contracts the account can support right now, and which constraint stops the next
 one. Raw output of `python -m scripts.capacity_report --net-liq 300000 --cash 100000`, re-run
 2026-08-12 after the final-review fix wave against the committed `risk_limits.yaml` (spot prices
-come from live quotes, so the exact figures drift run to run; the binding reasons do not):
+come from live quotes, so the exact figures drift run to run; the binding reasons do not).
+
+**Stale as of 2026-08-27:** the `would_own` list below is the *pre-restructure* one. The
+2026-08-27 universe restructure kept the count at 46 but changed the composition — CRM/COIN/XLV/
+XLP/TLT dropped out, TQQQ/UPRO/SOXL/MAGS were added — so this run does not cover the new names,
+none of which have been through `capacity_report.py`. Re-run it before treating any of MAGS/TQQQ/
+UPRO's collateral/risk-unit sizing as verified; nothing about the sizing *logic* changed, only
+which symbols feed it.
 
 ```
 SYMBOL        SPOT  LOTS   COLLATERAL  BINDING

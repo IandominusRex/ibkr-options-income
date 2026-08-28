@@ -83,10 +83,12 @@ from src.storage.system_settings import (
     autonomy_progress,
     get_autonomy_level,
     get_halt_reason,
+    get_setting,
     is_halted,
     promotion_blockers,
     set_autonomy_level,
     set_halted,
+    set_setting,
 )
 
 if TYPE_CHECKING:
@@ -100,6 +102,11 @@ _ET = ZoneInfo("America/New_York")
 # many days. The EOD job appends daily, so a healthy symbol sits at 0–1 day (3 over a weekend);
 # >5 means the appender or backfill has stopped running (N4).
 _IV_STALE_DAYS = 5
+
+# system_settings key: ET calendar date the buy-to-own list was last sent by the intraday loop.
+# The buy screen is scored every cycle (cheap), but only sent once per day — on whichever
+# cycle first completes that day — instead of every 15 minutes (2026-08-28).
+_BUY_LIST_SENT_DATE_KEY = "buy_list_gate_last_sent_date"
 
 
 # ---------------------------------------------------------------------------
@@ -447,23 +454,8 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     prog_msg_id = prog_msg.message_id
     dash_msg_id = dash_msg.message_id
 
-    def _make_editor(message_id: int) -> Callable[[str], Awaitable[None]]:
-        async def _edit(text: str) -> None:
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    parse_mode="MarkdownV2",
-                )
-            except Exception:
-                # "message is not modified" and transient edit errors are non-fatal.
-                pass
-
-        return _edit
-
-    _update_progress = _make_editor(prog_msg_id)
-    _update_dashboard = _make_editor(dash_msg_id)
+    _update_progress = _make_editor(context.bot, chat_id, prog_msg_id)
+    _update_dashboard = _make_editor(context.bot, chat_id, dash_msg_id)
 
     async def _run_and_notify() -> None:
         from src.orchestrator.scan import run_scan
@@ -476,6 +468,13 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 progress_callback=_update_progress,
                 dashboard_callback=_update_dashboard,
             )
+            # Manual /scan runs the full-sweep path — actively_wheeling ∪ held names get an
+            # unconditional chain fetch, and dip_watch names get seed-only unless they gapped
+            # ≥3% overnight (see _compute_material_symbols' force_full_sweep branch, 2026-08-28).
+            # It satisfies the intraday loop's "one full sweep since process start" requirement,
+            # so mark it done here too (same bot_data flag) to spare the next 15-min cycle a
+            # redundant forced full sweep.
+            context.bot_data["startup_full_sweep_done"] = True
             await _notify_manual_scan_outcome(context.bot, chat_id, prog_msg_id, result, ib_scan)
         except Exception:
             logger.exception("Scan failed")
@@ -635,7 +634,18 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
             positions = get_positions(ib)
             if cfg.secrets.ibkr_account:
-                account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
+                # isConnected() only reflects the TCP/exec-socket handshake — it stays True
+                # through the half-dead-socket state (Error 1100: data farm gone, socket
+                # still up) that the scan loop's own health probe guards against. Without a
+                # bound here, accountSummaryAsync hangs forever in that state and /status
+                # never replies at all (2026-08-27). Time out on the same budget as that
+                # probe and fall through with account=None rather than block indefinitely.
+                account = await asyncio.wait_for(
+                    get_account_snapshot_async(ib, cfg.secrets.ibkr_account),
+                    timeout=cfg.market_data.health_probe_timeout_seconds,
+                )
+        except TimeoutError:
+            logger.warning("/status: account snapshot timed out — IBKR data farm unresponsive")
         except Exception:
             logger.exception("/status: failed to fetch IBKR data")
     else:
@@ -1051,14 +1061,55 @@ async def _note_intraday_skip(bot_data: dict, bot: object, chat_id: str, reason:
         logger.exception("Intraday loop: failed to send overrun warning")
 
 
-async def _notify_scan_blocked(bot: object, chat_id: str, reason: str, detail: str) -> None:
+def _make_editor(bot: object, chat_id: str, message_id: int) -> Callable[[str], Awaitable[None]]:
+    """Build a ``dashboard_callback``/``progress_callback`` that edits one Telegram message
+    in place. Shared by the manual ``/scan`` command and the intraday loop's live progress
+    message (2026-08-28) — same "message is not modified"-tolerant edit, same signature
+    ``run_scan`` expects.
+    """
+
+    async def _edit(text: str) -> None:
+        try:
+            await bot.edit_message_text(  # type: ignore[attr-defined]
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                parse_mode="MarkdownV2",
+            )
+        except Exception:
+            # "message is not modified" and transient edit errors are non-fatal.
+            pass
+
+    return _edit
+
+
+async def _notify_scan_blocked(
+    bot: object,
+    chat_id: str,
+    reason: str,
+    detail: str,
+    *,
+    retry_symbols: list[str] | None = None,
+) -> None:
     """Tell the operator a scan cycle was *blocked* (not merely skipped) and exactly why.
 
     Unlike ``_note_intraday_skip`` (throttled overrun/contention nuisance warnings), a block is
     rare and actionable — the data socket is half-dead — so it is sent every time. Failures to
     send are swallowed: a Telegram outage must not crash the loop.
+
+    ``retry_symbols`` (2026-08-28) names whatever a mid-scan ``aborted_unhealthy`` abort never
+    reached — the caller queues these as next cycle's forced-include set (see
+    ``ScanResult.unreached_symbols`` / ``must_include_symbols``), so the operator sees not just
+    that a run was cut short but exactly which names will be retried and when. Omitted for the
+    pre-scan health-probe block, which has no partial run to report on.
     """
     logger.error("Intraday loop: scan BLOCKED — %s | %s", reason, detail)
+    retry_line = ""
+    if retry_symbols:
+        retry_line = (
+            f"\n\n📋 {len(retry_symbols)} symbol\\(s\\) not reached — queued for the next "
+            f"cycle: {_md_escape(', '.join(retry_symbols))}\\."
+        )
     try:
         cfg_s = get_config().secrets
         await bot.send_message(  # type: ignore[attr-defined]
@@ -1068,6 +1119,7 @@ async def _notify_scan_blocked(bot: object, chat_id: str, reason: str, detail: s
                 f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
                 f"*{_md_escape(reason)}*\n{detail}\n\n"
                 f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
+                f"{retry_line}"
             ),
             parse_mode="MarkdownV2",
         )
@@ -1090,7 +1142,13 @@ async def _force_scan_reconnect(ib_scan: IB) -> None:
 
 
 async def _run_intraday_scan(
-    ib_scan: IB, bot: object, chat_id: str, bot_data: dict
+    ib_scan: IB,
+    bot: object,
+    chat_id: str,
+    bot_data: dict,
+    *,
+    force_full_sweep: bool = False,
+    include_buy_list: bool = True,
 ) -> None:
     """Run one intraday scan and handle its outcome, off the scheduling loop's own task.
 
@@ -1106,38 +1164,91 @@ async def _run_intraday_scan(
     the caller before spawning this) is the same lease manual ``/scan`` already checks, so the
     two still can't run concurrently — a still-running scan just makes the *next* aligned mark
     log/notify a skip and try again 15 minutes later, instead of vanishing silently.
+
+    Two more behaviors live here (2026-08-28):
+
+    * **Live progress.** A dashboard message (the same progress-bar-plus-current-symbol
+      renderer ``/scan`` already uses) is sent before the scan runs and edited in place as it
+      progresses, so the operator can see it's working rather than staring at silence until
+      results (or a block) arrive.
+    * **Retry queue.** ``bot_data["pending_retry_symbols"]`` carries forward whatever the
+      *previous* cycle's ``aborted_unhealthy`` run never reached (``ScanResult.
+      unreached_symbols``) and is passed as this cycle's ``must_include_symbols`` — forcing
+      just those symbols through the materiality gate regardless of movement, since everything
+      else this cycle fetched is already fresh in ``scan_state``. The set is fully replaced
+      (not merged) from this cycle's own ``result.unreached_symbols`` afterward: symbols that
+      got through drop out, any newly-missed ones take their place. A ``lease_skipped`` cycle
+      produced no real result and leaves the queue untouched rather than clearing it.
+
+    ``include_buy_list`` (set by ``_intraday_scan_loop`` — 2026-08-28) forwards straight to
+    ``run_scan``, gating only the buy-to-own Telegram send. On a cycle that completes cleanly
+    (neither ``lease_skipped`` nor ``aborted_unhealthy``) with ``include_buy_list=True``,
+    today's ET date is recorded so the loop doesn't send it again until tomorrow. A cycle that
+    doesn't complete leaves the date untouched, so the gate retries at the next cycle instead
+    of silently losing the day.
     """
+    dash_msg_id: int | None = None
+    try:
+        cfg_s = get_config().secrets
+        dash_msg = await bot.send_message(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
+            text="🔍 *Scanning…* 0%\n▱▱▱▱▱▱▱▱▱▱\n\n⚙️ Starting scan…",
+            parse_mode="MarkdownV2",
+        )
+        dash_msg_id = dash_msg.message_id
+    except Exception:
+        logger.exception("Intraday loop: failed to send scan progress message")
+    dashboard_cb = _make_editor(bot, chat_id, dash_msg_id) if dash_msg_id is not None else None
+
     try:
         from src.orchestrator.scan import run_scan
 
-        result = await run_scan(ib_scan, bot, chat_id, intraday=True)
+        pending_retry = set(bot_data.get("pending_retry_symbols", ()))
+        result = await run_scan(
+            ib_scan,
+            bot,
+            chat_id,
+            dashboard_callback=dashboard_cb,
+            intraday=True,
+            force_full_sweep=force_full_sweep,
+            must_include_symbols=pending_retry,
+            include_buy_list=include_buy_list,
+        )
         if result.lease_skipped:
             # S9: another process (e.g. a concurrent /scan) held the scan lease — skipped.
-            await _note_intraday_skip(bot_data, bot, chat_id, "another process holds the scan lease")
-        elif result.aborted_unhealthy:
-            # Circuit breaker fired mid-sweep: the socket went half-dead after the
-            # pre-scan probe passed. Notify and force a reconnect (same recovery path).
-            threshold = get_config().market_data.max_consecutive_chain_timeouts
-            await _notify_scan_blocked(
-                bot,
-                chat_id,
-                "IBKR data farm stopped responding mid-scan (half-dead socket)",
-                f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
-                f"run was aborted instead of grinding the rest of the universe\\.",
-            )
-            await _force_scan_reconnect(ib_scan)
             await _note_intraday_skip(
-                bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
+                bot_data, bot, chat_id, "another process holds the scan lease"
             )
         else:
-            bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
-            logger.info(
-                "Intraday scan complete — CC=%d CSP=%d buy=%d autonomy=%s",
-                len(result.cc_candidates),
-                len(result.csp_candidates),
-                len(result.buy_candidates),
-                get_autonomy_level().value,
-            )
+            bot_data["pending_retry_symbols"] = set(result.unreached_symbols)
+            if result.aborted_unhealthy:
+                # Circuit breaker fired mid-sweep: the socket went half-dead after the
+                # pre-scan probe passed. Notify and force a reconnect (same recovery path).
+                threshold = get_config().market_data.max_consecutive_chain_timeouts
+                await _notify_scan_blocked(
+                    bot,
+                    chat_id,
+                    "IBKR data farm stopped responding mid-scan (half-dead socket)",
+                    f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
+                    f"run was aborted instead of grinding the rest of the universe\\.",
+                    retry_symbols=result.unreached_symbols,
+                )
+                await _force_scan_reconnect(ib_scan)
+                await _note_intraday_skip(
+                    bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
+                )
+            else:
+                bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
+                if include_buy_list:
+                    set_setting(_BUY_LIST_SENT_DATE_KEY, datetime.now(_ET).date().isoformat())
+                logger.info(
+                    "Intraday scan complete — CC=%d CSP=%d buy=%d autonomy=%s",
+                    len(result.cc_candidates),
+                    len(result.csp_candidates),
+                    len(result.buy_candidates),
+                    get_autonomy_level().value,
+                )
     except Exception:
         logger.exception("Intraday loop: scan failed")
     finally:
@@ -1262,12 +1373,45 @@ async def _intraday_scan_loop(
                 )
                 continue
 
+            # Force an unconditional full sweep on the first cycle this process actually gets to
+            # spawn a scan (2026-08-21): `market_data.force_full_scan_minutes` is a staleness
+            # *timer* that happens to usually cover a restart (the overnight/multi-day gap
+            # exceeds it), but that's incidental, not guaranteed — a same-day restart shortly
+            # after a full sweep would otherwise fall through to a narrow materiality-gated scan
+            # with no fresh full picture since the restart. `startup_full_sweep_done` is in
+            # `bot_data` (not persisted) so it resets on every process start and is set only here,
+            # at the point a scan is actually spawned — a cycle that `continue`s above (halted,
+            # past entry cutoff, unhealthy probe, or a still-running previous scan) never reaches
+            # this line, so the flag stays unset and the *next* eligible cycle forces the sweep
+            # instead. A manual `/scan` already sweeps everything and sets the same flag (see the
+            # `/scan` command handler), so a full sweep right after a restart isn't repeated twice.
+            force_full_sweep = not bot_data.get("startup_full_sweep_done", False)
+            bot_data["startup_full_sweep_done"] = True
+
+            # Buy-to-own is scored every cycle regardless (cheap — reuses analytics already
+            # fetched for CC/CSP) but only *sent* once per ET calendar day (2026-08-28): whichever
+            # cycle first completes today. `_run_intraday_scan` records today's date only after a
+            # cycle that actually completes, so a cycle that errors, aborts, or loses the lease
+            # leaves this `True` for the next cycle to retry rather than silently losing the day.
+            include_buy_list = (
+                get_setting(_BUY_LIST_SENT_DATE_KEY) != datetime.now(_ET).date().isoformat()
+            )
+
             # Spawned rather than awaited: a legitimately slow full sweep must not block this
             # loop from returning to `asyncio.sleep` for the *next* aligned mark (see
             # `_run_intraday_scan`'s docstring — 2026-08-13). `scan_running` is set here,
             # synchronously, so the very next iteration's check above sees it immediately.
             bot_data["scan_running"] = True
-            asyncio.create_task(_run_intraday_scan(ib_scan, bot, chat_id, bot_data))
+            asyncio.create_task(
+                _run_intraday_scan(
+                    ib_scan,
+                    bot,
+                    chat_id,
+                    bot_data,
+                    force_full_sweep=force_full_sweep,
+                    include_buy_list=include_buy_list,
+                )
+            )
         except Exception:
             logger.exception("Intraday loop: unexpected error — continuing to next cycle")
 

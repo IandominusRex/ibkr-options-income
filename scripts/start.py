@@ -18,12 +18,22 @@ already run does not fire it a second time (which would duplicate the journal
 row + Telegram summary). If the launcher starts *after* the EOD time on a
 trading day and the report has not yet run, it fires immediately (catch-up).
 
-Stop with Ctrl-C or SIGTERM — all child processes are cleanly terminated.
+Stop with Ctrl-C or SIGTERM — every child is sent SIGTERM, given `STOP_GRACE_SECONDS` to exit,
+then SIGKILLed if it hasn't (2026-08-27: a hung `run_approval_service` shutdown ignored SIGTERM
+and was orphaned when the launcher's old `sys.exit(0)`-right-after-`terminate()` didn't wait to
+check — it kept polling Telegram for 30+ minutes and fought the next restart's process over both
+the bot token and its clientIds). On startup, before launching anything, the launcher also scans
+for and kills any stray process still running one of this project's own daemon modules — a
+belt-and-suspenders guarantee against exactly that scenario (or a laptop sleep/crash, a terminal
+closed without Ctrl-C, or a second `scripts.start` started by accident) leaving the new session
+contending with a leftover one.
 """
 
 import argparse
+import contextlib
 import json
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -61,6 +71,14 @@ EOD_STATE_FILE = PROJECT_ROOT / "data" / "eod_scheduler_state.json"
 # real backstop; this just makes the collision unlikely in the first place. 0 disables.
 STARTUP_GRACE_SECONDS = 4.0
 
+# How long a child gets to exit cleanly after SIGTERM before _stop_all escalates to SIGKILL.
+STOP_GRACE_SECONDS = 10.0
+
+# Same idea, applied to a stray process found at startup (see _kill_stale_processes) —
+# shorter, since there's no reason to wait long for a process this session didn't just ask
+# to shut down gracefully a moment ago.
+STALE_KILL_GRACE_SECONDS = 5.0
+
 # Add project root to path so src.common is importable before any install
 sys.path.insert(0, str(PROJECT_ROOT))
 from src.common.logging import setup_logging  # noqa: E402
@@ -97,6 +115,87 @@ def _check_ollama() -> None:
             backend,
             msg,
         )
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _find_stale_pids() -> list[int]:
+    """PIDs of any *other* process currently running one of this project's own daemon modules.
+
+    Matches on the command line via ``ps`` rather than a pidfile, so it catches a stray
+    survivor regardless of how it was orphaned (this launcher's own bug, a crash, a laptop
+    sleep, or a second `scripts.start` started by hand) — there's no state file that can go
+    missing or go stale itself.
+    """
+    own_pid = os.getpid()
+    patterns: set[str] = {
+        "scripts.start",
+        EOD_MODULE,
+        *(str(cfg["module"]) for cfg in SERVICES.values()),
+    }
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid,command"], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        log.warning("Could not scan for stale processes (%s) — skipping the check", exc)
+        return []
+
+    stale = []
+    for line in out.splitlines()[1:]:
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid_str, cmd = parts
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            continue
+        if pid == own_pid:
+            continue
+        if any(pat in cmd for pat in patterns):
+            stale.append(pid)
+    return stale
+
+
+def _kill_stale_processes() -> None:
+    """Terminate any leftover daemon process from a prior session before we launch new ones.
+
+    Without this, a survivor left behind by a hung/skipped shutdown (see the module
+    docstring — 2026-08-27) fights the new session over the Telegram bot token
+    (`telegram.error.Conflict`) and clientIds (Error 326), leaving /status, /scan, and the
+    intraday loop dark until someone finds and kills it by hand.
+    """
+    stale = _find_stale_pids()
+    if not stale:
+        return
+    log.warning(
+        "Found %d stale process(es) from a prior session still running (%s) — terminating "
+        "before startup",
+        len(stale),
+        stale,
+    )
+    for pid in stale:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+
+    deadline = time.monotonic() + STALE_KILL_GRACE_SECONDS
+    remaining = set(stale)
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.5)
+        remaining = {pid for pid in remaining if _pid_alive(pid)}
+    for pid in remaining:
+        log.warning("Stale PID %d did not exit after SIGTERM — sending SIGKILL", pid)
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
 
 
 def _start(name: str) -> subprocess.Popen:
@@ -188,18 +287,41 @@ def main() -> None:
 
     def _stop_all(signum, frame):
         log.info("Received signal %s — stopping all daemons…", signum)
+        targets: list[subprocess.Popen] = []
         for name, proc in procs.items():
             if proc and proc.poll() is None:
                 log.info("Terminating %s (PID %d)", name, proc.pid)
                 proc.terminate()
+                targets.append(proc)
         if eod_proc and eod_proc.poll() is None:
             log.info("Terminating %s (PID %d)", EOD_LABEL, eod_proc.pid)
             eod_proc.terminate()
+            targets.append(eod_proc)
+
+        # SIGTERM alone doesn't guarantee an exit — a hung shutdown (e.g. an unbounded await
+        # in cleanup) can ignore it indefinitely. Wait up to STOP_GRACE_SECONDS total (shared
+        # across all targets, not per-process) and SIGKILL anything still alive after that, so
+        # this process never exits leaving an orphaned survivor behind (2026-08-27 incident).
+        deadline = time.monotonic() + STOP_GRACE_SECONDS
+        for proc in targets:
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                log.warning(
+                    "PID %d did not exit within %.0fs of SIGTERM — sending SIGKILL",
+                    proc.pid,
+                    STOP_GRACE_SECONDS,
+                )
+                proc.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=5)
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _stop_all)
     signal.signal(signal.SIGTERM, _stop_all)
 
+    _kill_stale_processes()
     _check_ollama()
 
     if STARTUP_GRACE_SECONDS > 0:

@@ -257,6 +257,7 @@ async def send_scan_results(
     csp_near_miss_more: int,
     per_symbol_skip: dict[str, list[str]],
     sends: SendDeps,
+    include_buy_list: bool = True,
 ) -> None:
     """Send a finished scan's results and drive the ``notify`` stage of the tracker.
 
@@ -266,6 +267,12 @@ async def send_scan_results(
 
     *cc_empty_reason* / *csp_empty_reason* are pre-rendered by the caller (they read
     ``ScanResult`` plus the per-strategy rejection tallies, which is orchestration state).
+
+    *include_buy_list* gates only the Telegram send of the buy-to-own screen — the caller
+    (the 15-min intraday loop) sets this ``False`` on every cycle after the first one that
+    completes each day, so the buy list fires once daily instead of every 15 minutes. Manual
+    ``/scan`` always leaves it ``True``. ``result.buy_candidates`` is scored either way — this
+    only suppresses the send.
     """
     # send_candidates manages its own short DB transactions (no session held across the
     # Telegram network sends — that would block other processes writing the same SQLite DB).
@@ -317,7 +324,8 @@ async def send_scan_results(
             near_miss_more=csp_near_miss_more,
             assessed_text=csp_assessed_text,
         )
-        await sends.send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
+        if include_buy_list:
+            await sends.send_buy_list(result.buy_candidates, chat_id, suppress_unchanged=intraday)
 
         # C7: skip-reasons card — send on full sweeps (manual /scan) when any symbols
         # were fully rejected. Omitted for intraday cycles (would fire ~26× per session).

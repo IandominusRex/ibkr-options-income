@@ -52,7 +52,11 @@ async def test_hung_symbol_does_not_hang_the_scan(tmp_path, monkeypatch):
 
     cfg = get_config()
     monkeypatch.setattr(cfg.market_data, "symbol_timeout_seconds", 0.05)
-    monkeypatch.setattr(cfg, "universe", {"would_own": ["AAPL"], "sectors": {"AAPL": "tech"}})
+    monkeypatch.setattr(
+        cfg,
+        "universe",
+        {"would_own": ["AAPL"], "actively_wheeling": ["AAPL"], "sectors": {"AAPL": "tech"}},
+    )
 
     # --- IB + account/positions ---
     mock_ib = MagicMock()
@@ -114,7 +118,11 @@ async def test_timeout_logs_error_and_continues(tmp_path, monkeypatch, caplog):
 
     cfg = get_config()
     monkeypatch.setattr(cfg.market_data, "symbol_timeout_seconds", 0.05)
-    monkeypatch.setattr(cfg, "universe", {"would_own": ["AAPL"], "sectors": {"AAPL": "tech"}})
+    monkeypatch.setattr(
+        cfg,
+        "universe",
+        {"would_own": ["AAPL"], "actively_wheeling": ["AAPL"], "sectors": {"AAPL": "tech"}},
+    )
 
     mock_ib = MagicMock()
     mock_ib.managedAccounts.return_value = ["DU123456"]
@@ -171,7 +179,13 @@ async def test_consecutive_timeouts_abort_the_scan(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg.market_data, "max_consecutive_chain_timeouts", 2)
     universe = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META"]
     monkeypatch.setattr(
-        cfg, "universe", {"would_own": universe, "sectors": {s: "tech" for s in universe}}
+        cfg,
+        "universe",
+        {
+            "would_own": universe,
+            "actively_wheeling": universe,
+            "sectors": {s: "tech" for s in universe},
+        },
     )
 
     mock_ib = MagicMock()
@@ -219,3 +233,80 @@ async def test_consecutive_timeouts_abort_the_scan(tmp_path, monkeypatch):
     # Breaker tripped after exactly the threshold — the remaining universe was NOT fetched.
     assert len(calls) == 2
     assert len(calls) < len(universe)
+    # Every symbol in the triggering run (both timed-out symbols the breaker counted) plus
+    # everything after it in iteration order (alphabetical — see `all_symbols = sorted(...)`)
+    # were never reached this run — a caller needs the exact list to retry them next cycle
+    # instead of relying on the materiality gate to notice on its own.
+    assert result.unreached_symbols == ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA"]
+
+
+@pytest.mark.asyncio
+async def test_unreached_symbols_excludes_ones_that_already_succeeded(tmp_path, monkeypatch):
+    """Only the consecutive failing run (+ everything after it) counts as unreached — a symbol
+    that got a real answer earlier in the same cycle, before the socket went bad, must not be
+    queued for a redundant retry next cycle."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.orchestrator.scan as scanmod
+    from src.common.config import get_config
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg.market_data, "symbol_timeout_seconds", 0.05)
+    monkeypatch.setattr(cfg.market_data, "max_consecutive_chain_timeouts", 3)
+    # Sorted order: AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA, XOM.
+    universe = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA", "XOM"]
+    monkeypatch.setattr(
+        cfg,
+        "universe",
+        {
+            "would_own": universe,
+            "actively_wheeling": universe,
+            "sectors": {s: "tech" for s in universe},
+        },
+    )
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    monkeypatch.setattr(
+        scanmod, "get_account_snapshot_async", AsyncMock(return_value=_make_account())
+    )
+    monkeypatch.setattr(scanmod, "get_positions", lambda ib: [])
+    monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
+
+    # AAPL and AMZN answer immediately; GOOGL/META/MSFT hang (3 in a row trips the breaker).
+    hangs = {"GOOGL", "META", "MSFT"}
+
+    async def _maybe_hangs(ib, symbol):
+        if symbol in hangs:
+            await asyncio.sleep(3600)
+        return []
+
+    monkeypatch.setattr(scanmod, "get_option_chain_quotes_async", _maybe_hangs)
+    monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
+    monkeypatch.setattr(
+        scanmod,
+        "get_technical_stats",
+        lambda symbol, **_: TechnicalStats(symbol=symbol, price=100.0),
+    )
+    monkeypatch.setattr(
+        scanmod, "get_fundamental_stats", lambda symbol: FundamentalStats(symbol=symbol)
+    )
+
+    class _DummySentiment:
+        def __init__(self, **kwargs):
+            pass
+
+        def score(self, symbol):
+            return None
+
+    monkeypatch.setattr(scanmod, "SentimentScorer", _DummySentiment)
+    monkeypatch.setattr(scanmod, "generate_buy_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(scanmod, "send_candidates", AsyncMock())
+    monkeypatch.setattr(scanmod, "send_buy_list", AsyncMock())
+
+    result = await asyncio.wait_for(
+        scanmod.run_scan(mock_ib, bot=object(), chat_id="123"), timeout=5.0
+    )
+
+    assert result.aborted_unhealthy is True
+    assert result.unreached_symbols == ["GOOGL", "META", "MSFT", "NVDA", "TSLA", "XOM"]

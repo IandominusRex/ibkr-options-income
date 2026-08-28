@@ -48,6 +48,8 @@ def score_candidates(candidates: list[TradeCandidate]) -> list[TradeCandidate]:
             + s.liquidity_score * w.get("liquidity", 0.2)
             + s.assignment_safety_score * w.get("assignment_risk", 0.2)
             + sentiment * w.get("sentiment", 0.0)
+            + (s.relative_strength if s.relative_strength is not None else 0.0)
+            * w.get("relative_strength", 0.0)
         )
         result.append(c.model_copy(update={"blended_score": round(blended, 4)}))
     result.sort(key=lambda c: c.blended_score, reverse=True)

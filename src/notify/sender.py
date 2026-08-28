@@ -59,6 +59,8 @@ _BUY_LIST_STATUS_MSG_KEY = "last_buy_list_status_msg_id"
 
 # Suffix appended to each status-msg key to store the accumulated plain-text body.
 _STATUS_BODY_SUFFIX = "_body"
+# Suffix appended to each status-msg key to store the ET calendar date of its last append.
+_STATUS_DATE_SUFFIX = "_date"
 # Cut a fresh message when the accumulated body exceeds this length (Telegram limit: 4096).
 _STATUS_MAX_BODY = 3800
 
@@ -101,17 +103,27 @@ async def _append_status(
     Each "no candidates" or "unchanged" cycle appends one ``[HH:MM] ...`` line to a single
     Telegram message (edited in-place), so repeated quiet cycles don't spam the thread.
     When the accumulated body exceeds ``_STATUS_MAX_BODY`` the slate is wiped and a fresh
-    message is sent so we stay within Telegram's 4096-char limit.
+    message is sent so we stay within Telegram's 4096-char limit. The same rollover happens
+    on the first quiet cycle of a new ET calendar day, regardless of body length, so every
+    day gets its own message and yesterday's cycles are never silently appended to.
 
     ``thread_id_val`` is forwarded only on new sends — ``edit_message_text`` does not
     accept ``message_thread_id``.
     """
     body_key = status_msg_key + _STATUS_BODY_SUFFIX
+    date_key = status_msg_key + _STATUS_DATE_SUFFIX
     stored_id = get_setting(status_msg_key)
     stored_body = get_setting(body_key)
+    stored_date = get_setting(date_key)
 
+    today = datetime.now(_ET).date().isoformat()
     timestamp = _et_hhmm()
     new_line = f"[{timestamp}] {line}"
+
+    if stored_date != today:
+        stored_id = ""
+        stored_body = ""
+
     # Blank line between cycles so each run reads as its own block (a `line` may itself span
     # several rows — the header plus a near-miss "closest" line).
     new_body = (stored_body + "\n\n" + new_line) if stored_body else new_line
@@ -128,6 +140,7 @@ async def _append_status(
                 text=new_body,
             )
             set_setting(body_key, new_body)
+            set_setting(date_key, today)
             logger.debug("Appended status line (key=%s, message_id=%s)", status_msg_key, stored_id)
             return
         except Exception:
@@ -145,6 +158,7 @@ async def _append_status(
     )
     set_setting(status_msg_key, str(msg.message_id))
     set_setting(body_key, new_body)
+    set_setting(date_key, today)
     logger.debug("Sent new status message (key=%s, message_id=%s)", status_msg_key, msg.message_id)
 
 

@@ -33,6 +33,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.common.config import get_config
+from src.common.market_hours import today_et
 from src.common.schemas import OrderState, PositionSnapshot
 from src.storage.models import FillRow, OrderRow
 from src.storage.positions import load_latest_position_snapshot
@@ -136,7 +137,9 @@ def mark_based_loss(positions: list[PositionSnapshot], net_liquidation: float) -
     pct = get_config().automation.daily_loss_halt_pct
     if not pct or net_liquidation <= 0:
         return None
-    baseline_positions = load_latest_position_snapshot(before=datetime.now(_ET).date())
+    baseline_positions = load_latest_position_snapshot(before=today_et())
+    if not baseline_positions:
+        baseline_positions = load_latest_position_snapshot()
     if not baseline_positions:
         return None  # no baseline yet — cannot measure a delta
     baseline = sum(p.unrealized_pnl or 0.0 for p in baseline_positions)

@@ -45,7 +45,7 @@ from src.strategies._evaluation import (
 from src.strategies.cash_secured_put import screen_csp_candidates
 from src.strategies.covered_call import screen_cc_candidates
 
-_EXPIRY = date.today() + timedelta(days=30)
+_EXPIRY = date.today() + timedelta(days=20)
 
 
 def _quote(

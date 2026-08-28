@@ -179,9 +179,12 @@ class ScanStateRow(Base):
     chain fetch this cycle and which can be skipped: a held name is always material, a name
     that cleared the score floor last cycle is material, and a ``would_own`` name is material
     only once its live spot has drifted past ``market_data.intraday_rescan_move_pct`` from
-    ``last_spot`` (the spot at its *last fetch*, not the last check — so slow drift still
-    accumulates to a re-fetch). Manual ``/scan`` and the first intraday cycle fetch
-    everything and seed every row; they never read the gate.
+    ``last_spot`` (the spot at its *last fetch* — or, for seed-only dip_watch names, the last
+    yfinance probe — so slow drift still accumulates to a re-fetch). Manual ``/scan`` and
+    the first intraday cycle fetch actively_wheeling ∪ held names and seed every row; they
+    never read the gate. Dip_watch names that didn't gap overnight at startup are seed-only
+    (``last_spot`` set from a yfinance probe, ``last_scanned_at`` NULL — see
+    ``_persist_seed_only_baselines`` in orchestrator/scan.py, 2026-08-28).
     """
 
     __tablename__ = "scan_state"
@@ -193,6 +196,49 @@ class ScanStateRow(Base):
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cleared_floor: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Fundamentals disk cache
+# ---------------------------------------------------------------------------
+
+
+class FundamentalCacheRow(Base):
+    """Persisted per-symbol fundamentals cache.
+
+    ``symbol`` is the primary key. ``data_json`` stores the JSON representation of a
+    :class:`~src.common.schemas.FundamentalStats` model (produced via ``model_dump_json``).
+    ``fetched_at`` records when the row was populated, allowing TTL logic.
+    ``next_earnings_date`` mirrors the ``next_earnings`` field of the cached stats so the
+    earnings‑aware TTL can be evaluated without loading the JSON payload.
+    """
+
+    __tablename__ = "fundamentals_cache"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    data_json: Mapped[str] = mapped_column(Text)  # JSON string of FundamentalStats
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    next_earnings_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Sentiment disk cache
+# ---------------------------------------------------------------------------
+
+
+class SentimentCacheRow(Base):
+    """Cache for sentiment sub‑sources.
+
+    ``source`` distinguishes the origin (``stocktwits``, ``news``, ``sentiment``).
+    ``data_json`` stores a JSON payload specific to that source; ``fetched_at`` enables a 1‑day TTL.
+    """
+
+    __tablename__ = "sentiment_cache"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data_json: Mapped[str] = mapped_column(Text)  # JSON of source‑specific fields
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class PositionSnapshotRow(Base):

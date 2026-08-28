@@ -28,6 +28,7 @@ from src.common.schemas import (
     OptionQuote,
     OptionRight,
     PositionSnapshot,
+    Regime,
     RollAlert,
     RollReview,
     SectorContext,
@@ -251,7 +252,13 @@ def _build_candidate_card(c: BuyCandidate) -> list[str]:
     # Trend context.
     b: list[str] = []
     if c.technical_regime:
-        b.append(_md(c.technical_regime))
+        # technical_regime may be a Regime enum or a plain string (legacy).
+        regime_str = (
+            c.technical_regime.value
+            if isinstance(c.technical_regime, Regime)
+            else c.technical_regime
+        )
+        b.append(_md(regime_str))
     trend = _trend_note(c)
     if trend:
         b.append(_md(trend))

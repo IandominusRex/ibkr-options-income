@@ -54,7 +54,7 @@ def _candidate(
     scores: ScoreCard | None = None,
     roc_pct: float = 2.0,
     annualized_yield_pct: float = 20.0,
-    dte: int = 30,
+    dte: int = 20,
     delta: float | None = -0.20,
     contracts: int = 1,
     collateral: float = 3_000.0,
@@ -110,7 +110,7 @@ def _csp_candidate(
     strike: float,
     contracts: int = 1,
     current_iv: float | None = 30.0,
-    dte: int = 30,
+    dte: int = 20,
     delta: float = -0.20,
     premium: float = 3.0,
 ) -> TradeCandidate:
@@ -143,7 +143,7 @@ def _cc_candidate(
     strike: float,
     contracts: int = 1,
     current_iv: float | None = 30.0,
-    dte: int = 30,
+    dte: int = 20,
     delta: float = 0.28,
 ) -> TradeCandidate:
     """Build a valid CC TradeCandidate whose roc/yield clear the configured floors, so only
@@ -310,7 +310,7 @@ class TestValidateCandidates:
         cand = _candidate(
             roc_pct=2.0,
             annualized_yield_pct=20.0,
-            dte=30,
+            dte=20,
             delta=-0.20,
             contracts=1,
             collateral=1_000.0,
@@ -336,7 +336,7 @@ class TestValidateCandidates:
         assert "yield_below_minimum" in verdicts[0].reasons
 
     def test_reject_dte_too_low(self) -> None:
-        verdicts = validate_candidates([_candidate(dte=10)], _account(), [])
+        verdicts = validate_candidates([_candidate(dte=3)], _account(), [])
         assert "dte_out_of_range" in verdicts[0].reasons
 
     def test_reject_dte_too_high(self) -> None:
@@ -449,23 +449,24 @@ class TestValidateCandidates:
 
     def test_cumulative_concentration_across_same_ticker(self) -> None:
         # D1: max_ticker_risk = 5% of 100k = 5,000 RISK UNITS. Three AAPL CSPs, each
-        # $10,000 collateral at 80% IV / 45 DTE ~= 2,809 risk units (10000 * 0.80 *
-        # sqrt(45/365)): the first fits (2,809 <= 5,000) and is charged; the next two
-        # each see a cumulative ~5,618 > 5,000 and are rejected (charge() only runs on
-        # PASS, so the rejected ones never raise the running tally further).
+        # $10,000 collateral at 80% IV / 28 DTE ~= 2,216 risk units (10000 * 0.80 *
+        # sqrt(28/365)): the first two fit (2,216, then a cumulative 4,432 <= 5,000) and
+        # are charged; the third sees a cumulative ~6,648 > 5,000 and is rejected
+        # (charge() only runs on PASS, so a rejected candidate never raises the running
+        # tally further).
         cands = [
             _candidate(
                 candidate_id=f"c{i}",
                 underlying="AAPL",
                 collateral=10_000.0,
-                dte=45,
+                dte=28,
                 current_iv=80.0,
             )
             for i in range(3)
         ]
         verdicts = validate_candidates(cands, _account(net_liquidation=100_000.0), [])
         passed = [v for v in verdicts if v.verdict == Verdict.PASS]
-        assert len(passed) == 1
+        assert len(passed) == 2
         assert all(
             "concentration_limit" in v.reasons for v in verdicts if v.verdict == Verdict.REJECT
         )
@@ -510,13 +511,13 @@ class TestValidateCandidates:
         # is fed only by the NEW priced candidates below (seeding it from the book requires the
         # caller to supply an IV lookup — see `seed_budgets`). Six "tech" CSPs, each $10,000
         # (at the 10,000 large-position threshold, so none of them consume the large
-        # slot) at 120% IV / 45 DTE (~4,213 risk units — safely under the 5,000 ticker
-        # cap on its own): the first five sum to ~21,067 (< the 25,000 sector cap) and
-        # all pass; the sixth tips the cumulative to ~25,281 and is rejected for
+        # slot) at 160% IV / 28 DTE (~4,432 risk units — safely under the 5,000 ticker
+        # cap on its own): the first five sum to ~22,158 (< the 25,000 sector cap) and
+        # all pass; the sixth tips the cumulative to ~26,590 and is rejected for
         # sector_limit, not its own ticker concentration.
         tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "PLTR"]
         cands = [
-            _candidate(candidate_id=t, underlying=t, collateral=10_000.0, dte=45, current_iv=120.0)
+            _candidate(candidate_id=t, underlying=t, collateral=10_000.0, dte=28, current_iv=160.0)
             for t in tickers
         ]
         acc = _account(net_liquidation=100_000.0, cash=200_000.0)
@@ -673,8 +674,8 @@ class TestValidateCandidates:
 
 class TestConcentrationInRiskUnits:
     def test_gate_accepts_a_high_priced_name_within_risk_units(self) -> None:
-        """D1: a $65k META put at 35% IV is ~$6.5k of risk units, inside a 5%-of-300k cap."""
-        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=35.0, dte=30)
+        """D1: a $65k META put at 35% IV is ~$5.5k of risk units, inside a 5%-of-300k cap."""
+        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=35.0, dte=21)
         account = _account(net_liq=300_000.0, cash=100_000.0)
         verdicts = validate_candidates([cand], account, [])
         assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
@@ -682,8 +683,8 @@ class TestConcentrationInRiskUnits:
     def test_gate_rejects_a_cheap_high_vol_name_that_is_large_in_risk_units(self) -> None:
         """MARA at 110% IV must be charged for its volatility, not just its collateral."""
         cand = _csp_candidate(
-            underlying="MARA", strike=15.0, contracts=40, current_iv=110.0, dte=30
-        )  # $60k collateral, ~$19k risk units vs a $15k cap
+            underlying="MARA", strike=15.0, contracts=40, current_iv=110.0, dte=21
+        )  # $60k collateral, ~$15.8k risk units vs a $15k cap
         account = _account(net_liq=300_000.0, cash=100_000.0)
         verdicts = validate_candidates([cand], account, [])
         assert verdicts[0].verdict.value == "reject"
@@ -694,7 +695,7 @@ class TestConcentrationInRiskUnits:
         raw-collateral cap and rejects on the cumulative breach alone — mirroring
         `capital._fits`'s identical fallback, so the gate is never looser than the sizer that
         feeds it (D1 human ruling, Finding 2)."""
-        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=None, dte=30)
+        cand = _csp_candidate(underlying="META", strike=650.0, contracts=1, current_iv=None, dte=21)
         account = _account(net_liq=300_000.0, cash=100_000.0)
         verdicts = validate_candidates([cand], account, [])
         # $65k cumulative > the 10%-of-NLV ($30k) collateral fallback cap.
@@ -729,7 +730,7 @@ class TestConcentrationInRiskUnits:
             underlying="MARA",
             market_value=-2_000.0,
         )
-        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=30)
+        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=21)
         account = _account(net_liq=300_000.0, cash=300_000.0)
         verdicts = validate_candidates([cand], account, [existing], iv_by_symbol={"MARA": 70.0})
         assert verdicts[0].verdict.value == "reject"
@@ -740,7 +741,7 @@ class TestConcentrationInRiskUnits:
         re-validation gate and the single-ticker deep-dive, both of which would need a new
         network round-trip to get one.
 
-        With `ticker_risk` unseeded, the candidate's own risk units ($301) sit far under the
+        With `ticker_risk` unseeded, the candidate's own risk units ($252) sit far under the
         $15,000 cap and say nothing about the book. The cumulative raw-collateral comparison in
         the large-position check is what catches it: $75,000 already held + $1,500 new is past
         the 25%-of-NLV ceiling. Comparing the candidate's marginal $1,500 alone (as it did
@@ -756,7 +757,7 @@ class TestConcentrationInRiskUnits:
             underlying="MARA",
             market_value=-2_000.0,
         )
-        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=30)
+        cand = _csp_candidate(underlying="MARA", strike=15.0, contracts=1, current_iv=70.0, dte=21)
         account = _account(net_liq=300_000.0, cash=300_000.0)
 
         verdicts = validate_candidates([cand], account, [existing])  # no iv_by_symbol
@@ -797,17 +798,17 @@ class TestConcentrationInRiskUnits:
 
     def test_second_large_position_hits_the_slot_cap(self) -> None:
         """max_large_positions defaults to 1. Two DIFFERENT (unmapped-sector) tickers, each
-        $40,000 collateral at 20% IV / 30 DTE (~2,294 risk units — nowhere near the 15,000
+        $40,000 collateral at 20% IV / 21 DTE (~1,919 risk units — nowhere near the 15,000
         ticker-risk cap on its own): $40,000 clears the 30,000 ticker-collateral threshold
         (10% of 300k) but sits well under the 75,000 large ceiling (25%), so the first
         candidate consumes the account's one large-position slot and passes; the second,
         on a different ticker so neither the ticker-risk nor sector caps mask it, finds the
         slot already taken."""
         cand_a = _csp_candidate(
-            underlying="ZZZ1", strike=400.0, contracts=1, current_iv=20.0, dte=30
+            underlying="ZZZ1", strike=400.0, contracts=1, current_iv=20.0, dte=21
         )
         cand_b = _csp_candidate(
-            underlying="ZZZ2", strike=400.0, contracts=1, current_iv=20.0, dte=30
+            underlying="ZZZ2", strike=400.0, contracts=1, current_iv=20.0, dte=21
         )
         account = _account(net_liq=300_000.0, cash=200_000.0)
         verdicts = validate_candidates([cand_a, cand_b], account, [])
@@ -1008,9 +1009,9 @@ def test_gate_rejects_premium_below_fair_value():
     from src.common.schemas import IdealZone, OptionRight
     from src.engine.risk_engine import validate_candidates
 
-    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=21, spot=15.0, min_credit=0.90)
     cand = _csp_candidate(
-        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=30, premium=0.50
+        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=21, premium=0.50
     ).model_copy(update={"ideal": zone})
     verdicts = validate_candidates([cand], _account(), [])
     assert "premium_below_fair_value" in verdicts[0].reasons
@@ -1021,9 +1022,9 @@ def test_gate_accepts_a_low_iv_name_paying_a_real_edge():
     from src.common.schemas import IdealZone, OptionRight
     from src.engine.risk_engine import validate_candidates
 
-    zone = IdealZone(symbol="SPY", right=OptionRight.PUT, dte=30, spot=660.0, min_credit=1.80)
+    zone = IdealZone(symbol="SPY", right=OptionRight.PUT, dte=21, spot=660.0, min_credit=1.80)
     cand = _csp_candidate(
-        underlying="SPY", strike=640.0, contracts=1, current_iv=13.5, dte=30, premium=2.10
+        underlying="SPY", strike=640.0, contracts=1, current_iv=13.5, dte=21, premium=2.10
     ).model_copy(update={"ideal": zone, "roc_pct": 0.33, "annualized_yield_pct": 4.0})
     verdicts = validate_candidates([cand], _account(net_liq=2_000_000.0, cash=500_000.0), [])
     assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
@@ -1033,7 +1034,7 @@ def test_missing_ideal_zone_never_blocks():
     """A candidate with no computable zone is data-unavailable, not a rejection."""
     from src.engine.risk_engine import validate_candidates
 
-    cand = _csp_candidate(underlying="AAPL", strike=200.0, contracts=1, current_iv=28.0, dte=30)
+    cand = _csp_candidate(underlying="AAPL", strike=200.0, contracts=1, current_iv=28.0, dte=21)
     assert cand.ideal is None
     verdicts = validate_candidates([cand], _account(), [])
     assert "premium_below_fair_value" not in verdicts[0].reasons
@@ -1109,9 +1110,9 @@ def test_require_vrp_edge_false_bypasses_the_gate(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(risk_engine_module, "get_config", lambda: patched_cfg)
 
-    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=30, spot=15.0, min_credit=0.90)
+    zone = IdealZone(symbol="MARA", right=OptionRight.PUT, dte=21, spot=15.0, min_credit=0.90)
     cand = _csp_candidate(
-        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=30, premium=0.50
+        underlying="MARA", strike=15.0, contracts=1, current_iv=110.0, dte=21, premium=0.50
     ).model_copy(update={"ideal": zone})
     verdicts = validate_candidates([cand], _account(), [])
     assert "premium_below_fair_value" not in verdicts[0].reasons

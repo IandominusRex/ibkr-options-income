@@ -348,13 +348,13 @@ def test_build_prompt_excludes_backtest_when_off(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _cc_quote_at(strike: float, *, dte: int = 34) -> OptionQuote:
+def _cc_quote_at(strike: float, *, dte: int = 20) -> OptionQuote:
     """A single CALL quote priced to clear every CC gate except (pre-fix) cost basis.
 
-    Delta (0.28) and DTE (34) sit mid-band for `covered_call.delta_min/max` (0.20/0.35) and
-    `dte_min/max` (21/45). The $5.00/$5.40 market (mid $5.20, spread 7.7% < the 10% liquidity
+    Delta (0.28) and DTE (20) sit mid-band for `covered_call.delta_min/max` (0.20/0.35) and
+    `dte_min/max` (7/28). The $5.00/$5.40 market (mid $5.20, spread 7.7% < the 10% liquidity
     cap) is priced above the Black-Scholes-at-HV30 floor for a spot near this strike — verified
-    by hand: ``bs_price(147.0, 147.0, 34, 0.22, "C") * 1.10 edge ≈ $4.71 < $5.20`` — so the VRP
+    by hand: ``bs_price(147.0, 147.0, 20, 0.22, "C") * 1.10 edge ≈ $3.54 < $5.20`` — so the VRP
     floor (`income.require_vrp_edge`) does not confound the basis-gate assertion this test
     exists to prove.
     """

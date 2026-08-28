@@ -42,6 +42,7 @@ from src.strategies._evaluation import (
 from src.strategies._scoring import (
     fundamental_score,
     make_candidate_id,
+    relative_strength_score,
     technical_score,
 )
 
@@ -201,6 +202,7 @@ def screen_cc_candidates(
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
             assignment_safety_score=(1 - delta) * 100 if delta is not None else 0.0,
+            relative_strength=relative_strength_score(tech_stats.relative_strength),
         )
 
         candidate = TradeCandidate(

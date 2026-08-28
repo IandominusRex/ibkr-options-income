@@ -10,7 +10,7 @@ import pandas as pd
 
 from src.analytics.price_data import get_ohlcv
 from src.common.market_hours import today_et
-from src.common.schemas import Regime, TechnicalStats
+from src.common.schemas import Phase, Regime, TechnicalStats
 from src.data.factory import get_price_provider
 
 _HIGH_VOL_ATR_RATIO = 0.025  # ATR/close > this → HIGH_VOL
@@ -69,10 +69,20 @@ def get_technical_stats(
     sma_20 = _sma(close, 20)
     sma_50 = _sma(close, 50)
     sma_200 = _sma(close, 200)
+    # Compute SMA slopes for phase classification – annualised % change over last 21 bars.
+    sma_50_series = close.rolling(50).mean()
+    sma_200_series = close.rolling(200).mean()
+    slope_50 = _annualized_slope(sma_50_series)
+    slope_200 = _annualized_slope(sma_200_series)
+    # Determine phase based on price, SMAs and slopes.
+    phase = classify_phase(price, sma_50, sma_200, slope_50, slope_200, rsi)
+
     atr_ratio = _atr_ratio(atr, price)
     supports, resistances = _support_resistance(close)
     regime = _classify_regime(price, atr, rsi, sma_50, sma_200)
 
+    # Relative strength: annualised % change of the close price over the last 21 bars.
+    rel_strength = _annualized_slope(close)
     return TechnicalStats(
         symbol=symbol,
         price=price,
@@ -88,6 +98,8 @@ def get_technical_stats(
         atr_ratio=atr_ratio,
         regime=regime,
         price_source=price_source,
+        phase=phase,
+        relative_strength=rel_strength,
     )
 
 
@@ -158,7 +170,19 @@ def _atr14(high: pd.Series, low: pd.Series, close: pd.Series) -> float | None:
     return round(val, 4) if np.isfinite(val) else None
 
 
+def _sma(close: pd.Series, n: int) -> float | None:
+    """Simple moving average: returns the last SMA value for window *n*.
+
+    Returns None if insufficient data.
+    """
+    if len(close) < n:
+        return None
+    val = float(close.rolling(n).mean().iloc[-1])
+    return round(val, 4) if np.isfinite(val) else None
+
+
 def _macd(close: pd.Series) -> tuple[float | None, float | None]:
+    """MACD line and signal."""
     if len(close) < 26:
         return None, None
     ema12 = close.ewm(span=12, adjust=False).mean()
@@ -173,11 +197,22 @@ def _macd(close: pd.Series) -> tuple[float | None, float | None]:
     )
 
 
-def _sma(close: pd.Series, n: int) -> float | None:
-    if len(close) < n:
+def _annualized_slope(series: pd.Series) -> float | None:
+    """Compute annualized % change over the last 21 bars.
+
+    Returns None if insufficient data. Uses geometric annualisation assuming ~252 trading days per year.
+    """
+    if len(series) < 22:
         return None
-    val = float(close.rolling(n).mean().iloc[-1])
-    return round(val, 4) if np.isfinite(val) else None
+    latest = series.iloc[-1]
+    earlier = series.iloc[-22]
+    if earlier <= 0 or latest <= 0:
+        return None
+    # Simple percent change
+    simple = (latest / earlier - 1) * 100
+    # Annualise based on 252 trading days per year and 21-day period
+    annualised = ((1 + simple / 100) ** (252 / 21) - 1) * 100
+    return round(annualised, 4)
 
 
 def _atr_ratio(atr: float | None, price: float) -> float | None:
@@ -211,6 +246,43 @@ def _support_resistance(close: pd.Series) -> tuple[list[float], list[float]]:
 
     # Keep the 3 most recent on each side
     return supports[-_SR_LEVELS:], resistances[-_SR_LEVELS:]
+
+
+def classify_phase(
+    price: float,
+    sma_50: float | None,
+    sma_200: float | None,
+    slope_50: float | None,
+    slope_200: float | None,
+    rsi: float | None,
+) -> Phase:
+    """Classify the market phase based on Minervini/Weinstein 4‑stage rules.
+
+    Returns a :class:`Phase` enum.
+    """
+    # Guard against missing data.
+    if sma_50 is None or sma_200 is None:
+        return Phase.BASE
+
+    # Helper to determine if SMA is rising (positive slope) – we treat any >0 as rising.
+    rising_200 = slope_200 is not None and slope_200 > 0
+    rising_50 = slope_50 is not None and slope_50 > 0
+    flat_50 = slope_50 is not None and abs(slope_50) < 0.01
+
+    # UPTREND – price above 50‑day SMA, 50 > 200 SMA, 200‑SMA rising.
+    if price > sma_50 and sma_50 > sma_200 and rising_200:
+        return Phase.UPTREND
+
+    # DISTRIBUTION – price below 50‑day SMA, RSI < 50, 200‑SMA rising, 50‑SMA flattening.
+    if price < sma_50 and rsi is not None and rsi < 50 and rising_200 and flat_50:
+        return Phase.DISTRIBUTION
+
+    # DOWNTREND – price below both SMAs, both SMAs falling.
+    if price < sma_50 and price < sma_200 and not rising_50 and not rising_200:
+        return Phase.DOWNTREND
+
+    # Otherwise baselines / side‑ways market.
+    return Phase.BASE
 
 
 def _classify_regime(

@@ -35,6 +35,9 @@ logs/*.log.*
 .claude/worktrees/
 .playwright-mcp/
 
+# Google Drive desktop sync staging (this repo lives in a synced folder)
+.tmp.driveupload/
+
 # Keep empty dirs tracked
 !data/.gitkeep
 !logs/.gitkeep

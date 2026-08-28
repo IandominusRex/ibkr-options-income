@@ -94,32 +94,45 @@ around with the links below, or read straight through.
 
 ### The universe — what it watches
 
-**How it works.** `config/universe.yaml` lists two overlapping sets of tickers: a **watchlist**
-(names it scans and will sell covered calls against *if you already own them*) and a **`would_own`**
+**How it works.** `config/universe.yaml` lists three overlapping sets of tickers: a **watchlist**
+(names it scans and will sell covered calls against *if you already own them*), a **`would_own`**
 list (names it's allowed to sell cash-secured puts on, because if assigned it's genuinely fine to
-end up holding the stock). Tickers are grouped into three tiers — **Tier 1 core** (SPY, QQQ, AAPL,
-MSFT, NVDA, JPM, GLD, TSLA, plus sector ETFs like XLF/XLK/XLE/XLV/XLP/XLU/XLI/TLT/SLV that spread the
-book away from a tech/crypto tilt), **Tier 2 active** (AMD, META, AMZN, PLTR, UBER, CRM, COIN, and
-similar), and **Tier 3 speculative/high-IV** (leveraged and high-volatility names like SOXL, LABU,
-MARA, RKLB). Leveraged ETFs and call-only thematics (ARKK, BITO) are watchlist-only — never
-`would_own`, because you don't want to be assigned into a 3x-leveraged fund.
+end up holding the stock), and an **`actively_wheeling`** subset of `would_own` — the core rotation
+it scans every 15-minute cycle (GOOGL, NVDA, AMZN, MAGS, META, PLTR, HOOD, SOFI, HIMS,
+NBIS, ASTS, RKLB, RGTI, MARA, TQQQ, UPRO, SOXL). Everything else in `would_own` ("dip-watch" —
+sector ETFs like XLV/XLP, SPY, QQQ, AAPL/MSFT/JPM, and more) isn't scanned every cycle at all — it's only
+pulled into a scan when its price *drops* 3%+, since a rally is never a reason to sell a new put on
+a name outside the core rotation. Tickers are also grouped into three risk tiers for reference —
+**safe bets**, **moderate**, and **risky** — independent of the `actively_wheeling`/dip-watch split.
+Leveraged ETFs are call-only and never `would_own` **except TQQQ/UPRO/SOXL**, a deliberate,
+confirmed exception — the account accepts daily-decay risk on assignment for those three
+specifically. Tickers ruled out entirely (never traded) live in `config/universe_archive.yaml`,
+outside the app's read path.
 
-**In plain English.** This is the shopping list. One column says "stocks we'll write calls against if
-we already own them," the other says "stocks we're actually OK ending up owning if a put gets
-exercised." A leveraged ETF might be fine to sell short-term options on, but nobody wants to wake up
-owning it outright — so it's kept off the second list on purpose.
+**In plain English.** This is the shopping list, in three tiers of eagerness. One column says
+"stocks we'll write calls against if we already own them." The next says "stocks we're actually OK
+ending up owning if a put gets exercised" — but within that list, a smaller "actively wheeling"
+core gets checked constantly, while the rest only gets a second look after a real dip, so the
+system isn't burning IBKR requests re-checking option chains on names that haven't moved. A
+leveraged ETF is normally kept off the would-own list entirely — nobody wants to wake up owning a
+3x-leveraged fund — except the three named above, where that tradeoff was made on purpose.
 
 ### Scanning — gathering fresh data every 15 minutes
 
 **How it works.** During market hours a loop wakes up every 15 minutes, clock-aligned to ET
 quarter-hours (9:30, 9:45, ...). Rather than re-pulling every option chain from IBKR every single
 cycle (which would exhaust the ~100 concurrent market-data-line limit IBKR allows), an **intraday
-materiality gate** only re-fetches a name's option chain if you hold it, if its price has moved more
-than 0.5% since its last fetch, or if it cleared the score floor last cycle — with a full sweep
-forced periodically as a safety net. A manual `/scan` from Telegram ignores that shortcut and always
-sweeps the whole universe fresh. Behind the scenes, daily price history is stored in SQLite and only
-the missing days are re-fetched from Yahoo Finance, so the system doesn't re-download a year of bars
-every run.
+materiality gate** only re-fetches a name's option chain when something about it changed: it moved
+past its bucket's threshold since its **last fetch** (0.5% either way for `actively_wheeling`, a 2%
+**rally** for a held stock, a 3% **drop** for dip-watch — a symbol in two buckets is tested against
+both and any one firing is enough), or it cleared the score floor last cycle. A full sweep is
+guaranteed on the first cycle after every process (re)start, and each symbol is force-refreshed
+once **its own** last fetch is over 120 min old as a staleness safety net. A manual `/scan` from
+Telegram and the startup full sweep fetch `actively_wheeling` ∪ held names unconditionally, but
+dip_watch names are **seed-only** (yfinance baseline persisted, no chain fetch) unless they gapped
+≥3% overnight — a gap in either direction is a legitimate CSP setup at the open. Behind the
+scenes, daily price history is stored in SQLite and only the missing days are re-fetched from
+Yahoo Finance, so the system doesn't re-download a year of bars every run.
 
 **In plain English.** Every 15 minutes, it checks in on your positions and the watchlist — but
 intelligently, only pulling fresh option prices for things that actually moved or that you own,
@@ -178,6 +191,9 @@ down. Nothing here decides whether the trade is allowed — it just proposes can
 rejects are kept around so you can see what was looked at and why it didn't make the cut.
 
 ### Scoring and ranking
+
+*(Updated: Modernization Phases 1–5 are complete in code: extended Greeks + American pricer, provider abstraction, phase/relative-strength classification, buy-recommendation overhaul, and disk-persisted fundamentals/sentiment cache.)*
+
 
 **How it works.** Each candidate gets normalized 0–100 scores across IV rank, technicals,
 fundamentals, liquidity, and sentiment, blended by configurable weights (`config/scoring_weights.yaml`)
@@ -441,9 +457,11 @@ python -m pytest               # all tests pass without IB Gateway
 |---|---|
 | **[SETUP.md](SETUP.md)** | Complete setup from scratch to first live trade |
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | What every folder does, how the system fits together, the process/clientId model, and operational risk handling |
+| **[How the scan works.md](How%20the%20scan%20works.md)** | Which tickers get scanned, how hard, and when: the three clocks (15-min loop, 120-min per-symbol staleness net, event-driven position monitor), the actively_wheeling / dip-watch / held-position split and their 0.5% / 3% / 2% gates, with a worked day-long scenario |
 | **[STATUS.md](STATUS.md)** | What's built, what's deliberately not built, tech stack, known limitations, and the live-cutover gate |
 | **[UNIVERSE_RESEARCH.md](UNIVERSE_RESEARCH.md)** | Deep-research findings for every ticker in the universe: tier classification, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF rules, and data-quality notes. Injected into Claude trade reviews. |
 | **[COMPETITIVE_RESEARCH_PLAN.md](COMPETITIVE_RESEARCH_PLAN.md)** | Competitive research findings (Puthouse and peer landscape) and phased implementation tracker for borrowed features C1–C11; all 5 phases complete as of 2026-06-22 |
+| **[docs/modernization/README.md](docs/modernization/README.md)** | Internal modernization plan (Phases 1–5): extended Greeks, provider abstraction, phase/RS scoring, recommendation overhaul, disk cache — all complete in code |
 | **`Archive/Improvement_Plans/`** | Historical: REMEDIATION.md, IMPROVEMENT_PLAN.md (N1–N23), IMPROVEMENT_PLAN_2.md, SCAN_EFFICIENCY_PLAN.md, SYSTEM_REVIEW.md, TELEGRAM_ROUTING_PLAN.md — all complete and archived |
 | **[CLAUDE.md](CLAUDE.md)** | Contributor and AI-assistant guidance |
 | **[ib_async_documentation.md](ib_async_documentation.md)** | IBKR API reference (ib_async library) |
@@ -464,7 +482,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
 | `src/ibkr/` | IBKR connection, live market data, option chains, portfolio |
 | `src/data/` | Provider abstraction layer between the analytics layer and external market-data backends (yfinance today; FMP/Polygon later). `protocols.py` defines the `PriceProvider`/`FundamentalsProvider`/`NewsProvider` interfaces; `factory.py` picks the active backend from `config/settings.yaml → data.*` and caches it process-wide; `yfinance_backend.py` is the active backend (literally the existing yfinance calls wrapped in a class — no behaviour change); `fmp_backend.py` is a documented-but-unwired stub. Analytics/strategies/engine never call `yfinance.*` directly — they go through `src/data/`. IBKR is *not* a provider (it's the broker + execution path, untouched) |
-| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive); `black_scholes.py` (full Greeks — delta/gamma/theta/vega/rho) and `american_option.py` (Cox-Ross-Rubinstein American pricer + early-exercise premium, Phase 1) |
+| `src/analytics/` | IV rank, technicals, fundamentals, liquidity scoring; `realized_vol.py` for the IV/RV richness gate (C1); `fair_value.py` computes the **ideal strike zone / minimum credit / action levels** shown beside every contract; `market_conditions.py` (macro backdrop — VIX + VIX term structure, 10y rates, SPY tape, broad-market headline tone) and `sector_context.py` (sector/market backdrop for the single-ticker deep-dive); `black_scholes.py` (full Greeks — delta/gamma/theta/vega/rho) and `american_option.py` (Cox-Ross-Rubinstein American pricer + early-exercise premium, Phase 1); fundamentals and sentiment are disk-cached via `FundamentalCacheRow`/`SentimentCacheRow` (Phase 5) |
 | `src/strategies/` | Covered-call, cash-secured-put, rolling candidate generation. The CC/CSP screens return the contracts they **rejected** alongside those they passed (`_evaluation.py`), each tagged with every gate it failed — so a scan that approves nothing still shows what it looked at and why |
 | `src/engine/` | Scoring, decision ranking, deterministic risk gate; `capital.py` is the shared capital model (`resolve_caps` / `max_contracts` / `seed_budgets`) that both the CSP generator and the risk gate call, so the two can never disagree about how big a position may be — concentration is measured in **risk units** (`collateral × IV × √(DTE/365)`), not raw collateral |
 | `src/claude/` | Headless `claude -p` runner + local-LLM Ollama backend (`backend: "ollama"` is active by default — see SETUP.md §14), output parser, and learning-loop outcome recorder |
@@ -476,7 +494,7 @@ python -m pytest               # all tests pass without IB Gateway
 | `src/orchestrator/` | EOD report, plus the scan split three ways: `scan.py` (the `run_scan`/`ScanResult` entry point — orchestration, gating, persistence), `scan_pipeline.py` (per-symbol data production: chain fetch, analytics, sentiment, CC/CSP screens — imports nothing from `src/notify/`, so a non-Telegram caller can run a scan), `scan_progress.py` (all presentation: the checklist + progress-bar messages a `/scan` edits in place, and the end-of-run candidate/buy/snapshot/provenance sends) |
 | `src/storage/` | SQLite database models, session management, order-creation idempotency, and the `risk_verdicts.py` assessment audit trail (every contract a scan priced and why it was set aside, pruned to 14 days) |
 | `Archive/dashboard/` | Streamlit read-only dashboard (archived; restore to `dashboard/` to reinstate) |
-| `scripts/` | Command-line entrypoints, including `capacity_report.py` — a read-only account-sizing diagnostic: one row per `would_own` symbol showing how many contracts the account can actually support right now and which constraint would stop the next one |
+| `scripts/` | Command-line entrypoints, including `capacity_report.py` — a read-only account-sizing diagnostic: one row per `would_own` symbol showing how many contracts the account can actually support right now and which constraint would stop the next one — and `ibc/start_gateway.sh`, which launches IB Gateway via IBC to automate its login/daily-restart instead of doing it by hand (see `SETUP.md` §4) |
 | `tests/` | pytest suite (IBKR mocked; no TWS needed) |
 
 ---

@@ -12,8 +12,9 @@ Design guarantees (this module is enrichment, never a dependency):
   • Every source fails closed to "no data" (None) on missing creds, missing libs, network,
     rate-limit, or parse errors — the scan pipeline never blocks on sentiment.
   • If *all* sources return no data, ``overall`` is None (distinct from a balanced 50).
-  • Each source is ``@daily_cached`` on the symbol, so the ~26 intraday scans/session reuse the
-    first cycle's result — each source hits its API at most once per calendar day per symbol.
+  • Each source is cached on the symbol. The module-level ``@daily_cached`` layer provides an
+    in-process speed-up, while a persistent disk cache (``SentimentCacheRow``) with a 1-day TTL
+    survives process restarts and avoids re-hitting yfinance/StockTwits on every cold start.
 
 Per the architecture fence: SentimentDetail reaches Claude (verdict/ranking) and Telegram only.
 Nothing here is importable from the risk engine, sizing, or execution path.
@@ -26,7 +27,7 @@ import logging
 import math
 import re
 import threading
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +36,31 @@ import httpx
 from src.common.cache import daily_cached
 from src.common.market_hours import today_et
 from src.common.schemas import SentimentDetail
+from src.storage.db import session_scope
+from src.storage.models import SentimentCacheRow
 
 logger = logging.getLogger(__name__)
 
 _SUBREDDITS = ("options", "wallstreetbets")
 _BULLISH = frozenset(
-    {"bull", "bullish", "buy", "call", "calls", "long", "moon", "squeeze", "rally", "breakout"}
+    {
+        "bull",
+        "bullish",
+        "buy",
+        "call",
+        "calls",
+        "long",
+        "moon",
+        "squeeze",
+        "rally",
+        "breakout",
+        "surge",
+        "high",
+        "profit",
+        "beat",
+        "record",
+        "stellar",
+    }
 )
 _BEARISH = frozenset(
     {"bear", "bearish", "put", "puts", "short", "sell", "crash", "dump", "drop", "collapse"}
@@ -56,6 +76,46 @@ _HTTP_TIMEOUT = 10.0
 _HISTORY_FILE = Path("data/sentiment_history.json")
 _HISTORY_DAYS = 7  # prune entries older than this many days on each write
 _HISTORY_LOCK = threading.Lock()
+
+
+# --------------------------------------------------------------------------- #
+# Disk cache helpers (Phase 5)
+# --------------------------------------------------------------------------- #
+def _load_sentiment_cache(symbol: str, source: str) -> dict | None:
+    """Return the cached payload dict for (symbol, source) if it is still fresh (≤1 day)."""
+    now_utc = datetime.now(UTC)
+    try:
+        with session_scope() as sess:
+            row = sess.get(SentimentCacheRow, (symbol, source))
+            if row:
+                age_days = (now_utc - row.fetched_at).days
+                if age_days <= 1:
+                    return json.loads(row.data_json)
+    except Exception:
+        pass
+    return None
+
+
+def _save_sentiment_cache(symbol: str, source: str, payload: dict) -> None:
+    """Persist *payload* for (symbol, source), swallowing any DB errors."""
+    now_utc = datetime.now(UTC)
+    try:
+        with session_scope() as sess:
+            row = sess.get(SentimentCacheRow, (symbol, source))
+            json_data = json.dumps(payload)
+            if row:
+                row.data_json = json_data
+                row.fetched_at = now_utc
+            else:
+                row = SentimentCacheRow(
+                    symbol=symbol,
+                    source=source,
+                    data_json=json_data,
+                    fetched_at=now_utc,
+                )
+                sess.add(row)
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -120,9 +180,13 @@ def _stocktwits_get(url: str) -> dict:
 def _fetch_stocktwits(symbol: str) -> tuple[float | None, int]:
     """Return (0-100 score, message_count) from StockTwits, or (None, 0) on any failure.
 
-    StockTwits messages carry an explicit user ``Bullish``/``Bearish`` self-tag; those map to
-    ±1.0 directly (the highest-quality signal). Untagged messages fall back to VADER on the body.
+    Implements a persistent disk cache (``SentimentCacheRow``) with a fixed 1-day TTL on top
+    of the original StockTwits fetch logic.
     """
+    cached = _load_sentiment_cache(symbol, "stocktwits")
+    if cached is not None:
+        return cached.get("score"), cached.get("msg_count", 0)
+
     url = _STOCKTWITS_URL.format(symbol=symbol.upper())
     try:
         messages = _stocktwits_get(url).get("messages", [])
@@ -143,11 +207,18 @@ def _fetch_stocktwits(symbol: str) -> tuple[float | None, int]:
         elif basic == "Bearish":
             biases.append(-1.0)
         else:
-            biases.append(_vader_compound(msg.get("body") or ""))
+            body = msg.get("body") or ""
+            bias = _keyword_bias(body)
+            if bias == 0.0:
+                bias = _vader_compound(body)
+            biases.append(bias)
 
     if not biases:
         return None, 0
-    return _bias_to_score(sum(biases) / len(biases)), len(biases)
+    score = _bias_to_score(sum(biases) / len(biases))
+    count = len(biases)
+    _save_sentiment_cache(symbol, "stocktwits", {"score": score, "msg_count": count})
+    return score, count
 
 
 # --------------------------------------------------------------------------- #
@@ -157,9 +228,13 @@ def _fetch_stocktwits(symbol: str) -> tuple[float | None, int]:
 def _fetch_news(symbol: str) -> tuple[float | None, int, str | None]:
     """Return (0-100 score, headline_count, top_headline) from yfinance news, or (None, 0, None).
 
-    Each headline is scored with VADER and averaged. Handles both the legacy flat ``news`` item
-    shape and the newer ``{"content": {...}}`` nesting yfinance returns.
+    Implements a persistent disk cache (``SentimentCacheRow``) with a fixed 1-day TTL on top
+    of the original news fetch logic.
     """
+    cached = _load_sentiment_cache(symbol, "news")
+    if cached is not None:
+        return cached.get("score"), cached.get("count", 0), cached.get("top_headline")
+
     try:
         from src.data.factory import get_news_provider
 
@@ -178,8 +253,12 @@ def _fetch_news(symbol: str) -> tuple[float | None, int, str | None]:
     if not titles:
         return None, 0, None
 
-    biases = [_vader_compound(t) for t in titles]
-    return _bias_to_score(sum(biases) / len(biases)), len(titles), titles[0]
+    biases = [_keyword_bias(t) if _keyword_bias(t) != 0.0 else _vader_compound(t) for t in titles]
+    score = _bias_to_score(sum(biases) / len(biases))
+    count = len(titles)
+    top = titles[0]
+    _save_sentiment_cache(symbol, "news", {"score": score, "count": count, "top_headline": top})
+    return score, count, top
 
 
 # --------------------------------------------------------------------------- #
@@ -215,13 +294,13 @@ def fetch_sentiment(
 ) -> float:
     """Fetch Reddit sentiment for *symbol*, returning a 0-100 score (50 = neutral).
 
-    Searches r/options and r/wallstreetbets for posts mentioning *symbol* in the last 24h, blending
-    upvote ratio with VADER + keyword bias on the title, scaled by log-compressed mention volume.
-
-    Returns 50.0 on any error or when credentials are missing. ``@daily_cached`` keys on the
-    positional ``symbol`` (credentials/``_reddit`` are keyword-only and excluded), so each symbol
-    hits praw at most once per calendar day in a long-lived process.
+    The result is persisted in ``SentimentCacheRow`` with a fixed 1-day TTL. If a fresh cache
+    entry exists, it is deserialized and returned, skipping any network calls.
     """
+    cached = _load_sentiment_cache(symbol, "sentiment")
+    if cached is not None:
+        return cached.get("score", _NEUTRAL)
+
     if _reddit is None:
         if not (client_id and client_secret):
             logger.debug("No Reddit credentials — neutral sentiment for %s", symbol)
@@ -249,7 +328,6 @@ def fetch_sentiment(
                     continue
                 mention_count += 1
                 upvote_sum += float(post.upvote_ratio)  # 0-1
-                # Blend a proper NLP read (VADER) with the finance-keyword bias on the title.
                 bias_sum += (_vader_compound(post.title) + _keyword_bias(post.title)) / 2
 
         if mention_count == 0:
@@ -258,17 +336,17 @@ def fetch_sentiment(
         avg_upvote_ratio = upvote_sum / mention_count
         avg_bias = bias_sum / mention_count  # -1 to +1
 
-        # Log-compress volume so 50+ mentions gives full weight, 1 mention gives ~17 %
         volume_factor = min(1.0, math.log1p(mention_count) / math.log1p(50))
 
-        # Blend upvote signal (centred at 0.5→0) and text bias equally → -1..+1
         signal = (avg_upvote_ratio - 0.5) * 2 * 0.5 + avg_bias * 0.5
         score = _NEUTRAL + signal * _SCORE_CAP * volume_factor
-        return round(max(0.0, min(100.0, score)), 2)
-
+        final_score = round(max(0.0, min(100.0, score)), 2)
     except Exception as exc:  # network, auth, rate-limit
         logger.warning("Sentiment fetch failed for %s: %s", symbol, exc)
         return _NEUTRAL
+
+    _save_sentiment_cache(symbol, "sentiment", {"score": final_score})
+    return final_score
 
 
 # --------------------------------------------------------------------------- #
@@ -373,7 +451,8 @@ class SentimentScorer:
 
     ``score(symbol)`` returns a :class:`SentimentDetail`. Within a scan, repeated calls for the
     same symbol are memoized; across the intraday loop's per-cycle scorers, the module-level
-    ``@daily_cached`` source functions keep each API to one hit per symbol per calendar day.
+    ``@daily_cached`` source functions and the disk cache keep each API to one hit per symbol per
+    calendar day.
 
     Reddit is included only when ``client_id``/``client_secret`` are supplied; StockTwits and news
     need no credentials. Every source degrades to "no data" rather than raising.

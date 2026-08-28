@@ -50,6 +50,30 @@ def test_repeat_count_resets_on_distinct_message(caplog):
     assert any("suppressed" in r.message for r in caplog.records)
 
 
+def test_suppresses_runs_that_alternate_option_right():
+    """A chain probe fires 'Unknown contract' once per (strike, right) combo, alternating
+    right='C'/'P' every other line. Since that token used to survive normalisation, it
+    defeated the consecutive-repeat check and let a single symbol emit hundreds of
+    un-suppressed lines (2026-08-27 incident)."""
+    f = _NoiseFilter()
+
+    decisions = []
+    for i in range(6):
+        strike = 485.0 + i * 2.5
+        right = "C" if i % 2 == 0 else "P"
+        rec = _record(
+            "ib_async.ib",
+            f"Unknown contract: Option(symbol='SMH', "
+            f"lastTradeDateOrContractMonth='20261009', strike={strike}, right='{right}', "
+            f"exchange='SMART')",
+            levelno=logging.WARNING,
+        )
+        decisions.append(f.filter(rec))
+
+    assert decisions[:3] == [True, True, True]
+    assert all(d is False for d in decisions[3:])
+
+
 def test_same_record_processed_by_multiple_handlers_is_idempotent():
     f = _NoiseFilter()
     rec = _record("ib_async.wrapper", "Error 300, reqId 1: Can't find EId with tickerId:1")

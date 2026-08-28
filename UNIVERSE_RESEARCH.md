@@ -4,7 +4,16 @@ Deep-research findings (June 2026) on every ticker in `config/universe.yaml`.
 Used by Claude Code when analysing the codebase and injected (in compact form) into the
 trade-review prompt in `src/claude/prompts/strategist.py`.
 
-**Last updated:** 2026-06-02  
+**Last updated:** 2026-08-28 — second archive pass: GLD/XLF/XLK/XLE/XLU/XLI/SLV/MA/HD/AMD/NET/
+SNOW/TTD/DDOG archived to `config/universe_archive.yaml` (realistically won't-trade ETFs, one
+payments-network name kept, AMD too expensive vs. SMH/SOXL, unfamiliar software names). Prior
+update, 2026-08-27 — tiers renamed Tier 1/2/3 → safe bets/moderate/risky (organizational
+only, no change to the underlying research); `would_own` split into `actively_wheeling` (the core
+rotation, scanned every intraday cycle) and dip-watch (would_own-eligible, but only scanned on a
+≥3% drop — see `config/universe.yaml`); ARKK/LLY/COST/CRM/COIN/MSTR/BITO/CRCL archived to
+`config/universe_archive.yaml`; MAGS/TQQQ/UPRO added, SOXL moved into `would_own` as a deliberate
+leveraged-decay exception.  
+**Originally published:** 2026-06-02  
 **Source methodology:** 104 adversarial search agents; claims requiring ApexVol data were
 rejected (ApexVol explicitly labels its IV rank / CSP yield tiles as "simulated — values are
 deterministic per ticker and do not reflect today's market"). All prices and IV ranks below
@@ -28,7 +37,13 @@ Typical monthly premium yields at the 0.30 delta:
 
 ---
 
-## Tier 1 — Core income (fund-manager grade)
+## Safe bets — core income (fund-manager grade)
+
+_Renamed from "Tier 1" 2026-08-27 — same names, same research, organizational label only. See
+`config/universe.yaml` for exactly which of these are `actively_wheeling` (core rotation, scanned
+every intraday cycle) vs dip-watch (would_own-eligible, scanned only on a ≥3% drop) — that split
+does not track this tier grouping 1:1, e.g. GOOGL/NVDA/AMZN are actively_wheeling but AAPL/MSFT/JPM
+are dip-watch._
 
 ### SPY — S&P 500 ETF
 - **Price (June 2026):** ~$540  
@@ -63,12 +78,17 @@ Typical monthly premium yields at the 0.30 delta:
 - **Assignment:** Acceptable — diversified semi exposure, no single-stock binary events  
 - **Notes:** Good substitute for individual semi exposure (NVDA/AMD) with lower assignment risk.
 
-### GLD — SPDR Gold Shares ETF
+### GLD — SPDR Gold Shares ETF — ARCHIVED 2026-08-28
+
+Removed from `config/universe.yaml` (user says realistically won't trade it much). See
+`config/universe_archive.yaml` for the archive entry and the "Archived — 2026-08-28" section
+below. Research retained here for reference only:
+
 - **Price (June 2026):** ~$250  
 - **IV rank typical range:** 14–28  
 - **Monthly premium at 0.30Δ:** ~0.8–1.5%  
-- **CC:** ✅ | **CSP:** ✅  
-- **Assignment:** Comfortable — gold as a store of value; decorrelates from equity drawdowns  
+- **CC:** was ✅ | **CSP:** was ✅  
+- **Assignment:** gold as a store of value; decorrelates from equity drawdowns  
 - **Notes:** Lower IV than equity ETFs, but excellent diversification. Useful when equity IV is depressed.
 
 ### AAPL — Apple
@@ -105,7 +125,9 @@ Typical monthly premium yields at the 0.30 delta:
 
 ---
 
-## Tier 2 — Active income (elevated IV, real fundamentals)
+## Moderate — active income (elevated IV, real fundamentals)
+
+_Renamed from "Tier 2" 2026-08-27 — same names, same research, organizational label only._
 
 ### NVDA — NVIDIA
 - **Price (June 2026):** **~$224** (not ~$130–$135; that was 2024/early-2025 data)  
@@ -113,7 +135,7 @@ Typical monthly premium yields at the 0.30 delta:
 - **Monthly premium at 0.30Δ:** ~2–4% in normal conditions  
 - **CC:** ✅ | **CSP:** ✅ (~$22,400 collateral)  
 - **Assignment:** Acceptable if bullish on AI infrastructure long-term  
-- **Notes:** Highest-premium Tier 1-adjacent name. IV compressed from 50%+ cycle highs into 30–40% range as AI narrative matured. Still the best premium/quality tradeoff in mega-cap tech.
+- **Notes:** Highest-premium safe-bet-adjacent name. IV compressed from 50%+ cycle highs into 30–40% range as AI narrative matured. Still the best premium/quality tradeoff in mega-cap tech.
 
 ### AMZN — Amazon
 - **Price (June 2026):** ~$205  
@@ -123,12 +145,17 @@ Typical monthly premium yields at the 0.30 delta:
 - **Assignment:** Comfortable — AWS + retail + ads = diversified cash flows  
 - **Notes:** Better premium than MSFT/AAPL with similar assignment safety.
 
-### AMD — Advanced Micro Devices
+### AMD — Advanced Micro Devices — ARCHIVED 2026-08-28
+
+Removed from `config/universe.yaml` (too expensive for this account's sizing; user prefers SMH
+or SOXL for semiconductor exposure instead). See `config/universe_archive.yaml` for the archive
+entry and the "Archived — 2026-08-28" section below. Research retained here for reference only:
+
 - **Price (June 2026):** ~$130  
 - **IV rank typical range:** 35–65  
 - **Monthly premium at 0.30Δ:** ~2–4%  
-- **CC:** ✅ | **CSP:** ✅ (~$13,000 collateral)  
-- **Assignment:** Acceptable — real AI/data-centre revenue, though volatile  
+- **CC:** was ✅ | **CSP:** was ✅ (~$13,000 collateral)  
+- **Assignment:** real AI/data-centre revenue, though volatile  
 - **Notes:** Popular wheel stock. More accessible price than NVDA. IV stays elevated due to NVDA competition narrative.
 
 ### META — Meta Platforms
@@ -178,20 +205,27 @@ Typical monthly premium yields at the 0.30 delta:
 - **Monthly premium at 0.30Δ:** ~2–4%  
 - **CC:** ✅ | **CSP:** ⚠️ with caution (~$13,300 collateral)  
 - **Assignment:** **Conditional** — ADR delisting/geopolitical risk means assignment could leave you holding a difficult-to-exit position if US-China tensions escalate. Keep per-ticker allocation small.  
-- **Notes:** Strong analyst consensus (38 Buy, 1 Sell). IV elevated by China regulatory and geopolitical overhang. Reasonable premiums. Treat as Tier 2 for CCs, Tier 3 caution for CSPs.
+- **Notes:** Strong analyst consensus (38 Buy, 1 Sell). IV elevated by China regulatory and geopolitical overhang. Reasonable premiums. Treat as moderate for CCs, extra caution for CSPs.
 
 ---
 
-## Tier 3 — Speculative / High-IV
+## Risky — speculative / high-IV
+
+_Renamed from "Tier 3" 2026-08-27 — same names, same research, organizational label only._
 
 ### SOXL — Direxion 3× Semiconductor Bull ETF
 - **Price (June 2026):** ~$25  
 - **IV typical range:** 80–140%  
 - **CC expected returns (verified):** 1.75–13.13% per trade; **182–534% annualized**  
 - **CC:** ✅ — exceptional income if you own shares  
-- **CSP:** ❌ — **NEVER**. Daily leverage reset causes structural NAV decay. Being assigned 100 shares through a -50% drawdown is catastrophic. SOXL lost -85% in 2022.  
+- **CSP:** ✅ — **as of 2026-08-27, a deliberate `would_own` exception** (confirmed: this account
+  accepts daily-reset decay risk on assignment for SOXL specifically, alongside TQQQ/UPRO). The
+  NAV-decay reasoning below still applies in full — this is an accepted risk, not a retraction of
+  it — but SOXL is no longer blanket CSP-excluded the way LABU/TSLL/DPST are.  
 - **Historical range:** -85% (2022) to +227% (2023)  
-- **Notes:** Sell short-dated (weekly/biweekly) OTM calls. Only viable as CC income tool. Never hold as a long-term position naked.
+- **Notes:** Sell short-dated (weekly/biweekly) OTM calls for CC income as before. If selling a
+  CSP, size small — assignment through a sharp drawdown compounds leverage decay with the
+  underlying's own move.
 
 ### LABU — Direxion 3× Biotech Bull ETF
 - **Price (June 2026):** ~$20  
@@ -219,7 +253,7 @@ Typical monthly premium yields at the 0.30 delta:
 - **IV typical range:** 90–130%  
 - **Monthly premium at 0.30Δ:** ~6–12%  
 - **CC:** ✅ — bitcoin proxy with exceptional premiums  
-- **CSP:** ⚠️ — technically in `would_own` but treat as high-risk; BTC can halve in days, taking MARA with it  
+- **CSP:** ⚠️ — in `would_own` (and `actively_wheeling` as of 2026-08-27) but treat as high-risk; BTC can halve in days, taking MARA with it  
 - **Assignment caution:** If assigned, you own a Bitcoin miner that can lose 70%+ in a bear cycle  
 - **Notes:** Premium income is real but so is the risk. The risk engine's `max_pct_per_ticker: 5%` cap limits exposure naturally. Best run as CC-only unless explicitly bullish on BTC.
 
@@ -228,20 +262,25 @@ Typical monthly premium yields at the 0.30 delta:
 - **IV rank (verified):** IV mean ~86%; IV rank 9.52% (currently VERY LOW vs. history — current IV is cheaper than usual)  
 - **Implied earnings move:** ±13.67%  
 - **CC:** ✅ — speculative quantum play; premiums can be very high around catalysts  
-- **CSP:** ⚠️ — technically in `would_own` with small sizing; very early stage company  
+- **CSP:** ⚠️ — in `would_own` (and `actively_wheeling` as of 2026-08-27) with small sizing; very early stage company  
 - **Assignment caution:** Quantum computing is a decade-long bet; assignment means owning a pre-revenue (or very early revenue) company through multi-year development  
 - **Notes:** IV rank at 9.52% means current options are cheap relative to history — not the best time to sell premium. Wait for IV rank > 40 before selling.
 
-### CRCL — Circle Internet Group (stablecoin/crypto)
+### CRCL — Circle Internet Group (stablecoin/crypto) — ARCHIVED 2026-08-27
+
+Removed from `config/universe.yaml` (thin option liquidity, 57% off ATH, most speculative name
+in the prior list). See `config/universe_archive.yaml` for the archive entry and the "Archived —
+2026-08-27" section below. Research retained here for reference only:
+
 - **Price (June 2026):** ~$113 (down from ATH $263 in June 2025 — off 57%)  
 - **IV (verified):** ~173%; IV rank 28.04  
-- **CC:** ✅ — exceptional IV if you own shares; weekly options can yield 5–15%  
-- **CSP:** ❌ — **NOT in `would_own`**. Recent IPO (2025), 57% off ATH, thin option liquidity, crypto infrastructure regulatory risk  
+- **CC:** was ✅ — exceptional IV if you own shares; weekly options can yield 5–15%  
+- **CSP:** was ❌ — **NOT in `would_own`**. Recent IPO (2025), 57% off ATH, thin option liquidity, crypto infrastructure regulatory risk  
 - **Notes:** IV 173% is extraordinary but options liquidity is thin — verify bid/ask spreads and OI before entering. Not suitable for CSPs.
 
 ---
 
-## TSLA — Tesla (Tier 2, added 2026-06-12)
+## TSLA — Tesla (moderate, added 2026-06-12)
 
 - **Price (June 2026):** ~$395–436  
 - **IV:** structurally high absolute IV (40–70%), but IV *rank* was compressed (~22) in mid-2026 — high premium in dollar terms, low relative to TSLA's own history.  
@@ -257,31 +296,27 @@ Concise entries for names added to broaden the book away from its tech/crypto ti
 spot-checked June 2026; IV descriptors are qualitative (verify IV **rank** on Barchart before
 selling — see Data quality warning).
 
-**Diversifier sector ETFs (all in `would_own`; liquid; defensives are LOW-IV → few signals):**
+**Diversifier sector ETFs (all in `would_own`; liquid; defensives are LOW-IV → few signals). As
+of 2026-08-27 all are dip-watch, not `actively_wheeling` — pulled into a scan only on a ≥3%
+drop, never scanned every cycle. XLV/XLP/TLT are the thinnest on premium of the three, which is
+part of why dip-watch treatment fits them (see `config/universe.yaml`). XLF/XLK/XLE/XLU/XLI/SLV
+were archived 2026-08-28 — see the "Archived — 2026-08-28" section below:**
 
 | Ticker | Price | Sector | IV character | CC | CSP | Notes |
 |---|---|---|---|---|---|---|
-| XLF | ~$52 | financials | moderate | ✅ | ✅ | broad financials; good liquidity |
-| XLK | ~$255 | tech | moderate | ✅ | ✅ | adds to the (already large) tech cap |
-| XLE | ~$90 | energy | moderate–high | ✅ | ✅ | commodity-linked decorrelation |
 | XLV | ~$154 | healthcare | low | ✅ | ✅ | defensive; thin premium |
 | XLP | ~$85 | consumer | very low | ✅ | ✅ | staples; often below `min_iv_rank` |
-| XLU | ~$44 | utilities | low | ✅ | ✅ | rate-sensitive defensive |
-| XLI | ~$176 | industrials | low–moderate | ✅ | ✅ | cyclical diversifier |
 | TLT | ~$86 | bonds | very low | ✅ | ✅ | rates hedge sleeve; rarely signals |
-| SLV | ~$60 | commodities | moderate | ✅ | ✅ | silver; higher IV than GLD |
 
 **Quality stocks added to `would_own`:**
 
-- **V (~$324) / MA (~$488)** — payments-network moats; LOW IV (~12–28), large collateral; CC+CSP but expect modest yield.
-- **WMT (~$120) / HD (~$327)** — defensive consumer; liquid chains; moderate IV.
-- **COIN (~$162)** — liquid crypto-equity; high IV (60–100%); the cleanest crypto expression (far better liquidity than small miners). Crypto-correlated gap risk — treat as part of the crypto bucket.
+- **V (~$324)** — payments-network moat; LOW IV (~12–28), large collateral; CC+CSP but expect modest yield. Dip-watch as of 2026-08-27. (MA was also added here but archived 2026-08-28 — user only wants one payments-network name.)
+- **WMT (~$120)** — defensive consumer; liquid chain; moderate IV. Dip-watch as of 2026-08-27. (HD was also added here but archived 2026-08-28 — user will not trade it.)
+- ~~**COIN (~$162)**~~ — **archived 2026-08-27**, see below. Was: liquid crypto-equity; high IV (60–100%); the cleanest crypto expression (far better liquidity than small miners). Crypto-correlated gap risk.
 
 **Watchlist-only (CC-focused or CC-only):**
 
-- **COST (~$975) / LLY (~$1,150)** — top-quality compounders but **CC-focused**: one CSP contract locks ~$97k / ~$115k collateral, so they're impractical for CSP below a multi-million-dollar account. LLY also carries pharma trial-result binary risk. Kept in `watchlist`, **removed from `would_own`**.
-- **MSTR (~$125)** — leveraged-BTC proxy; very high IV (80–130%). **CC-only, not in `would_own`** (assignment = holding a leveraged-BTC vehicle).
-- **NBIS, CRM, NET, CRWD, SNOW, TTD, DDOG, TEM, ASTS, IONQ** — high-IV software/AI/space/quantum names for CC (and CSP where in `would_own`). Note overlaps: NET/CRWD/HACK (cybersecurity), SNOW/DDOG/IGV (cloud software), IONQ/RGTI (quantum) are correlated theses.
+- **NBIS, CRWD, TEM, ASTS, IONQ** — high-IV software/AI/space/quantum names for CC (and CSP where in `would_own`). Note overlaps: CRWD/HACK (cybersecurity), IONQ/RGTI (quantum) are correlated theses. NBIS and ASTS moved into `actively_wheeling` 2026-08-27 (see below); CRM was archived the same day. NET/SNOW/TTD/DDOG were also here but archived 2026-08-28 — user isn't familiar enough with those names to trade them.
 
 **Removed 2026-06-12:**
 
@@ -291,11 +326,56 @@ selling — see Data quality warning).
 
 ---
 
+## Archived — 2026-08-27
+
+Names the user has decided they'll clearly never trade, moved to `config/universe_archive.yaml`
+(reference-only — nothing in the application loads that file). Full reasoning lives there; a
+short pointer per ticker:
+
+- **ARKK** — innovation-basket ETF; user will not trade it.
+- **LLY (~$1,150)** — was watchlist-only/CC-focused above (~$115k CSP collateral, pharma trial
+  risk); now fully archived, not just CC-focused.
+- **COST (~$975)** — was watchlist-only/CC-focused above (~$97k CSP collateral); now fully
+  archived, not just CC-focused.
+- **CRM** — was in the high-IV software group above; user will not trade it.
+- **COIN (~$162)** — was a `would_own` quality stock above; crypto-equity exposure user will not trade.
+- **MSTR (~$125)** — was CC-only/leveraged-BTC-proxy above; user will not trade it.
+- **BITO** — bitcoin futures ETF; futures-roll decay, redundant crypto exposure once COIN/MSTR
+  are also archived.
+- **CRCL** — see the dedicated (now-archived) section above; thin liquidity, most speculative
+  name in the prior list.
+
+To bring one back: reverse the process in `config/universe_archive.yaml`'s header comment, and
+update this file plus `src/claude/prompts/strategist.py`'s `_UNIVERSE_CONTEXT` per CLAUDE.md's
+doc-update table.
+
+---
+
+## Archived — 2026-08-28
+
+A second trim, same reference-only treatment as above — moved to `config/universe_archive.yaml`:
+
+- **GLD** — see the dedicated (now-archived) section above; user says realistically won't trade it much.
+- **AMD** — see the dedicated (now-archived) section above; too expensive for this account's sizing, user prefers SMH or SOXL for semiconductor exposure instead.
+- **XLF, XLK, XLE, XLU, XLI, SLV** — were in the diversifier-ETF table above; user says realistically won't trade them much.
+- **MA (~$488)** — was a `would_own` quality stock above; user only wants one payments-network name, kept V instead.
+- **HD (~$327)** — was a `would_own` quality stock above; user will not trade it.
+- **NET, SNOW, TTD, DDOG** — were in the watchlist-only group above; user isn't familiar enough with these names to trade them.
+
+To bring one back: reverse the process in `config/universe_archive.yaml`'s header comment, and
+update this file plus `src/claude/prompts/strategist.py`'s `_UNIVERSE_CONTEXT` per CLAUDE.md's
+doc-update table.
+
+---
+
 ## Key trading rules derived from research
 
 1. **Do not sell premium when IVR < 30.** The risk engine enforces this, but Claude should flag candidates near the floor as marginal.
 2. **TastyTrade standard: wait for IVR ≥ 50** before entering new premium positions in ideal conditions. IVR 30–49 = acceptable but not ideal.
-3. **Leveraged ETFs (SOXL, LABU, TSLL, DPST):** CC-only. Assignment = NAV decay trap. Never sell CSPs.
+3. **Leveraged ETFs (LABU, TSLL, DPST):** CC-only. Assignment = NAV decay trap. Never sell CSPs.
+   **TQQQ, UPRO, SOXL are a deliberate exception (2026-08-27):** this account accepts daily-reset
+   decay risk on assignment for these three specifically — they're in `would_own` and
+   `actively_wheeling`. The NAV-decay reasoning is unchanged; the risk is accepted, not absent.
 4. **BABA:** Size conservatively (< `max_pct_per_ticker`). Flag ADR risk in every review.
 5. **MARA, RGTI:** The `max_pct_per_ticker: 5%` cap limits damage. Flag as speculative in every review.
 6. **Earnings blackout:** The system enforces a 14-day blackout. Claude should call out if the DTE window is close to an expected earnings date that yfinance missed.
@@ -328,23 +408,24 @@ The risk engine caps sector exposure at 25% of net liquidation. Sector assignmen
 
 | Sector | Tickers |
 |---|---|
-| `index` | SPY, QQQ, IWM |
-| `semis` | NVDA, AMD, SMH, SOXL |
-| `tech` | AAPL, MSFT, GOOGL, AMZN, META, PLTR, RGTI, BABA, NBIS, CRM, NET, CRWD, SNOW, TTD, DDOG, IONQ, XLK, HACK, IGV, ARKK |
-| `financials` | JPM, SOFI, HOOD, DPST, V, MA, XLF |
-| `consumer` | TSLA, TSLL, WMT, HD, COST, UBER, XLP |
-| `healthcare` | HIMS, TEM, LLY, XLV |
-| `commodities` | GLD, SLV |
-| `crypto` | MARA, CRCL, COIN, MSTR, BITO |
-| `energy` | XLE |
-| `utilities` | XLU |
-| `industrials` | XLI |
+| `index` | SPY, QQQ, IWM, TQQQ, UPRO |
+| `semis` | NVDA, SMH, SOXL |
+| `tech` | AAPL, MSFT, GOOGL, AMZN, MAGS, META, PLTR, RGTI, BABA, NBIS, CRWD, IONQ, HACK, IGV |
+| `financials` | JPM, SOFI, HOOD, DPST, V |
+| `consumer` | TSLA, TSLL, WMT, UBER, XLP |
+| `healthcare` | HIMS, TEM, XLV |
+| `crypto` | MARA |
 | `bonds` | TLT |
 | `biotech` | LABU |
 | `aerospace` | RKLB |
 | `telecom` | ASTS |
 
-**Watch:** `tech` is still the largest bucket (~20 tickers) and will hit the 25% cap first on a
-strong tech morning — correct behaviour. The 2026-06-12 diversification batch deliberately grew
-the non-tech buckets (consumer, financials, healthcare, plus new utilities/industrials/bonds/
-energy) so the engine has genuinely decorrelated names to fall back on once the tech cap binds.
+**Watch:** `tech` is still the largest bucket (~14 tickers, including MAGS) and will hit the
+25% cap first on a strong tech morning — correct behaviour, and MAGS specifically double-counts
+exposure already held via GOOGL/NVDA/AMZN, so watch it compound faster than the other names in
+this bucket. The 2026-06-12 diversification batch deliberately grew the non-tech buckets
+(consumer, financials, healthcare, plus bonds) so the engine has genuinely decorrelated names to
+fall back on once the tech cap binds; the 2026-08-27 archive pass shrank `crypto` down to just
+MARA (CRCL/COIN/MSTR/BITO archived), and the 2026-08-28 trim removed the `commodities`,
+`energy`, `utilities`, and `industrials` sectors entirely (GLD/SLV, XLE, XLU, XLI archived) —
+one fewer decorrelation lever if the tech cap ever binds hard.

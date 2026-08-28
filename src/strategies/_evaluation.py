@@ -26,11 +26,12 @@ REASON_DTE_RANGE = "dte_out_of_range"
 REASON_NO_MARKET = "no_two_sided_market"
 REASON_ILLIQUID = "illiquid"
 REASON_BELOW_BASIS = "strike_below_basis"
+REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
 REASON_INSUFFICIENT_CASH = "insufficient_cash"
 REASON_NO_HEADROOM = "no_headroom"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
-REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
+REASON_PHASE_DOWNTREND = "phase_downtrend"
 
 
 @dataclass

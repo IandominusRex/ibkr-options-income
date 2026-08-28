@@ -9,6 +9,7 @@ is the same `subprocess.Popen` pattern used for the supervised daemons.
 from __future__ import annotations
 
 from datetime import date, datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import scripts.start as start
@@ -69,3 +70,82 @@ def test_state_file_tolerates_corruption(tmp_path, monkeypatch):
     state.write_text("not json{")
     monkeypatch.setattr(start, "EOD_STATE_FILE", state)
     assert start._read_eod_last_run() is None
+
+
+# --------------------------------------------------------------------------- #
+# Stale-process guard (2026-08-27: a hung shutdown orphaned run_approval_service,
+# which fought the next restart over the Telegram bot token and its clientIds).
+# --------------------------------------------------------------------------- #
+
+
+def test_find_stale_pids_matches_own_daemon_modules(monkeypatch):
+    monkeypatch.setattr(start.os, "getpid", lambda: 100)
+    fake_ps = (
+        "  PID COMMAND\n"
+        " 100 python -m scripts.start\n"
+        " 200 python -m scripts.run_approval_service\n"
+        " 300 python -m scripts.run_monitor\n"
+        " 400 /usr/bin/some_unrelated_process\n"
+    )
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    assert sorted(start._find_stale_pids()) == [200, 300]
+
+
+def test_find_stale_pids_excludes_own_pid(monkeypatch):
+    monkeypatch.setattr(start.os, "getpid", lambda: 200)
+    fake_ps = " 200 python -m scripts.run_approval_service\n"
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    assert start._find_stale_pids() == []
+
+
+def test_find_stale_pids_returns_empty_on_ps_failure(monkeypatch):
+    def fake_run(*_a, **_k):
+        raise OSError("no ps")
+
+    monkeypatch.setattr(start.subprocess, "run", fake_run)
+    assert start._find_stale_pids() == []
+
+
+def test_kill_stale_processes_noop_when_none_found(monkeypatch):
+    monkeypatch.setattr(start, "_find_stale_pids", lambda: [])
+    calls = []
+    monkeypatch.setattr(start.os, "kill", lambda *a: calls.append(a))
+    start._kill_stale_processes()
+    assert calls == []
+
+
+def test_kill_stale_processes_sigkills_a_survivor_after_the_grace_window(monkeypatch):
+    monkeypatch.setattr(start, "_find_stale_pids", lambda: [111])
+    monkeypatch.setattr(start, "STALE_KILL_GRACE_SECONDS", 1.0)
+    monkeypatch.setattr(start.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(start, "_pid_alive", lambda _pid: True)  # never exits on SIGTERM alone
+
+    clock = [0.0]
+
+    def fake_monotonic():
+        clock[0] += 0.5
+        return clock[0]
+
+    monkeypatch.setattr(start.time, "monotonic", fake_monotonic)
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(start.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    start._kill_stale_processes()
+
+    assert (111, start.signal.SIGTERM) in sent
+    assert (111, start.signal.SIGKILL) in sent
+
+
+def test_kill_stale_processes_skips_sigkill_if_process_exits_in_time(monkeypatch):
+    monkeypatch.setattr(start, "_find_stale_pids", lambda: [111])
+    monkeypatch.setattr(start, "STALE_KILL_GRACE_SECONDS", 5.0)
+    monkeypatch.setattr(start.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(start.time, "monotonic", lambda: 0.0)  # deadline never reached
+    monkeypatch.setattr(start, "_pid_alive", lambda _pid: False)  # exits immediately
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(start.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+    start._kill_stale_processes()
+
+    assert sent == [(111, start.signal.SIGTERM)]

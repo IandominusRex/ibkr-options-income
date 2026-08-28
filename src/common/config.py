@@ -163,18 +163,68 @@ class MarketDataCfg(BaseModel):
     # held positions and materially-moved would_own names can change a decision. A would_own
     # name is re-fetched intraday only once its live spot drifts ≥ this fraction from the spot at
     # its last fetch; held names and names that cleared the score floor last cycle always fetch.
-    # Manual /scan ignores this gate and always sweeps the full universe.
+    # Manual /scan and the first-cycle forced full sweep fetch actively_wheeling ∪ held names
+    # unconditionally; dip_watch names get seed-only unless they gapped ≥3% overnight (2026-08-28).
     intraday_rescan_move_pct: float = 0.005  # 0.5%
-    # Safety net: force a full intraday sweep when the oldest fetched symbol hasn't been
-    # refreshed in this many minutes, so a quiet-but-drifting name can't go stale indefinitely.
-    # 0 disables the periodic full sweep (gate purely by move/held/cleared).
-    force_full_scan_minutes: float = 90.0
+    # Safety net: force a full intraday sweep of `actively_wheeling` ∪ held names when a symbol
+    # hasn't been refreshed in this many minutes, so a quiet-but-drifting name can't go stale
+    # indefinitely. Checked PER SYMBOL (2026-08-27), not "the whole core sweeps together the
+    # moment the single stalest one goes over the line" — that old rule let one quiet name (e.g.
+    # GLD on a slow week) drag every other actively_wheeling name into a synchronized burst each
+    # time. Per-symbol staleness means each name's clock runs from its own last fetch, so
+    # frequently-moving and rarely-moving names desynchronize naturally — refreshes spread out
+    # over time with no explicit batch/rotation schedule needed. 0 disables the periodic sweep
+    # entirely (gate purely by move/held/cleared). Overridden to 120 in settings.yaml; this
+    # default only matters if that key is ever removed. `dip_pull_in_pct` names are event-
+    # triggered only and deliberately excluded from this timer (see below).
+    force_full_scan_minutes: float = 120.0
+    # Held stock positions used to be unconditionally material every intraday cycle (a CC
+    # candidate refresh on every held name, every 15 min, regardless of movement) — the single
+    # biggest fixed IBKR chain-fetch cost in the loop. Now gated: re-fetched intraday only once
+    # the live spot has *risen* ≥ this fraction from the spot at its last fetch — directional
+    # (2026-08-27), since a new CC candidate needs room to sell an OTM strike, which a drop
+    # doesn't create; existing-position risk (delta drift, assignment, rolls) is handled
+    # continuously by the separate event-driven monitor, not this gate. A dropping held name is
+    # still caught within `force_full_scan_minutes`. A brand-new position with no baseline yet is
+    # always fetched once.
+    held_position_move_pct: float = 0.02  # 2%
+    # `would_own` names outside `actively_wheeling` (universe.yaml) are not scanned every cycle
+    # at all — they're an opportunistic CSP allowlist, not the core rotation. They're pulled
+    # into a cycle's scan only when the live spot has *dropped* at least this fraction from the
+    # spot at its last fetch (a rally is never a CSP entry signal, so this check is directional,
+    # unlike `intraday_rescan_move_pct`). Excluded from `force_full_scan_minutes`. At startup /
+    # manual /scan, the same threshold is checked bidirectionally against the persisted baseline
+    # — a gap in either direction ≥3% is a legitimate CSP setup at the open; a quiet overnight
+    # name gets seed-only (yfinance baseline, no chain fetch) — 2026-08-28.
+    dip_pull_in_pct: float = 0.03  # 3%
+    # Per-cycle wall-clock ceiling on option-chain fetching in the intraday loop (2026-08-28).
+    # 0 disables it. The gate keeps a normal cycle tiny (measured: median 1 material symbol,
+    # mean 3.8 over 125 real cycles), but its filtering power collapses when correlation goes to
+    # 1: a broad -3% day makes every would_own name material at once, and at a measured ~37s
+    # mean per fetch that is a ~28-minute sweep inside a 15-minute cycle. An overrun doesn't just
+    # run long — it sets `scan_running`, so the NEXT cycle's scan is skipped entirely (profit-take
+    # and loss-exit checks still run; they precede the scan in the loop). The budget converts one
+    # oversized burst into consecutive full-speed cycles that each finish on time, with the
+    # remainder carried forward via `ScanResult.unreached_symbols` -> next cycle's
+    # `must_include_symbols`. Sized as: cycle (900s) - per-cycle fixed overhead (~120s of
+    # analytics+sentiment for EVERY symbol material or not, scoring, review, Telegram) - one
+    # worst-case symbol's `symbol_timeout_seconds` (150s) of overshoot, since the budget can only
+    # be checked between symbols. Never applies to a manual /scan (intraday=False), which is
+    # operator-initiated and expected to sweep in full.
+    chain_fetch_budget_seconds: float = 600.0
 
     @model_validator(mode="after")
     def _enforce_line_budget(self) -> MarketDataCfg:
         """`max_concurrent_lines` is the account's ~100-line market-data cap. A single chain
         batch holds `chain_batch_size` simultaneous lines, so the batch must not exceed the cap
         (N15: previously this key was read by nothing — fail loud at config load instead)."""
+        if 0 < self.chain_fetch_budget_seconds < self.symbol_timeout_seconds:
+            raise ValueError(
+                f"market_data.chain_fetch_budget_seconds ({self.chain_fetch_budget_seconds}) is "
+                f"below symbol_timeout_seconds ({self.symbol_timeout_seconds}) — the budget must "
+                "leave room for at least one worst-case symbol, or a slow first symbol would "
+                "consume the whole cycle and starve every later one. Use 0 to disable it."
+            )
         if self.chain_batch_size > self.max_concurrent_lines:
             raise ValueError(
                 f"market_data.chain_batch_size ({self.chain_batch_size}) exceeds "

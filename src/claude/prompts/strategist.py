@@ -31,73 +31,78 @@ _UNIVERSE_CONTEXT = """
 qualitative judgement (tier, liquidity, CC-vs-CSP suitability, structural risks) ONLY. For any
 current price level, use the SCAN-TIME SPOT PRICES block — never quote these figures as live.
 
-TIER 1 — Core income (fund-manager grade, stable assignment):
-  SPY  ~$540  IVR 15-35  CC+CSP  0.8-2.5%/mo   index; ETF, no earnings risk
-  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy
-  IWM  ~$200  IVR 20-45  CC+CSP  1.5-3.0%/mo   small-cap index
-  SMH  ~$220  IVR 28-55  CC+CSP  2.0-4.0%/mo   semi sector ETF; diversified
-  GLD  ~$250  IVR 14-28  CC+CSP  0.8-1.5%/mo   gold; decorrelates from equity
-  AAPL ~$211  IVR 18-40  CC+CSP  0.8-1.2%/mo   most liquid chain; low IV
-  MSFT ~$413  IVR 15-35  CC+CSP  0.7-1.0%/mo   structurally low IV (~7-8% avg)
-  GOOGL~$165  IVR 22-45  CC+CSP  1.0-2.0%/mo   diversified revenue
-  JPM  ~$280  IVR 20-40  CC+CSP  1.0-2.0%/mo   financials; dividend payer
-  V    ~$324  IVR 12-28  CC+CSP  0.6-1.0%/mo   payments moat; LOW IV, ~$32k collateral
-  MA   ~$488  IVR 12-28  CC+CSP  0.6-1.0%/mo   payments moat; LOW IV, ~$49k collateral
-  WMT  ~$120  IVR 14-30  CC+CSP  0.7-1.2%/mo   defensive staple; liquid chain
-  HD   ~$327  IVR 16-32  CC+CSP  0.8-1.4%/mo   quality retail
-  COST ~$975  IVR 12-26  CC*     low           *CC-focused: ~$97k CSP collateral/contract
-  LLY  ~$1150 IVR 18-34  CC*     low           *CC-focused: ~$115k CSP collateral/contract; pharma trial risk
+Risk tiers: SAFE_BETS (core, fund-manager grade), MODERATE (elevated IV, real fundamentals),
+RISKY (speculative / high-IV, assignment is a risk event). Orthogonal to that: `would_own`
+names marked ACTIVELY_WHEELING below are the core rotation, scanned every intraday cycle;
+DIP-WATCH would_own names are only pulled into a scan on a genuine ≥3% drop — a rally is never
+a CSP entry signal for them, so don't treat a DIP-WATCH name's price rise as a reason to expect
+a CSP candidate on it.
 
-DIVERSIFIER ETFs (broaden away from the tech/crypto tilt; defensives are LOW-IV → few signals):
-  XLF  ~$52   financials sector; liquid, moderate IV
-  XLK  ~$255  tech sector (adds to the tech cap)
-  XLE  ~$90   energy; commodity-linked decorrelation, moderate-high IV
-  XLV  ~$154  healthcare; defensive, low IV
-  XLP  ~$85   consumer staples; very low IV — rarely clears the IV gate
-  XLU  ~$44   utilities; rate-sensitive defensive, low IV
-  XLI  ~$176  industrials; cyclical, low-moderate IV
-  TLT  ~$86   long Treasuries; very low IV — hedge sleeve, few signals
-  SLV  ~$60   silver; higher IV than GLD, commodity diversifier
+SAFE_BETS — Core income (fund-manager grade, stable assignment):
+  SPY  ~$540  IVR 15-35  CC+CSP  0.8-2.5%/mo   index; ETF, no earnings risk; ACTIVELY_WHEELING
+  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; ACTIVELY_WHEELING
+  IWM  ~$200  IVR 20-45  CC+CSP  1.5-3.0%/mo   small-cap index; DIP-WATCH
+  SMH  ~$220  IVR 28-55  CC+CSP  2.0-4.0%/mo   semi sector ETF; diversified; DIP-WATCH
+  MAGS ~$55   IVR unk    CC+CSP  unk           Roundhill Magnificent Seven ETF; equal-weight
+                                                AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA — heavily
+                                                overlaps other tech names below; ACTIVELY_WHEELING
+  AAPL ~$211  IVR 18-40  CC+CSP  0.8-1.2%/mo   most liquid chain; low IV; DIP-WATCH
+  MSFT ~$413  IVR 15-35  CC+CSP  0.7-1.0%/mo   structurally low IV (~7-8% avg); DIP-WATCH
+  GOOGL~$165  IVR 22-45  CC+CSP  1.0-2.0%/mo   diversified revenue; ACTIVELY_WHEELING
+  NVDA ~$224  IVR 32-64  CC+CSP  2.0-4.0%/mo   AI leader; IV compressed from 50%+ highs; ACTIVELY_WHEELING
+  AMZN ~$205  IVR 25-45  CC+CSP  1.5-3.0%/mo   AWS + retail + ads; ACTIVELY_WHEELING
+  JPM  ~$280  IVR 20-40  CC+CSP  1.0-2.0%/mo   financials; dividend payer; DIP-WATCH
+  V    ~$324  IVR 12-28  CC+CSP  0.6-1.0%/mo   payments moat; LOW IV, ~$32k collateral; DIP-WATCH
+  WMT  ~$120  IVR 14-30  CC+CSP  0.7-1.2%/mo   defensive staple; liquid chain; DIP-WATCH
 
-TIER 2 — Active income (elevated IV, real fundamentals):
-  TSLA ~$395  IVR 40-70  CC+CSP  2.5-5.0%/mo   deepest single-stock liquidity after AAPL; high premium
-  NVDA ~$224  IVR 32-64  CC+CSP  2.0-4.0%/mo   AI leader; IV compressed from 50%+ highs
-  AMZN ~$205  IVR 25-45  CC+CSP  1.5-3.0%/mo   AWS + retail + ads
-  AMD  ~$130  IVR 35-65  CC+CSP  2.0-4.0%/mo   popular wheel; NVDA competition narrative keeps IV up
-  META ~$640  IVR 28-55  CC+CSP  2.0-4.0%/mo   strong FCF since 2023; large CSP collateral
-  PLTR ~$158  IVR 47     CC+CSP  3.0-5.0%/mo   AI/defence; IV rank 46.73 verified Jun-2026
-  SOFI ~$18   IVR 27     CC+CSP  3.0-6.0%/mo   IVR currently ~27 (below ideal 30+); up 32% YTD
-  HOOD ~$90   IVR 45-80  CC+CSP  3.0-6.0%/mo   retail brokerage; crypto-correlated IV
-  HIMS ~$35   IVR 55-90  CC+CSP  4.0-8.0%/mo   telehealth; ±16% earnings move; FDA binary risk
-  BABA ~$133  IVR 35-55  CC+CSP* 2.0-4.0%/mo   *ADR delisting/geopolitical risk — size small
+DIVERSIFIER ETFs (broaden away from the tech/crypto tilt; defensives are LOW-IV → few signals;
+all DIP-WATCH — pulled in only on a ≥3% drop, never scanned every cycle):
+  XLV  ~$154  healthcare; defensive, low IV — thin premium even when it does fetch
+  XLP  ~$85   consumer staples; very low IV — rarely clears the IV gate; would_own-eligible but not actively scanned
+  TLT  ~$86   long Treasuries; very low IV — hedge sleeve; would_own-eligible but not actively scanned
 
-TIER 3 — Speculative / CC-only leveraged ETFs (NEVER CSP):
-  SOXL ~$25   IV 80-140% CC ONLY 182-534% ann  3× semi; -85% in 2022; NAV decay trap on assignment
+MODERATE — Active income (elevated IV, real fundamentals):
+  TSLA ~$395  IVR 40-70  CC+CSP  2.5-5.0%/mo   deepest single-stock liquidity after AAPL; high premium; DIP-WATCH
+  META ~$640  IVR 28-55  CC+CSP  2.0-4.0%/mo   strong FCF since 2023; large CSP collateral; ACTIVELY_WHEELING
+  PLTR ~$158  IVR 47     CC+CSP  3.0-5.0%/mo   AI/defence; IV rank 46.73 verified Jun-2026; ACTIVELY_WHEELING
+  SOFI ~$18   IVR 27     CC+CSP  3.0-6.0%/mo   IVR currently ~27 (below ideal 30+); up 32% YTD; ACTIVELY_WHEELING
+  HOOD ~$90   IVR 45-80  CC+CSP  3.0-6.0%/mo   retail brokerage; crypto-correlated IV; ACTIVELY_WHEELING
+  HIMS ~$35   IVR 55-90  CC+CSP  4.0-8.0%/mo   telehealth; ±16% earnings move; FDA binary risk; ACTIVELY_WHEELING
+  BABA ~$133  IVR 35-55  CC+CSP* 2.0-4.0%/mo   *ADR delisting/geopolitical risk — size small; DIP-WATCH
+  NBIS ~unk   IVR unk    CC+CSP  unk           Nebius Group; AI infrastructure/cloud; elevated IV; ACTIVELY_WHEELING
+  UBER/CRWD — high-IV mobility/cybersecurity names; both DIP-WATCH (would_own-eligible,
+      pulled in only on a ≥3% drop). TEM is watchlist/CC-only, not in would_own.
+
+RISKY — leveraged, DELIBERATE would_own exception (confirmed 2026-08-27 — decay risk on
+assignment is accepted for these three specifically; ACTIVELY_WHEELING):
+  TQQQ ~unk   IV high    CC+CSP  high          3× Nasdaq-100
+  UPRO ~unk   IV high    CC+CSP  high          3× S&P 500
+  SOXL ~$25   IV 80-140% CC+CSP 182-534% ann   3× semi; -85% in 2022; decay accepted for this account
+
+RISKY — CC-only leveraged ETFs (NEVER would_own — no exception for these):
   LABU ~$20   IV 90-160% CC ONLY extreme       3× biotech + FDA binary risk; never assign
   TSLL ~$15   IV 90-130% CC ONLY very high     2× TSLA; affordable entry; leverage decay
   DPST ~$120  IV 70-110% CC ONLY high          3× regional banks; thin liquidity; verify OI
 
-TIER 3 — Speculative stocks (in would_own with hard position limits):
+RISKY — Speculative stocks (in would_own, ACTIVELY_WHEELING, hard position limits):
   MARA ~$15   IV 90-130% CC+CSP* 6-12%/mo     *BTC proxy; can lose 70%+ in bear cycle
   RGTI ~$10   IV ~86%    CC+CSP* speculative   *quantum computing; IVR 9.52% (LOW) — wait for IVR>40
-  CRCL ~$113  IV ~173%   CC ONLY              IPO 2025; -57% from ATH; thin liquidity; not in would_own
-  COIN ~$162  IV 60-100% CC+CSP* high          *liquid crypto-equity; cleaner than miners; crypto gap risk
-  MSTR ~$125  IV 80-130% CC ONLY very high     leveraged-BTC proxy; not in would_own
   RKLB ~$25   IV 70-110% CC+CSP* speculative   *space launch; pre-profit; cap sizing
-  ASTS ~$40   IV 80-120% CC ONLY speculative   satellite comms; pre-revenue; not in would_own
+  ASTS ~$40   IV 80-120% CC ONLY* speculative  *satellite comms; pre-revenue; now ACTIVELY_WHEELING
   IONQ ~$40   IV 80-120% CC ONLY speculative   quantum (same thesis as RGTI); not in would_own
 
 KEY RULES FOR REVIEW:
 - Flag any candidate with IVR < 30 as "thin premium environment"
 - Ideal sell zone: IVR ≥ 50 (TastyTrade standard); IVR 30-49 = acceptable
 - AAPL/MSFT premiums rarely exceed 1.2%/month — sanity-check yield claims
-- Defensive names (V/MA/COST/LLY and XLP/XLU/XLV/TLT) are LOW-IV — expect few signals; never inflate yield claims for them
-- COST (~$975) / LLY (~$1,150) are CC-focused: one CSP contract locks ~$100k+ collateral
-- Crypto cluster (COIN/MSTR/MARA/CRCL/BITO) is all BTC-correlated — treat as one bet for concentration
-- Leveraged ETFs: every review must note "CC-only; assignment risk is NAV decay"
+- Defensive names (V and XLP/XLV/TLT) are LOW-IV — expect few signals; never inflate yield claims for them
+- Crypto cluster (MARA) is BTC-correlated
+- Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/UPRO/SOXL,
+  which are would_own despite this (a deliberate, accepted exception, not an oversight)
 - BABA: every review must note ADR/geopolitical risk
-- MARA/RGTI/RKLB and other Tier-3 names: every review must note speculative nature and cap sizing reminder
+- MARA/RGTI/RKLB/ASTS and other RISKY names: every review must note speculative nature and cap sizing reminder
 - HIMS: flag FDA calendar risk near any earnings or regulatory announcement date
+- MAGS: flag the overlap with GOOGL/NVDA/AMZN when sizing — it's not independent exposure
 """.strip()
 
 

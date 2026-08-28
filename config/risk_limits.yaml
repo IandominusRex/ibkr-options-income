@@ -6,8 +6,8 @@
 covered_call:
   delta_min: 0.20
   delta_max: 0.35
-  dte_min: 21
-  dte_max: 45
+  dte_min: 7
+  dte_max: 28
   # Reject if the call strike is below this fraction of cost basis (N18, deliberate policy):
   # at 1.00 an underwater holding generates NO covered calls (writing below basis would lock in
   # a loss on assignment). Lower it (e.g. 0.95) to allow below-basis writes and keep harvesting
@@ -17,8 +17,8 @@ covered_call:
 cash_secured_put:
   delta_min: 0.15
   delta_max: 0.30
-  dte_min: 21
-  dte_max: 45
+  dte_min: 7
+  dte_max: 28
   # Hard cap on contracts per single CSP candidate (prevents a single trade from
   # consuming the full CSP budget). The cumulative risk gate enforces the overall cap.
   max_contracts: 10

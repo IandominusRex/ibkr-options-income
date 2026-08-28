@@ -145,12 +145,37 @@ def _chain_stats(symbol: str, quotes: list[OptionQuote]) -> tuple[float | None, 
     return term_slope, skew
 
 
-def infer_spot_from_quotes(quotes: list[OptionQuote]) -> float | None:
+def infer_spot_from_quotes(
+    quotes: list[OptionQuote], *, require_parity: bool = False
+) -> float | None:
     """Estimate the underlying spot price from the option chain.
 
     Uses put-call parity on same-strike/expiry pairs: spot ≈ strike + call_mid − put_mid.
     Takes the median across all available pairs for robustness. Falls back to the
     tightest-spread option's strike only when no call/put pair exists.
+
+    ``require_parity`` (2026-08-28) returns ``None`` instead of taking that fallback. The
+    fallback returns a *strike*, not a price — it is quantized to the chain's strike increment
+    ($2.50 on a $150 name), so it can be off by half an increment, ~0.8%. Two classes of caller
+    need very different things from this:
+
+    * **Loose** (default) — ``_chain_stats`` / ``_atm_iv_30d`` use spot only to rank strikes by
+      ``abs(strike - spot)`` and bucket them. Half a strike increment changes nothing there, and
+      returning ``None`` would needlessly drop term-structure slope, skew, and 30-day ATM IV.
+    * **Strict** (``require_parity=True``) — callers feeding ``spot_override`` into
+      ``get_technical_stats``, whose ``TechnicalStats.price`` becomes the **materiality baseline**
+      (``scan_state.last_spot``). There, a strike-quantized value is worse than useless: the
+      intraday gate compares that baseline against a fresh yfinance probe, so an ~0.8% quantization
+      error swamps the 0.5% ``intraday_rescan_move_pct`` threshold and manufactures phantom moves
+      (or masks real ones). ``None`` makes the caller fall through to the yfinance price it already
+      holds — which also puts baseline and probe on the *same* source, removing the cross-source
+      mismatch entirely.
+
+    This became load-bearing when the chain builder went OTM-only (``_build_chain_contracts``,
+    2026-08-28): calls are built only at ``strike >= spot`` and puts only at ``strike <= spot``,
+    so a strike carrying **both** rights — the only kind parity can use — no longer exists except
+    in the measure-zero case where spot lands exactly on a strike. Parity went from abundant to
+    structurally impossible, silently demoting every strict caller to the fallback.
     """
     from collections import defaultdict
 
@@ -171,6 +196,8 @@ def infer_spot_from_quotes(quotes: list[OptionQuote]) -> float | None:
         return parity_spots[len(parity_spots) // 2]  # median
 
     # Fallback: no paired strikes — use the tightest-spread option's strike (rough).
+    if require_parity:
+        return None
     candidates = [q for q in quotes if q.mid is not None and q.spread_pct is not None]
     if not candidates:
         return None

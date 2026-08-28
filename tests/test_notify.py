@@ -576,6 +576,39 @@ async def test_callback_reject_sets_status_no_order(monkeypatch, tmp_path):
     update.callback_query.edit_message_text.assert_called_once()
 
 
+async def test_status_command_falls_back_when_account_snapshot_times_out(monkeypatch, tmp_path):
+    """A half-dead IBKR socket (Error 1100) still reports isConnected()==True, so
+    accountSummaryAsync can hang forever with no exception. /status must time out and still
+    reply — not hang silently (2026-08-27 incident: /status produced no response at all)."""
+    _db_setup(tmp_path, monkeypatch)
+    cfg = _mock_svc_cfg(monkeypatch, chat_id="99999")
+    cfg.secrets.ibkr_account = "DU12345"
+    cfg.market_data.health_probe_timeout_seconds = 0.05
+
+    from src.notify.approval_service import handle_status_command
+
+    update = MagicMock()
+    update.effective_chat.id = 99999
+    update.message = AsyncMock()
+
+    ib = MagicMock()
+    ib.isConnected.return_value = True
+    ib.portfolio.return_value = []
+
+    async def _hangs_forever(*_args, **_kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr("src.ibkr.portfolio.get_account_snapshot_async", _hangs_forever)
+
+    context = MagicMock()
+    context.bot_data = {"ib_scan": ib, "intraday_scans_run": 0, "intraday_scans_skipped": 0}
+
+    await asyncio.wait_for(handle_status_command(update, context), timeout=2.0)
+
+    update.message.reply_text.assert_called_once()
+    assert "Status Overview" in update.message.reply_text.call_args.args[0]
+
+
 async def test_callback_unknown_approval_id_does_not_crash(monkeypatch, tmp_path):
     _db_setup(tmp_path, monkeypatch)
     _mock_svc_cfg(monkeypatch, chat_id="99999")
@@ -1604,6 +1637,34 @@ async def test_notify_scan_blocked_always_sends_with_detail():
     assert bot.send_message.call_count == 2
 
 
+async def test_notify_scan_blocked_names_symbols_queued_for_retry():
+    """A mid-scan abort must tell the operator which symbols were never reached and that
+    they're queued for next cycle — not just that something blocked (2026-08-28)."""
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = AsyncMock()
+    await _notify_scan_blocked(
+        bot,
+        "123",
+        "reason",
+        "detail",
+        retry_symbols=["V", "WMT", "XLE"],
+    )
+    text = bot.send_message.call_args.kwargs["text"]
+    assert "3" in text
+    assert "V" in text and "WMT" in text and "XLE" in text
+    assert "next cycle" in text
+
+
+async def test_notify_scan_blocked_omits_retry_line_when_nothing_queued():
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = AsyncMock()
+    await _notify_scan_blocked(bot, "123", "reason", "detail")
+    text = bot.send_message.call_args.kwargs["text"]
+    assert "queued" not in text
+
+
 async def test_notify_scan_blocked_swallows_send_failure():
     from src.notify.approval_service import _notify_scan_blocked
 
@@ -1731,6 +1792,138 @@ async def test_run_intraday_scan_success_clears_lease_and_updates_pending_orders
     mock_update.assert_called_once_with(ib_scan)
 
 
+async def test_run_intraday_scan_forwards_pending_retry_as_must_include(monkeypatch):
+    """A symbol queued from a prior cycle's aborted sweep must be forced through this cycle's
+    gate — not left to chance based on price movement (2026-08-28)."""
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data = {"pending_retry_symbols": {"V", "WMT"}}
+    mock_run_scan = AsyncMock(return_value=ScanResult())
+
+    with (
+        patch("src.orchestrator.scan.run_scan", mock_run_scan),
+        patch("src.notify.approval_service._update_pending_order_notifications", AsyncMock()),
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert mock_run_scan.call_args.kwargs["must_include_symbols"] == {"V", "WMT"}
+
+
+async def test_run_intraday_scan_replaces_pending_retry_with_new_unreached_symbols():
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    # Old pending set — this cycle's result reports a *different* unreached set.
+    bot_data = {"pending_retry_symbols": {"V", "WMT"}}
+    result = ScanResult(aborted_unhealthy=True, unreached_symbols=["XLE", "XLF"])
+
+    with (
+        patch("src.orchestrator.scan.run_scan", AsyncMock(return_value=result)),
+        patch("src.notify.approval_service._update_pending_order_notifications", AsyncMock()),
+        patch("src.notify.approval_service._notify_scan_blocked", AsyncMock()),
+        patch("src.notify.approval_service._force_scan_reconnect", AsyncMock()),
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert bot_data["pending_retry_symbols"] == {"XLE", "XLF"}
+
+
+async def test_run_intraday_scan_clears_pending_retry_on_clean_run():
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data = {"pending_retry_symbols": {"V", "WMT"}}
+    result = ScanResult()  # clean run, unreached_symbols defaults to []
+
+    with (
+        patch("src.orchestrator.scan.run_scan", AsyncMock(return_value=result)),
+        patch("src.notify.approval_service._update_pending_order_notifications", AsyncMock()),
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert bot_data["pending_retry_symbols"] == set()
+
+
+async def test_run_intraday_scan_lease_skipped_does_not_touch_pending_retry():
+    """Another process held the scan lease — this cycle produced no real result, so the
+    existing retry queue (from a genuine prior abort) must survive untouched."""
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data = {"pending_retry_symbols": {"V", "WMT"}}
+    result = ScanResult(lease_skipped=True)
+
+    with patch("src.orchestrator.scan.run_scan", AsyncMock(return_value=result)):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert bot_data["pending_retry_symbols"] == {"V", "WMT"}
+
+
+async def test_run_intraday_scan_aborted_notifies_with_retry_symbols():
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data: dict = {}
+    result = ScanResult(aborted_unhealthy=True, unreached_symbols=["XLE", "XLF"])
+
+    with (
+        patch("src.orchestrator.scan.run_scan", AsyncMock(return_value=result)),
+        patch("src.notify.approval_service._force_scan_reconnect", AsyncMock()),
+        patch("src.notify.approval_service._notify_scan_blocked", AsyncMock()) as mock_notify,
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    assert mock_notify.call_args.kwargs["retry_symbols"] == ["XLE", "XLF"]
+
+
+async def test_run_intraday_scan_sends_and_edits_a_live_progress_message():
+    """The operator should see which symbol is currently being scanned, not silence until
+    the whole cycle finishes (2026-08-28)."""
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    progress_msg = MagicMock()
+    progress_msg.message_id = 555
+    bot.send_message = AsyncMock(return_value=progress_msg)
+    bot_data: dict = {}
+    mock_run_scan = AsyncMock(return_value=ScanResult())
+
+    with (
+        patch("src.orchestrator.scan.run_scan", mock_run_scan),
+        patch("src.notify.approval_service._update_pending_order_notifications", AsyncMock()),
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data)
+
+    # A progress message was sent before the scan ran, and run_scan got a live editor for it.
+    bot.send_message.assert_called_once()
+    dashboard_cb = mock_run_scan.call_args.kwargs["dashboard_callback"]
+    assert dashboard_cb is not None
+
+    await dashboard_cb("🔍 *Scanning…* 40%")
+    bot.edit_message_text.assert_called_once_with(
+        chat_id="123", message_id=555, text="🔍 *Scanning…* 40%", parse_mode="MarkdownV2"
+    )
+
+
 async def test_run_intraday_scan_clears_lease_on_exception():
     """A scan failure must still release the lease — otherwise every later cycle would see
     `scan_running=True` forever and skip indefinitely."""
@@ -1745,6 +1938,79 @@ async def test_run_intraday_scan_clears_lease_on_exception():
         await _run_intraday_scan(ib_scan, bot, "123", bot_data)
 
     assert bot_data["scan_running"] is False
+
+
+async def test_run_intraday_scan_forwards_force_full_sweep():
+    from src.notify.approval_service import _run_intraday_scan
+    from src.orchestrator.scan import ScanResult
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    bot_data: dict = {}
+    mock_run_scan = AsyncMock(return_value=ScanResult())
+
+    with (
+        patch("src.orchestrator.scan.run_scan", mock_run_scan),
+        patch("src.notify.approval_service._update_pending_order_notifications", AsyncMock()),
+    ):
+        await _run_intraday_scan(ib_scan, bot, "123", bot_data, force_full_sweep=True)
+
+    mock_run_scan.assert_called_once()
+    assert mock_run_scan.call_args.args == (ib_scan, bot, "123")
+    assert mock_run_scan.call_args.kwargs["intraday"] is True
+    assert mock_run_scan.call_args.kwargs["force_full_sweep"] is True
+
+
+async def test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle():
+    """2026-08-21: the first cycle this process actually gets to spawn a scan must force a full
+    sweep (force_full_sweep=True) regardless of the staleness timer, since the timer only
+    incidentally covers a restart. The next cycle must not force it again."""
+    from types import SimpleNamespace
+
+    import src.notify.approval_service as approval_service
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    app = SimpleNamespace(bot=bot, bot_data={})
+
+    force_flags: list[bool] = []
+
+    async def _capture_run_scan(*args, **kwargs):
+        from src.orchestrator.scan import ScanResult
+
+        force_flags.append(kwargs.get("force_full_sweep", False))
+        return ScanResult()
+
+    with (
+        patch.object(approval_service, "is_rth", return_value=True),
+        patch.object(approval_service, "is_halted", return_value=False),
+        patch.object(approval_service, "is_new_entry_window", return_value=True),
+        patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
+        patch.object(approval_service, "_check_profit_takes", AsyncMock()),
+        patch.object(approval_service, "_check_loss_exits", AsyncMock()),
+        patch.object(approval_service, "_update_pending_order_notifications", AsyncMock()),
+        patch("src.ibkr.market_data.probe_market_data_health", AsyncMock(return_value=True)),
+        patch("src.orchestrator.scan.run_scan", _capture_run_scan),
+    ):
+        loop_task = asyncio.create_task(
+            approval_service._intraday_scan_loop(app, ib_scan, None, "123")
+        )
+        try:
+            for _ in range(200):
+                if len(force_flags) >= 2:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task
+
+    assert len(force_flags) >= 2, "loop did not spawn two scan cycles in time"
+    assert force_flags[0] is True
+    assert force_flags[1] is False
+    assert app.bot_data.get("startup_full_sweep_done") is True
 
 
 async def test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running():
@@ -2072,6 +2338,34 @@ async def test_empty_screen_falls_back_to_send_when_edit_fails(mock_bot_cls, mon
     assert get_setting("last_cc_status_msg_id") == "66"
 
 
+async def test_empty_screen_new_day_sends_fresh_message_not_edit(
+    mock_bot_cls, monkeypatch, tmp_path
+):
+    """A status message from a previous calendar day must never be edited — a new day always
+    starts a fresh message, even though the accumulated body is well under the length cap."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch)
+    mock_cls, mock_instance = mock_bot_cls
+    mock_instance.send_message.return_value = MagicMock(message_id=99)
+
+    from src.storage.system_settings import get_setting, set_setting
+
+    set_setting("last_cc_status_msg_id", "55")
+    set_setting(
+        "last_cc_status_msg_id_body", "[09:15] \U0001f535 Covered Calls — no candidates this cycle"
+    )
+    set_setting("last_cc_status_msg_id_date", "2020-01-01")  # a stale, previous-day date
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates([], [], **_cc_kwargs(empty_reason="0/4 passed the risk gate"))
+
+    mock_instance.send_message.assert_called_once()
+    mock_instance.edit_message_text.assert_not_called()
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "09:15" not in text  # yesterday's line was not carried into today's message
+    assert get_setting("last_cc_status_msg_id") == "99"
+
+
 async def test_full_candidate_send_clears_status_msg_id(mock_bot_cls, monkeypatch, tmp_path):
     """When actual candidates are sent, status_msg_id is cleared so next empty cycle sends fresh.
 
@@ -2147,6 +2441,40 @@ async def test_buy_list_full_send_clears_status_msg_id(monkeypatch, tmp_path):
         await send_buy_list(cands, chat_id="99999")
 
     assert get_setting("last_buy_list_status_msg_id") == ""
+
+
+async def test_buy_list_new_day_sends_fresh_message_not_edit(monkeypatch, tmp_path):
+    """Same day-rollover rule as the CC/CSP status message, applied to the buy-to-own thread."""
+    _db_setup(tmp_path, monkeypatch)
+
+    cfg = MagicMock()
+    cfg.secrets.telegram_bot_token = "tok"
+    cfg.secrets.telegram_thread_buy = ""
+    monkeypatch.setattr("src.notify.sender.get_config", lambda: cfg)
+
+    from src.storage.system_settings import get_setting, set_setting
+
+    set_setting("last_buy_list_status_msg_id", "77")
+    set_setting(
+        "last_buy_list_status_msg_id_body",
+        "[09:15] \U0001f7e2 Buy-to-Own — 0 would_own names cleared the buy screen this cycle",
+    )
+    set_setting("last_buy_list_status_msg_id_date", "2020-01-01")  # a stale, previous-day date
+
+    mock_instance = AsyncMock()
+    mock_instance.send_message.return_value = MagicMock(message_id=88)
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_buy_list([], chat_id="99999")
+
+    mock_instance.send_message.assert_called_once()
+    mock_instance.edit_message_text.assert_not_called()
+    text = mock_instance.send_message.call_args.kwargs["text"]
+    assert "09:15" not in text
+    assert get_setting("last_buy_list_status_msg_id") == "88"
 
 
 # --------------------------------------------------------------------------- #

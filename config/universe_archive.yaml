@@ -1,0 +1,127 @@
+# Archived tickers — names that were once in config/universe.yaml and have been deliberately
+# removed because they are ones you've decided you'll clearly never trade.
+#
+# This file is REFERENCE-ONLY. Nothing in the application loads it — `src/common/config.py`
+# only ever reads the four named config files (settings.yaml, risk_limits.yaml,
+# scoring_weights.yaml, universe.yaml). Adding a ticker here has zero runtime effect; it exists
+# purely so a removed name's reasoning is easy to find later instead of disappearing from the
+# repo's history unexplained.
+#
+# To bring a ticker back: move its entry out of here and back into the appropriate section of
+# universe.yaml (indexes/watchlist/would_own/sectors/strike_bands as applicable), and update
+# UNIVERSE_RESEARCH.md and src/claude/prompts/strategist.py's _UNIVERSE_CONTEXT per CLAUDE.md's
+# doc-update table.
+
+archived:
+  - ticker: ARKK
+    date: "2026-08-27"
+    reason: >
+      Innovation-basket ETF; user will not trade it.
+
+  - ticker: LLY
+    date: "2026-08-27"
+    reason: >
+      Eli Lilly; ~$1,150/sh, large-collateral CC-only name; user will not trade it.
+
+  - ticker: COST
+    date: "2026-08-27"
+    reason: >
+      Costco; ~$975/sh, large-collateral CC-only name; user will not trade it.
+
+  - ticker: CRM
+    date: "2026-08-27"
+    reason: >
+      Salesforce; user will not trade it.
+
+  - ticker: COIN
+    date: "2026-08-27"
+    reason: >
+      Coinbase; crypto-equity exposure user will not trade.
+
+  - ticker: MSTR
+    date: "2026-08-27"
+    reason: >
+      Strategy (MicroStrategy); leveraged-BTC proxy, user will not trade it.
+
+  - ticker: BITO
+    date: "2026-08-27"
+    reason: >
+      Bitcoin futures ETF; futures-roll decay, redundant crypto exposure now that
+      COIN/MSTR are also archived.
+
+  - ticker: CRCL
+    date: "2026-08-27"
+    reason: >
+      Circle/stablecoin IPO; thin option liquidity, down 57% from ATH — the most
+      speculative name in the prior list; archived alongside the rest of the crypto cluster.
+
+  - ticker: GLD
+    date: "2026-08-28"
+    reason: >
+      Gold ETF; user says realistically won't trade it much.
+
+  - ticker: XLF
+    date: "2026-08-28"
+    reason: >
+      Financials sector ETF; user says realistically won't trade it much.
+
+  - ticker: XLK
+    date: "2026-08-28"
+    reason: >
+      Technology sector ETF; user says realistically won't trade it much.
+
+  - ticker: XLE
+    date: "2026-08-28"
+    reason: >
+      Energy sector ETF; user says realistically won't trade it much.
+
+  - ticker: XLU
+    date: "2026-08-28"
+    reason: >
+      Utilities sector ETF; user says realistically won't trade it much.
+
+  - ticker: XLI
+    date: "2026-08-28"
+    reason: >
+      Industrials sector ETF; user says realistically won't trade it much.
+
+  - ticker: SLV
+    date: "2026-08-28"
+    reason: >
+      Silver ETF; user says realistically won't trade it much.
+
+  - ticker: MA
+    date: "2026-08-28"
+    reason: >
+      Mastercard; user only wants one payments-network name — kept Visa (V) instead.
+
+  - ticker: HD
+    date: "2026-08-28"
+    reason: >
+      Home Depot; user will not trade it.
+
+  - ticker: AMD
+    date: "2026-08-28"
+    reason: >
+      Too expensive for this account's sizing; user prefers SMH or SOXL for
+      semiconductor exposure instead.
+
+  - ticker: NET
+    date: "2026-08-28"
+    reason: >
+      Cloudflare; user is not familiar enough with the name to trade it.
+
+  - ticker: SNOW
+    date: "2026-08-28"
+    reason: >
+      Snowflake; user is not familiar enough with the name to trade it.
+
+  - ticker: TTD
+    date: "2026-08-28"
+    reason: >
+      Trade Desk; user is not familiar enough with the name to trade it.
+
+  - ticker: DDOG
+    date: "2026-08-28"
+    reason: >
+      Datadog; user is not familiar enough with the name to trade it.

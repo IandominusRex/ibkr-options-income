@@ -5,6 +5,9 @@ whether it cleared the score floor that cycle. The 15-min intraday loop reads th
 :func:`get_scan_state` to decide which symbols need a fresh chain fetch and which can be
 skipped, and writes it back through :func:`bulk_upsert_scan_state` for every symbol it
 actually fetched (in both full-sweep and intraday modes, so a full sweep seeds the baselines).
+A seed-only dip_watch baseline (yfinance probe price persisted without a chain fetch at
+startup / manual /scan) is also written here with ``last_scanned_at=NULL`` — see
+``_persist_seed_only_baselines`` in orchestrator/scan.py (2026-08-28).
 
 All failures are swallowed and logged — the materiality store is an optimisation, never a
 correctness dependency; a read miss degrades to "treat as material" at the call site.
@@ -85,11 +88,14 @@ def upsert_scan_state(
 
 
 def bulk_upsert_scan_state(
-    updates: dict[str, tuple[float | None, datetime, bool]],
+    updates: dict[str, tuple[float | None, datetime | None, bool]],
 ) -> None:
     """Batch-upsert materiality state for multiple symbols in a single DB transaction.
 
-    *updates* maps symbol → (last_spot, last_scanned_at, cleared_floor).
+    *updates* maps symbol → (last_spot, last_scanned_at, cleared_floor). ``last_scanned_at`` is
+    nullable: a NULL stamp marks a seed-only dip_watch baseline (yfinance probe price persisted
+    so the per-cycle gate has something to compare against, without an IBKR chain fetch having
+    happened — see ``_persist_seed_only_baselines`` in orchestrator/scan.py).
     Replaces N separate :func:`upsert_scan_state` calls (one per fetched symbol) with a
     single begin/commit so the 15-min loop doesn't pay N round-trips per cycle.
     """

@@ -33,6 +33,19 @@ def clear_all() -> None:
     with _REGISTRY_LOCK:
         for store in _REGISTRY:
             store.clear()
+    # Also clear any persistent disk‑cache rows. This keeps test isolation for the new
+    # ``FundamentalCacheRow`` and ``SentimentCacheRow`` tables introduced in Phase 5.
+    try:
+        from src.storage.db import session_scope
+        from src.storage.models import FundamentalCacheRow, SentimentCacheRow
+
+        with session_scope() as sess:
+            sess.query(FundamentalCacheRow).delete()
+            sess.query(SentimentCacheRow).delete()
+    except Exception:
+        # If the DB isn’t initialised (e.g. during early import), ignore – the in‑memory cache
+        # is already cleared and the DB will be fresh on first use.
+        pass
 
 
 def daily_cached[F: Callable[..., Any]](fn: F) -> F:

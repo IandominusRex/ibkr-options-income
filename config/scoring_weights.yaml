@@ -18,6 +18,7 @@ covered_call:
   assignment_risk: 0.20   # lower assignment likelihood scores higher (we keep shares)
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
   zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
+  relative_strength: 0.0  # RS component (Phase 3) – default off
 
 cash_secured_put:
   iv: 0.30
@@ -27,6 +28,7 @@ cash_secured_put:
   assignment_risk: 0.10   # assignment is acceptable here (we'd own it), so low weight
   sentiment: 0.05     # Reddit mention volume + upvote/keyword bias (conservative weight)
   zone_fit: 0.0       # share of `technical` given to ideal-zone strike placement
+  relative_strength: 0.0  # RS component (Phase 3) – default off
 
 # Minimum blended score (0-100) to surface a candidate to Claude / Telegram.
 # Enforced in orchestrator/scan.py after the risk gate.

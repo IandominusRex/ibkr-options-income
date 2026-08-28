@@ -24,6 +24,7 @@ read both before making structural changes.
 | **`ARCHITECTURE.md`** | Non-technical users and new contributors | Plain-English walkthrough of every folder, how modules interact, the pipeline, the process/clientId model, data-flow schemas, key invariants, and operational risk handling |
 | **`STATUS.md`** | Claude and developers | What's built vs. deliberately not built, tech stack, unenforced config, items needing live verification, the live-cutover gate |
 | **`UNIVERSE_RESEARCH.md`** | Claude Code + headless `claude -p` | Deep-research reference for every ticker: tier, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF assignment rules, IV rank methodology, data-quality warnings. A compact version is injected into every trade-review prompt via `src/claude/prompts/strategist.py`. |
+| **`How the scan works.md`** | Anyone | Operator-facing explanation of scan scheduling and the materiality gate: what `indexes`/`watchlist`/`would_own`/`actively_wheeling` each mean to the scan loop, the 15-min / 120-min clocks, the 0.5% / 2% / 3% thresholds and their directions, and a worked scenario. Update it whenever `market_data.*_pct`, `force_full_scan_minutes`, `intraday_loop_minutes`, or `_compute_material_symbols` changes |
 | **`CLAUDE.md`** | Claude Code | Invariants, conventions, safety rules, change workflow — read before any structural change |
 | **`ib_async_documentation.md`** | Claude and developers | Authoritative IBKR API reference — consult before guessing any ib_async signature |
 

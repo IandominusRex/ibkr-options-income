@@ -18,6 +18,7 @@ from src.common.schemas import (
     IVStats,
     OptionQuote,
     OptionRight,
+    Phase,
     PositionSnapshot,
     ScoreCard,
     Strategy,
@@ -34,6 +35,7 @@ from src.strategies._evaluation import (
     REASON_INSUFFICIENT_CASH,
     REASON_NO_HEADROOM,
     REASON_NO_MARKET,
+    REASON_PHASE_DOWNTREND,
     REASON_ROC,
     REASON_YIELD,
     ScreenResult,
@@ -43,6 +45,7 @@ from src.strategies._evaluation import (
 from src.strategies._scoring import (
     fundamental_score,
     make_candidate_id,
+    relative_strength_score,
     technical_score,
 )
 
@@ -189,6 +192,13 @@ def screen_csp_candidates(
             if floor is not None and floor > 0 and mid < floor:
                 reasons.append(REASON_BELOW_FAIR_VALUE)
 
+        # Optional down‑trend reject (Phase 3). If configured, reject when market is in DOWNTREND.
+        if (
+            cfg.risk["cash_secured_put"].get("reject_downtrend", False)
+            and tech_stats.phase == Phase.DOWNTREND
+        ):
+            reasons.append(REASON_PHASE_DOWNTREND)
+
         scores = ScoreCard(
             symbol=symbol,
             iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else 0.0,
@@ -196,6 +206,7 @@ def screen_csp_candidates(
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
             assignment_safety_score=(1 - delta_abs) * 100 if delta_abs is not None else 0.0,
+            relative_strength=relative_strength_score(tech_stats.relative_strength),
         )
 
         candidate = TradeCandidate(
