@@ -1,0 +1,37 @@
+# Research layer + web API settings. Secrets live in .env, NOT here.
+# See Web plan/P0-P1-design.md for the design these keys implement.
+
+database:
+  # Second database, separate from storage.db_url on purpose: SQLite permits one
+  # writer per database, and a nightly research ingest must never serialise against
+  # approval_service's writes. See design §4.3.
+  url: "sqlite:///data/research.db"
+
+api:
+  host: "127.0.0.1"       # loopback only; Tailscale interface when it goes remote
+  port: 8787
+  cors_origins:
+    - "http://localhost:3000"
+
+tiers:
+  # Wall-clock budget for synchronous materialisation of a cold-tier symbol on first
+  # view. Exceeding it returns a partial payload with pending sections plus an
+  # ingest_job, never a blank screen. See design §5.5.
+  materialization_budget_seconds: 8.0
+  warm_refresh_hour_et: 4      # nightly warm-tier refresh, 04:00 ET
+  directory_refresh_days: 7    # symbol directory refresh cadence
+
+providers:
+  edgar:
+    # SEC requires a declared User-Agent carrying a contact address. The address comes
+    # from .env (SEC_CONTACT_EMAIL); this is the product half of the string.
+    user_agent_product: "IBKR-Income-System/1.0"
+    max_requests_per_second: 10.0
+    timeout_seconds: 20.0
+
+summary:
+  # claude_cli | anthropic | openai | ollama
+  backend: "claude_cli"
+  model: "claude-sonnet-4-6"
+  timeout_seconds: 120
+  cache_ttl_hours: 24

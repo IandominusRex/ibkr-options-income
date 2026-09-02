@@ -45,6 +45,8 @@ class Secrets(BaseSettings):
     reddit_client_id: str = Field(default="", alias="REDDIT_CLIENT_ID")
     reddit_client_secret: str = Field(default="", alias="REDDIT_CLIENT_SECRET")
     reddit_user_agent: str = Field(default="ibkr-options-scanner/1.0", alias="REDDIT_USER_AGENT")
+    web_api_token: str = Field(default="", alias="WEB_API_TOKEN")
+    sec_contact_email: str = Field(default="", alias="SEC_CONTACT_EMAIL")
 
 
 class ReconnectCfg(BaseModel):
@@ -297,6 +299,55 @@ class DataCfg(BaseModel):
     news_provider: str = "yfinance"
 
 
+class ResearchDatabaseCfg(BaseModel):
+    url: str = "sqlite:///data/research.db"
+
+
+class ResearchApiCfg(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8787
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+
+
+class ResearchTiersCfg(BaseModel):
+    materialization_budget_seconds: float = 8.0
+    warm_refresh_hour_et: int = 4
+    directory_refresh_days: int = 7
+
+
+class EdgarProviderCfg(BaseModel):
+    user_agent_product: str = "IBKR-Income-System/1.0"
+    max_requests_per_second: float = 10.0
+    timeout_seconds: float = 20.0
+
+
+class ResearchProvidersCfg(BaseModel):
+    edgar: EdgarProviderCfg = Field(default_factory=EdgarProviderCfg)
+
+
+class ResearchSummaryCfg(BaseModel):
+    backend: str = "claude_cli"
+    model: str = "claude-sonnet-4-6"
+    timeout_seconds: int = 120
+    cache_ttl_hours: int = 24
+
+    @field_validator("backend")
+    @classmethod
+    def _known_backend(cls, v: str) -> str:
+        allowed = {"claude_cli", "anthropic", "openai", "ollama"}
+        if v not in allowed:
+            raise ValueError(f"research.summary.backend must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+
+class ResearchCfg(BaseModel):
+    database: ResearchDatabaseCfg = Field(default_factory=ResearchDatabaseCfg)
+    api: ResearchApiCfg = Field(default_factory=ResearchApiCfg)
+    tiers: ResearchTiersCfg = Field(default_factory=ResearchTiersCfg)
+    providers: ResearchProvidersCfg = Field(default_factory=ResearchProvidersCfg)
+    summary: ResearchSummaryCfg = Field(default_factory=ResearchSummaryCfg)
+
+
 class StorageCfg(BaseModel):
     db_url: str = "sqlite:///data/income_system.db"
     iv_history_parquet: str = "data/iv_history.parquet"
@@ -394,6 +445,7 @@ class Config(BaseModel):
     monitor: MonitorCfg
     automation: AutomationCfg
     data: DataCfg = Field(default_factory=DataCfg)
+    research: ResearchCfg = Field(default_factory=ResearchCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -413,6 +465,14 @@ class Config(BaseModel):
     def db_url_abs(self) -> str:
         """Resolve a relative sqlite path against the project root."""
         url = self.storage.db_url
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+            rel = url[len("sqlite:///") :]
+            return f"sqlite:///{(ROOT / rel).as_posix()}"
+        return url
+
+    def research_db_url_abs(self) -> str:
+        """Resolve the relative research sqlite path against the project root."""
+        url = self.research.database.url
         if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
             rel = url[len("sqlite:///") :]
             return f"sqlite:///{(ROOT / rel).as_posix()}"
@@ -444,6 +504,7 @@ def get_config() -> Config:
         monitor=MonitorCfg(**settings.get("monitor", {})),
         automation=AutomationCfg(**settings.get("automation", {})),
         data=DataCfg(**settings.get("data", {})),
+        research=ResearchCfg(**_load_yaml("research.yaml")),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),
