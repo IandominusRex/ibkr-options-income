@@ -614,6 +614,44 @@ Trade approval messages include Claude's full reasoning: why the trade is attrac
 
 ---
 
+## 6a. The web API (optional — research tier)
+
+The web API is a separate process from the trading daemons. It holds **no IBKR connection** and
+**no clientId** — by construction it cannot reach the broker. It reads the trading database
+**read-only** (enforced by SQLite's `mode=ro` URI, not by convention) and a separate research
+database (`data/research.db`) for the research tier.
+
+Install the web extra (FastAPI + uvicorn):
+
+```bash
+pip install -e ".[web,dev]"
+```
+
+Generate a bearer token and put it in `.env`:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+# .env
+WEB_API_TOKEN=<that string>
+SEC_CONTACT_EMAIL=you@example.com   # SEC EDGAR requires a contact in its User-Agent
+```
+
+Run it (loopback only by default; port 8787):
+
+```bash
+python -m scripts.run_api
+```
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.run_api` | Starts the web API on `config/research.yaml → api.host:port` (default `127.0.0.1:8787`). Requires `WEB_API_TOKEN` in `.env`. No IBKR connection. |
+
+Endpoints available now: `GET /health` (no auth), `GET /me` and `GET /nav` (bearer token).
+See `Web plan/OVERVIEW.md` for the roadmap; the research, options, portfolio, P&L and
+universe sections arrive in later milestones.
+
+---
+
 ## 7. The daily EOD report — scheduled by the launcher (no cron needed)
 
 The end-of-day report fires **automatically from `scripts.start`** — there is no cron job to set

@@ -318,6 +318,28 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 ---
 
+## Web platform
+
+A read-only research/investing web UI on top of the trading system. Roadmap:
+`Web plan/OVERVIEW.md`; design: `Web plan/P0-P1-design.md`.
+
+| Phase | Status |
+|---|---|
+| **P0 — Foundation** | **In progress (M1).** Research config (`config/research.yaml` + `ResearchCfg`), the research database schema (`src/research/store/`, 13 tables, a separate `Base` from the trading DB), and the `scripts/run_api.py` entrypoint are built. The FastAPI app factory, auth boundary, provenance envelope, read-only trading-DB engine, meta routes (`/health`, `/me`, `/nav`), and the import-fence test are the remaining M1 tasks. |
+| **P1 — Research tier** | Not started. EDGAR ingestion, normalisation, deterministic checks, and the analysis-cache + summary endpoints. |
+| **P2 — Options console** | Deliberately not built. Live-options view over the trading database. |
+| **P3 — Portfolio** | Deliberately not built. Positions, account, fills, campaigns. |
+| **P4 — Profitability tracker** | Deliberately not built. Realized/unrealized P&L, per-symbol, per-strategy. |
+| **P5 — Mobile** | Deliberately not built. Responsive/mobile shell. |
+
+Invariants (see `CLAUDE.md` and `Web plan/P0-P1-design.md` §4.3/§4.7): the API process holds no
+IBKR connection and no clientId; it reads the trading database read-only (SQLite `mode=ro`,
+enforced at the engine, not by convention); the trading system never imports `src.api` or
+`src.research` (one-way import fence, `tests/test_web_fence.py`); the research and trading
+databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
+
+---
+
 ## Removed 2026-08-10
 
 Task 16 of the Phase 1–3 remediation plan

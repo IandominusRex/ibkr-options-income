@@ -327,6 +327,29 @@ Every stage of the pipeline writes its results here. This means:
 
 ---
 
+### `src/research/` — The research data layer (web tier)
+
+A **second** SQLite database at `data/research.db`, separate from `data/income_system.db` on
+purpose. SQLite permits one writer per database; a nightly research ingest writing into the
+trading database would serialise against `approval_service`'s writes, and the failure mode is
+a delayed trade approval. Two databases means two writers never contend. The research
+`Base` (in `src/research/store/models.py`) is a distinct `DeclarativeBase` from
+`src/storage/models.Base` — `create_all()` can never build the wrong schema against the wrong
+engine, and the import is one-way: **the trading system never imports `src.research`** (the
+`tests/test_web_fence.py` fence test enforces this — see §4.7 of the web design).
+
+| File / package | What it does |
+|---|
+| `store/models.py` | Research-database ORM: the symbol directory (`symbols`), raw EDGAR companyfacts (`company_facts_raw`), normalised line items (`financials`), daily bars (`daily_bars`), delayed quotes (`quotes`), news items (`news_items`), the assembled analysis cache (`analysis_cache`), deterministic check results (`check_results`), AI summaries (`summaries`), watchlists + items, recently-viewed, and the ingest job queue (`ingest_jobs`). 13 tables. |
+| `store/session.py` | Engine + session factory for `data/research.db` (`get_research_engine`, `init_research_db`, `research_session` context manager). WAL mode + `foreign_keys=ON`, matching the trading database, so the API can read while a worker writes. |
+| `checks/` | Deterministic checks engine (empty package in M1; populated later). Must never import `src.research.summary` — the AI summary is enrichment and must not reach the deterministic checks (fence test). |
+| `summary/` | Pluggable AI summary backends (empty package in M1; populated later). Enrichment only — influences nothing in the engine or checks path. |
+
+Config lives in `config/research.yaml` (loaded by `ResearchCfg` in `src/common/config.py`).
+Secrets (`WEB_API_TOKEN`, `SEC_CONTACT_EMAIL`) live in `.env`, never in the YAML.
+
+---
+
 ### `src/common/` — Shared building blocks
 
 | File | What it does |
