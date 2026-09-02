@@ -1,7 +1,7 @@
 """FastAPI application factory.
 
-This process holds NO ib_async connection and therefore no clientId. It cannot reach the
-broker, by construction. See design §4.2.
+This process holds NO broker-API connection and therefore no clientId. It cannot reach IBKR,
+by construction — see design §4.2, enforced by tests/test_web_fence.py.
 """
 
 from __future__ import annotations

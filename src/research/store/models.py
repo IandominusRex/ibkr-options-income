@@ -6,7 +6,7 @@ serialise against approval_service's writes, and the failure mode is a delayed t
 approval. Keeping the metadata separate also means `create_all()` can never build the wrong
 schema against the wrong engine. See Web plan/P0-P1-design.md §4.3.
 
-NEVER import `src.storage.models.Base` here.
+NEVER import the trading schema's Base (src / storage / models.py) here.
 """
 
 from __future__ import annotations
