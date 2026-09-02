@@ -325,7 +325,7 @@ A read-only research/investing web UI on top of the trading system. Roadmap:
 
 | Phase | Status |
 |---|---|
-| **P0 — Foundation** | **In progress (M1).** Research config (`config/research.yaml` + `ResearchCfg`), the research database schema (`src/research/store/`, 13 tables, a separate `Base` from the trading DB), and the `scripts/run_api.py` entrypoint are built. The FastAPI app factory, auth boundary, provenance envelope, read-only trading-DB engine, meta routes (`/health`, `/me`, `/nav`), and the import-fence test are the remaining M1 tasks. |
+| **P0 — Foundation** | **Built (M1 complete).** Research config (`config/research.yaml` + `ResearchCfg`), the research database schema (`src/research/store/`, 13 tables, a separate `Base` from the trading DB), the `scripts/run_api.py` entrypoint, the FastAPI app factory, the bearer-auth boundary (`src/api/auth.py`/`deps.py`), the `Sourced`/`Envelope` provenance primitives (`src/api/models/common.py`), the read-only trading-DB engine (SQLite `mode=ro`, `src/api/trading_db.py`), the meta routes (`/health`, `/me`, `/nav`), and the one-way web/trading import-fence test (`tests/test_web_fence.py`, 4 assertions green) are all built and verified end-to-end (`python -m scripts.run_api` serves all three routes; `data/research.db` created with all 13 tables). |
 | **P1 — Research tier** | Not started. EDGAR ingestion, normalisation, deterministic checks, and the analysis-cache + summary endpoints. |
 | **P2 — Options console** | Deliberately not built. Live-options view over the trading database. |
 | **P3 — Portfolio** | Deliberately not built. Positions, account, fills, campaigns. |
