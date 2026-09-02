@@ -327,6 +327,31 @@ Every stage of the pipeline writes its results here. This means:
 
 ---
 
+### `src/api/` — The FastAPI web layer
+
+A separate process (`scripts/run_api.py`, port 8787 by default) that holds **no `ib_async`
+connection and no clientId** — it cannot reach the broker, by construction
+(`tests/test_web_fence.py::test_the_api_never_constructs_a_broker_connection` greps for
+`ib_async` under `src/api/` and `src/research/` and fails the build if it finds any). The
+import direction is one-way: the web layer imports from the trading system (`src.storage`,
+`src.common.config`), but nothing under `engine/`, `execution/`, or `strategies/` may import
+`src.api` or `src.research` — `test_web_fence.py::test_trading_path_never_imports_the_web_layer`
+enforces it by grepping those three packages' source text.
+
+| File | What it does |
+|---|
+| `models/common.py` | `Source` (`edgar`/`yfinance`/`stooq`/`ibkr`/`computed`), `Sourced[T]` (`value`, `source`, `as_of`, `stale`) and `Envelope` (the `as_of`-stamped response base). Every headline number in every response ships as a `Sourced` value; `stale` is **derived** by `Sourced.of(..., fresh_for=...)` from how old `as_of` is, never passed in by a caller who might guess wrong. |
+| `auth.py` | `Role` (`owner`/`viewer`), `User`, and `authenticate(token) -> User \| None` — a constant-time (`secrets.compare_digest`) bearer-token check against `WEB_API_TOKEN`. Fails closed: an unconfigured or empty token rejects every request rather than accepting anything. Single-owner today; the seam is deliberate so a future multi-user model only changes `authenticate`. |
+| `deps.py` | FastAPI dependencies: `current_user` (401 on missing/invalid token), `require_owner` (403 unless `Role.OWNER` — the gate P3/P4 routes apply once they expose the book), and `research_db` (yields a `research_session()`). |
+| `trading_db.py` | Read-only access to `data/income_system.db`. `read_only_url()` opens it via SQLite's `mode=ro` URI syntax, so a write raises `OperationalError` at the database layer — not by convention, structurally. The API never writes to the trading database. |
+| `routers/meta.py` | `GET /health` (no auth — research/trading DB reachability + worker heartbeat), `GET /me` (the current user), `GET /nav` (the left-rail manifest: one `NavSection{key, label, available, note}` per product area — P2-P4 sections render `available=False` with a `note` rather than being hidden, so the finished shape of the product is visible from M1). |
+| `main.py` | `create_app()` — the FastAPI factory: CORS from `cfg.research.api.cors_origins`, a 404 handler that returns JSON (never HTML, since the client parses every response as JSON), and the router mounts. |
+
+Config lives in `config/research.yaml` → `api.host`/`api.port`/`api.cors_origins` (loaded by
+`ResearchApiCfg`). Secrets (`WEB_API_TOKEN`, `SEC_CONTACT_EMAIL`) live in `.env`, never in YAML.
+
+---
+
 ### `src/research/` — The research data layer (web tier)
 
 A **second** SQLite database at `data/research.db`, separate from `data/income_system.db` on
