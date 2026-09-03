@@ -244,6 +244,9 @@ data:
   price_provider: yfinance
   fundamentals_provider: yfinance
   news_provider: yfinance
+  symbol_directory_provider: edgar
+  filings_provider: edgar
+  bulk_price_provider: stooq
 
 monitor:
   # Short option delta drift: roll if |delta| exceeds this ceiling.

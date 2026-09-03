@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
+from pydantic import BaseModel
 
 
 @runtime_checkable
@@ -70,6 +71,33 @@ class NewsProvider(Protocol):
 
         Each item is the raw dict yfinance returns (either the legacy flat shape with a
         ``title`` key, or the newer ``{"content": {...}}`` nesting — callers handle both).
+        Empty list when unavailable. Never raises.
+        """
+        ...
+
+
+class SymbolRecord(BaseModel):
+    """One row of the symbol directory. ``cik`` is zero-padded to 10 digits."""
+
+    symbol: str
+    cik: str
+    name: str = ""
+    exchange: str | None = None
+
+
+@runtime_checkable
+class SymbolDirectoryProvider(Protocol):
+    """The full list of listed US filers: ticker, CIK, name, exchange.
+
+    A backend satisfies this Protocol by implementing ``list_symbols`` — no inheritance
+    declaration needed. The EDGAR backend in :mod:`src.data.edgar_backend` is the first
+    implementation; a future FMP/Polygon swap is a config change
+    (``config/settings.yaml → data.symbol_directory_provider``).
+    """
+
+    def list_symbols(self) -> list[SymbolRecord]:
+        """Return every symbol the backend knows about.
+
         Empty list when unavailable. Never raises.
         """
         ...

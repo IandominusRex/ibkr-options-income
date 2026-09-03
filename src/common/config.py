@@ -297,6 +297,9 @@ class DataCfg(BaseModel):
     price_provider: str = "yfinance"
     fundamentals_provider: str = "yfinance"
     news_provider: str = "yfinance"
+    symbol_directory_provider: str = "edgar"
+    filings_provider: str = "edgar"
+    bulk_price_provider: str = "stooq"
 
 
 class ResearchDatabaseCfg(BaseModel):
@@ -336,7 +339,9 @@ class ResearchSummaryCfg(BaseModel):
     def _known_backend(cls, v: str) -> str:
         allowed = {"claude_cli", "anthropic", "openai", "ollama"}
         if v not in allowed:
-            raise ValueError(f"research.summary.backend must be one of {sorted(allowed)}, got {v!r}")
+            raise ValueError(
+                f"research.summary.backend must be one of {sorted(allowed)}, got {v!r}"
+            )
         return v
 
 

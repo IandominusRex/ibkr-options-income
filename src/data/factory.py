@@ -15,7 +15,12 @@ from __future__ import annotations
 import functools
 
 from src.common.config import get_config
-from src.data.protocols import FundamentalsProvider, NewsProvider, PriceProvider
+from src.data.protocols import (
+    FundamentalsProvider,
+    NewsProvider,
+    PriceProvider,
+    SymbolDirectoryProvider,
+)
 from src.data.yfinance_backend import (
     YFinanceFundamentalsProvider,
     YFinanceNewsProvider,
@@ -69,3 +74,17 @@ def get_fundamentals_provider() -> FundamentalsProvider:
 def get_news_provider() -> NewsProvider:
     """Return the active :class:`NewsProvider` (cached process-wide)."""
     return _make_news_provider(get_config().data.news_provider)
+
+
+def _make_symbol_directory_provider(name: str) -> SymbolDirectoryProvider:
+    if name == "edgar":
+        from src.data.edgar_backend import EdgarSymbolDirectoryProvider
+
+        return EdgarSymbolDirectoryProvider()
+    raise ValueError(f"Unknown data.symbol_directory_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_symbol_directory_provider() -> SymbolDirectoryProvider:
+    """Return the active :class:`SymbolDirectoryProvider` (cached process-wide)."""
+    return _make_symbol_directory_provider(get_config().data.symbol_directory_provider)
