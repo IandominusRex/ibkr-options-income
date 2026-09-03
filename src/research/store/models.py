@@ -177,6 +177,16 @@ class RecentlyViewedRow(Base):
     viewed_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class WorkerHeartbeatRow(Base):
+    """Single-row table. Written only after a job SUCCEEDS, so /health cannot lie."""
+
+    __tablename__ = "worker_heartbeat"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    beat_at: Mapped[datetime] = mapped_column(DateTime)
+    last_job: Mapped[str | None] = mapped_column(String(64))
+
+
 class IngestJobRow(Base):
     __tablename__ = "ingest_jobs"
 

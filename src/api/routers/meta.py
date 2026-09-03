@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from src.api.deps import CurrentUser, ResearchDb
 from src.api.models.common import Envelope
 from src.api.trading_db import get_trading_engine
+from src.research.ingest.jobs import read_heartbeat
 
 router = APIRouter()
 
@@ -70,7 +71,7 @@ def health(db: ResearchDb) -> HealthResponse:
         status="ok" if research_ok and trading_ok else "degraded",
         research_db=research_ok,
         trading_db=trading_ok,
-        worker_heartbeat=None,  # populated by the worker in Task 2.5
+        worker_heartbeat=read_heartbeat(),
     )
 
 
