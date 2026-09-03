@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from src.api.routers import meta
+from src.api.routers import meta, research
 from src.common.config import get_config
 
 log = logging.getLogger(__name__)
@@ -41,4 +41,5 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     app.include_router(meta.router)
+    app.include_router(research.router)
     return app
