@@ -645,10 +645,37 @@ python -m scripts.run_api
 | Command | What it does |
 |---|---|
 | `python -m scripts.run_api` | Starts the web API on `config/research.yaml → api.host:port` (default `127.0.0.1:8787`). Requires `WEB_API_TOKEN` in `.env`. No IBKR connection. |
+| `python -m scripts.run_research_worker` | Runs the research ingestion worker (APScheduler). Populates `data/research.db` from SEC EDGAR — the symbol directory first, then weekly refreshes. Holds no IBKR connection, no clientId. Requires `SEC_CONTACT_EMAIL` in `.env`. |
 
-Endpoints available now: `GET /health` (no auth), `GET /me` and `GET /nav` (bearer token).
-See `Web plan/OVERVIEW.md` for the roadmap; the research, options, portfolio, P&L and
-universe sections arrive in later milestones.
+Endpoints available now: `GET /health` (no auth), `GET /me`, `GET /nav`, and
+`GET /research/search?q=<ticker>` (bearer token). See `docs/web/api.md` for the full
+reference. The research worker process (`python -m scripts.run_research_worker`) populates
+the `symbols` table from SEC EDGAR so search has something to search — run it once on first
+start, then it refreshes weekly on its own. See `Web plan/OVERVIEW.md` for the roadmap; the
+options, portfolio, P&L and universe sections arrive in later milestones.
+
+### The web frontend (`web/`)
+
+The Next.js console is a separate npm project under `web/`. It talks only to the web API
+above — no broker, no direct database access.
+
+```bash
+cd web
+cp .env.local.example .env.local     # set NEXT_PUBLIC_API_TOKEN to match WEB_API_TOKEN
+npm install
+npm run dev                          # http://localhost:3000
+```
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on `:3000` |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint (next/core-web-vitals) |
+| `npm run test` | Vitest (jsdom) |
+| `npm run gen:api` | Regenerate `lib/api-types.ts` from the live `/openapi.json` (API must be up) |
+
+Press `⌘K` (Mac) or `Ctrl+K` (Win/Linux) on any page to open the command palette and
+search the symbol directory.
 
 ---
 
