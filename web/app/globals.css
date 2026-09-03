@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/*
+  Dark only in P1, deliberately. Every colour is consumed through a semantic token so a
+  light theme later is a token file rather than a refactor. NEVER use a raw palette class
+  (bg-white, bg-gray-800) or a hex literal in a component.
+  Values from Web plan/P0-P1-design.md §8.3.
+*/
+:root {
+  --bg-background: #121212;
+  --bg-surface: #181818;
+  --bg-elevated: #282828;
+
+  --text-content: #f5f5f5;
+  --text-muted: #a7a7a7;
+
+  --border-border: #2c2c2c;
+
+  /* Semantic only. Chrome is achromatic so these always mean something. */
+  --color-gain: #4ade80;
+  --color-loss: #f87171;
+  --color-unknown: #6b6b6b;
+  /* Focus and selection: deliberately neither cyan nor the gain green, so "selected"
+     can never read as "up". */
+  --color-focus: #7f9cf5;
+
+  /* Modal scrim: a true black at 60% opacity, separate from the surface stack so it
+     reads as "overlay" not as another elevation level. */
+  --color-scrim: rgba(0, 0, 0, 0.6);
+}
+
+@theme inline {
+  --color-background: var(--bg-background);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-content: var(--text-content);
+  --color-muted: var(--text-muted);
+  --color-border: var(--border-border);
+  --color-gain: var(--color-gain);
+  --color-loss: var(--color-loss);
+  --color-unknown: var(--color-unknown);
+  --color-focus: var(--color-focus);
+  --color-scrim: var(--color-scrim);
+
+  --font-sans: var(--font-sans), system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, monospace;
+}
+
+html,
+body {
+  background: var(--bg-background);
+  color: var(--text-content);
+}
+
+/* Numbers align in columns like a ledger. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* The unknown state carries texture as well as colour, so it never reads as a zero
+   and never depends on colour alone. */
+.hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-unknown) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+::selection {
+  background: var(--color-focus);
+  color: var(--bg-background);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

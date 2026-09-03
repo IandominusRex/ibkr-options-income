@@ -41,3 +41,9 @@ logs/*.log.*
 # Keep empty dirs tracked
 !data/.gitkeep
 !logs/.gitkeep
+
+# Web (Next.js)
+web/node_modules
+web/.next
+web/.env.local
+web/out
