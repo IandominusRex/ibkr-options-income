@@ -88,7 +88,7 @@ Sonnet: external data variance and the failure modes of a 20MB JSON document.
   - `get_filings_provider() -> FilingsProvider`
   - `COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_edgar_companyfacts.py`:
 
@@ -168,12 +168,12 @@ def test_blank_cik_short_circuits_without_a_request() -> None:
     assert called is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_edgar_companyfacts.py -v`
 Expected: FAIL with `ImportError: cannot import name 'EdgarFilingsProvider'`
 
-- [ ] **Step 3: Add the Protocol to `src/data/protocols.py`**
+- [x] **Step 3: Add the Protocol to `src/data/protocols.py`**
 
 ```python
 @runtime_checkable
@@ -188,7 +188,7 @@ class FilingsProvider(Protocol):
         ...
 ```
 
-- [ ] **Step 4: Add the backend to `src/data/edgar_backend.py`**
+- [x] **Step 4: Add the backend to `src/data/edgar_backend.py`**
 
 ```python
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -208,7 +208,7 @@ class EdgarFilingsProvider:
         return payload or {}
 ```
 
-- [ ] **Step 5: Add the factory getter to `src/data/factory.py`**
+- [x] **Step 5: Add the factory getter to `src/data/factory.py`**
 
 ```python
 def _make_filings_provider(name: str) -> FilingsProvider:
@@ -225,12 +225,12 @@ def get_filings_provider() -> FilingsProvider:
     return _make_filings_provider(get_config().data.filings_provider)
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_edgar_companyfacts.py -v && ruff check . && mypy src`
 Expected: 5 passed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/data tests/test_edgar_companyfacts.py
@@ -260,7 +260,7 @@ is wrong.
   - `parse_facts(payload: dict, concept: str, units: list[str]) -> list[Fact]`
   - `resolve_line_item(payload: dict, spec: LineItemSpec) -> tuple[str, list[Fact]] | None`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_research_concepts.py`:
 
@@ -457,12 +457,12 @@ def test_shipped_concept_map_covers_the_core_line_items() -> None:
         assert spec.concepts, name
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_research_concepts.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.research.ingest.concepts'`
 
-- [ ] **Step 3: Create `config/research_concepts.yaml`**
+- [x] **Step 3: Create `config/research_concepts.yaml`**
 
 ```yaml
 # Canonical line item -> ordered us-gaap concept candidates. First candidate with facts wins.
@@ -611,7 +611,7 @@ line_items:
       - PaymentsOfDividends
 ```
 
-- [ ] **Step 4: Create `src/research/schemas.py`**
+- [x] **Step 4: Create `src/research/schemas.py`**
 
 ```python
 """Shapes the research layer passes between its own modules."""
@@ -666,7 +666,7 @@ class NormalizedFinancials(BaseModel):
     quarterly: list[PeriodStatement] = []
 ```
 
-- [ ] **Step 5: Implement `src/research/ingest/concepts.py` (parsing and resolution only)**
+- [x] **Step 5: Implement `src/research/ingest/concepts.py` (parsing and resolution only)**
 
 ```python
 """XBRL fact parsing and concept resolution.
@@ -771,17 +771,17 @@ def resolve_line_item(payload: dict, spec: LineItemSpec) -> tuple[str, list[Fact
     return None
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_research_concepts.py -v && ruff check . && mypy src`
 Expected: 9 passed.
 
-- [ ] **Step 7: Update the docs**
+- [x] **Step 7: Update the docs**
 
 `ARCHITECTURE.md` config section gains `config/research_concepts.yaml` with a note that adding
 a mapping is a config change.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add config/research_concepts.yaml src/research tests/test_research_concepts.py ARCHITECTURE.md
@@ -806,7 +806,7 @@ reverts to the original looks completely normal.
   - Instant facts: annual takes 10-K filings, quarterly takes any form.
   - Ties on `end` are broken by the **latest `filed`**, which is how restatements win.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_research_periods.py`:
 
@@ -917,12 +917,12 @@ def test_empty_input_is_empty_output() -> None:
     assert select_periods([], kind="duration", period_type="annual", limit=5) == []
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_research_periods.py -v`
 Expected: FAIL with `ImportError: cannot import name 'select_periods'`
 
-- [ ] **Step 3: Append to `src/research/ingest/concepts.py`**
+- [x] **Step 3: Append to `src/research/ingest/concepts.py`**
 
 ```python
 # Duration windows, in days. Filers' fiscal years and quarters are not exactly 365/91 days,
@@ -973,12 +973,12 @@ def select_periods(
     return sorted(by_period.values(), key=lambda f: f.end, reverse=True)[:limit]
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_research_periods.py -v && ruff check . && mypy src`
 Expected: 10 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/research/ingest/concepts.py tests/test_research_periods.py
@@ -997,7 +997,7 @@ git commit -m "feat(research): period selection with restatement precedence"
 - Produces: `assert_units_supported(spec: LineItemSpec) -> None`, raising `ValueError` for any
   unit outside `{"USD", "USD/shares", "shares", "pure"}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_research_units.py`:
 
@@ -1029,12 +1029,12 @@ def test_every_shipped_line_item_uses_a_supported_unit() -> None:
         assert_units_supported(spec)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_research_units.py -v`
 Expected: FAIL with `ImportError: cannot import name 'assert_units_supported'`
 
-- [ ] **Step 3: Append to `src/research/ingest/concepts.py`**
+- [x] **Step 3: Append to `src/research/ingest/concepts.py`**
 
 ```python
 SUPPORTED_UNITS = frozenset({"USD", "USD/shares", "shares", "pure"})
@@ -1052,12 +1052,12 @@ def assert_units_supported(spec: LineItemSpec) -> None:
             )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_research_units.py -v && ruff check . && mypy src`
 Expected: 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/research/ingest/concepts.py tests/test_research_units.py
@@ -1080,7 +1080,7 @@ git commit -m "feat(research): reject unsupported XBRL units instead of coercing
   - `ingest_fundamentals(symbol: str, cik: str) -> NormalizedFinancials | None` (fetches,
     caches raw, normalises, persists `FinancialRow`s)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_ingest_fundamentals.py`:
 
@@ -1204,12 +1204,12 @@ def test_ingest_returns_none_when_the_filer_has_no_facts(db, monkeypatch) -> Non
     assert ingest_fundamentals("XYZ", "0000000001") is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ingest_fundamentals.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.research.ingest.fundamentals'`
 
-- [ ] **Step 3: Implement `src/research/ingest/fundamentals.py`**
+- [x] **Step 3: Implement `src/research/ingest/fundamentals.py`**
 
 ```python
 """Fetch, normalise, and persist a filer's financial statements.
@@ -1337,12 +1337,12 @@ def ingest_fundamentals(symbol: str, cik: str) -> NormalizedFinancials | None:
     return financials
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_ingest_fundamentals.py -v && ruff check . && mypy src`
 Expected: 8 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/research/ingest/fundamentals.py tests/test_ingest_fundamentals.py
@@ -1370,7 +1370,7 @@ is what keeps a cold-tier first view from feeling broken.
   - `enqueue(symbol: str, kind: str) -> None` (deduplicated on pending)
   - `drain_ingest_jobs(max_jobs: int = 20) -> int`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_research_materialize.py`:
 
@@ -1489,12 +1489,12 @@ def test_drain_gives_up_after_repeated_failures(db, monkeypatch) -> None:
         assert s.query(IngestJobRow).filter_by(symbol="AAPL").one().status == "failed"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_research_materialize.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.research.ingest.materialize'`
 
-- [ ] **Step 3: Implement `src/research/ingest/materialize.py`**
+- [x] **Step 3: Implement `src/research/ingest/materialize.py`**
 
 ```python
 """Cold-tier materialisation with a wall-clock budget.
@@ -1653,7 +1653,7 @@ def drain_ingest_jobs(max_jobs: int = 20) -> int:
     return done
 ```
 
-- [ ] **Step 4: Register the drain in the scheduler**
+- [x] **Step 4: Register the drain in the scheduler**
 
 In `src/research/ingest/jobs.py`'s `build_scheduler()`:
 
@@ -1670,12 +1670,12 @@ In `src/research/ingest/jobs.py`'s `build_scheduler()`:
     )
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_research_materialize.py -v && ruff check . && mypy src`
 Expected: 8 passed.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/research tests/test_research_materialize.py
@@ -1699,7 +1699,7 @@ Sonnet: this defines the partial-payload contract every later section plugs into
   - `AnalysisResponse{as_of, symbol, name, exchange, is_etf, fundamentals: Section[FinancialsPayload]}`
   - `GET /research/{symbol}` returning 404 only when the symbol is not in the directory
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_api_analysis.py`:
 
@@ -1819,12 +1819,12 @@ def test_symbol_lookup_is_case_insensitive(client, monkeypatch) -> None:
     assert client.get("/research/aapl", headers=AUTH).status_code == 200
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_api_analysis.py -v`
 Expected: FAIL with 404 on every case.
 
-- [ ] **Step 3: Implement `src/api/models/research.py`**
+- [x] **Step 3: Implement `src/api/models/research.py`**
 
 ```python
 """Response shapes for the research routes."""
@@ -1862,7 +1862,7 @@ class AnalysisResponse(Envelope):
     fundamentals: Section[NormalizedFinancials]
 ```
 
-- [ ] **Step 4: Add the route to `src/api/routers/research.py`**
+- [x] **Step 4: Add the route to `src/api/routers/research.py`**
 
 ```python
 @router.get("/{symbol}", response_model=AnalysisResponse)
@@ -1903,17 +1903,17 @@ Add the imports: `from fastapi import HTTPException`,
 matches `/research/search` as a symbol named "search". Keep the `search` function above
 `analysis` in the file.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_api_analysis.py tests/test_api_search.py -v && ruff check . && mypy src`
 Expected: all passed. The search tests passing confirms the route ordering is right.
 
-- [ ] **Step 6: Update `docs/web/api.md`**
+- [x] **Step 6: Update `docs/web/api.md`**
 
 Document `GET /research/{symbol}`, the `Section` shape, all three `SectionState` values, and
 the rule that 404 means "unknown symbol" while a missing section is a 200 with a reason.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/api docs/web/api.md tests/test_api_analysis.py
@@ -1938,7 +1938,7 @@ git commit -m "feat(api): add per-symbol analysis endpoint with per-section stat
   - `<SectionShell state reason>` rendering pending and unavailable states
   - `<StatementsTable financials />` with filing traceability in a `title` attribute
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `web/lib/format.test.ts`:
 
@@ -2015,12 +2015,12 @@ describe("StatementsTable", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd web && npx vitest run`
 Expected: FAIL, modules not found.
 
-- [ ] **Step 3: Implement `web/lib/format.ts`**
+- [x] **Step 3: Implement `web/lib/format.ts`**
 
 ```ts
 const MONTHS = [
@@ -2048,7 +2048,7 @@ export function formatPeriod(iso: string): string {
 }
 ```
 
-- [ ] **Step 4: Implement `web/components/stock/SectionShell.tsx`**
+- [x] **Step 4: Implement `web/components/stock/SectionShell.tsx`**
 
 ```tsx
 export function SectionShell({
@@ -2081,7 +2081,7 @@ export function SectionShell({
 }
 ```
 
-- [ ] **Step 5: Implement `web/components/stock/StatementsTable.tsx`**
+- [x] **Step 5: Implement `web/components/stock/StatementsTable.tsx`**
 
 ```tsx
 import { UNKNOWN, formatMoney, formatPeriod } from "@/lib/format";
@@ -2161,7 +2161,7 @@ export function StatementsTable({ financials }: { financials: Financials }) {
 }
 ```
 
-- [ ] **Step 6: Rewrite the ticker page**
+- [x] **Step 6: Rewrite the ticker page**
 
 `web/app/stock/[symbol]/page.tsx`:
 
@@ -2214,19 +2214,19 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
 Replace the `any` types with the generated types from `npm run gen:api` once the API is
 running; `AnalysisResponse` is exported by `lib/api-types.ts`.
 
-- [ ] **Step 7: Run tests to verify they pass**
+- [x] **Step 7: Run tests to verify they pass**
 
 Run: `cd web && npx vitest run && npm run build && npm run lint`
 Expected: 9 passed, clean build.
 
-- [ ] **Step 8: Verify end to end**
+- [x] **Step 8: Verify end to end**
 
 Start the API and worker, `npm run dev`, then visit `/stock/AAPL`. Expected: real Apple
 financials from SEC, five annual columns, and hovering a cell shows its accession number.
 Then visit `/stock/SPY`. Expected: the page renders with the fundamentals section explaining
 that no XBRL statements were filed.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add web
@@ -2237,10 +2237,10 @@ git commit -m "feat(web): ticker page with normalised statements and filing trac
 
 ## Milestone 3 exit criteria
 
-- [ ] `python -m pytest -q`, `ruff check .`, `mypy src` all green
-- [ ] `cd web && npx vitest run && npm run build && npm run lint` all green
-- [ ] `/stock/AAPL` shows five years of real SEC financials
-- [ ] `/stock/SPY` renders cleanly with an explained empty fundamentals section
-- [ ] A missing line item renders `n/a`, never `$0`
-- [ ] Hovering any cell reveals its concept, form, accession number and filing date
-- [ ] `docs/web/api.md` and `ARCHITECTURE.md` updated
+- [x] `python -m pytest -q`, `ruff check .`, `mypy src` all green
+- [x] `cd web && npx vitest run && npm run build && npm run lint` all green
+- [x] `/stock/AAPL` shows five years of real SEC financials
+- [x] `/stock/SPY` renders cleanly with an explained empty fundamentals section
+- [x] A missing line item renders `n/a`, never `$0`
+- [x] Hovering any cell reveals its concept, form, accession number and filing date
+- [x] `docs/web/api.md` and `ARCHITECTURE.md` updated
