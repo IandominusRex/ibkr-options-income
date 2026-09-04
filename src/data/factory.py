@@ -16,6 +16,7 @@ import functools
 
 from src.common.config import get_config
 from src.data.protocols import (
+    FilingsProvider,
     FundamentalsProvider,
     NewsProvider,
     PriceProvider,
@@ -88,3 +89,17 @@ def _make_symbol_directory_provider(name: str) -> SymbolDirectoryProvider:
 def get_symbol_directory_provider() -> SymbolDirectoryProvider:
     """Return the active :class:`SymbolDirectoryProvider` (cached process-wide)."""
     return _make_symbol_directory_provider(get_config().data.symbol_directory_provider)
+
+
+def _make_filings_provider(name: str) -> FilingsProvider:
+    if name == "edgar":
+        from src.data.edgar_backend import EdgarFilingsProvider
+
+        return EdgarFilingsProvider()
+    raise ValueError(f"Unknown data.filings_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_filings_provider() -> FilingsProvider:
+    """Return the active :class:`FilingsProvider` (cached process-wide)."""
+    return _make_filings_provider(get_config().data.filings_provider)

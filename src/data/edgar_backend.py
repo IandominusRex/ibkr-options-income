@@ -21,6 +21,7 @@ from src.data.protocols import SymbolRecord
 log = logging.getLogger(__name__)
 
 DIRECTORY_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
+COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 
 
 def _contact_email() -> str:
@@ -76,9 +77,7 @@ class EdgarClient:
         )
         self._max_retries = max_retries
 
-    def get_json(
-        self, url: str, *, etag: str | None = None
-    ) -> tuple[dict | None, str | None]:
+    def get_json(self, url: str, *, etag: str | None = None) -> tuple[dict | None, str | None]:
         """Fetch JSON. Returns (payload, etag); (None, etag) on 304 or on failure."""
         headers = {"User-Agent": user_agent()}
         if etag:
@@ -96,8 +95,13 @@ class EdgarClient:
                 return None, etag
             if resp.status_code == 200:
                 return resp.json(), resp.headers.get("ETag", etag)
-            if resp.status_code in (403, 429) and attempt < self._max_retries:
-                time.sleep(2.0 * (attempt + 1))
+            if resp.status_code in (403, 429, 500, 502, 503, 504) and attempt < self._max_retries:
+                # 403/429: throttle. 5xx: EDGAR transient outage. Retry with backoff.
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    time.sleep(min(float(retry_after), 10.0))
+                else:
+                    time.sleep(2.0 * (attempt + 1))
                 continue
             log.warning("EDGAR returned %s for %s", resp.status_code, url)
             return None, etag
@@ -134,3 +138,19 @@ class EdgarSymbolDirectoryProvider:
         except (KeyError, IndexError, TypeError) as exc:
             log.warning("EDGAR directory payload had an unexpected shape: %s", exc)
             return []
+
+
+class EdgarFilingsProvider:
+    """XBRL company facts. One document per filer, sometimes tens of megabytes."""
+
+    def __init__(self, client: EdgarClient | None = None) -> None:
+        self._client = client or EdgarClient()
+
+    def get_company_facts(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
+        cik = (cik or "").strip()
+        if not cik:
+            return {}, None
+        payload, new_etag = self._client.get_json(
+            COMPANYFACTS_URL.format(cik=cik.zfill(10)), etag=etag
+        )
+        return payload or {}, new_etag

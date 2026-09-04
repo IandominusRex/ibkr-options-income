@@ -26,9 +26,7 @@ _DIRECTORY = {
 
 @pytest.fixture(autouse=True)
 def _contact(monkeypatch):
-    monkeypatch.setattr(
-        "src.data.edgar_backend._contact_email", lambda: "trader@example.com"
-    )
+    monkeypatch.setattr("src.data.edgar_backend._contact_email", lambda: "trader@example.com")
 
 
 def test_user_agent_carries_a_contact_address() -> None:
@@ -110,3 +108,35 @@ def test_directory_returns_empty_list_on_failure() -> None:
         client=EdgarClient(transport=httpx.MockTransport(handler), max_retries=0)
     )
     assert provider.list_symbols() == []
+
+
+def test_client_retries_on_503_transient_outage() -> None:
+    """EDGAR has outages; a 503 should retry, not surface as 'no data' on the first hit."""
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"ok": True}, headers={"ETag": "x"})
+
+    client = EdgarClient(transport=httpx.MockTransport(handler), max_retries=3)
+    payload, _etag = client.get_json("https://data.sec.gov/x.json")
+    assert payload == {"ok": True}
+    assert calls["n"] == 3
+
+
+def test_client_honours_retry_after_header_on_429() -> None:
+    """SEC's Retry-After should be respected, capped so a bad value can't stall us."""
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"ok": True}, headers={"ETag": "x"})
+
+    client = EdgarClient(transport=httpx.MockTransport(handler), max_retries=2)
+    payload, _ = client.get_json("https://data.sec.gov/x.json")
+    assert payload == {"ok": True}
+    assert calls["n"] == 2

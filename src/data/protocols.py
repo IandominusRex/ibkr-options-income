@@ -101,3 +101,18 @@ class SymbolDirectoryProvider(Protocol):
         Empty list when unavailable. Never raises.
         """
         ...
+
+
+@runtime_checkable
+class FilingsProvider(Protocol):
+    """XBRL company facts for one filer, keyed by CIK."""
+
+    def get_company_facts(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
+        """Return the backend's full XBRL fact document for *cik*.
+
+        Returns ``(payload, etag)``. ``payload`` is an empty dict when unavailable
+        (no XBRL, 404, throttled, or 304 Not Modified). ``etag`` is the response's
+        ETag when a fresh payload was returned, or the *input* etag when a 304
+        meant the caller's cached payload is still current. Never raises.
+        """
+        ...
