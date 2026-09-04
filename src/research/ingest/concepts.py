@@ -146,3 +146,16 @@ def select_periods(
             by_period[fact.end] = fact
 
     return sorted(by_period.values(), key=lambda f: f.end, reverse=True)[:limit]
+
+
+SUPPORTED_UNITS = frozenset({"USD", "USD/shares", "shares", "pure"})
+
+
+def assert_units_supported(spec: LineItemSpec) -> None:
+    """Reject units we cannot interpret rather than coercing them.
+
+    A EUR-denominated revenue silently treated as USD is worse than no number at all.
+    """
+    for unit in spec.units:
+        if unit not in SUPPORTED_UNITS:
+            raise ValueError(f"Unsupported unit {unit!r}; supported: {sorted(SUPPORTED_UNITS)}")
