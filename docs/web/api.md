@@ -130,3 +130,113 @@ first, then ticker prefix, then name substring — each alphabetical within its 
   ]
 }
 ```
+
+---
+
+## `GET /research/{symbol}`
+
+The full analysis payload for one ticker. The contract every later section plugs into: the
+response is an `AnalysisResponse` carrying one `Section` per region of the page, and a slow
+or missing section **never fails the whole page** — it degrades per section.
+
+**Auth:** required. **404** only when `symbol` is not a known SEC filer (no row in the
+`symbols` table). Everything else is a 200 with per-section state.
+
+**Path parameter:**
+
+| Param | Type | Notes |
+|---|---|---|
+| `symbol` | string | case-insensitive; resolved via `symbol.upper()` |
+
+**Response — `AnalysisResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | |
+| `symbol` | string | upper-cased |
+| `name` | string | from the symbol directory |
+| `exchange` | string \| null | |
+| `is_etf` | bool | |
+| `fundamentals` | `Section<NormalizedFinancials>` | see below |
+
+**`Section[T]`** — one region of the page, with its own state:
+
+| Field | Type | Notes |
+|---|---|---|
+| `state` | `"ready"` \| `"pending"` \| `"unavailable"` | see `SectionState` |
+| `data` | `T` \| null | present when `state == "ready"`; null otherwise |
+| `reason` | string \| null | rendered to the user verbatim — reads as an explanation, not an exception |
+
+**`SectionState`:**
+
+| Value | Meaning | Client behaviour |
+|---|---|---|
+| `ready` | data is present | render |
+| `pending` | queued; still building | poll (the page's `refetchInterval` re-fetches every 5s while any section is `pending`) |
+| `unavailable` | will not resolve | render the `reason` inline; stop polling |
+
+A slow section is a **200 with a `reason`**, not an error — the contract is "the page always
+renders, the section explains itself." An ETF with no XBRL still gets a page; its
+fundamentals section carries `state=unavailable` and a human-readable `reason`.
+
+**Example — `GET /research/AAPL` (ready):**
+
+```json
+{
+  "as_of": "2026-09-03T10:00:00Z",
+  "symbol": "AAPL",
+  "name": "Apple Inc.",
+  "exchange": "Nasdaq",
+  "is_etf": false,
+  "fundamentals": {
+    "state": "ready",
+    "data": {
+      "symbol": "AAPL",
+      "cik": "0000320193",
+      "entity_name": "Apple Inc.",
+      "annual": [
+        { "period_end": "2024-09-28", "period_type": "annual",
+          "items": { "revenue": { "line_item": "revenue", "value": 391035000000,
+            "concept": "Revenues", "accn": "0000320193-24-000123",
+            "filed": "2024-11-01", "form": "10-K" } } }
+      ],
+      "quarterly": []
+    },
+    "reason": null
+  }
+}
+```
+
+**Example — `GET /research/SPY` (unavailable, ETF with no XBRL):**
+
+```json
+{
+  "as_of": "2026-09-03T10:00:00Z",
+  "symbol": "SPY",
+  "name": "SPDR S&P 500 ETF Trust",
+  "exchange": "Arca",
+  "is_etf": true,
+  "fundamentals": {
+    "state": "unavailable",
+    "data": null,
+    "reason": "No XBRL financial statements filed for this symbol"
+  }
+}
+```
+
+**Example — first cold view of a slow symbol (pending):**
+
+```json
+{
+  "as_of": "2026-09-03T10:00:00Z",
+  "symbol": "XYZ",
+  "name": "XYZ Holdings",
+  "exchange": "Nasdaq",
+  "is_etf": false,
+  "fundamentals": {
+    "state": "pending",
+    "data": null,
+    "reason": "Still building; refresh shortly"
+  }
+}
+```

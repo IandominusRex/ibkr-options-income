@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func, or_, select
 
 from src.api.deps import CurrentUser, ResearchDb
 from src.api.models.common import Envelope
+from src.api.models.research import AnalysisResponse, Section
+from src.research.ingest.materialize import materialize
+from src.research.schemas import NormalizedFinancials
 from src.research.store.models import SymbolRow
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -81,4 +84,33 @@ def search(
             )
             for row in rows
         ],
+    )
+
+
+@router.get("/{symbol}", response_model=AnalysisResponse)
+def analysis(symbol: str, user: CurrentUser, db: ResearchDb) -> AnalysisResponse:
+    """Full analysis for one symbol.
+
+    404 only when the symbol is not a known filer. Everything else degrades per section.
+    """
+    now = datetime.now(UTC)
+    upper = symbol.upper()
+
+    row = db.get(SymbolRow, upper)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+
+    result = materialize(upper)
+
+    return AnalysisResponse(
+        as_of=now,
+        symbol=upper,
+        name=row.name,
+        exchange=row.exchange,
+        is_etf=row.is_etf,
+        fundamentals=Section[NormalizedFinancials](
+            state=result.fundamentals_state,
+            data=result.fundamentals,
+            reason=result.reason,
+        ),
     )
