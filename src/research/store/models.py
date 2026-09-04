@@ -75,6 +75,7 @@ class FinancialRow(Base):
     concept: Mapped[str | None] = mapped_column(String(128))
     accn: Mapped[str | None] = mapped_column(String(32))
     filed: Mapped[date | None] = mapped_column(Date)
+    form: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         Index("ix_financials_lookup", "symbol", "period_type", "line_item", "period_end"),
