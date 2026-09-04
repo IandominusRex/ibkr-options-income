@@ -45,8 +45,33 @@ def get_research_engine() -> Engine:
 
 
 def init_research_db() -> None:
-    """Create every research table. Idempotent."""
-    Base.metadata.create_all(get_research_engine())
+    """Create every research table, then backfill any columns a later milestone added.
+
+    ``create_all()`` only creates tables that don't exist yet — it never alters one that
+    does. A ``data/research.db`` left over from an earlier milestone (e.g. M2, before M3
+    added ``financials.form`` and ``company_facts_raw.etag``) silently keeps the old
+    schema, and every query touching the new column then fails with
+    ``OperationalError: no such column``. There's no migration framework in this project
+    (a single-owner SQLite research cache doesn't warrant Alembic), so this backfills
+    missing columns directly via SQLite's ``ALTER TABLE ... ADD COLUMN``. Idempotent.
+    """
+    engine = get_research_engine()
+    Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing = {
+                row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table.name})")
+            }
+            for column in table.columns:
+                if column.name not in existing:
+                    col_type = column.type.compile(engine.dialect)
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}"
+                    )
 
 
 @contextmanager
