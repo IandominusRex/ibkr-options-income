@@ -48,7 +48,12 @@ app/                App Router pages and the root layout
   layout.tsx        Fonts, <Rail/>, <Providers/>
   page.tsx          Landing page (mounts <CommandPalette/>)
   stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
-                    any section is pending, mounts <SectionShell/> per region
+                    fundamentals/technicals/sentiment/news is pending, mounts
+                    <SectionShell/> per region, shows the delayed quote (with its age
+                    and a "delayed" tag once stale) beside the header. <PriceChart/>
+                    is NOT gated behind a Section's state — it fetches its own data
+                    from GET /research/{symbol}/bars independently, so a technicals
+                    outage must not hide it too
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -56,10 +61,18 @@ components/
                     StatementsTable (normalised statements with filing traceability
                     in a `title` attribute using a hyphen not an em dash; fixed row
                     order; annual and quarterly sections; missing items render "n/a"
-                    with `.hatch` texture, never "$0", never colour alone)
+                    with `.hatch` texture, never "$0", never colour alone),
+                    PriceChart (lightweight-charts candlestick + volume + SMA 50/200,
+                    colours read from CSS custom properties at mount, no entry
+                    animation), TechnicalsPanel (RSI/MACD/SMA/ATR + phase/regime,
+                    null renders "n/a" never "0"), NewsPanel (newest-first, relative
+                    age, sentiment chip is label+tint not colour-only), SentimentPanel
+                    (composite score + per-source sample count; a source with no
+                    tracked count renders "n/a samples", never a fabricated "0")
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`
   format.ts         formatMoney (compact $391.0B/$1.3M, "n/a" for unknown, "$0"
-                    for a real zero), formatPeriod ("Sep 2024"), UNKNOWN constant
+                    for a real zero), formatPeriod ("Sep 2024"), relativeAge
+                    ("5m ago"/"3h ago"/"2d ago"/"1mo ago"), UNKNOWN constant
 ```

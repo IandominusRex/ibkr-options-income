@@ -92,7 +92,7 @@ class DailyBarRow(Base):
     low: Mapped[float | None] = mapped_column(Float)
     close: Mapped[float | None] = mapped_column(Float)
     volume: Mapped[float | None] = mapped_column(Float)
-    source: Mapped[str] = mapped_column(String(16), default="stooq")
+    source: Mapped[str] = mapped_column(String(16), default="yfinance")
 
 
 class QuoteRow(Base):

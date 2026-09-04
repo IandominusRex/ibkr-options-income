@@ -16,6 +16,7 @@ import functools
 
 from src.common.config import get_config
 from src.data.protocols import (
+    BulkPriceProvider,
     FilingsProvider,
     FundamentalsProvider,
     NewsProvider,
@@ -23,6 +24,7 @@ from src.data.protocols import (
     SymbolDirectoryProvider,
 )
 from src.data.yfinance_backend import (
+    YFinanceBulkPriceProvider,
     YFinanceFundamentalsProvider,
     YFinanceNewsProvider,
     YFinancePriceProvider,
@@ -103,3 +105,28 @@ def _make_filings_provider(name: str) -> FilingsProvider:
 def get_filings_provider() -> FilingsProvider:
     """Return the active :class:`FilingsProvider` (cached process-wide)."""
     return _make_filings_provider(get_config().data.filings_provider)
+
+
+def _make_bulk_price_provider(name: str) -> BulkPriceProvider:
+    if name == "yfinance":
+        return YFinanceBulkPriceProvider()
+    if name == "stooq":
+        # 4.1 licence gate verdict: not permitted — see docs/web/data-sources.md
+        # (2026-09-04). stooq's CSV endpoint now sits behind a JS bot-verification
+        # challenge, so no StooqBulkPriceProvider exists. Use "yfinance".
+        raise ValueError(
+            "data.bulk_price_provider: 'stooq' is not usable (see docs/web/data-sources.md "
+            "for the licence check) — set 'yfinance' instead"
+        )
+    raise ValueError(f"Unknown data.bulk_price_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_bulk_price_provider() -> BulkPriceProvider:
+    """Return the active :class:`BulkPriceProvider` (cached process-wide).
+
+    Only ``yfinance`` is implemented — see ``docs/web/data-sources.md`` for why stooq,
+    the plan's first choice, was ruled out. The Protocol is what the rest of the system
+    depends on, so a future bulk-OHLCV source is a config change, not a rewrite.
+    """
+    return _make_bulk_price_provider(get_config().data.bulk_price_provider)

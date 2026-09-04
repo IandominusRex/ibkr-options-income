@@ -45,9 +45,16 @@ class Sourced[T](BaseModel):
         *,
         fresh_for: timedelta,
     ) -> Sourced[T]:
-        """Build a Sourced, deriving `stale` from how old `as_of` is."""
-        age = datetime.now(UTC) - _as_utc(as_of)
-        return cls(value=value, source=source, as_of=as_of, stale=age > fresh_for)
+        """Build a Sourced, deriving `stale` from how old `as_of` is.
+
+        `as_of` is normalized to UTC-aware before it's stored, not just before the age
+        comparison: a naive SQLite-read datetime serializes without a UTC offset, which a
+        browser's `Date` parser reads as *local* time — silently shifting the displayed
+        age by the viewer's UTC offset instead of reporting it correctly.
+        """
+        utc_as_of = _as_utc(as_of)
+        age = datetime.now(UTC) - utc_as_of
+        return cls(value=value, source=source, as_of=utc_as_of, stale=age > fresh_for)
 
 
 class Envelope(BaseModel):

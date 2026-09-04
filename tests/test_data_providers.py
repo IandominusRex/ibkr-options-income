@@ -24,6 +24,7 @@ import pytest
 
 from src.data import factory as data_factory
 from src.data.factory import (
+    get_bulk_price_provider,
     get_fundamentals_provider,
     get_news_provider,
     get_price_provider,
@@ -34,11 +35,13 @@ from src.data.fmp_backend import (
     FMPPriceProvider,
 )
 from src.data.protocols import (
+    BulkPriceProvider,
     FundamentalsProvider,
     NewsProvider,
     PriceProvider,
 )
 from src.data.yfinance_backend import (
+    YFinanceBulkPriceProvider,
     YFinanceFundamentalsProvider,
     YFinanceNewsProvider,
     YFinancePriceProvider,
@@ -54,10 +57,12 @@ def _clear_provider_cache():
     data_factory.get_price_provider.cache_clear()
     data_factory.get_fundamentals_provider.cache_clear()
     data_factory.get_news_provider.cache_clear()
+    data_factory.get_bulk_price_provider.cache_clear()
     yield
     data_factory.get_price_provider.cache_clear()
     data_factory.get_fundamentals_provider.cache_clear()
     data_factory.get_news_provider.cache_clear()
+    data_factory.get_bulk_price_provider.cache_clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -85,6 +90,9 @@ class TestProtocolConformance:
     def test_fmp_news_provider_satisfies_protocol(self):
         assert isinstance(FMPNewsProvider(), NewsProvider)
 
+    def test_yfinance_bulk_price_provider_satisfies_protocol(self):
+        assert isinstance(YFinanceBulkPriceProvider(), BulkPriceProvider)
+
 
 # --------------------------------------------------------------------------- #
 # Factory — reads config/settings.yaml → data.*
@@ -96,11 +104,13 @@ class TestFactory:
         assert isinstance(get_price_provider(), YFinancePriceProvider)
         assert isinstance(get_fundamentals_provider(), YFinanceFundamentalsProvider)
         assert isinstance(get_news_provider(), YFinanceNewsProvider)
+        assert isinstance(get_bulk_price_provider(), YFinanceBulkPriceProvider)
 
     def test_factory_caches_instance_process_wide(self):
         assert get_price_provider() is get_price_provider()
         assert get_fundamentals_provider() is get_fundamentals_provider()
         assert get_news_provider() is get_news_provider()
+        assert get_bulk_price_provider() is get_bulk_price_provider()
 
     def test_factory_rejects_unknown_backend(self, monkeypatch):
         from src.common.config import get_config
@@ -115,6 +125,16 @@ class TestFactory:
         assert isinstance(data_factory._make_price_provider("fmp"), FMPPriceProvider)
         assert isinstance(data_factory._make_fundamentals_provider("fmp"), FMPFundamentalsProvider)
         assert isinstance(data_factory._make_news_provider("fmp"), FMPNewsProvider)
+
+    def test_bulk_price_provider_rejects_stooq(self):
+        # Task 4.1 licence check (docs/web/data-sources.md, 2026-09-04): stooq is not
+        # usable for unattended access, so it was never wired.
+        with pytest.raises(ValueError, match="not usable"):
+            data_factory._make_bulk_price_provider("stooq")
+
+    def test_bulk_price_provider_rejects_unknown_backend(self):
+        with pytest.raises(ValueError, match="Unknown data.bulk_price_provider"):
+            data_factory._make_bulk_price_provider("unknown_backend")
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +219,16 @@ class TestYFinancePriceProviderGoldenMaster:
         assert out.empty
 
     def test_lookback_to_period_mapping(self):
-        cases = [(5, "5d"), (25, "1mo"), (80, "3mo"), (170, "6mo"), (365, "1y"), (999, "1y")]
+        cases = [
+            (5, "5d"),
+            (25, "1mo"),
+            (80, "3mo"),
+            (170, "6mo"),
+            (365, "1y"),
+            (400, "2y"),  # BulkPriceProvider's documented default lookback (Task 4.1)
+            (730, "2y"),
+            (999, "5y"),
+        ]
         for lookback, expected in cases:
             ticker = _make_ticker(history_df=pd.DataFrame())
             with _patch_yf(ticker):
@@ -283,6 +312,39 @@ class TestYFinanceNewsProviderGoldenMaster:
     def test_get_headlines_exception_returns_empty_list(self):
         with _patch_yf(side_effect=RuntimeError("network")):
             assert YFinanceNewsProvider().get_headlines("AAPL") == []
+
+
+class TestYFinanceBulkPriceProviderGoldenMaster:
+    """The cold-tier fallback: wraps ``YFinancePriceProvider.get_ohlcv`` so the
+    ``BulkPriceProvider`` Protocol is satisfied without stooq (Task 4.1 licence check).
+    """
+
+    def test_get_daily_bars_wraps_get_ohlcv(self):
+        df = pd.DataFrame(
+            {"Open": [1.0], "High": [2.0], "Low": [0.5], "Close": [1.5], "Volume": [100]},
+            index=pd.DatetimeIndex(["2026-01-02"]),
+        )
+        ticker = _make_ticker(history_df=df)
+        with _patch_yf(ticker):
+            out = YFinanceBulkPriceProvider().get_daily_bars("AAPL", lookback_days=400)
+        assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"]
+        assert out.index.name == "Date"
+        assert out["Close"].iloc[-1] == 1.5
+
+    def test_get_daily_bars_empty_history_returns_empty_frame_with_the_right_shape(self):
+        with _patch_yf(_make_ticker(history_df=pd.DataFrame())):
+            out = YFinanceBulkPriceProvider().get_daily_bars("BAD")
+        assert out.empty
+        assert list(out.columns) == ["Open", "High", "Low", "Close", "Volume"]
+
+    def test_get_daily_bars_exception_returns_empty_frame(self):
+        with _patch_yf(side_effect=RuntimeError("network")):
+            out = YFinanceBulkPriceProvider().get_daily_bars("AAPL")
+        assert out.empty
+
+    def test_default_construction_uses_the_real_price_provider(self):
+        provider = YFinanceBulkPriceProvider()
+        assert isinstance(provider._provider, YFinancePriceProvider)
 
 
 # --------------------------------------------------------------------------- #

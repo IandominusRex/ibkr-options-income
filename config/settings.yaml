@@ -246,7 +246,9 @@ data:
   news_provider: yfinance
   symbol_directory_provider: edgar
   filings_provider: edgar
-  bulk_price_provider: stooq
+  # stooq is not usable: see docs/web/data-sources.md (licence check, 2026-09-04) — the CSV
+  # endpoint now sits behind a JS bot-verification challenge. yfinance is the only backend.
+  bulk_price_provider: yfinance
 
 monitor:
   # Short option delta drift: roll if |delta| exceeds this ceiling.

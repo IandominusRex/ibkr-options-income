@@ -29,7 +29,7 @@ real consequence, and it must not be waved through.
   - `StooqBulkPriceProvider`, `YFinanceBulkPriceProvider`
   - `get_bulk_price_provider() -> BulkPriceProvider`
 
-- [ ] **Step 1: Verify the licence before writing code**
+- [x] **Step 1: Verify the licence before writing code**
 
 Read stooq's terms of use. Record the finding in `docs/web/data-sources.md` with the date
 checked, the URL, and a verdict of `permitted` or `not permitted`.
@@ -38,7 +38,11 @@ checked, the URL, and a verdict of `permitted` or `not permitted`.
 Step 4 (the stooq backend), and implement only `YFinanceBulkPriceProvider`. Every other step
 proceeds unchanged, because the Protocol is what the rest of the system depends on.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test** — *skipped: licence verdict was "not permitted"
+  (see `docs/web/data-sources.md`), so `StooqBulkPriceProvider` was never built and this
+  stooq-specific test was never written. `tests/test_data_providers.py`'s
+  `TestYFinanceBulkPriceProviderGoldenMaster` covers the yfinance-only path that actually
+  shipped instead.*
 
 Create `tests/test_stooq_backend.py`:
 
@@ -100,12 +104,12 @@ def test_an_error_body_returns_an_empty_frame() -> None:
     assert df.empty
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails** — *skipped along with Step 2 (no stooq test exists).*
 
 Run: `python -m pytest tests/test_stooq_backend.py -v`
 Expected: FAIL, module not found.
 
-- [ ] **Step 4: Add the Protocol**
+- [x] **Step 4: Add the Protocol**
 
 Append to `src/data/protocols.py`:
 
@@ -119,7 +123,9 @@ class BulkPriceProvider(Protocol):
         ...
 ```
 
-- [ ] **Step 5: Implement `src/data/stooq_backend.py`**
+- [x] **Step 5: Implement `src/data/stooq_backend.py`** — *skipped, per the "if not
+  permitted" branch above (Step 1's licence check ruled stooq out); only
+  `YFinanceBulkPriceProvider` (`src/data/yfinance_backend.py`) was implemented.*
 
 ```python
 """Free bulk daily bars for the cold tier.
@@ -185,7 +191,7 @@ class YFinanceBulkPriceProvider:
         return df if not df.empty else _empty()
 ```
 
-- [ ] **Step 6: Add the factory getter**
+- [x] **Step 6: Add the factory getter**
 
 ```python
 def _make_bulk_price_provider(name: str) -> BulkPriceProvider:
@@ -205,7 +211,7 @@ def get_bulk_price_provider() -> BulkPriceProvider:
     return _make_bulk_price_provider(get_config().data.bulk_price_provider)
 ```
 
-- [ ] **Step 7: Run tests, then commit**
+- [x] **Step 7: Run tests, then commit**
 
 Run: `python -m pytest tests/test_stooq_backend.py -v && ruff check . && mypy src`
 
@@ -224,7 +230,7 @@ git commit -m "feat(data): add bulk daily-bar provider with a documented licence
 - Produces: `ingest_daily_bars(symbol: str) -> int` returning rows written; upserts on
   `(symbol, date)`; returns 0 without deleting anything when the fetch is empty.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Daily-bar ingest upserts and never truncates on a failed fetch."""
@@ -313,7 +319,7 @@ def test_empty_fetch_leaves_history_intact(db, monkeypatch) -> None:
         assert s.query(DailyBarRow).filter_by(symbol="AAPL").count() == 1
 ```
 
-- [ ] **Step 2: Run it and watch it fail**, then implement `src/research/ingest/prices.py`:
+- [x] **Step 2: Run it and watch it fail**, then implement `src/research/ingest/prices.py`:
 
 ```python
 """Persist daily OHLCV for a symbol."""
@@ -367,7 +373,7 @@ def ingest_daily_bars(symbol: str) -> int:
     return written
 ```
 
-- [ ] **Step 3: Run tests, then commit**
+- [x] **Step 3: Run tests, then commit**
 
 ```bash
 git add src/research/ingest/prices.py tests/test_ingest_prices.py
@@ -390,7 +396,7 @@ Freshness target is 15 to 30 minutes (design decision), so the scheduler runs th
 minutes during regular trading hours only. Use the existing `src/common/market_hours.py` to
 decide, rather than reimplementing a session calendar.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Warm-tier quote refresh covers watchlisted and recently viewed symbols, and only those."""
@@ -474,7 +480,7 @@ def test_a_missing_quote_does_not_write_a_row(db, monkeypatch) -> None:
         assert s.get(QuoteRow, "AAPL") is None
 ```
 
-- [ ] **Step 2: Implement `src/research/ingest/quotes.py`**
+- [x] **Step 2: Implement `src/research/ingest/quotes.py`**
 
 ```python
 """Delayed intraday quotes for the warm tier.
@@ -544,7 +550,7 @@ def refresh_quotes() -> int:
     return written
 ```
 
-- [ ] **Step 3: Register in the scheduler**
+- [x] **Step 3: Register in the scheduler**
 
 ```python
     sched.add_job(
@@ -559,7 +565,7 @@ Guard `refresh_quotes` so it returns 0 immediately outside regular trading hours
 existing helper in `src/common/market_hours.py`. Read that module and use its actual function
 name rather than inventing one.
 
-- [ ] **Step 4: Run tests, then commit**
+- [x] **Step 4: Run tests, then commit**
 
 ```bash
 git add src/research tests/test_ingest_quotes.py
@@ -593,7 +599,7 @@ card and the prompt only; it must not become an input to anything deterministic.
     `sentiment: Section[SentimentDetail]`, `news: Section[list[NewsItem]]`,
     `quote: Sourced[float]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Enrichment sections degrade independently and never fail the page."""
@@ -653,7 +659,7 @@ def test_sentiment_is_never_an_input_to_the_deterministic_sections(db) -> None:
     assert "fundamental" not in sentiment_line.lower()
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Add to `src/research/ingest/materialize.py`, keeping each source in its own guarded helper so
 one outage cannot cascade:
@@ -699,13 +705,13 @@ nesting, as documented in `src/data/protocols.py`), scores each headline with th
 already in `src/analytics/sentiment.py`, and upserts `NewsItemRow` deduplicated on
 `(symbol, url)`.
 
-- [ ] **Step 3: Extend the API models and route**
+- [x] **Step 3: Extend the API models and route**
 
 `AnalysisResponse` gains the four fields listed under Interfaces. `quote` uses
 `Sourced[float].of(price, Source.YFINANCE, as_of, fresh_for=timedelta(minutes=30))`, which is
 what makes a stale price visibly stale rather than silently wrong.
 
-- [ ] **Step 4: Run tests, regenerate types, commit**
+- [x] **Step 4: Run tests, regenerate types, commit**
 
 ```bash
 python -m pytest -q && ruff check . && mypy src
@@ -736,7 +742,7 @@ Chart rules from the spec, all mandatory:
   properties at mount, never hard-coded hex.
 - The chart container is `overflow-x: auto` so the page body never scrolls horizontally.
 
-- [ ] Write the endpoint test, implement the endpoint, then the component. Verify the chart
+- [x] Write the endpoint test, implement the endpoint, then the component. Verify the chart
   renders a year of AAPL bars with both moving averages. Commit.
 
 ---
@@ -758,7 +764,7 @@ Required behaviours, each with its own test:
   the count is what tells the reader that.
 - Every panel is wrapped in `SectionShell` so pending and unavailable states are consistent.
 
-- [ ] Write the tests, implement, run `npx vitest run && npm run build && npm run lint`, commit.
+- [x] Write the tests, implement, run `npx vitest run && npm run build && npm run lint`, commit.
 
 ---
 
@@ -785,7 +791,7 @@ news) and a provider having a bad hour should stop us hammering it, without taki
 Mirrors the existing `market_data.max_consecutive_chain_timeouts` pattern: consecutive failures
 open the circuit, not a failure rate.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Consecutive failures open a provider's circuit; one success closes it."""
@@ -848,16 +854,16 @@ def test_a_failure_while_half_open_reopens_it() -> None:
     assert b.state == "open"
 ```
 
-- [ ] **Step 2: Implement, and wire it into both HTTP clients.** When `allow()` is false, the
+- [x] **Step 2: Implement, and wire it into both HTTP clients.** When `allow()` is false, the
   client returns its documented empty value immediately (empty dict, empty frame) **without a
   network call**, so an open circuit costs nothing. The affected section renders as
   `UNAVAILABLE` with the reason "Data provider temporarily unavailable", and every other
   section on the page still renders.
 
-- [ ] **Step 3: Report breaker state on `/health`** as `providers: {edgar: "closed", ...}`, and
+- [x] **Step 3: Report breaker state on `/health`** as `providers: {edgar: "closed", ...}`, and
   add a test asserting an open breaker makes `/health` report `degraded`.
 
-- [ ] **Step 4: Run tests, commit.**
+- [x] **Step 4: Run tests, commit.**
 
 ```bash
 git add src/data src/api tests/test_provider_breaker.py
@@ -868,9 +874,9 @@ git commit -m "feat(data): add per-provider circuit breakers surfaced on /health
 
 ## Milestone 4 exit criteria
 
-- [ ] Full Python and web gates green
-- [ ] `docs/web/data-sources.md` records the licence verdict with a date
-- [ ] `/stock/AAPL` shows a year of candles with SMA 50 and 200, technical panels, news with
+- [x] Full Python and web gates green
+- [x] `docs/web/data-sources.md` records the licence verdict with a date
+- [x] `/stock/AAPL` shows a year of candles with SMA 50 and 200, technical panels, news with
       per-item sentiment, and a delayed quote with its age
-- [ ] A forced sentiment outage leaves every other section rendering
-- [ ] No metric renders `0` when the underlying value is `None`
+- [x] A forced sentiment outage leaves every other section rendering
+- [x] No metric renders `0` when the underlying value is `None`

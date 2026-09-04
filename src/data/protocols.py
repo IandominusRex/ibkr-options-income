@@ -116,3 +116,21 @@ class FilingsProvider(Protocol):
         meant the caller's cached payload is still current. Never raises.
         """
         ...
+
+
+@runtime_checkable
+class BulkPriceProvider(Protocol):
+    """Daily OHLCV for the cold tier, where a keyed per-symbol API would be too expensive.
+
+    Distinct from :class:`PriceProvider`: the cold tier serves any US ticker on first view,
+    so a free bulk source is what makes the economics work. stooq was the plan's first
+    choice but the 4.1 licence gate ruled it out (see ``docs/web/data-sources.md``); yfinance
+    is the only backend today. The Protocol is what the rest of the system depends on, so a
+    future source is a config change (``data.bulk_price_provider``), not a rewrite.
+    """
+
+    def get_daily_bars(self, symbol: str, lookback_days: int = 400) -> pd.DataFrame:
+        """Ascending daily OHLCV with a ``DatetimeIndex`` and the columns
+        ``Open, High, Low, Close, Volume``. Empty frame when unavailable. Never raises.
+        """
+        ...

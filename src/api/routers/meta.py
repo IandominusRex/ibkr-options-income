@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from src.api.deps import CurrentUser, ResearchDb
 from src.api.models.common import Envelope
 from src.api.trading_db import get_trading_engine
+from src.data.breaker import breaker_states
 from src.research.ingest.jobs import read_heartbeat
 
 router = APIRouter()
@@ -20,6 +21,7 @@ class HealthResponse(Envelope):
     research_db: bool
     trading_db: bool
     worker_heartbeat: datetime | None = None
+    providers: dict[str, str] = {}
 
 
 class MeResponse(Envelope):
@@ -66,12 +68,16 @@ def health(db: ResearchDb) -> HealthResponse:
     except Exception:
         trading_ok = False
 
+    providers = breaker_states()
+    any_breaker_open = any(state == "open" for state in providers.values())
+
     return HealthResponse(
         as_of=now,
-        status="ok" if research_ok and trading_ok else "degraded",
+        status="ok" if research_ok and trading_ok and not any_breaker_open else "degraded",
         research_db=research_ok,
         trading_db=trading_ok,
         worker_heartbeat=read_heartbeat(),
+        providers=providers,
     )
 
 

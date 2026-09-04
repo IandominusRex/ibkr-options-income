@@ -53,6 +53,18 @@ def test_naive_as_of_is_treated_as_utc() -> None:
     assert s.stale is True
 
 
+def test_naive_as_of_comes_back_tz_aware_not_just_correctly_compared() -> None:
+    """A naive as_of must be normalized in the stored value too, not only for the internal
+    staleness comparison — otherwise the serialized JSON has no UTC offset, and a browser's
+    Date parser reads it as local time, silently shifting the displayed age.
+    """
+    naive = datetime.utcnow() - timedelta(minutes=45)
+    assert naive.tzinfo is None
+    s = Sourced.of(1.0, Source.YFINANCE, naive, fresh_for=timedelta(minutes=30))
+    assert s.as_of.tzinfo is not None
+    assert s.model_dump_json().count("Z") >= 1 or "+00:00" in s.model_dump_json()
+
+
 def test_envelope_carries_top_level_as_of() -> None:
     class Payload(Envelope):
         symbol: str

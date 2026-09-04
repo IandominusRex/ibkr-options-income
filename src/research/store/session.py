@@ -63,9 +63,7 @@ def init_research_db() -> None:
 def _add_missing_columns(engine: Engine) -> None:
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:
-            existing = {
-                row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table.name})")
-            }
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table.name})")}
             for column in table.columns:
                 if column.name not in existing:
                     col_type = column.type.compile(engine.dialect)

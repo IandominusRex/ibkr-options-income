@@ -21,3 +21,19 @@ export function formatPeriod(iso: string): string {
   const [y, m] = iso.split("-");
   return `${MONTHS[Number(m) - 1]} ${y}`;
 }
+
+/** "3m ago" / "2h ago" / "5d ago" / "3mo ago". Empty string for an unparseable timestamp. */
+export function relativeAge(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}

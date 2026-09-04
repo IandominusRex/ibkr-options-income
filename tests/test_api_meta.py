@@ -58,3 +58,23 @@ def test_unknown_route_returns_json_not_html(client) -> None:
     r = client.get("/nope", headers=AUTH)
     assert r.status_code == 404
     assert r.headers["content-type"].startswith("application/json")
+
+
+def test_an_open_breaker_makes_health_report_degraded(client) -> None:
+    """A provider with an open circuit degrades /health, not just the section it serves."""
+    from src.data.breaker import get_breaker
+
+    # Clear any prior state by recording enough failures to open the edgar breaker.
+    edgar = get_breaker("edgar", threshold=3, cooldown_seconds=300.0)
+    edgar.record_success()  # reset
+    for _ in range(3):
+        edgar.record_failure()
+    assert edgar.state == "open"
+
+    r = client.get("/health")
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["providers"]["edgar"] == "open"
+
+    # Clean up so other tests don't see an open circuit.
+    edgar.record_success()

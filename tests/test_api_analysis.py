@@ -118,3 +118,83 @@ def test_symbol_lookup_is_case_insensitive(client, monkeypatch) -> None:
         ),
     )
     assert client.get("/research/aapl", headers=AUTH).status_code == 200
+
+
+def test_quote_staleness_reflects_the_actual_quote_age_not_request_time(
+    client, monkeypatch
+) -> None:
+    """A quote fetched 45 minutes ago (fresh_for is 30 min) must read as stale — using the
+    request time instead of the quote row's own as_of would always report it as fresh.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    old_as_of = datetime.now(UTC) - timedelta(minutes=45)
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol,
+            fundamentals_state=SectionState.UNAVAILABLE,
+            reason="x",
+            quote=221.4,
+            quote_as_of=old_as_of,
+            quote_state=SectionState.READY,
+        ),
+    )
+    body = client.get("/research/AAPL", headers=AUTH).json()
+    assert body["quote"]["value"] == 221.4
+    assert body["quote"]["as_of"] is not None
+    assert body["quote"]["stale"] is True
+
+
+def test_a_fresh_quote_is_not_stale(client, monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    recent_as_of = datetime.now(UTC) - timedelta(minutes=5)
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol,
+            fundamentals_state=SectionState.UNAVAILABLE,
+            reason="x",
+            quote=221.4,
+            quote_as_of=recent_as_of,
+            quote_state=SectionState.READY,
+        ),
+    )
+    assert client.get("/research/AAPL", headers=AUTH).json()["quote"]["stale"] is False
+
+
+def test_no_quote_ingested_yet_is_null_not_an_error(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol, fundamentals_state=SectionState.UNAVAILABLE, reason="x"
+        ),
+    )
+    assert client.get("/research/AAPL", headers=AUTH).json()["quote"] is None
+
+
+def test_viewing_a_symbol_records_it_for_the_warm_tier(client, monkeypatch) -> None:
+    """GET /research/{symbol} is the only signal the warm tier has for "recently viewed" —
+    without recording it here, refresh_quotes' recently-viewed half is permanently empty.
+    """
+    from src.research.store.models import RecentlyViewedRow
+    from src.research.store.session import research_session
+
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol, fundamentals_state=SectionState.UNAVAILABLE, reason="x"
+        ),
+    )
+    client.get("/research/AAPL", headers=AUTH)
+    with research_session() as s:
+        row = s.get(RecentlyViewedRow, ("owner", "AAPL"))
+        assert row is not None
+        first_seen = row.viewed_at
+
+    client.get("/research/AAPL", headers=AUTH)
+    with research_session() as s:
+        row = s.get(RecentlyViewedRow, ("owner", "AAPL"))
+        assert row.viewed_at >= first_seen, "a re-view should update, not duplicate"
+        assert s.query(RecentlyViewedRow).filter_by(symbol="AAPL").count() == 1

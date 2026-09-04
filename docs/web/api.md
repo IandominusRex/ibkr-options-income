@@ -24,10 +24,11 @@ Liveness + reachability of the two databases. **No auth required.**
 | Field | Type | Notes |
 |---|---|---|
 | `as_of` | datetime | |
-| `status` | `"ok"` \| `"degraded"` | `degraded` when either DB is unreachable |
+| `status` | `"ok"` \| `"degraded"` | `degraded` when either DB is unreachable, or any provider circuit breaker is `open` |
 | `research_db` | bool | research.db reachable |
 | `trading_db` | bool | income_system.db reachable (read-only) |
 | `worker_heartbeat` | datetime \| null | last successful research-worker job; `null` until the worker runs |
+| `providers` | `dict[string, string]` | (M4) one entry per circuit breaker registered so far this process (`src/data/breaker.py`, lazily created on first use) — `"closed"` \| `"open"` \| `"half_open"` — keyed by provider name (`edgar`, `yfinance_prices`, `yfinance_news`) |
 
 **Example:**
 
@@ -37,7 +38,8 @@ Liveness + reachability of the two databases. **No auth required.**
   "status": "ok",
   "research_db": true,
   "trading_db": true,
-  "worker_heartbeat": null
+  "worker_heartbeat": null,
+  "providers": { "edgar": "closed", "yfinance_prices": "closed", "yfinance_news": "closed" }
 }
 ```
 
@@ -158,6 +160,17 @@ or missing section **never fails the whole page** — it degrades per section.
 | `exchange` | string \| null | |
 | `is_etf` | bool | |
 | `fundamentals` | `Section<NormalizedFinancials>` | see below |
+| `technicals` | `Section<TechnicalStats>` | (M4) RSI 14, MACD, SMA 50/200, ATR, phase/regime — defaults `pending` |
+| `sentiment` | `Section<SentimentDetail>` | (M4) composite score, label, 1-day delta, per-source sample counts — defaults `pending` |
+| `news` | `Section<NewsItem[]>` | (M4) recent headlines, newest first, each carrying its own VADER `sentiment` — defaults `pending` |
+| `quote` | `Sourced<float>` \| null | (M4) delayed last price; `as_of` is the warm-tier `QuoteRow`'s own capture time (not the request time), so `stale` (after 30 minutes, `fresh_for` on `Sourced.of`) reflects the quote's actual age; `null` when no quote has been fetched for this symbol |
+
+`technicals`, `sentiment`, and `news` each degrade **independently** — an outage in one (e.g.
+StockTwits down) never blocks the others, and never touches `fundamentals`.
+
+**Side effect:** every call upserts a `RecentlyViewedRow(user_id, symbol)` with the current
+timestamp — this is the only signal the warm tier's `refresh_quotes` (Task 4.3,
+`ingest/quotes.py`) has for which symbols were "recently viewed" in the last 7 days.
 
 **`Section[T]`** — one region of the page, with its own state:
 
@@ -238,5 +251,89 @@ fundamentals section carries `state=unavailable` and a human-readable `reason`.
     "data": null,
     "reason": "Still building; refresh shortly"
   }
+}
+```
+
+**Example — M4 enrichment sections, ready:**
+
+```json
+{
+  "as_of": "2026-09-03T10:00:00Z",
+  "symbol": "AAPL",
+  "name": "Apple Inc.",
+  "exchange": "Nasdaq",
+  "is_etf": false,
+  "fundamentals": { "state": "ready", "data": { "...": "..." }, "reason": null },
+  "technicals": {
+    "state": "ready",
+    "data": { "rsi_14": 55.2, "macd": 1.3, "sma_50": 220.1, "sma_200": 205.4, "atr": 3.2 },
+    "reason": null
+  },
+  "sentiment": {
+    "state": "unavailable",
+    "data": null,
+    "reason": "StockTwits down"
+  },
+  "news": {
+    "state": "ready",
+    "data": [
+      { "title": "Apple beats estimates", "url": "https://example.com/a", "published_at": "2026-09-03T09:00:00Z", "source": "Reuters", "sentiment": 0.62 }
+    ],
+    "reason": null
+  },
+  "quote": { "value": 221.4, "source": "yfinance", "as_of": "2026-09-03T09:45:00Z", "stale": false }
+}
+```
+
+A `sentiment` outage above leaves `technicals` and `news` `ready` — sections degrade
+independently, never cascading.
+
+---
+
+## `GET /research/{symbol}/bars`
+
+Daily OHLCV for the price chart, with server-side SMA 50/200 overlays so the chart and the
+`technicals` section can never disagree.
+
+**Auth:** required. **404** when `symbol` is not a known SEC filer.
+
+**Path parameter:** `symbol` (case-insensitive).
+
+**Query parameters:**
+
+| Param | Type | Default | Constraint |
+|---|---|---|---|
+| `range` | string | `"1y"` | one of `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y` |
+
+**Response — `BarsResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | |
+| `bars` | `Bar[]` | ascending by date; empty (not an error) when no bars are ingested yet |
+| `sma50` | `(float \| null)[]` | parallel to `bars`; `null` until 50 closes have accumulated |
+| `sma200` | `(float \| null)[]` | parallel to `bars`; `null` until 200 closes have accumulated |
+
+The endpoint fetches an extra `_SMA_SEED_BUFFER_DAYS=400`-day lookback beyond `range`'s
+display window before computing the SMAs, then slices bars and SMAs back down together —
+so `sma200` is populated from the *first* bar in `bars` whenever `daily_bars` actually holds
+that much history, not just for the last ~50 days of a `range=1y` response. It still comes
+back `null` for a genuinely short window (`range=1mo`) or a symbol whose ingested history
+doesn't reach back far enough — that's an honest "not enough data yet", not a bug.
+
+`Bar`: `{ time, open, high, low, close, volume }` — `time` is `YYYY-MM-DD`, lightweight-charts'
+expected daily field name, so no client-side remapping is needed.
+
+**Example — `GET /research/AAPL/bars?range=1y`:**
+
+```json
+{
+  "as_of": "2026-09-03T10:00:00Z",
+  "bars": [
+    { "time": "2026-08-28", "open": 220.0, "high": 222.5, "low": 219.0, "close": 221.4, "volume": 50000000 },
+    { "time": "2026-08-29", "open": 221.5, "high": 224.0, "low": 221.0, "close": 223.8, "volume": 48000000 }
+  ],
+  "sma50": [null, null],
+  "sma200": [null, null]
 }
 ```

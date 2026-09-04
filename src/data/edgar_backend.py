@@ -16,6 +16,7 @@ import time
 import httpx
 
 from src.common.config import get_config
+from src.data.breaker import get_breaker
 from src.data.protocols import SymbolRecord
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,11 @@ class EdgarClient:
 
     def get_json(self, url: str, *, etag: str | None = None) -> tuple[dict | None, str | None]:
         """Fetch JSON. Returns (payload, etag); (None, etag) on 304 or on failure."""
+        breaker = get_breaker("edgar")
+        if not breaker.allow():
+            # Open circuit: no network call. The affected section renders UNAVAILABLE.
+            return None, etag
+
         headers = {"User-Agent": user_agent()}
         if etag:
             headers["If-None-Match"] = etag
@@ -89,11 +95,14 @@ class EdgarClient:
                 resp = self._client.get(url, headers=headers)
             except httpx.HTTPError as exc:
                 log.warning("EDGAR request failed for %s: %s", url, exc)
+                breaker.record_failure()
                 return None, etag
 
             if resp.status_code == 304:
+                breaker.record_success()
                 return None, etag
             if resp.status_code == 200:
+                breaker.record_success()
                 return resp.json(), resp.headers.get("ETag", etag)
             if resp.status_code in (403, 429, 500, 502, 503, 504) and attempt < self._max_retries:
                 # 403/429: throttle. 5xx: EDGAR transient outage. Retry with backoff.
@@ -104,7 +113,9 @@ class EdgarClient:
                     time.sleep(2.0 * (attempt + 1))
                 continue
             log.warning("EDGAR returned %s for %s", resp.status_code, url)
+            breaker.record_failure()
             return None, etag
+        breaker.record_failure()
         return None, etag
 
 

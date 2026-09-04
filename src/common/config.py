@@ -299,7 +299,7 @@ class DataCfg(BaseModel):
     news_provider: str = "yfinance"
     symbol_directory_provider: str = "edgar"
     filings_provider: str = "edgar"
-    bulk_price_provider: str = "stooq"
+    bulk_price_provider: str = "yfinance"
 
 
 class ResearchDatabaseCfg(BaseModel):

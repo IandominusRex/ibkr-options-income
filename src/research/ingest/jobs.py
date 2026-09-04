@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.common.config import get_config
 from src.research.ingest.materialize import drain_ingest_jobs
+from src.research.ingest.quotes import refresh_quotes
 from src.research.ingest.symbols import refresh_symbol_directory
 from src.research.store.models import WorkerHeartbeatRow
 from src.research.store.session import research_session
@@ -68,5 +69,11 @@ def build_scheduler() -> BackgroundScheduler:
         replace_existing=True,
     )
     # Warm-tier refresh is registered in Milestone 4.
+    sched.add_job(
+        lambda: run_job("quotes", refresh_quotes),
+        IntervalTrigger(minutes=15),
+        id="refresh_quotes",
+        replace_existing=True,
+    )
     del cfg
     return sched
