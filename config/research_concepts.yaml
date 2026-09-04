@@ -1,0 +1,144 @@
+# Canonical line item -> ordered us-gaap concept candidates. First candidate with facts wins.
+#
+# Filers disagree about which concept means the same thing. Adding a mapping here is a config
+# change, not a code change, which matters because the long tail of filers is where this breaks.
+#
+# kind:
+#   duration - the fact carries start AND end (income statement, cash flow)
+#   instant  - the fact carries only end (balance sheet)
+# Getting kind wrong produces plausible nonsense, so it is required on every entry.
+
+line_items:
+  revenue:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - RevenueFromContractWithCustomerExcludingAssessedTax
+      - Revenues
+      - SalesRevenueNet
+      - RevenueFromContractWithCustomerIncludingAssessedTax
+
+  cost_of_revenue:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - CostOfRevenue
+      - CostOfGoodsAndServicesSold
+      - CostOfGoodsSold
+
+  gross_profit:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - GrossProfit
+
+  operating_income:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - OperatingIncomeLoss
+
+  net_income:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - NetIncomeLoss
+      - ProfitLoss
+      - NetIncomeLossAvailableToCommonStockholdersBasic
+
+  eps_diluted:
+    statement: income
+    kind: duration
+    units: ["USD/shares"]
+    concepts:
+      - EarningsPerShareDiluted
+      - EarningsPerShareBasicAndDiluted
+
+  shares_diluted:
+    statement: income
+    kind: duration
+    units: [shares]
+    concepts:
+      - WeightedAverageNumberOfDilutedSharesOutstanding
+      - WeightedAverageNumberOfSharesOutstandingBasic
+
+  total_assets:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - Assets
+
+  total_liabilities:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - Liabilities
+
+  stockholders_equity:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - StockholdersEquity
+      - StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+
+  current_assets:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - AssetsCurrent
+
+  current_liabilities:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - LiabilitiesCurrent
+
+  long_term_debt:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - LongTermDebtNoncurrent
+      - LongTermDebt
+
+  cash_and_equivalents:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - CashAndCashEquivalentsAtCarryingValue
+      - CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+
+  operating_cash_flow:
+    statement: cash_flow
+    kind: duration
+    units: [USD]
+    concepts:
+      - NetCashProvidedByUsedInOperatingActivities
+      - NetCashProvidedByUsedInOperatingActivitiesContinuingOperations
+
+  capital_expenditure:
+    statement: cash_flow
+    kind: duration
+    units: [USD]
+    concepts:
+      - PaymentsToAcquirePropertyPlantAndEquipment
+      - PaymentsToAcquireProductiveAssets
+
+  dividends_paid:
+    statement: cash_flow
+    kind: duration
+    units: [USD]
+    concepts:
+      - PaymentsOfDividendsCommonStock
+      - PaymentsOfDividends
