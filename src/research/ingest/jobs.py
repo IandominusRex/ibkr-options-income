@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from src.common.config import get_config
+from src.research.ingest.materialize import drain_ingest_jobs
 from src.research.ingest.symbols import refresh_symbol_directory
 from src.research.store.models import WorkerHeartbeatRow
 from src.research.store.session import research_session
@@ -59,6 +61,12 @@ def build_scheduler() -> BackgroundScheduler:
         id="symbol_directory",
         replace_existing=True,
     )
-    # Warm-tier refresh and the ingest_jobs drain are registered in Milestones 3 and 4.
+    sched.add_job(
+        lambda: run_job("drain", drain_ingest_jobs),
+        IntervalTrigger(seconds=30),
+        id="drain_ingest_jobs",
+        replace_existing=True,
+    )
+    # Warm-tier refresh is registered in Milestone 4.
     del cfg
     return sched
