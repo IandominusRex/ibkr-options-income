@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { use } from "react";
 import { apiFetch } from "@/lib/api";
+import { ChecksSection } from "@/components/checks/ChecksSection";
 import { NewsPanel } from "@/components/stock/NewsPanel";
 import { PriceChart } from "@/components/stock/PriceChart";
 import { SectionShell } from "@/components/stock/SectionShell";
@@ -11,7 +12,7 @@ import { StatementsTable } from "@/components/stock/StatementsTable";
 import { TechnicalsPanel } from "@/components/stock/TechnicalsPanel";
 import { relativeAge } from "@/lib/format";
 
-const PENDING_SECTIONS = ["fundamentals", "technicals", "sentiment", "news"] as const;
+const PENDING_SECTIONS = ["fundamentals", "technicals", "sentiment", "news", "checks"] as const;
 
 export default function StockPage({ params }: { params: Promise<{ symbol: string }> }) {
   const { symbol } = use(params);
@@ -52,6 +53,14 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         <h2 className="mb-3 text-sm font-medium tracking-wide text-muted">Price chart</h2>
         <PriceChart symbol={upper} />
       </section>
+
+      <SectionShell
+        title="Checks"
+        state={data?.checks?.state ?? "pending"}
+        reason={data?.checks?.reason}
+      >
+        {data?.checks?.data && <ChecksSection data={data.checks.data} />}
+      </SectionShell>
 
       <SectionShell
         title="Technicals"

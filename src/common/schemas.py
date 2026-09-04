@@ -265,6 +265,15 @@ class FundamentalStats(BaseModel):
     recommendation_key: str | None = None  # "buy" / "hold" / "underperform" / …
     fifty_two_week_high: float | None = None
     fifty_two_week_low: float | None = None
+    # ETF-only fields (M5, Task 5.5). Populated only when yfinance's quoteType == "ETF";
+    # None for a stock. Sourced from the same `info` dict the fields above are read from —
+    # no extra network cost. NEEDS LIVE VERIFICATION: yfinance's expense-ratio key has
+    # varied across library versions and this repo has not yet confirmed which unit a live
+    # pull returns for a real ETF (see STATUS.md).
+    expense_ratio: float | None = None  # percentage points (0.5 = 0.5%), matching the checks-engine convention
+    total_assets: float | None = None  # fund AUM in USD
+    avg_volume: float | None = None  # average daily share volume
+    inception_date: date | None = None
 
 
 # --------------------------------------------------------------------------- #

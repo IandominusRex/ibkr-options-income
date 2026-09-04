@@ -58,6 +58,10 @@ def get_fundamental_stats(symbol: str) -> FundamentalStats:
             quality_flag=True,
             fifty_two_week_high=_safe_float(info.get("fiftyTwoWeekHigh")),
             fifty_two_week_low=_safe_float(info.get("fiftyTwoWeekLow")),
+            expense_ratio=_etf_expense_ratio(info),
+            total_assets=_safe_float(info.get("totalAssets")),
+            avg_volume=_safe_float(info.get("averageVolume")),
+            inception_date=_fund_inception_date(info),
         )
     else:
         next_earnings = _next_earnings_date(provider.get_calendar(symbol))
@@ -141,6 +145,29 @@ def _ex_dividend_date(info: dict) -> date | None:
         return datetime.fromtimestamp(int(ts)).date()
     except Exception:
         return None
+
+
+def _fund_inception_date(info: dict) -> date | None:
+    try:
+        ts = info.get("fundInceptionDate")
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(int(ts)).date()
+    except Exception:
+        return None
+
+
+def _etf_expense_ratio(info: dict) -> float | None:
+    """Prefer ``netExpenseRatio``; fall back to ``annualReportExpenseRatio``.
+
+    Both yfinance key names have appeared across library versions for the same field.
+    ``or`` is unsafe here (a real 0.0 expense ratio would fall through), so check
+    explicitly for ``None``.
+    """
+    net = info.get("netExpenseRatio")
+    if net is not None:
+        return _safe_float(net)
+    return _safe_float(info.get("annualReportExpenseRatio"))
 
 
 def _dividend_safety(info: dict, free_cash_flow: float | None) -> bool | None:

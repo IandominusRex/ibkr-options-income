@@ -1,0 +1,383 @@
+# The checks engine. Each check names a registered metric function (fn), a comparison (op),
+# and a threshold. Thresholds are deliberate and published: the reader sees the actual value
+# next to the bar it was measured against.
+#
+# ops: lt | lte | gt | gte | between | truthy
+# applies_to: all | stock | etf
+# requires: the metric inputs that must be present; any missing input makes the check UNKNOWN,
+#           never FAIL.
+
+checks:
+  # ── Value ───────────────────────────────────────────────────────────────────
+  - id: value.pe_reasonable
+    category: value
+    fn: pe_ratio
+    op: between
+    threshold: [0.0001, 22.0]      # positive, and at or below a long-run market average
+    statement: "Is the P/E ratio positive and below the market average of 22?"
+    requires: [price, eps_diluted]
+    applies_to: stock
+
+  - id: value.peg_reasonable
+    category: value
+    fn: peg_ratio
+    op: between
+    threshold: [0.0001, 1.0]        # Lynch's rule: growth at least as fast as the multiple
+    statement: "Is the PEG ratio between 0 and 1?"
+    requires: [price, eps_diluted, eps_growth_yoy]
+    applies_to: stock
+
+  - id: value.pb_reasonable
+    category: value
+    fn: price_to_book
+    op: lt
+    threshold: 3.0
+    statement: "Is the price-to-book ratio below 3?"
+    requires: [price, shares_diluted, stockholders_equity]
+    applies_to: stock
+
+  - id: value.ps_reasonable
+    category: value
+    fn: price_to_sales
+    op: lt
+    threshold: 5.0
+    statement: "Is the price-to-sales ratio below 5?"
+    requires: [price, shares_diluted, revenue]
+    applies_to: stock
+
+  - id: value.fcf_yield
+    category: value
+    fn: fcf_yield_pct
+    op: gt
+    threshold: 4.0                  # comfortably above a risk-free rate
+    statement: "Is the free cash flow yield above 4%?"
+    requires: [price, shares_diluted, operating_cash_flow, capital_expenditure]
+    applies_to: stock
+
+  - id: value.earnings_yield
+    category: value
+    fn: earnings_yield_pct
+    op: gt
+    threshold: 4.0
+    statement: "Is the earnings yield above 4%?"
+    requires: [price, eps_diluted]
+    applies_to: stock
+
+  # ── Growth (trailing, from filings) ─────────────────────────────────────────
+  # EDGAR carries no analyst forecasts, so this category measures REALISED growth and is
+  # named accordingly. A forward-looking category needs a forecast provider and is deferred.
+  - id: growth.revenue_yoy
+    category: growth
+    fn: revenue_growth_yoy_pct
+    op: gt
+    threshold: 0.0
+    statement: "Did revenue grow year over year?"
+    requires: [revenue]
+    applies_to: stock
+
+  - id: growth.revenue_3y
+    category: growth
+    fn: revenue_cagr_3y_pct
+    op: gt
+    threshold: 5.0
+    statement: "Has revenue compounded above 5% a year over three years?"
+    requires: [revenue]
+    applies_to: stock
+
+  - id: growth.eps_yoy
+    category: growth
+    fn: eps_growth_yoy_pct
+    op: gt
+    threshold: 0.0
+    statement: "Did earnings per share grow year over year?"
+    requires: [eps_diluted]
+    applies_to: stock
+
+  - id: growth.eps_3y
+    category: growth
+    fn: eps_cagr_3y_pct
+    op: gt
+    threshold: 5.0
+    statement: "Have earnings per share compounded above 5% a year over three years?"
+    requires: [eps_diluted]
+    applies_to: stock
+
+  - id: growth.fcf_yoy
+    category: growth
+    fn: fcf_growth_yoy_pct
+    op: gt
+    threshold: 0.0
+    statement: "Did free cash flow grow year over year?"
+    requires: [operating_cash_flow, capital_expenditure]
+    applies_to: stock
+
+  - id: growth.margin_expanding
+    category: growth
+    fn: net_margin_change_3y_pts
+    op: gt
+    threshold: 0.0
+    statement: "Has the net margin widened over three years?"
+    requires: [net_income, revenue]
+    applies_to: stock
+
+  # ── Past performance ────────────────────────────────────────────────────────
+  - id: past.roe
+    category: past
+    fn: roe_pct
+    op: gt
+    threshold: 15.0
+    statement: "Is return on equity above 15%?"
+    requires: [net_income, stockholders_equity]
+    applies_to: stock
+
+  - id: past.roa
+    category: past
+    fn: roa_pct
+    op: gt
+    threshold: 5.0
+    statement: "Is return on assets above 5%?"
+    requires: [net_income, total_assets]
+    applies_to: stock
+
+  - id: past.net_margin
+    category: past
+    fn: net_margin_pct
+    op: gt
+    threshold: 10.0
+    statement: "Is the net profit margin above 10%?"
+    requires: [net_income, revenue]
+    applies_to: stock
+
+  - id: past.gross_margin
+    category: past
+    fn: gross_margin_pct
+    op: gt
+    threshold: 30.0
+    statement: "Is the gross margin above 30%?"
+    requires: [gross_profit, revenue]
+    applies_to: stock
+
+  - id: past.profitable_5y
+    category: past
+    fn: profitable_years_of_five
+    op: gte
+    threshold: 5.0
+    statement: "Was the company profitable in each of the last five years?"
+    requires: [net_income]
+    applies_to: stock
+
+  - id: past.ocf_positive_5y
+    category: past
+    fn: positive_ocf_years_of_five
+    op: gte
+    threshold: 5.0
+    statement: "Was operating cash flow positive in each of the last five years?"
+    requires: [operating_cash_flow]
+    applies_to: stock
+
+  # ── Financial health ────────────────────────────────────────────────────────
+  - id: health.current_ratio
+    category: health
+    fn: current_ratio
+    op: gt
+    threshold: 1.0
+    statement: "Are short term assets greater than short term liabilities?"
+    requires: [current_assets, current_liabilities]
+    applies_to: stock
+
+  - id: health.debt_to_equity
+    category: health
+    fn: debt_to_equity_pct
+    op: lt
+    threshold: 40.0
+    statement: "Is the debt-to-equity ratio below 40%?"
+    requires: [long_term_debt, stockholders_equity]
+    applies_to: stock
+
+  - id: health.debt_covered_by_ocf
+    category: health
+    fn: ocf_to_debt_pct
+    op: gt
+    threshold: 20.0
+    statement: "Is debt covered by operating cash flow above 20%?"
+    requires: [operating_cash_flow, long_term_debt]
+    applies_to: stock
+
+  - id: health.cash_buffer
+    category: health
+    fn: cash_to_current_liabilities
+    op: gt
+    threshold: 0.25
+    statement: "Does cash cover at least a quarter of short term liabilities?"
+    requires: [cash_and_equivalents, current_liabilities]
+    applies_to: stock
+
+  - id: health.positive_equity
+    category: health
+    fn: stockholders_equity_value
+    op: gt
+    threshold: 0.0
+    statement: "Is shareholders equity positive?"
+    requires: [stockholders_equity]
+    applies_to: stock
+
+  - id: health.assets_exceed_liabilities
+    category: health
+    fn: assets_minus_liabilities
+    op: gt
+    threshold: 0.0
+    statement: "Do total assets exceed total liabilities?"
+    requires: [total_assets, total_liabilities]
+    applies_to: stock
+
+  # ── Dividend and buybacks ───────────────────────────────────────────────────
+  - id: dividend.pays
+    category: dividend
+    fn: dividends_paid_value
+    op: gt
+    threshold: 0.0
+    statement: "Does the company pay a dividend?"
+    requires: [dividends_paid]
+    applies_to: stock
+
+  - id: dividend.payout_sustainable
+    category: dividend
+    fn: payout_ratio_pct
+    op: between
+    threshold: [0.0, 90.0]
+    statement: "Are dividends covered by net profit, with a payout ratio between 0 and 90%?"
+    requires: [dividends_paid, net_income]
+    applies_to: stock
+
+  - id: dividend.covered_by_fcf
+    category: dividend
+    fn: dividend_fcf_coverage
+    op: gt
+    threshold: 1.0
+    statement: "Is the dividend covered by free cash flow?"
+    requires: [dividends_paid, operating_cash_flow, capital_expenditure]
+    applies_to: stock
+
+  - id: dividend.not_cut_5y
+    category: dividend
+    fn: worst_dividend_drop_5y_pct
+    op: lt
+    threshold: 10.0
+    statement: "Has the dividend avoided any annual cut greater than 10% over five years?"
+    requires: [dividends_paid]
+    applies_to: stock
+
+  - id: dividend.growing_5y
+    category: dividend
+    fn: dividend_cagr_5y_pct
+    op: gt
+    threshold: 0.0
+    statement: "Has the dividend grown over five years?"
+    requires: [dividends_paid]
+    applies_to: stock
+
+  - id: dividend.yield_meaningful
+    category: dividend
+    fn: dividend_yield_pct
+    op: gt
+    threshold: 1.0
+    statement: "Is the dividend yield above 1%?"
+    requires: [dividends_paid, shares_diluted, price]
+    applies_to: stock
+
+  # ── Fund (ETFs only; replaces the five fundamental categories) ──────────────
+  # ETFs file N-CEN and N-PORT, not 10-K, so they have NO XBRL statements. Running the
+  # fundamental categories against them would report every serious ETF as failing almost
+  # everything. See design §6.1.
+  - id: fund.expense_ratio
+    category: fund
+    fn: expense_ratio_pct
+    op: lt
+    threshold: 0.5
+    statement: "Is the expense ratio below 0.5%?"
+    requires: [expense_ratio]
+    applies_to: etf
+
+  - id: fund.aum
+    category: fund
+    fn: aum_usd
+    op: gt
+    threshold: 1000000000.0
+    statement: "Are assets under management above $1B?"
+    requires: [total_assets_fund]
+    applies_to: etf
+
+  - id: fund.liquidity
+    category: fund
+    fn: avg_dollar_volume_usd
+    op: gt
+    threshold: 10000000.0
+    statement: "Is average daily dollar volume above $10M?"
+    requires: [price, avg_volume]
+    applies_to: etf
+
+  - id: fund.track_record
+    category: fund
+    fn: years_since_inception
+    op: gt
+    threshold: 3.0
+    statement: "Has the fund been trading for more than three years?"
+    requires: [years_since_inception]
+    applies_to: etf
+
+  # ── Options income suitability (every instrument) ───────────────────────────
+  # The category that differentiates this from a general research site. For an ETF it is
+  # doing most of the work, which is the honest picture for this system.
+  - id: options.iv_rank
+    category: options
+    fn: iv_rank
+    op: gt
+    threshold: 30.0
+    statement: "Is implied volatility rank above 30?"
+    requires: [iv_rank]
+    applies_to: all
+
+  - id: options.vrp_positive
+    category: options
+    fn: vrp_points
+    op: gt
+    threshold: 0.0
+    statement: "Is implied volatility above 30-day realised volatility?"
+    requires: [current_iv, hv_30]
+    applies_to: all
+
+  - id: options.chain_open_interest
+    category: options
+    fn: atm_open_interest
+    op: gt
+    threshold: 500.0
+    statement: "Is at-the-money open interest above 500 contracts?"
+    requires: [atm_open_interest]
+    applies_to: all
+
+  - id: options.spread_tight
+    category: options
+    fn: atm_spread_pct
+    op: lt
+    threshold: 10.0
+    statement: "Is the at-the-money bid-ask spread below 10% of the mid?"
+    requires: [atm_spread_pct]
+    applies_to: all
+
+  - id: options.cc_yield
+    category: options
+    fn: est_monthly_cc_yield_pct
+    op: gt
+    threshold: 1.0
+    statement: "Is the estimated monthly covered-call yield above 1%?"
+    requires: [current_iv, price]
+    applies_to: all
+
+  - id: options.earnings_clear
+    category: options
+    fn: days_to_earnings
+    op: gt
+    threshold: 45.0
+    statement: "Is the next earnings date beyond a typical 45-day option cycle?"
+    requires: [days_to_earnings]
+    applies_to: all

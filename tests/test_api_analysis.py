@@ -78,6 +78,46 @@ def test_ready_section_carries_data(client, monkeypatch) -> None:
     assert body["fundamentals"]["data"]["annual"][0]["items"]["revenue"]["value"] > 0
 
 
+def test_checks_section_carries_the_payload(client, monkeypatch) -> None:
+    from src.research.checks.payload import build_checks_payload
+
+    checks = build_checks_payload(
+        {"price": 100.0, "eps_diluted": 5.0}, symbol="AAPL", is_etf=False
+    )
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol,
+            fundamentals=_financials(),
+            fundamentals_state=SectionState.READY,
+            checks=checks,
+            checks_state=SectionState.READY,
+        ),
+    )
+    body = client.get("/research/AAPL", headers=AUTH).json()
+    assert body["checks"]["state"] == "ready"
+    categories = {c["category"] for c in body["checks"]["data"]["categories"]}
+    assert "value" in categories
+    assert "fund" not in categories
+
+
+def test_checks_section_degrades_when_unavailable(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.api.routers.research.materialize",
+        lambda symbol, **kw: MaterializeResult(
+            symbol=symbol,
+            fundamentals_state=SectionState.UNAVAILABLE,
+            reason="No SEC filer record for this symbol",
+            checks_state=SectionState.UNAVAILABLE,
+            checks_reason="No SEC filer record for this symbol",
+        ),
+    )
+    body = client.get("/research/AAPL", headers=AUTH).json()
+    assert body["checks"]["state"] == "unavailable"
+    assert body["checks"]["data"] is None
+    assert body["checks"]["reason"]
+
+
 def test_pending_section_is_200_with_a_reason_not_an_error(client, monkeypatch) -> None:
     """A slow section must not fail the page. The client polls."""
     monkeypatch.setattr(

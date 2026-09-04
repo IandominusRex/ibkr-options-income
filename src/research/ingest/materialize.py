@@ -31,6 +31,7 @@ from enum import StrEnum
 from pydantic import BaseModel
 
 from src.common.config import get_config
+from src.research.checks.payload import ChecksPayload, build_checks_payload
 from src.research.ingest.fundamentals import ingest_fundamentals, load_cached_financials
 from src.research.schemas import NormalizedFinancials
 from src.research.store.models import IngestJobRow, QuoteRow, SymbolRow
@@ -81,6 +82,15 @@ class MaterializeResult(BaseModel):
     quote_as_of: datetime | None = None
     quote_state: SectionState = SectionState.PENDING
     quote_reason: str | None = None
+    # Flat inputs for the checks engine (Task 5.5): fundamentals line items plus the
+    # options/IV tier, assembled by build_metrics. None only when the symbol itself is
+    # unresolvable (no CIK); a resolvable symbol always gets a dict, even if mostly empty.
+    metrics: dict[str, float | None] | None = None
+    # The check ribbon + warnings (Task 5.7), built from `metrics`. Same (data, state,
+    # reason) triple as the other sections, via _section() below.
+    checks: ChecksPayload | None = None
+    checks_state: SectionState = SectionState.PENDING
+    checks_reason: str | None = None
     # Kept for backwards compatibility with callers that read the single `reason` field.
     reason: str | None = None
 
@@ -126,6 +136,35 @@ def _news(symbol: str) -> object:
     return recent_news(symbol)
 
 
+def _checks_metrics(
+    symbol: str,
+    financials: NormalizedFinancials | None,
+    price: float | None,
+    *,
+    is_etf: bool,
+) -> dict[str, float | None]:
+    """Assemble the checks engine's flat metrics dict (Task 5.5).
+
+    get_iv_stats and get_fundamental_stats each degrade to an all-None object rather than
+    raising — a symbol with no iv_history (off-universe) or no fundamentals coverage
+    produces metrics that report UNKNOWN downstream, never a fabricated value.
+    """
+    from src.analytics.fundamentals import get_fundamental_stats
+    from src.analytics.iv import get_iv_stats
+    from src.research.checks.metrics import build_metrics
+
+    iv_stats = get_iv_stats(symbol)
+    fund_stats = get_fundamental_stats(symbol)
+    return build_metrics(
+        financials, price=price, is_etf=is_etf, iv_stats=iv_stats, fundamentals=fund_stats
+    )
+
+
+def _checks(symbol: str, metrics: dict[str, float | None], is_etf: bool) -> ChecksPayload:
+    """The check ribbon + warnings (Task 5.7). Never raises given a metrics dict."""
+    return build_checks_payload(metrics, symbol=symbol, is_etf=is_etf)
+
+
 def _quote(symbol: str) -> tuple[float | None, datetime | None, str | None]:
     """Read the most recent warm-tier quote row for *symbol*.
 
@@ -158,7 +197,7 @@ def _section(fn, *args) -> tuple[object | None, SectionState, str | None]:
     return data, SectionState.READY, None
 
 
-def _enrich(symbol: str, result: MaterializeResult) -> MaterializeResult:
+def _enrich(symbol: str, result: MaterializeResult, *, is_etf: bool = False) -> MaterializeResult:
     """Run the three enrichment sections + quote, independently of fundamentals.
 
     Each section is guarded by :func:`_section` so one outage cannot cascade. Sentiment is
@@ -191,6 +230,17 @@ def _enrich(symbol: str, result: MaterializeResult) -> MaterializeResult:
         result.quote_state = SectionState.UNAVAILABLE
         result.quote_reason = quote_reason or _REASON_NO_DATA
 
+    try:
+        result.metrics = _checks_metrics(symbol, result.fundamentals, price, is_etf=is_etf)
+    except Exception as exc:
+        log.warning("Checks metrics failed for %s: %s", symbol, exc)
+        result.metrics = {}
+
+    checks_data, checks_state, checks_reason = _section(_checks, symbol, result.metrics, is_etf)
+    result.checks = checks_data if isinstance(checks_data, ChecksPayload) else None
+    result.checks_state = checks_state
+    result.checks_reason = checks_reason
+
     return result
 
 
@@ -210,10 +260,12 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
 
     upper = symbol.upper()
 
-    # Resolve the CIK once; both the cache read and the ingest path need it.
+    # Resolve the CIK once; both the cache read and the ingest path need it. is_etf comes
+    # along for free from the same row — build_metrics needs it to skip XBRL extraction.
     with research_session() as session:
         row = session.get(SymbolRow, upper)
         cik = row.cik if row else None
+        is_etf = bool(row.is_etf) if row else False
 
     if not cik:
         # No directory row means no CIK, and a queued job would never resolve. Saying
@@ -235,6 +287,7 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
                 fundamentals=cached,
                 fundamentals_state=SectionState.READY,
             ),
+            is_etf=is_etf,
         )
 
     # Cold path: fetch from SEC inside the budget.
@@ -251,6 +304,7 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
                 fundamentals_reason=_REASON_SOURCE_UNAVAILABLE,
                 reason=_REASON_SOURCE_UNAVAILABLE,
             ),
+            is_etf=is_etf,
         )
 
     elapsed = time.monotonic() - started
@@ -264,6 +318,7 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
                 fundamentals_reason=_REASON_NO_XBRL,
                 reason=_REASON_NO_XBRL,
             ),
+            is_etf=is_etf,
         )
 
     # The ingest finished. If it exceeded the budget, queue a background warm refresh
@@ -284,6 +339,7 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
         MaterializeResult(
             symbol=upper, fundamentals=financials, fundamentals_state=SectionState.READY
         ),
+        is_etf=is_etf,
     )
 
 

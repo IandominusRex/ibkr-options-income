@@ -82,9 +82,7 @@ def recent_news(symbol: str, limit: int = 25) -> list[dict]:
 
     # Newest first. The provider's own ordering isn't a documented contract, so this is
     # enforced here rather than relied on; items with an unparseable date sort last.
-    out.sort(
-        key=lambda x: x["published_at"] or datetime.min.replace(tzinfo=UTC), reverse=True
-    )
+    out.sort(key=lambda x: x["published_at"] or datetime.min.replace(tzinfo=UTC), reverse=True)
     return out
 
 

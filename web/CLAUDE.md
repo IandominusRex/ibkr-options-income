@@ -48,7 +48,7 @@ app/                App Router pages and the root layout
   layout.tsx        Fonts, <Rail/>, <Providers/>
   page.tsx          Landing page (mounts <CommandPalette/>)
   stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
-                    fundamentals/technicals/sentiment/news is pending, mounts
+                    fundamentals/technicals/sentiment/news/checks is pending, mounts
                     <SectionShell/> per region, shows the delayed quote (with its age
                     and a "delayed" tag once stale) beside the header. <PriceChart/>
                     is NOT gated behind a Section's state — it fetches its own data
@@ -57,6 +57,14 @@ app/                App Router pages and the root layout
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
+  checks/           CheckRibbon (one segment per check, `data-state` + hatch texture for
+                    unknown, `role="img"` + `aria-label`, score line "X of evaluable" never
+                    "X of total"), ChecksSection (per-category ribbons behind a
+                    `<button aria-expanded>` that expands to CheckRow list on click,
+                    collapses on a second click; a not-applicable category is disabled and
+                    shows its `note` instead; renders leveraged-ETF decay Warnings above the
+                    ribbons), CheckRow (statement + actual + threshold + state; unknown
+                    renders `n/a` in `text-unknown`, never `0`)
   stock/            SectionShell (renders pending/unavailable states inline),
                     StatementsTable (normalised statements with filing traceability
                     in a `title` attribute using a hyphen not an em dash; fixed row

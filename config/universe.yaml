@@ -257,3 +257,22 @@ strike_bands:
   RGTI: 0.45
   IONQ: 0.45
   ASTS: 0.45
+
+# ---------------------------------------------------------------------------
+# Leveraged ETFs (2026-08-27). Listed here once so the research checks layer
+# (src/research/checks/warnings.py) can surface the daily-reset decay warning
+# without keeping a second hard-coded copy. Membership rules, derived:
+#   • CC-only (never assignment-eligible) = leveraged_etfs − would_own
+#       → LABU / TSLL / DPST
+#   • Deliberate would_own exception       = leveraged_etfs ∩ would_own
+#       → TQQQ / UPRO / SOXL (confirmed 2026-08-27)
+# Do not move a name between the two sets by editing here alone — the would_own
+# list is the source of truth for which side of the line a name sits on.
+# ---------------------------------------------------------------------------
+leveraged_etfs:
+  - TQQQ
+  - UPRO
+  - SOXL
+  - LABU
+  - TSLL
+  - DPST

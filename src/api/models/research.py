@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from src.api.models.common import Envelope, Sourced
 from src.common.schemas import SentimentDetail, TechnicalStats
+from src.research.checks.payload import ChecksPayload
 from src.research.ingest.materialize import SectionState
 from src.research.schemas import NormalizedFinancials
 
@@ -75,4 +76,5 @@ class AnalysisResponse(Envelope):
     technicals: Section[TechnicalStats] = Section[TechnicalStats](state=SectionState.PENDING)
     sentiment: Section[SentimentDetail] = Section[SentimentDetail](state=SectionState.PENDING)
     news: Section[list[NewsItem]] = Section[list[NewsItem]](state=SectionState.PENDING)
+    checks: Section[ChecksPayload] = Section[ChecksPayload](state=SectionState.PENDING)
     quote: Sourced[float] | None = None

@@ -163,10 +163,36 @@ or missing section **never fails the whole page** — it degrades per section.
 | `technicals` | `Section<TechnicalStats>` | (M4) RSI 14, MACD, SMA 50/200, ATR, phase/regime — defaults `pending` |
 | `sentiment` | `Section<SentimentDetail>` | (M4) composite score, label, 1-day delta, per-source sample counts — defaults `pending` |
 | `news` | `Section<NewsItem[]>` | (M4) recent headlines, newest first, each carrying its own VADER `sentiment` — defaults `pending` |
+| `checks` | `Section<ChecksPayload>` | (M5) the check ribbon + warnings, evaluated from `build_metrics()` + `evaluate()` + `warnings_for()` — see `docs/web/checks.md` for the full catalogue and thresholds — defaults `pending` |
 | `quote` | `Sourced<float>` \| null | (M4) delayed last price; `as_of` is the warm-tier `QuoteRow`'s own capture time (not the request time), so `stale` (after 30 minutes, `fresh_for` on `Sourced.of`) reflects the quote's actual age; `null` when no quote has been fetched for this symbol |
 
-`technicals`, `sentiment`, and `news` each degrade **independently** — an outage in one (e.g.
-StockTwits down) never blocks the others, and never touches `fundamentals`.
+`technicals`, `sentiment`, `news`, and `checks` each degrade **independently** — an outage in
+one (e.g. StockTwits down) never blocks the others, and never touches `fundamentals`.
+
+**`ChecksPayload`** (M5):
+
+| Field | Type | Notes |
+|---|---|---|
+| `categories` | `CategoryPayload[]` | catalogue order; a stock never gets a `fund` entry, an ETF gets all seven with the five fundamental categories `not_applicable` |
+| `warnings` | `Warning[]` | structural caveats (leveraged-ETF daily-reset decay) — never checks, never dilutes a category score |
+
+**`CategoryPayload`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `category` | string | `value` \| `growth` \| `past` \| `health` \| `dividend` \| `fund` \| `options` |
+| `passed` / `failed` / `unknown` | int | |
+| `evaluable` | int | `passed + failed` — the denominator the UI reports against, never `total` when `unknown > 0` |
+| `total` | int | checks defined for this category |
+| `not_applicable` | bool | true for a fundamental category on an ETF (files no XBRL) |
+| `note` | string \| null | populated only when `not_applicable` |
+| `checks` | `CheckResult[]` | every check in the category, for `ChecksSection`'s expand/collapse |
+
+**`CheckResult`:** `id`, `category`, `statement` (a question), `state`
+(`PASS`\|`FAIL`\|`UNKNOWN`\|`NOT_APPLICABLE`), `actual` (float \| null), `threshold` (float \|
+`[low, high]` \| null), `note` (string \| null, set for `UNKNOWN`/`NOT_APPLICABLE`).
+
+**`Warning`:** `level` (`"info"` \| `"caution"`), `title`, `detail`.
 
 **Side effect:** every call upserts a `RecentlyViewedRow(user_id, symbol)` with the current
 timestamp — this is the only signal the warm tier's `refresh_quotes` (Task 4.3,

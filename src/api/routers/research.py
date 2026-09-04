@@ -11,6 +11,7 @@ from src.api.deps import CurrentUser, ResearchDb
 from src.api.models.common import Envelope, Source, Sourced
 from src.api.models.research import AnalysisResponse, Bar, BarsResponse, NewsItem, Section
 from src.common.schemas import SentimentDetail, TechnicalStats
+from src.research.checks.payload import ChecksPayload
 from src.research.ingest.materialize import materialize
 from src.research.schemas import NormalizedFinancials
 from src.research.store.models import DailyBarRow, RecentlyViewedRow, SymbolRow
@@ -254,6 +255,11 @@ def analysis(symbol: str, user: CurrentUser, db: ResearchDb) -> AnalysisResponse
             state=result.news_state,
             data=news_data,
             reason=result.news_reason,
+        ),
+        checks=Section[ChecksPayload](
+            state=result.checks_state,
+            data=result.checks,
+            reason=result.checks_reason,
         ),
         quote=quote_sourced,
     )
