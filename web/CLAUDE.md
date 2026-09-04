@@ -47,11 +47,19 @@ app/                App Router pages and the root layout
   globals.css       The dark token system (source of truth for colour)
   layout.tsx        Fonts, <Rail/>, <Providers/>
   page.tsx          Landing page (mounts <CommandPalette/>)
-  stock/[symbol]/   Stub ticker page (Milestone 3 fills it in)
+  stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
+                    any section is pending, mounts <SectionShell/> per region
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
+  stock/            SectionShell (renders pending/unavailable states inline),
+                    StatementsTable (normalised statements with filing traceability
+                    in a `title` attribute using a hyphen not an em dash; fixed row
+                    order; annual and quarterly sections; missing items render "n/a"
+                    with `.hatch` texture, never "$0", never colour alone)
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`
+  format.ts         formatMoney (compact $391.0B/$1.3M, "n/a" for unknown, "$0"
+                    for a real zero), formatPeriod ("Sep 2024"), UNKNOWN constant
 ```
