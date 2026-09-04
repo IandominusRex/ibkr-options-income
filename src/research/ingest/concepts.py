@@ -98,3 +98,51 @@ def resolve_line_item(payload: dict, spec: LineItemSpec) -> tuple[str, list[Fact
         if facts:
             return concept, facts
     return None
+
+
+# Duration windows, in days. Filers' fiscal years and quarters are not exactly 365/91 days,
+# so these are ranges rather than equalities.
+_ANNUAL_DAYS = (300, 400)
+_QUARTER_DAYS = (60, 120)
+
+# Forms that carry annual balance-sheet positions.
+_ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "40-F"}
+
+
+def select_periods(
+    facts: list[Fact],
+    *,
+    kind: str,
+    period_type: str,
+    limit: int,
+) -> list[Fact]:
+    """Pick one fact per reporting period, newest first.
+
+    Two rules carry the correctness of this function:
+
+    1. `kind` is enforced. A duration fact can never satisfy an instant line item and vice
+       versa. Summing four quarterly durations into "total assets", or reading an instant as
+       a year of revenue, produces plausible nonsense.
+    2. When two filings report the same period, the one filed LATER wins. That is how a
+       restatement becomes the current answer instead of silently reverting.
+    """
+    if kind == "duration":
+        lo, hi = _ANNUAL_DAYS if period_type == "annual" else _QUARTER_DAYS
+        candidates = [
+            f for f in facts if f.start is not None and lo <= (f.end - f.start).days <= hi
+        ]
+    elif kind == "instant":
+        candidates = [f for f in facts if f.start is None]
+        if period_type == "annual":
+            candidates = [f for f in candidates if f.form in _ANNUAL_FORMS]
+    else:
+        raise ValueError(f"kind must be 'duration' or 'instant', got {kind!r}")
+
+    # One fact per period_end; the latest filing wins.
+    by_period: dict[date, Fact] = {}
+    for fact in candidates:
+        current = by_period.get(fact.end)
+        if current is None or fact.filed > current.filed:
+            by_period[fact.end] = fact
+
+    return sorted(by_period.values(), key=lambda f: f.end, reverse=True)[:limit]
