@@ -46,7 +46,13 @@ is the source of truth for every colour.
 app/                App Router pages and the root layout
   globals.css       The dark token system (source of truth for colour)
   layout.tsx        Fonts, <Rail/>, <Providers/>
-  page.tsx          Landing page (mounts <CommandPalette/>)
+  page.tsx          Landing page: search (CommandPalette), then WatchlistTable, then
+                    SectorGrid (ordered by IV rank). A client component because the
+                    watchlist and sector grid use react-query.
+  universe/         Universe page: react-query on GET /universe, groups symbols by list
+                    (indexes / watchlist / would_own / actively_wheeling), marks which
+                    would_own names are actively_wheeling vs dip-watch, shows sector tag
+                    and any strike-band override. Read-only in P1 (`editable: false`).
   stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
                     fundamentals/technicals/sentiment/news/checks is pending, mounts
                     <SectionShell/> per region, shows the delayed quote (with its age
@@ -57,6 +63,14 @@ app/                App Router pages and the root layout
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
+  home/             SectorGrid (react-query on GET /research/sectors, renders SectorCard
+                    ordered by avg_iv_rank desc; a sector with no IV history sorts last),
+                    SectorCard (sector name + count, daily change with sign + colour never
+                    colour alone, best/worst movers, avg IV rank with contributing count so a
+                    one-name average is visible), WatchlistTable (react-query on
+                    GET /watchlist, add/remove via useMutation invalidating the list; an
+                    empty watchlist renders one line of text plus the action — no decorative
+                    icon circle, per the banned template)
   checks/           CheckRibbon (one segment per check, `data-state` + hatch texture for
                     unknown, `role="img"` + `aria-label`, score line "X of evaluable" never
                     "X of total"), ChecksSection (per-category ribbons behind a

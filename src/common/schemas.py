@@ -270,7 +270,9 @@ class FundamentalStats(BaseModel):
     # no extra network cost. NEEDS LIVE VERIFICATION: yfinance's expense-ratio key has
     # varied across library versions and this repo has not yet confirmed which unit a live
     # pull returns for a real ETF (see STATUS.md).
-    expense_ratio: float | None = None  # percentage points (0.5 = 0.5%), matching the checks-engine convention
+    expense_ratio: float | None = (
+        None  # percentage points (0.5 = 0.5%), matching the checks-engine convention
+    )
     total_assets: float | None = None  # fund AUM in USD
     avg_volume: float | None = None  # average daily share volume
     inception_date: date | None = None

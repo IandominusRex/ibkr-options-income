@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Container
 from dataclasses import dataclass, field
@@ -71,6 +72,7 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
+from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
 from src.storage.risk_verdicts import record_assessments
@@ -1401,6 +1403,9 @@ async def _run_scan_body(
 
     # --- 5. Buy-to-own recommendations ---
     result.buy_candidates = generate_buy_candidates(would_own, holdings_symbols, analytics_map)
+    # Persisted so the web layer can read them without recomputing (which would mean a
+    # full scan per page load). Display-only data; nothing reads this back into a gate.
+    save_buy_candidates(result.run_id, result.buy_candidates)
 
     # --- 6. Scoring THEN risk gate ---
     # Score first so the risk engine consumes its cumulative budgets (per-ticker /
@@ -1942,6 +1947,9 @@ async def run_ticker_scan(
     }
     buy_candidates = generate_buy_candidates([ticker], holdings_symbols, analytics_map)
     buy_candidate = buy_candidates[0] if buy_candidates else None
+    # Persisted under a scan-prefixed run id so a single-ticker /scan can never displace
+    # the full scan's recommendations list (latest_buy_candidates filters this prefix out).
+    save_buy_candidates(f"scan-{ticker}-{int(time.time())}", buy_candidates)
 
     # 8b. Deep-dive enrichment (enrichment only — never gates; the /scan TICKER path only formats
     # text, so nothing here can reach execution).

@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from src.api.auth import Role, User, authenticate
+from src.api.trading_db import trading_session
 from src.research.store.session import research_session
 
 _bearer = HTTPBearer(auto_error=False)
@@ -47,3 +48,11 @@ def research_db() -> Iterator[Session]:
 
 
 ResearchDb = Annotated[Session, Depends(research_db)]
+
+
+def trading_db() -> Iterator[Session]:
+    with trading_session() as session:
+        yield session
+
+
+TradingDb = Annotated[Session, Depends(trading_db)]

@@ -191,7 +191,9 @@ def test_materialize_populates_metrics_from_iv_and_fundamentals(tmp_path, monkey
     )
     monkeypatch.setattr(
         "src.analytics.fundamentals.get_fundamental_stats",
-        lambda symbol: FundamentalStats(symbol=symbol, next_earnings=date.today() + timedelta(days=50)),
+        lambda symbol: FundamentalStats(
+            symbol=symbol, next_earnings=date.today() + timedelta(days=50)
+        ),
     )
 
     result = materialize("AAPL")

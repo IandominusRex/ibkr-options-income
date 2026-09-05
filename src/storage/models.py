@@ -396,6 +396,45 @@ class JournalRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class BuyCandidateRow(Base):
+    """One buy-to-own recommendation per scan run, persisted so the web recommendations
+    view can render what ``generate_buy_candidates`` produced without recomputing (which
+    would mean a full scan per page load).
+
+    Written by the orchestrator at both call sites (full scan and single-ticker
+    ``/scan TICKER``). Single-ticker runs use a ``scan-`` prefixed ``run_id`` so
+    ``latest_buy_candidates`` can filter them out: a ``/scan NVDA`` must never displace the
+    whole recommendations list with one name. Display-only data; nothing reads this back
+    into a gate, score, or sizing decision.
+    """
+
+    __tablename__ = "buy_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(40), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    sector: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    iv_rank: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    technical_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    current_iv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hv_30: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vrp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rsi_14: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sma_50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sma_200: Mapped[float | None] = mapped_column(Float, nullable=True)
+    next_earnings: Mapped[date | None] = mapped_column(Date, nullable=True)
+    dividend_yield: Mapped[float | None] = mapped_column(Float, nullable=True)
+    est_monthly_cc_yield: Mapped[float | None] = mapped_column(Float, nullable=True)
+    iv_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fundamental_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    technical_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class CampaignRow(Base):
     """One wheel-strategy campaign — links all legs (CSP→assignment→CC→roll→close) under one P&L thread.
 

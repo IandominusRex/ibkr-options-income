@@ -81,9 +81,7 @@ def test_ready_section_carries_data(client, monkeypatch) -> None:
 def test_checks_section_carries_the_payload(client, monkeypatch) -> None:
     from src.research.checks.payload import build_checks_payload
 
-    checks = build_checks_payload(
-        {"price": 100.0, "eps_diluted": 5.0}, symbol="AAPL", is_etf=False
-    )
+    checks = build_checks_payload({"price": 100.0, "eps_diluted": 5.0}, symbol="AAPL", is_etf=False)
     monkeypatch.setattr(
         "src.api.routers.research.materialize",
         lambda symbol, **kw: MaterializeResult(

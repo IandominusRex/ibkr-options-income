@@ -363,3 +363,194 @@ expected daily field name, so no client-side remapping is needed.
   "sma200": [null, null]
 }
 ```
+
+---
+
+## `GET /research/{symbol}/options`
+
+The on-demand options-income lens (Task 6.3). Registered directly ahead of
+`GET /research/{symbol}` so the path route can't swallow it — `/research/search` and
+`/research/NVDA/options` both resolve correctly.
+
+Honest degradation is the point: a universe symbol (one of `universe.yaml`'s
+`indexes`/`watchlist`/`would_own`/`actively_wheeling` lists — the "hot" tier) gets real
+`iv_rank`/`vrp_points`, read through the **read-only** trading engine (§4.3). An
+off-universe ("cold") symbol with no `iv_history` gets the same response shape with those
+checks `UNKNOWN` rather than a rank invented from a short series. `coverage.option_chain`
+is always `false` in P1 — the API process holds no IBKR connection, so
+`atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too, and the response says so rather
+than the UI quietly showing blanks. Leverage warnings (Task 5.4) are included for
+leveraged names via the shared `warnings_for` catalogue.
+
+**Auth:** required. **404** when `symbol` is not a known SEC filer.
+
+**Path parameter:** `symbol` (case-insensitive).
+
+**Response — `OptionsLensResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | |
+| `symbol` | string | |
+| `in_universe` | bool | true iff `symbol` is in one of `universe.yaml`'s four lists |
+| `tier` | `"hot" \| "cold"` | mirrors `in_universe` |
+| `checks` | `CheckResult[]` | the `research_checks.yaml` catalogue's `options` category only (`iv_rank`, `vrp_positive`, `chain_open_interest`, `spread_tight`, `cc_yield`, `earnings_clear`) |
+| `warnings` | `Warning[]` | leveraged-ETF daily-reset-decay caveats (Task 5.4), empty for an ordinary name |
+| `coverage` | `{ iv_history: bool, option_chain: bool }` | `option_chain` is always `false` in P1 |
+
+`CheckResult`: `{ id, category, statement, state: "PASS"|"FAIL"|"UNKNOWN"|"NOT_APPLICABLE", actual (float\|null), threshold, note (string\|null) }` — full catalogue: `docs/web/checks.md`.
+
+**Example — `GET /research/NVDA/options` (universe symbol):**
+
+```json
+{
+  "as_of": "2026-09-05T10:00:00Z",
+  "symbol": "NVDA",
+  "in_universe": true,
+  "tier": "hot",
+  "checks": [
+    { "id": "options.iv_rank", "category": "options", "statement": "Is implied volatility rank above 30?", "state": "PASS", "actual": 62.5, "threshold": 30.0, "note": null }
+  ],
+  "warnings": [],
+  "coverage": { "iv_history": true, "option_chain": false }
+}
+```
+
+**Example — `GET /research/RIVN/options` (off-universe symbol, no iv_history):**
+
+```json
+{
+  "as_of": "2026-09-05T10:00:00Z",
+  "symbol": "RIVN",
+  "in_universe": false,
+  "tier": "cold",
+  "checks": [
+    { "id": "options.iv_rank", "category": "options", "statement": "Is implied volatility rank above 30?", "state": "UNKNOWN", "actual": null, "threshold": 30.0, "note": "Input data unavailable" }
+  ],
+  "warnings": [],
+  "coverage": { "iv_history": false, "option_chain": false }
+}
+```
+
+---
+
+## `GET /research/recommendations`
+
+The scan's buy-to-own list, rendered exactly as `generate_buy_candidates` scored it. The
+web layer does **no re-scoring** — every field is the value the scan produced at scan
+time, persisted in `BuyCandidateRow` and read back unmodified so the site and the
+Telegram card can never disagree about what the system thinks.
+
+**Auth:** required. Reads through the **read-only** trading engine (§4.3 — the API
+writes nothing).
+
+**Query parameters:**
+
+| Param | Type | Default | Constraint |
+|---|---|---|---|
+| `limit` | int | `25` | `1`–`100` |
+
+**Response — `RecommendationsResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | request time |
+| `computed_at` | datetime \| null | the run the displayed candidates came from; `null` when no scan has run |
+| `candidates` | `BuyCandidateOut[]` | ranked by score descending; empty (not an error) when no full scan has run |
+
+`BuyCandidateOut` carries the full `BuyCandidate` shape (`symbol`, `score`, `sector`,
+`iv_rank`, `quality_flag`, `technical_regime`, `rationale`, `price`, `current_iv`,
+`hv_30`, `vrp`, `rsi_14`, `sma_50`, `sma_200`, `next_earnings`, `dividend_yield`,
+`est_monthly_cc_yield`, `iv_score`, `fundamental_score`, `technical_score`). An empty
+table returns an empty list with a 200, not a 404. Single-ticker `/scan TICKER` runs are
+excluded — a `/scan NVDA` cannot replace the whole list with one name.
+
+---
+
+## `GET /research/sectors`
+
+The sector card grid for the landing page. Sector membership comes from
+`universe.yaml`'s `sectors` map. `change_pct` is the warm-tier quote's daily change; a
+sector with no priced members reports `null`, never `0`. `avg_iv_rank` averages only
+members with IV history (read-only from the trading DB), and `iv_rank_count` carries
+the contributing count so a one-name average is visible. Cards are ordered by
+`avg_iv_rank` descending.
+
+**Auth:** required.
+
+**Response — `SectorsResponse`:**
+
+| Field | Type |
+|---|---|
+| `as_of` | datetime |
+| `sectors` | `SectorCard[]` |
+
+`SectorCard`: `{ sector, count, change_pct (float\|null), best: SectorMover, worst: SectorMover, avg_iv_rank (float\|null), iv_rank_count }`.
+`SectorMover`: `{ symbol, change_pct (float\|null) }`. `best`/`worst` use `{ symbol: "-", change_pct: null }` when the sector has no priced members.
+
+---
+
+## `GET /watchlist`
+
+The user's tracked symbols, scoped to their `user_id` (defaulting to `"owner"`). A
+second user's items are not returned.
+
+**Auth:** required.
+
+**Response — `WatchlistResponse`:**
+
+| Field | Type |
+|---|---|
+| `as_of` | datetime |
+| `items` | `WatchlistItem[]` |
+
+`WatchlistItem`: `{ symbol, name, price: Sourced<float> \| null, change_pct (float\|null), iv_rank (float\|null), checks: {passed, evaluable, unknown}, next_earnings (date\|null) }`. `price` is the warm-tier quote as a `Sourced` envelope (stale after 30 min). `checks` is the aggregate count — the full per-check payload lives on the ticker page.
+
+---
+
+## `POST /watchlist/{symbol}`
+
+Add a symbol to the current user's watchlist. **Idempotent:** a first add returns 201; a
+repeat returns 200 with `{added: false}` (not an error). Adding a symbol promotes it to
+the warm tier immediately (`warm_symbols()` reads `WatchlistItemRow`).
+
+**Auth:** required.
+
+| Status | When |
+|---|---|
+| 201 | first add |
+| 200 | repeat add (idempotent) |
+| 404 | symbol is not a known SEC filer |
+
+**Response (201/200):** `{ symbol, added }` where `added` is `true` on first add, `false` on repeat.
+
+---
+
+## `DELETE /watchlist/{symbol}`
+
+Remove a symbol from the current user's watchlist. **Idempotent:** a repeat delete is
+still 204.
+
+**Auth:** required. **204** on success or already-absent.
+
+---
+
+## `GET /universe`
+
+The effective scan universe, read-only in P1 (`editable: false`). Every list is returned
+unmodified and in `universe.yaml` file order.
+
+**Auth:** required.
+
+**Response — `UniverseResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | |
+| `indexes` | `string[]` | in file order |
+| `watchlist` | `string[]` | in file order |
+| `would_own` | `string[]` | CSP allowlist |
+| `actively_wheeling` | `string[]` | subset of `would_own` |
+| `sectors` | `Record<string, string>` | symbol → sector tag |
+| `strike_bands` | `Record<string, number>` | symbol → band fraction, only overrides |
+| `editable` | bool | `false` in P1 — no write path exists |
