@@ -554,3 +554,46 @@ unmodified and in `universe.yaml` file order.
 | `sectors` | `Record<string, string>` | symbol → sector tag |
 | `strike_bands` | `Record<string, number>` | symbol → band fraction, only overrides |
 | `editable` | bool | `false` in P1 — no write path exists |
+
+---
+
+## `GET /research/{symbol}/summary`
+
+The AI summary (M7). **Enrichment only — influences nothing.** The summary records
+narrative over numbers the deterministic layer already computed; it never calculates a
+figure, and the fence tests in `tests/test_web_fence.py` keep it that way.
+
+**GET makes no model call.** A first-time search on an obscure ticker must not silently
+trigger a model call (design §7). When nothing is cached, the response is `unavailable`
+with a reason; the client renders a **Generate summary** action rather than a spinner.
+A cached summary past `research.summary.cache_ttl_hours` is returned as `stale` so the
+client can prompt a regeneration.
+
+**Auth:** required. **404** when `symbol` is not a known SEC filer.
+
+**Response — `SummaryResponse`:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `as_of` | datetime | request time |
+| `symbol` | string | uppercased |
+| `state` | `"ready" \| "stale" \| "unavailable" \| "pending"` | `unavailable` = no cache, no model call; `pending` = generation attempted but failed soft |
+| `summary` | `SummaryOut \| null` | present when `state` is `ready` or `stale` |
+| `reason` | string \| null | explains `unavailable` / `pending` |
+
+`SummaryOut`: `{ thesis, bull_points[], bear_points[], watch_items[], caveats[], model, data_as_of }`.
+`caveats` always carries the quantitative limit (cannot account for one-time charges,
+M&A, spinoffs, restatements). `model` and `data_as_of` make a stale summary visibly stale.
+
+---
+
+## `POST /research/{symbol}/summary`
+
+Generate and cache a summary on demand. Fail-soft: a failed generation returns `pending`
+with a reason (not an error), so the rest of the page is untouched. The cache key is
+`(symbol, model, prompt_hash, data_as_of)`; a changed `data_as_of` misses.
+
+**Auth:** required. **404** when `symbol` is not a known SEC filer.
+
+**Response (200):** `SummaryResponse` (same shape as GET), with `state` = `ready` on
+success or `pending` on fail-soft.

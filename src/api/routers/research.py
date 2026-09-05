@@ -22,6 +22,8 @@ from src.api.models.research import (
     SectorCard,
     SectorMover,
     SectorsResponse,
+    SummaryOut,
+    SummaryResponse,
 )
 from src.common.config import get_config
 from src.common.schemas import FundamentalStats, IVStats, SentimentDetail, TechnicalStats
@@ -114,8 +116,8 @@ def recommendations(
     """The scan's buy-to-own list, rendered exactly as it was scored.
 
     Reads ``BuyCandidateRow`` through the **read-only** trading session (§4.3 — the API
-    writes nothing). The web layer does no re-scoring: every field is what
-    ``generate_buy_candidates`` produced at scan time, so the site and the Telegram card
+    writes nothing). The web layer does no re-scoring: every field is what the
+    orchestrator's scan-time scoring produced, so the site and the Telegram card
     can never disagree about what the system thinks. An empty table returns an empty
     list with a 200, not a 404 — no scan has run yet is a legitimate state.
     """
@@ -474,9 +476,7 @@ def options_lens(
         None, price=price, is_etf=row.is_etf, iv_stats=iv_stats, fundamentals=fund_stats
     )
     payload = build_checks_payload(metrics, symbol=upper, is_etf=row.is_etf)
-    options_checks = next(
-        (c.checks for c in payload.categories if c.category == "options"), []
-    )
+    options_checks = next((c.checks for c in payload.categories if c.category == "options"), [])
 
     return OptionsLensResponse(
         as_of=now,
@@ -581,4 +581,193 @@ def analysis(symbol: str, user: CurrentUser, db: ResearchDb) -> AnalysisResponse
             reason=result.checks_reason,
         ),
         quote=quote_sourced,
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI summary (M7) — enrichment, never a dependency
+# ---------------------------------------------------------------------------
+# The on-demand rule (design §7): GET makes no model call. It returns whatever is
+# cached (or an `unavailable` state with a reason) so a first-time search on an
+# obscure ticker does not silently trigger a model call. POST generates on demand.
+
+
+def _analysis_for_summary(db: ResearchDb, upper: str) -> AnalysisResponse:
+    """Rebuild a minimal AnalysisResponse for the summary context builder.
+
+    The summary only needs the already-computed sections (checks, technicals,
+    sentiment, news) — it never triggers a fresh fetch. We reuse the same
+    `materialize` path the main analysis route uses, which reads from cache.
+
+    ``as_of`` is the data's computed time, not the request time, so the summary
+    cache key ``(symbol, model, prompt_hash, data_as_of)`` is stable across
+    requests for the same underlying data — a GET after a POST hits the cache.
+    We use the latest check result's ``computed_at`` (or the analysis cache row's
+    ``computed_at``) as that timestamp; falling back to ``now`` only when no
+    checks have been computed yet.
+    """
+    from src.research.store.models import AnalysisCacheRow, CheckResultRow
+
+    row = db.get(SymbolRow, upper)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+    result = materialize(upper)
+    technicals_data: TechnicalStats | None = None
+    if isinstance(result.technicals, TechnicalStats):
+        technicals_data = result.technicals
+    sentiment_data: SentimentDetail | None = None
+    if isinstance(result.sentiment, SentimentDetail):
+        sentiment_data = result.sentiment
+    news_data: list[NewsItem] | None = None
+    if result.news is not None:
+        news_data = [
+            NewsItem(
+                title=str(item.get("title", "")),
+                url=item.get("url"),
+                published_at=item.get("published_at"),
+                source=item.get("source"),
+                sentiment=item.get("sentiment"),
+            )
+            for item in result.news
+            if item.get("title")
+        ]
+    # Stable data_as_of: the most recent check computation, or the analysis cache
+    # row's computed_at, so the cache key is stable for the same underlying data.
+    # When neither exists (a cold symbol with no computed analysis), fall back to
+    # the quote's as_of — which is stable between requests for the same data — or
+    # finally the SymbolRow.updated_at, never the request time (which would make
+    # every GET miss the POST's cache).
+    data_as_of = datetime.now(UTC)
+    latest_check = db.execute(
+        select(CheckResultRow.computed_at)
+        .where(CheckResultRow.symbol == upper)
+        .order_by(CheckResultRow.computed_at.desc())
+        .limit(1)
+    ).first()
+    if latest_check is not None:
+        data_as_of = latest_check[0]
+        if data_as_of.tzinfo is None:
+            data_as_of = data_as_of.replace(tzinfo=UTC)
+    else:
+        cache_row = db.get(AnalysisCacheRow, upper)
+        if cache_row is not None and cache_row.computed_at is not None:
+            data_as_of = cache_row.computed_at
+            if data_as_of.tzinfo is None:
+                data_as_of = data_as_of.replace(tzinfo=UTC)
+        else:
+            quote = db.get(QuoteRow, upper)
+            if quote is not None and quote.as_of is not None:
+                data_as_of = quote.as_of
+                if data_as_of.tzinfo is None:
+                    data_as_of = data_as_of.replace(tzinfo=UTC)
+            elif row.updated_at is not None:
+                data_as_of = row.updated_at
+                if data_as_of.tzinfo is None:
+                    data_as_of = data_as_of.replace(tzinfo=UTC)
+    return AnalysisResponse(
+        as_of=data_as_of,
+        symbol=upper,
+        name=row.name,
+        exchange=row.exchange,
+        is_etf=row.is_etf,
+        fundamentals=Section[NormalizedFinancials](
+            state=result.fundamentals_state,
+            data=result.fundamentals,
+            reason=result.fundamentals_reason or result.reason,
+        ),
+        technicals=Section[TechnicalStats](
+            state=result.technicals_state,
+            data=technicals_data,
+            reason=result.technicals_reason,
+        ),
+        sentiment=Section[SentimentDetail](
+            state=result.sentiment_state,
+            data=sentiment_data,
+            reason=result.sentiment_reason,
+        ),
+        news=Section[list[NewsItem]](
+            state=result.news_state,
+            data=news_data,
+            reason=result.news_reason,
+        ),
+        checks=Section[ChecksPayload](
+            state=result.checks_state,
+            data=result.checks,
+            reason=result.checks_reason,
+        ),
+    )
+
+
+def _to_summary_out(summary: object) -> SummaryOut:
+    return SummaryOut(
+        thesis=getattr(summary, "thesis", ""),
+        bull_points=list(getattr(summary, "bull_points", []) or []),
+        bear_points=list(getattr(summary, "bear_points", []) or []),
+        watch_items=list(getattr(summary, "watch_items", []) or []),
+        caveats=list(getattr(summary, "caveats", []) or []),
+        model=getattr(summary, "model", ""),
+        data_as_of=getattr(summary, "data_as_of", datetime.now(UTC)),
+    )
+
+
+@router.get("/{symbol}/summary", response_model=SummaryResponse)
+def get_summary(symbol: str, user: CurrentUser, db: ResearchDb) -> SummaryResponse:
+    """Return a cached summary if one exists. **Makes no model call and no
+    ``materialize``/fetch.**
+
+    A cold-tier search on an obscure ticker must not silently trigger a model call
+    (design §7), and the same principle applies to the SEC/enrichment fetches
+    ``materialize`` would run. The GET first consults the cache directly; only on a
+    miss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for
+    the ``unavailable`` reason, and even then it makes no model call — the client
+    renders a Generate action rather than a spinner.
+    """
+    now = datetime.now(UTC)
+    upper = symbol.upper()
+    row = db.get(SymbolRow, upper)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+
+    from src.research.summary.service import cached_summary_for
+
+    summary, state = cached_summary_for(upper, db)
+    if summary is not None and state == "ready":
+        return SummaryResponse(
+            as_of=now, symbol=upper, state="ready", summary=_to_summary_out(summary)
+        )
+    if summary is not None and state == "stale":
+        return SummaryResponse(
+            as_of=now, symbol=upper, state="stale", summary=_to_summary_out(summary)
+        )
+    return SummaryResponse(
+        as_of=now,
+        symbol=upper,
+        state="unavailable",
+        reason="No summary yet. Generate one on demand.",
+    )
+
+
+@router.post("/{symbol}/summary", response_model=SummaryResponse)
+def post_summary(symbol: str, user: CurrentUser, db: ResearchDb) -> SummaryResponse:
+    """Generate and cache a summary on demand. Fail-soft: a failed generation returns
+    ``pending`` with a reason, not an error, so the rest of the page is untouched."""
+    now = datetime.now(UTC)
+    upper = symbol.upper()
+    row = db.get(SymbolRow, upper)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+
+    from src.research.summary.service import summary_for
+
+    analysis = _analysis_for_summary(db, upper)
+    summary, state = summary_for(upper, analysis, db, force=True)
+    if summary is not None:
+        return SummaryResponse(
+            as_of=now, symbol=upper, state="ready", summary=_to_summary_out(summary)
+        )
+    return SummaryResponse(
+        as_of=now,
+        symbol=upper,
+        state="pending",
+        reason="Generation failed. The page is unaffected; try again later.",
     )

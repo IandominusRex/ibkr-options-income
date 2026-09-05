@@ -58,18 +58,35 @@ def _build_cmd(cfg: object) -> list[str]:
     return cmd
 
 
-def _run_cli[T](prompt: str, prefix: str, parse_fn: Callable[[str], T | None]) -> T | None:
-    """Shared subprocess retry loop for roll and EOD journal CLI calls.
+def _run_cli[T](
+    prompt: str,
+    prefix: str,
+    parse_fn: Callable[[str], T | None],
+    *,
+    cmd: list[str] | None = None,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> T | None:
+    """Shared subprocess retry loop for every CLI-backed enrichment call: roll, EOD
+    journal, and (M7) the summary layer's ``claude_cli`` backend.
 
-    Retries up to cfg.max_retries on TimeoutExpired or empty/unparseable output;
+    Retries up to ``max_retries`` on TimeoutExpired or empty/unparseable output;
     returns immediately None on FileNotFoundError. Calls _log_cost on success.
+
+    ``cmd``/``timeout_seconds``/``max_retries`` default to the ``claude.*`` config
+    (roll and the EOD journal, unchanged from before this was parameterised). A caller
+    with its own timeout/retry budget — the summary layer uses
+    ``research.summary.timeout_seconds`` rather than ``claude.timeout_seconds`` — passes
+    its own values so it need not duplicate this subprocess loop.
     """
     cfg = get_config().claude
-    cmd = _build_cmd(cfg)
-    for attempt in range(cfg.max_retries + 1):
+    cmd = cmd if cmd is not None else _build_cmd(cfg)
+    timeout = timeout_seconds if timeout_seconds is not None else cfg.timeout_seconds
+    retries = max_retries if max_retries is not None else cfg.max_retries
+    for attempt in range(retries + 1):
         try:
             result = subprocess.run(
-                cmd, input=prompt, capture_output=True, text=True, timeout=cfg.timeout_seconds
+                cmd, input=prompt, capture_output=True, text=True, timeout=timeout
             )
         except subprocess.TimeoutExpired:
             log.warning("%s: timed out (attempt %d)", prefix, attempt + 1)
@@ -85,7 +102,7 @@ def _run_cli[T](prompt: str, prefix: str, parse_fn: Callable[[str], T | None]) -
             _log_cost(result.stdout)
             return parsed
         log.warning("%s: unparseable output (attempt %d)", prefix, attempt + 1)
-    log.error("%s: all %d attempt(s) failed", prefix, cfg.max_retries + 1)
+    log.error("%s: all %d attempt(s) failed", prefix, retries + 1)
     return None
 
 

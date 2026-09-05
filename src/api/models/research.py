@@ -213,3 +213,35 @@ class OptionsLensResponse(Envelope):
     checks: list[CheckResult] = []
     warnings: list[CheckWarning] = []
     coverage: OptionsCoverage
+
+
+class SummaryOut(BaseModel):
+    """The AI narrative over computed values. Enrichment — influences nothing.
+
+    Every number the model used was passed in via ``ResearchContext``; the model never
+    calculates. ``caveats`` always carries the quantitative limit. ``model`` and
+    ``data_as_of`` make a stale summary visibly stale.
+    """
+
+    thesis: str
+    bull_points: list[str] = []
+    bear_points: list[str] = []
+    watch_items: list[str] = []
+    caveats: list[str] = []
+    model: str
+    data_as_of: datetime
+
+
+class SummaryResponse(Envelope):
+    """``GET/POST /research/{symbol}/summary``.
+
+    ``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),
+    ``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST
+    generation was attempted but failed soft). ``reason`` explains ``unavailable``/
+    ``pending`` so the panel can show why and prompt a Generate/retry action.
+    """
+
+    symbol: str
+    state: Literal["ready", "stale", "unavailable", "pending"]
+    summary: SummaryOut | None = None
+    reason: str | None = None

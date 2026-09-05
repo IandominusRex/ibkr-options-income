@@ -78,6 +78,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/research/recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recommendations
+         * @description The scan's buy-to-own list, rendered exactly as it was scored.
+         *
+         *     Reads ``BuyCandidateRow`` through the **read-only** trading session (§4.3 — the API
+         *     writes nothing). The web layer does no re-scoring: every field is what the
+         *     orchestrator's scan-time scoring produced, so the site and the Telegram card
+         *     can never disagree about what the system thinks. An empty table returns an empty
+         *     list with a 200, not a 404 — no scan has run yet is a legitimate state.
+         */
+        get: operations["recommendations_research_recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/sectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sectors
+         * @description Sector cards: aggregate daily change, best/worst mover, count, and average IV rank.
+         *
+         *     Membership comes from ``universe.yaml``'s ``sectors`` map (every universe symbol tagged
+         *     with its sector). ``change_pct`` is the warm-tier quote's daily change from the research
+         *     DB; a sector with no priced members reports ``change_pct`` as ``None``, never ``0``.
+         *     ``avg_iv_rank`` averages only members that actually have IV history in the trading DB
+         *     (read-only), and the card carries the contributing count so a one-name average is visible.
+         *
+         *     Cards are returned ordered by ``avg_iv_rank`` descending (premium richness is the
+         *     reason to look); sectors with no IV history sort last, preserving their file order.
+         */
+        get: operations["sectors_research_sectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/research/{symbol}/bars": {
         parameters: {
             query?: never;
@@ -94,6 +149,33 @@ export interface paths {
          *     disagree. A symbol with no bars returns empty lists, not an error.
          */
         get: operations["bars_research__symbol__bars_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Options Lens
+         * @description On-demand options-income lens — honest about what it does and doesn't know.
+         *
+         *     A universe symbol gets real `iv_rank`/`vrp_points` from the trading DB, read-only
+         *     (§4.3). An off-universe symbol gets the same shape with `UNKNOWN` and
+         *     `coverage.iv_history` false rather than a percentile invented from a short series.
+         *     `coverage.option_chain` is always false in P1 — the API holds no IBKR connection, so
+         *     `atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too. Leverage warnings (Task 5.4)
+         *     are included for leveraged names via the shared `warnings_for` catalogue.
+         */
+        get: operations["options_lens_research__symbol__options_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -119,6 +201,104 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Summary
+         * @description Return a cached summary if one exists. **Makes no model call and no
+         *     ``materialize``/fetch.**
+         *
+         *     A cold-tier search on an obscure ticker must not silently trigger a model call
+         *     (design §7), and the same principle applies to the SEC/enrichment fetches
+         *     ``materialize`` would run. The GET first consults the cache directly; only on a
+         *     miss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for
+         *     the ``unavailable`` reason, and even then it makes no model call — the client
+         *     renders a Generate action rather than a spinner.
+         */
+        get: operations["get_summary_research__symbol__summary_get"];
+        put?: never;
+        /**
+         * Post Summary
+         * @description Generate and cache a summary on demand. Fail-soft: a failed generation returns
+         *     ``pending`` with a reason, not an error, so the rest of the page is untouched.
+         */
+        post: operations["post_summary_research__symbol__summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/universe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Universe */
+        get: operations["universe_universe_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Watchlist
+         * @description Return this user's watchlist items. A second user's items are not returned.
+         */
+        get: operations["list_watchlist_watchlist_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/watchlist/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Symbol
+         * @description Add *symbol* to this user's watchlist. Idempotent: a repeat is 200, not an error.
+         *
+         *     Returns 201 on first add, 200 on a repeat. 404 if the symbol is not a known filer — we
+         *     never create a row that can never resolve to a name. Adding a symbol promotes it to the
+         *     warm tier immediately (``warm_symbols`` reads ``WatchlistItemRow``).
+         */
+        post: operations["add_symbol_watchlist__symbol__post"];
+        /**
+         * Remove Symbol
+         * @description Remove *symbol* from this user's watchlist. Idempotent: a repeat delete is 204.
+         */
+        delete: operations["remove_symbol_watchlist__symbol__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -165,6 +345,12 @@ export interface components {
              *     }
              */
             news: components["schemas"]["Section_list_NewsItem__"];
+            /**
+             * @default {
+             *       "state": "pending"
+             *     }
+             */
+            checks: components["schemas"]["Section_ChecksPayload_"];
             quote?: components["schemas"]["Sourced_float_"] | null;
         };
         /**
@@ -217,6 +403,118 @@ export interface components {
              * @default []
              */
             sma200: (number | null)[];
+        };
+        /**
+         * BuyCandidateOut
+         * @description One buy-to-own recommendation, rendered exactly as the scan scored it.
+         *
+         *     The web layer does no re-scoring: every field below is the value
+         *     ``generate_buy_candidates`` produced at scan time, persisted via
+         *     ``BuyCandidateRow`` and read back unmodified so the site and Telegram can never
+         *     disagree about what the system thinks.
+         */
+        BuyCandidateOut: {
+            /** Symbol */
+            symbol: string;
+            /** Score */
+            score: number;
+            /** Sector */
+            sector?: string | null;
+            /** Iv Rank */
+            iv_rank?: number | null;
+            /** Quality Flag */
+            quality_flag?: boolean | null;
+            /** Technical Regime */
+            technical_regime?: string | null;
+            /**
+             * Rationale
+             * @default
+             */
+            rationale: string;
+            /** Price */
+            price?: number | null;
+            /** Current Iv */
+            current_iv?: number | null;
+            /** Hv 30 */
+            hv_30?: number | null;
+            /** Vrp */
+            vrp?: number | null;
+            /** Rsi 14 */
+            rsi_14?: number | null;
+            /** Sma 50 */
+            sma_50?: number | null;
+            /** Sma 200 */
+            sma_200?: number | null;
+            /** Next Earnings */
+            next_earnings?: string | null;
+            /** Dividend Yield */
+            dividend_yield?: number | null;
+            /** Est Monthly Cc Yield */
+            est_monthly_cc_yield?: number | null;
+            /** Iv Score */
+            iv_score?: number | null;
+            /** Fundamental Score */
+            fundamental_score?: number | null;
+            /** Technical Score */
+            technical_score?: number | null;
+        };
+        /** CategoryPayload */
+        CategoryPayload: {
+            /** Category */
+            category: string;
+            /** Passed */
+            passed: number;
+            /** Failed */
+            failed: number;
+            /** Unknown */
+            unknown: number;
+            /** Evaluable */
+            evaluable: number;
+            /** Total */
+            total: number;
+            /**
+             * Not Applicable
+             * @default false
+             */
+            not_applicable: boolean;
+            /** Note */
+            note?: string | null;
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckResult"][];
+        };
+        /** CheckResult */
+        CheckResult: {
+            /** Id */
+            id: string;
+            /** Category */
+            category: string;
+            /** Statement */
+            statement: string;
+            state: components["schemas"]["CheckState"];
+            /** Actual */
+            actual?: number | null;
+            /** Threshold */
+            threshold?: number | number[] | null;
+            /** Note */
+            note?: string | null;
+        };
+        /**
+         * CheckState
+         * @enum {string}
+         */
+        CheckState: "PASS" | "FAIL" | "UNKNOWN" | "NOT_APPLICABLE";
+        /** ChecksPayload */
+        ChecksPayload: {
+            /** Categories */
+            categories: components["schemas"]["CategoryPayload"][];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: components["schemas"]["Warning"][];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -344,6 +642,61 @@ export interface components {
             quarterly: components["schemas"]["PeriodStatement"][];
         };
         /**
+         * OptionsCoverage
+         * @description What the on-demand options lens could actually check.
+         *
+         *     ``option_chain`` is always ``false`` in P1 — the API process holds no IBKR
+         *     connection, so ``atm_open_interest``/``atm_spread_pct`` stay ``UNKNOWN`` and the
+         *     response says so rather than the UI quietly showing blanks.
+         */
+        OptionsCoverage: {
+            /** Iv History */
+            iv_history: boolean;
+            /**
+             * Option Chain
+             * @default false
+             */
+            option_chain: boolean;
+        };
+        /**
+         * OptionsLensResponse
+         * @description ``GET /research/{symbol}/options`` — the on-demand options-income checks lens.
+         *
+         *     ``in_universe``/``tier`` reflect whether *symbol* is one of the ~46 `universe.yaml`
+         *     names (the "hot" tier, with full IV history) or anything else ("cold", best-effort).
+         *     ``checks`` is the catalogue's `options` category only. `iv_rank`/`vrp_points` are read
+         *     real from the trading DB for a universe name; for an off-universe name with no
+         *     `iv_history` they resolve to `UNKNOWN` rather than a percentile invented from a short
+         *     series — `coverage.iv_history` names which case applied.
+         */
+        OptionsLensResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol: string;
+            /** In Universe */
+            in_universe: boolean;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "hot" | "cold";
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckResult"][];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: components["schemas"]["Warning"][];
+            coverage: components["schemas"]["OptionsCoverage"];
+        };
+        /**
          * PeriodStatement
          * @description Every line item for one reporting period.
          */
@@ -365,6 +718,28 @@ export interface components {
          * @enum {string}
          */
         Phase: "base" | "uptrend" | "distribution" | "downtrend";
+        /**
+         * RecommendationsResponse
+         * @description ``GET /research/recommendations`` — the buy list the scan produced.
+         *
+         *     ``computed_at`` is the most recent full scan's compute time (the run the displayed
+         *     candidates came from). ``as_of`` is the request time. ``candidates`` is empty (not
+         *     an error) when no full scan has run yet; the route still returns 200 in that case.
+         */
+        RecommendationsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Computed At */
+            computed_at?: string | null;
+            /**
+             * Candidates
+             * @default []
+             */
+            candidates: components["schemas"]["BuyCandidateOut"][];
+        };
         /**
          * Regime
          * @enum {string}
@@ -406,6 +781,13 @@ export interface components {
          * @enum {string}
          */
         SectionState: "ready" | "pending" | "unavailable";
+        /** Section[ChecksPayload] */
+        Section_ChecksPayload_: {
+            state: components["schemas"]["SectionState"];
+            data?: components["schemas"]["ChecksPayload"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
         /** Section[NormalizedFinancials] */
         Section_NormalizedFinancials_: {
             state: components["schemas"]["SectionState"];
@@ -434,6 +816,61 @@ export interface components {
             data?: components["schemas"]["NewsItem"][] | null;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * SectorCard
+         * @description One sector's aggregate summary for the landing-page grid.
+         *
+         *     ``avg_iv_rank`` is the differentiator: where premium is rich today, at a glance —
+         *     no consumer research site shows it. ``iv_rank_count`` is the number of members that
+         *     actually contributed to that average, so a one-name average is visible as such
+         *     (and ``avg_iv_rank`` is ``None`` when no member has IV history).
+         *     ``change_pct`` is ``None`` (never ``0``) when no member has a priced quote.
+         *     Cards are ordered by ``avg_iv_rank`` descending on the client, since premium
+         *     richness is the reason to look.
+         */
+        SectorCard: {
+            /** Sector */
+            sector: string;
+            /** Count */
+            count: number;
+            /** Change Pct */
+            change_pct?: number | null;
+            best: components["schemas"]["SectorMover"];
+            worst: components["schemas"]["SectorMover"];
+            /** Avg Iv Rank */
+            avg_iv_rank?: number | null;
+            /**
+             * Iv Rank Count
+             * @default 0
+             */
+            iv_rank_count: number;
+        };
+        /**
+         * SectorMover
+         * @description One symbol and its daily change, for the best/worst corner of a sector card.
+         */
+        SectorMover: {
+            /** Symbol */
+            symbol: string;
+            /** Change Pct */
+            change_pct?: number | null;
+        };
+        /**
+         * SectorsResponse
+         * @description ``GET /research/sectors`` — the sector card grid.
+         */
+        SectorsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Sectors
+             * @default []
+             */
+            sectors: components["schemas"]["SectorCard"][];
         };
         /**
          * SentimentDetail
@@ -495,6 +932,71 @@ export interface components {
              */
             stale: boolean;
         };
+        /**
+         * SummaryOut
+         * @description The AI narrative over computed values. Enrichment — influences nothing.
+         *
+         *     Every number the model used was passed in via ``ResearchContext``; the model never
+         *     calculates. ``caveats`` always carries the quantitative limit. ``model`` and
+         *     ``data_as_of`` make a stale summary visibly stale.
+         */
+        SummaryOut: {
+            /** Thesis */
+            thesis: string;
+            /**
+             * Bull Points
+             * @default []
+             */
+            bull_points: string[];
+            /**
+             * Bear Points
+             * @default []
+             */
+            bear_points: string[];
+            /**
+             * Watch Items
+             * @default []
+             */
+            watch_items: string[];
+            /**
+             * Caveats
+             * @default []
+             */
+            caveats: string[];
+            /** Model */
+            model: string;
+            /**
+             * Data As Of
+             * Format: date-time
+             */
+            data_as_of: string;
+        };
+        /**
+         * SummaryResponse
+         * @description ``GET/POST /research/{symbol}/summary``.
+         *
+         *     ``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),
+         *     ``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST
+         *     generation was attempted but failed soft). ``reason`` explains ``unavailable``/
+         *     ``pending`` so the panel can show why and prompt a Generate/retry action.
+         */
+        SummaryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "stale" | "unavailable" | "pending";
+            summary?: components["schemas"]["SummaryOut"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
         /** TechnicalStats */
         TechnicalStats: {
             /** Symbol */
@@ -531,6 +1033,42 @@ export interface components {
             price_source: string;
             phase?: components["schemas"]["Phase"] | null;
         };
+        /**
+         * UniverseResponse
+         * @description The parsed universe.yaml: the four lists, the sector map, strike-band overrides.
+         *
+         *     ``sectors`` maps every universe symbol to its sector tag. ``strike_bands`` maps the
+         *     symbols that carry a per-symbol override to the band fraction. Both are read-only
+         *     in P1; ``editable`` is ``false`` so the client knows not to show an edit control.
+         */
+        UniverseResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Indexes */
+            indexes: string[];
+            /** Watchlist */
+            watchlist: string[];
+            /** Would Own */
+            would_own: string[];
+            /** Actively Wheeling */
+            actively_wheeling: string[];
+            /** Sectors */
+            sectors: {
+                [key: string]: string;
+            };
+            /** Strike Bands */
+            strike_bands: {
+                [key: string]: number;
+            };
+            /**
+             * Editable
+             * @default false
+             */
+            editable: boolean;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -543,6 +1081,60 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * Warning
+         * @description One surfaced caveat. ``level`` drives the icon/tint; never colour-only.
+         */
+        Warning: {
+            /** Level */
+            level: string;
+            /** Title */
+            title: string;
+            /** Detail */
+            detail: string;
+        };
+        /**
+         * WatchlistItem
+         * @description One row of the user's watchlist, with the fields the landing table needs.
+         *
+         *     ``price`` ships as ``Sourced<float>`` so its provenance and staleness are explicit.
+         *     ``checks`` is the aggregate {passed, evaluable, unknown} — the full per-check payload
+         *     lives on the ticker page (M5), one click away. ``iv_rank`` is read-only from the
+         *     trading DB's iv_history; ``None`` when the symbol has no IV history.
+         */
+        WatchlistItem: {
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            price?: components["schemas"]["Sourced_float_"] | null;
+            /** Change Pct */
+            change_pct?: number | null;
+            /** Iv Rank */
+            iv_rank?: number | null;
+            /** Checks */
+            checks: {
+                [key: string]: number;
+            };
+            /** Next Earnings */
+            next_earnings?: string | null;
+        };
+        /**
+         * WatchlistResponse
+         * @description ``GET /watchlist`` — the user's tracked symbols, scoped to their user_id.
+         */
+        WatchlistResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Items
+             * @default []
+             */
+            items: components["schemas"]["WatchlistItem"][];
         };
     };
     responses: never;
@@ -645,6 +1237,57 @@ export interface operations {
             };
         };
     };
+    recommendations_research_recommendations_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sectors_research_sectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectorsResponse"];
+                };
+            };
+        };
+    };
     bars_research__symbol__bars_get: {
         parameters: {
             query?: {
@@ -678,6 +1321,37 @@ export interface operations {
             };
         };
     };
+    options_lens_research__symbol__options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsLensResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     analysis_research__symbol__get: {
         parameters: {
             query?: never;
@@ -697,6 +1371,168 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AnalysisResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_summary_research__symbol__summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_summary_research__symbol__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    universe_universe_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UniverseResponse"];
+                };
+            };
+        };
+    };
+    list_watchlist_watchlist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+        };
+    };
+    add_symbol_watchlist__symbol__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_symbol_watchlist__symbol__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

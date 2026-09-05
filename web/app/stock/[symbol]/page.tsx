@@ -9,6 +9,7 @@ import { PriceChart } from "@/components/stock/PriceChart";
 import { SectionShell } from "@/components/stock/SectionShell";
 import { SentimentPanel } from "@/components/stock/SentimentPanel";
 import { StatementsTable } from "@/components/stock/StatementsTable";
+import { SummaryPanel } from "@/components/stock/SummaryPanel";
 import { TechnicalsPanel } from "@/components/stock/TechnicalsPanel";
 import { relativeAge } from "@/lib/format";
 
@@ -94,6 +95,10 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
         reason={data?.news?.reason}
       >
         {data?.news?.data && <NewsPanel items={data.news.data} />}
+      </SectionShell>
+
+      <SectionShell title="AI summary" state="ready">
+        <SummaryPanel symbol={upper} />
       </SectionShell>
     </div>
   );

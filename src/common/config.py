@@ -47,6 +47,8 @@ class Secrets(BaseSettings):
     reddit_user_agent: str = Field(default="ibkr-options-scanner/1.0", alias="REDDIT_USER_AGENT")
     web_api_token: str = Field(default="", alias="WEB_API_TOKEN")
     sec_contact_email: str = Field(default="", alias="SEC_CONTACT_EMAIL")
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
 
 class ReconnectCfg(BaseModel):
