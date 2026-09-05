@@ -6,7 +6,7 @@
 **Goal:** Stand up the API process, its auth boundary, the research database, and the two
 structural fences, with nothing user-visible yet.
 
-**Spec:** `Web plan/P0-P1-design.md` §4. **Index:** `Web plan/IMPLEMENTATION-PLAN.md` (read
+**Spec:** `Web plan/P0-P1-design.md` §4. **Index:** `Web plan/P0-P1-IMPLEMENTATION-PLAN.md` (read
 Global Constraints first).
 
 **Ends with:** `python -m scripts.run_api` serves `/health`, `/me` and `/nav` behind a bearer

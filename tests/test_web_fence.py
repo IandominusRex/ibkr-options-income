@@ -69,7 +69,7 @@ def test_the_api_never_constructs_a_broker_connection() -> None:
 
 # ---------------------------------------------------------------------------
 # M7 — the AI summary layer. It records itself and touches nothing else
-# (Web plan/milestones/M7-ai-summary.md Task 7.5).
+# (Web plan/milestones/P0-P1/M7-ai-summary.md Task 7.5).
 #
 # These check for the import path ``src.research.summary`` rather than the plan's
 # original bare "summary" substring: "summary" is already an ordinary word elsewhere in

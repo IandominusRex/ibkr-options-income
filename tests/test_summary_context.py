@@ -1,6 +1,6 @@
 """The context carries computed values only, and never asks the model to calculate.
 
-Task 7.1 (Web plan/milestones/M7-ai-summary.md). ``build_context`` is fence-critical: it is
+Task 7.1 (Web plan/milestones/P0-P1/M7-ai-summary.md). ``build_context`` is fence-critical: it is
 what makes "the model never computes a number" true rather than aspirational.
 """
 

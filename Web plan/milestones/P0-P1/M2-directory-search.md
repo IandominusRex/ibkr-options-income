@@ -7,7 +7,7 @@
 screen.
 
 **Spec:** `Web plan/P0-P1-design.md` §5.1, §5.2, §5.5, §8, §9. **Index:**
-`Web plan/IMPLEMENTATION-PLAN.md`.
+`Web plan/P0-P1-IMPLEMENTATION-PLAN.md`.
 
 **Depends on:** Milestone 1 complete.
 

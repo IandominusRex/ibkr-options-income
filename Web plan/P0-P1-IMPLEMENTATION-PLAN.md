@@ -1,5 +1,8 @@
 # Web Platform P0 + P1 — Implementation Plan (Index)
 
+> **Complete.** All seven milestones shipped (M7 closed 2026-09-05). Milestone files live in
+> `milestones/P0-P1/`. The next phase is `P2-design.md` + `P2-IMPLEMENTATION-PLAN.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
@@ -178,13 +181,13 @@ task in the entire plan (6.1) modifies trading-system code.
 
 | File | Ends with |
 |---|---|
-| `milestones/M1-foundation.md` | API process, auth, research DB, fences. Nothing user-visible. |
-| `milestones/M2-directory-search.md` | Search across the whole market; shell and rail on screen. |
-| `milestones/M3-fundamentals.md` | Normalised statements rendering on a ticker page. |
-| `milestones/M4-prices-technicals.md` | Chart, technicals, news, sentiment. Page is useful. |
-| `milestones/M5-checks.md` | Check ribbons and expandable checks. The digestibility payoff. |
-| `milestones/M6-options-recommendations.md` | Sector cards, watchlist, buy-list replacement. |
-| `milestones/M7-ai-summary.md` | Four AI backends, caching, rendering. |
+| `milestones/P0-P1/M1-foundation.md` | API process, auth, research DB, fences. Nothing user-visible. |
+| `milestones/P0-P1/M2-directory-search.md` | Search across the whole market; shell and rail on screen. |
+| `milestones/P0-P1/M3-fundamentals.md` | Normalised statements rendering on a ticker page. |
+| `milestones/P0-P1/M4-prices-technicals.md` | Chart, technicals, news, sentiment. Page is useful. |
+| `milestones/P0-P1/M5-checks.md` | Check ribbons and expandable checks. The digestibility payoff. |
+| `milestones/P0-P1/M6-options-recommendations.md` | Sector cards, watchlist, buy-list replacement. |
+| `milestones/P0-P1/M7-ai-summary.md` | Four AI backends, caching, rendering. |
 
 Milestones are strictly sequential. Each ends green on the full quality gate and is shippable on
 its own.

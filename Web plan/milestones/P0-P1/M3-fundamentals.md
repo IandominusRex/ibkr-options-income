@@ -6,7 +6,7 @@
 **Goal:** EDGAR XBRL becomes normalised financial statements rendering on a ticker page, with
 every figure traceable to the filing it came from.
 
-**Spec:** `Web plan/P0-P1-design.md` §5.3, §5.4, §5.5. **Index:** `Web plan/IMPLEMENTATION-PLAN.md`.
+**Spec:** `Web plan/P0-P1-design.md` §5.3, §5.4, §5.5. **Index:** `Web plan/P0-P1-IMPLEMENTATION-PLAN.md`.
 
 **Depends on:** Milestone 2 complete.
 

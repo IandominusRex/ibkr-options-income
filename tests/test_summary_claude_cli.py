@@ -1,6 +1,6 @@
 """The CLI backend parses strictly, fails soft, and reuses runner.py's subprocess loop.
 
-Task 7.2 (Web plan/milestones/M7-ai-summary.md). ``ClaudeCliSummaryProvider`` shells out
+Task 7.2 (Web plan/milestones/P0-P1/M7-ai-summary.md). ``ClaudeCliSummaryProvider`` shells out
 via ``src.claude.runner``'s shared ``_run_cli``/``_build_cmd`` rather than a second CLI
 invoker, so it inherits the same hardening flags and cost logging as the strategist review.
 """
