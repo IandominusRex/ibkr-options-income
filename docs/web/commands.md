@@ -126,8 +126,13 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
   `TradeCandidate` as a `CandidateRow` and raises a **PENDING** `ApprovalRow` (frozen snapshot,
   N2a) — mirroring `roll_pipeline.queue_roll_for_approval`'s `has_active_order` guard, so a
   replayed drain against a candidate that already has an active order is `applied` (not
-  failed) with `result = {"approval_id": null, "note": "order_already_active"}`, never a second
-  approval. Nothing from the stored `RiskVerdictRow` reaches the approval except the
+  failed) with `result = {"approval_id": null, "note": "order_already_active"}` rather than a
+  second order. `has_active_order` checks for an `OrderRow`, not an `ApprovalRow`, so this
+  guards against a second *order*, not against every replay timing: a replay landing in the
+  narrow window after the first approval is raised but before its command is marked `applied`
+  (no `OrderRow` exists yet) can still raise a second PENDING approval for the same candidate.
+  Pre-existing in the `roll_pipeline` pattern this mirrors, not introduced by this milestone.
+  Nothing from the stored `RiskVerdictRow` reaches the approval except the
   `(candidate_id, symbol, strategy, strike, expiry)` used to select which contract to look for
   — every number on the resulting approval comes from this fresh run.
 - **Live mode:** `needs_confirmation = true`.

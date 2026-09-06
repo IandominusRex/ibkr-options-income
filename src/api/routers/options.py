@@ -427,12 +427,15 @@ def get_approval(
 
 
 def _latest_run_id(db: TradingDb) -> tuple[str | None, datetime | None]:
-    """Resolve the newest non-``scan-``-prefixed run_id from ``risk_verdicts``.
+    """Resolve the newest non-single-ticker-prefixed run_id from ``risk_verdicts``.
 
     Mirrors ``latest_buy_candidates_from``'s single-ticker filter: a ``/scan NVDA``
-    must not become "the latest run" for the assessed browser either. Returns
-    ``(run_id, computed_at)`` where ``computed_at`` is the newest ``created_at``
-    among that run's rows.
+    must not become "the latest run" for the assessed browser either. Two prefixes
+    carry that same "one ticker, not a full scan" meaning and are both excluded:
+    ``scan-`` (the Telegram ``/scan TICKER`` command) and ``ticker-`` (every promote
+    attempt, win or lose, via ``src.orchestrator.scan._price_and_gate_ticker``).
+    Returns ``(run_id, computed_at)`` where ``computed_at`` is the newest
+    ``created_at`` among that run's rows.
     """
     from src.storage.models import RiskVerdictRow
 
@@ -440,6 +443,7 @@ def _latest_run_id(db: TradingDb) -> tuple[str | None, datetime | None]:
         select(RiskVerdictRow.run_id, func.max(RiskVerdictRow.created_at))
         .where(RiskVerdictRow.run_id.isnot(None))
         .where(~RiskVerdictRow.run_id.like("scan-%"))
+        .where(~RiskVerdictRow.run_id.like("ticker-%"))
         .group_by(RiskVerdictRow.run_id)
         .order_by(func.max(RiskVerdictRow.created_at).desc())
         .limit(1)

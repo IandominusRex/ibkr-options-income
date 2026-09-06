@@ -21,20 +21,17 @@ import pytest
 
 from src.common.schemas import ApprovalStatus
 
-# M4 Task 4.4: Task 4.2's `_FakeChain` and its `drain_env`/`fake_chain` fixtures
-# (tests/test_drain_promote.py) are reused verbatim for the promote-refusal tests below
-# rather than duplicating ~150 lines of fixture engineering — a deliberate, sanctioned
-# exception to this repo's usual "no shared fixtures across test files" convention.
-# Aliased on import because this file already defines its own `drain_env` fixture (for
-# the approve/reject tests further down, registering different handlers). The imported
-# names are "unused" as far as static analysis can tell — pytest resolves them by the
-# matching parameter name on the test functions that use them, below.
-from tests.test_drain_promote import (
-    _FakeChain,  # noqa: F401
-    fake_chain,  # noqa: F401
-)
+# M4 Task 4.4: Task 4.2's `drain_env`/`fake_chain` fixtures (tests/test_drain_promote.py) are
+# reused verbatim for the promote-refusal tests below rather than duplicating ~150 lines of
+# fixture engineering — a deliberate, sanctioned exception to this repo's usual "no shared
+# fixtures across test files" convention. `drain_env` is aliased on import because this file
+# already defines its own `drain_env` fixture (for the approve/reject tests further down,
+# registering different handlers). Both imported names are "unused" as far as static analysis
+# can tell — pytest resolves them by the matching parameter name on the test functions that
+# use them, below.
 from tests.test_drain_promote import _payload as _promote_payload
 from tests.test_drain_promote import drain_env as promote_drain_env  # noqa: F401
+from tests.test_drain_promote import fake_chain  # noqa: F401
 
 _EXPIRY = date.today() + timedelta(days=30)
 

@@ -182,6 +182,32 @@ def test_run_latest_filters_single_ticker_runs(client) -> None:
     assert r.json()["run_id"] == _RUN
 
 
+def test_run_latest_filters_ticker_promote_runs(client) -> None:
+    """Every promote attempt (win or lose) is audited under a `ticker-` run_id via
+    `_price_and_gate_ticker` — a different prefix from `/scan TICKER`'s `scan-`, but the
+    same "one ticker, not a full scan" meaning. It must not displace the full scan run
+    either."""
+    with session_scope() as s:
+        # A promote's single-ticker audit run, later than the real run.
+        s.add(
+            _verdict(
+                candidate_id="promote1",
+                run_id="ticker-a1b2c3d4",
+                stage="passed",
+            )
+        )
+        s.flush()
+        s.query(RiskVerdictRow).filter(RiskVerdictRow.run_id == "ticker-a1b2c3d4").update(
+            {"created_at": datetime.now(UTC) + timedelta(hours=1)}
+        )
+
+    r = client.get("/options/assessed?run=latest", headers=AUTH)
+    assert r.status_code == 200
+    # The latest run must NOT be the ticker- prefixed one.
+    assert r.json()["run_id"] != "ticker-a1b2c3d4"
+    assert r.json()["run_id"] == _RUN
+
+
 def test_groups_ordered_by_best_contract_first(client) -> None:
     r = client.get("/options/assessed", headers=AUTH)
     groups = r.json()["groups"]
