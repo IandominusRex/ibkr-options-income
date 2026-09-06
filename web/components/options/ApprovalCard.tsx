@@ -1,8 +1,17 @@
+"use client";
+
 import Link from "next/link";
 import { UNKNOWN, relativeAge } from "@/lib/format";
 import type { ApprovalSummary, ClaudeReviewPayload } from "./types";
+import { DecideControls } from "./DecideControls";
 
-export function ApprovalCard({ approval }: { approval: ApprovalSummary }) {
+export function ApprovalCard({
+  approval,
+  drainHealthy = true,
+}: {
+  approval: ApprovalSummary;
+  drainHealthy?: boolean;
+}) {
   const expiry = approval.expiry;
   const dte = expiry ? daysToExpiry(expiry) : null;
   const totalPremium =
@@ -11,17 +20,17 @@ export function ApprovalCard({ approval }: { approval: ApprovalSummary }) {
     .review ?? null;
 
   return (
-    <Link
-      href={`/options/${approval.id}`}
-      className="block rounded-md border border-border bg-surface px-4 py-3 hover:bg-elevated focus-visible:bg-elevated"
-    >
+    <div className="rounded-md border border-border bg-surface px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="flex items-baseline gap-2">
+        <Link
+          href={`/options/${approval.id}`}
+          className="flex items-baseline gap-2 rounded focus-visible:ring-focus hover:text-focus"
+        >
           <span className="font-mono text-sm text-content">
             {approval.underlying} {formatContract(approval)}
           </span>
           <span className="text-xs text-muted">{approval.source}</span>
-        </div>
+        </Link>
         <span className="text-xs text-muted">{relativeAge(approval.as_of)}</span>
       </div>
 
@@ -57,7 +66,9 @@ export function ApprovalCard({ approval }: { approval: ApprovalSummary }) {
           {review.risks && <ReviewLine label="Risks" text={review.risks} />}
         </div>
       )}
-    </Link>
+
+      <DecideControls approval={approval} drainHealthy={drainHealthy} />
+    </div>
   );
 }
 

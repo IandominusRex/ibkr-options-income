@@ -1,53 +1,1199 @@
 {
+  "openapi": "3.1.0",
+  "info": {
+    "title": "IBKR Income System \u2014 Web API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Me",
+        "operationId": "me_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/nav": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Nav",
+        "operationId": "nav_nav_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NavResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/research/search": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Search",
+        "description": "Rank: exact ticker, then ticker prefix, then name substring.\n\nEach band is alphabetical within itself. A blank query returns no results rather\nthan the whole table.",
+        "operationId": "search_research_search_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/recommendations": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Recommendations",
+        "description": "The scan's buy-to-own list, rendered exactly as it was scored.\n\nReads ``BuyCandidateRow`` through the **read-only** trading session (\u00a74.3 \u2014 the API\nwrites nothing). The web layer does no re-scoring: every field is what the\norchestrator's scan-time scoring produced, so the site and the Telegram card\ncan never disagree about what the system thinks. An empty table returns an empty\nlist with a 200, not a 404 \u2014 no scan has run yet is a legitimate state.",
+        "operationId": "recommendations_research_recommendations_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 25,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/sectors": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Sectors",
+        "description": "Sector cards: aggregate daily change, best/worst mover, count, and average IV rank.\n\nMembership comes from ``universe.yaml``'s ``sectors`` map (every universe symbol tagged\nwith its sector). ``change_pct`` is the warm-tier quote's daily change from the research\nDB; a sector with no priced members reports ``change_pct`` as ``None``, never ``0``.\n``avg_iv_rank`` averages only members that actually have IV history in the trading DB\n(read-only), and the card carries the contributing count so a one-name average is visible.\n\nCards are returned ordered by ``avg_iv_rank`` descending (premium richness is the\nreason to look); sectors with no IV history sort last, preserving their file order.",
+        "operationId": "sectors_research_sectors_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectorsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/research/{symbol}/bars": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Bars",
+        "description": "Daily OHLCV with server-side SMA 50 and 200, in lightweight-charts' field names.\n\n``time`` is ``YYYY-MM-DD`` (lightweight-charts' accepted daily format). SMA 50 and 200\nare computed from ``daily_bars`` here so the chart and the technical panel can never\ndisagree. A symbol with no bars returns empty lists, not an error.",
+        "operationId": "bars_research__symbol__bars_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(1mo|3mo|6mo|1y|2y|5y)$",
+              "default": "1y",
+              "title": "Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BarsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/{symbol}/options": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Options Lens",
+        "description": "On-demand options-income lens \u2014 honest about what it does and doesn't know.\n\nA universe symbol gets real `iv_rank`/`vrp_points` from the trading DB, read-only\n(\u00a74.3). An off-universe symbol gets the same shape with `UNKNOWN` and\n`coverage.iv_history` false rather than a percentile invented from a short series.\n`coverage.option_chain` is always false in P1 \u2014 the API holds no IBKR connection, so\n`atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too. Leverage warnings (Task 5.4)\nare included for leveraged names via the shared `warnings_for` catalogue.",
+        "operationId": "options_lens_research__symbol__options_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptionsLensResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/{symbol}": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Analysis",
+        "description": "Full analysis for one symbol.\n\n404 only when the symbol is not a known filer. Everything else degrades per section.",
+        "operationId": "analysis_research__symbol__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/research/{symbol}/summary": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Get Summary",
+        "description": "Return a cached summary if one exists. **Makes no model call and no\n``materialize``/fetch.**\n\nA cold-tier search on an obscure ticker must not silently trigger a model call\n(design \u00a77), and the same principle applies to the SEC/enrichment fetches\n``materialize`` would run. The GET first consults the cache directly; only on a\nmiss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for\nthe ``unavailable`` reason, and even then it makes no model call \u2014 the client\nrenders a Generate action rather than a spinner.",
+        "operationId": "get_summary_research__symbol__summary_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Post Summary",
+        "description": "Generate and cache a summary on demand. Fail-soft: a failed generation returns\n``pending`` with a reason, not an error, so the rest of the page is untouched.",
+        "operationId": "post_summary_research__symbol__summary_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/approvals": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Approvals",
+        "description": "List approvals, pending by default. ``status=all`` returns decided ones too.\n\nAn unknown status value is rejected with 422 (not a silent empty list) \u2014 an\noperator typo should surface, not look like \"no approvals.\"",
+        "operationId": "list_approvals_options_approvals_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "expired",
+                "all"
+              ],
+              "type": "string",
+              "description": "Filter by approval status, or `all` for every status (newest first).",
+              "default": "pending",
+              "title": "Status"
+            },
+            "description": "Filter by approval status, or `all` for every status (newest first)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/approvals/{approval_id}": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "Get Approval",
+        "description": "One approval in full. 404 if unknown. Joined enrichment degrades to null.",
+        "operationId": "get_approval_options_approvals__approval_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Approval Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/assessed": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Assessed",
+        "description": "The assessed browser: every contract the scan priced, grouped by symbol.",
+        "operationId": "list_assessed_options_assessed_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "latest",
+              "title": "Run"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "generator",
+                    "risk_gate",
+                    "score_floor",
+                    "dedupe",
+                    "top_n",
+                    "passed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one assessment stage. Unknown values return 422.",
+              "title": "Stage"
+            },
+            "description": "Filter to one assessment stage. Unknown values return 422."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/orders": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Orders",
+        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list).",
+        "operationId": "list_orders_options_orders_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "working",
+                "all",
+                "queued",
+                "submitted",
+                "filled",
+                "partial",
+                "cancelled",
+                "rejected"
+              ],
+              "type": "string",
+              "description": "`working` (queued/submitted/partial), `all`, or a specific state.",
+              "default": "working",
+              "title": "State"
+            },
+            "description": "`working` (queued/submitted/partial), `all`, or a specific state."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/fills": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Fills",
+        "description": "Recent fills within the last ``days`` days.",
+        "operationId": "list_fills_options_fills_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 90,
+              "minimum": 1,
+              "default": 7,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/shorts": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Shorts",
+        "description": "Open short option positions from the most recent position snapshot.\n\n``as_of`` is the snapshot's capture time, not request time \u2014 the same discipline\nP0/P1 M4 fixed for quotes. Long options and stock are excluded. ``delta`` carries\nits source through ``Sourced`` so a BS delta never looks identical to an IBKR one.\nA position with no snapshot data returns ``null`` for ``mark`` and\n``unrealized_pnl``, never ``0.0``.",
+        "operationId": "list_shorts_options_shorts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShortListResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/options/controls": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "Controls",
+        "description": "Autonomy rung, halt state, mode, and command-drain health.",
+        "operationId": "controls_options_controls_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/universe": {
+      "get": {
+        "tags": [
+          "universe"
+        ],
+        "summary": "Universe",
+        "operationId": "universe_universe_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/watchlist": {
+      "get": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "List Watchlist",
+        "description": "Return this user's watchlist items. A second user's items are not returned.",
+        "operationId": "list_watchlist_watchlist_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/watchlist/{symbol}": {
+      "post": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "Add Symbol",
+        "description": "Add *symbol* to this user's watchlist. Idempotent: a repeat is 200, not an error.\n\nReturns 201 on first add, 200 on a repeat. 404 if the symbol is not a known filer \u2014 we\nnever create a row that can never resolve to a name. Adding a symbol promotes it to the\nwarm tier immediately (``warm_symbols`` reads ``WatchlistItemRow``).",
+        "operationId": "add_symbol_watchlist__symbol__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "watchlist"
+        ],
+        "summary": "Remove Symbol",
+        "description": "Remove *symbol* from this user's watchlist. Idempotent: a repeat delete is 204.",
+        "operationId": "remove_symbol_watchlist__symbol__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/commands": {
+      "post": {
+        "tags": [
+          "commands"
+        ],
+        "summary": "Post Commands",
+        "description": "Enqueue an intent. 201 if new, 200 if a dedupe returned the existing row.",
+        "operationId": "post_commands_commands_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/commands/{command_id}": {
+      "get": {
+        "tags": [
+          "commands"
+        ],
+        "summary": "Get Command",
+        "description": "Read one command's status through the read-only engine.",
+        "operationId": "get_command_commands__command_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "command_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Command Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/commands/{command_id}/confirm": {
+      "post": {
+        "tags": [
+          "commands"
+        ],
+        "summary": "Confirm Command",
+        "description": "Supply the confirm token for a live-mode order-reaching intent.\n\nIn paper mode no token was issued, so this is a no-op 204. A command not\nawaiting confirmation (already applied, expired, or not an order-reaching\nkind) returns 409 \u2014 the request does not make sense for that command. A\nwrong or missing token is **403**: the caller has not proven authority to\nrelease this order, and the token is NOT cleared, so the command stays\npending (the fail-closed property, M3 Task 3.5).",
+        "operationId": "confirm_command_commands__command_id__confirm_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "command_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Command Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
       "AlternativeStrike": {
-        "description": "Another contract assessed on the same underlying during the same run.",
         "properties": {
-          "blended_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blended Score"
-          },
           "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
           },
           "expiry": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Expiry"
-          },
-          "premium": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Premium"
-          },
-          "reasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reasons",
-            "type": "array"
           },
           "right": {
             "anyOf": [
@@ -60,6 +1206,28 @@
             ],
             "title": "Right"
           },
+          "blended_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blended Score"
+          },
+          "premium": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Premium"
+          },
           "stage": {
             "anyOf": [
               {
@@ -71,35 +1239,37 @@
             ],
             "title": "Stage"
           },
-          "strategy": {
-            "title": "Strategy",
-            "type": "string"
-          },
-          "strike": {
-            "title": "Strike",
-            "type": "number"
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
           }
         },
+        "type": "object",
         "required": [
           "candidate_id",
           "strategy",
           "strike"
         ],
         "title": "AlternativeStrike",
-        "type": "object"
+        "description": "Another contract assessed on the same underlying during the same run."
       },
       "AnalysisResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "checks": {
-            "$ref": "#/components/schemas/Section_ChecksPayload_",
-            "default": {
-              "state": "pending"
-            }
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
           },
           "exchange": {
             "anyOf": [
@@ -112,20 +1282,34 @@
             ],
             "title": "Exchange"
           },
+          "is_etf": {
+            "type": "boolean",
+            "title": "Is Etf",
+            "default": false
+          },
           "fundamentals": {
             "$ref": "#/components/schemas/Section_NormalizedFinancials_"
           },
-          "is_etf": {
-            "default": false,
-            "title": "Is Etf",
-            "type": "boolean"
+          "technicals": {
+            "$ref": "#/components/schemas/Section_TechnicalStats_",
+            "default": {
+              "state": "pending"
+            }
           },
-          "name": {
-            "title": "Name",
-            "type": "string"
+          "sentiment": {
+            "$ref": "#/components/schemas/Section_SentimentDetail_",
+            "default": {
+              "state": "pending"
+            }
           },
           "news": {
             "$ref": "#/components/schemas/Section_list_NewsItem__",
+            "default": {
+              "state": "pending"
+            }
+          },
+          "checks": {
+            "$ref": "#/components/schemas/Section_ChecksPayload_",
             "default": {
               "state": "pending"
             }
@@ -139,96 +1323,63 @@
                 "type": "null"
               }
             ]
-          },
-          "sentiment": {
-            "$ref": "#/components/schemas/Section_SentimentDetail_",
-            "default": {
-              "state": "pending"
-            }
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
-          },
-          "technicals": {
-            "$ref": "#/components/schemas/Section_TechnicalStats_",
-            "default": {
-              "state": "pending"
-            }
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "symbol",
           "name",
           "fundamentals"
         ],
-        "title": "AnalysisResponse",
-        "type": "object"
+        "title": "AnalysisResponse"
       },
       "ApprovalDetail": {
-        "description": "One approval in full, with the joined enrichment.",
         "properties": {
-          "alternatives": {
-            "items": {
-              "$ref": "#/components/schemas/AlternativeStrike"
-            },
-            "title": "Alternatives",
-            "type": "array"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "blended_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blended Score"
+          "id": {
+            "type": "integer",
+            "title": "Id"
           },
           "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
+            "type": "string",
+            "title": "Candidate Id"
           },
-          "contracts": {
-            "title": "Contracts",
-            "type": "integer"
-          },
-          "decided_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired"
             ],
-            "title": "Decided At"
+            "title": "Status"
           },
-          "expires_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
+          },
+          "right": {
+            "type": "string",
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
           },
           "expiry": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
@@ -236,37 +1387,9 @@
             ],
             "title": "Expiry"
           },
-          "gate_reasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Gate Reasons",
-            "type": "array"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "ideal": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/IdealZonePayload"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "order_state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Order State"
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
           },
           "premium": {
             "anyOf": [
@@ -279,6 +1402,82 @@
             ],
             "title": "Premium"
           },
+          "blended_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blended Score"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "order_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order State"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "scan",
+              "roll"
+            ],
+            "title": "Source"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Snapshot"
+          },
+          "ideal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IdealZonePayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gate_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Gate Reasons"
+          },
           "review": {
             "anyOf": [
               {
@@ -289,46 +1488,15 @@
               }
             ]
           },
-          "right": {
-            "title": "Right",
-            "type": "string"
-          },
-          "snapshot": {
-            "additionalProperties": true,
-            "title": "Snapshot",
-            "type": "object"
-          },
-          "source": {
-            "enum": [
-              "scan",
-              "roll"
-            ],
-            "title": "Source",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "approved",
-              "rejected",
-              "expired"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "strategy": {
-            "title": "Strategy",
-            "type": "string"
-          },
-          "strike": {
-            "title": "Strike",
-            "type": "number"
-          },
-          "underlying": {
-            "title": "Underlying",
-            "type": "string"
+          "alternatives": {
+            "items": {
+              "$ref": "#/components/schemas/AlternativeStrike"
+            },
+            "type": "array",
+            "title": "Alternatives"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "id",
@@ -343,85 +1511,75 @@
           "snapshot"
         ],
         "title": "ApprovalDetail",
-        "type": "object"
+        "description": "One approval in full, with the joined enrichment."
       },
       "ApprovalListResponse": {
         "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
           "approvals": {
             "items": {
               "$ref": "#/components/schemas/ApprovalSummary"
             },
-            "title": "Approvals",
-            "type": "array"
-          },
-          "as_of": {
-            "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "type": "array",
+            "title": "Approvals"
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
-        "title": "ApprovalListResponse",
-        "type": "object"
+        "title": "ApprovalListResponse"
       },
       "ApprovalSummary": {
-        "description": "One row in the approvals list.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "blended_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blended Score"
+          "id": {
+            "type": "integer",
+            "title": "Id"
           },
           "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
+            "type": "string",
+            "title": "Candidate Id"
           },
-          "contracts": {
-            "title": "Contracts",
-            "type": "integer"
-          },
-          "decided_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired"
             ],
-            "title": "Decided At"
+            "title": "Status"
           },
-          "expires_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At"
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
+          },
+          "right": {
+            "type": "string",
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
           },
           "expiry": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
@@ -429,20 +1587,9 @@
             ],
             "title": "Expiry"
           },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "order_state": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Order State"
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
           },
           "premium": {
             "anyOf": [
@@ -455,41 +1602,62 @@
             ],
             "title": "Premium"
           },
-          "right": {
-            "title": "Right",
-            "type": "string"
+          "blended_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blended Score"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "order_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order State"
           },
           "source": {
+            "type": "string",
             "enum": [
               "scan",
               "roll"
             ],
-            "title": "Source",
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "approved",
-              "rejected",
-              "expired"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "strategy": {
-            "title": "Strategy",
-            "type": "string"
-          },
-          "strike": {
-            "title": "Strike",
-            "type": "number"
-          },
-          "underlying": {
-            "title": "Underlying",
-            "type": "string"
+            "title": "Source"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "id",
@@ -503,107 +1671,26 @@
           "source"
         ],
         "title": "ApprovalSummary",
-        "type": "object"
+        "description": "One row in the approvals list."
       },
       "AssessedContract": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "blended_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blended Score"
+            "title": "As Of"
           },
           "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
+            "type": "string",
+            "title": "Candidate Id"
           },
-          "expiry": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expiry"
-          },
-          "ideal": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/IdealZonePayload"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "premium": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Premium"
-          },
-          "promotable": {
-            "title": "Promotable",
-            "type": "boolean"
-          },
-          "promote_note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Promote Note"
-          },
-          "reasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reasons",
-            "type": "array"
-          },
-          "reasons_text": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Reasons Text",
-            "type": "array"
-          },
-          "stage": {
-            "enum": [
-              "generator",
-              "risk_gate",
-              "score_floor",
-              "dedupe",
-              "top_n",
-              "passed"
-            ],
-            "title": "Stage",
-            "type": "string"
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
           },
           "strategy": {
-            "title": "Strategy",
-            "type": "string"
+            "type": "string",
+            "title": "Strategy"
           },
           "strike": {
             "anyOf": [
@@ -616,11 +1703,93 @@
             ],
             "title": "Strike"
           },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "generator",
+              "risk_gate",
+              "score_floor",
+              "dedupe",
+              "top_n",
+              "passed"
+            ],
+            "title": "Stage"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "reasons_text": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons Text"
+          },
+          "blended_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blended Score"
+          },
+          "premium": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Premium"
+          },
+          "ideal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IdealZonePayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "promotable": {
+            "type": "boolean",
+            "title": "Promotable"
+          },
+          "promote_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promote Note"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "candidate_id",
@@ -629,67 +1798,47 @@
           "stage",
           "promotable"
         ],
-        "title": "AssessedContract",
-        "type": "object"
+        "title": "AssessedContract"
       },
       "AssessedGroup": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
           },
           "contracts": {
             "items": {
               "$ref": "#/components/schemas/AssessedContract"
             },
-            "title": "Contracts",
-            "type": "array"
+            "type": "array",
+            "title": "Contracts"
           },
           "counts": {
             "additionalProperties": {
               "type": "integer"
             },
-            "title": "Counts",
-            "type": "object"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+            "type": "object",
+            "title": "Counts"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "symbol"
         ],
-        "title": "AssessedGroup",
-        "type": "object"
+        "title": "AssessedGroup"
       },
       "AssessedResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "computed_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Computed At"
-          },
-          "groups": {
-            "items": {
-              "$ref": "#/components/schemas/AssessedGroup"
-            },
-            "title": "Groups",
-            "type": "array"
+            "title": "As Of"
           },
           "run_id": {
             "anyOf": [
@@ -701,60 +1850,79 @@
               }
             ],
             "title": "Run Id"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/AssessedGroup"
+            },
+            "type": "array",
+            "title": "Groups"
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
-        "title": "AssessedResponse",
-        "type": "object"
+        "title": "AssessedResponse"
       },
       "AutonomyRung": {
         "properties": {
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
           "level": {
-            "title": "Level",
-            "type": "string"
+            "type": "string",
+            "title": "Level"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
           }
         },
+        "type": "object",
         "required": [
           "level",
           "label"
         ],
-        "title": "AutonomyRung",
-        "type": "object"
+        "title": "AutonomyRung"
       },
       "Bar": {
-        "description": "One daily OHLCV bar in lightweight-charts' expected field names.\n\n``time`` is a ``YYYY-MM-DD`` string (lightweight-charts accepts the date prefix of an\nISO timestamp for a daily series). No client-side remapping is needed.",
         "properties": {
-          "close": {
-            "title": "Close",
-            "type": "number"
-          },
-          "high": {
-            "title": "High",
-            "type": "number"
-          },
-          "low": {
-            "title": "Low",
-            "type": "number"
+          "time": {
+            "type": "string",
+            "title": "Time"
           },
           "open": {
-            "title": "Open",
-            "type": "number"
+            "type": "number",
+            "title": "Open"
           },
-          "time": {
-            "title": "Time",
-            "type": "string"
+          "high": {
+            "type": "number",
+            "title": "High"
+          },
+          "low": {
+            "type": "number",
+            "title": "Low"
+          },
+          "close": {
+            "type": "number",
+            "title": "Close"
           },
           "volume": {
-            "title": "Volume",
-            "type": "number"
+            "type": "number",
+            "title": "Volume"
           }
         },
+        "type": "object",
         "required": [
           "time",
           "open",
@@ -764,41 +1932,24 @@
           "volume"
         ],
         "title": "Bar",
-        "type": "object"
+        "description": "One daily OHLCV bar in lightweight-charts' expected field names.\n\n``time`` is a ``YYYY-MM-DD`` string (lightweight-charts accepts the date prefix of an\nISO timestamp for a daily series). No client-side remapping is needed."
       },
       "BarsResponse": {
-        "description": "Daily bars with server-side SMA 50 and 200 overlays.\n\n``sma50``/``sma200`` are parallel lists aligned to ``bars``: ``None`` until enough\ndata exists to compute the moving average at that index, then the value. Computed\nserver-side from ``daily_bars`` so the chart and the technical panel can never disagree.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "bars": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/Bar"
             },
+            "type": "array",
             "title": "Bars",
-            "type": "array"
-          },
-          "sma200": {
-            "default": [],
-            "items": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "title": "Sma200",
-            "type": "array"
+            "default": []
           },
           "sma50": {
-            "default": [],
             "items": {
               "anyOf": [
                 {
@@ -809,19 +1960,103 @@
                 }
               ]
             },
+            "type": "array",
             "title": "Sma50",
-            "type": "array"
+            "default": []
+          },
+          "sma200": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Sma200",
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
         "title": "BarsResponse",
-        "type": "object"
+        "description": "Daily bars with server-side SMA 50 and 200 overlays.\n\n``sma50``/``sma200`` are parallel lists aligned to ``bars``: ``None`` until enough\ndata exists to compute the moving average at that index, then the value. Computed\nserver-side from ``daily_bars`` so the chart and the technical panel can never disagree."
       },
       "BuyCandidateOut": {
-        "description": "One buy-to-own recommendation, rendered exactly as the scan scored it.\n\nThe web layer does no re-scoring: every field below is the value\n``generate_buy_candidates`` produced at scan time, persisted via\n``BuyCandidateRow`` and read back unmodified so the site and Telegram can never\ndisagree about what the system thinks.",
         "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "iv_rank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iv Rank"
+          },
+          "quality_flag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Flag"
+          },
+          "technical_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Technical Regime"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale",
+            "default": ""
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
           "current_iv": {
             "anyOf": [
               {
@@ -832,6 +2067,73 @@
               }
             ],
             "title": "Current Iv"
+          },
+          "hv_30": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hv 30"
+          },
+          "vrp": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vrp"
+          },
+          "rsi_14": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rsi 14"
+          },
+          "sma_50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma 50"
+          },
+          "sma_200": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma 200"
+          },
+          "next_earnings": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Earnings"
           },
           "dividend_yield": {
             "anyOf": [
@@ -855,39 +2157,6 @@
             ],
             "title": "Est Monthly Cc Yield"
           },
-          "fundamental_score": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fundamental Score"
-          },
-          "hv_30": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Hv 30"
-          },
-          "iv_rank": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Iv Rank"
-          },
           "iv_score": {
             "anyOf": [
               {
@@ -899,19 +2168,7 @@
             ],
             "title": "Iv Score"
           },
-          "next_earnings": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Earnings"
-          },
-          "price": {
+          "fundamental_score": {
             "anyOf": [
               {
                 "type": "number"
@@ -920,86 +2177,7 @@
                 "type": "null"
               }
             ],
-            "title": "Price"
-          },
-          "quality_flag": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quality Flag"
-          },
-          "rationale": {
-            "default": "",
-            "title": "Rationale",
-            "type": "string"
-          },
-          "rsi_14": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rsi 14"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "sector": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sector"
-          },
-          "sma_200": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sma 200"
-          },
-          "sma_50": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sma 50"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
-          },
-          "technical_regime": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Technical Regime"
+            "title": "Fundamental Score"
           },
           "technical_score": {
             "anyOf": [
@@ -1011,52 +2189,46 @@
               }
             ],
             "title": "Technical Score"
-          },
-          "vrp": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Vrp"
           }
         },
+        "type": "object",
         "required": [
           "symbol",
           "score"
         ],
         "title": "BuyCandidateOut",
-        "type": "object"
+        "description": "One buy-to-own recommendation, rendered exactly as the scan scored it.\n\nThe web layer does no re-scoring: every field below is the value\n``generate_buy_candidates`` produced at scan time, persisted via\n``BuyCandidateRow`` and read back unmodified so the site and Telegram can never\ndisagree about what the system thinks."
       },
       "CategoryPayload": {
         "properties": {
           "category": {
-            "title": "Category",
-            "type": "string"
+            "type": "string",
+            "title": "Category"
           },
-          "checks": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/CheckResult"
-            },
-            "title": "Checks",
-            "type": "array"
-          },
-          "evaluable": {
-            "title": "Evaluable",
-            "type": "integer"
+          "passed": {
+            "type": "integer",
+            "title": "Passed"
           },
           "failed": {
-            "title": "Failed",
-            "type": "integer"
+            "type": "integer",
+            "title": "Failed"
+          },
+          "unknown": {
+            "type": "integer",
+            "title": "Unknown"
+          },
+          "evaluable": {
+            "type": "integer",
+            "title": "Evaluable"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
           },
           "not_applicable": {
-            "default": false,
+            "type": "boolean",
             "title": "Not Applicable",
-            "type": "boolean"
+            "default": false
           },
           "note": {
             "anyOf": [
@@ -1069,19 +2241,16 @@
             ],
             "title": "Note"
           },
-          "passed": {
-            "title": "Passed",
-            "type": "integer"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
-          },
-          "unknown": {
-            "title": "Unknown",
-            "type": "integer"
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "type": "array",
+            "title": "Checks",
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "category",
           "passed",
@@ -1090,11 +2259,25 @@
           "evaluable",
           "total"
         ],
-        "title": "CategoryPayload",
-        "type": "object"
+        "title": "CategoryPayload"
       },
       "CheckResult": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CheckState"
+          },
           "actual": {
             "anyOf": [
               {
@@ -1105,32 +2288,6 @@
               }
             ],
             "title": "Actual"
-          },
-          "category": {
-            "title": "Category",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "state": {
-            "$ref": "#/components/schemas/CheckState"
-          },
-          "statement": {
-            "title": "Statement",
-            "type": "string"
           },
           "threshold": {
             "anyOf": [
@@ -1148,26 +2305,37 @@
               }
             ],
             "title": "Threshold"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "category",
           "statement",
           "state"
         ],
-        "title": "CheckResult",
-        "type": "object"
+        "title": "CheckResult"
       },
       "CheckState": {
+        "type": "string",
         "enum": [
           "PASS",
           "FAIL",
           "UNKNOWN",
           "NOT_APPLICABLE"
         ],
-        "title": "CheckState",
-        "type": "string"
+        "title": "CheckState"
       },
       "ChecksPayload": {
         "properties": {
@@ -1175,53 +2343,50 @@
             "items": {
               "$ref": "#/components/schemas/CategoryPayload"
             },
-            "title": "Categories",
-            "type": "array"
+            "type": "array",
+            "title": "Categories"
           },
           "warnings": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/Warning"
             },
+            "type": "array",
             "title": "Warnings",
-            "type": "array"
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "categories"
         ],
-        "title": "ChecksPayload",
-        "type": "object"
+        "title": "ChecksPayload"
       },
       "ClaudeReviewPayload": {
-        "description": "Claude's five review fields, surfaced separately \u2014 never one prose blob.\n\nTelegram renders these as one chat bubble; the console renders them as five\nlabelled sections beside the numbers they refer to. ``rolling_considerations``\nis the fifth and may be empty on the full-universe path.",
         "properties": {
+          "why_attractive": {
+            "type": "string",
+            "title": "Why Attractive",
+            "default": ""
+          },
+          "risks": {
+            "type": "string",
+            "title": "Risks",
+            "default": ""
+          },
+          "tradeoffs": {
+            "type": "string",
+            "title": "Tradeoffs",
+            "default": ""
+          },
           "assignment_considerations": {
-            "default": "",
+            "type": "string",
             "title": "Assignment Considerations",
-            "type": "string"
+            "default": ""
           },
-          "confidence": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confidence"
-          },
-          "priority": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Priority"
+          "rolling_considerations": {
+            "type": "string",
+            "title": "Rolling Considerations",
+            "default": ""
           },
           "recommendation": {
             "anyOf": [
@@ -1234,32 +2399,35 @@
             ],
             "title": "Recommendation"
           },
-          "risks": {
-            "default": "",
-            "title": "Risks",
-            "type": "string"
+          "priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
           },
-          "rolling_considerations": {
-            "default": "",
-            "title": "Rolling Considerations",
-            "type": "string"
-          },
-          "tradeoffs": {
-            "default": "",
-            "title": "Tradeoffs",
-            "type": "string"
-          },
-          "why_attractive": {
-            "default": "",
-            "title": "Why Attractive",
-            "type": "string"
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
           }
         },
+        "type": "object",
         "title": "ClaudeReviewPayload",
-        "type": "object"
+        "description": "Claude's five review fields, surfaced separately \u2014 never one prose blob.\n\nTelegram renders these as one chat bubble; the console renders them as five\nlabelled sections beside the numbers they refer to. ``rolling_considerations``\nis the fifth and may be empty on the full-universe path."
       },
       "CommandKind": {
-        "description": "Every intent the web layer can enqueue. Later milestones register handlers.",
+        "type": "string",
         "enum": [
           "approve",
           "reject",
@@ -1273,7 +2441,7 @@
           "refresh"
         ],
         "title": "CommandKind",
-        "type": "string"
+        "description": "Every intent the web layer can enqueue. Later milestones register handlers."
       },
       "CommandRequest": {
         "properties": {
@@ -1282,57 +2450,40 @@
           },
           "payload": {
             "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
+            "type": "object",
+            "title": "Payload"
           }
         },
+        "type": "object",
         "required": [
           "kind",
           "payload"
         ],
-        "title": "CommandRequest",
-        "type": "object"
+        "title": "CommandRequest"
       },
       "CommandResponse": {
         "properties": {
-          "applied_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applied At"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "created": {
-            "default": false,
-            "title": "Created",
-            "type": "boolean"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
+            "title": "As Of"
           },
           "id": {
-            "title": "Id",
-            "type": "integer"
+            "type": "integer",
+            "title": "Id"
           },
           "kind": {
             "$ref": "#/components/schemas/CommandKind"
           },
-          "needs_confirmation": {
-            "default": false,
-            "title": "Needs Confirmation",
-            "type": "boolean"
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "applied",
+              "failed",
+              "expired"
+            ],
+            "title": "Status"
           },
           "result": {
             "anyOf": [
@@ -1346,62 +2497,77 @@
             ],
             "title": "Result"
           },
-          "status": {
-            "enum": [
-              "pending",
-              "applied",
-              "failed",
-              "expired"
+          "needs_confirmation": {
+            "type": "boolean",
+            "title": "Needs Confirmation",
+            "default": false
+          },
+          "confirm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Confirm Token"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "applied_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created",
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "id",
           "kind",
           "status",
           "created_at"
         ],
-        "title": "CommandResponse",
-        "type": "object"
+        "title": "CommandResponse"
       },
       "CommandStatus": {
-        "description": "The status of a command, returned by ``GET /commands/{id}`` and ``POST /commands``.",
         "properties": {
-          "applied_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applied At"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
+            "title": "As Of"
           },
           "id": {
-            "title": "Id",
-            "type": "integer"
+            "type": "integer",
+            "title": "Id"
           },
           "kind": {
             "$ref": "#/components/schemas/CommandKind"
           },
-          "needs_confirmation": {
-            "default": false,
-            "title": "Needs Confirmation",
-            "type": "boolean"
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "applied",
+              "failed",
+              "expired"
+            ],
+            "title": "Status"
           },
           "result": {
             "anyOf": [
@@ -1415,17 +2581,41 @@
             ],
             "title": "Result"
           },
-          "status": {
-            "enum": [
-              "pending",
-              "applied",
-              "failed",
-              "expired"
+          "needs_confirmation": {
+            "type": "boolean",
+            "title": "Needs Confirmation",
+            "default": false
+          },
+          "confirm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Confirm Token"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "applied_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "kind",
@@ -1433,44 +2623,39 @@
           "created_at"
         ],
         "title": "CommandStatus",
-        "type": "object"
+        "description": "The status of a command, returned by ``GET /commands/{id}`` and ``POST /commands``.\n\n``confirm_token`` is present only while a live-mode order-reaching intent is\nawaiting its second confirmation (\u00a74.6). It is returned so the owner \u2014 the\nonly role that can reach these routes \u2014 can supply it back via\n``POST /commands/{id}/confirm``; it is cleared the moment the command is\nconfirmed or expired, and is absent in paper mode entirely."
       },
       "ConfirmRequest": {
         "properties": {
           "confirm_token": {
-            "default": "",
+            "type": "string",
             "title": "Confirm Token",
-            "type": "string"
+            "default": ""
           }
         },
-        "title": "ConfirmRequest",
-        "type": "object"
+        "type": "object",
+        "title": "ConfirmRequest"
       },
       "ControlsResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "autonomy": {
             "$ref": "#/components/schemas/AutonomyRung"
           },
-          "drain_healthy": {
-            "title": "Drain Healthy",
-            "type": "boolean"
+          "rungs": {
+            "items": {
+              "$ref": "#/components/schemas/AutonomyRung"
+            },
+            "type": "array",
+            "title": "Rungs"
           },
-          "drain_last_seen": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Drain Last Seen"
+          "halted": {
+            "type": "boolean",
+            "title": "Halted"
           },
           "halt_reason": {
             "anyOf": [
@@ -1483,30 +2668,36 @@
             ],
             "title": "Halt Reason"
           },
-          "halted": {
-            "title": "Halted",
-            "type": "boolean"
-          },
           "mode": {
+            "type": "string",
             "enum": [
               "paper",
               "live"
             ],
-            "title": "Mode",
-            "type": "string"
+            "title": "Mode"
+          },
+          "drain_healthy": {
+            "type": "boolean",
+            "title": "Drain Healthy"
+          },
+          "drain_last_seen": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drain Last Seen"
           },
           "pending_commands": {
-            "title": "Pending Commands",
-            "type": "integer"
-          },
-          "rungs": {
-            "items": {
-              "$ref": "#/components/schemas/AutonomyRung"
-            },
-            "title": "Rungs",
-            "type": "array"
+            "type": "integer",
+            "title": "Pending Commands"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "autonomy",
@@ -1515,48 +2706,59 @@
           "drain_healthy",
           "pending_commands"
         ],
-        "title": "ControlsResponse",
-        "type": "object"
+        "title": "ControlsResponse"
       },
       "FillListResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "fills": {
             "items": {
               "$ref": "#/components/schemas/FillSummary"
             },
-            "title": "Fills",
-            "type": "array"
+            "type": "array",
+            "title": "Fills"
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
-        "title": "FillListResponse",
-        "type": "object"
+        "title": "FillListResponse"
       },
       "FillSummary": {
         "properties": {
-          "action": {
-            "title": "Action",
-            "type": "string"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "avg_price": {
-            "title": "Avg Price",
-            "type": "number"
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "order_id": {
+            "type": "integer",
+            "title": "Order Id"
           },
           "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "filled_qty": {
+            "type": "number",
+            "title": "Filled Qty"
+          },
+          "avg_price": {
+            "type": "number",
+            "title": "Avg Price"
           },
           "commission": {
             "anyOf": [
@@ -1569,28 +2771,17 @@
             ],
             "title": "Commission"
           },
-          "filled_at": {
-            "format": "date-time",
-            "title": "Filled At",
-            "type": "string"
-          },
-          "filled_qty": {
-            "title": "Filled Qty",
-            "type": "number"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
           "is_live": {
-            "title": "Is Live",
-            "type": "boolean"
+            "type": "boolean",
+            "title": "Is Live"
           },
-          "order_id": {
-            "title": "Order Id",
-            "type": "integer"
+          "filled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Filled At"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "id",
@@ -1602,8 +2793,7 @@
           "is_live",
           "filled_at"
         ],
-        "title": "FillSummary",
-        "type": "object"
+        "title": "FillSummary"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1611,76 +2801,64 @@
             "items": {
               "$ref": "#/components/schemas/ValidationError"
             },
-            "title": "Detail",
-            "type": "array"
+            "type": "array",
+            "title": "Detail"
           }
         },
-        "title": "HTTPValidationError",
-        "type": "object"
+        "type": "object",
+        "title": "HTTPValidationError"
       },
       "HealthResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "providers": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "default": {},
-            "title": "Providers",
-            "type": "object"
-          },
-          "research_db": {
-            "title": "Research Db",
-            "type": "boolean"
+            "title": "As Of"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "type": "string",
+            "title": "Status"
+          },
+          "research_db": {
+            "type": "boolean",
+            "title": "Research Db"
           },
           "trading_db": {
-            "title": "Trading Db",
-            "type": "boolean"
+            "type": "boolean",
+            "title": "Trading Db"
           },
           "worker_heartbeat": {
             "anyOf": [
               {
-                "format": "date-time",
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Worker Heartbeat"
+          },
+          "providers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Providers",
+            "default": {}
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "status",
           "research_db",
           "trading_db"
         ],
-        "title": "HealthResponse",
-        "type": "object"
+        "title": "HealthResponse"
       },
       "IdealZonePayload": {
-        "description": "The denormalised ideal zone from ``RiskVerdictRow`` (lo / hi / min_credit).",
         "properties": {
-          "hi": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Hi"
-          },
           "lo": {
             "anyOf": [
               {
@@ -1691,6 +2869,17 @@
               }
             ],
             "title": "Lo"
+          },
+          "hi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi"
           },
           "min_credit": {
             "anyOf": [
@@ -1704,22 +2893,26 @@
             "title": "Min Credit"
           }
         },
+        "type": "object",
         "title": "IdealZonePayload",
-        "type": "object"
+        "description": "The denormalised ideal zone from ``RiskVerdictRow`` (lo / hi / min_credit)."
       },
       "LineItemValue": {
-        "description": "One normalised line item for one period, traceable to its filing.",
         "properties": {
-          "accn": {
+          "line_item": {
+            "type": "string",
+            "title": "Line Item"
+          },
+          "value": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Accn"
+            "title": "Value"
           },
           "concept": {
             "anyOf": [
@@ -1732,11 +2925,22 @@
             ],
             "title": "Concept"
           },
+          "accn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accn"
+          },
           "filed": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
@@ -1754,94 +2958,80 @@
               }
             ],
             "title": "Form"
-          },
-          "line_item": {
-            "title": "Line Item",
-            "type": "string"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value"
           }
         },
+        "type": "object",
         "required": [
           "line_item",
           "value"
         ],
         "title": "LineItemValue",
-        "type": "object"
+        "description": "One normalised line item for one period, traceable to its filing."
       },
       "MeResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "type": "string",
+            "title": "Id"
           },
           "role": {
-            "title": "Role",
-            "type": "string"
+            "type": "string",
+            "title": "Role"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "id",
           "role"
         ],
-        "title": "MeResponse",
-        "type": "object"
+        "title": "MeResponse"
       },
       "NavResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "sections": {
             "items": {
               "$ref": "#/components/schemas/NavSection"
             },
-            "title": "Sections",
-            "type": "array"
+            "type": "array",
+            "title": "Sections"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "sections"
         ],
-        "title": "NavResponse",
-        "type": "object"
+        "title": "NavResponse"
       },
       "NavSection": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "available": {
-            "title": "Available",
-            "type": "boolean"
+            "title": "As Of"
           },
           "key": {
-            "title": "Key",
-            "type": "string"
+            "type": "string",
+            "title": "Key"
           },
           "label": {
-            "title": "Label",
-            "type": "string"
+            "type": "string",
+            "title": "Label"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
           },
           "note": {
             "anyOf": [
@@ -1855,40 +3045,43 @@
             "title": "Note"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "key",
           "label",
           "available"
         ],
-        "title": "NavSection",
-        "type": "object"
+        "title": "NavSection"
       },
       "NewsItem": {
-        "description": "One news headline with its per-item VADER sentiment.\n\n``sentiment`` is the VADER compound polarity in -1.0..+1.0 (0.0 = neutral/unavailable).\nThe frontend renders it as a labelled chip (label + tint, never colour-only).",
         "properties": {
-          "published_at": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
             "anyOf": [
               {
-                "format": "date-time",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Published At"
+            "title": "Url"
           },
-          "sentiment": {
+          "published_at": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Sentiment"
+            "title": "Published At"
           },
           "source": {
             "anyOf": [
@@ -1901,130 +3094,127 @@
             ],
             "title": "Source"
           },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "url": {
+          "sentiment": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Url"
+            "title": "Sentiment"
           }
         },
+        "type": "object",
         "required": [
           "title"
         ],
         "title": "NewsItem",
-        "type": "object"
+        "description": "One news headline with its per-item VADER sentiment.\n\n``sentiment`` is the VADER compound polarity in -1.0..+1.0 (0.0 = neutral/unavailable).\nThe frontend renders it as a labelled chip (label + tint, never colour-only)."
       },
       "NormalizedFinancials": {
         "properties": {
-          "annual": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/PeriodStatement"
-            },
-            "title": "Annual",
-            "type": "array"
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
           },
           "cik": {
-            "title": "Cik",
-            "type": "string"
+            "type": "string",
+            "title": "Cik"
           },
           "entity_name": {
-            "default": "",
+            "type": "string",
             "title": "Entity Name",
-            "type": "string"
+            "default": ""
           },
-          "quarterly": {
-            "default": [],
+          "annual": {
             "items": {
               "$ref": "#/components/schemas/PeriodStatement"
             },
-            "title": "Quarterly",
-            "type": "array"
+            "type": "array",
+            "title": "Annual",
+            "default": []
           },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+          "quarterly": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodStatement"
+            },
+            "type": "array",
+            "title": "Quarterly",
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "symbol",
           "cik"
         ],
-        "title": "NormalizedFinancials",
-        "type": "object"
+        "title": "NormalizedFinancials"
       },
       "OptionsCoverage": {
-        "description": "What the on-demand options lens could actually check.\n\n``option_chain`` is always ``false`` in P1 \u2014 the API process holds no IBKR\nconnection, so ``atm_open_interest``/``atm_spread_pct`` stay ``UNKNOWN`` and the\nresponse says so rather than the UI quietly showing blanks.",
         "properties": {
           "iv_history": {
-            "title": "Iv History",
-            "type": "boolean"
+            "type": "boolean",
+            "title": "Iv History"
           },
           "option_chain": {
-            "default": false,
+            "type": "boolean",
             "title": "Option Chain",
-            "type": "boolean"
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "iv_history"
         ],
         "title": "OptionsCoverage",
-        "type": "object"
+        "description": "What the on-demand options lens could actually check.\n\n``option_chain`` is always ``false`` in P1 \u2014 the API process holds no IBKR\nconnection, so ``atm_open_interest``/``atm_spread_pct`` stay ``UNKNOWN`` and the\nresponse says so rather than the UI quietly showing blanks."
       },
       "OptionsLensResponse": {
-        "description": "``GET /research/{symbol}/options`` \u2014 the on-demand options-income checks lens.\n\n``in_universe``/``tier`` reflect whether *symbol* is one of the ~46 `universe.yaml`\nnames (the \"hot\" tier, with full IV history) or anything else (\"cold\", best-effort).\n``checks`` is the catalogue's `options` category only. `iv_rank`/`vrp_points` are read\nreal from the trading DB for a universe name; for an off-universe name with no\n`iv_history` they resolve to `UNKNOWN` rather than a percentile invented from a short\nseries \u2014 `coverage.iv_history` names which case applied.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "checks": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/CheckResult"
-            },
-            "title": "Checks",
-            "type": "array"
-          },
-          "coverage": {
-            "$ref": "#/components/schemas/OptionsCoverage"
-          },
-          "in_universe": {
-            "title": "In Universe",
-            "type": "boolean"
+            "title": "As Of"
           },
           "symbol": {
-            "title": "Symbol",
-            "type": "string"
+            "type": "string",
+            "title": "Symbol"
+          },
+          "in_universe": {
+            "type": "boolean",
+            "title": "In Universe"
           },
           "tier": {
+            "type": "string",
             "enum": [
               "hot",
               "cold"
             ],
-            "title": "Tier",
-            "type": "string"
+            "title": "Tier"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "type": "array",
+            "title": "Checks",
+            "default": []
           },
           "warnings": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/Warning"
             },
+            "type": "array",
             "title": "Warnings",
-            "type": "array"
+            "default": []
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/OptionsCoverage"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "symbol",
@@ -2033,31 +3223,44 @@
           "coverage"
         ],
         "title": "OptionsLensResponse",
-        "type": "object"
+        "description": "``GET /research/{symbol}/options`` \u2014 the on-demand options-income checks lens.\n\n``in_universe``/``tier`` reflect whether *symbol* is one of the ~46 `universe.yaml`\nnames (the \"hot\" tier, with full IV history) or anything else (\"cold\", best-effort).\n``checks`` is the catalogue's `options` category only. `iv_rank`/`vrp_points` are read\nreal from the trading DB for a universe name; for an off-universe name with no\n`iv_history` they resolve to `UNKNOWN` rather than a percentile invented from a short\nseries \u2014 `coverage.iv_history` names which case applied."
       },
       "OrderListResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "orders": {
             "items": {
               "$ref": "#/components/schemas/OrderSummary"
             },
-            "title": "Orders",
-            "type": "array"
+            "type": "array",
+            "title": "Orders"
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
-        "title": "OrderListResponse",
-        "type": "object"
+        "title": "OrderListResponse"
       },
       "OrderSummary": {
         "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
           "approval_id": {
             "anyOf": [
               {
@@ -2069,47 +3272,23 @@
             ],
             "title": "Approval Id"
           },
-          "as_of": {
-            "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
           },
-          "avg_fill_price": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Avg Fill Price"
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
           },
-          "candidate_id": {
-            "title": "Candidate Id",
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Detail"
+          "strike": {
+            "type": "number",
+            "title": "Strike"
           },
           "expiry": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
@@ -2117,17 +3296,17 @@
             ],
             "title": "Expiry"
           },
-          "filled_qty": {
-            "title": "Filled Qty",
-            "type": "number"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "is_live": {
-            "title": "Is Live",
-            "type": "boolean"
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "submitted",
+              "filled",
+              "partial",
+              "cancelled",
+              "rejected"
+            ],
+            "title": "State"
           },
           "limit_price": {
             "anyOf": [
@@ -2140,36 +3319,48 @@
             ],
             "title": "Limit Price"
           },
-          "state": {
-            "enum": [
-              "queued",
-              "submitted",
-              "filled",
-              "partial",
-              "cancelled",
-              "rejected"
+          "filled_qty": {
+            "type": "number",
+            "title": "Filled Qty"
+          },
+          "avg_fill_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "State",
-            "type": "string"
+            "title": "Avg Fill Price"
           },
-          "strategy": {
-            "title": "Strategy",
-            "type": "string"
+          "is_live": {
+            "type": "boolean",
+            "title": "Is Live"
           },
-          "strike": {
-            "title": "Strike",
-            "type": "number"
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
           },
-          "underlying": {
-            "title": "Underlying",
-            "type": "string"
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           },
           "updated_at": {
+            "type": "string",
             "format": "date-time",
-            "title": "Updated At",
-            "type": "string"
+            "title": "Updated At"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "id",
@@ -2183,83 +3374,83 @@
           "created_at",
           "updated_at"
         ],
-        "title": "OrderSummary",
-        "type": "object"
+        "title": "OrderSummary"
       },
       "PeriodStatement": {
-        "description": "Every line item for one reporting period.",
         "properties": {
+          "period_end": {
+            "type": "string",
+            "format": "date",
+            "title": "Period End"
+          },
+          "period_type": {
+            "type": "string",
+            "title": "Period Type"
+          },
           "items": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LineItemValue"
             },
-            "title": "Items",
-            "type": "object"
-          },
-          "period_end": {
-            "format": "date",
-            "title": "Period End",
-            "type": "string"
-          },
-          "period_type": {
-            "title": "Period Type",
-            "type": "string"
+            "type": "object",
+            "title": "Items"
           }
         },
+        "type": "object",
         "required": [
           "period_end",
           "period_type",
           "items"
         ],
         "title": "PeriodStatement",
-        "type": "object"
+        "description": "Every line item for one reporting period."
       },
       "Phase": {
+        "type": "string",
         "enum": [
           "base",
           "uptrend",
           "distribution",
           "downtrend"
         ],
-        "title": "Phase",
-        "type": "string"
+        "title": "Phase"
       },
       "RecommendationsResponse": {
-        "description": "``GET /research/recommendations`` \u2014 the buy list the scan produced.\n\n``computed_at`` is the most recent full scan's compute time (the run the displayed\ncandidates came from). ``as_of`` is the request time. ``candidates`` is empty (not\nan error) when no full scan has run yet; the route still returns 200 in that case.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "candidates": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/BuyCandidateOut"
-            },
-            "title": "Candidates",
-            "type": "array"
+            "title": "As Of"
           },
           "computed_at": {
             "anyOf": [
               {
-                "format": "date-time",
-                "type": "string"
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Computed At"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/BuyCandidateOut"
+            },
+            "type": "array",
+            "title": "Candidates",
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
         "title": "RecommendationsResponse",
-        "type": "object"
+        "description": "``GET /research/recommendations`` \u2014 the buy list the scan produced.\n\n``computed_at`` is the most recent full scan's compute time (the run the displayed\ncandidates came from). ``as_of`` is the request time. ``candidates`` is empty (not\nan error) when no full scan has run yet; the route still returns 200 in that case."
       },
       "Regime": {
+        "type": "string",
         "enum": [
           "bullish",
           "bearish",
@@ -2267,44 +3458,51 @@
           "high_volatility",
           "low_volatility"
         ],
-        "title": "Regime",
-        "type": "string"
+        "title": "Regime"
       },
       "RollAlertSummary": {
         "properties": {
-          "created_at": {
-            "format": "date-time",
-            "title": "Created At",
-            "type": "string"
-          },
-          "detail": {
-            "title": "Detail",
-            "type": "string"
-          },
           "id": {
-            "title": "Id",
-            "type": "integer"
+            "type": "integer",
+            "title": "Id"
           },
           "trigger": {
-            "title": "Trigger",
-            "type": "string"
+            "type": "string",
+            "title": "Trigger"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           }
         },
+        "type": "object",
         "required": [
           "id",
           "trigger",
           "detail",
           "created_at"
         ],
-        "title": "RollAlertSummary",
-        "type": "object"
+        "title": "RollAlertSummary"
       },
       "SearchHit": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
           },
           "exchange": {
             "anyOf": [
@@ -2318,65 +3516,60 @@
             "title": "Exchange"
           },
           "is_etf": {
-            "default": false,
+            "type": "boolean",
             "title": "Is Etf",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "symbol",
           "name"
         ],
-        "title": "SearchHit",
-        "type": "object"
+        "title": "SearchHit"
       },
       "SearchResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "query": {
-            "title": "Query",
-            "type": "string"
+            "type": "string",
+            "title": "Query"
           },
           "results": {
             "items": {
               "$ref": "#/components/schemas/SearchHit"
             },
-            "title": "Results",
-            "type": "array"
+            "type": "array",
+            "title": "Results"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "query",
           "results"
         ],
-        "title": "SearchResponse",
-        "type": "object"
+        "title": "SearchResponse"
       },
       "SectionState": {
+        "type": "string",
         "enum": [
           "ready",
           "pending",
           "unavailable"
         ],
-        "title": "SectionState",
-        "type": "string"
+        "title": "SectionState"
       },
       "Section_ChecksPayload_": {
         "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SectionState"
+          },
           "data": {
             "anyOf": [
               {
@@ -2397,19 +3590,19 @@
               }
             ],
             "title": "Reason"
-          },
-          "state": {
-            "$ref": "#/components/schemas/SectionState"
           }
         },
+        "type": "object",
         "required": [
           "state"
         ],
-        "title": "Section[ChecksPayload]",
-        "type": "object"
+        "title": "Section[ChecksPayload]"
       },
       "Section_NormalizedFinancials_": {
         "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SectionState"
+          },
           "data": {
             "anyOf": [
               {
@@ -2430,19 +3623,19 @@
               }
             ],
             "title": "Reason"
-          },
-          "state": {
-            "$ref": "#/components/schemas/SectionState"
           }
         },
+        "type": "object",
         "required": [
           "state"
         ],
-        "title": "Section[NormalizedFinancials]",
-        "type": "object"
+        "title": "Section[NormalizedFinancials]"
       },
       "Section_SentimentDetail_": {
         "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SectionState"
+          },
           "data": {
             "anyOf": [
               {
@@ -2463,19 +3656,19 @@
               }
             ],
             "title": "Reason"
-          },
-          "state": {
-            "$ref": "#/components/schemas/SectionState"
           }
         },
+        "type": "object",
         "required": [
           "state"
         ],
-        "title": "Section[SentimentDetail]",
-        "type": "object"
+        "title": "Section[SentimentDetail]"
       },
       "Section_TechnicalStats_": {
         "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SectionState"
+          },
           "data": {
             "anyOf": [
               {
@@ -2496,19 +3689,19 @@
               }
             ],
             "title": "Reason"
-          },
-          "state": {
-            "$ref": "#/components/schemas/SectionState"
           }
         },
+        "type": "object",
         "required": [
           "state"
         ],
-        "title": "Section[TechnicalStats]",
-        "type": "object"
+        "title": "Section[TechnicalStats]"
       },
       "Section_list_NewsItem__": {
         "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SectionState"
+          },
           "data": {
             "anyOf": [
               {
@@ -2533,20 +3726,41 @@
               }
             ],
             "title": "Reason"
-          },
-          "state": {
-            "$ref": "#/components/schemas/SectionState"
           }
         },
+        "type": "object",
         "required": [
           "state"
         ],
-        "title": "Section[list[NewsItem]]",
-        "type": "object"
+        "title": "Section[list[NewsItem]]"
       },
       "SectorCard": {
-        "description": "One sector's aggregate summary for the landing-page grid.\n\n``avg_iv_rank`` is the differentiator: where premium is rich today, at a glance \u2014\nno consumer research site shows it. ``iv_rank_count`` is the number of members that\nactually contributed to that average, so a one-name average is visible as such\n(and ``avg_iv_rank`` is ``None`` when no member has IV history).\n``change_pct`` is ``None`` (never ``0``) when no member has a priced quote.\nCards are ordered by ``avg_iv_rank`` descending on the client, since premium\nrichness is the reason to look.",
         "properties": {
+          "sector": {
+            "type": "string",
+            "title": "Sector"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct"
+          },
+          "best": {
+            "$ref": "#/components/schemas/SectorMover"
+          },
+          "worst": {
+            "$ref": "#/components/schemas/SectorMover"
+          },
           "avg_iv_rank": {
             "anyOf": [
               {
@@ -2558,37 +3772,13 @@
             ],
             "title": "Avg Iv Rank"
           },
-          "best": {
-            "$ref": "#/components/schemas/SectorMover"
-          },
-          "change_pct": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Change Pct"
-          },
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
           "iv_rank_count": {
-            "default": 0,
+            "type": "integer",
             "title": "Iv Rank Count",
-            "type": "integer"
-          },
-          "sector": {
-            "title": "Sector",
-            "type": "string"
-          },
-          "worst": {
-            "$ref": "#/components/schemas/SectorMover"
+            "default": 0
           }
         },
+        "type": "object",
         "required": [
           "sector",
           "count",
@@ -2596,11 +3786,14 @@
           "worst"
         ],
         "title": "SectorCard",
-        "type": "object"
+        "description": "One sector's aggregate summary for the landing-page grid.\n\n``avg_iv_rank`` is the differentiator: where premium is rich today, at a glance \u2014\nno consumer research site shows it. ``iv_rank_count`` is the number of members that\nactually contributed to that average, so a one-name average is visible as such\n(and ``avg_iv_rank`` is ``None`` when no member has IV history).\n``change_pct`` is ``None`` (never ``0``) when no member has a priced quote.\nCards are ordered by ``avg_iv_rank`` descending on the client, since premium\nrichness is the reason to look."
       },
       "SectorMover": {
-        "description": "One symbol and its daily change, for the best/worst corner of a sector card.",
         "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
           "change_pct": {
             "anyOf": [
               {
@@ -2611,76 +3804,40 @@
               }
             ],
             "title": "Change Pct"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
           }
         },
+        "type": "object",
         "required": [
           "symbol"
         ],
         "title": "SectorMover",
-        "type": "object"
+        "description": "One symbol and its daily change, for the best/worst corner of a sector card."
       },
       "SectorsResponse": {
-        "description": "``GET /research/sectors`` \u2014 the sector card grid.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "sectors": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/SectorCard"
             },
+            "type": "array",
             "title": "Sectors",
-            "type": "array"
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
         "title": "SectorsResponse",
-        "type": "object"
+        "description": "``GET /research/sectors`` \u2014 the sector card grid."
       },
       "SentimentDetail": {
-        "description": "Composite social + news sentiment for one symbol \u2014 enrichment only.\n\n``overall`` (0-100, 50 = neutral, ``None`` = no data from any source) is the single\nnumber that feeds scoring via :attr:`ScoreCard.sentiment_score`. The per-source fields,\ncounts, 1-day velocity, and headline are surfaced to Claude and the Telegram deep-dive\ncard to *explain* the read; they never reach the risk engine or position sizing.",
         "properties": {
-          "delta_1d": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Delta 1D"
-          },
-          "label": {
-            "default": "no data",
-            "title": "Label",
-            "type": "string"
-          },
-          "news": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "News"
-          },
-          "news_count": {
-            "default": 0,
-            "title": "News Count",
-            "type": "integer"
-          },
           "overall": {
             "anyOf": [
               {
@@ -2692,7 +3849,12 @@
             ],
             "title": "Overall"
           },
-          "reddit": {
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": "no data"
+          },
+          "delta_1d": {
             "anyOf": [
               {
                 "type": "number"
@@ -2701,7 +3863,7 @@
                 "type": "null"
               }
             ],
-            "title": "Reddit"
+            "title": "Delta 1D"
           },
           "stocktwits": {
             "anyOf": [
@@ -2715,9 +3877,36 @@
             "title": "Stocktwits"
           },
           "stocktwits_msgs": {
-            "default": 0,
+            "type": "integer",
             "title": "Stocktwits Msgs",
-            "type": "integer"
+            "default": 0
+          },
+          "news": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "News"
+          },
+          "news_count": {
+            "type": "integer",
+            "title": "News Count",
+            "default": 0
+          },
+          "reddit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reddit"
           },
           "top_headline": {
             "anyOf": [
@@ -2731,72 +3920,69 @@
             "title": "Top Headline"
           }
         },
+        "type": "object",
         "title": "SentimentDetail",
-        "type": "object"
+        "description": "Composite social + news sentiment for one symbol \u2014 enrichment only.\n\n``overall`` (0-100, 50 = neutral, ``None`` = no data from any source) is the single\nnumber that feeds scoring via :attr:`ScoreCard.sentiment_score`. The per-source fields,\ncounts, 1-day velocity, and headline are surfaced to Claude and the Telegram deep-dive\ncard to *explain* the read; they never reach the risk engine or position sizing."
       },
       "ShortListResponse": {
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "shorts": {
             "items": {
               "$ref": "#/components/schemas/ShortPosition"
             },
-            "title": "Shorts",
-            "type": "array"
+            "type": "array",
+            "title": "Shorts"
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
-        "title": "ShortListResponse",
-        "type": "object"
+        "title": "ShortListResponse"
       },
       "ShortPosition": {
         "properties": {
-          "alerts": {
-            "items": {
-              "$ref": "#/components/schemas/RollAlertSummary"
-            },
-            "title": "Alerts",
-            "type": "array"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "assignment_risk": {
-            "title": "Assignment Risk",
-            "type": "boolean"
+          "position_symbol": {
+            "type": "string",
+            "title": "Position Symbol"
           },
-          "avg_cost": {
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "right": {
+            "type": "string",
+            "enum": [
+              "C",
+              "P"
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "expiry": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Avg Cost"
-          },
-          "contracts": {
-            "title": "Contracts",
-            "type": "integer"
-          },
-          "delta": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Sourced_float_"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Expiry"
           },
           "dte": {
             "anyOf": [
@@ -2809,17 +3995,20 @@
             ],
             "title": "Dte"
           },
-          "expiry": {
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
+          },
+          "avg_cost": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "number"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Expiry"
+            "title": "Avg Cost"
           },
           "mark": {
             "anyOf": [
@@ -2832,6 +4021,17 @@
             ],
             "title": "Mark"
           },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
           "pnl_pct": {
             "anyOf": [
               {
@@ -2843,38 +4043,29 @@
             ],
             "title": "Pnl Pct"
           },
-          "position_symbol": {
-            "title": "Position Symbol",
-            "type": "string"
-          },
-          "right": {
-            "enum": [
-              "C",
-              "P"
-            ],
-            "title": "Right",
-            "type": "string"
-          },
-          "strike": {
-            "title": "Strike",
-            "type": "number"
-          },
-          "underlying": {
-            "title": "Underlying",
-            "type": "string"
-          },
-          "unrealized_pnl": {
+          "delta": {
             "anyOf": [
               {
-                "type": "number"
+                "$ref": "#/components/schemas/Sourced_float_"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Unrealized Pnl"
+            ]
+          },
+          "assignment_risk": {
+            "type": "boolean",
+            "title": "Assignment Risk"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/RollAlertSummary"
+            },
+            "type": "array",
+            "title": "Alerts"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "position_symbol",
@@ -2884,11 +4075,10 @@
           "contracts",
           "assignment_risk"
         ],
-        "title": "ShortPosition",
-        "type": "object"
+        "title": "ShortPosition"
       },
       "Source": {
-        "description": "Where a number came from. A Black-Scholes delta must not look like an IBKR one.",
+        "type": "string",
         "enum": [
           "edgar",
           "yfinance",
@@ -2897,23 +4087,10 @@
           "computed"
         ],
         "title": "Source",
-        "type": "string"
+        "description": "Where a number came from. A Black-Scholes delta must not look like an IBKR one."
       },
       "Sourced_float_": {
         "properties": {
-          "as_of": {
-            "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/Source"
-          },
-          "stale": {
-            "default": false,
-            "title": "Stale",
-            "type": "boolean"
-          },
           "value": {
             "anyOf": [
               {
@@ -2924,100 +4101,105 @@
               }
             ],
             "title": "Value"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "source",
           "as_of"
         ],
-        "title": "Sourced[float]",
-        "type": "object"
+        "title": "Sourced[float]"
       },
       "SummaryOut": {
-        "description": "The AI narrative over computed values. Enrichment \u2014 influences nothing.\n\nEvery number the model used was passed in via ``ResearchContext``; the model never\ncalculates. ``caveats`` always carries the quantitative limit. ``model`` and\n``data_as_of`` make a stale summary visibly stale.",
         "properties": {
-          "bear_points": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "title": "Bear Points",
-            "type": "array"
+          "thesis": {
+            "type": "string",
+            "title": "Thesis"
           },
           "bull_points": {
-            "default": [],
             "items": {
               "type": "string"
             },
+            "type": "array",
             "title": "Bull Points",
-            "type": "array"
+            "default": []
           },
-          "caveats": {
-            "default": [],
+          "bear_points": {
             "items": {
               "type": "string"
             },
-            "title": "Caveats",
-            "type": "array"
-          },
-          "data_as_of": {
-            "format": "date-time",
-            "title": "Data As Of",
-            "type": "string"
-          },
-          "model": {
-            "title": "Model",
-            "type": "string"
-          },
-          "thesis": {
-            "title": "Thesis",
-            "type": "string"
+            "type": "array",
+            "title": "Bear Points",
+            "default": []
           },
           "watch_items": {
-            "default": [],
             "items": {
               "type": "string"
             },
+            "type": "array",
             "title": "Watch Items",
-            "type": "array"
+            "default": []
+          },
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Caveats",
+            "default": []
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "data_as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Data As Of"
           }
         },
+        "type": "object",
         "required": [
           "thesis",
           "model",
           "data_as_of"
         ],
         "title": "SummaryOut",
-        "type": "object"
+        "description": "The AI narrative over computed values. Enrichment \u2014 influences nothing.\n\nEvery number the model used was passed in via ``ResearchContext``; the model never\ncalculates. ``caveats`` always carries the quantitative limit. ``model`` and\n``data_as_of`` make a stale summary visibly stale."
       },
       "SummaryResponse": {
-        "description": "``GET/POST /research/{symbol}/summary``.\n\n``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),\n``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST\ngeneration was attempted but failed soft). ``reason`` explains ``unavailable``/\n``pending`` so the panel can show why and prompt a Generate/retry action.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
           },
           "state": {
+            "type": "string",
             "enum": [
               "ready",
               "stale",
               "unavailable",
               "pending"
             ],
-            "title": "State",
-            "type": "string"
+            "title": "State"
           },
           "summary": {
             "anyOf": [
@@ -3029,21 +4211,48 @@
               }
             ]
           },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "symbol",
           "state"
         ],
         "title": "SummaryResponse",
-        "type": "object"
+        "description": "``GET/POST /research/{symbol}/summary``.\n\n``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),\n``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST\ngeneration was attempted but failed soft). ``reason`` explains ``unavailable``/\n``pending`` so the panel can show why and prompt a Generate/retry action."
       },
       "TechnicalStats": {
         "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "rsi_14": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rsi 14"
+          },
           "atr_14": {
             "anyOf": [
               {
@@ -3054,17 +4263,6 @@
               }
             ],
             "title": "Atr 14"
-          },
-          "atr_ratio": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Atr Ratio"
           },
           "macd": {
             "anyOf": [
@@ -3088,24 +4286,63 @@
             ],
             "title": "Macd Signal"
           },
-          "phase": {
+          "sma_20": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Phase"
+                "type": "number"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Sma 20"
           },
-          "price": {
-            "title": "Price",
-            "type": "number"
+          "sma_50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma 50"
           },
-          "price_source": {
-            "default": "yfinance",
-            "title": "Price Source",
-            "type": "string"
+          "sma_200": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma 200"
+          },
+          "support_levels": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Support Levels"
+          },
+          "resistance_levels": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Resistance Levels"
+          },
+          "atr_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atr Ratio"
           },
           "regime": {
             "anyOf": [
@@ -3128,132 +4365,85 @@
             ],
             "title": "Relative Strength"
           },
-          "resistance_levels": {
-            "items": {
-              "type": "number"
-            },
-            "title": "Resistance Levels",
-            "type": "array"
+          "price_source": {
+            "type": "string",
+            "title": "Price Source",
+            "default": "yfinance"
           },
-          "rsi_14": {
+          "phase": {
             "anyOf": [
               {
-                "type": "number"
+                "$ref": "#/components/schemas/Phase"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Rsi 14"
-          },
-          "sma_20": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sma 20"
-          },
-          "sma_200": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sma 200"
-          },
-          "sma_50": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sma 50"
-          },
-          "support_levels": {
-            "items": {
-              "type": "number"
-            },
-            "title": "Support Levels",
-            "type": "array"
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
+            ]
           }
         },
+        "type": "object",
         "required": [
           "symbol",
           "price"
         ],
-        "title": "TechnicalStats",
-        "type": "object"
+        "title": "TechnicalStats"
       },
       "UniverseResponse": {
-        "description": "The parsed universe.yaml: the four lists, the sector map, strike-band overrides.\n\n``sectors`` maps every universe symbol to its sector tag. ``strike_bands`` maps the\nsymbols that carry a per-symbol override to the band fraction. Both are read-only\nin P1; ``editable`` is ``false`` so the client knows not to show an edit control.",
         "properties": {
-          "actively_wheeling": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Actively Wheeling",
-            "type": "array"
-          },
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
-          },
-          "editable": {
-            "default": false,
-            "title": "Editable",
-            "type": "boolean"
+            "title": "As Of"
           },
           "indexes": {
             "items": {
               "type": "string"
             },
-            "title": "Indexes",
-            "type": "array"
-          },
-          "sectors": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Sectors",
-            "type": "object"
-          },
-          "strike_bands": {
-            "additionalProperties": {
-              "type": "number"
-            },
-            "title": "Strike Bands",
-            "type": "object"
+            "type": "array",
+            "title": "Indexes"
           },
           "watchlist": {
             "items": {
               "type": "string"
             },
-            "title": "Watchlist",
-            "type": "array"
+            "type": "array",
+            "title": "Watchlist"
           },
           "would_own": {
             "items": {
               "type": "string"
             },
-            "title": "Would Own",
-            "type": "array"
+            "type": "array",
+            "title": "Would Own"
+          },
+          "actively_wheeling": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actively Wheeling"
+          },
+          "sectors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Sectors"
+          },
+          "strike_bands": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Strike Bands"
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "default": false
           }
         },
+        "type": "object",
         "required": [
           "as_of",
           "indexes",
@@ -3264,17 +4454,10 @@
           "strike_bands"
         ],
         "title": "UniverseResponse",
-        "type": "object"
+        "description": "The parsed universe.yaml: the four lists, the sector map, strike-band overrides.\n\n``sectors`` maps every universe symbol to its sector tag. ``strike_bands`` maps the\nsymbols that carry a per-symbol override to the band fraction. Both are read-only\nin P1; ``editable`` is ``false`` so the client knows not to show an edit control."
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -3286,53 +4469,77 @@
                 }
               ]
             },
-            "title": "Location",
-            "type": "array"
+            "type": "array",
+            "title": "Location"
           },
           "msg": {
-            "title": "Message",
-            "type": "string"
+            "type": "string",
+            "title": "Message"
           },
           "type": {
-            "title": "Error Type",
-            "type": "string"
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
+        "type": "object",
         "required": [
           "loc",
           "msg",
           "type"
         ],
-        "title": "ValidationError",
-        "type": "object"
+        "title": "ValidationError"
       },
       "Warning": {
-        "description": "One surfaced caveat. ``level`` drives the icon/tint; never colour-only.",
         "properties": {
-          "detail": {
-            "title": "Detail",
-            "type": "string"
-          },
           "level": {
-            "title": "Level",
-            "type": "string"
+            "type": "string",
+            "title": "Level"
           },
           "title": {
-            "title": "Title",
-            "type": "string"
+            "type": "string",
+            "title": "Title"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
           }
         },
+        "type": "object",
         "required": [
           "level",
           "title",
           "detail"
         ],
         "title": "Warning",
-        "type": "object"
+        "description": "One surfaced caveat. ``level`` drives the icon/tint; never colour-only."
       },
       "WatchlistItem": {
-        "description": "One row of the user's watchlist, with the fields the landing table needs.\n\n``price`` ships as ``Sourced<float>`` so its provenance and staleness are explicit.\n``checks`` is the aggregate {passed, evaluable, unknown} \u2014 the full per-check payload\nlives on the ticker page (M5), one click away. ``iv_rank`` is read-only from the\ntrading DB's iv_history; ``None`` when the symbol has no IV history.",
         "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sourced_float_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "change_pct": {
             "anyOf": [
               {
@@ -3343,13 +4550,6 @@
               }
             ],
             "title": "Change Pct"
-          },
-          "checks": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "title": "Checks",
-            "type": "object"
           },
           "iv_rank": {
             "anyOf": [
@@ -3362,1241 +4562,63 @@
             ],
             "title": "Iv Rank"
           },
-          "name": {
-            "title": "Name",
-            "type": "string"
+          "checks": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Checks"
           },
           "next_earnings": {
             "anyOf": [
               {
-                "format": "date",
-                "type": "string"
+                "type": "string",
+                "format": "date"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Next Earnings"
-          },
-          "price": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Sourced_float_"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "symbol": {
-            "title": "Symbol",
-            "type": "string"
           }
         },
+        "type": "object",
         "required": [
           "symbol",
           "name",
           "checks"
         ],
         "title": "WatchlistItem",
-        "type": "object"
+        "description": "One row of the user's watchlist, with the fields the landing table needs.\n\n``price`` ships as ``Sourced<float>`` so its provenance and staleness are explicit.\n``checks`` is the aggregate {passed, evaluable, unknown} \u2014 the full per-check payload\nlives on the ticker page (M5), one click away. ``iv_rank`` is read-only from the\ntrading DB's iv_history; ``None`` when the symbol has no IV history."
       },
       "WatchlistResponse": {
-        "description": "``GET /watchlist`` \u2014 the user's tracked symbols, scoped to their user_id.",
         "properties": {
           "as_of": {
+            "type": "string",
             "format": "date-time",
-            "title": "As Of",
-            "type": "string"
+            "title": "As Of"
           },
           "items": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/WatchlistItem"
             },
+            "type": "array",
             "title": "Items",
-            "type": "array"
+            "default": []
           }
         },
+        "type": "object",
         "required": [
           "as_of"
         ],
         "title": "WatchlistResponse",
-        "type": "object"
+        "description": "``GET /watchlist`` \u2014 the user's tracked symbols, scoped to their user_id."
       }
     },
     "securitySchemes": {
       "HTTPBearer": {
-        "scheme": "bearer",
-        "type": "http"
-      }
-    }
-  },
-  "info": {
-    "title": "IBKR Income System \u2014 Web API",
-    "version": "0.1.0"
-  },
-  "openapi": "3.1.0",
-  "paths": {
-    "/commands": {
-      "post": {
-        "description": "Enqueue an intent. 201 if new, 200 if a dedupe returned the existing row.",
-        "operationId": "post_commands_commands_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CommandRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommandResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Post Commands",
-        "tags": [
-          "commands"
-        ]
-      }
-    },
-    "/commands/{command_id}": {
-      "get": {
-        "description": "Read one command's status through the read-only engine.",
-        "operationId": "get_command_commands__command_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "command_id",
-            "required": true,
-            "schema": {
-              "title": "Command Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommandStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Command",
-        "tags": [
-          "commands"
-        ]
-      }
-    },
-    "/commands/{command_id}/confirm": {
-      "post": {
-        "description": "Supply the confirm token for a live-mode order-reaching intent.\n\nIn paper mode no token was issued, so this is a no-op 204. In live mode a mismatched\nor missing token returns 409. A command not awaiting confirmation (already applied,\nor not an order-reaching kind) also returns 409.",
-        "operationId": "confirm_command_commands__command_id__confirm_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "command_id",
-            "required": true,
-            "schema": {
-              "title": "Command Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConfirmRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Confirm Command",
-        "tags": [
-          "commands"
-        ]
-      }
-    },
-    "/health": {
-      "get": {
-        "operationId": "health_health_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Health",
-        "tags": [
-          "meta"
-        ]
-      }
-    },
-    "/me": {
-      "get": {
-        "operationId": "me_me_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Me",
-        "tags": [
-          "meta"
-        ]
-      }
-    },
-    "/nav": {
-      "get": {
-        "operationId": "nav_nav_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NavResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Nav",
-        "tags": [
-          "meta"
-        ]
-      }
-    },
-    "/options/approvals": {
-      "get": {
-        "description": "List approvals, pending by default. ``status=all`` returns decided ones too.\n\nAn unknown status value is rejected with 422 (not a silent empty list) \u2014 an\noperator typo should surface, not look like \"no approvals.\"",
-        "operationId": "list_approvals_options_approvals_get",
-        "parameters": [
-          {
-            "description": "Filter by approval status, or `all` for every status (newest first).",
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "default": "pending",
-              "description": "Filter by approval status, or `all` for every status (newest first).",
-              "enum": [
-                "pending",
-                "approved",
-                "rejected",
-                "expired",
-                "all"
-              ],
-              "title": "Status",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApprovalListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Approvals",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/approvals/{approval_id}": {
-      "get": {
-        "description": "One approval in full. 404 if unknown. Joined enrichment degrades to null.",
-        "operationId": "get_approval_options_approvals__approval_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "approval_id",
-            "required": true,
-            "schema": {
-              "title": "Approval Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApprovalDetail"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Approval",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/assessed": {
-      "get": {
-        "description": "The assessed browser: every contract the scan priced, grouped by symbol.",
-        "operationId": "list_assessed_options_assessed_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "run",
-            "required": false,
-            "schema": {
-              "default": "latest",
-              "title": "Run",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "symbol",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Symbol"
-            }
-          },
-          {
-            "description": "Filter to one assessment stage. Unknown values return 422.",
-            "in": "query",
-            "name": "stage",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "generator",
-                    "risk_gate",
-                    "score_floor",
-                    "dedupe",
-                    "top_n",
-                    "passed"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filter to one assessment stage. Unknown values return 422.",
-              "title": "Stage"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 200,
-              "maximum": 1000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssessedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Assessed",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/controls": {
-      "get": {
-        "description": "Autonomy rung, halt state, mode, and command-drain health.",
-        "operationId": "controls_options_controls_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ControlsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Controls",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/fills": {
-      "get": {
-        "description": "Recent fills within the last ``days`` days.",
-        "operationId": "list_fills_options_fills_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "maximum": 90,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "maximum": 500,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FillListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Fills",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/orders": {
-      "get": {
-        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list).",
-        "operationId": "list_orders_options_orders_get",
-        "parameters": [
-          {
-            "description": "`working` (queued/submitted/partial), `all`, or a specific state.",
-            "in": "query",
-            "name": "state",
-            "required": false,
-            "schema": {
-              "default": "working",
-              "description": "`working` (queued/submitted/partial), `all`, or a specific state.",
-              "enum": [
-                "working",
-                "all",
-                "queued",
-                "submitted",
-                "filled",
-                "partial",
-                "cancelled",
-                "rejected"
-              ],
-              "title": "State",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "maximum": 200,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OrderListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Orders",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/options/shorts": {
-      "get": {
-        "description": "Open short option positions from the most recent position snapshot.\n\n``as_of`` is the snapshot's capture time, not request time \u2014 the same discipline\nP0/P1 M4 fixed for quotes. Long options and stock are excluded. ``delta`` carries\nits source through ``Sourced`` so a BS delta never looks identical to an IBKR one.\nA position with no snapshot data returns ``null`` for ``mark`` and\n``unrealized_pnl``, never ``0.0``.",
-        "operationId": "list_shorts_options_shorts_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ShortListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Shorts",
-        "tags": [
-          "options"
-        ]
-      }
-    },
-    "/research/recommendations": {
-      "get": {
-        "description": "The scan's buy-to-own list, rendered exactly as it was scored.\n\nReads ``BuyCandidateRow`` through the **read-only** trading session (\u00a74.3 \u2014 the API\nwrites nothing). The web layer does no re-scoring: every field is what the\norchestrator's scan-time scoring produced, so the site and the Telegram card\ncan never disagree about what the system thinks. An empty table returns an empty\nlist with a 200, not a 404 \u2014 no scan has run yet is a legitimate state.",
-        "operationId": "recommendations_research_recommendations_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 25,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecommendationsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Recommendations",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/search": {
-      "get": {
-        "description": "Rank: exact ticker, then ticker prefix, then name substring.\n\nEach band is alphabetical within itself. A blank query returns no results rather\nthan the whole table.",
-        "operationId": "search_research_search_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "default": "",
-              "maxLength": 64,
-              "title": "Q",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 50,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Search",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/sectors": {
-      "get": {
-        "description": "Sector cards: aggregate daily change, best/worst mover, count, and average IV rank.\n\nMembership comes from ``universe.yaml``'s ``sectors`` map (every universe symbol tagged\nwith its sector). ``change_pct`` is the warm-tier quote's daily change from the research\nDB; a sector with no priced members reports ``change_pct`` as ``None``, never ``0``.\n``avg_iv_rank`` averages only members that actually have IV history in the trading DB\n(read-only), and the card carries the contributing count so a one-name average is visible.\n\nCards are returned ordered by ``avg_iv_rank`` descending (premium richness is the\nreason to look); sectors with no IV history sort last, preserving their file order.",
-        "operationId": "sectors_research_sectors_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SectorsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Sectors",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/{symbol}": {
-      "get": {
-        "description": "Full analysis for one symbol.\n\n404 only when the symbol is not a known filer. Everything else degrades per section.",
-        "operationId": "analysis_research__symbol__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AnalysisResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Analysis",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/{symbol}/bars": {
-      "get": {
-        "description": "Daily OHLCV with server-side SMA 50 and 200, in lightweight-charts' field names.\n\n``time`` is ``YYYY-MM-DD`` (lightweight-charts' accepted daily format). SMA 50 and 200\nare computed from ``daily_bars`` here so the chart and the technical panel can never\ndisagree. A symbol with no bars returns empty lists, not an error.",
-        "operationId": "bars_research__symbol__bars_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "title": "Symbol",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "range",
-            "required": false,
-            "schema": {
-              "default": "1y",
-              "pattern": "^(1mo|3mo|6mo|1y|2y|5y)$",
-              "title": "Range",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BarsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Bars",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/{symbol}/options": {
-      "get": {
-        "description": "On-demand options-income lens \u2014 honest about what it does and doesn't know.\n\nA universe symbol gets real `iv_rank`/`vrp_points` from the trading DB, read-only\n(\u00a74.3). An off-universe symbol gets the same shape with `UNKNOWN` and\n`coverage.iv_history` false rather than a percentile invented from a short series.\n`coverage.option_chain` is always false in P1 \u2014 the API holds no IBKR connection, so\n`atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too. Leverage warnings (Task 5.4)\nare included for leveraged names via the shared `warnings_for` catalogue.",
-        "operationId": "options_lens_research__symbol__options_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OptionsLensResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Options Lens",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/research/{symbol}/summary": {
-      "get": {
-        "description": "Return a cached summary if one exists. **Makes no model call and no\n``materialize``/fetch.**\n\nA cold-tier search on an obscure ticker must not silently trigger a model call\n(design \u00a77), and the same principle applies to the SEC/enrichment fetches\n``materialize`` would run. The GET first consults the cache directly; only on a\nmiss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for\nthe ``unavailable`` reason, and even then it makes no model call \u2014 the client\nrenders a Generate action rather than a spinner.",
-        "operationId": "get_summary_research__symbol__summary_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SummaryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Summary",
-        "tags": [
-          "research"
-        ]
-      },
-      "post": {
-        "description": "Generate and cache a summary on demand. Fail-soft: a failed generation returns\n``pending`` with a reason, not an error, so the rest of the page is untouched.",
-        "operationId": "post_summary_research__symbol__summary_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SummaryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Post Summary",
-        "tags": [
-          "research"
-        ]
-      }
-    },
-    "/universe": {
-      "get": {
-        "operationId": "universe_universe_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UniverseResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Universe",
-        "tags": [
-          "universe"
-        ]
-      }
-    },
-    "/watchlist": {
-      "get": {
-        "description": "Return this user's watchlist items. A second user's items are not returned.",
-        "operationId": "list_watchlist_watchlist_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WatchlistResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Watchlist",
-        "tags": [
-          "watchlist"
-        ]
-      }
-    },
-    "/watchlist/{symbol}": {
-      "delete": {
-        "description": "Remove *symbol* from this user's watchlist. Idempotent: a repeat delete is 204.",
-        "operationId": "remove_symbol_watchlist__symbol__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "maxLength": 16,
-              "minLength": 1,
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Remove Symbol",
-        "tags": [
-          "watchlist"
-        ]
-      },
-      "post": {
-        "description": "Add *symbol* to this user's watchlist. Idempotent: a repeat is 200, not an error.\n\nReturns 201 on first add, 200 on a repeat. 404 if the symbol is not a known filer \u2014 we\nnever create a row that can never resolve to a name. Adding a symbol promotes it to the\nwarm tier immediately (``warm_symbols`` reads ``WatchlistItemRow``).",
-        "operationId": "add_symbol_watchlist__symbol__post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "symbol",
-            "required": true,
-            "schema": {
-              "maxLength": 16,
-              "minLength": 1,
-              "title": "Symbol",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Add Symbol",
-        "tags": [
-          "watchlist"
-        ]
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }

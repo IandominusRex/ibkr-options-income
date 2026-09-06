@@ -23,7 +23,7 @@ means:
 |---|---|---|---|
 | `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
-| `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success, `409` on a mismatch or when not awaiting confirmation. |
+| `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
 
 Every route requires the `owner` role. A viewer token gets `403`.
 
@@ -44,10 +44,35 @@ A wrong-shaped `payload` returns `422` with the validation errors.
 | `status` | `"pending"` \| `"applied"` \| `"failed"` \| `"expired"` | |
 | `result` | object \| null | What happened — on failure, `{reason, detail}` |
 | `needs_confirmation` | bool | `true` when a live-mode `confirm_token` is outstanding |
+| `confirm_token` | string \| null | Present only while a live-mode token is outstanding — the owner supplies it back via the confirm route; cleared on confirm, absent in paper mode |
 | `created` | bool | (POST only) `true` if a new row was inserted, `false` if a dedupe returned the existing one |
 | `created_at` | datetime | |
 | `applied_at` | datetime \| null | |
 | `as_of` | datetime | Response envelope stamp |
+
+### The live-mode flow, as an ordered list
+
+When `LIVE_TRADING=true` and the kind can reach an order (`approve`, `promote`,
+`roll_request`), one click is not enough. Follow these steps:
+
+1. Click **Approve** (or the equivalent action) in the console. A first
+   confirmation dialog opens showing the exact contract and contract count.
+2. Confirm the first dialog. The API stores the intent with a `confirm_token`
+   and returns `needs_confirmation: true`. **Nothing has been applied yet** —
+   the drain skips this command until the token is released.
+3. A **second, clearly labelled LIVE confirmation** opens in the console. This
+   is not a repeat of the first dialog: it names the kind, says this is the
+   mandatory live-trading release, and reminds you the execution-time
+   `[CONFIRM LIVE]` Telegram step still fires afterwards.
+4. Release it. The console `POST /commands/{id}/confirm` with the token; on
+   `204` the token is cleared and the **next drain cycle** applies the intent.
+5. If you cancel the second dialog instead, the intent stays queued awaiting
+   confirmation. It does not apply; it expires with the approval TTL.
+
+A wrong token never clears the field — the command stays pending, fail closed.
+The token expires with `approval.ttl_minutes`; the drain's expiry sweep moves
+an unconfirmed command to `expired`, never applies it. In paper mode no token
+is issued, steps 2-4 do not happen, and the drain applies normally.
 
 ---
 
@@ -57,22 +82,34 @@ A wrong-shaped `payload` returns `422` with the validation errors.
 
 - **Payload:** `{ approval_id: int }`
 - **Dedupe key:** `approve:{approval_id}`
-- **Applied by:** M3 (the approve/reject handler). Sets `ApprovalRow.status = approved`,
-  creates an `OrderRow`, and the executor sends the order.
+- **Applied by:** M3. The drain's handler calls `_process_button(approval_id,
+  "approve")` — the exact function the Telegram Approve button runs, unchanged.
+  Sets `ApprovalRow.status = approved`, copies the frozen N2a snapshot onto a
+  `QUEUED` `OrderRow`, and the executor picks it up when the exec connection is
+  available.
+- **Already decided is not a failure.** If Telegram got there first,
+  `_process_button` returns "Already {status}" and mutates nothing; the command
+  is still marked `applied` with that text in `result.decision`. The four
+  idempotency layers (spec §4.5) mean a replayed or racing approve can never
+  create a second order.
+- **TWS down does not lose the decision.** The approve needs no broker
+  connection: it creates a `QUEUED` order, and `process_queued_orders` submits
+  it when the exec connection returns.
 - **Live mode:** `needs_confirmation = true` — requires a `POST /commands/{id}/confirm`
   before the drain will process it.
-- **Failure modes:** `approval_not_pending` (already decided or expired),
-  `gate_rejected` (the Rules Engine re-rejected at apply time), `broker_unavailable`
-  (TWS down), `unknown_approval` (no such `approval_id`).
+- **Failure modes:** `approval_not_found` (no such `approval_id`).
 - **Milestone:** M3.
 
 ### `reject` — reject a pending approval
 
 - **Payload:** `{ approval_id: int }`
 - **Dedupe key:** `reject:{approval_id}`
-- **Applied by:** M3. Sets `ApprovalRow.status = rejected`. No order is created.
+- **Applied by:** M3. The drain's handler calls `_process_button(approval_id,
+  "reject")` unchanged: sets `ApprovalRow.status = rejected` and records the
+  `USER_REJECTED` outcome. No order is created. An already-decided approval
+  applies neutrally, same as approve.
 - **Live mode:** No confirmation needed — rejecting cannot reach an order.
-- **Failure modes:** `approval_not_pending`, `unknown_approval`.
+- **Failure modes:** `approval_not_found`.
 - **Milestone:** M3.
 
 ### `promote` — promote an assessed contract to the approval queue
@@ -176,6 +213,9 @@ Every `interval` seconds it:
    `/options/controls` reads this to tell an operator their click is queued and
    nothing is picking it up.
 
-In M1, `HANDLERS` is empty — the only observable behaviour is the unknown-kind path,
-the expiry sweep, and the heartbeat. This is deliberate: the machinery is proven
-before anything can use it.
+In M1, `HANDLERS` was empty — the only observable behaviour was the unknown-kind
+path, the expiry sweep, and the heartbeat. This was deliberate: the machinery was
+proven before anything could use it. **Since M3**, `approve` and `reject` are
+registered. A handler raising `CommandFailed` fails its own command with that
+machine-readable reason (rendered humanised on the receipt); any other exception
+is recorded as `handler_error` with the exception text.

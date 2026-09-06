@@ -91,28 +91,43 @@ def get_command(command_id: int, _user: OwnerUser) -> CommandStatus:
 def confirm_command(command_id: int, body: ConfirmRequest, _user: OwnerUser) -> Response:
     """Supply the confirm token for a live-mode order-reaching intent.
 
-    In paper mode no token was issued, so this is a no-op 204. In live mode a mismatched
-    or missing token returns 409. A command not awaiting confirmation (already applied,
-    or not an order-reaching kind) also returns 409.
+    In paper mode no token was issued, so this is a no-op 204. A command not
+    awaiting confirmation (already applied, expired, or not an order-reaching
+    kind) returns 409 — the request does not make sense for that command. A
+    wrong or missing token is **403**: the caller has not proven authority to
+    release this order, and the token is NOT cleared, so the command stays
+    pending (the fail-closed property, M3 Task 3.5).
     """
     resp = get_status(command_id)
     if resp is None:
         raise HTTPException(status_code=404, detail="Command not found")
     if not resp.needs_confirmation:
-        return Response(status_code=204)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Command is not awaiting confirmation",
+        )
     if not body.confirm_token:
-        raise HTTPException(status_code=409, detail="A confirm_token is required for this command")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A confirm_token is required to release this command",
+        )
     # The token is stored on the row; we verify it by reading through the read-only
-    # engine and comparing. A mismatch is 409.
+    # engine and comparing. A mismatch is 403 and does not clear the field.
     from src.api.trading_db import trading_session
     from src.storage.models import AppCommandRow
 
     with trading_session() as s:
         row = s.get(AppCommandRow, command_id)
         if row is None or row.confirm_token is None:
-            raise HTTPException(status_code=409, detail="Not awaiting confirmation")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Not awaiting confirmation",
+            )
         if not secrets.compare_digest(body.confirm_token, row.confirm_token):
-            raise HTTPException(status_code=409, detail="Confirm token does not match")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Confirm token does not match",
+            )
     # Clearing the token is a write — it goes through the command engine, via the only
     # module allowed to hold the write handle. The router never imports the write session.
     clear_confirm_token(command_id)

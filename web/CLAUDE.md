@@ -69,17 +69,21 @@ app/                App Router pages and the root layout
                     is NOT gated behind a Section's state — it fetches its own data
                     from GET /research/{symbol}/bars independently, so a technicals
                     outage must not hide it too
-  options/          Options console (P2 M2): read-only. <ControlsStrip/> at the top
+  options/          Options console (P2 M2 + M3). <ControlsStrip/> at the top
                     (mode, autonomy rung, halt state, drain health), then a tab bar
                     for Approvals / Assessed / Orders / Fills / Shorts. The Approvals
                     tab renders <ApprovalsList/> (cards linking to the detail page).
-                    No action buttons anywhere in M2 — no Approve, Reject, Promote or
-                    Roll control. An operator must not see an affordance that implies
-                    a capability that does not exist yet.
+                    Since M3 the cards and the detail page carry live Approve /
+                    Reject controls through <DecideControls/> — confirm dialog
+                    first, one POST, then a <CommandReceipt/> that never overstates
+                    what happened. Promote and Roll controls do not exist yet
+                    (M4/M5).
   options/[approvalId]/  Approval detail: <ApprovalDetailCard/> with the five review
                     fields as labelled sections (<ReviewPanel/>), the ideal zone bar
-                    (<IdealZoneBar/>), humanised gate reasons, and the alternatives
-                    table. 404 renders a not-found state with a link back to the list.
+                    (<IdealZoneBar/>), humanised gate reasons, the alternatives
+                    table, and the same <DecideControls/> as the card — both
+                    surfaces decide through one code path. 404 renders a not-found
+                    state with a link back to the list.
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -114,8 +118,8 @@ components/
   options/          ApprovalsList (react-query on GET /options/approvals, renders
                     ApprovalCard per pending approval; empty state is one line of
                     text), ApprovalCard (contract label, contracts, premium per share
-                    and total, score, DTE, order state; links to the detail page; no
-                    action buttons), ControlsStrip (react-query on GET /options/controls,
+                    and total, score, DTE, order state; links to the detail page;
+                    mounts DecideControls), ControlsStrip (react-query on GET /options/controls,
                     read-only mode/autonomy/halt/drain pills; says "unhealthy" in
                     words when drain_healthy is false), StageBadge (text label + distinct
                     fill per AssessmentStage, never colour alone — reuses the check
@@ -130,14 +134,36 @@ components/
                     text not a dot, fired roll alerts render as text on the row;
                     no roll button), ApprovalDetailCard (five review fields as five
                     labelled sections via ReviewPanel, IdealZoneBar with lo/hi/
-                    min_credit markers, AlternativesTable, 404 with link back),
-                    ReviewPanel (null review renders nothing at all, not a bordered
-                    box), IdealZoneBar (bar with premium marked against lo/hi/
-                    min_credit, numbers visible, no fabricated precision),
-                    AlternativesTable (other contracts assessed on the same run)
+                    min_credit markers, AlternativesTable, 404 with link back,
+                    DecideControls), ReviewPanel (null review renders nothing at all,
+                    not a bordered box), IdealZoneBar (bar with premium marked
+                    against lo/hi/min_credit, numbers visible, no fabricated
+                    precision), AlternativesTable (other contracts assessed on the
+                    same run), DecideControls (the shared decide flow for the card
+                    and the detail page: Approve/Reject open ConfirmAction before
+                    any request, one POST /commands, the returned id drives a
+                    CommandReceipt; controls disabled while in flight; a decided
+                    approval renders its decision, not controls; 403 renders a
+                    permission message; in live mode a distinct, clearly labelled
+                    second LIVE confirmation releases the confirm token), ConfirmAction
+                    (the confirmation dialog: exact contract and contract count in the
+                    summary, optional case-sensitive typed-word gate for halt in M6,
+                    Escape/cancel call onCancel, focus trapped while open and
+                    returned to the trigger on close, aria-modal + labelled +
+                    visible focus ring, reduced motion disables the entry
+                    transition), CommandReceipt (P2's signature component: state
+                    from receiptState — pending never renders as applied, submitted
+                    only when an order is working, filled only when a fill exists,
+                    stalled stated in words with no spinner, intent id always
+                    visible, failed renders the humanised reason plus detail codes)
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`
+  commands.ts       submitCommand / confirmCommand / useCommandStatus (polls
+                    GET /commands/{id} every 2s while pending, stops at a
+                    terminal state — spec §9.4)
+  receipt.ts        receiptState, the receipt state machine (spec §9.2) — a
+                    pure function, tested exhaustively in receipt.test.ts
   format.ts         formatMoney (compact $391.0B/$1.3M, "n/a" for unknown, "$0"
                     for a real zero), formatPeriod ("Sep 2024"), relativeAge
                     ("5m ago"/"3h ago"/"2d ago"/"1mo ago"), UNKNOWN constant

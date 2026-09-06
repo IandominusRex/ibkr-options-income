@@ -211,7 +211,13 @@ def test_claude_cli_reuses_runner_build_cmd_not_a_second_invoker(monkeypatch) ->
         resp.stdout = json.dumps(
             {
                 "result": json.dumps(
-                    {"thesis": "x", "bull_points": [], "bear_points": [], "watch_items": [], "caveats": []}
+                    {
+                        "thesis": "x",
+                        "bull_points": [],
+                        "bear_points": [],
+                        "watch_items": [],
+                        "caveats": [],
+                    }
                 )
             }
         )
@@ -242,7 +248,13 @@ def test_claude_cli_logs_cost_on_success(monkeypatch, caplog) -> None:
             {
                 "total_cost_usd": 0.0123,
                 "result": json.dumps(
-                    {"thesis": "x", "bull_points": [], "bear_points": [], "watch_items": [], "caveats": []}
+                    {
+                        "thesis": "x",
+                        "bull_points": [],
+                        "bear_points": [],
+                        "watch_items": [],
+                        "caveats": [],
+                    }
                 ),
             }
         )

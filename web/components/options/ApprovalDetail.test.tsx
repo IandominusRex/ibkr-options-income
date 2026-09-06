@@ -1,7 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { ApprovalDetailCard } from "./ApprovalDetail";
 import type { ApprovalDetail } from "./types";
+
+function withClient(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
 
 const base: ApprovalDetail = {
   as_of: "x",
@@ -35,7 +41,7 @@ const base: ApprovalDetail = {
 
 describe("ApprovalDetailCard", () => {
   it("renders the five review fields as five labelled sections", () => {
-    render(<ApprovalDetailCard detail={base} />);
+    withClient(<ApprovalDetailCard detail={base} />);
     expect(screen.getByText("Why attractive")).toBeDefined();
     expect(screen.getByText("Risks")).toBeDefined();
     expect(screen.getByText("Tradeoffs")).toBeDefined();
@@ -47,13 +53,13 @@ describe("ApprovalDetailCard", () => {
   });
 
   it("renders gate reasons as humanised text, not raw codes", () => {
-    render(<ApprovalDetailCard detail={base} />);
+    withClient(<ApprovalDetailCard detail={base} />);
     expect(screen.getByText("IV rank too low (poor premium)")).toBeDefined();
     expect(screen.queryByText("iv_rank_below_minimum")).toBeNull();
   });
 
   it("renders the ideal zone bar with numbers visible", () => {
-    render(<ApprovalDetailCard detail={base} />);
+    withClient(<ApprovalDetailCard detail={base} />);
     expect(screen.getByText(/\$185\.00/)).toBeDefined();
     expect(screen.getByText(/\$192\.00/)).toBeDefined();
     expect(screen.getByText(/\$3\.10/)).toBeDefined();
@@ -62,9 +68,7 @@ describe("ApprovalDetailCard", () => {
   });
 
   it("renders nothing for a null review, not a bordered box", () => {
-    const { container } = render(
-      <ApprovalDetailCard detail={{ ...base, review: null }} />,
-    );
+    const { container } = withClient(<ApprovalDetailCard detail={{ ...base, review: null }} />);
     expect(screen.queryByText("No review available")).toBeNull();
     // No bordered box is rendered for the review section.
     expect(container.textContent).not.toContain("No review");
@@ -74,14 +78,18 @@ describe("ApprovalDetailCard", () => {
     // The page handles 404; this test verifies the card itself does not
     // render when detail is absent. The page-level 404 is tested via the
     // page component's error branch.
-    render(<ApprovalDetailCard detail={base} />);
+    withClient(<ApprovalDetailCard detail={base} />);
     // The "Back to approvals" link is always present on the detail card.
     expect(screen.getByText(/Back to approvals/i)).toBeDefined();
   });
 
-  it("asserts no button with an accessible name matching /approve|reject/i exists", () => {
-    render(<ApprovalDetailCard detail={base} />);
-    const buttons = screen.queryAllByRole("button", { name: /approve|reject/i });
-    expect(buttons).toHaveLength(0);
+  it("renders decide controls for a pending approval, wired through the confirm gate", () => {
+    withClient(<ApprovalDetailCard detail={base} />);
+    // M3: the controls are real. Clicking Approve opens the confirmation dialog
+    // BEFORE any request is made — the M2 guard ("no dead affordance") evolves
+    // into "the control does what it claims".
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(screen.getByTestId("confirm-summary").textContent).toContain("NVDA");
   });
 });

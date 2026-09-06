@@ -625,8 +625,10 @@ In **live mode**, `approve`, `promote`, and `roll_request` are created with a
 
 Read one command's status through the **read-only** engine. **Owner-only.**
 
-**Response:** `CommandStatus` (`{id, kind, status, result, needs_confirmation, created_at, applied_at, as_of}`).
-**404** for an unknown id.
+**Response:** `CommandStatus` (`{id, kind, status, result, needs_confirmation, confirm_token, created_at, applied_at, as_of}`).
+`confirm_token` is present only while a live-mode token is outstanding (the owner
+supplies it back through the confirm route; it is cleared on confirm and absent in
+paper mode). **404** for an unknown id.
 
 ### `POST /commands/{id}/confirm`
 
@@ -634,8 +636,13 @@ Supply the `confirm_token` for a live-mode order-reaching intent. **Owner-only.*
 
 **Body:** `{ confirm_token: string }`
 
-**Response:** `204` on success (or when the command is not awaiting confirmation).
-`409` on a token mismatch or when the command is not awaiting confirmation.
+**Response:**
+- `204` — the token matched and was cleared; the next drain cycle applies the command.
+- `403` — the token is wrong or missing. **The token is NOT cleared**; the command
+  stays `pending` awaiting confirmation (fail closed).
+- `409` — the command is not awaiting confirmation (paper mode, already confirmed,
+  or not an order-reaching kind).
+- `404` — unknown command id.
 
 ---
 

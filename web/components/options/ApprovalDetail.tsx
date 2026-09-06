@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { UNKNOWN } from "@/lib/format";
+import { DecideControls } from "./DecideControls";
 import { IdealZoneBar } from "./IdealZoneBar";
 import { ReviewPanel } from "./ReviewPanel";
 import { AlternativesTable } from "./AlternativesTable";
@@ -78,6 +81,8 @@ export function ApprovalDetailCard({ detail }: { detail: ApprovalDetail }) {
       <ReviewPanel review={detail.review} />
 
       <AlternativesTable alternatives={detail.alternatives} />
+
+      <DecideControls approval={detail} drainHealthy={true} />
     </div>
   );
 }

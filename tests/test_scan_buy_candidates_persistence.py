@@ -52,9 +52,7 @@ def _stub_scan_common(scanmod, monkeypatch) -> None:
     monkeypatch.setattr(scanmod, "get_account_snapshot_async", AsyncMock(return_value=_account()))
     monkeypatch.setattr(scanmod, "get_positions", lambda ib: [])
     monkeypatch.setattr(scanmod, "get_market_conditions", lambda: MarketConditions(vix=15.0))
-    monkeypatch.setattr(
-        scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol)
-    )
+    monkeypatch.setattr(scanmod, "get_iv_stats", lambda symbol, quotes=None: IVStats(symbol=symbol))
     monkeypatch.setattr(
         scanmod,
         "get_technical_stats",

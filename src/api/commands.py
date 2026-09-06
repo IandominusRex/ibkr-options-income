@@ -46,7 +46,11 @@ def submit(
 
 
 def get_status(command_id: int) -> CommandStatus | None:
-    """Read one command's status through the READ-ONLY engine, not the write one."""
+    """Read one command's status through the READ-ONLY engine, not the write one.
+
+    ``confirm_token`` is exposed only while it is outstanding — after a successful
+    confirm or an expiry sweep the field is null, so old commands never leak it.
+    """
     from datetime import UTC, datetime
 
     with trading_session() as s:
@@ -59,6 +63,7 @@ def get_status(command_id: int) -> CommandStatus | None:
             status=row.status,  # type: ignore[arg-type]
             result=row.result,
             needs_confirmation=row.confirm_token is not None,
+            confirm_token=row.confirm_token,
             created_at=row.created_at if row.created_at else datetime.now(UTC),
             applied_at=row.applied_at,
         )
@@ -73,7 +78,5 @@ def clear_confirm_token(command_id: int) -> None:
     """
     with command_session() as s:
         s.execute(
-            update(AppCommandRow)
-            .where(AppCommandRow.id == command_id)
-            .values(confirm_token=None)
+            update(AppCommandRow).where(AppCommandRow.id == command_id).values(confirm_token=None)
         )

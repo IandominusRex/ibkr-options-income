@@ -99,3 +99,19 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Dialog / receipt entry: a short opacity step-in. Reduced motion both disables
+   this via the block above and opts out in JS (ConfirmAction drops the class),
+   because a keyframe at 0.01ms can still fire once in some browsers. */
+@keyframes receipt-entry {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-receipt-entry {
+  animation: receipt-entry 0.15s ease-out;
+}

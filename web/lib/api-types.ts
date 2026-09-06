@@ -4,70 +4,6 @@
  */
 
 export interface paths {
-    "/commands": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Post Commands
-         * @description Enqueue an intent. 201 if new, 200 if a dedupe returned the existing row.
-         */
-        post: operations["post_commands_commands_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commands/{command_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Command
-         * @description Read one command's status through the read-only engine.
-         */
-        get: operations["get_command_commands__command_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/commands/{command_id}/confirm": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Confirm Command
-         * @description Supply the confirm token for a live-mode order-reaching intent.
-         *
-         *     In paper mode no token was issued, so this is a no-op 204. In live mode a mismatched
-         *     or missing token returns 409. A command not awaiting confirmation (already applied,
-         *     or not an order-reaching kind) also returns 409.
-         */
-        post: operations["confirm_command_commands__command_id__confirm_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/health": {
         parameters: {
             query?: never;
@@ -113,6 +49,190 @@ export interface paths {
         get: operations["nav_nav_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search
+         * @description Rank: exact ticker, then ticker prefix, then name substring.
+         *
+         *     Each band is alphabetical within itself. A blank query returns no results rather
+         *     than the whole table.
+         */
+        get: operations["search_research_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recommendations
+         * @description The scan's buy-to-own list, rendered exactly as it was scored.
+         *
+         *     Reads ``BuyCandidateRow`` through the **read-only** trading session (§4.3 — the API
+         *     writes nothing). The web layer does no re-scoring: every field is what the
+         *     orchestrator's scan-time scoring produced, so the site and the Telegram card
+         *     can never disagree about what the system thinks. An empty table returns an empty
+         *     list with a 200, not a 404 — no scan has run yet is a legitimate state.
+         */
+        get: operations["recommendations_research_recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/sectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sectors
+         * @description Sector cards: aggregate daily change, best/worst mover, count, and average IV rank.
+         *
+         *     Membership comes from ``universe.yaml``'s ``sectors`` map (every universe symbol tagged
+         *     with its sector). ``change_pct`` is the warm-tier quote's daily change from the research
+         *     DB; a sector with no priced members reports ``change_pct`` as ``None``, never ``0``.
+         *     ``avg_iv_rank`` averages only members that actually have IV history in the trading DB
+         *     (read-only), and the card carries the contributing count so a one-name average is visible.
+         *
+         *     Cards are returned ordered by ``avg_iv_rank`` descending (premium richness is the
+         *     reason to look); sectors with no IV history sort last, preserving their file order.
+         */
+        get: operations["sectors_research_sectors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}/bars": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bars
+         * @description Daily OHLCV with server-side SMA 50 and 200, in lightweight-charts' field names.
+         *
+         *     ``time`` is ``YYYY-MM-DD`` (lightweight-charts' accepted daily format). SMA 50 and 200
+         *     are computed from ``daily_bars`` here so the chart and the technical panel can never
+         *     disagree. A symbol with no bars returns empty lists, not an error.
+         */
+        get: operations["bars_research__symbol__bars_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Options Lens
+         * @description On-demand options-income lens — honest about what it does and doesn't know.
+         *
+         *     A universe symbol gets real `iv_rank`/`vrp_points` from the trading DB, read-only
+         *     (§4.3). An off-universe symbol gets the same shape with `UNKNOWN` and
+         *     `coverage.iv_history` false rather than a percentile invented from a short series.
+         *     `coverage.option_chain` is always false in P1 — the API holds no IBKR connection, so
+         *     `atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too. Leverage warnings (Task 5.4)
+         *     are included for leveraged names via the shared `warnings_for` catalogue.
+         */
+        get: operations["options_lens_research__symbol__options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Analysis
+         * @description Full analysis for one symbol.
+         *
+         *     404 only when the symbol is not a known filer. Everything else degrades per section.
+         */
+        get: operations["analysis_research__symbol__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/research/{symbol}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Summary
+         * @description Return a cached summary if one exists. **Makes no model call and no
+         *     ``materialize``/fetch.**
+         *
+         *     A cold-tier search on an obscure ticker must not silently trigger a model call
+         *     (design §7), and the same principle applies to the SEC/enrichment fetches
+         *     ``materialize`` would run. The GET first consults the cache directly; only on a
+         *     miss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for
+         *     the ``unavailable`` reason, and even then it makes no model call — the client
+         *     renders a Generate action rather than a spinner.
+         */
+        get: operations["get_summary_research__symbol__summary_get"];
+        put?: never;
+        /**
+         * Post Summary
+         * @description Generate and cache a summary on demand. Fail-soft: a failed generation returns
+         *     ``pending`` with a reason, not an error, so the rest of the page is untouched.
+         */
+        post: operations["post_summary_research__symbol__summary_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -182,7 +302,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/options/controls": {
+    "/options/orders": {
         parameters: {
             query?: never;
             header?: never;
@@ -190,10 +310,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Controls
-         * @description Autonomy rung, halt state, mode, and command-drain health.
+         * List Orders
+         * @description Working orders by default. ``state=all`` returns everything.
+         *
+         *     An unknown state value is rejected with 422 (not a silent empty list).
          */
-        get: operations["controls_options_controls_get"];
+        get: operations["list_orders_options_orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -214,28 +336,6 @@ export interface paths {
          * @description Recent fills within the last ``days`` days.
          */
         get: operations["list_fills_options_fills_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/options/orders": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Orders
-         * @description Working orders by default. ``state=all`` returns everything.
-         *
-         *     An unknown state value is rejected with 422 (not a silent empty list).
-         */
-        get: operations["list_orders_options_orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -270,7 +370,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/research/recommendations": {
+    "/options/controls": {
         parameters: {
             query?: never;
             header?: never;
@@ -278,176 +378,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Recommendations
-         * @description The scan's buy-to-own list, rendered exactly as it was scored.
-         *
-         *     Reads ``BuyCandidateRow`` through the **read-only** trading session (§4.3 — the API
-         *     writes nothing). The web layer does no re-scoring: every field is what the
-         *     orchestrator's scan-time scoring produced, so the site and the Telegram card
-         *     can never disagree about what the system thinks. An empty table returns an empty
-         *     list with a 200, not a 404 — no scan has run yet is a legitimate state.
+         * Controls
+         * @description Autonomy rung, halt state, mode, and command-drain health.
          */
-        get: operations["recommendations_research_recommendations_get"];
+        get: operations["controls_options_controls_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Search
-         * @description Rank: exact ticker, then ticker prefix, then name substring.
-         *
-         *     Each band is alphabetical within itself. A blank query returns no results rather
-         *     than the whole table.
-         */
-        get: operations["search_research_search_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/sectors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Sectors
-         * @description Sector cards: aggregate daily change, best/worst mover, count, and average IV rank.
-         *
-         *     Membership comes from ``universe.yaml``'s ``sectors`` map (every universe symbol tagged
-         *     with its sector). ``change_pct`` is the warm-tier quote's daily change from the research
-         *     DB; a sector with no priced members reports ``change_pct`` as ``None``, never ``0``.
-         *     ``avg_iv_rank`` averages only members that actually have IV history in the trading DB
-         *     (read-only), and the card carries the contributing count so a one-name average is visible.
-         *
-         *     Cards are returned ordered by ``avg_iv_rank`` descending (premium richness is the
-         *     reason to look); sectors with no IV history sort last, preserving their file order.
-         */
-        get: operations["sectors_research_sectors_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/{symbol}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Analysis
-         * @description Full analysis for one symbol.
-         *
-         *     404 only when the symbol is not a known filer. Everything else degrades per section.
-         */
-        get: operations["analysis_research__symbol__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/{symbol}/bars": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Bars
-         * @description Daily OHLCV with server-side SMA 50 and 200, in lightweight-charts' field names.
-         *
-         *     ``time`` is ``YYYY-MM-DD`` (lightweight-charts' accepted daily format). SMA 50 and 200
-         *     are computed from ``daily_bars`` here so the chart and the technical panel can never
-         *     disagree. A symbol with no bars returns empty lists, not an error.
-         */
-        get: operations["bars_research__symbol__bars_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/{symbol}/options": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Options Lens
-         * @description On-demand options-income lens — honest about what it does and doesn't know.
-         *
-         *     A universe symbol gets real `iv_rank`/`vrp_points` from the trading DB, read-only
-         *     (§4.3). An off-universe symbol gets the same shape with `UNKNOWN` and
-         *     `coverage.iv_history` false rather than a percentile invented from a short series.
-         *     `coverage.option_chain` is always false in P1 — the API holds no IBKR connection, so
-         *     `atm_open_interest`/`atm_spread_pct` stay `UNKNOWN` too. Leverage warnings (Task 5.4)
-         *     are included for leveraged names via the shared `warnings_for` catalogue.
-         */
-        get: operations["options_lens_research__symbol__options_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/research/{symbol}/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Summary
-         * @description Return a cached summary if one exists. **Makes no model call and no
-         *     ``materialize``/fetch.**
-         *
-         *     A cold-tier search on an obscure ticker must not silently trigger a model call
-         *     (design §7), and the same principle applies to the SEC/enrichment fetches
-         *     ``materialize`` would run. The GET first consults the cache directly; only on a
-         *     miss does it build the ``AnalysisResponse`` to compute a stable ``data_as_of`` for
-         *     the ``unavailable`` reason, and even then it makes no model call — the client
-         *     renders a Generate action rather than a spinner.
-         */
-        get: operations["get_summary_research__symbol__summary_get"];
-        put?: never;
-        /**
-         * Post Summary
-         * @description Generate and cache a summary on demand. Fail-soft: a failed generation returns
-         *     ``pending`` with a reason, not an error, so the rest of the page is untouched.
-         */
-        post: operations["post_summary_research__symbol__summary_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -519,6 +455,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Commands
+         * @description Enqueue an intent. 201 if new, 200 if a dedupe returned the existing row.
+         */
+        post: operations["post_commands_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commands/{command_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Command
+         * @description Read one command's status through the read-only engine.
+         */
+        get: operations["get_command_commands__command_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commands/{command_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Command
+         * @description Supply the confirm token for a live-mode order-reaching intent.
+         *
+         *     In paper mode no token was issued, so this is a no-op 204. A command not
+         *     awaiting confirmation (already applied, expired, or not an order-reaching
+         *     kind) returns 409 — the request does not make sense for that command. A
+         *     wrong or missing token is **403**: the caller has not proven authority to
+         *     release this order, and the token is NOT cleared, so the command stays
+         *     pending (the fail-closed property, M3 Task 3.5).
+         */
+        post: operations["confirm_command_commands__command_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -528,24 +531,24 @@ export interface components {
          * @description Another contract assessed on the same underlying during the same run.
          */
         AlternativeStrike: {
-            /** Blended Score */
-            blended_score?: number | null;
             /** Candidate Id */
             candidate_id: string;
-            /** Expiry */
-            expiry?: string | null;
-            /** Premium */
-            premium?: number | null;
-            /** Reasons */
-            reasons?: string[];
-            /** Right */
-            right?: string | null;
-            /** Stage */
-            stage?: string | null;
             /** Strategy */
             strategy: string;
             /** Strike */
             strike: number;
+            /** Expiry */
+            expiry?: string | null;
+            /** Right */
+            right?: string | null;
+            /** Blended Score */
+            blended_score?: number | null;
+            /** Premium */
+            premium?: number | null;
+            /** Stage */
+            stage?: string | null;
+            /** Reasons */
+            reasons?: string[];
         };
         /** AnalysisResponse */
         AnalysisResponse: {
@@ -554,110 +557,110 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /**
-             * @default {
-             *       "state": "pending"
-             *     }
-             */
-            checks: components["schemas"]["Section_ChecksPayload_"];
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
             /** Exchange */
             exchange?: string | null;
-            fundamentals: components["schemas"]["Section_NormalizedFinancials_"];
             /**
              * Is Etf
              * @default false
              */
             is_etf: boolean;
-            /** Name */
-            name: string;
-            /**
-             * @default {
-             *       "state": "pending"
-             *     }
-             */
-            news: components["schemas"]["Section_list_NewsItem__"];
-            quote?: components["schemas"]["Sourced_float_"] | null;
-            /**
-             * @default {
-             *       "state": "pending"
-             *     }
-             */
-            sentiment: components["schemas"]["Section_SentimentDetail_"];
-            /** Symbol */
-            symbol: string;
+            fundamentals: components["schemas"]["Section_NormalizedFinancials_"];
             /**
              * @default {
              *       "state": "pending"
              *     }
              */
             technicals: components["schemas"]["Section_TechnicalStats_"];
+            /**
+             * @default {
+             *       "state": "pending"
+             *     }
+             */
+            sentiment: components["schemas"]["Section_SentimentDetail_"];
+            /**
+             * @default {
+             *       "state": "pending"
+             *     }
+             */
+            news: components["schemas"]["Section_list_NewsItem__"];
+            /**
+             * @default {
+             *       "state": "pending"
+             *     }
+             */
+            checks: components["schemas"]["Section_ChecksPayload_"];
+            quote?: components["schemas"]["Sourced_float_"] | null;
         };
         /**
          * ApprovalDetail
          * @description One approval in full, with the joined enrichment.
          */
         ApprovalDetail: {
-            /** Alternatives */
-            alternatives?: components["schemas"]["AlternativeStrike"][];
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            /** Blended Score */
-            blended_score?: number | null;
-            /** Candidate Id */
-            candidate_id: string;
-            /** Contracts */
-            contracts: number;
-            /** Decided At */
-            decided_at?: string | null;
-            /** Expires At */
-            expires_at?: string | null;
-            /** Expiry */
-            expiry?: string | null;
-            /** Gate Reasons */
-            gate_reasons?: string[];
             /** Id */
             id: number;
-            ideal?: components["schemas"]["IdealZonePayload"] | null;
-            /** Order State */
-            order_state?: string | null;
-            /** Premium */
-            premium?: number | null;
-            review?: components["schemas"]["ClaudeReviewPayload"] | null;
-            /** Right */
-            right: string;
-            /** Snapshot */
-            snapshot: {
-                [key: string]: unknown;
-            };
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "scan" | "roll";
+            /** Candidate Id */
+            candidate_id: string;
             /**
              * Status
              * @enum {string}
              */
             status: "pending" | "approved" | "rejected" | "expired";
-            /** Strategy */
-            strategy: string;
-            /** Strike */
-            strike: number;
             /** Underlying */
             underlying: string;
+            /** Strategy */
+            strategy: string;
+            /** Right */
+            right: string;
+            /** Strike */
+            strike: number;
+            /** Expiry */
+            expiry?: string | null;
+            /** Contracts */
+            contracts: number;
+            /** Premium */
+            premium?: number | null;
+            /** Blended Score */
+            blended_score?: number | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Decided At */
+            decided_at?: string | null;
+            /** Order State */
+            order_state?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "scan" | "roll";
+            /** Snapshot */
+            snapshot: {
+                [key: string]: unknown;
+            };
+            ideal?: components["schemas"]["IdealZonePayload"] | null;
+            /** Gate Reasons */
+            gate_reasons?: string[];
+            review?: components["schemas"]["ClaudeReviewPayload"] | null;
+            /** Alternatives */
+            alternatives?: components["schemas"]["AlternativeStrike"][];
         };
         /** ApprovalListResponse */
         ApprovalListResponse: {
-            /** Approvals */
-            approvals?: components["schemas"]["ApprovalSummary"][];
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
+            /** Approvals */
+            approvals?: components["schemas"]["ApprovalSummary"][];
         };
         /**
          * ApprovalSummary
@@ -669,42 +672,42 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /** Blended Score */
-            blended_score?: number | null;
-            /** Candidate Id */
-            candidate_id: string;
-            /** Contracts */
-            contracts: number;
-            /** Decided At */
-            decided_at?: string | null;
-            /** Expires At */
-            expires_at?: string | null;
-            /** Expiry */
-            expiry?: string | null;
             /** Id */
             id: number;
-            /** Order State */
-            order_state?: string | null;
-            /** Premium */
-            premium?: number | null;
-            /** Right */
-            right: string;
-            /**
-             * Source
-             * @enum {string}
-             */
-            source: "scan" | "roll";
+            /** Candidate Id */
+            candidate_id: string;
             /**
              * Status
              * @enum {string}
              */
             status: "pending" | "approved" | "rejected" | "expired";
-            /** Strategy */
-            strategy: string;
-            /** Strike */
-            strike: number;
             /** Underlying */
             underlying: string;
+            /** Strategy */
+            strategy: string;
+            /** Right */
+            right: string;
+            /** Strike */
+            strike: number;
+            /** Expiry */
+            expiry?: string | null;
+            /** Contracts */
+            contracts: number;
+            /** Premium */
+            premium?: number | null;
+            /** Blended Score */
+            blended_score?: number | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Decided At */
+            decided_at?: string | null;
+            /** Order State */
+            order_state?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "scan" | "roll";
         };
         /** AssessedContract */
         AssessedContract: {
@@ -713,34 +716,34 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /** Blended Score */
-            blended_score?: number | null;
             /** Candidate Id */
             candidate_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Strategy */
+            strategy: string;
+            /** Strike */
+            strike?: number | null;
             /** Expiry */
             expiry?: string | null;
-            ideal?: components["schemas"]["IdealZonePayload"] | null;
-            /** Premium */
-            premium?: number | null;
-            /** Promotable */
-            promotable: boolean;
-            /** Promote Note */
-            promote_note?: string | null;
-            /** Reasons */
-            reasons?: string[];
-            /** Reasons Text */
-            reasons_text?: string[];
             /**
              * Stage
              * @enum {string}
              */
             stage: "generator" | "risk_gate" | "score_floor" | "dedupe" | "top_n" | "passed";
-            /** Strategy */
-            strategy: string;
-            /** Strike */
-            strike?: number | null;
-            /** Symbol */
-            symbol: string;
+            /** Reasons */
+            reasons?: string[];
+            /** Reasons Text */
+            reasons_text?: string[];
+            /** Blended Score */
+            blended_score?: number | null;
+            /** Premium */
+            premium?: number | null;
+            ideal?: components["schemas"]["IdealZonePayload"] | null;
+            /** Promotable */
+            promotable: boolean;
+            /** Promote Note */
+            promote_note?: string | null;
         };
         /** AssessedGroup */
         AssessedGroup: {
@@ -749,14 +752,14 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** Symbol */
+            symbol: string;
             /** Contracts */
             contracts?: components["schemas"]["AssessedContract"][];
             /** Counts */
             counts?: {
                 [key: string]: number;
             };
-            /** Symbol */
-            symbol: string;
         };
         /** AssessedResponse */
         AssessedResponse: {
@@ -765,19 +768,19 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** Run Id */
+            run_id?: string | null;
             /** Computed At */
             computed_at?: string | null;
             /** Groups */
             groups?: components["schemas"]["AssessedGroup"][];
-            /** Run Id */
-            run_id?: string | null;
         };
         /** AutonomyRung */
         AutonomyRung: {
-            /** Label */
-            label: string;
             /** Level */
             level: string;
+            /** Label */
+            label: string;
         };
         /**
          * Bar
@@ -787,16 +790,16 @@ export interface components {
          *     ISO timestamp for a daily series). No client-side remapping is needed.
          */
         Bar: {
-            /** Close */
-            close: number;
+            /** Time */
+            time: string;
+            /** Open */
+            open: number;
             /** High */
             high: number;
             /** Low */
             low: number;
-            /** Open */
-            open: number;
-            /** Time */
-            time: string;
+            /** Close */
+            close: number;
             /** Volume */
             volume: number;
         };
@@ -820,15 +823,15 @@ export interface components {
              */
             bars: components["schemas"]["Bar"][];
             /**
-             * Sma200
-             * @default []
-             */
-            sma200: (number | null)[];
-            /**
              * Sma50
              * @default []
              */
             sma50: (number | null)[];
+            /**
+             * Sma200
+             * @default []
+             */
+            sma200: (number | null)[];
         };
         /**
          * BuyCandidateOut
@@ -840,63 +843,64 @@ export interface components {
          *     disagree about what the system thinks.
          */
         BuyCandidateOut: {
-            /** Current Iv */
-            current_iv?: number | null;
-            /** Dividend Yield */
-            dividend_yield?: number | null;
-            /** Est Monthly Cc Yield */
-            est_monthly_cc_yield?: number | null;
-            /** Fundamental Score */
-            fundamental_score?: number | null;
-            /** Hv 30 */
-            hv_30?: number | null;
+            /** Symbol */
+            symbol: string;
+            /** Score */
+            score: number;
+            /** Sector */
+            sector?: string | null;
             /** Iv Rank */
             iv_rank?: number | null;
-            /** Iv Score */
-            iv_score?: number | null;
-            /** Next Earnings */
-            next_earnings?: string | null;
-            /** Price */
-            price?: number | null;
             /** Quality Flag */
             quality_flag?: boolean | null;
+            /** Technical Regime */
+            technical_regime?: string | null;
             /**
              * Rationale
              * @default
              */
             rationale: string;
-            /** Rsi 14 */
-            rsi_14?: number | null;
-            /** Score */
-            score: number;
-            /** Sector */
-            sector?: string | null;
-            /** Sma 200 */
-            sma_200?: number | null;
-            /** Sma 50 */
-            sma_50?: number | null;
-            /** Symbol */
-            symbol: string;
-            /** Technical Regime */
-            technical_regime?: string | null;
-            /** Technical Score */
-            technical_score?: number | null;
+            /** Price */
+            price?: number | null;
+            /** Current Iv */
+            current_iv?: number | null;
+            /** Hv 30 */
+            hv_30?: number | null;
             /** Vrp */
             vrp?: number | null;
+            /** Rsi 14 */
+            rsi_14?: number | null;
+            /** Sma 50 */
+            sma_50?: number | null;
+            /** Sma 200 */
+            sma_200?: number | null;
+            /** Next Earnings */
+            next_earnings?: string | null;
+            /** Dividend Yield */
+            dividend_yield?: number | null;
+            /** Est Monthly Cc Yield */
+            est_monthly_cc_yield?: number | null;
+            /** Iv Score */
+            iv_score?: number | null;
+            /** Fundamental Score */
+            fundamental_score?: number | null;
+            /** Technical Score */
+            technical_score?: number | null;
         };
         /** CategoryPayload */
         CategoryPayload: {
             /** Category */
             category: string;
-            /**
-             * Checks
-             * @default []
-             */
-            checks: components["schemas"]["CheckResult"][];
-            /** Evaluable */
-            evaluable: number;
+            /** Passed */
+            passed: number;
             /** Failed */
             failed: number;
+            /** Unknown */
+            unknown: number;
+            /** Evaluable */
+            evaluable: number;
+            /** Total */
+            total: number;
             /**
              * Not Applicable
              * @default false
@@ -904,28 +908,27 @@ export interface components {
             not_applicable: boolean;
             /** Note */
             note?: string | null;
-            /** Passed */
-            passed: number;
-            /** Total */
-            total: number;
-            /** Unknown */
-            unknown: number;
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckResult"][];
         };
         /** CheckResult */
         CheckResult: {
-            /** Actual */
-            actual?: number | null;
-            /** Category */
-            category: string;
             /** Id */
             id: string;
-            /** Note */
-            note?: string | null;
-            state: components["schemas"]["CheckState"];
+            /** Category */
+            category: string;
             /** Statement */
             statement: string;
+            state: components["schemas"]["CheckState"];
+            /** Actual */
+            actual?: number | null;
             /** Threshold */
             threshold?: number | number[] | null;
+            /** Note */
+            note?: string | null;
         };
         /**
          * CheckState
@@ -952,36 +955,36 @@ export interface components {
          */
         ClaudeReviewPayload: {
             /**
-             * Assignment Considerations
+             * Why Attractive
              * @default
              */
-            assignment_considerations: string;
-            /** Confidence */
-            confidence?: number | null;
-            /** Priority */
-            priority?: number | null;
-            /** Recommendation */
-            recommendation?: string | null;
+            why_attractive: string;
             /**
              * Risks
              * @default
              */
             risks: string;
             /**
-             * Rolling Considerations
-             * @default
-             */
-            rolling_considerations: string;
-            /**
              * Tradeoffs
              * @default
              */
             tradeoffs: string;
             /**
-             * Why Attractive
+             * Assignment Considerations
              * @default
              */
-            why_attractive: string;
+            assignment_considerations: string;
+            /**
+             * Rolling Considerations
+             * @default
+             */
+            rolling_considerations: string;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Priority */
+            priority?: number | null;
+            /** Confidence */
+            confidence?: number | null;
         };
         /**
          * CommandKind
@@ -999,75 +1002,85 @@ export interface components {
         };
         /** CommandResponse */
         CommandResponse: {
-            /** Applied At */
-            applied_at?: string | null;
             /**
              * As Of
              * Format: date-time
              */
             as_of?: string;
+            /** Id */
+            id: number;
+            kind: components["schemas"]["CommandKind"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "applied" | "failed" | "expired";
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Needs Confirmation
+             * @default false
+             */
+            needs_confirmation: boolean;
+            /** Confirm Token */
+            confirm_token?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Applied At */
+            applied_at?: string | null;
             /**
              * Created
              * @default false
              */
             created: boolean;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Id */
-            id: number;
-            kind: components["schemas"]["CommandKind"];
-            /**
-             * Needs Confirmation
-             * @default false
-             */
-            needs_confirmation: boolean;
-            /** Result */
-            result?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "pending" | "applied" | "failed" | "expired";
         };
         /**
          * CommandStatus
          * @description The status of a command, returned by ``GET /commands/{id}`` and ``POST /commands``.
+         *
+         *     ``confirm_token`` is present only while a live-mode order-reaching intent is
+         *     awaiting its second confirmation (§4.6). It is returned so the owner — the
+         *     only role that can reach these routes — can supply it back via
+         *     ``POST /commands/{id}/confirm``; it is cleared the moment the command is
+         *     confirmed or expired, and is absent in paper mode entirely.
          */
         CommandStatus: {
-            /** Applied At */
-            applied_at?: string | null;
             /**
              * As Of
              * Format: date-time
              */
             as_of?: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
             /** Id */
             id: number;
             kind: components["schemas"]["CommandKind"];
-            /**
-             * Needs Confirmation
-             * @default false
-             */
-            needs_confirmation: boolean;
-            /** Result */
-            result?: {
-                [key: string]: unknown;
-            } | null;
             /**
              * Status
              * @enum {string}
              */
             status: "pending" | "applied" | "failed" | "expired";
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Needs Confirmation
+             * @default false
+             */
+            needs_confirmation: boolean;
+            /** Confirm Token */
+            confirm_token?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Applied At */
+            applied_at?: string | null;
         };
         /** ConfirmRequest */
         ConfirmRequest: {
@@ -1085,23 +1098,23 @@ export interface components {
              */
             as_of: string;
             autonomy: components["schemas"]["AutonomyRung"];
-            /** Drain Healthy */
-            drain_healthy: boolean;
-            /** Drain Last Seen */
-            drain_last_seen?: string | null;
-            /** Halt Reason */
-            halt_reason?: string | null;
+            /** Rungs */
+            rungs?: components["schemas"]["AutonomyRung"][];
             /** Halted */
             halted: boolean;
+            /** Halt Reason */
+            halt_reason?: string | null;
             /**
              * Mode
              * @enum {string}
              */
             mode: "paper" | "live";
+            /** Drain Healthy */
+            drain_healthy: boolean;
+            /** Drain Last Seen */
+            drain_last_seen?: string | null;
             /** Pending Commands */
             pending_commands: number;
-            /** Rungs */
-            rungs?: components["schemas"]["AutonomyRung"][];
         };
         /** FillListResponse */
         FillListResponse: {
@@ -1115,32 +1128,32 @@ export interface components {
         };
         /** FillSummary */
         FillSummary: {
-            /** Action */
-            action: string;
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            /** Avg Price */
-            avg_price: number;
+            /** Id */
+            id: number;
+            /** Order Id */
+            order_id: number;
             /** Candidate Id */
             candidate_id: string;
+            /** Action */
+            action: string;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Avg Price */
+            avg_price: number;
             /** Commission */
             commission?: number | null;
+            /** Is Live */
+            is_live: boolean;
             /**
              * Filled At
              * Format: date-time
              */
             filled_at: string;
-            /** Filled Qty */
-            filled_qty: number;
-            /** Id */
-            id: number;
-            /** Is Live */
-            is_live: boolean;
-            /** Order Id */
-            order_id: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1154,6 +1167,14 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** Status */
+            status: string;
+            /** Research Db */
+            research_db: boolean;
+            /** Trading Db */
+            trading_db: boolean;
+            /** Worker Heartbeat */
+            worker_heartbeat?: string | null;
             /**
              * Providers
              * @default {}
@@ -1161,24 +1182,16 @@ export interface components {
             providers: {
                 [key: string]: string;
             };
-            /** Research Db */
-            research_db: boolean;
-            /** Status */
-            status: string;
-            /** Trading Db */
-            trading_db: boolean;
-            /** Worker Heartbeat */
-            worker_heartbeat?: string | null;
         };
         /**
          * IdealZonePayload
          * @description The denormalised ideal zone from ``RiskVerdictRow`` (lo / hi / min_credit).
          */
         IdealZonePayload: {
-            /** Hi */
-            hi?: number | null;
             /** Lo */
             lo?: number | null;
+            /** Hi */
+            hi?: number | null;
             /** Min Credit */
             min_credit?: number | null;
         };
@@ -1187,18 +1200,18 @@ export interface components {
          * @description One normalised line item for one period, traceable to its filing.
          */
         LineItemValue: {
-            /** Accn */
-            accn?: string | null;
-            /** Concept */
-            concept?: string | null;
-            /** Filed */
-            filed?: string | null;
-            /** Form */
-            form?: string | null;
             /** Line Item */
             line_item: string;
             /** Value */
             value: number | null;
+            /** Concept */
+            concept?: string | null;
+            /** Accn */
+            accn?: string | null;
+            /** Filed */
+            filed?: string | null;
+            /** Form */
+            form?: string | null;
         };
         /** MeResponse */
         MeResponse: {
@@ -1229,12 +1242,12 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /** Available */
-            available: boolean;
             /** Key */
             key: string;
             /** Label */
             label: string;
+            /** Available */
+            available: boolean;
             /** Note */
             note?: string | null;
         };
@@ -1246,24 +1259,21 @@ export interface components {
          *     The frontend renders it as a labelled chip (label + tint, never colour-only).
          */
         NewsItem: {
-            /** Published At */
-            published_at?: string | null;
-            /** Sentiment */
-            sentiment?: number | null;
-            /** Source */
-            source?: string | null;
             /** Title */
             title: string;
             /** Url */
             url?: string | null;
+            /** Published At */
+            published_at?: string | null;
+            /** Source */
+            source?: string | null;
+            /** Sentiment */
+            sentiment?: number | null;
         };
         /** NormalizedFinancials */
         NormalizedFinancials: {
-            /**
-             * Annual
-             * @default []
-             */
-            annual: components["schemas"]["PeriodStatement"][];
+            /** Symbol */
+            symbol: string;
             /** Cik */
             cik: string;
             /**
@@ -1272,12 +1282,15 @@ export interface components {
              */
             entity_name: string;
             /**
+             * Annual
+             * @default []
+             */
+            annual: components["schemas"]["PeriodStatement"][];
+            /**
              * Quarterly
              * @default []
              */
             quarterly: components["schemas"]["PeriodStatement"][];
-            /** Symbol */
-            symbol: string;
         };
         /**
          * OptionsCoverage
@@ -1313,26 +1326,26 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /**
-             * Checks
-             * @default []
-             */
-            checks: components["schemas"]["CheckResult"][];
-            coverage: components["schemas"]["OptionsCoverage"];
-            /** In Universe */
-            in_universe: boolean;
             /** Symbol */
             symbol: string;
+            /** In Universe */
+            in_universe: boolean;
             /**
              * Tier
              * @enum {string}
              */
             tier: "hot" | "cold";
             /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["CheckResult"][];
+            /**
              * Warnings
              * @default []
              */
             warnings: components["schemas"]["Warning"][];
+            coverage: components["schemas"]["OptionsCoverage"];
         };
         /** OrderListResponse */
         OrderListResponse: {
@@ -1346,45 +1359,45 @@ export interface components {
         };
         /** OrderSummary */
         OrderSummary: {
-            /** Approval Id */
-            approval_id?: number | null;
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            /** Avg Fill Price */
-            avg_fill_price?: number | null;
-            /** Candidate Id */
-            candidate_id: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Detail */
-            detail?: string | null;
-            /** Expiry */
-            expiry?: string | null;
-            /** Filled Qty */
-            filled_qty: number;
             /** Id */
             id: number;
-            /** Is Live */
-            is_live: boolean;
-            /** Limit Price */
-            limit_price?: number | null;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Approval Id */
+            approval_id?: number | null;
+            /** Underlying */
+            underlying: string;
+            /** Strategy */
+            strategy: string;
+            /** Strike */
+            strike: number;
+            /** Expiry */
+            expiry?: string | null;
             /**
              * State
              * @enum {string}
              */
             state: "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
-            /** Strategy */
-            strategy: string;
-            /** Strike */
-            strike: number;
-            /** Underlying */
-            underlying: string;
+            /** Limit Price */
+            limit_price?: number | null;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Avg Fill Price */
+            avg_fill_price?: number | null;
+            /** Is Live */
+            is_live: boolean;
+            /** Detail */
+            detail?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /**
              * Updated At
              * Format: date-time
@@ -1396,10 +1409,6 @@ export interface components {
          * @description Every line item for one reporting period.
          */
         PeriodStatement: {
-            /** Items */
-            items: {
-                [key: string]: components["schemas"]["LineItemValue"];
-            };
             /**
              * Period End
              * Format: date
@@ -1407,6 +1416,10 @@ export interface components {
             period_end: string;
             /** Period Type */
             period_type: string;
+            /** Items */
+            items: {
+                [key: string]: components["schemas"]["LineItemValue"];
+            };
         };
         /**
          * Phase
@@ -1427,13 +1440,13 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** Computed At */
+            computed_at?: string | null;
             /**
              * Candidates
              * @default []
              */
             candidates: components["schemas"]["BuyCandidateOut"][];
-            /** Computed At */
-            computed_at?: string | null;
         };
         /**
          * Regime
@@ -1442,17 +1455,17 @@ export interface components {
         Regime: "bullish" | "bearish" | "sideways" | "high_volatility" | "low_volatility";
         /** RollAlertSummary */
         RollAlertSummary: {
+            /** Id */
+            id: number;
+            /** Trigger */
+            trigger: string;
+            /** Detail */
+            detail: string;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /** Detail */
-            detail: string;
-            /** Id */
-            id: number;
-            /** Trigger */
-            trigger: string;
         };
         /** SearchHit */
         SearchHit: {
@@ -1461,6 +1474,10 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
             /** Exchange */
             exchange?: string | null;
             /**
@@ -1468,10 +1485,6 @@ export interface components {
              * @default false
              */
             is_etf: boolean;
-            /** Name */
-            name: string;
-            /** Symbol */
-            symbol: string;
         };
         /** SearchResponse */
         SearchResponse: {
@@ -1492,39 +1505,39 @@ export interface components {
         SectionState: "ready" | "pending" | "unavailable";
         /** Section[ChecksPayload] */
         Section_ChecksPayload_: {
+            state: components["schemas"]["SectionState"];
             data?: components["schemas"]["ChecksPayload"] | null;
             /** Reason */
             reason?: string | null;
-            state: components["schemas"]["SectionState"];
         };
         /** Section[NormalizedFinancials] */
         Section_NormalizedFinancials_: {
+            state: components["schemas"]["SectionState"];
             data?: components["schemas"]["NormalizedFinancials"] | null;
             /** Reason */
             reason?: string | null;
-            state: components["schemas"]["SectionState"];
         };
         /** Section[SentimentDetail] */
         Section_SentimentDetail_: {
+            state: components["schemas"]["SectionState"];
             data?: components["schemas"]["SentimentDetail"] | null;
             /** Reason */
             reason?: string | null;
-            state: components["schemas"]["SectionState"];
         };
         /** Section[TechnicalStats] */
         Section_TechnicalStats_: {
+            state: components["schemas"]["SectionState"];
             data?: components["schemas"]["TechnicalStats"] | null;
             /** Reason */
             reason?: string | null;
-            state: components["schemas"]["SectionState"];
         };
         /** Section[list[NewsItem]] */
         Section_list_NewsItem__: {
+            state: components["schemas"]["SectionState"];
             /** Data */
             data?: components["schemas"]["NewsItem"][] | null;
             /** Reason */
             reason?: string | null;
-            state: components["schemas"]["SectionState"];
         };
         /**
          * SectorCard
@@ -1539,31 +1552,31 @@ export interface components {
          *     richness is the reason to look.
          */
         SectorCard: {
-            /** Avg Iv Rank */
-            avg_iv_rank?: number | null;
-            best: components["schemas"]["SectorMover"];
-            /** Change Pct */
-            change_pct?: number | null;
+            /** Sector */
+            sector: string;
             /** Count */
             count: number;
+            /** Change Pct */
+            change_pct?: number | null;
+            best: components["schemas"]["SectorMover"];
+            worst: components["schemas"]["SectorMover"];
+            /** Avg Iv Rank */
+            avg_iv_rank?: number | null;
             /**
              * Iv Rank Count
              * @default 0
              */
             iv_rank_count: number;
-            /** Sector */
-            sector: string;
-            worst: components["schemas"]["SectorMover"];
         };
         /**
          * SectorMover
          * @description One symbol and its daily change, for the best/worst corner of a sector card.
          */
         SectorMover: {
-            /** Change Pct */
-            change_pct?: number | null;
             /** Symbol */
             symbol: string;
+            /** Change Pct */
+            change_pct?: number | null;
         };
         /**
          * SectorsResponse
@@ -1591,24 +1604,15 @@ export interface components {
          *     card to *explain* the read; they never reach the risk engine or position sizing.
          */
         SentimentDetail: {
-            /** Delta 1D */
-            delta_1d?: number | null;
+            /** Overall */
+            overall?: number | null;
             /**
              * Label
              * @default no data
              */
             label: string;
-            /** News */
-            news?: number | null;
-            /**
-             * News Count
-             * @default 0
-             */
-            news_count: number;
-            /** Overall */
-            overall?: number | null;
-            /** Reddit */
-            reddit?: number | null;
+            /** Delta 1D */
+            delta_1d?: number | null;
             /** Stocktwits */
             stocktwits?: number | null;
             /**
@@ -1616,6 +1620,15 @@ export interface components {
              * @default 0
              */
             stocktwits_msgs: number;
+            /** News */
+            news?: number | null;
+            /**
+             * News Count
+             * @default 0
+             */
+            news_count: number;
+            /** Reddit */
+            reddit?: number | null;
             /** Top Headline */
             top_headline?: string | null;
         };
@@ -1631,30 +1644,15 @@ export interface components {
         };
         /** ShortPosition */
         ShortPosition: {
-            /** Alerts */
-            alerts?: components["schemas"]["RollAlertSummary"][];
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            /** Assignment Risk */
-            assignment_risk: boolean;
-            /** Avg Cost */
-            avg_cost?: number | null;
-            /** Contracts */
-            contracts: number;
-            delta?: components["schemas"]["Sourced_float_"] | null;
-            /** Dte */
-            dte?: number | null;
-            /** Expiry */
-            expiry?: string | null;
-            /** Mark */
-            mark?: number | null;
-            /** Pnl Pct */
-            pnl_pct?: number | null;
             /** Position Symbol */
             position_symbol: string;
+            /** Underlying */
+            underlying: string;
             /**
              * Right
              * @enum {string}
@@ -1662,10 +1660,25 @@ export interface components {
             right: "C" | "P";
             /** Strike */
             strike: number;
-            /** Underlying */
-            underlying: string;
+            /** Expiry */
+            expiry?: string | null;
+            /** Dte */
+            dte?: number | null;
+            /** Contracts */
+            contracts: number;
+            /** Avg Cost */
+            avg_cost?: number | null;
+            /** Mark */
+            mark?: number | null;
             /** Unrealized Pnl */
             unrealized_pnl?: number | null;
+            /** Pnl Pct */
+            pnl_pct?: number | null;
+            delta?: components["schemas"]["Sourced_float_"] | null;
+            /** Assignment Risk */
+            assignment_risk: boolean;
+            /** Alerts */
+            alerts?: components["schemas"]["RollAlertSummary"][];
         };
         /**
          * Source
@@ -1675,19 +1688,19 @@ export interface components {
         Source: "edgar" | "yfinance" | "stooq" | "ibkr" | "computed";
         /** Sourced[float] */
         Sourced_float_: {
+            /** Value */
+            value?: number | null;
+            source: components["schemas"]["Source"];
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            source: components["schemas"]["Source"];
             /**
              * Stale
              * @default false
              */
             stale: boolean;
-            /** Value */
-            value?: number | null;
         };
         /**
          * SummaryOut
@@ -1698,35 +1711,35 @@ export interface components {
          *     ``data_as_of`` make a stale summary visibly stale.
          */
         SummaryOut: {
-            /**
-             * Bear Points
-             * @default []
-             */
-            bear_points: string[];
+            /** Thesis */
+            thesis: string;
             /**
              * Bull Points
              * @default []
              */
             bull_points: string[];
             /**
-             * Caveats
+             * Bear Points
              * @default []
              */
-            caveats: string[];
-            /**
-             * Data As Of
-             * Format: date-time
-             */
-            data_as_of: string;
-            /** Model */
-            model: string;
-            /** Thesis */
-            thesis: string;
+            bear_points: string[];
             /**
              * Watch Items
              * @default []
              */
             watch_items: string[];
+            /**
+             * Caveats
+             * @default []
+             */
+            caveats: string[];
+            /** Model */
+            model: string;
+            /**
+             * Data As Of
+             * Format: date-time
+             */
+            data_as_of: string;
         };
         /**
          * SummaryResponse
@@ -1743,52 +1756,52 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /** Reason */
-            reason?: string | null;
+            /** Symbol */
+            symbol: string;
             /**
              * State
              * @enum {string}
              */
             state: "ready" | "stale" | "unavailable" | "pending";
             summary?: components["schemas"]["SummaryOut"] | null;
-            /** Symbol */
-            symbol: string;
+            /** Reason */
+            reason?: string | null;
         };
         /** TechnicalStats */
         TechnicalStats: {
+            /** Symbol */
+            symbol: string;
+            /** Price */
+            price: number;
+            /** Rsi 14 */
+            rsi_14?: number | null;
             /** Atr 14 */
             atr_14?: number | null;
-            /** Atr Ratio */
-            atr_ratio?: number | null;
             /** Macd */
             macd?: number | null;
             /** Macd Signal */
             macd_signal?: number | null;
-            phase?: components["schemas"]["Phase"] | null;
-            /** Price */
-            price: number;
+            /** Sma 20 */
+            sma_20?: number | null;
+            /** Sma 50 */
+            sma_50?: number | null;
+            /** Sma 200 */
+            sma_200?: number | null;
+            /** Support Levels */
+            support_levels?: number[];
+            /** Resistance Levels */
+            resistance_levels?: number[];
+            /** Atr Ratio */
+            atr_ratio?: number | null;
+            regime?: components["schemas"]["Regime"] | null;
+            /** Relative Strength */
+            relative_strength?: number | null;
             /**
              * Price Source
              * @default yfinance
              */
             price_source: string;
-            regime?: components["schemas"]["Regime"] | null;
-            /** Relative Strength */
-            relative_strength?: number | null;
-            /** Resistance Levels */
-            resistance_levels?: number[];
-            /** Rsi 14 */
-            rsi_14?: number | null;
-            /** Sma 20 */
-            sma_20?: number | null;
-            /** Sma 200 */
-            sma_200?: number | null;
-            /** Sma 50 */
-            sma_50?: number | null;
-            /** Support Levels */
-            support_levels?: number[];
-            /** Symbol */
-            symbol: string;
+            phase?: components["schemas"]["Phase"] | null;
         };
         /**
          * UniverseResponse
@@ -1799,20 +1812,19 @@ export interface components {
          *     in P1; ``editable`` is ``false`` so the client knows not to show an edit control.
          */
         UniverseResponse: {
-            /** Actively Wheeling */
-            actively_wheeling: string[];
             /**
              * As Of
              * Format: date-time
              */
             as_of: string;
-            /**
-             * Editable
-             * @default false
-             */
-            editable: boolean;
             /** Indexes */
             indexes: string[];
+            /** Watchlist */
+            watchlist: string[];
+            /** Would Own */
+            would_own: string[];
+            /** Actively Wheeling */
+            actively_wheeling: string[];
             /** Sectors */
             sectors: {
                 [key: string]: string;
@@ -1821,35 +1833,36 @@ export interface components {
             strike_bands: {
                 [key: string]: number;
             };
-            /** Watchlist */
-            watchlist: string[];
-            /** Would Own */
-            would_own: string[];
+            /**
+             * Editable
+             * @default false
+             */
+            editable: boolean;
         };
         /** ValidationError */
         ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
             /** Location */
             loc: (string | number)[];
             /** Message */
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
         /**
          * Warning
          * @description One surfaced caveat. ``level`` drives the icon/tint; never colour-only.
          */
         Warning: {
-            /** Detail */
-            detail: string;
             /** Level */
             level: string;
             /** Title */
             title: string;
+            /** Detail */
+            detail: string;
         };
         /**
          * WatchlistItem
@@ -1861,21 +1874,21 @@ export interface components {
          *     trading DB's iv_history; ``None`` when the symbol has no IV history.
          */
         WatchlistItem: {
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            price?: components["schemas"]["Sourced_float_"] | null;
             /** Change Pct */
             change_pct?: number | null;
+            /** Iv Rank */
+            iv_rank?: number | null;
             /** Checks */
             checks: {
                 [key: string]: number;
             };
-            /** Iv Rank */
-            iv_rank?: number | null;
-            /** Name */
-            name: string;
             /** Next Earnings */
             next_earnings?: string | null;
-            price?: components["schemas"]["Sourced_float_"] | null;
-            /** Symbol */
-            symbol: string;
         };
         /**
          * WatchlistResponse
@@ -1902,103 +1915,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    post_commands_commands_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CommandRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_command_commands__command_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                command_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CommandStatus"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_command_commands__command_id__confirm_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                command_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ConfirmRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -2055,6 +1971,246 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NavResponse"];
+                };
+            };
+        };
+    };
+    search_research_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recommendations_research_recommendations_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sectors_research_sectors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectorsResponse"];
+                };
+            };
+        };
+    };
+    bars_research__symbol__bars_get: {
+        parameters: {
+            query?: {
+                range?: string;
+            };
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BarsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    options_lens_research__symbol__options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptionsLensResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analysis_research__symbol__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_summary_research__symbol__summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_summary_research__symbol__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2158,9 +2314,13 @@ export interface operations {
             };
         };
     };
-    controls_options_controls_get: {
+    list_orders_options_orders_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `working` (queued/submitted/partial), `all`, or a specific state. */
+                state?: "working" | "all" | "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2173,7 +2333,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControlsResponse"];
+                    "application/json": components["schemas"]["OrderListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2210,39 +2379,6 @@ export interface operations {
             };
         };
     };
-    list_orders_options_orders_get: {
-        parameters: {
-            query?: {
-                /** @description `working` (queued/submitted/partial), `all`, or a specific state. */
-                state?: "working" | "all" | "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OrderListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_shorts_options_shorts_get: {
         parameters: {
             query?: never;
@@ -2263,70 +2399,7 @@ export interface operations {
             };
         };
     };
-    recommendations_research_recommendations_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecommendationsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    search_research_search_get: {
-        parameters: {
-            query?: {
-                q?: string;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sectors_research_sectors_get: {
+    controls_options_controls_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2341,164 +2414,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SectorsResponse"];
-                };
-            };
-        };
-    };
-    analysis_research__symbol__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                symbol: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AnalysisResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    bars_research__symbol__bars_get: {
-        parameters: {
-            query?: {
-                range?: string;
-            };
-            header?: never;
-            path: {
-                symbol: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BarsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    options_lens_research__symbol__options_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                symbol: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptionsLensResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_summary_research__symbol__summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                symbol: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_summary_research__symbol__summary_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                symbol: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ControlsResponse"];
                 };
             };
         };
@@ -2584,6 +2500,103 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_commands_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommandRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_command_commands__command_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_command_commands__command_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                command_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {

@@ -472,7 +472,8 @@ def list_assessed(
     db: TradingDb,
     run: str = Query(default="latest"),
     symbol: str | None = Query(default=None),
-    stage: Literal["generator", "risk_gate", "score_floor", "dedupe", "top_n", "passed"] | None = Query(
+    stage: Literal["generator", "risk_gate", "score_floor", "dedupe", "top_n", "passed"]
+    | None = Query(
         default=None,
         description="Filter to one assessment stage. Unknown values return 422.",
     ),
@@ -638,8 +639,9 @@ def _order_underlying_strategy_strike(
 def list_orders(
     _user: OwnerUser,
     db: TradingDb,
-    state: Literal["working", "all", "queued", "submitted", "filled", "partial", "cancelled", "rejected"]
-    = Query(
+    state: Literal[
+        "working", "all", "queued", "submitted", "filled", "partial", "cancelled", "rejected"
+    ] = Query(
         default="working",
         description="`working` (queued/submitted/partial), `all`, or a specific state.",
     ),
@@ -857,12 +859,7 @@ def list_shorts(
         # percentage is unrealized / (|avg_cost| * contracts * 100) * 100, which
         # simplifies to unrealized / (|avg_cost| * contracts). Dividing by the
         # per-share cost alone would be off by ~contracts*100.
-        if (
-            unrealized is not None
-            and avg_cost
-            and float(avg_cost) != 0
-            and contracts > 0
-        ):
+        if unrealized is not None and avg_cost and float(avg_cost) != 0 and contracts > 0:
             pnl_pct = round(float(unrealized) / (abs(float(avg_cost)) * contracts), 2)
 
         shorts.append(
@@ -970,7 +967,9 @@ def controls(
     rungs = [AutonomyRung(level=lvl, label=lbl) for lvl, lbl in _RUNGS]
     # The active rung's label comes from _RUNGS so it cannot drift from the
     # rungs list (two sources of truth would let a renamed label diverge).
-    active_label = next((lbl for lvl, lbl in _RUNGS if lvl == level.value), level.value.capitalize())
+    active_label = next(
+        (lbl for lvl, lbl in _RUNGS if lvl == level.value), level.value.capitalize()
+    )
     return ControlsResponse(
         as_of=now,
         autonomy=AutonomyRung(level=level.value, label=active_label),

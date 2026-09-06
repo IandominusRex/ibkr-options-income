@@ -132,13 +132,21 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
 
 
 class CommandStatus(Envelope):
-    """The status of a command, returned by ``GET /commands/{id}`` and ``POST /commands``."""
+    """The status of a command, returned by ``GET /commands/{id}`` and ``POST /commands``.
+
+    ``confirm_token`` is present only while a live-mode order-reaching intent is
+    awaiting its second confirmation (§4.6). It is returned so the owner — the
+    only role that can reach these routes — can supply it back via
+    ``POST /commands/{id}/confirm``; it is cleared the moment the command is
+    confirmed or expired, and is absent in paper mode entirely.
+    """
 
     id: int
     kind: CommandKind
     status: Literal["pending", "applied", "failed", "expired"]
     result: dict | None = None
     needs_confirmation: bool = False  # true when a live-mode confirm_token is outstanding
+    confirm_token: str | None = None
     created_at: datetime
     applied_at: datetime | None = None
     as_of: datetime = Field(default_factory=lambda: datetime.now(UTC))

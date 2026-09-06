@@ -4,13 +4,22 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { ApprovalCard } from "./ApprovalCard";
 import { EmptyState } from "./EmptyState";
-import type { ApprovalListResponse } from "./types";
+import type { ApprovalListResponse, ControlsResponse } from "./types";
 
 export function ApprovalsList() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["options", "approvals"],
     queryFn: () => apiFetch<ApprovalListResponse>("/options/approvals?status=pending"),
     placeholderData: (prev) => prev,
+  });
+
+  // The drain's health drives the receipt's "stalled" state (spec §9.2 rule 3):
+  // a queued command whose drain is dead must say so in words.
+  const controls = useQuery({
+    queryKey: ["options", "controls"],
+    queryFn: () => apiFetch<ControlsResponse>("/options/controls"),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
   });
 
   if (isLoading) {
@@ -27,7 +36,7 @@ export function ApprovalsList() {
     <ul className="space-y-3">
       {approvals.map((a) => (
         <li key={a.id}>
-          <ApprovalCard approval={a} />
+          <ApprovalCard approval={a} drainHealthy={controls.data?.drain_healthy ?? false} />
         </li>
       ))}
     </ul>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { ApprovalsList } from "./ApprovalsList";
@@ -87,7 +87,7 @@ describe("ApprovalsList", () => {
     expect(screen.getByText(/Earnings risk/)).toBeDefined();
   });
 
-  it("asserts no button with an accessible name matching /approve|reject/i exists", async () => {
+  it("renders action controls for pending approvals, wired — not dead affordances", async () => {
     const { apiFetch } = await import("@/lib/api");
     (apiFetch as any).mockResolvedValue({
       as_of: "x",
@@ -114,8 +114,11 @@ describe("ApprovalsList", () => {
     });
     withClient(<ApprovalsList />);
     await screen.findByText(/NVDA/);
-    // The load-bearing guard: no dead Approve/Reject control may ship in M2.
-    const buttons = screen.queryAllByRole("button", { name: /approve|reject/i });
-    expect(buttons).toHaveLength(0);
+    // M3: the controls are real now. Clicking Approve opens the confirmation
+    // dialog BEFORE any request is made — the M2 guard ("no dead control")
+    // evolves into "the control does what it claims, through the confirm gate".
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(screen.getByTestId("confirm-summary").textContent).toContain("NVDA");
   });
 });

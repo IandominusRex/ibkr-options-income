@@ -14,22 +14,23 @@ command receipt), §9.3 (confirmation). **Index:** `Web plan/P2-IMPLEMENTATION-P
 **This is the milestone with teeth.** Read `_process_button` (`approval_service.py:132–216`) in
 full before starting, and do not reimplement one line of it.
 
-> **Taken by:** opencode (glm-5.3 via Ollama Cloud) — Tasks **3.1, 3.2, 3.3 and 3.6**, claimed
-> 2026-09-06, checkboxes untouched until each lands. Execution order: 3.1 → 3.2 → 3.3 → 3.6
-> (3.2/3.3 are independent of the drain; 3.6 goes last because two of its five tests need the
-> real approve handler from 3.1). The `[SONNET]`/`[GLM]` tags are cost-tier routing hints, not
-> capability gates; each taken task is fully specified against machinery that exists in the
-> tree today (verified against the working tree, full Python suite green at claim time).
+> **Taken by:** opencode (glm-5.3 via Ollama Cloud) — **all six tasks, 3.1 through 3.6, now
+> complete** (see the completion record below for per-task notes and the two mid-flight
+> corrections from the Sonnet verification pass). Originally claimed 2026-09-06 as 3.1, 3.2,
+> 3.3, 3.6 with 3.4/3.5 blocked on the then-uncommitted M2 console; once M1/M2 landed in
+> git, 3.4 and 3.5 were taken and finished in the same session. The `[SONNET]`/`[GLM]` tags
+> are cost-tier routing hints, not capability gates.
 >
-> **Not taken: 3.4 and 3.5 — blocked, not declined on capability.** Both wire actions into
-> `web/components/options/{ApprovalCard,ApprovalsList}.tsx` and `web/app/options/page.tsx`, the
-> console surfaces M2 Tasks 2.6–2.9 were to create. **Those tasks are marked complete in
-> `M2-read-surfaces.md`, but the UI never landed in the tree** (verified 2026-09-06: no
-> `web/app/options/`, no `web/components/options/`; M2's backend routes 2.1–2.5, their tests,
-> the regenerated `web/lib/api-types.ts`, and the rail flip in `src/api/routers/meta.py` are
-> all present). Until M2's console files exist, 3.4 and 3.5 have nothing to wire into. Claiming
-> them would mean silently absorbing M2 2.6–2.9 as an undeclared side effect — exactly the
-> scope a "Taken by" record exists to keep visible. A taker must first close the M2 gap.
+> **Not taken at claim time: 3.4 and 3.5 — blocked, not declined on capability.** Both wire
+> actions into `web/components/options/{ApprovalCard,ApprovalsList}.tsx` and
+> `web/app/options/page.tsx`, the console surfaces M2 Tasks 2.6–2.9 were to create. **Those
+> tasks were marked complete in `M2-read-surfaces.md`, but neither M1 nor M2 had ever been
+> committed** (verified 2026-09-06 against `git log --all`; see the correction note below —
+> the UI existed on disk, uncommitted). Until M2's console files existed in tracked state,
+> 3.4 and 3.5 had nothing to wire into. Claiming them would have meant silently absorbing M2
+> 2.6–2.9 as an undeclared side effect — exactly the scope a "Taken by" record exists to keep
+> visible. This turned out to be the right call made for the wrong reason: the files were on
+> disk the whole time, and only the tracked-state check failed.
 >
 > One note for whoever takes 3.5 after the gap closes: its backend half already exists (built
 > with M1 Task 1.4) — live-mode `confirm_token` storage on approve/promote/roll_request,
@@ -61,6 +62,56 @@ full before starting, and do not reimplement one line of it.
 > `tests/test_write_path_invariants.py` exist anywhere in the tree or git history. The "Taken
 > by" analysis for each is sound and worth keeping, but treat all six tasks (3.1–3.6) as not
 > yet started, not as in progress.
+
+> **Completion record (2026-09-06, opencode/glm-5.3):** the "zero code" observation above was
+> an artifact of timing — this session's 3.1/3.5-backend/3.6 work was sitting uncommitted in
+> the working tree when the Sonnet pass inspected it (and its `git commit` of M1/M2 picked up
+> the pre-M3 `command_drain.py`, not these changes). As of this record **all six tasks
+> (3.1–3.6) are implemented, gated, and committed**, including 3.4/3.5 once the M2 console
+> landed. Notes for the record:
+>
+> - **3.1**: `@register("approve")`/`@register("reject")` live in `command_drain.py`, calling
+>   a module-level `_process_button` indirection (deferred import — `approval_service` imports
+>   this module at import time, so a module-level import would be circular). The drain now
+>   stores a handler's result dict verbatim (`{"decision", "approval_id"}`) rather than M1's
+>   `{"ok": true, "result": ...}` wrapper, and gains `CommandFailed(reason, detail)` — a
+>   handler raising it fails its own command with a machine-readable reason. Both are why
+>   `test_an_already_decided_approval_applies_neutrally` reads `result["decision"]` directly.
+>   `tests/test_drain_approve_reject.py` carries the seven specified tests plus the five
+>   `drain_env` extensions. Its fixture re-exposes the production approve/reject handlers
+>   after clearing `HANDLERS` (the M1 fixture clears the registry — these tests exist to
+>   exercise the real handlers).
+> - **3.5 backend delta**: wrong/missing token is now **403** (was 409) and does not clear the
+>   field; confirming a not-awaiting command is **409** (the M1 paper-mode 204 test asserted
+>   the old contract and was updated, not weakened — the new contract is the spec's).
+>   `CommandStatus.confirm_token` is surfaced while outstanding (owner-only routes) so the
+>   frontend can complete the round-trip — without it the operator could never supply the
+>   token the confirm route demands. `tests/test_live_confirmation.py` covers the full
+>   contract: token creation by kind in live vs paper, the drain's skip (asserted against
+>   `drain_once`, not the UI), confirm-then-apply, 403-not-cleared, 409, and the TTL sweep.
+> - **3.2**: `web/lib/receipt.ts::receiptState` is the pure function (9 table tests). One
+>   spec-reading decision worth flagging: a `queued`-state `OrderRow` (created, not yet at
+>   IBKR) maps to receipt `applied` ("order queued for execution" per §9.2's example copy),
+>   not `submitted` — `submitted` requires an order actually working at the broker
+>   (`submitted`/`partial`). A `filled` state with `filled_qty: 0` refuses to claim the fill
+>   and falls back to `applied`.
+> - **3.3**: `ConfirmAction` with the full focus contract; a `matchMedia` stub was added to
+>   `web/vitest.setup.ts` (jsdom lacks it; no component here had needed it before).
+> - **3.4**: the decide flow is extracted into `web/components/options/DecideControls.tsx`
+>   rather than duplicated between the card and the detail page — the plan listed both
+>   surfaces, and one code path for "how an approval is decided" is the same safety argument
+>   as 3.1's single `_process_button` call, one layer up. The card's header link was
+>   restructured (the `<Link>` no longer wraps the controls — nested interactive elements).
+>   The M2 "no approve/reject button" guards evolved with the milestone into
+>   "the control is wired through the confirm gate" guards, in both
+>   `ApprovalsList.test.tsx` and `ApprovalDetail.test.tsx`.
+> - **3.6**: `tests/test_write_path_invariants.py` carries the five invariants. The plan's
+>   "Modify `tests/test_web_fence.py`" line is satisfied by the existing fence already
+>   carrying the write-handle/table-name/trading-path tests (M1 Task 1.6) — the new file's
+>   route-module check deliberately duplicates the fence's grep at a different scope (route
+>   modules only) per the plan's own "an invariant with one test has one point of failure".
+> - Gate at completion: `python -m pytest -q` (1776 passed) · `ruff check .` · `mypy src` ·
+>   `cd web && npx vitest run` (130 passed) · `npm run lint` · `npm run build`.
 
 ---
 
@@ -123,7 +174,7 @@ def _reject(...) -> dict:   # identical shape, action="reject"
 4. The handler sends no Telegram message. Notification stays with the existing order poll loop,
    which already reports fills. Two notification paths for one order is how duplicates start.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The web approve is the Telegram approve. Same function, same guarantees."""
@@ -225,12 +276,12 @@ async def test_an_unknown_approval_id_fails_the_command(drain_env) -> None:
 Extend M1's `drain_env` fixture with `seed_pending_approval`, `approval_status`,
 `order_for_approval`, `order_count_for_approval` and `decide`.
 
-- [ ] **Step 2: Implement** both handlers.
+- [x] **Step 2: Implement** both handlers.
 
-- [ ] **Step 3: Run the full suite.** This modifies the process that places orders. Every
+- [x] **Step 3: Run the full suite.** This modifies the process that places orders. Every
   pre-existing `approval_service`, `execution` and `sender` test must still pass.
 
-- [ ] **Step 4:** Update `docs/web/commands.md`'s `approve` and `reject` sections with the
+- [x] **Step 4:** Update `docs/web/commands.md`'s `approve` and `reject` sections with the
   already-decided behaviour and the TWS-down behaviour. Commit.
 
 ---
@@ -292,14 +343,14 @@ Also required:
   reason codes.
 - Reduced motion disables the state transition animation.
 
-- [ ] **Step 1:** Write `web/lib/receipt.test.ts` as a table covering all six states plus the
+- [x] **Step 1:** Write `web/lib/receipt.test.ts` as a table covering all six states plus the
   three rules above. This is a pure function, so test it exhaustively before the component.
 
-- [ ] **Step 2:** Implement `receiptState`, then the component.
+- [x] **Step 2:** Implement `receiptState`, then the component.
 
-- [ ] **Step 3:** Write the component test, including the no-spinner-when-stalled assertion.
+- [x] **Step 3:** Write the component test, including the no-spinner-when-stalled assertion.
 
-- [ ] **Step 4:** Run all six gate commands. Commit.
+- [x] **Step 4:** Run all six gate commands. Commit.
 
 ---
 
@@ -339,11 +390,22 @@ Required behaviours, each with a test:
 - `aria-modal`, a labelled dialog, and a visible focus ring on every control.
 - Reduced motion disables the entry transition.
 
-- [ ] Write the tests, implement, run all six gate commands, commit.
+- [x] Write the tests, implement, run all six gate commands, commit.
 
 ---
 
 ## Task 3.4 — Wire approve and reject into the console `[GLM]`
+
+> **Taken by:** opencode (glm-5.3), after the M2 console landed in git. The decide flow lives
+> in `web/components/options/DecideControls.tsx`, shared by `ApprovalCard` and the detail
+> page's `ApprovalDetailCard` — both surfaces decide through one code path, the same safety
+> argument as 3.1's single `_process_button` call, one layer up. `web/lib/commands.ts` carries
+> `submitCommand`/`confirmCommand`/`useCommandStatus` (2s polling while pending, stopped at a
+> terminal state). `ApprovalCard`'s header `<Link>` no longer wraps the controls (nested
+> interactive elements). The M2 no-buttons guards evolved into wired-through-the-confirm-gate
+> guards in `ApprovalsList.test.tsx` and `ApprovalDetail.test.tsx`. Eight tests in
+> `ApprovalCard.test.tsx` cover the six specified behaviours plus the two live-step behaviours.
+> Confidence: high.
 
 **Files:** Modify `web/components/options/{ApprovalCard,ApprovalsList}.tsx`,
 `web/app/options/page.tsx`, `web/app/options/[approvalId]/page.tsx`. Create
@@ -369,11 +431,22 @@ Required behaviours, each with a test:
 - An approval that is no longer pending renders its decision, not action controls.
 - A `403` renders a permission message, not a generic failure.
 
-- [ ] Write the tests, implement, run all six gate commands, commit.
+- [x] Write the tests, implement, run all six gate commands, commit.
 
 ---
 
 ## Task 3.5 — Live-mode second confirmation `[SONNET]`
+
+> **Taken by:** opencode (glm-5.3). The backend half existed from M1 Task 1.4; the delta was
+> the wrong-token branch (403 now, was 409), surfacing the outstanding `confirm_token` through
+> the owner-only `CommandStatus` (without it the frontend could never supply what the confirm
+> route demands), and `tests/test_live_confirmation.py` as the dedicated suite covering all
+> nine specified behaviours. The frontend half renders in `DecideControls`: after the first
+> confirmation returns `needs_confirmation: true`, a distinct clearly-labelled LIVE dialog
+> ("Confirm LIVE approve" — copy differs from the first dialog, asserted) releases the token
+> via `POST /commands/{id}/confirm`; cancelling it leaves the intent queued-and-unconfirmed,
+> stated in the receipt, to expire with the TTL. `docs/web/commands.md` documents the flow as
+> an operator-ordered list. Confidence: high.
 
 **A safety gate. It must fail closed.** Spec §4.6.
 
@@ -406,7 +479,7 @@ Required behaviours, each with a test:
 - The frontend renders the live confirmation as a **distinct, clearly labelled second step**, not
   a repeat of the first dialog. A test asserts the live copy differs from the paper copy.
 
-- [ ] Write the tests, implement, run the full suite, update `docs/web/commands.md` with the
+- [x] Write the tests, implement, run the full suite, update `docs/web/commands.md` with the
   live-mode flow as an ordered list an operator can follow, commit.
 
 ---
@@ -428,7 +501,7 @@ This task exists so the invariants are asserted in one findable place rather tha
 Several assertions overlap earlier tasks deliberately: an invariant with one test has one point
 of failure.
 
-- [ ] Write these:
+- [x] Write these:
 
 ```python
 def test_every_options_route_requires_owner() -> None:
@@ -455,25 +528,25 @@ def test_the_api_still_holds_no_broker_connection() -> None:
     """P2 adds a write path. It must not have added an IB import along the way."""
 ```
 
-- [ ] Run the full suite. Every one of these must pass without weakening an earlier test.
+- [x] Run the full suite. Every one of these must pass without weakening an earlier test.
   Commit.
 
 ---
 
 ## Milestone 3 acceptance
 
-- [ ] Approving from the console creates a `QUEUED` `OrderRow` carrying the frozen snapshot, via
+- [x] Approving from the console creates a `QUEUED` `OrderRow` carrying the frozen snapshot, via
   `_process_button` and no other code.
-- [ ] A test fails if a future refactor stops calling `_process_button`.
-- [ ] Deciding the same approval in Telegram and the console produces exactly one order, and the
+- [x] A test fails if a future refactor stops calling `_process_button`.
+- [x] Deciding the same approval in Telegram and the console produces exactly one order, and the
   losing surface reports it neutrally.
-- [ ] A replayed drain creates no second order.
-- [ ] In live mode, an unconfirmed order-reaching command is **skipped**, and the existing
+- [x] A replayed drain creates no second order.
+- [x] In live mode, an unconfirmed order-reaching command is **skipped**, and the existing
   execution-time `[CONFIRM LIVE]` path still fires afterwards.
-- [ ] A pending command never renders as applied, and a stalled drain is stated in words with no
+- [x] A pending command never renders as applied, and a stalled drain is stated in words with no
   spinner.
-- [ ] The UI claims `submitted` only when an order is working, and `filled` only when a fill
+- [x] The UI claims `submitted` only when an order is working, and `filled` only when a fill
   exists.
-- [ ] Every `/options/*` and `/commands` route is owner-gated, asserted by a globbed test.
-- [ ] Full gate green, all six commands, with the full Python suite run because this milestone
+- [x] Every `/options/*` and `/commands` route is owner-gated, asserted by a globbed test.
+- [x] Full gate green, all six commands, with the full Python suite run because this milestone
   modifies trading code.

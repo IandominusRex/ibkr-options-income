@@ -173,8 +173,9 @@ def test_post_invalid_payload_returns_422(client) -> None:
     assert r.status_code == 422
 
 
-def test_post_confirm_returns_204_in_paper_mode(client) -> None:
-    """In paper mode there is no token, so confirm is a no-op 204."""
+def test_post_confirm_on_a_paper_command_is_409(client) -> None:
+    """In paper mode there is no token, so the command is not awaiting confirmation —
+    the M3 contract makes that a 409 rather than a silent 204."""
     r = client.post(
         "/commands",
         json={"kind": "approve", "payload": {"approval_id": 42}},
@@ -182,7 +183,7 @@ def test_post_confirm_returns_204_in_paper_mode(client) -> None:
     )
     cid = r.json()["id"]
     got = client.post(f"/commands/{cid}/confirm", json={"confirm_token": ""}, headers=AUTH)
-    assert got.status_code == 204
+    assert got.status_code == 409
 
 
 def test_post_confirm_in_live_mode_clears_the_token(client, monkeypatch) -> None:
@@ -218,7 +219,8 @@ def test_post_confirm_in_live_mode_clears_the_token(client, monkeypatch) -> None
     assert status["needs_confirmation"] is False
 
 
-def test_post_confirm_with_a_wrong_token_returns_409(client, monkeypatch) -> None:
+def test_post_confirm_with_a_wrong_token_returns_403(client, monkeypatch) -> None:
+    """M3 Task 3.5: a wrong token is 403 (not 409) and does not clear the field."""
     monkeypatch.setattr("src.api.routers.commands.get_config", lambda: _live_config())
     r = client.post(
         "/commands",
@@ -231,7 +233,11 @@ def test_post_confirm_with_a_wrong_token_returns_409(client, monkeypatch) -> Non
         json={"confirm_token": "wrong-token"},
         headers=AUTH,
     )
-    assert got.status_code == 409
+    assert got.status_code == 403
+    # The token is NOT cleared — the command is still pending and still awaiting.
+    status = client.get(f"/commands/{cid}", headers=AUTH).json()
+    assert status["status"] == "pending"
+    assert status["needs_confirmation"] is True
 
 
 # --- helpers ----------------------------------------------------------------
