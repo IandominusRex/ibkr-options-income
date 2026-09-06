@@ -478,9 +478,14 @@ async def test_a_ticker_pricing_abort_folds_into_chain_unavailable(drain_env, fa
 
 
 @pytest.mark.asyncio
-async def test_a_score_below_the_floor_fails_with_score_below_minimum(
+async def test_a_dedupe_staged_promote_with_a_low_score_still_fails_with_score_below_minimum(
     drain_env, fake_chain, monkeypatch
 ) -> None:
+    """The score-floor check is a legitimate re-derivation safeguard for every ORIGINAL
+    stage except `score_floor` (final-review fix wave): a `dedupe`-staged contract is not
+    "below the operator's configured minimum by design" the way a `score_floor` one is, so
+    a fresh run scoring below a raised floor still fails here — proving the `score_floor`
+    skip below is scoped precisely, not a blanket removal of the check."""
     from src.common.config import get_config
     from src.notify.command_drain import drain_once
 
@@ -489,7 +494,7 @@ async def test_a_score_below_the_floor_fails_with_score_below_minimum(
     # not a faked verdict.
     monkeypatch.setitem(get_config().weights, "min_candidate_score", 999.0)
 
-    drain_env.seed_assessed("c1", stage="score_floor", symbol="NVDA", strike=180.0)
+    drain_env.seed_assessed("c1", stage="dedupe", symbol="NVDA", strike=180.0)
     fake_chain.will_price("NVDA", strike=180.0, gate="pass")
     cid = drain_env.enqueue("promote", _payload())
 
@@ -499,3 +504,34 @@ async def test_a_score_below_the_floor_fails_with_score_below_minimum(
     result = drain_env.result(cid)
     assert result["reason"] == "score_below_minimum"
     assert result["detail"]["minimum"] == 999.0
+
+
+@pytest.mark.asyncio
+async def test_a_score_floor_staged_promote_succeeds_despite_the_low_score(
+    drain_env, fake_chain, monkeypatch
+) -> None:
+    """Final-review fix wave: a `score_floor` promote must actually be able to succeed.
+
+    A `score_floor` contract is, by definition, one whose score is below the configured
+    minimum — that's the entire reason it's in that stage. `P2-design.md` §5.2 says
+    `SCORE_FLOOR` is promotable *because* it's letting the operator go below a bar they
+    configured themselves for this one contract, not re-enforcing the same bar. Before this
+    fix, the unconditional `score_below_minimum` check made this structurally impossible.
+    """
+    from src.common.config import get_config
+    from src.notify.command_drain import drain_once
+
+    # Same "raise the floor above what it could ever score" setup as the dedupe test
+    # above — the difference that matters is the ORIGINAL stored stage, `score_floor`.
+    monkeypatch.setitem(get_config().weights, "min_candidate_score", 999.0)
+
+    drain_env.seed_assessed("c1", stage="score_floor", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "applied"
+    approval_id = drain_env.result(cid)["approval_id"]
+    assert approval_id is not None
+    assert drain_env.approval_status(approval_id) == ApprovalStatus.PENDING

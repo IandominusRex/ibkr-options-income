@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ib_async import IB
+from sqlalchemy import select
 
 from src.common.config import get_config
 from src.storage.app_commands import (
@@ -39,6 +40,7 @@ from src.storage.app_commands import (
     pending_commands,
 )
 from src.storage.db import session_scope
+from src.storage.models import RiskVerdictRow
 from src.storage.system_settings import set_setting
 
 log = logging.getLogger(__name__)
@@ -230,6 +232,31 @@ def _reject(*, command: Any, **_: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _original_stage(candidate_id: str) -> str | None:
+    """The most recent stored ``risk_verdicts`` stage for *candidate_id*, or ``None``.
+
+    Mirrors ``src.api.routers.commands.assert_promotable``'s query exactly (same
+    ordering: ``created_at`` descending, ``id`` descending, limit 1) so the two
+    lookups agree on what "the assessed row" means — but this is a plain read, not
+    an HTTP-raising guard, since this module is not the API layer and cannot import
+    that function without pulling in FastAPI's `HTTPException`.
+
+    Returns ``None`` when no row exists at all — which should not normally happen
+    since the API guard already required one to exist before this command row
+    could be created, but the drain handler does not share that guarantee
+    structurally (see ``test_no_promote_path_exists_for_a_gate_rejected_contract``,
+    which enqueues a promote command directly, bypassing the API guard entirely).
+    """
+    with session_scope() as s:
+        row = s.execute(
+            select(RiskVerdictRow)
+            .where(RiskVerdictRow.candidate_id == candidate_id)
+            .order_by(RiskVerdictRow.created_at.desc(), RiskVerdictRow.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return row.stage if row is not None else None
+
+
 @register("promote")
 async def _promote(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: Any) -> dict:
     """Re-price and re-gate a promoted candidate; raise a PENDING approval if it still clears.
@@ -285,7 +312,16 @@ async def _promote(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: Any) -
         reasons = list(verdict.reasons) if verdict is not None else []
         raise CommandFailed("gate_rejected", {"reasons": reasons})
 
-    if match.blended_score < priced.min_score:
+    # The score-floor check is a re-derivation safeguard, not a re-enforcement of the same
+    # bar for every stage: a `score_floor` candidate is, by definition, one whose score
+    # already sits below this minimum — that's the entire reason it's in that stage, and
+    # promoting it is letting the operator go below a bar they configured themselves
+    # (P2-design.md §5.2), not something to reject again. Every other original stage
+    # (`dedupe`, `top_n`, unknown/missing) keeps the check: the fresh run might reveal a
+    # score has newly dropped for a reason unrelated to why it was staged.
+    if _original_stage(payload.candidate_id) != "score_floor" and (
+        match.blended_score < priced.min_score
+    ):
         raise CommandFailed(
             "score_below_minimum",
             {"score": match.blended_score, "minimum": priced.min_score},
