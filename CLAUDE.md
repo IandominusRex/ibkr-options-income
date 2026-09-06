@@ -245,6 +245,12 @@ The build is feature-complete; there are no remaining phases. For any change:
 3. **Update docs** per the mandatory doc-update table above. If you build, defer, or change the status
    of a feature/limitation, reflect it in **`STATUS.md`**.
 
+## The web layer and the trading database
+
+The API reads the trading database read-only and writes exactly one table, `app_commands`,
+through `src/api/commands.py`. No other module may import `get_command_engine`. Enforced by
+`tests/test_web_fence.py`.
+
 ## How Claude is invoked in production (not the API)
 
 `src/claude/runner.py` shells out to `claude -p "<prompt>" --output-format json`, passing context

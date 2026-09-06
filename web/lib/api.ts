@@ -1,5 +1,4 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8787";
-const TOKEN = process.env.NEXT_PUBLIC_API_TOKEN ?? "";
+const BASE = "/api";
 
 export class ApiError extends Error {
   constructor(
@@ -15,7 +14,6 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     ...init,
     headers: {
       ...(init?.headers ?? {}),
-      Authorization: `Bearer ${TOKEN}`,
       "Content-Type": "application/json",
     },
   });

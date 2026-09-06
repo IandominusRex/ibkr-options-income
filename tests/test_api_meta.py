@@ -49,9 +49,12 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     sections = {s["key"]: s for s in r.json()["sections"]}
     assert set(sections) == {"research", "options", "portfolio", "pnl", "universe"}
     assert sections["research"]["available"] is True
-    # P2-P4 render a placeholder rather than being hidden, so the shape is visible.
-    assert sections["options"]["available"] is False
-    assert sections["options"]["note"]
+    # P2 M2 ships the options console read surfaces — the rail is now available.
+    assert sections["options"]["available"] is True
+    assert sections["options"]["note"] is None
+    # P3/P4 still render a placeholder.
+    assert sections["portfolio"]["available"] is False
+    assert sections["portfolio"]["note"]
 
 
 def test_unknown_route_returns_json_not_html(client) -> None:

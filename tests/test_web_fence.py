@@ -116,3 +116,50 @@ def test_the_recommendations_route_does_not_rescore() -> None:
     text = (ROOT / "src" / "api" / "routers" / "research.py").read_text(encoding="utf-8")
     assert "generate_buy_candidates" not in text
     assert "blended_score" not in text or "=" not in text.split("blended_score")[1][:3]
+
+
+# ---------------------------------------------------------------------------
+# P2 — the API writes exactly one table. See Web plan/P2-design.md §4.2.
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_command_module_holds_a_write_handle() -> None:
+    """get_command_engine and command_session are the API's only read-write handle.
+
+    One module (``src/api/commands.py``) may import them, alongside ``trading_db.py``
+    where they are defined. The router must not reach for ``command_session`` to clear
+    a confirm token — that write goes through ``src/api/commands.py`` instead.
+    """
+    allowed = {"src/api/commands.py", "src/api/trading_db.py"}
+    offenders = [
+        str(p.relative_to(ROOT))
+        for p in sorted((ROOT / "src" / "api").rglob("*.py"))
+        if any(
+            token in p.read_text(encoding="utf-8")
+            for token in ("get_command_engine", "command_session")
+        )
+        and str(p.relative_to(ROOT)) not in allowed
+    ]
+    assert not offenders, f"write handle leaked to: {offenders}"
+
+
+def test_the_command_writer_names_no_other_table() -> None:
+    """A grep-level guard on top of the runtime listener from Task 1.2."""
+    text = (ROOT / "src" / "api" / "commands.py").read_text(encoding="utf-8")
+    forbidden = ("OrderRow", "ApprovalRow", "CandidateRow", "PositionSnapshotRow", "FillRow")
+    named = [t for t in forbidden if t in text]
+    assert not named, f"the command writer must touch app_commands only, names: {named}"
+
+
+def test_the_trading_path_still_never_imports_the_web_layer() -> None:
+    """P2 adds a drain in src/notify/, which MAY import src.api's schemas. The engine,
+    execution and strategies packages still may not."""
+    offenders = [
+        rel
+        for rel in _modules_under("engine", "execution", "strategies")
+        if any(
+            token in (ROOT / rel).read_text(encoding="utf-8")
+            for token in ("src.api", "src.research")
+        )
+    ]
+    assert not offenders, f"fence violated — web layer reachable from: {offenders}"

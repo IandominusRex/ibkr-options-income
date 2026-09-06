@@ -42,9 +42,10 @@ class NavResponse(Envelope):
 
 # P2-P4 sections render an explicit placeholder rather than being hidden, so the finished
 # shape of the product is legible from milestone 1. See design §9.
+# "options" flipped to available=True in P2 M2 (the console ships read surfaces).
 _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("research", "Research", True, None),
-    ("options", "Options", False, "Arrives in P2"),
+    ("options", "Options", True, None),
     ("portfolio", "Portfolio", False, "Arrives in P3"),
     ("pnl", "P&L", False, "Arrives in P4"),
     ("universe", "Universe", True, None),

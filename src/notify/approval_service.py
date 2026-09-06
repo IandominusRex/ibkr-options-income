@@ -75,6 +75,7 @@ from src.ibkr.connection import (
     debounce_account_summary_on_reconnect,
     suppress_account_summary_on_reconnect,
 )
+from src.notify.command_drain import drain_once
 from src.notify.sender import thread_id
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
@@ -1017,6 +1018,22 @@ async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> 
         await asyncio.sleep(interval)
 
 
+async def _command_drain_loop(ib: IB | None, bot: object, chat_id: str, interval: int) -> None:
+    """Background task: drain pending app_commands on a fixed interval.
+
+    Created alongside ``poll_task`` in ``_run_service``. The drain runs even when
+    ``ib is None`` so broker-free commands (reject, halt, resume, set_autonomy,
+    universe edits) still apply with TWS down. See ``command_drain.py`` and M1
+    Task 1.5.
+    """
+    while True:
+        try:
+            await drain_once(ib, bot, chat_id)
+        except Exception:
+            logger.exception("Error in command drain loop")
+        await asyncio.sleep(interval)
+
+
 # ---------------------------------------------------------------------------
 # Intraday loop helpers
 # ---------------------------------------------------------------------------
@@ -1737,6 +1754,7 @@ async def _run_service(token: str, chat_id: str) -> None:
                 + (" — active" if ib else " — disabled (no exec connection)"),
                 "Intraday loop (15 min, RTH)"
                 + (" — active" if ib_scan else " — disabled (no scan connection)"),
+                "Command drain loop — active",
                 f"Autonomy rung: {current_autonomy}",
             ]
             thread_id_val = thread_id(cfg.secrets.telegram_thread_scan)
@@ -1799,6 +1817,19 @@ async def _run_service(token: str, chat_id: str) -> None:
         holiday_task = asyncio.create_task(_market_holiday_loop(app, chat_id))
         logger.info("Market holiday notification loop started")
 
+        drain_task = asyncio.create_task(
+            _command_drain_loop(
+                ib,
+                app.bot,
+                chat_id,
+                cfg.execution.poll_interval_seconds,
+            )
+        )
+        logger.info(
+            "Command drain loop started (poll every %ss)",
+            cfg.execution.poll_interval_seconds,
+        )
+
         try:
             await stop_event.wait()
         finally:
@@ -1819,6 +1850,9 @@ async def _run_service(token: str, chat_id: str) -> None:
             holiday_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await holiday_task
+            drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain_task
             await app.updater.stop()
             await app.stop()
 

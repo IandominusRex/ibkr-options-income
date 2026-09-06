@@ -86,7 +86,7 @@ The navigation manifest that drives the web app's left rail. Lists every section
   "as_of": "2026-09-03T10:00:00Z",
   "sections": [
     { "as_of": "2026-09-03T10:00:00Z", "key": "research", "label": "Research", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "options", "label": "Options", "available": false, "note": "Arrives in P2" },
+    { "as_of": "2026-09-03T10:00:00Z", "key": "options", "label": "Options", "available": true, "note": null },
     { "as_of": "2026-09-03T10:00:00Z", "key": "portfolio", "label": "Portfolio", "available": false, "note": "Arrives in P3" },
     { "as_of": "2026-09-03T10:00:00Z", "key": "pnl", "label": "P&L", "available": false, "note": "Arrives in P4" },
     { "as_of": "2026-09-03T10:00:00Z", "key": "universe", "label": "Universe", "available": true, "note": null }
@@ -597,3 +597,144 @@ with a reason (not an error), so the rest of the page is untouched. The cache ke
 
 **Response (200):** `SummaryResponse` (same shape as GET), with `state` = `ready` on
 success or `pending` on fail-soft.
+
+---
+
+## Commands
+
+The first write routes in the web layer. See `docs/web/commands.md` for the full
+runbook (every kind, its payload, dedupe key, what applies it, and failure modes).
+
+### `POST /commands`
+
+Enqueue an intent. **Owner-only** (403 for viewers, 401 for missing token).
+
+**Body:** `{ kind: CommandKind, payload: object }`
+
+**Response:**
+- `201` — a new command was enqueued. Body: `CommandResponse` (`{id, kind, status, ..., created: true}`).
+- `200` — a duplicate `dedupe_key` returned the existing command. Body: `CommandResponse` with `created: false` and the existing `id`.
+- `422` — the payload does not validate against the schema for `kind`.
+- `409` — (future) the intent is refused on its merits.
+
+In **live mode**, `approve`, `promote`, and `roll_request` are created with a
+`confirm_token` and `needs_confirmation: true`. The drain skips them until
+`POST /commands/{id}/confirm` supplies the token. In paper mode, no token is issued.
+
+### `GET /commands/{id}`
+
+Read one command's status through the **read-only** engine. **Owner-only.**
+
+**Response:** `CommandStatus` (`{id, kind, status, result, needs_confirmation, created_at, applied_at, as_of}`).
+**404** for an unknown id.
+
+### `POST /commands/{id}/confirm`
+
+Supply the `confirm_token` for a live-mode order-reaching intent. **Owner-only.**
+
+**Body:** `{ confirm_token: string }`
+
+**Response:** `204` on success (or when the command is not awaiting confirmation).
+`409` on a token mismatch or when the command is not awaiting confirmation.
+
+---
+
+## Options console (P2)
+
+The options console read surfaces. Every route is **owner-only** (403 for viewers,
+401 for missing token) and reads through the `mode=ro` trading engine. No route
+reaches IBKR; every number is as fresh as the last write by a trading process and
+says so via the top-level `as_of`.
+
+### `GET /options/approvals`
+
+Pending and recently decided approvals. Each carries the frozen `snapshot` (the
+exact payload the human was shown), joined to the `CandidateRow`, `RiskVerdictRow`
+and `ClaudeReviewRow` when present. A pruned candidate renders from `snapshot`
+alone — the joined rows are enrichment whose absence never 500s.
+
+**Query params:** `status=pending` (default), `approved`, `rejected`, `expired`, or `all`; `limit` (1-200, default 50). An unknown `status` returns **422**, not a silent empty list. `status=all` is ordered newest-first by `created_at` (a pending row is not promoted above a newer decided one).
+
+**Response — `ApprovalListResponse`:**
+
+| Field | Type |
+|---|---|
+| `as_of` | datetime |
+| `approvals` | `ApprovalSummary[]` |
+
+`ApprovalSummary`: `{ as_of, id, candidate_id, status, underlying, strategy, right, strike, expiry, contracts, premium, blended_score, expires_at, decided_at, order_state, source }`.
+`premium` is per share, always. `order_state` is `null` when no order exists.
+`source` is `"scan"` or `"roll"`, derived from the candidate's `run_id` prefix.
+
+### `GET /options/approvals/{id}`
+
+One approval in full, including the ideal zone, the gate reasons (humanised), the
+five Claude review fields (separately, never one blob), and the alternative strikes
+assessed on the same run.
+
+**Response — `ApprovalDetail`:** `ApprovalSummary` plus `{ snapshot, ideal, gate_reasons, review, alternatives }`.
+`ideal` is `{ lo, hi, min_credit }` from `RiskVerdictRow`. `review` is the five
+fields `{ why_attractive, risks, tradeoffs, assignment_considerations, rolling_considerations }` or `null`.
+**404** for an unknown id.
+
+### `GET /options/assessed`
+
+Every contract the scan priced, grouped by symbol, with its `AssessmentStage`,
+reason codes (raw and humanised), score, premium, denormalised ideal zone, and a
+`promotable` / `promote_note` pair. The promotable table (spec §5.2):
+`generator` and `risk_gate` are never promotable; `score_floor` is promotable with
+a note carrying the configured `min_candidate_score`; `dedupe` and `top_n` are
+promotable with a null note; `passed` is not promotable (already surfaced).
+
+**Query params:** `run=latest` (default) | a specific run_id; `symbol`; `stage` (one of `generator`, `risk_gate`, `score_floor`, `dedupe`, `top_n`, `passed` — unknown returns **422**); `limit` (1-1000, default 200). `run=latest` resolves to the newest non-`scan-`-prefixed `run_id`, matching `latest_buy_candidates`'s single-ticker filter. `limit` caps the **total** number of contracts returned across all groups (not a per-symbol cap); `counts` in each group header still reflects the full per-stage tally for that symbol, not the truncated subset. Within each group and across groups, contracts are ranked the same way `scan.py::_rank_assessed` ranks them: `passed` first, then rejects by stage progression (got further ranks higher), then blended score descending.
+
+**Response — `AssessedResponse`:** `{ as_of, run_id, computed_at, groups: AssessedGroup[] }`.
+`AssessedGroup`: `{ as_of, symbol, contracts: AssessedContract[], counts: Record<string, int> }`.
+
+### `GET /options/orders`
+
+Working orders by default. `state=working` means `queued`, `submitted` or
+`partial`; `state=all` returns everything. `underlying`/`strategy`/`strike` come
+from the order's `snapshot`, falling back to the joined `CandidateRow` so a pruned
+candidate does not blank the row. `avg_fill_price` is `null` for an unfilled
+order, never `0.0`.
+
+**Query params:** `state=working` (default), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `limit` (1-200, default 50).
+
+**Response — `OrderListResponse`:** `{ as_of, orders: OrderSummary[] }`.
+
+### `GET /options/fills`
+
+Recent fills within the last `days` days.
+
+**Query params:** `days` (1-90, default 7); `limit` (1-500, default 100).
+
+**Response — `FillListResponse`:** `{ as_of, fills: FillSummary[] }`.
+
+### `GET /options/shorts`
+
+Open short option positions from the most recent `position_snapshots` row. `as_of`
+is the snapshot's capture time, **not** request time. Long options and stock are
+excluded. `delta` carries its source through `Sourced` (IBKR vs computed/BS). A
+position with no snapshot data returns `null` for `mark`, `unrealized_pnl`,
+`expiry` and `dte`, never `0.0` or a fabricated `date.today()`. `assignment_risk`
+is `false` when `expiry` or `delta` is unknown — a missing field must not fabricate
+the signal. `pnl_pct` is `unrealized_pnl / (|avg_cost| * contracts)`, i.e. total
+P&L over the position's total cost (not per-share cost). `alerts` is empty, not
+`null`, when nothing has fired.
+
+**Response — `ShortListResponse`:** `{ as_of, shorts: ShortPosition[] }`.
+`ShortPosition`: `{ as_of, position_symbol, underlying, right, strike, expiry: date | null, dte: int | null, contracts, avg_cost, mark, unrealized_pnl, pnl_pct, delta: Sourced<float> | null, assignment_risk, alerts: RollAlertSummary[] }`.
+
+### `GET /options/controls`
+
+The autonomy rung, halt state, mode, and command-drain health.
+
+**Response — `ControlsResponse`:** `{ as_of, autonomy: { level, label }, rungs: { level, label }[], halted, halt_reason, mode, drain_healthy, drain_last_seen, pending_commands }`.
+
+`drain_healthy` reads the `command_drain_heartbeat` system_settings key (written
+by the command drain after every cycle) and compares it against twice
+`execution.poll_interval_seconds`. A drain that has never run is `false` with
+`drain_last_seen: null` — it must never default to `true`. **Do not reuse
+`/health`'s `worker_heartbeat`**: that reports the research worker and would show
+green while the command drain is dead.

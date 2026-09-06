@@ -677,7 +677,7 @@ above — no broker, no direct database access.
 
 ```bash
 cd web
-cp .env.local.example .env.local     # set NEXT_PUBLIC_API_TOKEN to match WEB_API_TOKEN
+cp .env.local.example .env.local     # set API_TOKEN to match WEB_API_TOKEN
 npm install
 npm run dev                          # http://localhost:3000
 ```
@@ -1214,6 +1214,6 @@ an 8B model, depending on prompt length and memory pressure.
 | `ollama: request to http://localhost:11434/api/generate failed: ... Connection refused` | `claude.backend` is `"ollama"`/`"cli_then_ollama"` but `ollama serve` isn't running | Run `ollama serve` (or `brew services start ollama`); verify with `curl http://localhost:11434` |
 | `ollama: output parsed to empty list` / `ollama roll: unparseable output` | The local model's JSON didn't match the `ClaudeReview`/`RollReview` schema — often a context-window overflow on a large full scan, which truncates the prompt or the JSON output | Fails soft (same as a `claude -p` failure) — the pipeline proceeds with the deterministic list. If it happens mainly on full `/scan` (not single-ticker), raise `ollama_num_ctx`; otherwise try a larger/different `ollama_model`. |
 | Web API returns 403 on `/research/search` | `SEC_CONTACT_EMAIL` missing in `.env` — SEC EDGAR rejects requests without a contact in the User-Agent | Set `SEC_CONTACT_EMAIL=you@example.com` in `.env` and restart `python -m scripts.run_research_worker` (the worker makes the EDGAR calls, not the API) |
-| Web API returns 401 on every request | `WEB_API_TOKEN` in `.env` doesn't match `NEXT_PUBLIC_API_TOKEN` in `web/.env.local` (or the `Authorization: Bearer <token>` header is missing) | Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, set it in both `.env` files, and restart both the API and `npm run dev` |
+| Web API returns 401 on every request | `WEB_API_TOKEN` in `.env` doesn't match `API_TOKEN` in `web/.env.local` (or the proxy's `Authorization: Bearer <token>` header is missing) | Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`, set it in both `.env` files, and restart both the API and `npm run dev` |
 | Web search returns no results for any ticker | The research worker hasn't run yet — `data/research.db` has no `symbols` rows | Run `python -m scripts.run_research_worker` once on first start; it pulls the SEC symbol directory (~10k tickers). Search works after the first successful job |
 | Ticker page's AI summary panel says "unavailable" and the Generate button does nothing | `research.summary.backend` is set to `anthropic`/`openai` but `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is missing in `.env`, or `claude_cli` is set but `claude` isn't on PATH and `claude.enabled` is false | Set the matching `.env` key, or switch `research.summary.backend` to `ollama` (requires `ollama serve` running) — a failed generation fails soft to `pending`, never an error |

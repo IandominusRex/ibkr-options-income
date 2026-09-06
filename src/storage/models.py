@@ -435,6 +435,35 @@ class BuyCandidateRow(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class AppCommandRow(Base):
+    """An intent queued by the web layer for the trading process to act on.
+
+    The bridge between a web click and a mutation inside the exec process: the API
+    inserts a row here (the only table it may write — see ``src/api/commands.py``),
+    and ``approval_service``'s command-drain loop applies it. Applying a command —
+    mutating ``ApprovalRow``, inserting ``OrderRow``, and marking this row
+    ``applied`` — is one transaction in the exec process (spec §4.2).
+
+    ``dedupe_key`` is ``f"{kind}:{target}"`` for idempotent kinds (approve, reject,
+    promote, roll_request, universe edits) and ``NULL`` for kinds that may repeat
+    harmlessly (halt, resume, set_autonomy, refresh). A NULL key never collides.
+    """
+
+    __tablename__ = "app_commands"
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_app_commands_dedupe_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    payload: Mapped[dict] = mapped_column(JSON)  # the intent's arguments
+    dedupe_key: Mapped[str | None] = mapped_column(String(96), nullable=True, unique=True)
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    requested_by: Mapped[str] = mapped_column(String(64))
+    confirm_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class CampaignRow(Base):
     """One wheel-strategy campaign — links all legs (CSP→assignment→CC→roll→close) under one P&L thread.
 

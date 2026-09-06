@@ -30,6 +30,15 @@ is the source of truth for every colour.
 - `cmdk` for the command palette, `lightweight-charts` and `recharts` for charts (later
   milestones).
 
+## API proxy and the Vercel limitation
+
+`web/lib/api.ts` fetches from `/api`, not from the upstream API directly. The proxy at
+`app/api/[...path]/route.ts` injects `Authorization: Bearer ${API_TOKEN}` server-side
+(`API_TOKEN` has no `NEXT_PUBLIC_` prefix, so Next.js cannot inline it into the client
+bundle). This works under `next start` behind Tailscale. It does **not** survive a
+Vercel-hosted frontend, because a route handler running in Vercel's cloud cannot reach
+a private API at `127.0.0.1:8787`. The proxy fails closed when `API_TOKEN` is unset.
+
 ## Scripts
 
 | Command | What it does |
@@ -60,6 +69,17 @@ app/                App Router pages and the root layout
                     is NOT gated behind a Section's state — it fetches its own data
                     from GET /research/{symbol}/bars independently, so a technicals
                     outage must not hide it too
+  options/          Options console (P2 M2): read-only. <ControlsStrip/> at the top
+                    (mode, autonomy rung, halt state, drain health), then a tab bar
+                    for Approvals / Assessed / Orders / Fills / Shorts. The Approvals
+                    tab renders <ApprovalsList/> (cards linking to the detail page).
+                    No action buttons anywhere in M2 — no Approve, Reject, Promote or
+                    Roll control. An operator must not see an affordance that implies
+                    a capability that does not exist yet.
+  options/[approvalId]/  Approval detail: <ApprovalDetailCard/> with the five review
+                    fields as labelled sections (<ReviewPanel/>), the ideal zone bar
+                    (<IdealZoneBar/>), humanised gate reasons, and the alternatives
+                    table. 404 renders a not-found state with a link back to the list.
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -91,6 +111,30 @@ components/
                     age, sentiment chip is label+tint not colour-only), SentimentPanel
                     (composite score + per-source sample count; a source with no
                     tracked count renders "n/a samples", never a fabricated "0")
+  options/          ApprovalsList (react-query on GET /options/approvals, renders
+                    ApprovalCard per pending approval; empty state is one line of
+                    text), ApprovalCard (contract label, contracts, premium per share
+                    and total, score, DTE, order state; links to the detail page; no
+                    action buttons), ControlsStrip (react-query on GET /options/controls,
+                    read-only mode/autonomy/halt/drain pills; says "unhealthy" in
+                    words when drain_healthy is false), StageBadge (text label + distinct
+                    fill per AssessmentStage, never colour alone — reuses the check
+                    ribbon's visual language), EmptyState (one line of text, no icon
+                    circle), AssessedBrowser (grouped-by-symbol collapsible list with
+                    per-stage counts, filterable by stage and symbol; non-promotable
+                    rows render promote_note as plain text, no promote control),
+                    OrdersTable (working orders, state badge is label+fill never
+                    colour alone, null avg_fill_price renders "n/a" never "$0.00"),
+                    FillsTable (recent fills with relative age), ShortsTable (open
+                    short option positions, delta renders its source, snapshot age as
+                    text not a dot, fired roll alerts render as text on the row;
+                    no roll button), ApprovalDetailCard (five review fields as five
+                    labelled sections via ReviewPanel, IdealZoneBar with lo/hi/
+                    min_credit markers, AlternativesTable, 404 with link back),
+                    ReviewPanel (null review renders nothing at all, not a bordered
+                    box), IdealZoneBar (bar with premium marked against lo/hi/
+                    min_credit, numbers visible, no fabricated precision),
+                    AlternativesTable (other contracts assessed on the same run)
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`

@@ -77,7 +77,7 @@ def expire_stale_commands(session: Session, older_than_minutes: int) -> int: ...
 roll_request, and `f"{list_name}:{symbol}"` for universe edits. `halt`, `resume`,
 `set_autonomy` and `refresh` pass `None`, because repeating them is harmless.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """app_commands round-trips, and a duplicate intent can never become two rows."""
@@ -141,13 +141,13 @@ def test_mark_failed_records_the_reason(db_session) -> None:
 Use whatever database fixture the existing storage tests use. Match `tests/test_storage_*.py`
 rather than inventing a new one.
 
-- [ ] **Step 2: Implement** the model and helpers, mirroring `src/storage/buy_candidates.py`'s
+- [x] **Step 2: Implement** the model and helpers, mirroring `src/storage/buy_candidates.py`'s
   structure so the file reads like its neighbours.
 
-- [ ] **Step 3: Run the full suite.** `python -m pytest -q`. This adds a table to the trading
+- [x] **Step 3: Run the full suite.** `python -m pytest -q`. This adds a table to the trading
   database, so a regression here is a trading regression.
 
-- [ ] **Step 4: Update `ARCHITECTURE.md`** (`src/storage/` table plus the data-flow section),
+- [x] **Step 4: Update `ARCHITECTURE.md`** (`src/storage/` table plus the data-flow section),
   then commit.
 
 ---
@@ -194,7 +194,7 @@ def get_status(command_id: int) -> CommandStatus | None:
 Note the asymmetry in the last function and preserve it: **reads go through the read-only
 engine even for commands.** The write handle is used for inserts and nothing else.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The API writes exactly one table, and the read path stays read-only."""
@@ -240,20 +240,20 @@ def test_the_command_engine_refuses_any_other_table(api_dbs) -> None:
             s.commit()
 ```
 
-- [ ] **Step 2: Implement.** The third test needs a real mechanism, not a hope. Use a SQLAlchemy
+- [x] **Step 2: Implement.** The third test needs a real mechanism, not a hope. Use a SQLAlchemy
   `before_flush` (or `before_execute`) event listener bound to the command engine's session that
   raises if any mapped object outside `AppCommandRow` is in the flush set. Write the listener so
   the failure message names the offending table. A comment must say why the listener exists and
   point at spec §4.2.
 
-- [ ] **Step 3: Update root `CLAUDE.md`.** The invariant sentence changes. Add, in the web
+- [x] **Step 3: Update root `CLAUDE.md`.** The invariant sentence changes. Add, in the web
   section:
 
   > The API reads the trading database read-only and writes exactly one table, `app_commands`,
   > through `src/api/commands.py`. No other module may import `get_command_engine`. Enforced by
   > `tests/test_web_fence.py`.
 
-- [ ] **Step 4:** Update `README.md` layout table and `ARCHITECTURE.md` folder guide for
+- [x] **Step 4:** Update `README.md` layout table and `ARCHITECTURE.md` folder guide for
   `src/api/commands.py`. Run the gate. Commit.
 
 ---
@@ -319,7 +319,7 @@ class CommandStatus(Envelope):
 This is where spec §7.2's narrow surface is enforced, at the type level, before a command row can
 exist. `sectors` must fail parsing. A test asserts exactly that.
 
-- [ ] Write the tests: every kind parses its payload; a wrong-shaped payload raises; `sectors`
+- [x] Write the tests: every kind parses its payload; a wrong-shaped payload raises; `sectors`
   and `leveraged_etfs` are rejected as `list_name`; `set_autonomy` rejects a level outside the
   four rungs; `dedupe_key_for` produces the documented string for each keyed kind and `None` for
   the four unkeyed ones. Implement, run, commit.
@@ -358,7 +358,7 @@ Required behaviours, each with a test:
 - The route reads status through the **read-only** engine (spec §4.2). A test asserts
   `get_status` does not touch `get_command_engine`.
 
-- [ ] Write the tests, implement, run the gate, then write `docs/web/commands.md` with a section
+- [x] Write the tests, implement, run the gate, then write `docs/web/commands.md` with a section
   per kind: payload, dedupe key, what applies it, and its failure modes. It is the runbook for
   the only part of the web layer that can move money, so write it for an operator at 3pm on a
   bad day, not for a developer. Commit.
@@ -413,10 +413,19 @@ async def _command_drain_loop(ib: IB | None, bot: Bot, chat_id: str, interval: i
    picking it up. Write it **after** the work, never before, so a hung handler cannot look
    healthy.
 
+> **Verified 2026-09-06 (opencode review):** the heartbeat was missing from the initial
+> build — `drain_once` returned without writing anything to `system_settings`. Added
+> `COMMAND_DRAIN_HEARTBEAT_KEY = "command_drain_heartbeat"` and a `set_setting` call at
+> the end of `drain_once`, after the handler loop and before `return processed`, so a
+> hung handler cannot make the loop look healthy. Two tests cover it:
+> `test_the_drain_writes_a_heartbeat_after_the_cycle` (advances even on an empty cycle)
+> and `test_a_hung_handler_does_not_advance_the_heartbeat_before_failing` (advances
+> only after the cycle completes, despite a handler raising).
+
 In M1 `HANDLERS` is empty, so the only observable behaviour is the unknown-kind path and the
 expiry sweep. That is deliberate: the machinery is proven before anything can use it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The drain applies what it can, fails what it cannot, and never stalls."""
@@ -469,15 +478,15 @@ Build the `drain_env` fixture in the test file: a temp trading DB, a fake bot, a
 `enqueue`/`status`/`result` helpers. Restore `HANDLERS` between tests so a registration in one
 test cannot leak into another.
 
-- [ ] **Step 2: Implement** `command_drain.py`, then wire `_command_drain_loop` into
+- [x] **Step 2: Implement** `command_drain.py`, then wire `_command_drain_loop` into
   `_run_service` beside `poll_task`, with the same cancellation handling in the `finally` block
   and the same startup log line style. Add it to the `services` list in the startup
   notification.
 
-- [ ] **Step 3: Run the full suite.** This modifies `approval_service.py`, so every pre-existing
+- [x] **Step 3: Run the full suite.** This modifies `approval_service.py`, so every pre-existing
   approval-service test must still pass.
 
-- [ ] **Step 4: Update `ARCHITECTURE.md`** (`src/notify/` section, the new module and the new
+- [x] **Step 4: Update `ARCHITECTURE.md`** (`src/notify/` section, the new module and the new
   loop), then commit.
 
 ---
@@ -488,7 +497,7 @@ test cannot leak into another.
 
 **Files:** Modify `tests/test_web_fence.py`.
 
-- [ ] Add these, in the existing file's style (globbed, not hand-listed):
+- [x] Add these, in the existing file's style (globbed, not hand-listed):
 
 ```python
 # ---------------------------------------------------------------------------
@@ -534,7 +543,17 @@ def test_the_trading_path_still_never_imports_the_web_layer() -> None:
   explicit rather than accidental: the drain lives there precisely because `src/notify/` is
   allowed to know about both sides.
 
-- [ ] Run `python -m pytest tests/test_web_fence.py -q`, then the full gate. Commit.
+> **Verified 2026-09-06 (opencode review):** `test_only_the_command_module_holds_a_write_handle`
+> originally grepped only for `get_command_engine`. The initial build of the `confirm` route in
+> `src/api/routers/commands.py` imported `command_session` directly to clear the token — a real
+> leak of the write handle that the original test could not catch (it only watched for
+> `get_command_engine`). Fixed two ways: (1) the clear-write moved into
+> `src/api/commands.py::clear_confirm_token`, so the router no longer touches the write session,
+> and (2) the fence test now greps for both `get_command_engine` **and** `command_session`,
+> closing the gap. A test (`test_post_confirm_in_live_mode_clears_the_token`) asserts the clear
+> actually happens through `commands.py`.
+
+- [x] Run `python -m pytest tests/test_web_fence.py -q`, then the full gate. Commit.
 
 ---
 
@@ -575,14 +594,14 @@ Required behaviours, each with a test:
 - The proxy forwards the request body for `POST` and never logs it. Command payloads are not
   secret, but the habit is.
 
-- [ ] **Step 1:** Write the tests above.
+- [x] **Step 1:** Write the tests above.
 
-- [ ] **Step 2: Implement the proxy**, then change `web/lib/api.ts`:
+- [x] **Step 2: Implement the proxy**, then change `web/lib/api.ts`:
   - `BASE` becomes `"/api"`.
   - The `Authorization` header is **removed** from `apiFetch`.
   - `TOKEN` and its `NEXT_PUBLIC_API_TOKEN` read are **deleted**.
 
-- [ ] **Step 3: Purge the old variable.** Remove `NEXT_PUBLIC_API_TOKEN` from `.env.example` and
+- [x] **Step 3: Purge the old variable.** Remove `NEXT_PUBLIC_API_TOKEN` from `.env.example` and
   from every mention in `SETUP.md`, replacing it with `API_TOKEN`. Grep the repo to be sure:
 
 ```bash
@@ -593,11 +612,11 @@ grep -rn "NEXT_PUBLIC_API_TOKEN" --include="*.ts" --include="*.tsx" --include="*
   The grep must come back empty. A stale mention in `SETUP.md` means the next person to set this
   up reintroduces the leak.
 
-- [ ] **Step 4:** Record the Vercel limitation in `web/CLAUDE.md`, verbatim from spec §8.2: this
+- [x] **Step 4:** Record the Vercel limitation in `web/CLAUDE.md`, verbatim from spec §8.2: this
   proxy works under `next start` behind Tailscale and does **not** survive a Vercel-hosted
   frontend, because a route handler running in Vercel's cloud cannot reach a private API.
 
-- [ ] **Step 5:** `npx vitest run && npm run lint && npm run build`, then the Python gate.
+- [x] **Step 5:** `npx vitest run && npm run lint && npm run build`, then the Python gate.
   Verify by hand that the built bundle no longer contains the token:
 
 ```bash
@@ -612,41 +631,61 @@ cd web && npm run build && grep -r "$(grep API_TOKEN ../.env | cut -d= -f2)" .ne
 
 **Files:** Modify `STATUS.md`, `docs/web/architecture.md`, `docs/web/api.md`.
 
-- [ ] Add a **P2 — Options console** progress row to `STATUS.md`'s web platform table describing
+- [x] Add a **P2 — Options console** progress row to `STATUS.md`'s web platform table describing
   what M1 built and stating plainly that **nothing user-visible ships yet**: the intent queue
   exists, the drain runs with no registered handlers, and no web action can reach an order until
   M3.
 
-- [ ] Update `docs/web/architecture.md` with the two-engine model: the read-only engine for every
+- [x] Update `docs/web/architecture.md` with the two-engine model: the read-only engine for every
   route, the write-scoped engine for `app_commands` only, and the drain loop in
   `approval_service`. Include the §4.1 diagram.
 
-- [ ] Confirm `docs/web/commands.md` (created in 1.4) documents every kind defined in 1.3, even
+- [x] Confirm `docs/web/commands.md` (created in 1.4) documents every kind defined in 1.3, even
   the ones with no handler yet, each marked with the milestone that implements it.
 
-- [ ] Regenerate the schema and the client types:
+- [x] Regenerate the schema and the client types:
 
 ```bash
 python -c "import json;from src.api.main import create_app;print(json.dumps(create_app().openapi(),indent=2))" > docs/web/openapi.json
 cd web && npm run gen:api
 ```
 
-- [ ] Full gate: `python -m pytest -q` · `ruff check .` · `mypy src` · `cd web && npx vitest run
+- [x] Full gate: `python -m pytest -q` · `ruff check .` · `mypy src` · `cd web && npx vitest run
   && npm run lint && npm run build`. Commit.
 
 ---
 
 ## Milestone 1 acceptance
 
-- [ ] `app_commands` exists, and a duplicate intent cannot become two rows.
-- [ ] The API's read path still raises `OperationalError` on a write.
-- [ ] The API's write path can insert an `app_commands` row and **nothing else**, proven by a
+- [x] `app_commands` exists, and a duplicate intent cannot become two rows.
+- [x] The API's read path still raises `OperationalError` on a write.
+- [x] The API's write path can insert an `app_commands` row and **nothing else**, proven by a
   runtime listener, not a comment.
-- [ ] `tests/test_web_fence.py` fails if the write handle leaks to a second module.
-- [ ] The drain loop runs in `approval_service`, fails unknown kinds loudly, isolates a throwing
+- [x] `tests/test_web_fence.py` fails if the write handle leaks to a second module.
+- [x] The drain loop runs in `approval_service`, fails unknown kinds loudly, isolates a throwing
   handler, and applies broker-free commands with no exec connection.
-- [ ] `grep -rn "NEXT_PUBLIC_API_TOKEN"` comes back empty, and the built bundle does not contain
+- [x] `grep -rn "NEXT_PUBLIC_API_TOKEN"` comes back empty, and the built bundle does not contain
   the token.
-- [ ] `POST /commands` and `GET /commands/{id}` are `owner_only`.
-- [ ] Nothing in the UI has changed. No web action can cause an order.
-- [ ] Full gate green, all six commands.
+- [x] `POST /commands` and `GET /commands/{id}` are `owner_only`.
+- [x] Nothing in the UI has changed. No web action can cause an order.
+- [x] Full gate green, all six commands.
+
+> **Verified 2026-09-06 (opencode review of the GLM build):** all eight tasks were
+> implemented and the suite was green, but two issues against the plan were found and fixed:
+>
+> 1. **Missing `command_drain_heartbeat` (Task 1.5 design point 6).** `drain_once` returned
+>    without writing any heartbeat to `system_settings`, so M2's `/options/controls` would have
+>    no way to distinguish a live drain from a dead one. Added a `set_setting` call at the end of
+>    `drain_once` (after the work, never before), with two tests covering the empty-cycle and
+>    hung-handler cases.
+> 2. **Write-handle leak in the `confirm` route (Task 1.2 invariant).** `src/api/routers/
+>    commands.py` imported `command_session` directly to clear the confirm token, violating
+>    "no other module may import `get_command_engine`." The original fence test only grepped for
+>    `get_command_engine`, so it passed despite the leak. Fixed by moving the clear-write into
+>    `src/api/commands.py::clear_confirm_token`, and strengthened the fence test to also grep
+>    for `command_session`.
+>
+> One pre-existing failure remains outside M1's scope: `tests/test_web_fence.py::
+> test_the_api_never_constructs_a_broker_connection` flags `src/api/routers/options.py` (an
+> untracked M2 file whose only `ib_async` mention is in a comment). That is for the M2 session
+> to resolve, not M1.
