@@ -306,9 +306,14 @@ async def test_no_promote_path_exists_for_a_gate_rejected_contract(
     assert result["reason"] == "gate_rejected"
     assert "approval_id" not in result
 
+    # Not filtered by candidate_id: ApprovalRow.candidate_id is the fresh run's own
+    # TradeCandidate.candidate_id (a SHA1 hash from make_candidate_id), never the literal
+    # payload string "c1" used to select which contract to look for — a filter on "c1" would
+    # never match any row this handler could possibly write, making the check vacuous. This
+    # test's DB is a fresh tmp_path-backed sqlite (via _db_setup), so an unconditional
+    # zero-row count is the meaningful assertion: no approval of any shape was raised.
     with session_scope() as s:
-        raised = s.query(ApprovalRow).filter(ApprovalRow.candidate_id == "c1").all()
-    assert raised == []
+        assert s.query(ApprovalRow).count() == 0
 
 
 @pytest.mark.asyncio
