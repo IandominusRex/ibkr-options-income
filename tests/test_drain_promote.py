@@ -137,6 +137,20 @@ class _FakeChain:
         self.side_effect = exc
         self._wire("N/A")
 
+    def will_break_analytics(self, symbol: str, *, strike: float = 180.0) -> None:
+        """The chain fetch succeeds but analytics fails outright — `TickerPricingAborted`
+        ("analytics"), which the promote handler folds into `chain_unavailable` (M4 Task 4.2
+        fix round: it is not a chain-fetch failure, but reports under the same "no fresh,
+        honest price for this ticker" umbrella rather than inventing a fifth reason code)."""
+        self.will_price(symbol, strike=strike, gate="pass")
+
+        import src.orchestrator.scan as scanmod
+
+        def _boom(sym: str, **_: object) -> TechnicalStats:
+            raise RuntimeError("yfinance unreachable")
+
+        self._monkeypatch.setattr(scanmod, "get_technical_stats", _boom)
+
     def _wire(self, symbol: str) -> None:
         import src.orchestrator.scan as scanmod
 
@@ -441,6 +455,26 @@ async def test_a_chain_fetch_failure_fails_with_chain_unavailable(drain_env, fak
     result = drain_env.result(cid)
     assert result["reason"] == "chain_unavailable"
     assert result["detail"]["detail"] == "no market data farm connection"
+
+
+@pytest.mark.asyncio
+async def test_a_ticker_pricing_abort_folds_into_chain_unavailable(drain_env, fake_chain) -> None:
+    """An analytics/account-fetch failure is not a chain-fetch failure, but it reports under
+    the same reason: no fresh, honest price for this ticker either way (M4 Task 4.2 fix round —
+    `TickerPricingAborted` must not escape `_promote` uncaught as a bare `handler_error`)."""
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_break_analytics("NVDA", strike=180.0)
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "chain_unavailable"
+    assert result["detail"]["stage"] == "analytics"
+    assert result["detail"]["detail"] == "analytics error"
 
 
 @pytest.mark.asyncio

@@ -141,10 +141,16 @@ with the most specific reason available:
 
 | Situation | `reason` | `detail` |
 |---|---|---|
-| The chain fetch failed | `chain_unavailable` | the provider's message |
+| The chain fetch failed **or** the fresh analytics/account fetch failed outright | `chain_unavailable` | the provider's message (chain fetch), or `{"stage": "analytics" \| "account", "detail": <human text>}` (analytics/account fetch — `_price_and_gate_ticker` raised `TickerPricingAborted` before a chain was even screened) |
 | The contract no longer prices | `contract_not_priced` | how many contracts were priced |
 | The Rules Engine now rejects it | `gate_rejected` | the verdict's `reasons` list, verbatim |
 | It priced but scored below the floor | `score_below_minimum` | the score and the threshold |
+
+`chain_unavailable` is deliberately one reason covering two internal causes: a chain-fetch
+failure and an analytics/account-fetch failure both mean the same thing to the operator — there
+is no fresh, honest price for this ticker right now — so an analytics/account-fetch failure is
+not given its own fifth reason code; it folds into `chain_unavailable`, with the failed stage
+named in `detail` instead.
 
 A `gate_rejected` outcome is a success of the design, not a bug — the gate changing its mind
 between the original scan and the promote is exactly the mechanism working, so its reasons are

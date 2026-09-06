@@ -1696,15 +1696,24 @@ class TickerNotFoundError(Exception):
 class TickerPricingAborted(Exception):
     """Raised by `_price_and_gate_ticker` when analytics or the portfolio fetch fails outright.
 
-    Carries the stage name (``"analytics"`` or ``"account"``) so `run_ticker_scan` can
-    reproduce its original per-stage Telegram error message. A caller with no Telegram
-    message to send (the promote drain handler, M4 Task 4.2) has no reason to catch this
-    specially — it propagates as an ordinary handler failure instead.
+    Carries the stage name (``"analytics"`` or ``"account"``) plus a shared plain-text
+    ``detail`` so both callers report the identical underlying failure without duplicating the
+    wording: `run_ticker_scan` wraps ``detail`` in its own Telegram sentence
+    ("❌ *Scan failed* — {detail}\\."); the promote drain handler (M4 Task 4.2) has no Telegram
+    message to send, so it catches this and folds it into its ``chain_unavailable`` failure
+    reason — the same "no fresh, honest price for this ticker" umbrella a chain-fetch failure
+    already reports under — carrying ``stage`` and ``detail`` in the command's result detail.
     """
+
+    _MESSAGES: dict[str, str] = {
+        "analytics": "analytics error",
+        "account": "account fetch error",
+    }
 
     def __init__(self, stage: str) -> None:
         super().__init__(stage)
         self.stage = stage
+        self.detail = self._MESSAGES.get(stage, stage)
 
 
 @dataclass
@@ -1975,11 +1984,9 @@ async def run_ticker_scan(
     try:
         priced = await _price_and_gate_ticker(ib, ticker)
     except TickerPricingAborted as exc:
-        message = {
-            "analytics": "❌ *Scan failed* — analytics error\\.",
-            "account": "❌ *Scan failed* — account fetch error\\.",
-        }[exc.stage]
-        await _ticker_edit_msg(bot, chat_id, progress_msg_id, message)
+        await _ticker_edit_msg(
+            bot, chat_id, progress_msg_id, f"❌ *Scan failed* — {exc.detail}\\."
+        )
         return
 
     quotes = priced.quotes

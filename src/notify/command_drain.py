@@ -241,17 +241,25 @@ async def _promote(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: Any) -
     ``CommandFailed`` with the most specific reason available when it cannot (see
     ``docs/web/commands.md``'s promote failure-reason table). ``ib is None`` fails immediately
     with ``broker_unavailable`` — a promote needs a fresh chain and cannot be honestly served
-    without one.
+    without one. A `TickerPricingAborted` (the analytics or portfolio fetch failed outright,
+    before a chain was even screened) folds into ``chain_unavailable`` too — same "no fresh,
+    honest price for this ticker" umbrella a chain-fetch failure already reports under — with
+    the failed stage carried in the detail rather than inventing a fifth reason code.
     """
     from src.api.models.commands import PromotePayload
-    from src.orchestrator.scan import _price_and_gate_ticker
+    from src.orchestrator.scan import TickerPricingAborted, _price_and_gate_ticker
 
     if ib is None:
         raise CommandFailed("broker_unavailable")
 
     payload = PromotePayload(**command.payload)
 
-    priced = await _price_and_gate_ticker(ib, payload.symbol)
+    try:
+        priced = await _price_and_gate_ticker(ib, payload.symbol)
+    except TickerPricingAborted as exc:
+        raise CommandFailed(
+            "chain_unavailable", {"stage": exc.stage, "detail": exc.detail}
+        ) from exc
 
     # Check chain failure before searching `scored` at all — an empty chain from a real
     # failure must not be reported as "contract not priced".
