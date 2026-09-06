@@ -121,6 +121,33 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
 - **Failure modes:** `candidate_not_found`, `already_has_approval`, `gate_rejected`.
 - **Milestone:** M4.
 
+**The promotable-stage guard (Task 4.1).** `POST /commands` refuses a `promote` before any
+`app_commands` row is created, unless the candidate's most recently assessed `risk_verdicts` row
+(`candidate_id` is not unique — the same candidate can be assessed differently across scan runs,
+so this means the newest by `created_at`) is at one of exactly three stages. This is spec §5.2's
+promotable table, verbatim:
+
+| Stage | Meaning | Promotable |
+|---|---|---|
+| `GENERATOR` | failed a strategy filter (delta band, DTE, liquidity, ROC) | **no** |
+| `RISK_GATE` | failed the deterministic Rules Engine | **no** |
+| `SCORE_FLOOR` | cleared the gate, scored below `min_candidate_score` | **yes, flagged** |
+| `DEDUPE` | a better strike for the same underlying and strategy won | **yes** |
+| `TOP_N` | good enough, but `max_new_positions_per_run` was already full | **yes** |
+| `PASSED` | surfaced for approval | already an approval |
+
+`DEDUPE` and `TOP_N` mean the Rules Engine said yes and the score floor said yes; only the
+ranking dropped the contract — promoting one is the operator disagreeing with a ranking, which
+is a judgment call the operator is entitled to make. `SCORE_FLOOR` is promotable but flagged,
+because the contract fell below a bar the operator themselves configured.
+
+`RISK_GATE` and `GENERATOR` are never promotable — the gate saying no is the whole point of the
+gate — and `PASSED` is refused because it already has an approval. A refusal is `409` with
+`{"reason": "stage_not_promotable", "stage": <the stage>}` and **leaves no command row behind**,
+so the assessed browser cannot accumulate failed intents against contracts that were never
+eligible. An unknown `candidate_id` (no assessed row at all) is `404`, not `409`. The guard reads
+through the read-only trading-database engine, never the write-scoped command engine.
+
 ### `roll_request` — request a roll for a position
 
 - **Payload:** `{ position_symbol: str }`

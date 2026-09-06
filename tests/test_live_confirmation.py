@@ -7,7 +7,7 @@ supplies the right token. If the confirm route were broken, nothing executes.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -105,6 +105,28 @@ def test_live_mode_reject_needs_no_confirmation(client, monkeypatch) -> None:
 
 def test_live_mode_promote_and_roll_request_need_confirmation(client, monkeypatch) -> None:
     _live(monkeypatch)
+    # Task 4.1's guard requires an assessed row at a promotable stage before a
+    # promote command can be enqueued at all.
+    from src.storage.db import session_scope
+    from src.storage.models import RiskVerdictRow
+
+    with session_scope() as s:
+        s.add(
+            RiskVerdictRow(
+                candidate_id="c1",
+                run_id="run-1",
+                symbol="NVDA",
+                strategy="cash_secured_put",
+                strike=190.0,
+                expiry=date.today() + timedelta(days=30),
+                verdict="pass",
+                stage="top_n",
+                reasons=[],
+                blended_score=70.0,
+                premium=3.0,
+            )
+        )
+
     promote = client.post(
         "/commands",
         json={

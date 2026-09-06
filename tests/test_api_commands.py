@@ -134,6 +134,31 @@ def test_post_refresh_in_live_mode_does_not_need_confirmation(client, monkeypatc
 
 
 def test_post_promote_in_live_mode_needs_confirmation(client, monkeypatch) -> None:
+    """Task 4.1 gates promote on an assessed row at a promotable stage — seed one
+    for "abc" so this test can stay focused on the live-mode confirmation behaviour
+    it's named for. The guard itself is exercised by tests/test_promote_guard.py."""
+    from datetime import date, timedelta
+
+    from src.storage.db import session_scope
+    from src.storage.models import RiskVerdictRow
+
+    with session_scope() as s:
+        s.add(
+            RiskVerdictRow(
+                candidate_id="abc",
+                run_id="run-1",
+                symbol="NVDA",
+                strategy="covered_call",
+                strike=105.0,
+                expiry=date.today() + timedelta(days=30),
+                verdict="pass",
+                stage="top_n",
+                reasons=[],
+                blended_score=70.0,
+                premium=3.0,
+            )
+        )
+
     monkeypatch.setattr("src.api.routers.commands.get_config", lambda: _live_config())
     r = client.post(
         "/commands",
