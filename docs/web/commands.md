@@ -116,10 +116,39 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
 
 - **Payload:** `{ candidate_id: str, symbol: str, strategy: str, strike: float, expiry: date }`
 - **Dedupe key:** `promote:{candidate_id}`
-- **Applied by:** M4. Creates an `ApprovalRow` from the `CandidateRow`'s frozen snapshot.
+- **Applied by:** M4 Task 4.2. The drain handler (`src/notify/command_drain.py`'s `_promote`)
+  re-prices and re-gates the requested contract **right now** — it re-runs the single-ticker
+  pricing path (`src.orchestrator.scan._price_and_gate_ticker`: fresh chain, fresh analytics,
+  the real CC/CSP screens, the real score, the real Rules Engine) for `payload.symbol`, then
+  searches the gate-passed output for the exact `(strategy, strike, expiry)` requested. Only on
+  a match that still clears the gate does it call
+  `src.execution.promote_pipeline.queue_promoted_for_approval`, which persists the fresh
+  `TradeCandidate` as a `CandidateRow` and raises a **PENDING** `ApprovalRow` (frozen snapshot,
+  N2a) — mirroring `roll_pipeline.queue_roll_for_approval`'s `has_active_order` guard, so a
+  replayed drain against a candidate that already has an active order is `applied` (not
+  failed) with `result = {"approval_id": null, "note": "order_already_active"}`, never a second
+  approval. Nothing from the stored `RiskVerdictRow` reaches the approval except the
+  `(candidate_id, symbol, strategy, strike, expiry)` used to select which contract to look for
+  — every number on the resulting approval comes from this fresh run.
 - **Live mode:** `needs_confirmation = true`.
-- **Failure modes:** `candidate_not_found`, `already_has_approval`, `gate_rejected`.
+- **Failure modes:** `broker_unavailable` (no `ib` — see below), plus the table below.
 - **Milestone:** M4.
+
+**The promote failure-reason table (Task 4.2).** If `ib is None` the command fails immediately
+with `broker_unavailable` — a promote needs a fresh chain and cannot be honestly served without
+one. Otherwise, when the fresh run does not end in a new PENDING approval, the command fails
+with the most specific reason available:
+
+| Situation | `reason` | `detail` |
+|---|---|---|
+| The chain fetch failed | `chain_unavailable` | the provider's message |
+| The contract no longer prices | `contract_not_priced` | how many contracts were priced |
+| The Rules Engine now rejects it | `gate_rejected` | the verdict's `reasons` list, verbatim |
+| It priced but scored below the floor | `score_below_minimum` | the score and the threshold |
+
+A `gate_rejected` outcome is a success of the design, not a bug — the gate changing its mind
+between the original scan and the promote is exactly the mechanism working, so its reasons are
+surfaced verbatim, never softened or summarized.
 
 **The promotable-stage guard (Task 4.1).** `POST /commands` refuses a `promote` before any
 `app_commands` row is created, unless the candidate's most recently assessed `risk_verdicts` row

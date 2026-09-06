@@ -1,0 +1,467 @@
+"""M4 Task 4.2: a promote is priced now and gated now, or it does not happen.
+
+The API-boundary guard (`src.api.routers.commands.assert_promotable`, M4 Task 4.1) already
+refuses a promote for a non-promotable stage before a command row can exist — but that guard
+reads a *stored* `RiskVerdictRow`, a snapshot of what a past scan saw. This is the belt of the
+belt-and-braces: the drain handler re-runs the single-ticker pricing + gating path
+(`src.orchestrator.scan._price_and_gate_ticker`) for real, and only raises an approval when the
+fresh run still clears the gate.
+
+Mocking discipline (per the task brief): only the chain fetch (and the other IBKR/network
+boundary calls `_stub_scan_common` in test_scan_buy_candidates_persistence.py already mocks) is
+mocked. `screen_cc_candidates`/`screen_csp_candidates`, `score_candidates`, and
+`validate_candidates` all run for real — the "gate rejected" scenario below is manufactured by
+overloading the account's margin usage (a real, deterministic Rules Engine rejection that
+applies regardless of the contract's own economics), not by faking the engine's verdict.
+"""
+
+from __future__ import annotations
+
+import types
+from datetime import date, timedelta
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.common.schemas import (
+    AccountSnapshot,
+    ApprovalStatus,
+    FundamentalStats,
+    IVStats,
+    OptionQuote,
+    OptionRight,
+    PositionSnapshot,
+    TechnicalStats,
+)
+
+# 24 DTE — inside the covered_call [7, 28] window (config/risk_limits.yaml).
+_EXPIRY = date.today() + timedelta(days=24)
+
+
+def _db_setup(tmp_path, monkeypatch) -> None:
+    import src.storage.db as dbmod
+    from src.common.config import Config
+
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 'drain.db'}")
+    dbmod.init_db()
+
+
+def _account(*, maintenance_margin: float = 10_000.0) -> AccountSnapshot:
+    return AccountSnapshot(
+        account="DU123456",
+        net_liquidation=100_000.0,
+        total_cash=70_000.0,
+        buying_power=80_000.0,
+        maintenance_margin=maintenance_margin,
+        excess_liquidity=70_000.0,
+    )
+
+
+class _FakeChain:
+    """Configures `get_option_chain_quotes_async` (the only mocked network boundary).
+
+    `will_price` builds a realistic quote that clears the real delta/DTE/liquidity screens
+    (see tests/test_strategies.py's known-good fixture combo, which this mirrors) and a stock
+    position so `screen_cc_candidates` actually runs. `gate="reject"` swaps in an account with
+    maintenance margin over `portfolio.max_margin_usage_pct` (50% by default) — a real,
+    contract-agnostic Rules Engine rejection (`margin_limit`), so the *real* `validate_candidates`
+    still runs and still says no, rather than a faked verdict.
+    """
+
+    def __init__(self, monkeypatch) -> None:
+        self._monkeypatch = monkeypatch
+        self.quotes: list[OptionQuote] = []
+        self.side_effect: BaseException | None = None
+        self.position: PositionSnapshot | None = None
+        self.account: AccountSnapshot = _account()
+        self._wired = False
+
+    def will_price(
+        self,
+        symbol: str,
+        *,
+        strike: float,
+        gate: str = "pass",
+        premium: float = 2.50,
+        delta: float = 0.28,
+        dte: int = 24,
+        held: bool = True,
+    ) -> None:
+        expiry = date.today() + timedelta(days=dte)
+        self.quotes = [
+            OptionQuote(
+                underlying=symbol,
+                right=OptionRight.CALL,
+                strike=strike,
+                expiry=expiry,
+                bid=round(premium - 0.10, 2),
+                ask=round(premium + 0.10, 2),
+                volume=500,
+                open_interest=2000,
+                delta=delta,
+                iv=0.28,
+            )
+        ]
+        self.position = (
+            PositionSnapshot(symbol=symbol, sec_type="STK", position=200.0, avg_cost=150.0)
+            if held
+            else None
+        )
+        self.account = _account(maintenance_margin=90_000.0) if gate == "reject" else _account()
+        self._wire(symbol)
+
+    def will_vanish(self, symbol: str, *, other_strike: float = 999.0) -> None:
+        """The chain succeeds but no longer offers the promoted strike."""
+        expiry = date.today() + timedelta(days=24)
+        self.quotes = [
+            OptionQuote(
+                underlying=symbol,
+                right=OptionRight.CALL,
+                strike=other_strike,
+                expiry=expiry,
+                bid=1.90,
+                ask=2.10,
+                volume=500,
+                open_interest=2000,
+                delta=0.28,
+                iv=0.28,
+            )
+        ]
+        self.position = None  # no held shares → no CC candidate at any strike
+        self.account = _account()
+        self._wire(symbol)
+
+    def will_fail(self, *, exc: BaseException) -> None:
+        self.side_effect = exc
+        self._wire("N/A")
+
+    def _wire(self, symbol: str) -> None:
+        import src.orchestrator.scan as scanmod
+
+        mp = self._monkeypatch
+        if self.side_effect is not None:
+            mock = AsyncMock(side_effect=self.side_effect)
+        else:
+            mock = AsyncMock(return_value=self.quotes)
+        mp.setattr(scanmod, "get_option_chain_quotes_async", mock)
+        mp.setattr(scanmod, "get_positions", lambda ib: [self.position] if self.position else [])
+        mp.setattr(
+            scanmod, "get_account_snapshot_async", AsyncMock(return_value=self.account)
+        )
+        mp.setattr(
+            scanmod,
+            "get_iv_stats",
+            lambda sym, quotes=None: IVStats(symbol=sym, current_iv=28.0, iv_rank=65.0),
+        )
+        mp.setattr(
+            scanmod,
+            "get_technical_stats",
+            lambda sym, **_: TechnicalStats(symbol=sym, price=170.0, rsi_14=55.0),
+        )
+        mp.setattr(
+            scanmod,
+            "get_fundamental_stats",
+            lambda sym: FundamentalStats(symbol=sym, quality_flag=True),
+        )
+        self._wired = True
+
+
+@pytest.fixture
+def fake_chain(monkeypatch):
+    return _FakeChain(monkeypatch)
+
+
+@pytest.fixture
+def drain_env(monkeypatch, tmp_path):
+    """A temp trading DB + fake bot + command/approval helpers, promote registered only."""
+    _db_setup(tmp_path, monkeypatch)
+
+    from src.notify.command_drain import HANDLERS
+    from src.storage.app_commands import enqueue_command
+    from src.storage.db import session_scope
+    from src.storage.models import AppCommandRow, ApprovalRow, OrderRow, RiskVerdictRow
+
+    saved_handlers = dict(HANDLERS)
+    HANDLERS.clear()
+    HANDLERS.update({k: v for k, v in saved_handlers.items() if k == "promote"})
+
+    bot = AsyncMock()
+    bot.send_message = AsyncMock()
+
+    def enqueue(kind: str, payload: dict) -> int:
+        with session_scope() as s:
+            row, _ = enqueue_command(s, kind=kind, payload=payload, requested_by="test")
+            return row.id
+
+    def status(cid: int) -> str:
+        with session_scope() as s:
+            row = s.get(AppCommandRow, cid)
+            assert row is not None
+            return row.status
+
+    def result(cid: int) -> dict:
+        with session_scope() as s:
+            row = s.get(AppCommandRow, cid)
+            assert row is not None
+            return row.result or {}
+
+    def seed_assessed(
+        candidate_id: str,
+        *,
+        stage: str,
+        symbol: str,
+        strike: float,
+        strategy: str = "covered_call",
+        expiry: date = _EXPIRY,
+        premium: float = 1.00,
+    ) -> None:
+        """A stored assessment row — what a past scan saw. The promote handler never reads
+        this; it exists only to document the (already-passed) M4 Task 4.1 precondition."""
+        with session_scope() as s:
+            s.add(
+                RiskVerdictRow(
+                    candidate_id=candidate_id,
+                    run_id="seed-run",
+                    symbol=symbol,
+                    strategy=strategy,
+                    strike=strike,
+                    expiry=expiry,
+                    verdict="pass" if stage == "passed" else "reject",
+                    stage=stage,
+                    reasons=[],
+                    blended_score=80.0,
+                    premium=premium,
+                )
+            )
+
+    def approval_status(approval_id: int) -> str:
+        with session_scope() as s:
+            row = s.get(ApprovalRow, approval_id)
+            assert row is not None
+            return row.status
+
+    def order_for_approval(approval_id: int) -> OrderRow | None:
+        with session_scope() as s:
+            row = s.query(OrderRow).filter(OrderRow.approval_id == approval_id).one_or_none()
+            if row is None:
+                return None
+            s.expunge(row)
+            return row
+
+    def approval(approval_id: int) -> ApprovalRow:
+        with session_scope() as s:
+            row = s.get(ApprovalRow, approval_id)
+            assert row is not None
+            s.expunge(row)
+            return row
+
+    env = types.SimpleNamespace(
+        bot=bot,
+        ib=MagicMock(),  # a non-None sentinel; the fake chain mocks every real call
+        enqueue=enqueue,
+        status=status,
+        result=result,
+        seed_assessed=seed_assessed,
+        approval_status=approval_status,
+        order_for_approval=order_for_approval,
+        approval=approval,
+    )
+
+    yield env
+
+    HANDLERS.clear()
+    HANDLERS.update(saved_handlers)
+
+
+def _payload(
+    *,
+    candidate_id: str = "c1",
+    symbol: str = "NVDA",
+    strategy: str = "covered_call",
+    strike: float = 180.0,
+    expiry: date = _EXPIRY,
+) -> dict:
+    return {
+        "candidate_id": candidate_id,
+        "symbol": symbol,
+        "strategy": strategy,
+        "strike": strike,
+        "expiry": expiry.isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_still_passing_contract_becomes_a_pending_approval(drain_env, fake_chain) -> None:
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "applied"
+    approval_id = drain_env.result(cid)["approval_id"]
+    assert approval_id is not None
+    assert drain_env.approval_status(approval_id) == ApprovalStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_a_promote_never_creates_an_approved_approval(drain_env, fake_chain) -> None:
+    """A promote raises a proposal. Approving it is a separate human act."""
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    approval_id = drain_env.result(cid)["approval_id"]
+    assert drain_env.approval_status(approval_id) != ApprovalStatus.APPROVED
+    assert drain_env.order_for_approval(approval_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_now_rejected_contract_fails_with_the_gates_reasons(drain_env, fake_chain) -> None:
+    """The gate changing its mind is the mechanism working."""
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="reject")
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "gate_rejected"
+    # Surfaced verbatim from the real Rules Engine — not summarized, not softened.
+    assert result["detail"]["reasons"] == ["margin_limit"]
+
+
+@pytest.mark.asyncio
+async def test_the_promoted_numbers_come_from_the_fresh_run(drain_env, fake_chain) -> None:
+    """The stored row picks the contract. It supplies none of the numbers."""
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0, premium=1.00)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass", premium=2.50)
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    approval = drain_env.approval(drain_env.result(cid)["approval_id"])
+    assert approval.snapshot["premium"] == 2.50  # not 1.00, the stale seeded row's value
+
+
+@pytest.mark.asyncio
+async def test_a_vanished_contract_fails_with_contract_not_priced(drain_env, fake_chain) -> None:
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_vanish("NVDA", other_strike=175.0)
+    cid = drain_env.enqueue("promote", _payload(strike=180.0))
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "contract_not_priced"
+    assert result["detail"]["priced_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_promote_with_no_broker_fails_honestly(drain_env) -> None:
+    from src.notify.command_drain import drain_once
+
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(None, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    assert drain_env.result(cid)["reason"] == "broker_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_promote_raises_no_second_approval(drain_env, fake_chain) -> None:
+    """Idempotent against a replayed drain: an active order blocks a second approval.
+
+    `has_active_order` (the same guard `queue_roll_for_approval` uses) only sees OrderRows —
+    so "replayed" here means the first promote's approval was already turned into a QUEUED
+    order before a second, distinct promote command for the identical contract is drained.
+    """
+    from src.notify.command_drain import drain_once
+    from src.storage.db import session_scope
+    from src.storage.models import OrderRow
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+
+    first = drain_env.enqueue("promote", _payload(candidate_id="c1"))
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+    assert drain_env.status(first) == "applied"
+    first_approval_id = drain_env.result(first)["approval_id"]
+    assert first_approval_id is not None
+
+    # The first approval is already working an order (e.g. approved via M3's path).
+    with session_scope() as s:
+        candidate_id = drain_env.approval(first_approval_id).candidate_id
+        s.add(
+            OrderRow(
+                candidate_id=candidate_id,
+                approval_id=first_approval_id,
+                state="queued",
+                snapshot=drain_env.approval(first_approval_id).snapshot,
+            )
+        )
+
+    second = drain_env.enqueue("promote", _payload(candidate_id="c1"))
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(second) == "applied"
+    second_result = drain_env.result(second)
+    assert second_result["approval_id"] is None
+    assert second_result["note"] == "order_already_active"
+
+
+@pytest.mark.asyncio
+async def test_a_chain_fetch_failure_fails_with_chain_unavailable(drain_env, fake_chain) -> None:
+    from src.notify.command_drain import drain_once
+
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_fail(exc=RuntimeError("no market data farm connection"))
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "chain_unavailable"
+    assert result["detail"]["detail"] == "no market data farm connection"
+
+
+@pytest.mark.asyncio
+async def test_a_score_below_the_floor_fails_with_score_below_minimum(
+    drain_env, fake_chain, monkeypatch
+) -> None:
+    from src.common.config import get_config
+    from src.notify.command_drain import drain_once
+
+    # A real candidate that clears every screen and the real Rules Engine, but with the
+    # ranking floor raised above what it could ever score — the config knob a human tunes,
+    # not a faked verdict.
+    monkeypatch.setitem(get_config().weights, "min_candidate_score", 999.0)
+
+    drain_env.seed_assessed("c1", stage="score_floor", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = drain_env.enqueue("promote", _payload())
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "score_below_minimum"
+    assert result["detail"]["minimum"] == 999.0

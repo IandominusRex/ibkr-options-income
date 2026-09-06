@@ -23,6 +23,7 @@ Design points that are not negotiable (see M1-write-foundation.md Task 1.5):
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -112,6 +113,11 @@ async def drain_once(ib: IB | None, bot: Any, chat_id: str) -> int:
                 continue
 
             result = handler(ib=ib, bot=bot, chat_id=chat_id, command=cmd, payload=cmd.payload)
+            # A handler may be a coroutine function (M4 Task 4.2's "promote" re-runs a scan
+            # path and must await it) or a plain sync function (every earlier handler) — both
+            # are supported so existing handlers need no change.
+            if inspect.isawaitable(result):
+                result = await result
             # Handlers return the result dict stored on the command. The M1
             # machinery wrapped everything as {"ok": True, "result": ...}; a
             # handler's own dict is stored verbatim so a receipt can read
@@ -208,3 +214,83 @@ def _approve(*, command: Any, **_: Any) -> dict:
 def _reject(*, command: Any, **_: Any) -> dict:
     """Apply a reject intent by calling ``_process_button`` unchanged."""
     return _apply_approval_decision(command=command, action="reject")
+
+
+# ---------------------------------------------------------------------------
+# M4 Task 4.2 — promote.
+#
+# The API-boundary guard (`src.api.routers.commands.assert_promotable`, M4 Task 4.1) already
+# refused a non-promotable stage before this command row could exist. That guard read a
+# *stored* `RiskVerdictRow` — a snapshot of what a past scan saw. This handler is the belt of
+# the belt-and-braces: it re-prices and re-gates the requested contract right now, through the
+# exact same generators/scoring/Rules-Engine path a `/scan TICKER` would use, and only raises
+# an approval if the fresh run still clears the gate. Nothing from the stored row reaches the
+# approval except the (candidate_id, symbol, strategy, strike, expiry) used to select which
+# contract to look for — every number on the resulting approval comes from the fresh run.
+# ---------------------------------------------------------------------------
+
+
+@register("promote")
+async def _promote(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: Any) -> dict:
+    """Re-price and re-gate a promoted candidate; raise a PENDING approval if it still clears.
+
+    Never places, sizes, or bypasses the Rules Engine — it drives the identical
+    `_price_and_gate_ticker` path the Telegram `/scan TICKER` command uses (chain fetch,
+    analytics, CC/CSP screens, scoring, `validate_candidates`), then searches the gate-passed
+    output for the exact (strategy, strike, expiry) the operator asked to promote. Raises
+    ``CommandFailed`` with the most specific reason available when it cannot (see
+    ``docs/web/commands.md``'s promote failure-reason table). ``ib is None`` fails immediately
+    with ``broker_unavailable`` — a promote needs a fresh chain and cannot be honestly served
+    without one.
+    """
+    from src.api.models.commands import PromotePayload
+    from src.orchestrator.scan import _price_and_gate_ticker
+
+    if ib is None:
+        raise CommandFailed("broker_unavailable")
+
+    payload = PromotePayload(**command.payload)
+
+    priced = await _price_and_gate_ticker(ib, payload.symbol)
+
+    # Check chain failure before searching `scored` at all — an empty chain from a real
+    # failure must not be reported as "contract not priced".
+    if priced.chain_error is not None:
+        raise CommandFailed("chain_unavailable", {"detail": priced.chain_error})
+
+    match = next(
+        (
+            c
+            for c in priced.scored
+            if c.strategy.value == payload.strategy
+            and c.strike == payload.strike
+            and c.expiry == payload.expiry
+            and c.underlying == payload.symbol
+        ),
+        None,
+    )
+    if match is None:
+        raise CommandFailed("contract_not_priced", {"priced_count": len(priced.quotes)})
+
+    verdict = priced.verdict_map.get(match.candidate_id)
+    if verdict is None or verdict.verdict.value != "pass":
+        reasons = list(verdict.reasons) if verdict is not None else []
+        raise CommandFailed("gate_rejected", {"reasons": reasons})
+
+    if match.blended_score < priced.min_score:
+        raise CommandFailed(
+            "score_below_minimum",
+            {"score": match.blended_score, "minimum": priced.min_score},
+        )
+
+    from src.execution.promote_pipeline import queue_promoted_for_approval
+
+    ttl_minutes = get_config().approval.ttl_minutes
+    approval_id = queue_promoted_for_approval(match, chat_id=chat_id, ttl_minutes=ttl_minutes)
+    if approval_id is None:
+        # `queue_promoted_for_approval` returns None only when an order is already active for
+        # this candidate — a replayed drain, not a failure: the intent's goal (this contract
+        # has a proposal in flight) is already satisfied. Mirrors `_apply_approval_decision`'s
+        # "already decided" outcome above.
+        return {"approval_id": None, "note": "order_already_active"}
+    return {"approval_id": approval_id}
