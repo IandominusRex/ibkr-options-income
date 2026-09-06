@@ -21,6 +21,21 @@ import pytest
 
 from src.common.schemas import ApprovalStatus
 
+# M4 Task 4.4: Task 4.2's `_FakeChain` and its `drain_env`/`fake_chain` fixtures
+# (tests/test_drain_promote.py) are reused verbatim for the promote-refusal tests below
+# rather than duplicating ~150 lines of fixture engineering — a deliberate, sanctioned
+# exception to this repo's usual "no shared fixtures across test files" convention.
+# Aliased on import because this file already defines its own `drain_env` fixture (for
+# the approve/reject tests further down, registering different handlers). The imported
+# names are "unused" as far as static analysis can tell — pytest resolves them by the
+# matching parameter name on the test functions that use them, below.
+from tests.test_drain_promote import (
+    _FakeChain,  # noqa: F401
+    fake_chain,  # noqa: F401
+)
+from tests.test_drain_promote import _payload as _promote_payload
+from tests.test_drain_promote import drain_env as promote_drain_env  # noqa: F401
+
 _EXPIRY = date.today() + timedelta(days=30)
 
 
@@ -239,3 +254,87 @@ def test_the_api_still_holds_no_broker_connection() -> None:
             if code.startswith("import ib_async") or code.startswith("from ib_async"):
                 offenders.append(f"{p.relative_to(root)}: {code}")
     assert not offenders, f"ib_async reached the API layer: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# 6. A browser cannot overrule the Rules Engine (M4 Task 4.4)
+#
+# The API-boundary guard (`assert_promotable`, Task 4.1) is the primary defence: it
+# refuses a non-promotable stage with 409 before an `app_commands` row can even exist.
+# These three tests are the belt to that brace — they prove the drain handler itself
+# (Task 4.2) is a second, independent line of defence that does not trust the guard
+# having run, and that the guard's own promotable set cannot silently widen.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_promote_path_exists_for_a_gate_rejected_contract(
+    promote_drain_env,  # noqa: F811
+    fake_chain,  # noqa: F811
+) -> None:
+    """Belt and braces: the API refuses it, and the drain would too.
+
+    Bypass the API guard entirely, insert a promote command for a risk_gate contract
+    directly, and assert the drain still refuses rather than raising an approval.
+
+    `promote_drain_env.enqueue(...)` calls `enqueue_command` directly — it never goes
+    through `src/api/routers/commands.py::post_commands`, so Task 4.1's `assert_promotable`
+    guard (which only runs inside that router function) never runs at all. If the drain
+    handler itself did not independently re-gate, this is exactly the shape of bug that
+    would let a malformed or bypassed request reach an order: no HTTP layer stands between
+    the enqueued command and the drain.
+
+    `seed_assessed(..., stage="risk_gate")` documents what a real risk_gate-staged
+    contract looks like in storage — the promote handler never reads this row (Task 4.2's
+    entire design point is that it always re-derives from a fresh run, never trusts the
+    stored stage). The actual rejection comes from `fake_chain.will_price(..., gate="reject")`,
+    which overloads the account's margin usage so the real `validate_candidates` genuinely,
+    independently says no during the fresh re-derivation — not from the stored label.
+    """
+    from src.notify.command_drain import drain_once
+    from src.storage.db import session_scope
+    from src.storage.models import ApprovalRow
+
+    promote_drain_env.seed_assessed("c1", stage="risk_gate", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="reject")
+    cid = promote_drain_env.enqueue("promote", _promote_payload(strike=180.0))
+
+    await drain_once(promote_drain_env.ib, promote_drain_env.bot, "chat")
+
+    assert promote_drain_env.status(cid) == "failed"
+    result = promote_drain_env.result(cid)
+    assert result["reason"] == "gate_rejected"
+    assert "approval_id" not in result
+
+    with session_scope() as s:
+        raised = s.query(ApprovalRow).filter(ApprovalRow.candidate_id == "c1").all()
+    assert raised == []
+
+
+@pytest.mark.asyncio
+async def test_the_promote_handler_runs_the_real_rules_engine(
+    promote_drain_env,  # noqa: F811
+    fake_chain,  # noqa: F811
+) -> None:
+    """A test that mocks validate_candidates proves nothing. Assert the real one is called."""
+    from unittest.mock import patch
+
+    from src.engine.risk_engine import validate_candidates as real_validate_candidates
+    from src.notify.command_drain import drain_once
+
+    promote_drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = promote_drain_env.enqueue("promote", _promote_payload(strike=180.0))
+
+    with patch("src.orchestrator.scan.validate_candidates", wraps=real_validate_candidates) as spy:
+        await drain_once(promote_drain_env.ib, promote_drain_env.bot, "chat")
+
+    assert spy.called
+    assert promote_drain_env.status(cid) == "applied"
+
+
+def test_promotable_stages_match_the_spec_exactly() -> None:
+    """A future edit that widens PROMOTABLE_STAGES must fail here first."""
+    from src.api.routers.commands import PROMOTABLE_STAGES
+
+    assert PROMOTABLE_STAGES == frozenset({"score_floor", "dedupe", "top_n"})
