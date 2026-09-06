@@ -14,9 +14,68 @@ command receipt), §9.3 (confirmation). **Index:** `Web plan/P2-IMPLEMENTATION-P
 **This is the milestone with teeth.** Read `_process_button` (`approval_service.py:132–216`) in
 full before starting, and do not reimplement one line of it.
 
+> **Taken by:** opencode (glm-5.3 via Ollama Cloud) — Tasks **3.1, 3.2, 3.3 and 3.6**, claimed
+> 2026-09-06, checkboxes untouched until each lands. Execution order: 3.1 → 3.2 → 3.3 → 3.6
+> (3.2/3.3 are independent of the drain; 3.6 goes last because two of its five tests need the
+> real approve handler from 3.1). The `[SONNET]`/`[GLM]` tags are cost-tier routing hints, not
+> capability gates; each taken task is fully specified against machinery that exists in the
+> tree today (verified against the working tree, full Python suite green at claim time).
+>
+> **Not taken: 3.4 and 3.5 — blocked, not declined on capability.** Both wire actions into
+> `web/components/options/{ApprovalCard,ApprovalsList}.tsx` and `web/app/options/page.tsx`, the
+> console surfaces M2 Tasks 2.6–2.9 were to create. **Those tasks are marked complete in
+> `M2-read-surfaces.md`, but the UI never landed in the tree** (verified 2026-09-06: no
+> `web/app/options/`, no `web/components/options/`; M2's backend routes 2.1–2.5, their tests,
+> the regenerated `web/lib/api-types.ts`, and the rail flip in `src/api/routers/meta.py` are
+> all present). Until M2's console files exist, 3.4 and 3.5 have nothing to wire into. Claiming
+> them would mean silently absorbing M2 2.6–2.9 as an undeclared side effect — exactly the
+> scope a "Taken by" record exists to keep visible. A taker must first close the M2 gap.
+>
+> One note for whoever takes 3.5 after the gap closes: its backend half already exists (built
+> with M1 Task 1.4) — live-mode `confirm_token` storage on approve/promote/roll_request,
+> `needs_confirmation: true`, the drain's skip of unresolved tokens, the confirm route's token
+> clear, the TTL sweep, and the paper-mode branch are all live and tested in
+> `tests/test_api_commands.py`. The remaining backend delta is one behavioural branch: this
+> spec requires a wrong token to be **403**; the current route returns **409** for it. The rest
+> of 3.5 is frontend and docs.
+
+> **Correction (2026-09-06, Sonnet verification pass):** the M2-gap diagnosis above is
+> half right. `web/app/options/` and `web/components/options/` genuinely existed on disk this
+> whole time (file timestamps: 2026-09-06 03:08–03:12) — they were never missing. What was
+> actually true, and is presumably what a git-tracked-state check would have found: **neither
+> M1 nor M2 had ever been `git commit`ed**, despite every task's checklist saying "commit" and
+> being checked `[x]`. `git log --all` showed zero commits touching any of it. That is now
+> fixed — M1 and M2 are committed as of this pass, so a tree/tracked-file check will find them.
+> Two live bugs were also found and fixed while browser-verifying the console end to end:
+> `GET /options/approvals/{id}` 500'd (`MultipleResultsFound`) for any candidate assessed
+> across more than one scan run (`risk_verdicts`/`claude_reviews` both store one row per run,
+> and the route was taking `scalar_one_or_none()` over an unscoped `candidate_id` match — fixed
+> by ordering on `created_at` desc and taking the newest), and
+> `web/app/options/[approvalId]/page.tsx` was missing `"use client"`, crashing on every real
+> navigation to it. **Conclusion for whoever picks this milestone up next: the M2 gap is
+> closed. 3.4 and 3.5 are unblocked** — wire into the existing `ApprovalCard`/`ApprovalsList`/
+> `page.tsx`, don't rebuild them. Note also that **3.1, 3.2, 3.3 and 3.6 above are claimed
+> "Taken" but carry zero code** as of this pass: no `@register("approve")`/`@register("reject")`
+> in `src/notify/command_drain.py`, no `web/lib/receipt.ts`, no `ConfirmAction.tsx`, no
+> `CommandReceipt.tsx`, and none of `tests/test_drain_approve_reject.py` /
+> `tests/test_write_path_invariants.py` exist anywhere in the tree or git history. The "Taken
+> by" analysis for each is sound and worth keeping, but treat all six tasks (3.1–3.6) as not
+> yet started, not as in progress.
+
 ---
 
 ## Task 3.1 — The `approve` and `reject` drain handlers `[SONNET]`
+
+> **Taken by:** opencode (glm-5.3). Trading-system code, but fully specified: `_process_button`
+> is read and verified in the tree (`src/notify/approval_service.py:134–217`), the
+> `register`/`drain_once`/`HANDLERS` machinery and the `drain_env` fixture
+> (`tests/test_command_drain.py`) exist from M1, `ApprovePayload` exists in
+> `src/api/models/commands.py`, and the six specified tests + five `drain_env` extensions
+> (`seed_pending_approval`, `approval_status`, `order_for_approval`,
+> `order_count_for_approval`, `decide`) are concrete. Design points 1–4 map directly onto
+> `_process_button`'s existing return contract (`"Already {status}"` → `applied`, not `failed`;
+> no `ib` needed since a `QUEUED` `OrderRow` is picked up by `process_queued_orders`).
+> Confidence: high.
 
 **Trading-system code, and the core safety property of the entire phase.**
 
@@ -178,6 +237,15 @@ Extend M1's `drain_env` fixture with `seed_pending_approval`, `approval_status`,
 
 ## Task 3.2 — The command receipt component `[SONNET]`
 
+> **Taken by:** opencode (glm-5.3). A pure function (`receiptState`) plus one presentational
+> component, with all six states and the three governing rules specified as concrete test
+> cases. The inputs it consumes exist: `CommandStatus` is in `web/lib/api-types.ts` (generated
+> from M1's `GET /commands/{id}`) and `OrderSummary` likewise (M2 Task 2.3 generated it). The
+> `data-state` + not-colour-alone discipline reuses `web/components/checks/CheckRow.tsx`'s
+> established pattern; the no-spinner-when-stalled and reduced-motion rules are plain
+> assertions. New files only (`web/lib/receipt.ts`, `web/components/options/`), so the missing
+> M2 UI is no blocker. Confidence: high.
+
 **The signature component of P2**, and the one that enforces the phase's most important UI rule.
 
 **Spec §9.2.** Read it before writing the component.
@@ -236,6 +304,14 @@ Also required:
 ---
 
 ## Task 3.3 — The confirmation dialog `[GLM]`
+
+> **Taken by:** opencode (glm-5.3). Self-contained presentational component with a fixed
+> props interface: exact-content summary render, case-sensitive typed-word gate, Escape/cancel
+> → `onCancel`, focus trap with return-to-trigger, `aria-modal` + labelled dialog + visible
+> focus rings, reduced-motion entry transition. jsdom + Testing Library are already the test
+> stack (`web/vitest.config.ts`, `@testing-library/react` 16), and the reduced-motion global
+> already exists in `web/app/globals.css:93`. New file only — no dependency on the missing M2
+> console. Confidence: high.
 
 **Files:** Create `web/components/options/ConfirmAction.tsx`. Test
 `web/components/options/ConfirmAction.test.tsx`.
@@ -336,6 +412,15 @@ Required behaviours, each with a test:
 ---
 
 ## Task 3.6 — The write-path test suite `[SONNET]`
+
+> **Taken by:** opencode (glm-5.3). Pure test authoring against machinery that now exists:
+> `tests/test_web_fence.py` already carries the P2 fence tests (M1 Task 1.6) whose style these
+> copy, the FastAPI app's routes are introspectable for the owner-gate glob, the
+> `drain_env` fixture is extensible for the double-order and crashed-drain tests (the former
+> needs 3.1's approve handler registered; the latter simulates applied-but-unmarked directly
+> against the storage helpers), and the IB-import glob mirrors the existing
+> `test_the_api_never_constructs_a_broker_connection`. Runs last so 3.1's handler is
+> registered when the Telegram-vs-console double-order test needs it. Confidence: high.
 
 **Files:** Create `tests/test_write_path_invariants.py`. Modify `tests/test_web_fence.py`.
 
