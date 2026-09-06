@@ -121,4 +121,43 @@ describe("ApprovalsList", () => {
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(screen.getByTestId("confirm-summary").textContent).toContain("NVDA");
   });
+
+  it("does not flash 'stalled' before the controls query resolves", async () => {
+    // Regression: ApprovalsList used to default drain_healthy to `false` while
+    // the controls query was loading, so every receipt flashed `stalled`
+    // ("the trading service is not draining commands") on first render with
+    // no evidence the drain was actually dead. The default is now `true` (no
+    // evidence = assume healthy); `stalled` requires a real unhealthy report.
+    const { apiFetch } = await import("@/lib/api");
+    let resolveControls: (v: unknown) => void = () => {};
+    (apiFetch as any).mockImplementation((path: string) => {
+      if (path.includes("/options/controls")) {
+        return new Promise((r) => (resolveControls = r));
+      }
+      return Promise.resolve({
+        as_of: "x",
+        approvals: [
+          {
+            as_of: "x", id: 1, candidate_id: "c1", status: "pending",
+            underlying: "NVDA", strategy: "cash_secured_put", right: "P",
+            strike: 190.0, expiry: "2026-10-16", contracts: 1, premium: 3.25,
+            blended_score: 72.0, expires_at: null, decided_at: null,
+            order_state: null, source: "scan",
+          },
+        ],
+      });
+    });
+    withClient(<ApprovalsList />);
+    await screen.findByText(/NVDA/);
+    // While controls are still pending, no receipt has been created yet (no
+    // command has been submitted). The list itself must NOT render any
+    // "stalled" text — that would be a false alarm with no evidence.
+    expect(screen.queryByText("the trading service is not draining commands")).toBeNull();
+    // Release the controls query as unhealthy — NOW stalled is honest.
+    resolveControls({
+      as_of: "x", autonomy: { level: "manual", label: "Manual" }, rungs: [],
+      halted: false, halt_reason: null, mode: "paper",
+      drain_healthy: false, drain_last_seen: null, pending_commands: 0,
+    });
+  });
 });

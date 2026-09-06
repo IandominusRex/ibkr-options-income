@@ -1,14 +1,29 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
 import { DecideControls } from "./DecideControls";
 import { IdealZoneBar } from "./IdealZoneBar";
 import { ReviewPanel } from "./ReviewPanel";
 import { AlternativesTable } from "./AlternativesTable";
-import type { ApprovalDetail } from "./types";
+import type { ApprovalDetail, ControlsResponse } from "./types";
 
 export function ApprovalDetailCard({ detail }: { detail: ApprovalDetail }) {
+  // The drain's health drives the receipt's `stalled` state (spec §9.2 rule 3).
+  // Fetching it here (same as <ApprovalsList/>) lets the detail page's receipt
+  // state "the trading service is not draining commands" in words when the
+  // worker is dead — a hardcoded `true` would hide that, violating rule 3 on
+  // this surface. `true` is the placeholder while the query loads so a
+  // not-yet-known drain is NOT falsely reported as dead.
+  const controls = useQuery({
+    queryKey: ["options", "controls"],
+    queryFn: () => apiFetch<ControlsResponse>("/options/controls"),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+  const drainHealthy = controls.data?.drain_healthy ?? true;
   return (
     <div className="space-y-6">
       <div>
@@ -82,7 +97,7 @@ export function ApprovalDetailCard({ detail }: { detail: ApprovalDetail }) {
 
       <AlternativesTable alternatives={detail.alternatives} />
 
-      <DecideControls approval={detail} drainHealthy={true} />
+      <DecideControls approval={detail} drainHealthy={drainHealthy} />
     </div>
   );
 }

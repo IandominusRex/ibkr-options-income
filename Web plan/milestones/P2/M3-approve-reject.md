@@ -112,6 +112,45 @@ full before starting, and do not reimplement one line of it.
 >   modules only) per the plan's own "an invariant with one test has one point of failure".
 > - Gate at completion: `python -m pytest -q` (1776 passed) · `ruff check .` · `mypy src` ·
 >   `cd web && npx vitest run` (130 passed) · `npm run lint` · `npm run build`.
+>
+> **Verification pass (2026-09-06, opencode/glm-5.2):** the implementation above is accurate
+> against the spec — `_process_button` is called unchanged (the monkeypatch test fails on
+> any fork), the four idempotency layers hold, the live-mode gate fails closed (403-not-
+> cleared, 409, TTL sweep), and the receipt's three rules are enforced and tested. Three
+> bugs were found in the frontend wiring of the receipt and the confirm gate, fixed, and
+> covered by regression tests (vitest now 133, was 130):
+>
+> 1. **`DecideControls` read the orders cache with the wrong type.** It called
+>    `getQueryData<OrderSummary[]>(["options", "orders"])`, but `<OrdersTable/>` caches an
+>    `OrderListResponse` (`{ as_of, orders: OrderSummary[] }`) under that key — so `.find()`
+>    ran on the wrong shape and always returned `undefined`. A receipt could never advance
+>    from `applied` to `submitted`/`filled` from the cache, which is the only path the
+>    polling ever sees (the command-status poll returns the *command*, not the *order*).
+>    Fixed by reading the cached `OrderListResponse` and unwrapping `.orders` before
+>    `.find()`. The orders query is now also invalidated when a command goes terminal, so
+>    the next poll sees the new `OrderRow` the drain just created instead of a stale list.
+>    Regression test: `ApprovalCard.test.tsx` "reads the orders cache as an
+>    OrderListResponse, not a bare OrderSummary[]" seeds the cache with the real shape and
+>    asserts the receipt advances to `submitted`.
+> 2. **`ApprovalDetailCard` hardcoded `drainHealthy={true}`.** The detail page could never
+>    show spec §9.2 rule 3's `stalled` state — a dead drain was indistinguishable from a
+>    live one on that surface. Fixed by fetching `/options/controls` in the detail card
+>    (same as `ApprovalsList`) and passing `drain_healthy` through, with `true` as the
+>    placeholder while the query loads (no evidence = assume healthy, not assume dead).
+>    Regression test: `ApprovalDetail.test.tsx` "renders a stalled receipt when the drain
+>    is unhealthy (not hardcoded healthy)" mocks `/options/controls` returning
+>    `drain_healthy: false` and asserts the receipt's `data-state` is `stalled`.
+> 3. **`ApprovalsList` defaulted `drain_healthy` to `false` while the controls query was
+>    loading.** Every receipt flashed `stalled` ("the trading service is not draining
+>    commands") on first render with no evidence the drain was actually dead — a false
+>    alarm that trains the operator to ignore the warning when it is real. Fixed by
+>    defaulting to `true` while loading; `stalled` now requires a real unhealthy report.
+>    Regression test: `ApprovalsList.test.tsx` "does not flash 'stalled' before the
+>    controls query resolves" holds the controls query pending and asserts no `stalled`
+>    text renders.
+>
+> Gate after fixes: `python -m pytest -q` (1776 passed) · `ruff check .` · `mypy src` ·
+> `cd web && npx vitest run` (133 passed) · `npm run lint` · `npm run build` — all green.
 
 ---
 

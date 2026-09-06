@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApprovalDetailCard } from "./ApprovalDetail";
 import type { ApprovalDetail } from "./types";
 
@@ -8,6 +8,11 @@ function withClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
+
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual("@/lib/api");
+  return { ...(actual as object), apiFetch: vi.fn() };
+});
 
 const base: ApprovalDetail = {
   as_of: "x",
@@ -91,5 +96,47 @@ describe("ApprovalDetailCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(screen.getByTestId("confirm-summary").textContent).toContain("NVDA");
+  });
+
+  it("renders a stalled receipt when the drain is unhealthy (not hardcoded healthy)", async () => {
+    // Regression: ApprovalDetailCard used to hardcode drainHealthy={true}, so
+    // the detail page could never show spec §9.2 rule 3's `stalled` state —
+    // a dead drain was indistinguishable from a live one on this surface.
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockImplementation(async (path: string) => {
+      if (path === "/options/controls") {
+        return {
+          as_of: "x",
+          autonomy: { level: "manual", label: "Manual" },
+          rungs: [],
+          halted: false,
+          halt_reason: null,
+          mode: "paper",
+          drain_healthy: false,
+          drain_last_seen: null,
+          pending_commands: 0,
+        };
+      }
+      if (path === "/commands") {
+        return {
+          id: 41, kind: "approve", status: "pending", result: null,
+          needs_confirmation: false, confirm_token: null,
+          created_at: "x", applied_at: null, as_of: "x", created: true,
+        };
+      }
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    withClient(<ApprovalDetailCard detail={base} />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const dialog = screen.getByRole("dialog");
+    const buttons = dialog.querySelectorAll<HTMLButtonElement>("button");
+    fireEvent.click(buttons[buttons.length - 1]);
+    // The drain is unhealthy, so once the command is pending the receipt must
+    // render `stalled` in words — not `queued` (the hardcoded-true behaviour).
+    const receipt = await waitFor(() => screen.getByTestId("command-receipt"));
+    expect(receipt.getAttribute("data-state")).toBe("stalled");
+    expect(
+      screen.getAllByText("the trading service is not draining commands").length,
+    ).toBeGreaterThan(0);
   });
 });

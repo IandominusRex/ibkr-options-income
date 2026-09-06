@@ -36,7 +36,12 @@ export function ApprovalsList() {
     <ul className="space-y-3">
       {approvals.map((a) => (
         <li key={a.id}>
-          <ApprovalCard approval={a} drainHealthy={controls.data?.drain_healthy ?? false} />
+          {/* `drain_healthy` defaults to `true` while controls are loading so a
+           * receipt never flashes `stalled` ("the trading service is not
+           * draining commands") on the basis of "no evidence yet" — only on
+           * actual evidence the drain is dead. The spec's `stalled` state is
+           * for a dead drain, not an unloaded one. */}
+          <ApprovalCard approval={a} drainHealthy={controls.data?.drain_healthy ?? true} />
         </li>
       ))}
     </ul>

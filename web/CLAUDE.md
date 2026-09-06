@@ -135,7 +135,11 @@ components/
                     no roll button), ApprovalDetailCard (five review fields as five
                     labelled sections via ReviewPanel, IdealZoneBar with lo/hi/
                     min_credit markers, AlternativesTable, 404 with link back,
-                    DecideControls), ReviewPanel (null review renders nothing at all,
+                    DecideControls; fetches GET /options/controls itself so the
+                    detail page's receipt can state a dead drain in words, same
+                    as the list — drain_healthy defaults to true while loading
+                    so an unloaded drain is not falsely reported as dead),
+                    ReviewPanel (null review renders nothing at all,
                     not a bordered box), IdealZoneBar (bar with premium marked
                     against lo/hi/min_credit, numbers visible, no fabricated
                     precision), AlternativesTable (other contracts assessed on the
@@ -145,7 +149,11 @@ components/
                     CommandReceipt; controls disabled while in flight; a decided
                     approval renders its decision, not controls; 403 renders a
                     permission message; in live mode a distinct, clearly labelled
-                    second LIVE confirmation releases the confirm token), ConfirmAction
+                    second LIVE confirmation releases the confirm token; reads the
+                    orders cache as the OrderListResponse shape <OrdersTable/>
+                    stores — NOT a bare OrderSummary[] — and invalidates the
+                    orders query when a command goes terminal so the next poll
+                    sees the new OrderRow the drain created), ConfirmAction
                     (the confirmation dialog: exact contract and contract count in the
                     summary, optional case-sensitive typed-word gate for halt in M6,
                     Escape/cancel call onCancel, focus trapped while open and

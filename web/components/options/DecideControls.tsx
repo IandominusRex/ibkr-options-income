@@ -9,7 +9,7 @@ import {
   useCommandStatus,
   type CommandStatus,
 } from "@/lib/commands";
-import type { ApprovalSummary, OrderSummary } from "./types";
+import type { ApprovalSummary, OrderListResponse } from "./types";
 import { ConfirmAction } from "./ConfirmAction";
 import { CommandReceipt } from "./CommandReceipt";
 
@@ -48,7 +48,14 @@ export function DecideControls({
   const commandQuery = useCommandStatus(command?.id ?? null);
   const current = (commandQuery.data ?? command) as CommandStatus | null;
 
-  const orders = qc.getQueryData<OrderSummary[]>(["options", "orders"]);
+  // The orders list is cached under the same key by <OrdersTable/> as an
+  // OrderListResponse ({ as_of, orders: [...] }) — NOT a bare OrderSummary[].
+  // Reading it as the wrong shape silently made `order` always undefined, so a
+  // receipt could never advance to `submitted`/`filled` from the cache. Also
+  // invalidate it when a command goes terminal so the next poll sees the new
+  // order the drain just created.
+  const cached = qc.getQueryData<OrderListResponse>(["options", "orders"]);
+  const orders = cached?.orders ?? null;
   const order =
     current && current.status !== "pending"
       ? (orders ?? []).find((o) => o.approval_id === approval.id) ?? null
@@ -58,6 +65,7 @@ export function DecideControls({
     if (current && current.status !== "pending") {
       qc.invalidateQueries({ queryKey: ["options", "approvals"] });
       qc.invalidateQueries({ queryKey: ["options", "approval"] });
+      qc.invalidateQueries({ queryKey: ["options", "orders"] });
     }
   }, [current, qc]);
 

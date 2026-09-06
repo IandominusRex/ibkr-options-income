@@ -145,6 +145,45 @@ describe("ApprovalCard — decide controls (M3)", () => {
     ).toBeGreaterThan(0);
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
+
+  it("reads the orders cache as an OrderListResponse, not a bare OrderSummary[]", async () => {
+    // Regression: DecideControls used to read getQueryData<OrderSummary[]>
+    // under ["options","orders"], but <OrdersTable/> caches an
+    // OrderListResponse ({ as_of, orders: [...] }) there. A receipt could
+    // never advance from `applied` to `submitted`/`filled` from the cache —
+    // the .find() ran on the wrong shape and returned undefined.
+    submitCommand.mockResolvedValueOnce({
+      id: 41, kind: "approve", status: "applied", result: { decision: "Approved" },
+      needs_confirmation: false, confirm_token: null,
+      created_at: "x", applied_at: "x", as_of: "x", created: true,
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Seed the cache with the REAL shape OrdersTable stores.
+    qc.setQueryData(["options", "orders"], {
+      as_of: "x",
+      orders: [
+        {
+          as_of: "x", id: 7, candidate_id: "c1", approval_id: 42,
+          underlying: "NVDA", strategy: "cash_secured_put", strike: 190,
+          expiry: "2026-10-16", state: "submitted", limit_price: 2.45,
+          filled_qty: 0, avg_fill_price: null, is_live: false, detail: null,
+          created_at: "x", updated_at: "x",
+        },
+      ],
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <ApprovalCard approval={approval()} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(dialogConfirm());
+    // The receipt advances to `submitted` because the cache (with the right
+    // shape) carries a working order for this approval. Before the fix it
+    // stayed `applied` — the .find() returned undefined on the wrong shape.
+    const receipt = await screen.findByTestId("command-receipt");
+    expect(receipt.getAttribute("data-state")).toBe("submitted");
+  });
 });
 
 describe("ApprovalCard — live-mode second confirmation (M3 3.5)", () => {
