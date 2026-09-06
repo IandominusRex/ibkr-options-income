@@ -50,6 +50,7 @@ from src.common.schemas import (
     OptionQuote,
     OptionRight,
     PositionSnapshot,
+    RiskVerdict,
     SectorContext,
     TechnicalStats,
     TradeCandidate,
@@ -1692,37 +1693,78 @@ class TickerNotFoundError(Exception):
     """Raised when a ticker cannot be qualified on IBKR."""
 
 
-async def run_ticker_scan(
-    ib: IB,
-    ticker: str,
-    *,
-    bot: object,
-    chat_id: str,
-    progress_msg_id: int,
-) -> None:
-    """Run a single-ticker on-demand scan and edit *progress_msg_id* with the result.
+class TickerPricingAborted(Exception):
+    """Raised by `_price_and_gate_ticker` when analytics or the portfolio fetch fails outright.
 
-    Fetches the option chain for *ticker*, runs analytics + CC/CSP/buy-candidate
-    generation, applies scoring and the risk gate, and formats a compact Telegram
-    MarkdownV2 summary.  The progress message is always edited — either with the
-    result or an error.  Never raises (errors edit the message and return).
-
-    Raises:
-        TickerNotFoundError: if *ticker* cannot be qualified as an IBKR Stock.
+    Carries the stage name (``"analytics"`` or ``"account"``) so `run_ticker_scan` can
+    reproduce its original per-stage Telegram error message. A caller with no Telegram
+    message to send (the promote drain handler, M4 Task 4.2) has no reason to catch this
+    specially — it propagates as an ordinary handler failure instead.
     """
-    from src.ibkr.contracts import qualify_stock_async
-    from src.notify.formatters import format_ticker_scan_result
 
+    def __init__(self, stage: str) -> None:
+        super().__init__(stage)
+        self.stage = stage
+
+
+@dataclass
+class TickerPricingResult:
+    """Everything `_price_and_gate_ticker` produced for one symbol.
+
+    This is `run_ticker_scan`'s steps 2-7 (chain fetch, analytics, positions/account fetch,
+    CC/CSP screens, scoring, the `validate_candidates` gate) plus the pre-existing
+    `record_assessments` call, returned as data instead of formatted straight to Telegram.
+    `run_ticker_scan` uses a subset of these fields to carry on with its own steps 7b+
+    (near-miss detection, hypothetical zones, the buy candidate, the Claude/Ollama review,
+    and the Telegram card). The promote drain handler (M4 Task 4.2) instead uses `scored` +
+    `verdict_map` + `min_score` + `chain_error` to find and classify one specific contract,
+    without paying for the review or the formatting.
+    """
+
+    quotes: list[OptionQuote]
+    # None on success. On a chain-fetch failure this is `str(exc)` (or "timed out" for a
+    # `TimeoutError`) — genuinely new: `run_ticker_scan` itself still only sees an empty
+    # `quotes` list and a log line, same as before this refactor.
+    chain_error: str | None
+    iv_stats: IVStats
+    tech_stats: TechnicalStats
+    fund_stats: FundamentalStats
+    positions: list[PositionSnapshot]
+    account: AccountSnapshot
+    stock_pos: PositionSnapshot | None
+    is_held: bool
+    csp_skip_reason: str | None
+    scored: list[TradeCandidate]
+    verdict_map: dict[str, RiskVerdict]
+    min_score: float
+    cc_passed: list[TradeCandidate]
+    csp_passed: list[TradeCandidate]
+    ticker_assessed: list[AssessedContract]
+
+
+async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
+    """Fetch a fresh chain for *ticker*, screen + score + gate CC/CSP candidates, and record
+    the assessment audit trail.
+
+    Extracted out of `run_ticker_scan` (M4 Task 4.2) so a promote can re-price and re-gate a
+    single contract exactly as a `/scan TICKER` would — same generators, same scoring, same
+    Rules Engine, same audit trail — without needing a live `bot`/`progress_msg_id` or paying
+    for the Claude review and Telegram formatting that follow in `run_ticker_scan`. Ticker
+    qualification (`run_ticker_scan`'s step 1) stays with the caller:
+    `get_option_chain_quotes_async` already qualifies the stock itself, so an unknown ticker
+    surfaces here as an empty chain, not a separate error path.
+
+    Never raises for a chain-fetch failure — that mirrors the pre-existing swallow-and-log
+    behavior: `quotes` comes back empty and the failure text lands in `chain_error`. Raises
+    `TickerPricingAborted` when analytics or the portfolio fetch fails outright, since nothing
+    downstream (screens, scoring, the gate) can run without them.
+    """
     cfg = get_config()
     loop = asyncio.get_running_loop()
 
-    # 1. Validate the ticker exists on IBKR.
-    try:
-        await qualify_stock_async(ib, ticker)
-    except ValueError as exc:
-        raise TickerNotFoundError(ticker) from exc
-
     # 2. Fetch option chain.
+    quotes: list[OptionQuote] = []
+    chain_error: str | None = None
     try:
         quotes = await asyncio.wait_for(
             get_option_chain_quotes_async(ib, ticker),
@@ -1730,11 +1772,11 @@ async def run_ticker_scan(
         )
     except TimeoutError:
         log.error("ticker_scan: option chain for %s timed out", ticker)
-        quotes = []
+        chain_error = "timed out"
         drain_market_data_lines(ib)
-    except Exception:
+    except Exception as exc:
         log.exception("ticker_scan: option chain failed for %s", ticker)
-        quotes = []
+        chain_error = str(exc)
         drain_market_data_lines(ib)
 
     # 3. Analytics (yfinance) — blocking, run off-thread.
@@ -1745,12 +1787,9 @@ async def run_ticker_scan(
         iv_stats, tech_stats, fund_stats = await loop.run_in_executor(
             None, _fetch_analytics, ticker, quotes, spot_override, None
         )
-    except Exception:
+    except Exception as exc:
         log.exception("ticker_scan: analytics failed for %s", ticker)
-        await _ticker_edit_msg(
-            bot, chat_id, progress_msg_id, "❌ *Scan failed* — analytics error\\."
-        )
-        return
+        raise TickerPricingAborted("analytics") from exc
 
     # 4. Portfolio: fetch positions and account (needed for CC sizing / CSP collateral).
     try:
@@ -1758,12 +1797,9 @@ async def run_ticker_scan(
         managed = ib.managedAccounts()
         acct = cfg.secrets.ibkr_account or (managed[0] if managed else "")
         account: AccountSnapshot = await get_account_snapshot_async(ib, acct)
-    except Exception:
+    except Exception as exc:
         log.exception("ticker_scan: failed to fetch positions/account for %s", ticker)
-        await _ticker_edit_msg(
-            bot, chat_id, progress_msg_id, "❌ *Scan failed* — account fetch error\\."
-        )
-        return
+        raise TickerPricingAborted("account") from exc
 
     # 5. CC candidates — only if we hold the stock.
     cc_candidates: list[TradeCandidate] = []
@@ -1811,12 +1847,8 @@ async def run_ticker_scan(
 
     # 7. Scoring + risk gate on CC+CSP.
     all_option_candidates = cc_candidates + csp_candidates
-    cc_reject_reasons: list[str] = []
-    csp_reject_reasons: list[str] = []
-    cc_near_miss: TradeCandidate | None = None
-    csp_near_miss: TradeCandidate | None = None
     scored: list[TradeCandidate] = []
-    verdict_map: dict = {}
+    verdict_map: dict[str, RiskVerdict] = {}
     min_score: float = 0
     if all_option_candidates:
         try:
@@ -1888,6 +1920,80 @@ async def run_ticker_scan(
     ticker_assessed = _rank_assessed(ticker_assessed)
     # Same write-only audit trail as the full scan, keyed by a per-deep-dive run id.
     record_assessments(f"ticker-{uuid.uuid4().hex[:8]}", ticker_assessed)
+
+    return TickerPricingResult(
+        quotes=quotes,
+        chain_error=chain_error,
+        iv_stats=iv_stats,
+        tech_stats=tech_stats,
+        fund_stats=fund_stats,
+        positions=positions,
+        account=account,
+        stock_pos=stock_pos,
+        is_held=is_held,
+        csp_skip_reason=csp_skip_reason,
+        scored=scored,
+        verdict_map=verdict_map,
+        min_score=min_score,
+        cc_passed=cc_passed,
+        csp_passed=csp_passed,
+        ticker_assessed=ticker_assessed,
+    )
+
+
+async def run_ticker_scan(
+    ib: IB,
+    ticker: str,
+    *,
+    bot: object,
+    chat_id: str,
+    progress_msg_id: int,
+) -> None:
+    """Run a single-ticker on-demand scan and edit *progress_msg_id* with the result.
+
+    Fetches the option chain for *ticker*, runs analytics + CC/CSP/buy-candidate
+    generation, applies scoring and the risk gate, and formats a compact Telegram
+    MarkdownV2 summary.  The progress message is always edited — either with the
+    result or an error.  Never raises (errors edit the message and return).
+
+    Raises:
+        TickerNotFoundError: if *ticker* cannot be qualified as an IBKR Stock.
+    """
+    from src.ibkr.contracts import qualify_stock_async
+    from src.notify.formatters import format_ticker_scan_result
+
+    loop = asyncio.get_running_loop()
+
+    # 1. Validate the ticker exists on IBKR.
+    try:
+        await qualify_stock_async(ib, ticker)
+    except ValueError as exc:
+        raise TickerNotFoundError(ticker) from exc
+
+    # 2-7. Fetch a fresh chain, run analytics, screen + score + gate CC/CSP candidates, and
+    # record the assessment audit trail — shared with the promote drain handler (M4 Task 4.2).
+    try:
+        priced = await _price_and_gate_ticker(ib, ticker)
+    except TickerPricingAborted as exc:
+        message = {
+            "analytics": "❌ *Scan failed* — analytics error\\.",
+            "account": "❌ *Scan failed* — account fetch error\\.",
+        }[exc.stage]
+        await _ticker_edit_msg(bot, chat_id, progress_msg_id, message)
+        return
+
+    quotes = priced.quotes
+    iv_stats, tech_stats, fund_stats = priced.iv_stats, priced.tech_stats, priced.fund_stats
+    positions, account = priced.positions, priced.account
+    stock_pos, is_held = priced.stock_pos, priced.is_held
+    csp_skip_reason = priced.csp_skip_reason
+    cc_passed, csp_passed = priced.cc_passed, priced.csp_passed
+    ticker_assessed = priced.ticker_assessed
+
+    cc_reject_reasons: list[str] = []
+    csp_reject_reasons: list[str] = []
+    cc_near_miss: TradeCandidate | None = None
+    csp_near_miss: TradeCandidate | None = None
 
     # Why was a strategy empty? Name the closest contract that failed plus exactly what it
     # failed on, so the card explains "No qualifying X options" with a real strike rather than
