@@ -69,15 +69,17 @@ app/                App Router pages and the root layout
                     is NOT gated behind a Section's state — it fetches its own data
                     from GET /research/{symbol}/bars independently, so a technicals
                     outage must not hide it too
-  options/          Options console (P2 M2 + M3). <ControlsStrip/> at the top
-                    (mode, autonomy rung, halt state, drain health), then a tab bar
-                    for Approvals / Assessed / Orders / Fills / Shorts. The Approvals
-                    tab renders <ApprovalsList/> (cards linking to the detail page).
-                    Since M3 the cards and the detail page carry live Approve /
-                    Reject controls through <DecideControls/> — confirm dialog
-                    first, one POST, then a <CommandReceipt/> that never overstates
-                    what happened. Promote and Roll controls do not exist yet
-                    (M4/M5).
+  options/          Options console (P2 M2 + M3 + M4 Task 4.3). <ControlsStrip/> at
+                    the top (mode, autonomy rung, halt state, drain health), then a
+                    tab bar for Approvals / Assessed / Orders / Fills / Shorts. The
+                    Approvals tab renders <ApprovalsList/> (cards linking to the
+                    detail page). Since M3 the cards and the detail page carry live
+                    Approve / Reject controls through <DecideControls/> - confirm
+                    dialog first, one POST, then a <CommandReceipt/> that never
+                    overstates what happened. Since M4 Task 4.3 the Assessed tab's
+                    <AssessedBrowser/> carries a live Promote control per row
+                    (<AssessedRow/>) through the same confirm-then-receipt shape.
+                    Roll controls do not exist yet (M5).
   options/[approvalId]/  Approval detail: <ApprovalDetailCard/> with the five review
                     fields as labelled sections (<ReviewPanel/>), the ideal zone bar
                     (<IdealZoneBar/>), humanised gate reasons, the alternatives
@@ -125,8 +127,30 @@ components/
                     fill per AssessmentStage, never colour alone — reuses the check
                     ribbon's visual language), EmptyState (one line of text, no icon
                     circle), AssessedBrowser (grouped-by-symbol collapsible list with
-                    per-stage counts, filterable by stage and symbol; non-promotable
-                    rows render promote_note as plain text, no promote control),
+                    per-stage counts, filterable by stage and symbol; fetches
+                    GET /options/controls itself, same pattern as ApprovalsList, so
+                    a promoted row's receipt can state a dead drain in words; each
+                    contract renders through AssessedRow), AssessedRow (P2 M4 Task
+                    4.3: one assessed-contract row, extracted from AssessedBrowser's
+                    Group so the promote control has somewhere to live. A promote
+                    button renders only when promotable is true AND strike/expiry
+                    are non-null - a promotable row with either unexpectedly null
+                    falls through to the non-promotable rendering rather than send
+                    null to the API. A non-promotable row renders promote_note as
+                    plain text, no control, disabled or otherwise. Clicking Promote
+                    opens ConfirmAction first, stating in one sentence that the
+                    contract is priced and gated again and an approval appears only
+                    if it still passes; a score_floor row's dialog additionally
+                    shows the blended score and promote_note's configured-minimum
+                    text verbatim. On confirm, submitCommand("promote", {candidate_id,
+                    symbol, strategy, strike, expiry}) fires once; in live mode the
+                    response routes through the same second LIVE confirmation
+                    DecideControls uses. Renders CommandReceipt with order=null
+                    (a promote never has the working-order lifecycle approve/reject
+                    do) - failed/gate_rejected reasons render through CommandReceipt's
+                    existing humaniser unmodified; on applied, a "View approval" link
+                    to /options/{approval_id} renders only when result.approval_id is
+                    non-null),
                     OrdersTable (working orders, state badge is label+fill never
                     colour alone, null avg_fill_price renders "n/a" never "$0.00"),
                     FillsTable (recent fills with relative age), ShortsTable (open

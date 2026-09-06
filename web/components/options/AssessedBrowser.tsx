@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
+import { AssessedRow } from "./AssessedRow";
 import { EmptyState } from "./EmptyState";
-import { StageBadge } from "./StageBadge";
-import type { AssessedResponse, AssessedStage } from "./types";
+import type { AssessedResponse, AssessedStage, ControlsResponse } from "./types";
 
 const STAGES: AssessedStage[] = [
   "generator",
@@ -30,6 +30,17 @@ export function AssessedBrowser() {
     },
     placeholderData: (prev) => prev,
   });
+
+  // Same pattern as <ApprovalsList/>: the drain's health drives a promoted
+  // command's receipt "stalled" state (spec §9.2 rule 3). Defaults to healthy
+  // while loading so an unloaded drain never falsely reads as dead.
+  const controls = useQuery({
+    queryKey: ["options", "controls"],
+    queryFn: () => apiFetch<ControlsResponse>("/options/controls"),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+  const drainHealthy = controls.data?.drain_healthy ?? true;
 
   if (isLoading) {
     return <p className="text-sm text-muted">Loading assessed contracts</p>;
@@ -68,7 +79,7 @@ export function AssessedBrowser() {
         </p>
       )}
       {groups.map((g) => (
-        <Group key={g.symbol} group={g} />
+        <Group key={g.symbol} group={g} drainHealthy={drainHealthy} />
       ))}
     </div>
   );
@@ -112,7 +123,13 @@ function Filters({
   );
 }
 
-function Group({ group }: { group: AssessedResponse["groups"][number] }) {
+function Group({
+  group,
+  drainHealthy,
+}: {
+  group: AssessedResponse["groups"][number];
+  drainHealthy: boolean;
+}) {
   const [open, setOpen] = useState(true);
   const counts = Object.entries(group.counts)
     .filter(([, n]) => n > 0)
@@ -133,27 +150,7 @@ function Group({ group }: { group: AssessedResponse["groups"][number] }) {
       {open && (
         <ul className="divide-y divide-border border-t border-border">
           {group.contracts.map((c) => (
-            <li key={c.candidate_id} className="px-4 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <StageBadge stage={c.stage} />
-                  <span className="tabular font-mono text-xs text-content">
-                    {c.strike != null ? c.strike.toFixed(2) : "?"} {c.strategy}
-                  </span>
-                </div>
-                <span className="tabular text-xs text-muted">
-                  {c.blended_score != null ? c.blended_score.toFixed(1) : "n/a"}
-                </span>
-              </div>
-              {c.reasons_text.length > 0 && (
-                <p className="mt-1 text-xs text-muted">
-                  {c.reasons_text.join(" - ")}
-                </p>
-              )}
-              {!c.promotable && c.promote_note && (
-                <p className="mt-1 text-xs text-muted">{c.promote_note}</p>
-              )}
-            </li>
+            <AssessedRow key={c.candidate_id} contract={c} drainHealthy={drainHealthy} />
           ))}
         </ul>
       )}

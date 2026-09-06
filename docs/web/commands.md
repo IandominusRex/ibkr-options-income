@@ -132,7 +132,14 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
   — every number on the resulting approval comes from this fresh run.
 - **Live mode:** `needs_confirmation = true`.
 - **Failure modes:** `broker_unavailable` (no `ib` — see below), plus the table below.
-- **Milestone:** M4.
+- **Reachable from the console since Task 4.3:** the Assessed tab's `<AssessedRow/>`
+  renders a Promote button on any row where `promotable` is true, opens the same
+  `ConfirmAction` → `submitCommand` → `CommandReceipt` shape `<DecideControls/>` uses for
+  approve/reject (including the live-mode second confirmation), and on `applied` links to
+  the new approval via `result.approval_id`. A `score_floor` row's confirmation additionally
+  shows the score and this table's configured-minimum note, so promoting below a
+  self-configured bar is not a surprise.
+- **Milestone:** M4 (Task 4.2 backend, Task 4.3 frontend).
 
 **The promote failure-reason table (Task 4.2).** If `ib is None` the command fails immediately
 with `broker_unavailable` — a promote needs a fresh chain and cannot be honestly served without
