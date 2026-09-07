@@ -90,7 +90,9 @@ def test_a_remove_takes_a_symbol_out(db_session, yaml_universe) -> None:
     symbol = "AAPL"
     assert symbol in yaml_universe["would_own"]
     assert symbol not in yaml_universe["actively_wheeling"]
-    set_override(db_session, symbol=symbol, list_name="would_own", action="remove", created_by="owner")
+    set_override(
+        db_session, symbol=symbol, list_name="would_own", action="remove", created_by="owner"
+    )
     db_session.commit()
     invalidate_universe_cache()
     assert symbol not in effective_universe()["would_own"]
@@ -102,7 +104,9 @@ def test_a_remove_only_affects_its_own_list_name(db_session, yaml_universe) -> N
     symbol = "AAPL"
     assert symbol in yaml_universe["would_own"]
     assert symbol in yaml_universe["watchlist"]
-    set_override(db_session, symbol=symbol, list_name="would_own", action="remove", created_by="owner")
+    set_override(
+        db_session, symbol=symbol, list_name="would_own", action="remove", created_by="owner"
+    )
     db_session.commit()
     invalidate_universe_cache()
     eff = effective_universe()
@@ -135,12 +139,34 @@ def test_every_non_overridable_key_passes_through_untouched(db_session, yaml_uni
         assert eff[key] == yaml_universe[key]
 
 
+def test_passthrough_containers_are_copies_not_aliases(db_session, yaml_universe) -> None:
+    """M7 final-review Fix 5: `effective_universe()` must not hand back the literal same
+    dict/list objects `get_config().universe` holds — `sectors` in particular feeds
+    risk_engine's concentration limits and is a single process-wide, lru_cache-shared
+    object. Nothing mutates the returned containers today, but object identity, not just
+    equality, is the property that makes that true by construction rather than by luck.
+    """
+    eff = effective_universe()
+    cfg_universe = get_config().universe
+
+    assert eff["sectors"] is not cfg_universe["sectors"]
+    assert eff["sectors"] == cfg_universe["sectors"]
+
+    assert eff["indexes"] is not cfg_universe["indexes"]
+    assert eff["indexes"] == cfg_universe["indexes"]
+
+    assert eff["actively_wheeling"] is not cfg_universe["actively_wheeling"]
+    assert eff["actively_wheeling"] == cfg_universe["actively_wheeling"]
+
+
 # ---------------------------------------------------------------------------
 # Design point 2 — fail-safe on a broken overrides read
 # ---------------------------------------------------------------------------
 
 
-def test_an_unreadable_overrides_table_falls_back_to_the_yaml(monkeypatch, yaml_universe, caplog) -> None:
+def test_an_unreadable_overrides_table_falls_back_to_the_yaml(
+    monkeypatch, yaml_universe, caplog
+) -> None:
     """A locked database must not empty the universe mid-scan."""
     monkeypatch.setattr(
         "src.common.universe._read_overrides",
@@ -171,7 +197,9 @@ def test_an_unreadable_overrides_table_does_not_raise(monkeypatch, yaml_universe
 
 def test_removing_an_actively_wheeling_symbol_is_ignored(db_session, yaml_universe) -> None:
     wheeling = yaml_universe["actively_wheeling"][0]
-    set_override(db_session, symbol=wheeling, list_name="would_own", action="remove", created_by="owner")
+    set_override(
+        db_session, symbol=wheeling, list_name="would_own", action="remove", created_by="owner"
+    )
     db_session.commit()
     invalidate_universe_cache()
     assert wheeling in effective_universe()["would_own"]
@@ -181,7 +209,9 @@ def test_the_actively_wheeling_guard_does_not_apply_to_watchlist(db_session, yam
     """The guard is would_own-specific — a wheeling symbol can still be removed from watchlist."""
     wheeling = yaml_universe["actively_wheeling"][0]
     assert wheeling in yaml_universe["watchlist"]
-    set_override(db_session, symbol=wheeling, list_name="watchlist", action="remove", created_by="owner")
+    set_override(
+        db_session, symbol=wheeling, list_name="watchlist", action="remove", created_by="owner"
+    )
     db_session.commit()
     invalidate_universe_cache()
     assert wheeling not in effective_universe()["watchlist"]

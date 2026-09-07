@@ -113,14 +113,27 @@ def validate_payload(kind: CommandKind, raw: dict) -> BaseModel:
 def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     """The ``f"{kind}:{target}"`` convention from Task 1.1.
 
-    ``None`` for the four repeatable kinds (halt, resume, set_autonomy, refresh) —
-    repeating them is harmless, so they are never deduped.
+    ``None`` for the six repeatable kinds (halt, resume, set_autonomy, refresh,
+    universe_add, universe_remove) — repeating them is harmless, so they are never
+    deduped. The universe kinds joined this set in the M7 final-review fix round: both
+    drain handlers (``_universe_add``/``_universe_remove``) upsert a
+    ``UniverseOverrideRow`` via ``set_override``, which is idempotent by construction
+    (a later call for the same ``(symbol, list_name)`` overwrites the row in place) —
+    the same idempotency shape as halt/resume/set_autonomy. A stable dedupe key here was
+    actively wrong: it let a *permanently* stale key (never expiring, never tied to
+    status) match an already-``applied`` row on a later, semantically different request
+    — remove -> add -> remove would dedupe the second remove to the first ``applied``
+    remove command, return ``created: false, status: "applied"``, and never enqueue the
+    row that would actually reverse the add. Repeating the command now just creates a
+    fresh row and re-applies, which is correct because the handler is upsert-only.
     """
     if kind in (
         CommandKind.HALT,
         CommandKind.RESUME,
         CommandKind.SET_AUTONOMY,
         CommandKind.REFRESH,
+        CommandKind.UNIVERSE_ADD,
+        CommandKind.UNIVERSE_REMOVE,
     ):
         return None
     if kind in (CommandKind.APPROVE, CommandKind.REJECT):
@@ -132,9 +145,6 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     if kind == CommandKind.ROLL_REQUEST:
         assert isinstance(payload, RollRequestPayload)
         return f"{kind.value}:{payload.position_symbol}"
-    if kind in (CommandKind.UNIVERSE_ADD, CommandKind.UNIVERSE_REMOVE):
-        assert isinstance(payload, UniversePayload)
-        return f"{kind.value}:{payload.list_name}:{payload.symbol}"
     return None
 
 

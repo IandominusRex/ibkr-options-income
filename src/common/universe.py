@@ -77,7 +77,9 @@ def _compose_list(
     removed = {
         row.symbol for row in overrides if row.action == "remove" and row.symbol not in remove_guard
     }
-    added = sorted((row for row in overrides if row.action == "add"), key=lambda row: row.created_at)
+    added = sorted(
+        (row for row in overrides if row.action == "add"), key=lambda row: row.created_at
+    )
 
     composed = [symbol for symbol in base_list if symbol not in removed]
     present = set(composed)
@@ -119,7 +121,27 @@ def effective_universe() -> dict[str, Any]:
 
     remove_guard = frozenset(base.get("actively_wheeling") or [])
 
-    composed: dict[str, Any] = dict(base)
+    # A shallow `dict(base)` copies the top-level dict but aliases every value inside it —
+    # `composed["sectors"]` would be the literal same dict object as `get_config().universe
+    # ["sectors"]`, which is itself a single `@functools.lru_cache(maxsize=1)`-cached,
+    # process-wide-shared object that risk_engine.py reads for concentration limits.
+    # Nothing mutates it today, so this was not a live bug, but the object is unusually
+    # consequential and copying one level deeper is cheap (M7 final-review Fix 5): every
+    # passthrough value gets its own copy — dict-valued keys (sectors, strike_bands) via
+    # `dict(v)`, list-valued keys (indexes, actively_wheeling, leveraged_etfs) via `list(v)`
+    # — so nothing a caller does to `effective_universe()`'s return value can ever reach the
+    # cached config object.
+    composed: dict[str, Any] = {}
+    for key, value in base.items():
+        if key in OVERRIDABLE_LISTS:
+            continue
+        if isinstance(value, dict):
+            composed[key] = dict(value)
+        elif isinstance(value, list):
+            composed[key] = list(value)
+        else:
+            composed[key] = value
+
     for list_name in OVERRIDABLE_LISTS:
         base_list = list(base.get(list_name) or [])
         list_overrides = [row for row in overrides if row.list_name == list_name]

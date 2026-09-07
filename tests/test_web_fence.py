@@ -191,6 +191,35 @@ def test_the_risk_engine_never_reads_an_override() -> None:
 
 
 def test_the_overridable_set_matches_the_spec_exactly() -> None:
-    """A future edit that widens this must fail here first."""
+    """A future edit that widens this must fail here first.
+
+    The overridable set `{"would_own", "watchlist"}` is independently declared four times
+    (M7 final-review Fix 6): `src.common.universe.OVERRIDABLE_LISTS`,
+    `src.api.routers.universe._OVERRIDABLE`, `UniversePayload.list_name`'s `Literal` type,
+    and the two route functions' `list_name: Literal[...]` parameters. This test pins all
+    four so a future edit that widens any one of them without the others fails here first,
+    not silently at runtime.
+    """
+    import typing
+
+    from src.api.models.commands import UniversePayload
+    from src.api.routers.universe import (
+        _OVERRIDABLE,
+        add_to_universe,
+        remove_from_universe,
+    )
     from src.common.universe import OVERRIDABLE_LISTS
-    assert OVERRIDABLE_LISTS == frozenset({"would_own", "watchlist"})
+
+    expected = frozenset({"would_own", "watchlist"})
+
+    assert OVERRIDABLE_LISTS == expected
+    assert _OVERRIDABLE == expected
+
+    payload_annotation = UniversePayload.model_fields["list_name"].annotation
+    assert frozenset(typing.get_args(payload_annotation)) == expected
+
+    for route_fn in (add_to_universe, remove_from_universe):
+        hints = typing.get_type_hints(route_fn)
+        assert frozenset(typing.get_args(hints["list_name"])) == expected, (
+            f"{route_fn.__name__}'s list_name parameter has drifted from the spec's overridable set"
+        )

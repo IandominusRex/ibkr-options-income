@@ -28,13 +28,13 @@ from sqlalchemy.orm import Session
 
 from src.api.auth import User
 from src.api.commands import get_status, submit
-from src.api.deps import CurrentUser, OwnerUser, ResearchDb
+from src.api.deps import CurrentUser, OwnerUser, ResearchDb, assert_known_symbol
 from src.api.models.commands import CommandKind, UniversePayload, dedupe_key_for
 from src.api.models.common import Envelope
 from src.api.routers.commands import CommandResponse
+from src.api.routers.options import _as_utc
 from src.common.config import get_config
 from src.common.universe import effective_universe
-from src.research.store.models import SymbolRow
 from src.storage.db import session_scope
 from src.storage.models import UniverseOverrideRow
 from src.storage.universe_overrides import all_overrides
@@ -85,29 +85,49 @@ def _plain_entries(symbols: list[str]) -> list[UniverseEntry]:
 
 
 def _overridable_entries(
-    list_name: str, overrides: list[UniverseOverrideRow], composed: list[str]
+    list_name: str, overrides: list[UniverseOverrideRow]
 ) -> list[UniverseEntry]:
     """Union of the YAML base membership (file order) and any override row for
-    *list_name* — NOT just the already-filtered composed list, because a remove-overridden
-    YAML-base symbol must still be visible (greyed out) with its provenance, so the UI can
-    offer a revert.
+    *list_name* — NOT just the composed list, because a remove-overridden YAML-base symbol
+    must still be visible (greyed out) with its provenance, so the UI can offer a revert.
+
+    ``removed`` is derived directly from the override row's ``action`` plus the same
+    ``actively_wheeling`` guard ``src/common/universe.py::_compose_list`` applies — never
+    from ``effective_universe()``'s cached composed list (fixed in the M7 final review).
+    The composer's in-process cache is invalidated only by the drain handlers
+    (``_universe_add``/``_universe_remove`` in ``src/notify/command_drain.py``), which run
+    in the exec process; this API process holds its own separate cache instance, so a
+    ``removed`` flag derived from composed-list membership could read up to
+    ``_TTL_SECONDS`` (60s) stale right after a removal was applied elsewhere — showing a
+    just-removed symbol as still present, with a revert badge that fires the wrong action.
+    Deriving it from ``get_config()`` + the guard directly makes this determination
+    independent of that cache's freshness in any process.
     """
     base: list[str] = list(get_config().universe.get(list_name) or [])
     by_symbol = {row.symbol: row for row in overrides}
-    composed_set = set(composed)
+
+    # Matches _compose_list's exact guard: a `remove` is ignored (the symbol stays
+    # effectively present) only when composing would_own, and only for a symbol that is
+    # also actively_wheeling. No case-normalization here, mirroring _compose_list, which
+    # also compares raw YAML/DB symbol strings without upper-casing.
+    remove_guard: frozenset[str] = (
+        frozenset(get_config().universe.get("actively_wheeling") or [])
+        if list_name == "would_own"
+        else frozenset()
+    )
 
     entries: list[UniverseEntry] = []
     for symbol in base:
         row = by_symbol.get(symbol)
         if row is not None and row.action == "remove":
-            still_present = symbol in composed_set
+            guarded = symbol in remove_guard
             entries.append(
                 UniverseEntry(
                     symbol=symbol,
                     overridden=True,
-                    removed=not still_present,
+                    removed=not guarded,
                     created_by=row.created_by,
-                    created_at=row.created_at,
+                    created_at=_as_utc(row.created_at),
                 )
             )
         else:
@@ -117,7 +137,7 @@ def _overridable_entries(
                     overridden=row is not None,
                     removed=False,
                     created_by=row.created_by if row else None,
-                    created_at=row.created_at if row else None,
+                    created_at=_as_utc(row.created_at) if row else None,
                 )
             )
 
@@ -145,7 +165,7 @@ def _overridable_entries(
                 overridden=True,
                 removed=row.action == "remove",
                 created_by=row.created_by,
-                created_at=row.created_at,
+                created_at=_as_utc(row.created_at),
             )
         )
     return entries
@@ -172,6 +192,10 @@ def _read_overrides_for_entries() -> list[UniverseOverrideRow]:
 
 
 def _build_lists() -> list[UniverseListOut]:
+    # Still used for the two non-overridable lists' symbol membership (indexes,
+    # actively_wheeling) — fine to read from the cache there; up to 60s staleness on those
+    # is the documented, accepted TTL behaviour. The overridable lists' `removed`/`overridden`
+    # provenance is computed independently of this, in _overridable_entries (Fix 3).
     u = effective_universe()
 
     overrides = _read_overrides_for_entries()
@@ -181,10 +205,10 @@ def _build_lists() -> list[UniverseListOut]:
 
     out: list[UniverseListOut] = []
     for name in _ALL_LISTS:
-        symbols = [str(s) for s in (u.get(name) or [])]
         if name in _OVERRIDABLE:
-            entries = _overridable_entries(name, overrides_by_list[name], symbols)
+            entries = _overridable_entries(name, overrides_by_list[name])
         else:
+            symbols = [str(s) for s in (u.get(name) or [])]
             entries = _plain_entries(symbols)
         out.append(UniverseListOut(name=name, overridable=name in _OVERRIDABLE, entries=entries))
     return out
@@ -214,9 +238,7 @@ def _apply_universe_command(
     `Literal["would_own", "watchlist"]` by the caller's path-parameter type — FastAPI
     returns 422 for anything else before the route body (and this function) ever runs.
     """
-    upper = symbol.upper()
-    if research.get(SymbolRow, upper) is None:
-        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+    upper = assert_known_symbol(research, symbol)
 
     if kind == CommandKind.UNIVERSE_REMOVE and list_name == "would_own":
         wheeling = {s.upper() for s in (get_config().universe.get("actively_wheeling") or [])}
@@ -250,8 +272,10 @@ def add_to_universe(
     list_name: Literal["would_own", "watchlist"],
     symbol: str = Path(..., min_length=1, max_length=16),
 ) -> JSONResponse:
-    """Enqueue a `universe_add` intent. `201` if new, `200` if a dedupe returned the
-    existing command. `404` for an unknown symbol; `422` for a non-overridable list."""
+    """Enqueue a `universe_add` intent. Always `201` — universe_add/universe_remove have no
+    dedupe key (M7 final-review Fix 1: they are idempotent upserts, so a repeat is always a
+    fresh command, never a `200` reusing a stale one). `404` for an unknown symbol; `422`
+    for a non-overridable list."""
     return _apply_universe_command(
         kind=CommandKind.UNIVERSE_ADD,
         list_name=list_name,

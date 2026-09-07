@@ -16,16 +16,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.commands import clear_confirm_token, get_status, submit
-from src.api.deps import OwnerUser
+from src.api.deps import OwnerUser, assert_known_symbol
 from src.api.models.commands import (
     CommandKind,
     CommandStatus,
     PromotePayload,
+    UniversePayload,
     dedupe_key_for,
     validate_payload,
 )
 from src.api.trading_db import trading_session
 from src.common.config import get_config
+from src.research.store.session import research_session
 from src.storage.models import RiskVerdictRow
 
 router = APIRouter(prefix="/commands", tags=["commands"])
@@ -108,6 +110,20 @@ def post_commands(req: CommandRequest, user: OwnerUser) -> JSONResponse:
         assert isinstance(payload, PromotePayload)
         with trading_session() as s:
             assert_promotable(s, payload.candidate_id)
+
+    if kind in (CommandKind.UNIVERSE_ADD, CommandKind.UNIVERSE_REMOVE):
+        # Same principle as PROMOTE above: the refusal must be total, at the API
+        # boundary, before a command row exists. routers/universe.py's thin wrappers
+        # already check this before enqueueing, but this generic route accepts a
+        # universe_add/universe_remove payload directly — without this check here too,
+        # an owner could bypass the thin wrappers and enqueue an override for a symbol
+        # that does not exist in the research directory (M7 final-review Fix 2). The
+        # actively_wheeling-removal guard does NOT need duplicating here: the composer's
+        # own guard (src/common/universe.py::_compose_list) makes that direction safe
+        # regardless of which route the override row came in through.
+        assert isinstance(payload, UniversePayload)
+        with research_session() as s:
+            assert_known_symbol(s, payload.symbol)
 
     dedupe_key = dedupe_key_for(kind, payload)
 

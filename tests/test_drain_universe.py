@@ -158,12 +158,68 @@ def test_removing_a_symbol_creates_a_command(client, count_commands) -> None:
     assert count_commands() == before + 1
 
 
-def test_a_repeat_add_dedupes_to_200(client) -> None:
+def test_a_repeat_add_creates_a_fresh_command_not_a_dedupe(client, count_commands) -> None:
+    """M7 final-review fix: universe_add/universe_remove have no dedupe key (they are
+    idempotent upserts, same shape as halt/resume/set_autonomy), so a repeat POST is a
+    fresh 201 with a new command id — never a 200 reusing a stale, possibly already-applied
+    row. See test_a_symbol_survives_remove_add_remove below for why a stable dedupe key
+    was actively wrong here."""
+    before = count_commands()
     first = client.post("/universe/watchlist/NVDA", headers=AUTH)
     assert first.status_code == 201
     second = client.post("/universe/watchlist/NVDA", headers=AUTH)
-    assert second.status_code == 200
-    assert second.json()["id"] == first.json()["id"]
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+    assert count_commands() == before + 2
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_survives_remove_add_remove(client, yaml_universe) -> None:
+    """The exact regression the M7 final review caught: before the fix, `universe_add`/
+    `universe_remove` deduped on a permanent `f"{kind}:{list_name}:{symbol}"` key, so the
+    *second* remove of the same symbol reused the *first* remove's already-`applied`
+    command row (same kind, same target) instead of creating a new one — the API
+    returned 200/`applied` (the receipt said "Applied") but no command was actually
+    enqueued or drained, so the override table kept the intervening add's row and the
+    symbol silently stayed in `would_own`. With the dedupe key removed (kinds now `None`,
+    same as halt/resume/set_autonomy), every POST/DELETE creates a fresh command and
+    genuinely re-applies, so `effective_universe()` reflects each of the three steps in
+    turn: out, back in, out again.
+    """
+    from src.notify.command_drain import drain_once
+
+    symbol = "AAPL"
+    assert symbol in yaml_universe["would_own"]
+    assert symbol not in yaml_universe["actively_wheeling"]  # unguarded, plain remove
+
+    from src.common.universe import effective_universe, invalidate_universe_cache
+
+    # Step 1: remove.
+    r1 = client.delete(f"/universe/would_own/{symbol}", headers=AUTH)
+    assert r1.status_code == 201
+    await drain_once(None, AsyncMock(), "chat")
+    invalidate_universe_cache()
+    assert symbol not in effective_universe()["would_own"]
+
+    # Step 2: add it back.
+    r2 = client.post(f"/universe/would_own/{symbol}", headers=AUTH)
+    assert r2.status_code == 201
+    assert r2.json()["id"] != r1.json()["id"]
+    await drain_once(None, AsyncMock(), "chat")
+    invalidate_universe_cache()
+    assert symbol in effective_universe()["would_own"]
+
+    # Step 3: remove it again — this is the request the old dedupe key would have
+    # silently swallowed (it matches step 1's already-applied command).
+    r3 = client.delete(f"/universe/would_own/{symbol}", headers=AUTH)
+    assert r3.status_code == 201, "a repeat remove must create a fresh command, not dedupe"
+    assert r3.json()["id"] not in (r1.json()["id"], r2.json()["id"])
+    assert r3.json()["status"] == "pending", "the fresh command must not already read 'applied'"
+    await drain_once(None, AsyncMock(), "chat")
+    invalidate_universe_cache()
+    assert symbol not in effective_universe()["would_own"], (
+        "the second remove must actually take effect, not no-op against a stale dedupe key"
+    )
 
 
 def test_viewer_role_cannot_post(client, monkeypatch) -> None:
@@ -181,9 +237,7 @@ def test_viewer_role_cannot_post(client, monkeypatch) -> None:
     monkeypatch.setattr("src.api.deps.authenticate", fake_auth)
     monkeypatch.setattr("src.api.auth.authenticate", fake_auth)
 
-    r = client.post(
-        "/universe/watchlist/NVDA", headers={"Authorization": "Bearer viewer-token"}
-    )
+    r = client.post("/universe/watchlist/NVDA", headers={"Authorization": "Bearer viewer-token"})
     assert r.status_code == 403
 
 
@@ -419,6 +473,99 @@ async def test_a_removed_yaml_base_entry_shows_removed_true(client, yaml_univers
     assert entry["created_by"] == "owner"
 
 
+@pytest.mark.asyncio
+async def test_removed_is_correct_even_when_the_composer_cache_is_stale(
+    client, yaml_universe, monkeypatch
+) -> None:
+    """M7 final-review Fix 3: `removed` must not depend on `effective_universe()`'s cached
+    composed list. In production, the drain (which calls `invalidate_universe_cache()`)
+    runs in the exec process, while `GET /universe` runs in a separate API process with its
+    own separate in-memory cache instance — so a `removed` flag derived from that cache's
+    composed-list membership could read up to 60s stale right after a removal was applied
+    elsewhere, showing a just-removed symbol as still present with a revert badge that
+    fires the wrong action.
+
+    This test simulates that cross-process gap in a single process: it primes the cache
+    with the pre-removal state, then patches `invalidate_universe_cache` to a no-op for the
+    drain call (standing in for "the drain's invalidate only reaches ITS process's cache,
+    not this one's"), applies the removal through the real drain handler, and asserts the
+    cache is provably still stale (AAPL still reads as present) — yet `GET /universe`
+    already reports `removed: True`, because the router's `removed` field no longer reads
+    that cache at all.
+    """
+    from src.common.universe import effective_universe, invalidate_universe_cache
+    from src.notify.command_drain import drain_once
+
+    symbol = "AAPL"
+    assert symbol in yaml_universe["would_own"]
+    assert symbol not in yaml_universe["actively_wheeling"]  # unguarded, plain remove
+
+    # Prime the composer's cache with the pre-removal state.
+    invalidate_universe_cache()
+    assert symbol in effective_universe()["would_own"]
+
+    r = client.delete(f"/universe/would_own/{symbol}", headers=AUTH)
+    assert r.status_code == 201
+
+    # Stand in for "the drain's cache-invalidate call only reaches the exec process's own
+    # cache instance" — the write still happens for real, only the invalidate is a no-op.
+    monkeypatch.setattr("src.common.universe.invalidate_universe_cache", lambda: None)
+    await drain_once(None, AsyncMock(), "chat")
+
+    # Prove the cache really is still stale — this is the failure mode Fix 3 closes.
+    assert symbol in effective_universe()["would_own"], "the cache must still be stale here"
+
+    # GET /universe must show removed=True anyway: its `removed` field is independent of
+    # the stale cache above.
+    body = client.get("/universe", headers=AUTH).json()
+    would_own = next(lst for lst in body["lists"] if lst["name"] == "would_own")
+    entry = next(e for e in would_own["entries"] if e["symbol"] == symbol)
+    assert entry["overridden"] is True
+    assert entry["removed"] is True
+
+
+def test_created_at_serializes_with_a_utc_offset_not_naive(client) -> None:
+    """M7 final-review Fix 4: `created_at` must come across with a UTC offset. SQLite
+    returns a naive `datetime` for this column (`UniverseOverrideRow.created_at` is a plain
+    `DateTime`, no `timezone=True`), and a naive ISO string is parsed as *local* time by a
+    browser's `Date` parser — silently shifting the displayed "time ago" by the viewer's
+    UTC offset. The fix normalizes with `src/api/routers/options.py`'s `_as_utc` helper
+    before the value reaches the response, the same pattern already used for eleven other
+    datetime fields in that router.
+    """
+    from datetime import datetime as _dt
+
+    from src.storage.db import session_scope
+    from src.storage.models import UniverseOverrideRow
+
+    with session_scope() as s:
+        s.add(
+            UniverseOverrideRow(
+                symbol="ZZZZ", list_name="would_own", action="add", created_by="owner"
+            )
+        )
+
+    # Sanity: prove SQLite really does hand back a naive datetime here, so this test is
+    # exercising the fix and not an accident of the driver/column type.
+    with session_scope() as s:
+        from sqlalchemy import select
+
+        row = s.execute(
+            select(UniverseOverrideRow).where(UniverseOverrideRow.symbol == "ZZZZ")
+        ).scalar_one()
+        assert row.created_at.tzinfo is None, (
+            "fixture assumption broken: SQLite returned a tz-aware value"
+        )
+
+    body = client.get("/universe", headers=AUTH).json()
+    would_own = next(lst for lst in body["lists"] if lst["name"] == "would_own")
+    entry = next(e for e in would_own["entries"] if e["symbol"] == "ZZZZ")
+    raw = entry["created_at"]
+    assert raw is not None
+    parsed = _dt.fromisoformat(raw)
+    assert parsed.tzinfo is not None, f"created_at must carry a UTC offset, got: {raw!r}"
+
+
 def test_indexes_never_carry_override_metadata_even_with_a_stray_row(client) -> None:
     """Defence in depth, mirroring test_effective_universe's test_sectors_can_never_be_overridden
     — a stray override row naming an index symbol must not leak into the indexes list's entries."""
@@ -427,9 +574,7 @@ def test_indexes_never_carry_override_metadata_even_with_a_stray_row(client) -> 
 
     with session_scope() as s:
         s.add(
-            UniverseOverrideRow(
-                symbol="SPY", list_name="indexes", action="add", created_by="owner"
-            )
+            UniverseOverrideRow(symbol="SPY", list_name="indexes", action="add", created_by="owner")
         )
 
     body = client.get("/universe", headers=AUTH).json()
