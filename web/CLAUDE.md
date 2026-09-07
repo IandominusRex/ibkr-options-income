@@ -58,10 +58,15 @@ app/                App Router pages and the root layout
   page.tsx          Landing page: search (CommandPalette), then WatchlistTable, then
                     SectorGrid (ordered by IV rank). A client component because the
                     watchlist and sector grid use react-query.
-  universe/         Universe page: react-query on GET /universe, groups symbols by list
-                    (indexes / watchlist / would_own / actively_wheeling), marks which
-                    would_own names are actively_wheeling vs dip-watch, shows sector tag
-                    and any strike-band override. Read-only in P1 (`editable: false`).
+  universe/         Universe page: react-query on GET /universe (M7: `lists[]`, one
+                    UniverseListOut per section, replacing the old flat per-list
+                    arrays), renders each list through <UniverseList/>. Writable since
+                    M7 Task 7.5 (`editable: true`): would_own and watchlist accept add
+                    and remove through <AddSymbol/> and each row's remove/revert
+                    controls; indexes and actively_wheeling stay read-only with a note
+                    that they are managed in config/universe.yaml. Still shows sector
+                    tag, strike-band override, and marks which would_own names are
+                    actively_wheeling vs dip-watch.
   stock/[symbol]/   Ticker page: react-query on GET /research/{symbol}, polls while
                     fundamentals/technicals/sentiment/news/checks is pending, mounts
                     <SectionShell/> per region, shows the delayed quote (with its age
@@ -218,6 +223,22 @@ components/
                     only when an order is working, filled only when a fill exists,
                     stalled stated in words with no spinner, intent id always
                     visible, failed renders the humanised reason plus detail codes)
+  universe/         M7 Task 7.5. UniverseList (one GET /universe section: heading with
+                    entry count, a row per entry with sector tag, strike-band
+                    override, and, for would_own only, a wheeling/dip-watch tag; a
+                    non-overridable list renders a config/universe.yaml note instead
+                    of controls, gated on `list.overridable` in addition to the
+                    backend's own gating), OverrideBadge (author + timestamp +
+                    revert for an overridden entry; the YAML base row stays visible,
+                    never hidden, even when removed; revert fires the opposite
+                    action - add for a removed entry, remove for a present one),
+                    AddSymbol (typeahead over GET /research/search so a typo cannot
+                    reach the write route as a raw symbol; adding to would_own opens
+                    a ConfirmAction naming the cash-secured-put/assignment
+                    consequence, adding to watchlist fires immediately with no
+                    dialog). All three route mutations through
+                    submitUniverseCommand (lib/commands.ts) and render a
+                    CommandReceipt.
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`

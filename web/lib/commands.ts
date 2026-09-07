@@ -37,6 +37,26 @@ export async function confirmCommand(id: number, confirmToken: string): Promise<
   });
 }
 
+/**
+ * The write path for the two path-param universe routes (M7 Task 7.4):
+ * `POST /universe/{list_name}/{symbol}` and `DELETE /universe/{list_name}/{symbol}`.
+ * Unlike `submitCommand`, these take no body — the intent lives entirely in the
+ * URL. Both return the same `CommandStatus & { created: boolean }` shape.
+ * Neither route ever returns `needs_confirmation: true` (universe kinds never
+ * need the live second-confirmation step `HaltControl` and friends handle for
+ * halt/resume), so callers do not need to build that flow for this helper.
+ */
+export async function submitUniverseCommand(
+  action: "add" | "remove",
+  listName: string,
+  symbol: string,
+): Promise<SubmitResult> {
+  return apiFetch<SubmitResult>(
+    `/universe/${listName}/${encodeURIComponent(symbol)}`,
+    { method: action === "add" ? "POST" : "DELETE" },
+  );
+}
+
 const TERMINAL: CommandStatus["status"][] = ["applied", "failed", "expired"];
 
 export function useCommandStatus(id: number | null): UseQueryResult<CommandStatus> {
