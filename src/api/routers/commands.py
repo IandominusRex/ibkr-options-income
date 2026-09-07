@@ -31,6 +31,13 @@ from src.storage.models import RiskVerdictRow
 router = APIRouter(prefix="/commands", tags=["commands"])
 
 # Kinds that can reach an order in live mode and need a second confirmation (§4.6).
+#
+# The control kinds (halt, resume, set_autonomy, refresh) are deliberately NOT in this
+# set — that is not an oversight, it is the M6 asymmetry: the live token exists for
+# intents that can reach an order, and a halt must never be slowed by a second step
+# (halting when you did not mean to costs missed premium; failing to halt when you
+# meant to can cost a great deal more). Pinned by tests in tests/test_command_schemas.py
+# and tests/test_write_path_invariants.py::test_control_kinds_never_require_live_confirmation.
 _LIVE_CONFIRM_KINDS: frozenset[CommandKind] = frozenset(
     {CommandKind.APPROVE, CommandKind.PROMOTE, CommandKind.ROLL_REQUEST}
 )

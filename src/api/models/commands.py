@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.models.common import Envelope
 from src.common.schemas import AutonomyLevel
@@ -59,14 +59,21 @@ class RollRequestPayload(BaseModel):
 
 
 class HaltPayload(BaseModel):
-    reason: str = ""
+    """``reason`` is rendered by ``/status`` and the console's halt banner — an unbounded
+    string in a settings value is a rendering bug waiting to happen, so it is capped
+    here at parse time, before a command row can exist (M6 Task 6.2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="", max_length=200)
 
 
 class ResumePayload(BaseModel):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class SetAutonomyPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     level: AutonomyLevel
 
 
@@ -81,7 +88,7 @@ class UniversePayload(BaseModel):
 
 
 class RefreshPayload(BaseModel):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 PAYLOAD_FOR: dict[CommandKind, type[BaseModel]] = {

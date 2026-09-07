@@ -206,3 +206,46 @@ def test_command_status_constructs() -> None:
     )
     assert s.kind == CommandKind.REFRESH
     assert s.needs_confirmation is False
+
+
+# ---------------------------------------------------------------------------
+# M6 Task 6.2 — control-kind payload validation.
+#
+# The control kinds are the lightest in the queue, and their payloads are the
+# most likely to be typed by hand (a client typo) or by a future tool, so the
+# schemas are closed: unknown keys are a 422 at parse time, before a command
+# row can exist. The reason cap exists because the reason is rendered by
+# /status and the console's halt banner — an unbounded string in a settings
+# value is a rendering bug waiting to happen.
+# ---------------------------------------------------------------------------
+
+
+def test_halt_reason_over_200_chars_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.HALT, {"reason": "x" * 201})
+
+
+def test_halt_reason_at_exactly_200_chars_parses() -> None:
+    m = validate_payload(CommandKind.HALT, {"reason": "x" * 200})
+    assert m.reason == "x" * 200
+
+
+def test_resume_rejects_unknown_keys() -> None:
+    """A typo in a client is caught rather than ignored."""
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.RESUME, {"reason": "oops"})
+
+
+def test_refresh_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.REFRESH, {"force": True})
+
+
+def test_halt_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.HALT, {"reson": "typo"})
+
+
+def test_set_autonomy_rejects_unknown_keys() -> None:
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.SET_AUTONOMY, {"level": "manual", "force": True})

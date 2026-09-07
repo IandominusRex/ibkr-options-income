@@ -282,3 +282,53 @@ class _FakeConfig:
 
 def _live_config() -> _FakeConfig:
     return _FakeConfig()
+
+
+# ---------------------------------------------------------------------------
+# M6 Task 6.2 — control kinds at the API boundary.
+# ---------------------------------------------------------------------------
+
+
+def test_post_set_autonomy_with_an_invalid_level_is_422_and_creates_no_row(client) -> None:
+    """A level outside the four rungs never becomes a command row."""
+    r = client.post(
+        "/commands",
+        json={"kind": "set_autonomy", "payload": {"level": "yolo"}},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+    from src.storage.db import session_scope
+    from src.storage.models import AppCommandRow
+
+    with session_scope() as s:
+        assert s.query(AppCommandRow).count() == 0
+
+
+def test_post_halt_with_an_over_length_reason_is_422_and_creates_no_row(client) -> None:
+    r = client.post(
+        "/commands",
+        json={"kind": "halt", "payload": {"reason": "x" * 201}},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+    from src.storage.db import session_scope
+    from src.storage.models import AppCommandRow
+
+    with session_scope() as s:
+        assert s.query(AppCommandRow).count() == 0
+
+
+def test_post_halt_in_live_mode_needs_no_confirmation(client, monkeypatch) -> None:
+    """The deliberate asymmetry (M6): the live token in §4.6 is for intents that can
+    reach an order. A halt is not one — a halt must never be slowed by a second step.
+    This looks like an oversight otherwise; the test name says it is not."""
+    monkeypatch.setattr("src.api.routers.commands.get_config", lambda: _live_config())
+    r = client.post(
+        "/commands",
+        json={"kind": "halt", "payload": {"reason": "checking something"}},
+        headers=AUTH,
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["needs_confirmation"] is False
+    assert body["confirm_token"] is None
