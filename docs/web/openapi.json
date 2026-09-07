@@ -904,6 +904,126 @@
         ]
       }
     },
+    "/universe/{list_name}/{symbol}": {
+      "post": {
+        "tags": [
+          "universe"
+        ],
+        "summary": "Add To Universe",
+        "description": "Enqueue a `universe_add` intent. `201` if new, `200` if a dedupe returned the\nexisting command. `404` for an unknown symbol; `422` for a non-overridable list.",
+        "operationId": "add_to_universe_universe__list_name___symbol__post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "list_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "would_own",
+                "watchlist"
+              ],
+              "type": "string",
+              "title": "List Name"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "universe"
+        ],
+        "summary": "Remove From Universe",
+        "description": "Enqueue a `universe_remove` intent. `409` if removing an `actively_wheeling` symbol\nfrom `would_own` \u2014 you cannot stop being willing to own something you are actively\nwheeling. `404` for an unknown symbol; `422` for a non-overridable list.",
+        "operationId": "remove_from_universe_universe__list_name___symbol__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "list_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "would_own",
+                "watchlist"
+              ],
+              "type": "string",
+              "title": "List Name"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/watchlist": {
       "get": {
         "tags": [
@@ -2668,6 +2788,18 @@
             ],
             "title": "Halt Reason"
           },
+          "halted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Halted At"
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -3470,9 +3602,24 @@
             "type": "string",
             "title": "Trigger"
           },
+          "trigger_label": {
+            "type": "string",
+            "title": "Trigger Label"
+          },
           "detail": {
             "type": "string",
             "title": "Detail"
+          },
+          "claude_recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claude Recommendation"
           },
           "created_at": {
             "type": "string",
@@ -3484,6 +3631,7 @@
         "required": [
           "id",
           "trigger",
+          "trigger_label",
           "detail",
           "created_at"
         ],
@@ -4388,6 +4536,78 @@
         ],
         "title": "TechnicalStats"
       },
+      "UniverseEntry": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "overridden": {
+            "type": "boolean",
+            "title": "Overridden",
+            "default": false
+          },
+          "removed": {
+            "type": "boolean",
+            "title": "Removed",
+            "default": false
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol"
+        ],
+        "title": "UniverseEntry"
+      },
+      "UniverseListOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "overridable": {
+            "type": "boolean",
+            "title": "Overridable"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "overridable",
+          "entries"
+        ],
+        "title": "UniverseListOut"
+      },
       "UniverseResponse": {
         "properties": {
           "as_of": {
@@ -4395,33 +4615,12 @@
             "format": "date-time",
             "title": "As Of"
           },
-          "indexes": {
+          "lists": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/UniverseListOut"
             },
             "type": "array",
-            "title": "Indexes"
-          },
-          "watchlist": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Watchlist"
-          },
-          "would_own": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Would Own"
-          },
-          "actively_wheeling": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Actively Wheeling"
+            "title": "Lists"
           },
           "sectors": {
             "additionalProperties": {
@@ -4440,21 +4639,18 @@
           "editable": {
             "type": "boolean",
             "title": "Editable",
-            "default": false
+            "default": true
           }
         },
         "type": "object",
         "required": [
           "as_of",
-          "indexes",
-          "watchlist",
-          "would_own",
-          "actively_wheeling",
+          "lists",
           "sectors",
           "strike_bands"
         ],
         "title": "UniverseResponse",
-        "description": "The parsed universe.yaml: the four lists, the sector map, strike-band overrides.\n\n``sectors`` maps every universe symbol to its sector tag. ``strike_bands`` maps the\nsymbols that carry a per-symbol override to the band fraction. Both are read-only\nin P1; ``editable`` is ``false`` so the client knows not to show an edit control."
+        "description": "The parsed universe.yaml: four lists (each with override provenance for the\noverridable two), the sector map, strike-band overrides. ``editable`` is ``true`` \u2014\nTask 7.4 is the write path this shape describes."
       },
       "ValidationError": {
         "properties": {

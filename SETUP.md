@@ -693,6 +693,27 @@ npm run dev                          # http://localhost:3000
 Press `⌘K` (Mac) or `Ctrl+K` (Win/Linux) on any page to open the command palette and
 search the symbol directory.
 
+### Using the options console
+
+`/options` (once the API and `web/` are both running) lets you act on what the trading system
+proposed, from a browser instead of Telegram. Every action is an **intent**: the console submits
+it to `POST /commands`, the running `approval_service` process drains and applies it on its own
+schedule (typically within a few seconds), and the console polls the intent to a terminal state
+and renders a `CommandReceipt` — nothing on the page ever claims an action succeeded before the
+drain actually applied it. Live-mode order-reaching actions (approve, promote, roll_request) carry
+the same second `[CONFIRM LIVE]` step execution has always required.
+
+| Action | Where | What it does |
+|---|---|---|
+| Approve / Reject | `/options`, per pending approval | The exact `_process_button` mutation Telegram's ✅/❌ buttons perform — the web is a second front door onto the same order path, never a second path. |
+| Promote | `/options` → Assessed tab, per gate-passed-but-not-yet-approved contract | Re-prices and re-gates the contract fresh (a stored score never gets promoted on trust) and, only if it still clears the Rules Engine, raises a PENDING approval for you to approve above. |
+| Propose a roll | `/options` → Shorts tab, per open short | Prices a defensive roll for that position and raises it as a PENDING approval — it does **not** execute the roll. You still approve the proposal separately. |
+| Halt / Resume / Autonomy | `/options` controls strip | The same kill switch and autonomy ladder as `/halt`, `/resume`, `/autonomy` in Telegram — one flag, one rung, read by every consumer. Halt is one click, no confirmation; Resume requires typing the word RESUME. |
+| Add/remove `would_own` or `watchlist` | `/universe` | Edits the scan universe without touching `config/universe.yaml` by hand. Adding a symbol to `would_own` means the system may start selling cash-secured puts on it and you may be assigned its shares — the console shows that consequence in a confirmation before submitting. `watchlist` is reporting-only and applies immediately. `sectors` and every other list stay file-only; they are not editable from the browser at all. |
+
+See `docs/web/commands.md` for every command kind's payload, dedupe key, and failure reasons, and
+`Web plan/P2-design.md` for the full design.
+
 ---
 
 ## 7. The daily EOD report — scheduled by the launcher (no cron needed)

@@ -50,6 +50,7 @@ row that matches:
 | Feature built / deferred, or a limitation changes | `STATUS.md` (what's built / not built / known limitations) |
 | Bug fix that changes behaviour users would notice | `SETUP.md` troubleshooting table if relevant |
 | **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
+| **New command kind registered** in `command_drain.py` | `docs/web/commands.md` |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -250,6 +251,16 @@ The build is feature-complete; there are no remaining phases. For any change:
 The API reads the trading database read-only and writes exactly one table, `app_commands`,
 through `src/api/commands.py`. No other module may import `get_command_engine`. Enforced by
 `tests/test_web_fence.py`.
+
+Every web action is an intent drained by `approval_service`, never a direct mutation from the API
+process: the drain's approve/reject handlers call `_process_button` unchanged, never reimplement
+it, and the Rules Engine remains the only path to an order — the web layer can propose (approve,
+promote, roll_request, universe edits) but cannot gate or size anything itself.
+
+Universe overrides (P2 M7, `src/common/universe.py::effective_universe()`) cover `would_own` and
+`watchlist` only. `sectors` stays file-only — `config/universe.yaml` — precisely so the risk
+engine's concentration limits stay unreachable from the web, at every layer (API `422`, the
+schema's `Literal` type, and the composer's byte-identical passthrough for every other key).
 
 ## How Claude is invoked in production (not the API)
 

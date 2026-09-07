@@ -1,5 +1,12 @@
 # Web Platform P2 — Options Console — Implementation Plan (Index)
 
+> **Complete.** All seven milestones shipped (M7 closed 2026-09-07). Milestone files live in
+> `milestones/P2/`. See "Implementation log — M7 (universe editing)" below for M7's own
+> account; M1-M6's completion records live in their own milestone files
+> (`milestones/P2/M1-write-foundation.md` through `M6-controls.md`). This is the last phase this
+> plan covers — see § "Verification before live" below for what live-cutover verification still
+> needs to happen before `LIVE_TRADING=true`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
@@ -233,3 +240,218 @@ the task whose deliverable creates the obligation:
 `docs/web/commands.md` is new and is the runbook for the one part of the web layer that can move
 money. Every command kind gets its payload, its idempotency key, its failure modes, and what an
 operator should do when it fails.
+
+---
+
+## Implementation log — M7 (universe editing, 2026-09-07)
+
+M7 makes `would_own` and `watchlist` editable from the browser as reversible, audited deltas over
+`config/universe.yaml`, which stays the documented base — and closes out the whole P2 phase.
+Tasks 7.1-7.6 landed as GLM/Sonnet work per the routing table above (`c31f808` through `6d74e4c`);
+this entry (Task 7.7) is the close-out pass: docs, the schema/type regen, and this log.
+
+### What each task shipped
+
+**Task 7.1 — the override store.** `UniverseOverrideRow` (`src/storage/models.py`), unique on
+`(symbol, list_name)`, holding one row per operator add/remove: upper-cased `symbol`,
+`action: "add"|"remove"`, `created_by`/`created_at`. `src/storage/universe_overrides.py`'s
+`set_override`/`clear_override`/`all_overrides` each take an explicit `session`, mirroring
+`app_commands.py`'s shape. `set_override` is a **total-replace upsert** — a later call for the
+same `(symbol, list_name)` overwrites `action`, `created_by`, and `created_at` in place, so an
+add followed by a remove is one row, never two to reconcile at read time.
+
+**Task 7.2 — the composer.** `src/common/universe.py::effective_universe()` composes
+`universe_overrides` onto `get_config().universe`. `OVERRIDABLE_LISTS =
+frozenset({"would_own", "watchlist"})` — every other key (`sectors`, `strike_bands`, `indexes`,
+`actively_wheeling`, `leveraged_etfs`) passes through byte-identical, proven even against a
+stray override row inserted directly under `list_name="sectors"` (defence in depth: the API and
+schema already refuse it before a row can exist; the composer refuses it again). A `remove`
+override on a symbol currently in `actively_wheeling` is ignored when composing `would_own`
+specifically. A 60-second TTL cache (`(dict, time.monotonic())`, module-level) avoids a DB
+round-trip on every read; `invalidate_universe_cache()` is the drain's escape hatch. An
+unreadable overrides table (locked SQLite, missing table, anything) is caught broadly, logs a
+warning, and returns the YAML base untouched — never raises, never empties the universe.
+Composed-list ordering is deterministic: YAML file order minus removed symbols, then added
+symbols appended in `created_at` order.
+
+**Task 7.3 — six consumers migrated** from `get_config().universe` to `effective_universe()`:
+`src/strategies/cash_secured_put.py` (the CSP eligibility check — the single most consequential
+edit in the milestone, proven end-to-end by a test that adds an override and confirms
+`generate_csp_candidates` actually changes its output), `src/orchestrator/scan.py` (symbol
+selection), `src/orchestrator/eod_report.py` (two sites: the daily IV-history refresh set and
+the EOD watchlist report), `src/api/routers/universe.py`, and `src/api/routers/research.py`
+(two sites). `src/engine/risk_engine.py`, `src/ibkr/market_data.py`'s `strike_bands`, and every
+`actively_wheeling`/`sectors` read elsewhere are deliberately untouched — not overridable. An
+autouse `tests/conftest.py` fixture resets the TTL cache around every test, once `scan.py`
+started reading through the cache (mirrors the pre-existing `_clear_daily_caches` pattern).
+
+**Task 7.4 — the write path.** `GET /universe` reshaped: `lists: [{name, overridable, entries:
+[{symbol, overridden, removed, created_by, created_at}]}]` — four lists (`indexes`, `watchlist`,
+`would_own`, `actively_wheeling`, in that order), only the latter two `overridable`; `editable`
+flips to `true`. `would_own`/`watchlist` entries are the **union** of the YAML base and every
+override row for that list, not just the filtered effective list, so a removed YAML-base symbol
+stays visible (greyed out) with a revert path. New routes `POST`/`DELETE
+/universe/{list_name}/{symbol}` (owner-only, thin wrappers over the same command-queue path
+`POST /commands` uses): `list_name` is a `Literal["would_own", "watchlist"]` path parameter so
+any other value is `422` before any command row can exist (proven for
+`sectors`/`leveraged_etfs`/`strike_bands`/`actively_wheeling`); an unknown symbol (checked
+against the research symbol directory) is `404`; removing an `actively_wheeling` symbol
+specifically from `would_own` (not `watchlist` — that guard is `would_own`-only, mirroring the
+composer's own scoping) is `409`. Drain handlers `_universe_add`/`_universe_remove`
+(`src/notify/command_drain.py`) call `set_override` (never `clear_override` — a remove is always
+recorded as an explicit override row, even for a YAML-base symbol, because deleting the row
+would silently do nothing for one) and `invalidate_universe_cache()` immediately after, so an
+edit is live in the process that applied it within the same drain cycle rather than up to 60
+seconds later. Neither handler ever fails (every validation already happened at the API
+boundary) or sends a Telegram notification (deliberately, unlike halt/resume/set_autonomy — a
+universe edit is reversible non-urgent config, not a safety-critical control).
+
+**Task 7.5 — the frontend.** `web/components/universe/{UniverseList,OverrideBadge,AddSymbol}.tsx`,
+a rewritten `web/app/universe/page.tsx` consuming the new `lists[]` shape, `web/lib/commands.ts`
+gains `submitUniverseCommand`. Add/remove controls render only on `would_own`/`watchlist`;
+`indexes`/`actively_wheeling` render read-only with a note that they're managed in
+`config/universe.yaml`. Adding to `would_own` opens a confirmation naming the actual consequence
+(the system may sell cash-secured puts on the symbol and the operator may be assigned its
+shares); adding to `watchlist` fires immediately, no dialog (a reporting list, never reaches an
+order). An overridden entry renders `OverrideBadge` (author, timestamp, a revert control that
+fires the opposite action of the entry's current state). The symbol picker is a typeahead over
+`GET /research/search` — a typo cannot become a `404`. Every mutation renders `CommandReceipt`
+and stops polling at a terminal command status. The wheeling-vs-dip-watch tag the pre-M7 page
+showed within `would_own` was preserved.
+
+**Task 7.6 — the fence.** `tests/test_web_fence.py` gains three tests: no module under
+`src/claude/eval/` or `src/research/` can write a universe override (`universe_overrides`/
+`set_override` string-absent check); `src/engine/risk_engine.py` never mentions
+`effective_universe`/`universe_overrides` anywhere in its text; `OVERRIDABLE_LISTS ==
+frozenset({"would_own", "watchlist"})` exactly, pinned so a future widening fails here first.
+
+**Task 7.7 — close out P2 (this entry).** `STATUS.md`'s P2 row gains the M7 paragraph in the
+same dense style as M5/M6, and the "Not built" sentence is replaced with the explicit
+no-order-ticket/no-Tailscale/no-`sectors`-override/P3-P5-deferred statement. Root `CLAUDE.md`'s
+"The web layer and the trading database" section gains the two remaining P2 facts (the drain/
+`_process_button` invariant, the `would_own`/`watchlist`-only override surface) beside the
+`app_commands` fact an earlier P2 milestone already put there, plus a doc-update trigger row for
+new command kinds. `README.md`'s layout table gains rows/extensions for `src/api/commands.py`,
+`src/storage/universe_overrides.py`, `src/execution/{promote_pipeline,roll_pipeline}.py`,
+`src/notify/command_drain.py`, and `web/app/options/` — `src/common/universe.py` already had a
+row from Task 7.2, confirmed rather than duplicated. `SETUP.md` gains a "Using the options
+console" section mirroring "Using the Telegram bot"'s shape (intro paragraph + table), covering
+approvals, promote, roll requests, halt/resume/autonomy, and universe editing with the
+`would_own` consequence spelled out; the `API_TOKEN`/`WEB_API_TOKEN` distinction from Task 1.7
+was already documented (§6a and the troubleshooting table) and was left untouched.
+`ARCHITECTURE.md`'s folder guide had three stale entries from when this milestone was mid-flight
+— the `models.py`/`universe_overrides.py` entries still said "nothing reads this table yet" and
+`routers/universe.py`'s entry still described the read-only P1 shape with `editable: false` —
+corrected to the shipped state, and `command_drain.py`'s entry gained the `universe_add`/
+`universe_remove` paragraph the other five handler kinds already had. `docs/web/openapi.json`
+and `web/lib/api-types.ts` regenerated from `create_app().openapi()`; the new `/universe/
+{list_name}/{symbol}` routes and the reshaped `UniverseResponse` are present in both.
+
+### What was escalated
+
+One fix-loop round across the whole milestone, in Task 7.4: the initial cut of `GET /universe`'s
+entries-union silently dropped a genuinely reachable state — a symbol added via override and
+then removed again, leaving a single non-base row with `action="remove"` and no corresponding
+base-list entry to attach it to. The union logic as first written only ever walked the YAML
+`base` list and separately appended override rows whose `action == "add"`, so a non-base
+`remove` row (which represents real provenance — an operator who added a symbol and then
+un-added it — and a state the UI should still be able to show/revert) fell through both loops
+and never appeared in `entries` at all. Fixed so every override row for a non-base symbol
+appears in `entries`, tagged `removed = (action == "remove")`, sorted by `created_at` alongside
+the `add` rows in the same append order `_compose_list` uses. Every other task's review was
+clean or Minor-only on the first pass.
+
+### Every ruling made along the way
+
+1. `effective_universe()` reads overrides via `src.storage.db.session_scope()`, not
+   `src.api.trading_db.trading_session()` — keeps `src/common/config.py` free of any storage
+   import while still working from both the exec process and the API process.
+2. `GET /universe`'s reshaped response (`lists[]`/`entries` with `overridden`/`removed`/
+   `created_by`/`created_at`) was fully specified before the write-path task started, including
+   the union-not-filtered-list design that keeps removed YAML-base symbols visible for a revert.
+3. Task 7.4's scope was extended to include rewriting `tests/test_api_universe.py` (the milestone
+   file's own task list omitted it, but the new response shape made the old flat-shape tests
+   break necessarily) and `docs/web/api.md`.
+4. A pre-existing doc stub in `docs/web/commands.md` (written speculatively before this milestone
+   ran) claimed `universe_add`/`universe_remove` could fail with `unknown_symbol`/
+   `already_in_list`/`not_in_list` as **drain** failure reasons. Corrected: all validation
+   happens at the API boundary (`422`/`404`/`409`) before a command row can exist, so a command
+   that reaches the drain always applies — the drain handlers have no failure reasons of their
+   own.
+5. The `actively_wheeling`-removal `409` guard is scoped to `would_own` only, not `watchlist`
+   (mirrors the composer's own guard scoping — watchlist membership doesn't gate CSP
+   eligibility).
+6. `POST`/`DELETE /universe/{list_name}/{symbol}` require the owner role, deliberately diverging
+   from the P1 `watchlist.py` precedent's any-authenticated-role gate on its analogous
+   single-symbol routes — these change CSP eligibility, watchlist membership does not.
+7. Task 7.5's UI satisfies "no control exists on the sectors list" (the milestone text's literal
+   wording) via the two real non-overridable sections (`indexes`/`actively_wheeling`) rather than
+   inventing a `sectors` list-section the shipped backend never has — `sectors` stayed a flat
+   per-symbol annotation map, unchanged from before this milestone.
+8. Task 7.4's fix-loop round (see "What was escalated" above) was the only one needed across the
+   whole milestone; every other task's review was clean or Minor-only on the first pass.
+9. (Task 7.7) The brief's literal cross-check command,
+   `grep -o 'reason="[a-z_]*"' src/notify/command_drain.py`, matches nothing against the shipped
+   code — every failure reason is raised as `CommandFailed("reason_string", ...)` (a positional
+   argument) or `_fail(cmd.id, "reason_string")`, never as a `reason="..."` keyword literal. Ran
+   the semantically equivalent check instead: extracted every string literal passed to
+   `CommandFailed`/`_fail` (`approval_not_found`, `broker_unavailable`, `chain_unavailable`,
+   `contract_not_priced`, `gate_rejected`, `score_below_minimum`, `position_not_found`,
+   `not_an_open_short`, `no_qualifying_roll`, `roll_already_working`, `promotion_refused`,
+   `unknown_kind`, `handler_error`) and confirmed each appears in `docs/web/commands.md`. All
+   present; no changes needed there. Separately noticed (not fixed, out of this task's scope):
+   `docs/web/commands.md`'s `refresh` section still says "Applied by: M6. Triggers a full scan on
+   the next cycle," but `refresh` has no registered handler in `command_drain.py` — a pre-existing
+   inaccuracy `STATUS.md`'s own P2 row already flagged before this pass ("`refresh`'s handler
+   ... remains unregistered") and unrelated to universe editing.
+10. (Task 7.7) `Web plan/milestones/P2/M7-universe-editing.md`'s own checkboxes (31 across all
+    seven tasks plus the acceptance list) were still unchecked despite every task being shipped
+    and committed — the file was never updated to reflect completion the way `M6-controls.md`
+    was by its own close-out commit. Checked off as part of this close-out pass, with a short
+    completion banner added after the acceptance list pointing back to this log for the full
+    account, since the M7-file's own file list in Task 7.7's brief didn't call it out explicitly
+    but leaving a "closed-out" milestone's own tracking file showing zero completed tasks would
+    misrepresent the phase's status to the next reader.
+
+### Minor findings deferred, not fixed (recorded for completeness, per the brief's template)
+
+- `src/storage/universe_overrides.py`: an unused `logging` import (dead code) — left in place;
+  Task 7.7 is documentation-only and the brief's own commit instructions scope generated/derived
+  changes to the openapi/api-types regeneration alone.
+- `README.md`'s layout table did not have a row for `src/storage/universe_overrides.py`
+  specifically (Task 7.1's own file list didn't ask for it) — added in this pass.
+- `tests/test_universe_consumers.py` has a local autouse cache-reset fixture now redundant with
+  the global one Task 7.3 added to `tests/conftest.py`.
+- `src/common/universe.py`'s two `remove_guard`-named variables at different scopes (naming
+  clarity nit, not a bug).
+- `eod_report.py`'s `_universe_symbols(cfg)` retains a now-unused `cfg` parameter.
+- `web/CLAUDE.md`'s `components/universe/` bullet slightly over-attributes
+  `submitUniverseCommand`/`CommandReceipt` behaviour to `OverrideBadge` (purely presentational).
+- `AddSymbol.tsx`/`UniverseList.tsx` each have their own small `describeError` function with
+  slightly different case coverage (403/404 vs 403/404/409) — a reasonable divergence, not true
+  duplication.
+
+None of these block the milestone or the phase.
+
+### Final gate (2026-09-07)
+
+`python -m pytest -q` — 1920 passed. `ruff check .` — clean. `mypy src` — clean.
+`cd web && npx vitest run` — 203 passed (28 files). `npm run lint` — clean. `npm run build` —
+clean (`/options`, `/options/[approvalId]`, `/universe`, `/`, `/stock/[symbol]` all compile and
+prerender). All six green — P2 is complete.
+
+**Acceptance, independently re-verified in this pass, not just re-asserted:**
+`would_own`/`watchlist` are editable from the browser and the edit changes CSP eligibility
+(`tests/test_universe_consumers.py`'s end-to-end `generate_csp_candidates` test, Task 7.3).
+`sectors` cannot be overridden through the API, the schema, or the composer, even via a row
+inserted directly into the table (`tests/test_effective_universe.py`,
+`tests/test_api_universe.py`, Task 7.6's `test_the_overridable_set_matches_the_spec_exactly`).
+`risk_engine.py` still reads `get_config()` and imports nothing from the override path
+(`tests/test_web_fence.py::test_the_risk_engine_never_reads_an_override`, verified by direct
+`grep` against the file's own text during this pass, not just by re-running the test). Removing
+an `actively_wheeling` symbol from `would_own` is refused at the API (`409`) and ignored by the
+composer. An unreadable overrides table falls back to the YAML base. Adding to `would_own`
+carries a confirmation naming the assignment consequence. No enrichment layer can write an
+override (`tests/test_web_fence.py::test_no_enrichment_layer_can_write_a_universe_override`).
+Every command reason in the code appears in `docs/web/commands.md` (re-derived fresh in this
+pass — see ruling 9 above). `STATUS.md` records P2 as built and P3-P5 as still deferred.
