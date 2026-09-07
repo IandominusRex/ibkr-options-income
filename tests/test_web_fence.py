@@ -163,3 +163,34 @@ def test_the_trading_path_still_never_imports_the_web_layer() -> None:
         )
     ]
     assert not offenders, f"fence violated — web layer reachable from: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# P2 M7 — universe overrides are human-edited config, and only a human writes them.
+# See Web plan/P2-design.md §7.4.
+# ---------------------------------------------------------------------------
+
+
+def test_no_enrichment_layer_can_write_a_universe_override() -> None:
+    """An override changes CSP eligibility. Only an authenticated human may create one."""
+    offenders = [
+        str(p.relative_to(ROOT))
+        for d in ("claude/eval", "research")
+        for p in sorted((ROOT / "src" / d).rglob("*.py"))
+        if "universe_overrides" in p.read_text(encoding="utf-8")
+        or "set_override" in p.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"an enrichment layer can write the universe: {offenders}"
+
+
+def test_the_risk_engine_never_reads_an_override() -> None:
+    """sectors feeds concentration limits and is deliberately not overridable."""
+    text = (ROOT / "src" / "engine" / "risk_engine.py").read_text(encoding="utf-8")
+    assert "effective_universe" not in text
+    assert "universe_overrides" not in text
+
+
+def test_the_overridable_set_matches_the_spec_exactly() -> None:
+    """A future edit that widens this must fail here first."""
+    from src.common.universe import OVERRIDABLE_LISTS
+    assert OVERRIDABLE_LISTS == frozenset({"would_own", "watchlist"})
