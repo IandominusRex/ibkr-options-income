@@ -24,6 +24,8 @@ means:
 | `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
 | `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
+| `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
+| `DELETE` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_remove` intent. Same `422`/`404` as above, plus `409` when removing an `actively_wheeling` symbol from `would_own`. See the `universe_remove` section below. |
 
 Every route requires the `owner` role. A viewer token gets `403`.
 
@@ -321,22 +323,46 @@ to the new approval.
 
 - **Payload:** `{ symbol: str, list_name: "would_own" | "watchlist" }`
 - **Dedupe key:** `universe_add:{list_name}:{symbol}`
-- **Applied by:** M7. Creates a `UniverseOverrideRow`. **`sectors` and
-  `leveraged_etfs` are rejected at the type level** — only `would_own` and
-  `watchlist` may be edited from the web (spec §7.2).
+- **Reachable from the console since Task 7.4:** `POST /universe/{list_name}/{symbol}` is a
+  thin wrapper that validates and enqueues this exact intent, returning the same
+  `CommandStatus` shape `POST /commands` returns — see the route in the table above.
+- **Applied by:** M7 Task 7.4. The drain handler (`src/notify/command_drain.py`'s
+  `_universe_add`) upserts a `UniverseOverrideRow` with `action="add"` via
+  `src.storage.universe_overrides.set_override`, then calls
+  `invalidate_universe_cache()` so the edit is live in this process at once, not up to 60s
+  later. Idempotent: repeating it re-applies the same upsert, same idempotency shape as
+  halt/resume/set_autonomy. Sends no Telegram notification — a universe edit is reversible,
+  non-urgent config, not a safety-critical control. Applies with `ib is None`.
 - **Live mode:** No confirmation needed.
-- **Failure modes:** `unknown_symbol`, `already_in_list`.
-- **Milestone:** M7.
+- **Failure modes:** none — all real validation happens **before** a command row can exist,
+  at the `POST /universe/{list_name}/{symbol}` REST boundary: `list_name` outside
+  `{would_own, watchlist}` is `422` (enforced by `Literal` path-parameter typing, so
+  `sectors`/`leveraged_etfs`/`strike_bands`/`actively_wheeling` can never become a command),
+  and an unknown `symbol` (not in the research symbol directory) is `404`. A command that
+  reaches the drain is therefore always valid and always applies.
+- **Milestone:** M7, built (Task 7.4).
 
 ### `universe_remove` — remove a symbol from a universe list
 
 - **Payload:** `{ symbol: str, list_name: "would_own" | "watchlist" }`
 - **Dedupe key:** `universe_remove:{list_name}:{symbol}`
-- **Applied by:** M7. Removes the `UniverseOverrideRow` (or the base entry, if the
-  symbol is in `universe.yaml`).
+- **Reachable from the console since Task 7.4:** `DELETE /universe/{list_name}/{symbol}` is
+  a thin wrapper that validates and enqueues this exact intent.
+- **Applied by:** M7 Task 7.4. The drain handler (`_universe_remove`) upserts a
+  `UniverseOverrideRow` with `action="remove"` — **never `clear_override`**: a remove always
+  means "record an override that suppresses this symbol," whether it started in the YAML
+  base or was itself an override-add; deleting the row would silently do nothing for a
+  YAML-base symbol. Also calls `invalidate_universe_cache()`. Sends no Telegram
+  notification. Applies with `ib is None`.
 - **Live mode:** No confirmation needed.
-- **Failure modes:** `not_in_list`.
-- **Milestone:** M7.
+- **Failure modes:** none — same boundary-first validation as `universe_add`, plus one more
+  check specific to removal: removing a symbol that is in `actively_wheeling` **from
+  `would_own`** is `409` with `{"reason": "actively_wheeling", "symbol": ...}` — you cannot
+  stop being willing to own something you are actively wheeling. This guard is
+  `would_own`-only, mirroring the composer's own remove-guard (`src/common/universe.py`):
+  removing the same symbol from `watchlist` is harmless and is not blocked. As with
+  `universe_add`, a command that reaches the drain is always valid and always applies.
+- **Milestone:** M7, built (Task 7.4).
 
 ### `refresh` — request a scan refresh
 

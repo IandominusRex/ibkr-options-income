@@ -576,3 +576,60 @@ def _set_autonomy(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
     )
     _notify(bot, chat_id, f"Autonomy set to {payload.level.value.upper()} from the web console.")
     return {"level": payload.level.value, "previous": get_autonomy_level().value}
+
+
+# ---------------------------------------------------------------------------
+# M7 Task 7.4 — universe_add / universe_remove.
+#
+# All real validation (non-overridable list -> 422, actively_wheeling remove -> 409,
+# unknown symbol -> 404) already happened at the API boundary before this command could
+# ever be created — see src/api/routers/universe.py. A command that reaches this handler
+# is always valid and always applies: neither handler raises CommandFailed. Neither sends
+# a Telegram notification either (unlike halt/resume/set_autonomy) — a universe edit is
+# reversible, non-urgent config, not a safety-critical control.
+# ---------------------------------------------------------------------------
+
+
+@register("universe_add")
+def _universe_add(*, command: Any, **_: Any) -> dict:
+    """Upsert an 'add' override. Idempotent — repeating it is applied, not an error, the
+    same idempotency shape as halt/resume/set_autonomy. Invalidates the cache so the edit
+    is live in this process immediately, not up to 60s later."""
+    from src.api.models.commands import UniversePayload
+    from src.common.universe import invalidate_universe_cache
+    from src.storage.universe_overrides import set_override
+
+    payload = UniversePayload(**command.payload)
+    with session_scope() as s:
+        set_override(
+            s,
+            symbol=payload.symbol,
+            list_name=payload.list_name,
+            action="add",
+            created_by=command.requested_by,
+        )
+    invalidate_universe_cache()
+    return {"symbol": payload.symbol.upper(), "list_name": payload.list_name, "action": "add"}
+
+
+@register("universe_remove")
+def _universe_remove(*, command: Any, **_: Any) -> dict:
+    """Upsert a 'remove' override — NOT clear_override. A remove always means "record an
+    override that suppresses this symbol," whether the symbol started in the YAML base or
+    was itself an override-add; deleting the row (clear_override) would silently do nothing
+    for a YAML-base symbol, which is the wrong behaviour for an explicit remove request."""
+    from src.api.models.commands import UniversePayload
+    from src.common.universe import invalidate_universe_cache
+    from src.storage.universe_overrides import set_override
+
+    payload = UniversePayload(**command.payload)
+    with session_scope() as s:
+        set_override(
+            s,
+            symbol=payload.symbol,
+            list_name=payload.list_name,
+            action="remove",
+            created_by=command.requested_by,
+        )
+    invalidate_universe_cache()
+    return {"symbol": payload.symbol.upper(), "list_name": payload.list_name, "action": "remove"}
