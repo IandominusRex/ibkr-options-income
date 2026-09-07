@@ -195,15 +195,58 @@ so the assessed browser cannot accumulate failed intents against contracts that 
 eligible. An unknown `candidate_id` (no assessed row at all) is `404`, not `409`. The guard reads
 through the read-only trading-database engine, never the write-scoped command engine.
 
-### `roll_request` — request a roll for a position
+### `roll_request` — ask the system to propose a roll for an open short
 
-- **Payload:** `{ position_symbol: str }`
+- **Payload:** `{ position_symbol: str }` — the OCC symbol of the open short, exactly as
+  `GET /options/shorts` returns it.
 - **Dedupe key:** `roll_request:{position_symbol}`
-- **Applied by:** M5. Triggers the roll evaluation; a `RollAlertRow` is created and
-  Claude reviews it.
+- **Applied by:** M5 Task 5.1. The drain handler (`src/notify/command_drain.py`'s `_roll_request`)
+  resolves the position from a live portfolio read, fetches a fresh chain + IV/technical stats
+  through the same shared helper the intraday monitor uses
+  (`src.execution.roll_pipeline.fetch_roll_inputs` — the one chain-fetch path for rolls, so the
+  web console and the monitor cannot drift apart on how a roll is priced), and calls
+  `queue_roll_for_approval` **unchanged**. The pipeline already runs
+  `generate_roll_candidates(..., defensive=True)`, picks the best by ROC, and raises a **PENDING**
+  `ApprovalRow` with the frozen snapshot. Two steps, never one: this proposes; the operator
+  approves the proposal through the same path as every other approval (§6.1). No order is placed
+  by a roll request.
+- **Result on success:** `{"approval_id": int, "candidate_id": str}` — link the receipt to
+  `/options/{approval_id}`.
+- **The web roll is the monitor's roll.** `defensive=True` in both paths; the roll's own net-debit
+  cap and delta-reduction floor (in `rolling.py`) are the roll's economic control, and the handler
+  adds no bounds of its own and relaxes none. `tests/test_write_path_invariants.py` pins that no
+  economic token leaks into the drain and that the defensive policy is shared.
 - **Live mode:** `needs_confirmation = true`.
-- **Failure modes:** `position_not_found`, `no_qualifying_roll`, `broker_unavailable`.
-- **Milestone:** M5.
+- **Failure modes:** the table below — five distinguishable outcomes, each rendered honestly.
+  `position_not_found` (the OCC symbol is not in the live portfolio) is a sixth, listed in the
+  table's note.
+- **Milestone:** M5 (Task 5.1 backend, Task 5.2 frontend).
+
+**The roll_request reason table (Task 5.1).** If `ib is None` the command fails immediately with
+`broker_unavailable` — a roll needs a fresh chain and cannot be honestly served without one.
+Otherwise, when the handler cannot end in a new PENDING approval, the command fails with the most
+specific reason available:
+
+| Situation | `reason` | `detail` |
+|---|---|---|
+| `ib is None` | `broker_unavailable` | none |
+| The position is not an open short option (a long, or a stock) | `not_an_open_short` | none |
+| The chain fetch failed | `chain_unavailable` | the provider's message |
+| `generate_roll_candidates` returned nothing | `no_qualifying_roll` | none |
+| An order is already active **or** a PENDING approval already exists for the same roll candidate | `roll_already_working` | `{"approval_id": int \| null}` — link the receipt to the in-flight proposal |
+
+`roll_already_working` covers both an active order (the monitor's proposal was approved and is
+working) and an existing PENDING approval (the monitor's proposal is awaiting the operator's
+decision). The latter is the case `has_active_order` alone would miss — it only sees `OrderRow`s —
+so the handler also checks for a PENDING approval on the same deterministic candidate id, which is
+what prevents a web request from racing the monitor into two approvals for the same position
+(M5's headline acceptance criterion). A sixth reason, `position_not_found`, fires when the OCC
+symbol is not in the live portfolio at all.
+
+A `no_qualifying_roll` outcome is a correct answer rendered as one, not an error: no roll on the
+current chain clears the roll's own bounds. The frontend renders it as a plain sentence, not red
+failed chrome. `roll_already_working` links to the existing approval. On success the receipt links
+to the new approval.
 
 ### `halt` — halt the system
 

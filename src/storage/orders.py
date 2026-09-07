@@ -51,3 +51,23 @@ def has_active_order(session: Session, candidate_id: str) -> bool:
         )
     ).scalar_one()
     return count > 0
+
+
+def active_order_for(session: Session, candidate_id: str) -> OrderRow | None:
+    """The most recent active order for *candidate_id*, or None.
+
+    The row-level companion to ``has_active_order`` (same active-state set). M5 Task 5.1's
+    ``roll_request`` drain handler uses it to link a ``roll_already_working`` receipt to the
+    approval the working order came from — ``has_active_order`` answers the yes/no, this
+    returns the row whose ``approval_id`` the receipt links to. Ordered newest-first so a
+    candidate with a filled order followed by a fresh re-queue still links to the live one.
+    """
+    return session.execute(
+        select(OrderRow)
+        .where(
+            OrderRow.candidate_id == candidate_id,
+            OrderRow.state.in_(_ACTIVE_ORDER_STATES),
+        )
+        .order_by(OrderRow.created_at.desc(), OrderRow.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()

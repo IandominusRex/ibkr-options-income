@@ -157,26 +157,25 @@ async def _try_queue_roll(
 
     Returns the approval id (so the caller can attach Approve/Reject buttons), or None when no
     roll qualifies or anything fails — in which case the caller falls back to an alert-only send.
-    """
-    underlying = pos.underlying or pos.symbol
-    try:
-        from src.analytics.iv import get_iv_stats
-        from src.analytics.technicals import get_technical_stats
-        from src.execution.roll_pipeline import queue_roll_for_approval
-        from src.ibkr.market_data import get_option_chain_quotes_async
 
-        quotes = await get_option_chain_quotes_async(ib, underlying)
+    Since M5 Task 5.1 the chain + stats fetch goes through ``roll_pipeline.fetch_roll_inputs`` —
+    the shared path the command drain's ``roll_request`` handler also uses — so the monitor and
+    the web console cannot drift apart on how a roll is priced.
+    """
+    try:
+        from src.execution.roll_pipeline import fetch_roll_inputs, queue_roll_for_approval
+
+        quotes, iv_stats, tech_stats = await fetch_roll_inputs(ib, pos)
         if not quotes:
             return None
-        loop = asyncio.get_running_loop()
-        iv_stats = await loop.run_in_executor(None, get_iv_stats, underlying, quotes)
-        tech_stats = await loop.run_in_executor(None, get_technical_stats, underlying)
         queued = queue_roll_for_approval(
             pos, quotes, iv_stats, tech_stats, chat_id=chat_id, ttl_minutes=cfg.approval.ttl_minutes
         )
         return queued[0] if queued is not None else None
     except Exception:
-        log.exception("roll: chain/candidate generation failed for %s", underlying)
+        log.exception(
+            "roll: chain/candidate generation failed for %s", pos.underlying or pos.symbol
+        )
         return None
 
 

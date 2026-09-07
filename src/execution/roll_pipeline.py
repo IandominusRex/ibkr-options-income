@@ -1,4 +1,4 @@
-"""Turn a roll trigger into an approvable roll candidate (N20).
+"""Turn a roll trigger into an approvable roll candidate (N20), and the shared chain-fetch path.
 
 The intraday monitor fires a `RollAlert` when a short option breaches its delta/DTE/IV limits.
 Historically that was alert-only — `generate_roll_candidates` had no production caller and
@@ -8,15 +8,22 @@ PENDING `ApprovalRow` (with the frozen snapshot, N2a). The existing Telegram App
 creates a QUEUED ROLL `OrderRow`, which `process_queued_orders` → `execute_candidate` routes to
 `execute_roll` (the two-leg BAG combo).
 
-Deterministic, synchronous DB work only — the caller (the monitor) does the chain fetch and the
-Telegram send. Returns the approval id + candidate so the caller can attach the inline keyboard.
+Since M5 Task 5.1, this module also owns `fetch_roll_inputs` — the single chain-fetch path shared
+by the monitor's `_try_queue_roll` and the command drain's `roll_request` handler. The milestone
+is explicit that the web path must not build a second chain-fetch path; the helper is the
+structural expression of that. `queue_roll_for_approval` itself stays deterministic and
+synchronous (the caller fetches via `fetch_roll_inputs` then calls it) — the DB write half is
+unchanged. Returns the approval id + candidate so the caller can attach the inline keyboard.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+
+from ib_async import IB
 
 from src.common.schemas import (
     ApprovalStatus,
@@ -30,6 +37,37 @@ from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow
 from src.storage.orders import has_active_order
 from src.strategies.rolling import generate_roll_candidates
+
+log = logging.getLogger(__name__)
+
+
+async def fetch_roll_inputs(
+    ib: IB, position: PositionSnapshot
+) -> tuple[list[OptionQuote], IVStats, TechnicalStats]:
+    """Fetch the chain + IV/technical stats a roll proposal is priced from.
+
+    The one chain-fetch path for roll pricing, shared by the intraday monitor's
+    ``_try_queue_roll`` and the command drain's ``roll_request`` handler (M5 Task 5.1:
+    "Do not build a second chain-fetch path"). Composes the exact three helpers the monitor
+    used to inline — ``get_option_chain_quotes_async`` (async, IBKR), ``get_iv_stats`` and
+    ``get_technical_stats`` (blocking, yfinance-backed, so offloaded to the default executor
+    to avoid stalling the event loop the drain runs on). Raises whatever the fetch raises;
+    the caller decides how to report it (the monitor swallows into an alert-only fallback,
+    the drain handler maps it to ``chain_unavailable``). An empty-but-successful chain is
+    returned as ``([], iv, tech)`` — the caller treats that as a data outage, not an
+    economic answer.
+    """
+    from src.analytics.iv import get_iv_stats
+    from src.analytics.technicals import get_technical_stats
+    from src.ibkr.market_data import get_option_chain_quotes_async
+
+    underlying = position.underlying or position.symbol
+    quotes = await get_option_chain_quotes_async(ib, underlying)
+    loop = asyncio.get_running_loop()
+    iv_stats = await loop.run_in_executor(None, get_iv_stats, underlying, quotes)
+    tech_stats = await loop.run_in_executor(None, get_technical_stats, underlying)
+    return quotes, iv_stats, tech_stats
+
 
 log = logging.getLogger(__name__)
 

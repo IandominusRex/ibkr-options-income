@@ -17,9 +17,47 @@ approach.
 **Two steps, never one.** The console asks the system to propose a roll; the operator then
 approves that proposal through M3's path. There is no button that rolls a position.
 
+> **Taken by:** opencode (glm-5.2 via Ollama Cloud) — **all four tasks, 5.1 through 5.4**, now
+> complete (see the completion record at the bottom of this file for per-task notes, the two
+> design decisions worth flagging, and the gate counts). The `[SONNET]`/`[GLM]` tags are
+> cost-tier routing hints, not capability gates — same convention M1/M2/M3 used, where opencode
+> took every task regardless of tag. All four tasks are honestly within reach here:
+>
+> - **5.1** is trading-system code, but `queue_roll_for_approval` already does the entire job and
+>   the monitor's `_try_queue_roll` already composes the fetch — the handler is a thin resolver
+>   that delegates to both, plus a `has_active_order` pre-check the milestone itself specifies.
+>   Same shape as the promote handler already in `command_drain.py`.
+> - **5.2** mirrors `AssessedRow`'s promote control exactly (`ConfirmAction` → `submitCommand`
+>   → `CommandReceipt` → link); the receipt components and decide-flow already exist from M3/M4.
+> - **5.3** adds two fields to `RollAlertSummary` and moves the trigger humaniser to a shared
+>   home (the one mapping, no second copy); the alert rows already come back on `GET /options/shorts`.
+> - **5.4** is pure test authoring against machinery 5.1 builds; the three test bodies are
+>   concrete and the invariant they pin is the milestone's own design point.
+>
+> **One design decision worth flagging up front (see the completion record for the rest).** The
+> milestone's headline test — "a monitor alert and a web request produce exactly one approval" —
+> cannot be satisfied by `has_active_order` alone, because `has_active_order` only sees `OrderRow`s
+> and the monitor's roll raises a **PENDING** `ApprovalRow` (no order until the operator approves
+> it). The handler therefore disambiguates the pipeline's `None` against *both* an active order and
+> an existing PENDING approval for the same deterministic candidate id, mapping either to
+> `roll_already_working` with `detail.approval_id` so the receipt can link to the in-flight
+> proposal. This stays inside the five reasons in the table below (a PENDING proposal is "a roll
+> already in flight for this position"), adds no economic bound, and is the only reading under
+> which the milestone's own acceptance criterion holds. Documented in `docs/web/commands.md`.
+
 ---
 
 ## Task 5.1 — The `roll_request` drain handler `[SONNET]`
+
+> **Taken by:** opencode (glm-5.2). Trading-system code, but `queue_roll_for_approval`
+> (`src/execution/roll_pipeline.py:37`) is read and verified in the tree, the drain's
+> `register`/`drain_once`/`HANDLERS` machinery and the `drain_env`/`fake_chain` fixture pattern
+> exist from M3/M4 (`tests/test_drain_approve_reject.py`, `tests/test_drain_promote.py`), the
+> monitor's `_try_queue_roll` (`src/monitor/intraday.py:150`) is the existing chain-fetch
+> composition the handler must reuse, and `RollRequestPayload` + its dedupe key + its live-mode
+> confirm-token membership (`_LIVE_CONFIRM_KINDS`) already exist from M1. The five reasons in the
+> table below are concrete and the seven specified tests + the two extra distinguishable-outcome
+> tests (chain fetch failure, position not found) write directly against that fixture pattern.
 
 **Trading-system code.** It reaches the broker and raises an approval.
 
@@ -167,6 +205,17 @@ prevents it, and this test is what proves it.
 
 ## Task 5.2 — The roll action on the shorts list `[GLM]`
 
+> **Taken by:** opencode (glm-5.2). The decide-flow primitives all exist from M3/M4:
+> `ConfirmAction`, `CommandReceipt`, `submitCommand`/`useCommandStatus`, and the live-mode second
+> confirmation. The shape to mirror is `web/components/options/AssessedRow.tsx` (M4 Task 4.3's
+> promote control) — extract a `ShortsRow` that renders the table row plus the
+> confirm-then-submit-then-receipt flow, the same way `AssessedRow` was extracted from
+> `AssessedBrowser`. `CommandReceipt` gains one optional prop (`plainReasons`) so `no_qualifying_roll`
+> renders as a plain sentence instead of red failed chrome — default absent, so every existing
+> receipt test stays green. The M2-era "asserts no roll button exists" guard in
+> `ShortsTable.test.tsx` evolves the same way M3's no-approve-button guard did: into "the roll
+> control exists and is wired through the confirm gate".
+
 **Files:** Modify `web/components/options/ShortsTable.tsx`. Test
 `web/components/options/ShortsTable.test.tsx`.
 
@@ -191,6 +240,17 @@ Required behaviours, each with a test:
 
 ## Task 5.3 — Roll alerts on the shorts list `[GLM]`
 
+> **Taken by:** opencode (glm-5.2). `RollAlertRow` already carries `claude_recommendation`
+> (`src/storage/models.py:292`) and `GET /options/shorts` already returns alerts (M2 Task 2.4);
+> the delta is two new fields on `RollAlertSummary` (`trigger_label`, `claude_recommendation`) and
+> moving `_TRIGGER_LABELS`/`_humanize_trigger` out of `src/notify/formatters.py` into
+> `src/monitor/triggers.py` (where the trigger codes are defined) so the API router and the
+> Telegram formatter import the one mapping — no second copy, no notify-layer import from the API
+> (the heartbeat-key precedent in `src/api/routers/options.py` already established that the API
+> must not pull in the notify layer). The web renders `trigger_label` verbatim; the humaniser
+> correctness is a Python-side test. `relativeAge` already exists in `web/lib/format.ts` for the
+> alert age.
+
 **Files:** Modify `web/components/options/ShortsTable.tsx`, and
 `src/api/routers/options.py` if `alerts` needs more fields than 2.4 shipped. Test
 `web/components/options/ShortsTable.test.tsx`.
@@ -212,6 +272,16 @@ Required behaviours, each with a test:
 ---
 
 ## Task 5.4 — Roll degradation tests `[SONNET]`
+
+> **Taken by:** opencode (glm-5.2). Pure test authoring against machinery 5.1 builds. The three
+> test bodies are concrete: a source-scan + behavioral tripwire proving the handler never reaches
+> `execute_roll` directly; the verbatim token grep proving no roll economics leaked into
+> `command_drain.py`; and a `wraps`-spy on `generate_roll_candidates` proving `defensive=True`
+> flows through both the handler's own pre-check call and the pipeline's internal call (the web
+> roll is the monitor's roll). Reuses the `drain_env`/`fake_chain` fixtures from
+> `tests/test_drain_roll.py` the same sanctioned way `tests/test_write_path_invariants.py` already
+> imports the promote fixtures from `tests/test_drain_promote.py` (documented exception to the
+> no-shared-fixtures convention, M4 Task 4.4).
 
 **Files:** Modify `tests/test_write_path_invariants.py`.
 
