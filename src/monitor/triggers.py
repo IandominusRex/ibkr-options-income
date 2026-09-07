@@ -3,6 +3,14 @@
 Each check_* function is a pure function: given position + market data + thresholds,
 it returns a RollAlert when its condition is met, or None when not triggered.
 call check_all() to run all four triggers in one pass.
+
+This module also owns the human-readable labels for the trigger codes it produces
+(`TRIGGER_LABELS` + `humanize_trigger`). The labels moved here from
+`src/notify/formatters.py` in M5 Task 5.3 so the Telegram formatter and the web API
+import the one mapping rather than each keeping a copy — the trigger codes are this
+module's internal vocabulary, so their human names belong beside them. The API
+router populates `RollAlertSummary.trigger_label` through `humanize_trigger`, and
+the web renders that verbatim; no second mapping lives anywhere.
 """
 
 from __future__ import annotations
@@ -240,3 +248,28 @@ def check_all(
         alerts.append(alert)
 
     return alerts
+
+
+# ---------------------------------------------------------------------------
+# Human-readable labels for the trigger codes above.
+#
+# The single mapping both the Telegram formatter (`src/notify/formatters.py`) and the web API
+# (`src/api/routers/options.py`) import — M5 Task 5.3: "Do not write a second mapping; if it
+# needs to be shared, move it somewhere both can import rather than copying it." The codes are
+# this module's internal vocabulary; their human names belong beside them. Unknown codes
+# de-snake-case, matching how `_humanize_reject_reason` degrades in the formatter.
+# ---------------------------------------------------------------------------
+
+TRIGGER_LABELS: dict[str, str] = {
+    "delta_drift": "delta drift",
+    "dte": "nearing expiry",
+    "manage_dte": "management point",
+    "iv_spike": "IV spike",
+    "ex_div": "ex-dividend",
+    "assignment_risk": "assignment risk",
+}
+
+
+def humanize_trigger(code: str) -> str:
+    """Return the human-readable label for a trigger code, de-snake-casing unknown codes."""
+    return TRIGGER_LABELS.get(code, code.replace("_", " "))

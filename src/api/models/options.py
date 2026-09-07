@@ -193,8 +193,15 @@ class FillListResponse(Envelope):
 
 class RollAlertSummary(BaseModel):
     id: int
-    trigger: str
+    trigger: str  # the raw code, kept for audit
+    # Human-readable label through the same mapping the Telegram formatter uses (M5 Task 5.3).
+    # `src/monitor/triggers.py::humanize_trigger` is the single source; the API imports it, the
+    # formatter imports it, the web renders this field verbatim — no second mapping anywhere.
+    trigger_label: str
     detail: str
+    # Claude's recommendation on the alert, labelled as a model opinion on the row — enrichment,
+    # never a deterministic number. Carried from RollAlertRow.claude_recommendation (nullable).
+    claude_recommendation: str | None = None
     created_at: datetime
 
 

@@ -150,9 +150,15 @@ export function ShortsRow({
             <ul className="space-y-0.5">
               {short.alerts.map((a) => (
                 <li key={a.id}>
-                  <span className="text-content">{a.trigger}</span>
+                  <span className="text-content">{a.trigger_label}</span>
                   <span className="text-muted"> {a.detail}</span>
                   <span className="text-muted"> {relativeAge(a.created_at)} ago</span>
+                  {a.claude_recommendation && (
+                    <span className="text-muted">
+                      {" "}
+                      Model opinion (Claude): {a.claude_recommendation}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

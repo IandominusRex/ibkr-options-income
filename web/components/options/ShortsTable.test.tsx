@@ -124,14 +124,62 @@ describe("ShortsTable", () => {
       shorts: [
         shortState({
           alerts: [
-            { id: 1, trigger: "delta_drift", detail: "delta has drifted to -0.42", created_at: "x" },
+            {
+              id: 1,
+              trigger: "delta_drift",
+              trigger_label: "delta drift",
+              detail: "delta has drifted to -0.42",
+              claude_recommendation: "HOLD",
+              created_at: "2026-09-06T09:55:00Z",
+            },
           ],
         }),
       ],
     });
     withClient(<ShortsTable />);
     expect((await screen.findAllByText(/NVDA/)).length).toBeGreaterThan(0);
+    // M5 Task 5.3: the humanised trigger label renders, not the raw code.
+    expect(screen.getByText(/delta drift/i)).toBeDefined();
     expect(screen.getByText(/drifted to -0\.42/i)).toBeDefined();
+    // Claude's recommendation renders labelled as a model opinion, distinct from any
+    // deterministic number on the row.
+    expect(screen.getByText(/model opinion.*HOLD/i)).toBeDefined();
+  });
+
+  it("the alert's age renders as text, not a dot", async () => {
+    // A fresh timestamp so relativeAge resolves to "Xs ago" — scoped to the alert row so it
+    // never collides with the snapshot-age line.
+    const fresh = new Date(Date.now() - 30_000).toISOString();
+    mockApi({
+      shorts: [
+        shortState({
+          alerts: [
+            {
+              id: 2,
+              trigger: "dte",
+              trigger_label: "nearing expiry",
+              detail: "7 days left",
+              claude_recommendation: null,
+              created_at: fresh,
+            },
+          ],
+        }),
+      ],
+    });
+    withClient(<ShortsTable />);
+    await screen.findAllByText(/nearing expiry/i);
+    // The alert line contains an age word; the snapshot-age line says "Snapshot ... ago".
+    // Scope: the alerts cell is the one whose text starts with the trigger label.
+    const expiryLine = screen.getByText(/nearing expiry/i).closest("li");
+    expect(expiryLine).not.toBeNull();
+    expect((expiryLine as HTMLElement).textContent).toMatch(/\bago\b/);
+  });
+
+  it("a position with no alerts renders nothing extra, not 'No alerts'", async () => {
+    mockApi({ shorts: [shortState({ alerts: [] })] });
+    withClient(<ShortsTable />);
+    await screen.findAllByText(/NVDA/);
+    expect(screen.queryByText(/no alerts/i)).toBeNull();
   });
 });
 

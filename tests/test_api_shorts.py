@@ -108,6 +108,7 @@ def client(monkeypatch, tmp_path):
                 underlying="NVDA",
                 trigger="delta_drift",
                 detail="delta has drifted to -0.42, beyond the 0.40 ceiling",
+                claude_recommendation="HOLD",
                 created_at=capture_time,
             )
         )
@@ -188,6 +189,54 @@ def test_alerts_render_on_the_position_row(client) -> None:
     assert len(nvda["alerts"]) == 1
     assert nvda["alerts"][0]["trigger"] == "delta_drift"
     assert "0.42" in nvda["alerts"][0]["detail"]
+
+
+def test_alert_trigger_label_is_humanised_through_the_shared_mapping(client) -> None:
+    """M5 Task 5.3: trigger_label comes from src.monitor.triggers.humanize_trigger — the one
+    mapping the Telegram formatter also uses. The web renders trigger_label verbatim; the raw
+    trigger code is kept for audit. An unknown code de-snake-cases."""
+    r = client.get("/options/shorts", headers=AUTH)
+    nvda = [s for s in r.json()["shorts"] if s["underlying"] == "NVDA"][0]
+    alert = nvda["alerts"][0]
+    assert alert["trigger_label"] == "delta drift"
+    assert alert["trigger"] == "delta_drift"  # raw code kept
+
+
+def test_alert_claude_recommendation_is_passed_through(client) -> None:
+    """M5 Task 5.3: claude_recommendation is carried from RollAlertRow so the web can label it
+    as a model opinion on the row. Nullable: an alert with no Claude review carries null."""
+    r = client.get("/options/shorts", headers=AUTH)
+    nvda = [s for s in r.json()["shorts"] if s["underlying"] == "NVDA"][0]
+    assert nvda["alerts"][0]["claude_recommendation"] == "HOLD"
+
+
+def test_alerts_with_no_claude_review_carry_null(client) -> None:
+    with session_scope() as s:
+        s.add(
+            RollAlertRow(
+                position_symbol="NVDA  260117 00190000 P",
+                underlying="NVDA",
+                trigger="dte",
+                detail="7 days left, inside the 7-day roll window",
+                claude_recommendation=None,
+                created_at=datetime(2026, 9, 6, 11, 0, 0, tzinfo=UTC),
+            )
+        )
+    r = client.get("/options/shorts", headers=AUTH)
+    nvda = [s for s in r.json()["shorts"] if s["underlying"] == "NVDA"][0]
+    dte_alert = [a for a in nvda["alerts"] if a["trigger"] == "dte"][0]
+    assert dte_alert["claude_recommendation"] is None
+    assert dte_alert["trigger_label"] == "nearing expiry"
+
+
+def test_the_trigger_humaniser_is_the_one_the_telegram_formatter_uses() -> None:
+    """M5 Task 5.3: the API and the Telegram formatter import the one mapping from
+    src.monitor.triggers — no second copy anywhere. Asserted by identity: the formatter's
+    `_humanize_trigger` IS `src.monitor.triggers.humanize_trigger`."""
+    from src.monitor.triggers import humanize_trigger
+    from src.notify import formatters
+
+    assert formatters._humanize_trigger is humanize_trigger
 
 
 def test_empty_shorts_returns_200(client) -> None:

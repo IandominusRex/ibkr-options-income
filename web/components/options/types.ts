@@ -139,7 +139,9 @@ export type FillListResponse = { as_of: string; fills: FillSummary[] };
 export type RollAlertSummary = {
   id: number;
   trigger: string;
+  trigger_label: string;
   detail: string;
+  claude_recommendation: string | null;
   created_at: string;
 };
 

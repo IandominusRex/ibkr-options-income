@@ -36,6 +36,11 @@ from src.common.schemas import (
     TradeCandidate,
 )
 
+# M5 Task 5.3: the trigger-code → human-label mapping moved to src/monitor/triggers.py (beside
+# the codes it names) so the Telegram formatter and the web API import the one mapping. Kept as
+# the private alias this module's callers already use.
+from src.monitor.triggers import humanize_trigger as _humanize_trigger
+
 _ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 
 _MAX_MESSAGE_LEN = 4000
@@ -1847,20 +1852,10 @@ def format_live_confirm_request(
 
 # Plain-English names for the raw trigger codes on a RollAlert. The codes are the monitor's
 # internal vocabulary (`triggers.check_*`); an operator reading an alert at 15:40 should not
-# have to decode `delta_drift + ex_div`. Unknown codes de-snake-case, matching how
-# `_humanize_reject_reason` degrades.
-_TRIGGER_LABELS: dict[str, str] = {
-    "delta_drift": "delta drift",
-    "dte": "nearing expiry",
-    "manage_dte": "management point",
-    "iv_spike": "IV spike",
-    "ex_div": "ex-dividend",
-    "assignment_risk": "assignment risk",
-}
-
-
-def _humanize_trigger(code: str) -> str:
-    return _TRIGGER_LABELS.get(code, code.replace("_", " "))
+# have to decode `delta_drift + ex_div`. Since M5 Task 5.3 the mapping lives in
+# `src/monitor/triggers.py` (beside the codes it names) and is imported here and by the web API
+# router — one mapping, no second copy. `_humanize_trigger` (imported at the top of this module)
+# is the name this module's callers already use; it delegates unchanged.
 
 
 def format_roll_alert(

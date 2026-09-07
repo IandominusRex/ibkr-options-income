@@ -804,12 +804,16 @@ def list_shorts(
             .all()
         )
     alerts_by_symbol: dict[str, list[RollAlertSummary]] = {}
+    from src.monitor.triggers import humanize_trigger
+
     for a in alert_rows:
         alerts_by_symbol.setdefault(a.position_symbol, []).append(
             RollAlertSummary(
                 id=a.id,
                 trigger=a.trigger,
+                trigger_label=humanize_trigger(a.trigger),
                 detail=a.detail,
+                claude_recommendation=a.claude_recommendation,
                 created_at=_as_utc(a.created_at) or as_of,
             )
         )
