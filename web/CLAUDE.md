@@ -78,8 +78,11 @@ app/                App Router pages and the root layout
                     dialog first, one POST, then a <CommandReceipt/> that never
                     overstates what happened. Since M4 Task 4.3 the Assessed tab's
                     <AssessedBrowser/> carries a live Promote control per row
-                    (<AssessedRow/>) through the same confirm-then-receipt shape.
-                    Roll controls do not exist yet (M5).
+                    (                    <AssessedRow/>) through the same confirm-then-receipt shape.
+                    Since M5 Task 5.2 the Shorts tab's <ShortsTable/> carries a live
+                    "Propose a roll" control per row (<ShortsRow/>) through the same
+                    confirm-then-receipt shape; no_qualifying_roll renders as a plain
+                    answer, roll_already_working links to the in-flight approval.
   options/[approvalId]/  Approval detail: <ApprovalDetailCard/> with the five review
                     fields as labelled sections (<ReviewPanel/>), the ideal zone bar
                     (<IdealZoneBar/>), humanised gate reasons, the alternatives
@@ -155,8 +158,14 @@ components/
                     colour alone, null avg_fill_price renders "n/a" never "$0.00"),
                     FillsTable (recent fills with relative age), ShortsTable (open
                     short option positions, delta renders its source, snapshot age as
-                    text not a dot, fired roll alerts render as text on the row;
-                    no roll button), ApprovalDetailCard (five review fields as five
+                    text not a dot, fired roll alerts render as text on the row with
+                    the humanised trigger label + age + Claude's view labelled
+                    "Model opinion (Claude)"; since M5 Task 5.2 each row carries a
+                    "Propose a roll" control through <ShortsRow/> - the same
+                    confirm-then-receipt shape AssessedRow uses for promote,
+                    no_qualifying_roll renders as a plain answer not red chrome,
+                    roll_already_working links to the in-flight approval, live-mode
+                    second confirmation wired), ApprovalDetailCard (five review fields as five
                     labelled sections via ReviewPanel, IdealZoneBar with lo/hi/
                     min_credit markers, AlternativesTable, 404 with link back,
                     DecideControls; fetches GET /options/controls itself so the
