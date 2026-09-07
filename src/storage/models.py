@@ -497,3 +497,28 @@ class CampaignRow(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class UniverseOverrideRow(Base):
+    """An operator's manual add/remove of a symbol in the `would_own`/`watchlist` universe lists.
+
+    Layered on top of `config/universe.yaml` rather than replacing it — the YAML stays the base
+    list, this table holds only the deltas an operator has made through the web UI (consumed by
+    `src/common/universe.py`, M7 Task 7.2). One row per `(symbol, list_name)`
+    (`uq_universe_overrides_symbol_list`): `set_override` upserts, so a later override for the
+    same pair replaces the earlier one in place — an add followed by a remove is one row with
+    `action="remove"`, never two rows to reconcile at read time. `symbol` is upper-cased at write
+    time (`src/storage/universe_overrides.py`) so `nvda` and `NVDA` collide into the same row.
+    """
+
+    __tablename__ = "universe_overrides"
+    __table_args__ = (
+        UniqueConstraint("symbol", "list_name", name="uq_universe_overrides_symbol_list"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    list_name: Mapped[str] = mapped_column(String(16))  # "would_own" | "watchlist" — nothing else
+    action: Mapped[str] = mapped_column(String(8))  # "add" | "remove"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    created_by: Mapped[str] = mapped_column(String(64))  # user id; the audit trail
