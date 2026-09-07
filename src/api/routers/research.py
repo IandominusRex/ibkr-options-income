@@ -25,8 +25,8 @@ from src.api.models.research import (
     SummaryOut,
     SummaryResponse,
 )
-from src.common.config import get_config
 from src.common.schemas import FundamentalStats, IVStats, SentimentDetail, TechnicalStats
+from src.common.universe import effective_universe
 from src.research.checks.metrics import build_metrics
 from src.research.checks.payload import ChecksPayload, build_checks_payload
 from src.research.ingest.materialize import materialize
@@ -193,7 +193,7 @@ def sectors(
     reason to look); sectors with no IV history sort last, preserving their file order.
     """
     now = datetime.now(UTC)
-    u = get_config().universe
+    u = effective_universe()
     sector_map: dict[str, str] = {str(k): str(v) for k, v in (u.get("sectors") or {}).items()}
 
     # Members of a sector = every universe symbol tagged with that sector.
@@ -363,7 +363,7 @@ def _in_universe(symbol: str) -> bool:
     IV history and option-chain data (design §5.5). Watchlisting alone doesn't grant that;
     only membership in one of universe.yaml's own lists does.
     """
-    u = get_config().universe
+    u = effective_universe()
     return any(symbol in (u.get(key) or []) for key in _UNIVERSE_TIER_LISTS)
 
 

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.common import cache
+from src.common.universe import invalidate_universe_cache
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +21,22 @@ def _clear_daily_caches():
     cache.clear_all()
     yield
     cache.clear_all()
+
+
+@pytest.fixture(autouse=True)
+def _clear_effective_universe_cache():
+    """Reset ``src.common.universe``'s process-local TTL cache around every test (M7 Task 7.3).
+
+    ``effective_universe()`` (read by scan.py, eod_report.py, and others as of Task 7.3) caches
+    its composed result for ``_TTL_SECONDS`` of *wall*-monotonic time — far longer than a test
+    file takes to run. Several pre-existing scan tests monkeypatch ``get_config().universe``
+    directly and expect the change to take effect immediately; without this reset, a value
+    cached by an earlier test in the same pytest process would leak into a later one that
+    monkeypatches a different universe, independent of any DB override.
+    """
+    invalidate_universe_cache()
+    yield
+    invalidate_universe_cache()
 
 
 @pytest.fixture(autouse=True)

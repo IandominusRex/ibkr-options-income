@@ -1,10 +1,11 @@
 """GET /universe — the effective scan universe (read-only in P1).
 
-Reads ``config/universe.yaml`` through ``get_config().universe`` and returns every list
-unmodified and in file order. ``editable`` is ``false`` because the
-``universe_overrides`` write path belongs to P2; the client must not render an edit
-affordance that has no backend behind it (design §4.5 — never claim more than the
-backend did).
+Reads ``config/universe.yaml`` composed with any ``universe_overrides`` rows through
+``effective_universe()`` (M7 Task 7.3) and returns every list in file order, overrides
+included for ``would_own``/``watchlist``. ``editable`` is ``false`` because the
+``universe_overrides`` *write* path from this router belongs to P2/Task 7.4; the client
+must not render an edit affordance that has no backend behind it (design §4.5 — never
+claim more than the backend did).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from fastapi import APIRouter
 
 from src.api.deps import CurrentUser
 from src.api.models.common import Envelope
-from src.common.config import get_config
+from src.common.universe import effective_universe
 
 router = APIRouter(prefix="/universe", tags=["universe"])
 
@@ -45,8 +46,7 @@ def _list(d: dict[str, object], key: str) -> list[str]:
 
 @router.get("", response_model=UniverseResponse)
 def universe(user: CurrentUser) -> UniverseResponse:
-    cfg = get_config()
-    u = cfg.universe
+    u = effective_universe()
     return UniverseResponse(
         as_of=datetime.now(UTC),
         indexes=_list(u, "indexes"),

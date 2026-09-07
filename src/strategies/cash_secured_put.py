@@ -25,6 +25,7 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
+from src.common.universe import effective_universe
 from src.engine.capital import Budgets, max_contracts, resolve_caps, seed_budgets
 from src.strategies._evaluation import (
     REASON_BELOW_FAIR_VALUE,
@@ -90,7 +91,7 @@ def screen_csp_candidates(
     """
     cfg = get_config()
     result = ScreenResult()
-    if symbol not in cfg.universe["would_own"]:
+    if symbol not in effective_universe()["would_own"]:
         result.skipped = "not_in_would_own"
         return result
 
