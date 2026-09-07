@@ -21,6 +21,12 @@ import pytest
 
 from src.common.schemas import ApprovalStatus
 
+# M6 Task 6.4: same sanctioned reuse for the controls tests — the control handlers'
+# `drain_env` lives in tests/test_drain_controls.py (this file's own `drain_env`
+# registers the approve/reject handlers; the controls one registers
+# halt/resume/set_autonomy).
+from tests.test_drain_controls import drain_env as controls_drain_env  # noqa: F401
+
 # M4 Task 4.4: Task 4.2's `drain_env`/`fake_chain` fixtures (tests/test_drain_promote.py) are
 # reused verbatim for the promote-refusal tests below rather than duplicating ~150 lines of
 # fixture engineering — a deliberate, sanctioned exception to this repo's usual "no shared
@@ -457,3 +463,59 @@ async def test_the_web_and_the_monitor_share_one_roll_policy(
     assert all(handler_calls), "the handler's generation call must pass defensive=True"
     assert pipeline_calls, "the pipeline must generate candidates internally"
     assert all(pipeline_calls), "the pipeline's generation call must pass defensive=True"
+
+
+# ---------------------------------------------------------------------------
+# M6 Task 6.4 — controls invariants.
+#
+# The three control kinds are the only write-path commands with no broker and
+# no order anywhere near them; these tests pin that, and pin the single halt
+# flag. `drain_env` is reused from tests/test_drain_controls.py under the
+# sanctioned cross-file alias M4 Task 4.4 / M5 Task 5.4 established (this file's
+# own `drain_env` registers the approve/reject handlers; the controls one
+# registers halt/resume/set_autonomy).
+# ---------------------------------------------------------------------------
+
+# The controls `drain_env` is aliased on import at the top of this file
+# (controls_drain_env), from tests/test_drain_controls.py.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,payload",
+    [("halt", {"reason": "r"}), ("resume", {}), ("set_autonomy", {"level": "manual"})],
+)
+async def test_every_control_kind_applies_without_a_broker(
+    controls_drain_env,  # noqa: F811
+    kind,
+    payload,
+) -> None:
+    """Parametrised over halt, resume, set_autonomy. None may need TWS."""
+    from src.notify.command_drain import drain_once
+
+    cid = controls_drain_env.enqueue(kind, payload)
+    await drain_once(None, controls_drain_env.bot, "chat")
+    assert controls_drain_env.status(cid) == "applied", f"{kind} must apply with ib=None"
+
+
+def test_control_kinds_never_require_live_confirmation() -> None:
+    """The live token gates order-reaching intents. A halt is not one: a halt must
+    never be slowed by a second step — the deliberate M6 asymmetry, pinned here so
+    adding a control kind to _LIVE_CONFIRM_KINDS fails loudly."""
+    from src.api.models.commands import CommandKind
+    from src.api.routers.commands import _LIVE_CONFIRM_KINDS
+
+    for kind in (CommandKind.HALT, CommandKind.RESUME, CommandKind.SET_AUTONOMY):
+        assert kind not in _LIVE_CONFIRM_KINDS, f"{kind} must never require live confirmation"
+
+
+def test_the_halt_key_is_the_same_one_telegram_uses() -> None:
+    """Two halt flags would be a catastrophe. Assert one key, from system_settings."""
+    from pathlib import Path
+
+    from src.storage.system_settings import HALT_KEY
+
+    assert HALT_KEY == "execution_halted"
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "src" / "notify" / "command_drain.py").read_text(encoding="utf-8")
+    assert "execution_halted" not in text, "use the HALT_KEY constant, never the literal"
