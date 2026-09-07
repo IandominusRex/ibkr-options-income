@@ -2,15 +2,27 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { UNKNOWN, relativeAge } from "@/lib/format";
+import { relativeAge } from "@/lib/format";
 import { EmptyState } from "./EmptyState";
-import type { ShortListResponse } from "./types";
+import { ShortsRow } from "./ShortsRow";
+import type { ControlsResponse, ShortListResponse } from "./types";
 
 export function ShortsTable() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["options", "shorts"],
     queryFn: () => apiFetch<ShortListResponse>("/options/shorts"),
     placeholderData: (prev) => prev,
+  });
+
+  // The drain's health drives the roll receipt's "stalled" state (spec §9.2 rule 3):
+  // a queued roll_request whose drain is dead must say so in words. Same pattern as
+  // ApprovalsList/AssessedBrowser. Defaults to `true` while loading so a receipt
+  // never flashes `stalled` on "no evidence yet".
+  const controls = useQuery({
+    queryKey: ["options", "controls"],
+    queryFn: () => apiFetch<ControlsResponse>("/options/controls"),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
   });
 
   if (isLoading) return <p className="text-sm text-muted">Loading shorts</p>;
@@ -20,6 +32,7 @@ export function ShortsTable() {
     return <EmptyState text="No open short option positions." />;
   }
   const snapshotAge = data?.as_of ? relativeAge(data.as_of) : "";
+  const drainHealthy = controls.data?.drain_healthy ?? true;
 
   return (
     <div className="space-y-2">
@@ -36,45 +49,12 @@ export function ShortsTable() {
             <th className="py-2 font-medium">uPnL</th>
             <th className="py-2 font-medium">Delta</th>
             <th className="py-2 font-medium">Alerts</th>
+            <th className="py-2 font-medium">Action</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {shorts.map((s) => (
-            <tr key={s.position_symbol}>
-              <td className="py-2">
-                <div className="font-mono text-xs text-content">
-                  {s.underlying} {s.strike.toFixed(2)} {s.right}
-                </div>
-                <div className="text-xs text-muted">{s.position_symbol}</div>
-              </td>
-              <td className="py-2 tabular text-content">
-                {s.dte != null ? s.dte : UNKNOWN}
-              </td>
-              <td className="py-2 tabular text-content">{s.contracts}</td>
-              <td className="py-2 tabular">
-                {s.mark != null ? `$${s.mark.toFixed(2)}` : UNKNOWN}
-              </td>
-              <td className="py-2 tabular">
-                {s.unrealized_pnl != null
-                  ? `$${s.unrealized_pnl.toFixed(0)}`
-                  : UNKNOWN}
-              </td>
-              <td className="py-2 tabular text-xs">
-                {s.delta != null ? (
-                  <span className="text-content">
-                    {s.delta.value != null ? s.delta.value.toFixed(2) : UNKNOWN}
-                    <span className="ml-1 text-muted">{s.delta.source}</span>
-                  </span>
-                ) : (
-                  UNKNOWN
-                )}
-              </td>
-              <td className="py-2 text-xs text-muted">
-                {s.alerts.length > 0
-                  ? s.alerts.map((a) => a.detail).join(" - ")
-                  : ""}
-              </td>
-            </tr>
+            <ShortsRow key={s.position_symbol} short={s} drainHealthy={drainHealthy} />
           ))}
         </tbody>
       </table>
