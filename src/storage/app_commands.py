@@ -32,7 +32,8 @@ def enqueue_command(
 
     On a ``dedupe_key`` collision returns the existing row with ``created=False`` —
     never a second row, never an exception. A ``None`` dedupe_key is never deduped
-    (refresh, halt, resume, set_autonomy may repeat harmlessly).
+    (refresh, halt, resume, set_autonomy, universe_add, universe_remove may repeat
+    harmlessly).
     """
     if dedupe_key is not None:
         existing = session.execute(

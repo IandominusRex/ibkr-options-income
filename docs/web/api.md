@@ -591,12 +591,11 @@ edited from the web, with zero side effects on a rejected request.
 
 | Status | When |
 |---|---|
-| 201 | new command enqueued |
-| 200 | a duplicate `POST` deduped to the existing command |
+| 201 | command enqueued — always, even on a repeat request. `universe_add`/`universe_remove` carry no `dedupe_key` (M7 final-review fix): `set_override` is an idempotent upsert, so a stable key could match an already-`applied` command from an earlier, semantically different request and silently no-op instead of re-applying. |
 | 404 | `symbol` is not a known SEC filer (checked against the research symbol directory) |
 | 422 | `list_name` is not `would_own`/`watchlist` |
 
-**Response (201/200):** `CommandStatus` (see `docs/web/commands.md`), `kind: "universe_add"`.
+**Response (201):** `CommandStatus` (see `docs/web/commands.md`), `kind: "universe_add"`.
 
 See `docs/web/commands.md`'s `universe_add` section for what the drain does with the
 enqueued intent.
@@ -620,13 +619,12 @@ harmless and is **not** blocked.
 
 | Status | When |
 |---|---|
-| 201 | new command enqueued |
-| 200 | a duplicate request deduped to the existing command |
+| 201 | command enqueued — always, even on a repeat request (no `dedupe_key`, same reasoning as `POST` above) |
 | 404 | `symbol` is not a known SEC filer |
 | 409 | `list_name == "would_own"` and `symbol` is in `actively_wheeling` |
 | 422 | `list_name` is not `would_own`/`watchlist` |
 
-**Response (201/200):** `CommandStatus`, `kind: "universe_remove"`.
+**Response (201):** `CommandStatus`, `kind: "universe_remove"`.
 
 ---
 

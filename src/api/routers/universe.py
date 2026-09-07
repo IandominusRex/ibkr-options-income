@@ -292,9 +292,10 @@ def remove_from_universe(
     list_name: Literal["would_own", "watchlist"],
     symbol: str = Path(..., min_length=1, max_length=16),
 ) -> JSONResponse:
-    """Enqueue a `universe_remove` intent. `409` if removing an `actively_wheeling` symbol
-    from `would_own` — you cannot stop being willing to own something you are actively
-    wheeling. `404` for an unknown symbol; `422` for a non-overridable list."""
+    """Enqueue a `universe_remove` intent. Always `201` (see `add_to_universe` — no dedupe
+    key). `409` if removing an `actively_wheeling` symbol from `would_own` — you cannot stop
+    being willing to own something you are actively wheeling. `404` for an unknown symbol;
+    `422` for a non-overridable list."""
     return _apply_universe_command(
         kind=CommandKind.UNIVERSE_REMOVE,
         list_name=list_name,

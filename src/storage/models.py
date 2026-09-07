@@ -445,8 +445,10 @@ class AppCommandRow(Base):
     ``applied`` — is one transaction in the exec process (spec §4.2).
 
     ``dedupe_key`` is ``f"{kind}:{target}"`` for idempotent kinds (approve, reject,
-    promote, roll_request, universe edits) and ``NULL`` for kinds that may repeat
-    harmlessly (halt, resume, set_autonomy, refresh). A NULL key never collides.
+    promote, roll_request) and ``NULL`` for kinds that may repeat harmlessly (halt,
+    resume, set_autonomy, refresh, universe_add, universe_remove — the latter two
+    joined this group in M7 after a stable key let a later remove dedupe to an
+    earlier, already-applied command and silently no-op). A NULL key never collides.
     """
 
     __tablename__ = "app_commands"

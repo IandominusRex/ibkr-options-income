@@ -1591,6 +1591,27 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   the sync `_batch_quotes` is the version the line-cap/cancel-discipline tests exercise, so collapsing
   it risks weakening that coverage without a live session to re-validate. Deferred deliberately.
 
+- **`promote`/`roll_request` share the same permanent-dedupe-key defect M7's final-review round fixed
+  for `universe_add`/`universe_remove`, and it is not fixed here — found 2026-09-07, out of scope for
+  this milestone, tracked for a follow-up.** `dedupe_key_for` (`src/api/models/commands.py`) keys
+  `promote` on `candidate_id` (a deterministic hash — stable across re-scans) and `roll_request` on
+  the bare `position_symbol`; `enqueue_command` matches a `dedupe_key` regardless of the existing
+  row's `status`, and the key is never cleared. So a *second* `roll_request` for a symbol — days or
+  months later, on an entirely different position — dedupes to the first, already-`applied` command:
+  `200`/`created: false`/`status: "applied"`, no new command, the drain never runs, and
+  `<ShortsRow/>` renders the OLD command's result (e.g. a stale `approval_id`, or a stale
+  `no_qualifying_roll`) as this request's answer. `promote` has the identical shape: a re-scanned
+  candidate keeps its id, so re-promoting after the first approval expired silently no-ops with an
+  "Applied" receipt. `approve`/`reject` are unaffected — `approval_id` is unique per approval, and
+  re-deciding an already-decided one is a legitimate no-op, which is what that dedupe key is for.
+  The fix is the same one-liner M7 applied to `universe_add`/`universe_remove` — return `None` from
+  `dedupe_key_for` for `promote`/`roll_request` too (or, more generally, scope `enqueue_command`'s
+  dedupe lookup to `status == "pending"` rows only, which fixes every keyed kind at once and still
+  preserves "two clicks on Approve produce one command"). Not fixed here because M4/M5 (where
+  `promote`/`roll_request` were built) are already-merged milestones outside M7's diff, and a fix
+  touching the order-reaching command paths deserves its own scoped task and review, not a rushed
+  addendum to this milestone's final gate.
+
 ---
 
 ## Validated by mocked tests only — verify on a live paper session before live cutover

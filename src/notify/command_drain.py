@@ -583,8 +583,10 @@ def _set_autonomy(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
 #
 # All real validation (non-overridable list -> 422, actively_wheeling remove -> 409,
 # unknown symbol -> 404) already happened at the API boundary before this command could
-# ever be created — see src/api/routers/universe.py. A command that reaches this handler
-# is always valid and always applies: neither handler raises CommandFailed. Neither sends
+# ever be created — enforced at both entry points, src/api/routers/universe.py's thin
+# wrappers and (since the M7 final-review fix round) the generic POST /commands route in
+# src/api/routers/commands.py. A command that reaches this handler is always valid and
+# always applies: neither handler raises CommandFailed. Neither sends
 # a Telegram notification either (unlike halt/resume/set_autonomy) — a universe edit is
 # reversible, non-urgent config, not a safety-critical control.
 # ---------------------------------------------------------------------------
