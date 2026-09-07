@@ -407,6 +407,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/universe/{list_name}/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add To Universe
+         * @description Enqueue a `universe_add` intent. `201` if new, `200` if a dedupe returned the
+         *     existing command. `404` for an unknown symbol; `422` for a non-overridable list.
+         */
+        post: operations["add_to_universe_universe__list_name___symbol__post"];
+        /**
+         * Remove From Universe
+         * @description Enqueue a `universe_remove` intent. `409` if removing an `actively_wheeling` symbol
+         *     from `would_own` — you cannot stop being willing to own something you are actively
+         *     wheeling. `404` for an unknown symbol; `422` for a non-overridable list.
+         */
+        delete: operations["remove_from_universe_universe__list_name___symbol__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/watchlist": {
         parameters: {
             query?: never;
@@ -1104,6 +1131,8 @@ export interface components {
             halted: boolean;
             /** Halt Reason */
             halt_reason?: string | null;
+            /** Halted At */
+            halted_at?: string | null;
             /**
              * Mode
              * @enum {string}
@@ -1459,8 +1488,12 @@ export interface components {
             id: number;
             /** Trigger */
             trigger: string;
+            /** Trigger Label */
+            trigger_label: string;
             /** Detail */
             detail: string;
+            /** Claude Recommendation */
+            claude_recommendation?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1803,13 +1836,39 @@ export interface components {
             price_source: string;
             phase?: components["schemas"]["Phase"] | null;
         };
+        /** UniverseEntry */
+        UniverseEntry: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * Overridden
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Removed
+             * @default false
+             */
+            removed: boolean;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** UniverseListOut */
+        UniverseListOut: {
+            /** Name */
+            name: string;
+            /** Overridable */
+            overridable: boolean;
+            /** Entries */
+            entries: components["schemas"]["UniverseEntry"][];
+        };
         /**
          * UniverseResponse
-         * @description The parsed universe.yaml: the four lists, the sector map, strike-band overrides.
-         *
-         *     ``sectors`` maps every universe symbol to its sector tag. ``strike_bands`` maps the
-         *     symbols that carry a per-symbol override to the band fraction. Both are read-only
-         *     in P1; ``editable`` is ``false`` so the client knows not to show an edit control.
+         * @description The parsed universe.yaml: four lists (each with override provenance for the
+         *     overridable two), the sector map, strike-band overrides. ``editable`` is ``true`` —
+         *     Task 7.4 is the write path this shape describes.
          */
         UniverseResponse: {
             /**
@@ -1817,14 +1876,8 @@ export interface components {
              * Format: date-time
              */
             as_of: string;
-            /** Indexes */
-            indexes: string[];
-            /** Watchlist */
-            watchlist: string[];
-            /** Would Own */
-            would_own: string[];
-            /** Actively Wheeling */
-            actively_wheeling: string[];
+            /** Lists */
+            lists: components["schemas"]["UniverseListOut"][];
             /** Sectors */
             sectors: {
                 [key: string]: string;
@@ -1835,7 +1888,7 @@ export interface components {
             };
             /**
              * Editable
-             * @default false
+             * @default true
              */
             editable: boolean;
         };
@@ -2435,6 +2488,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UniverseResponse"];
+                };
+            };
+        };
+    };
+    add_to_universe_universe__list_name___symbol__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_name: "would_own" | "watchlist";
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_from_universe_universe__list_name___symbol__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                list_name: "would_own" | "watchlist";
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

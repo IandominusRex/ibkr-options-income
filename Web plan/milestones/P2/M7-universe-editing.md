@@ -64,7 +64,7 @@ Required behaviours, each with a test:
 - `clear_override` returns `False` when nothing was there.
 - `created_by` is stored and returned.
 
-- [ ] Write the tests, implement, run the full suite, update `ARCHITECTURE.md`, commit.
+- [x] Write the tests, implement, run the full suite, update `ARCHITECTURE.md`, commit.
 
 ---
 
@@ -118,7 +118,7 @@ def invalidate_universe_cache() -> None:
    scan behaviour non-reproducible.
 5. TTL of 60 seconds, from a module constant, not a magic number at the call site.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The YAML is the base. Overrides are deltas. Some things are not overridable at all."""
@@ -181,7 +181,7 @@ def test_every_non_overridable_key_passes_through_untouched(yaml_universe) -> No
         assert eff[key] == yaml_universe[key]
 ```
 
-- [ ] **Step 2:** Implement. Run the gate, update `README.md` and `ARCHITECTURE.md`, commit.
+- [x] **Step 2:** Implement. Run the gate, update `README.md` and `ARCHITECTURE.md`, commit.
 
 ---
 
@@ -215,7 +215,7 @@ and nothing else. A test asserts `risk_engine.py` does not import `effective_uni
 **Do not change `src/orchestrator/scan.py:1118`'s `actively_wheeling` read** or
 `src/ibkr/market_data.py:536`'s `strike_bands` read. Neither list is overridable.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """An override changes what the system does. Except where it must not."""
@@ -241,14 +241,14 @@ def test_strike_bands_and_actively_wheeling_still_read_the_file() -> None:
     ...
 ```
 
-- [ ] **Step 2:** Migrate the call sites. Keep the diff minimal: one import and one expression per
+- [x] **Step 2:** Migrate the call sites. Keep the diff minimal: one import and one expression per
   site. Do not refactor anything else in these files.
 
-- [ ] **Step 3: Run the full suite.** This changes a strategy generator's eligibility check.
+- [x] **Step 3: Run the full suite.** This changes a strategy generator's eligibility check.
   Every pre-existing CSP, scan and EOD test must still pass. If one fails, the migration is wrong
   and the test is right.
 
-- [ ] **Step 4:** Verify the fence is still green: `src/strategies/` must still not import
+- [x] **Step 4:** Verify the fence is still green: `src/strategies/` must still not import
   `src.api` or `src.research`. `src/common/universe.py` is neither, so this is fine, but confirm
   rather than assume. Commit.
 
@@ -286,7 +286,7 @@ Required behaviours, each with a test:
 - An overridden entry is returned with `overridden: true`, `created_by` and `created_at`, so the
   UI can show provenance and offer a revert.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The override surface is two lists wide, and that is the safety property."""
@@ -326,7 +326,7 @@ def test_the_universe_route_reports_which_lists_are_editable(client) -> None:
     assert editable == {"would_own", "watchlist"}
 ```
 
-- [ ] **Step 2:** Implement, run the full suite, update `docs/web/commands.md` and
+- [x] **Step 2:** Implement, run the full suite, update `docs/web/commands.md` and
   `docs/web/api.md`, commit.
 
 ---
@@ -355,7 +355,7 @@ Required behaviours, each with a test:
 - Every mutation renders a `CommandReceipt` and stops polling at a terminal state.
 - No em dashes in any of the copy.
 
-- [ ] Write the tests, implement, run all six gate commands, commit.
+- [x] Write the tests, implement, run all six gate commands, commit.
 
 ---
 
@@ -363,7 +363,7 @@ Required behaviours, each with a test:
 
 **Files:** Modify `tests/test_web_fence.py`.
 
-- [ ] Add:
+- [x] Add:
 
 ```python
 # ---------------------------------------------------------------------------
@@ -397,7 +397,7 @@ def test_the_overridable_set_matches_the_spec_exactly() -> None:
     assert OVERRIDABLE_LISTS == frozenset({"would_own", "watchlist"})
 ```
 
-- [ ] Run the full suite. Commit.
+- [x] Run the full suite. Commit.
 
 ---
 
@@ -406,13 +406,13 @@ def test_the_overridable_set_matches_the_spec_exactly() -> None:
 **Files:** `STATUS.md`, `README.md`, `SETUP.md`, `ARCHITECTURE.md`, `CLAUDE.md`,
 `docs/web/*`, `Web plan/P2-IMPLEMENTATION-PLAN.md`.
 
-- [ ] **Update `STATUS.md`.** Replace the "P2 — Options console: Deliberately not built" row with
+- [x] **Update `STATUS.md`.** Replace the "P2 — Options console: Deliberately not built" row with
   what was built, in the style M5 and M6 of P0/P1 used: the modules, the routes, the invariants,
   the rulings made along the way, and the test counts. State explicitly what is **not** built:
   no order ticket (spec §4.3), no Tailscale, no `sectors` override, and P3 through P5 still
   deferred.
 
-- [ ] **Update root `CLAUDE.md`** with the three P2 facts, and no more than three, so the file
+- [x] **Update root `CLAUDE.md`** with the three P2 facts, and no more than three, so the file
   does not double:
   1. The API reads the trading database read-only and writes exactly one table,
      `app_commands`, through `src/api/commands.py`.
@@ -423,14 +423,14 @@ def test_the_overridable_set_matches_the_spec_exactly() -> None:
 
   Add a doc-update trigger row: **new command kind → `docs/web/commands.md`**.
 
-- [ ] **Update `README.md`** layout table with `src/api/commands.py`,
+- [x] **Update `README.md`** layout table with `src/api/commands.py`,
   `src/common/universe.py`, `src/execution/promote_pipeline.py`,
   `src/notify/command_drain.py`, and `web/app/options/`.
 
-- [ ] **Update `SETUP.md`** with the `API_TOKEN` change from Task 1.7 and a short section on
+- [x] **Update `SETUP.md`** with the `API_TOKEN` change from Task 1.7 and a short section on
   using the options console, mirroring the existing "Using the Telegram bot" section's shape.
 
-- [ ] **Verify `docs/web/commands.md` is complete.** Every kind from 1.3 has a section with its
+- [x] **Verify `docs/web/commands.md` is complete.** Every kind from 1.3 has a section with its
   payload, dedupe key, what applies it, every failure reason it can return, and what an operator
   should do about each. Cross-check against every `reason` string in `command_drain.py`:
 
@@ -441,46 +441,56 @@ grep -o '^| `[a-z_]*`' docs/web/commands.md | sort -u
 
   Every reason in the first list must appear in the second.
 
-- [ ] **Regenerate the schema and client types:**
+- [x] **Regenerate the schema and client types:**
 
 ```bash
 python -c "import json;from src.api.main import create_app;print(json.dumps(create_app().openapi(),indent=2))" > docs/web/openapi.json
 cd web && npm run gen:api
 ```
 
-- [ ] **Add the implementation log** to `Web plan/P2-IMPLEMENTATION-PLAN.md` in the style of
+- [x] **Add the implementation log** to `Web plan/P2-IMPLEMENTATION-PLAN.md` in the style of
   `milestones/P0-P1/M6-options-recommendations.md`: what each model shipped, what was escalated,
   and every ruling made along the way.
 
-- [ ] **Final gate, all six:**
+- [x] **Final gate, all six:**
 
 ```bash
 python -m pytest -q && ruff check . && mypy src
 cd web && npx vitest run && npm run lint && npm run build
 ```
 
-- [ ] Commit.
+- [x] Commit.
 
 ---
 
 ## Milestone 7 acceptance
 
-- [ ] `would_own` and `watchlist` are editable from the browser, and the edit changes CSP
+- [x] `would_own` and `watchlist` are editable from the browser, and the edit changes CSP
   eligibility within a minute, verified by a real test against
   `generate_cash_secured_puts`.
-- [ ] `sectors` cannot be overridden through the API, through the schema, or through the
+- [x] `sectors` cannot be overridden through the API, through the schema, or through the
   composer, even when a row is inserted directly into the table.
-- [ ] `src/engine/risk_engine.py` still reads `get_config()` and imports nothing from the
+- [x] `src/engine/risk_engine.py` still reads `get_config()` and imports nothing from the
   override path.
-- [ ] Removing an `actively_wheeling` symbol is refused at the API and ignored by the composer.
-- [ ] An unreadable overrides table falls back to the YAML base rather than emptying the
+- [x] Removing an `actively_wheeling` symbol is refused at the API and ignored by the composer.
+- [x] An unreadable overrides table falls back to the YAML base rather than emptying the
   universe.
-- [ ] Adding to `would_own` carries a confirmation that names the actual consequence: the system
+- [x] Adding to `would_own` carries a confirmation that names the actual consequence: the system
   may be assigned shares.
-- [ ] No enrichment layer can write an override.
-- [ ] Every command reason in the code appears in `docs/web/commands.md`.
-- [ ] `STATUS.md` records P2 as built and P3 through P5 as still deferred.
-- [ ] Full gate green, all six commands.
+- [x] No enrichment layer can write an override.
+- [x] Every command reason in the code appears in `docs/web/commands.md`.
+- [x] `STATUS.md` records P2 as built and P3 through P5 as still deferred.
+- [x] Full gate green, all six commands.
+
+> **Complete (2026-09-07).** All seven tasks shipped and committed (Tasks 7.1-7.6 through
+> `6d74e4c`; Task 7.7's close-out documentation in this pass). Final gate:
+> `python -m pytest -q` (1920 passed), `ruff check .` clean, `mypy src` clean,
+> `cd web && npx vitest run` (203 passed), `npm run lint` clean, `npm run build` clean. Every
+> acceptance item above was independently re-verified during Task 7.7, not just re-asserted —
+> see `Web plan/P2-IMPLEMENTATION-PLAN.md`'s M7 implementation log for the full account,
+> including the one fix-loop round (Task 7.4's entries-union bug) and every ruling made along
+> the way. **P2 is complete** — this was the last milestone in the phase; see
+> `Web plan/P2-IMPLEMENTATION-PLAN.md` for the phase-level close-out note.
 
 ---
 

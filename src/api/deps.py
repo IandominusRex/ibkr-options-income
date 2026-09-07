@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.api.auth import Role, User, authenticate
 from src.api.trading_db import trading_session
+from src.research.store.models import SymbolRow
 from src.research.store.session import research_session
 
 _bearer = HTTPBearer(auto_error=False)
@@ -56,3 +57,19 @@ def trading_db() -> Iterator[Session]:
 
 
 TradingDb = Annotated[Session, Depends(trading_db)]
+
+
+def assert_known_symbol(research: Session, symbol: str) -> str:
+    """Raise 404 unless ``symbol`` (case-insensitive) is a known SEC filer in the research
+    symbol directory. Returns the upper-cased symbol otherwise.
+
+    Shared by ``routers/universe.py``'s thin ``POST``/``DELETE /universe/{list_name}/{symbol}``
+    wrappers and ``routers/commands.py``'s generic ``POST /commands`` boundary check for
+    ``universe_add``/``universe_remove`` (M7 final-review Fix 2) — without this check at the
+    generic route too, an owner could smuggle an override for a symbol that does not exist in
+    the research directory straight past the thin wrappers' validation.
+    """
+    upper = symbol.upper()
+    if research.get(SymbolRow, upper) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+    return upper

@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from src.common.config import get_config
+from src.common.universe import effective_universe
 
 
 class Warning(BaseModel):
@@ -36,8 +37,7 @@ def _leveraged_set() -> set[str]:
 
 
 def _would_own_set() -> set[str]:
-    cfg = get_config()
-    raw = cfg.universe.get("would_own") or []
+    raw = effective_universe().get("would_own") or []
     return {str(s).upper() for s in raw}
 
 

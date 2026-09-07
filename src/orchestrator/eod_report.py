@@ -28,6 +28,7 @@ from src.claude.runner import write_journal_narrative
 from src.common.config import get_config
 from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, EODSummary, PositionSnapshot
+from src.common.universe import effective_universe
 from src.ibkr.connection import IBKRConnection
 from src.ibkr.portfolio import (
     enrich_positions_with_greeks_async,
@@ -103,7 +104,7 @@ def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
 
 def _universe_symbols(cfg) -> list[str]:
     """Indexes ∪ watchlist ∪ would_own — the symbols whose IV history we keep fresh."""
-    u = cfg.universe
+    u = effective_universe()
     return sorted(
         set(u.get("indexes", [])) | set(u.get("watchlist", [])) | set(u.get("would_own", []))
     )
@@ -351,7 +352,7 @@ async def run() -> None:
     yesterday_unrealized = _load_yesterday_unrealized(today)
 
     # 4. Build the summary.
-    watchlist = list(cfg.universe.get("watchlist", []))
+    watchlist = list(effective_universe().get("watchlist", []))
     prev_watchlist = _load_yesterday_watchlist(today)
     watchlist_changed = prev_watchlist is None or prev_watchlist != watchlist
     summary = _build_eod_summary(

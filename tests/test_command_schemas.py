@@ -161,27 +161,13 @@ def test_dedupe_key_for_keyed_kinds() -> None:
         )
         == "roll_request:NVDA"
     )
-    assert (
-        dedupe_key_for(
-            CommandKind.UNIVERSE_ADD,
-            validate_payload(
-                CommandKind.UNIVERSE_ADD, {"symbol": "NVDA", "list_name": "watchlist"}
-            ),
-        )
-        == "universe_add:watchlist:NVDA"
-    )
-    assert (
-        dedupe_key_for(
-            CommandKind.UNIVERSE_REMOVE,
-            validate_payload(
-                CommandKind.UNIVERSE_REMOVE, {"symbol": "META", "list_name": "would_own"}
-            ),
-        )
-        == "universe_remove:would_own:META"
-    )
 
 
 def test_dedupe_key_for_unkeyed_kinds_is_none() -> None:
+    """halt/resume/set_autonomy/refresh/universe_add/universe_remove are all repeatable —
+    see dedupe_key_for's own docstring for why the universe kinds joined this set in the
+    M7 final-review fix round (a stable key let a repeat request dedupe to a stale,
+    already-applied row instead of creating a fresh one)."""
     assert dedupe_key_for(CommandKind.HALT, validate_payload(CommandKind.HALT, {})) is None
     assert dedupe_key_for(CommandKind.RESUME, validate_payload(CommandKind.RESUME, {})) is None
     assert (
@@ -192,6 +178,24 @@ def test_dedupe_key_for_unkeyed_kinds_is_none() -> None:
         is None
     )
     assert dedupe_key_for(CommandKind.REFRESH, validate_payload(CommandKind.REFRESH, {})) is None
+    assert (
+        dedupe_key_for(
+            CommandKind.UNIVERSE_ADD,
+            validate_payload(
+                CommandKind.UNIVERSE_ADD, {"symbol": "NVDA", "list_name": "watchlist"}
+            ),
+        )
+        is None
+    )
+    assert (
+        dedupe_key_for(
+            CommandKind.UNIVERSE_REMOVE,
+            validate_payload(
+                CommandKind.UNIVERSE_REMOVE, {"symbol": "META", "list_name": "would_own"}
+            ),
+        )
+        is None
+    )
 
 
 def test_command_status_constructs() -> None:

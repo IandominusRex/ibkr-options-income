@@ -537,8 +537,10 @@ still 204.
 
 ## `GET /universe`
 
-The effective scan universe, read-only in P1 (`editable: false`). Every list is returned
-unmodified and in `universe.yaml` file order.
+The effective scan universe (`config/universe.yaml` composed with any
+`universe_overrides` rows — M7 Task 7.3's `effective_universe()`), reported as four
+per-list entries so the client can render override provenance and offer a revert
+(`editable: true` since Task 7.4).
 
 **Auth:** required.
 
@@ -547,13 +549,82 @@ unmodified and in `universe.yaml` file order.
 | Field | Type | Notes |
 |---|---|---|
 | `as_of` | datetime | |
-| `indexes` | `string[]` | in file order |
-| `watchlist` | `string[]` | in file order |
-| `would_own` | `string[]` | CSP allowlist |
-| `actively_wheeling` | `string[]` | subset of `would_own` |
+| `lists` | `UniverseListOut[]` | exactly four, in this order: `indexes`, `watchlist`, `would_own`, `actively_wheeling` |
 | `sectors` | `Record<string, string>` | symbol → sector tag |
 | `strike_bands` | `Record<string, number>` | symbol → band fraction, only overrides |
-| `editable` | bool | `false` in P1 — no write path exists |
+| `editable` | bool | `true` — Task 7.4 shipped the write path |
+
+`UniverseListOut`: `{ name: string, overridable: bool, entries: UniverseEntry[] }`.
+`overridable` is `true` only for `would_own`/`watchlist`; `indexes` and
+`actively_wheeling` are always `overridable: false` and their `entries` never carry
+override metadata (not even when a stray `universe_overrides` row names a symbol in one
+of those lists — defence in depth, mirroring the composer's own discipline).
+
+`UniverseEntry`: `{ symbol: string, overridden: bool, removed: bool, created_by: string
+| null, created_at: datetime | null }`. For `would_own`/`watchlist`, `entries` is the
+**union** of the YAML base membership (file order) and any override row for that list —
+not just the composed (already-filtered) list — so a `remove`-overridden YAML-base
+symbol is still visible with `removed: true` and its provenance, letting the UI grey it
+out and offer a revert (`POST` the same symbol back). A symbol added purely via override
+(not in the YAML base) is appended after the base entries, in `created_at` order, with
+`overridden: true`. A `remove` override on a symbol the `actively_wheeling` guard kept in
+`would_own` (see `POST`/`DELETE` below) shows `overridden: true, removed: false` — the row
+exists but had no practical effect.
+
+---
+
+## `POST /universe/{list_name}/{symbol}`
+
+Add a symbol to a universe list. A thin wrapper over `POST /commands`
+(`kind: "universe_add"`): validates, then enqueues the intent and returns the same
+`CommandStatus` shape — the actual mutation happens later, in the drain, so poll the
+returned `id` (or `GET /commands/{id}`) to see it move to `applied`.
+
+**Auth:** owner only (unlike `POST /watchlist/{symbol}`, which allows any authenticated
+role — a universe edit moves CSP eligibility, so it follows every other P2 write route's
+owner gate instead of the P1 watchlist precedent).
+
+`list_name` is a path parameter typed `Literal["would_own", "watchlist"]` — FastAPI/
+Pydantic rejects any other value with `422` **before an `app_commands` row can exist**,
+so `sectors`, `leveraged_etfs`, `strike_bands`, and `actively_wheeling` can never be
+edited from the web, with zero side effects on a rejected request.
+
+| Status | When |
+|---|---|
+| 201 | command enqueued — always, even on a repeat request. `universe_add`/`universe_remove` carry no `dedupe_key` (M7 final-review fix): `set_override` is an idempotent upsert, so a stable key could match an already-`applied` command from an earlier, semantically different request and silently no-op instead of re-applying. |
+| 404 | `symbol` is not a known SEC filer (checked against the research symbol directory) |
+| 422 | `list_name` is not `would_own`/`watchlist` |
+
+**Response (201):** `CommandStatus` (see `docs/web/commands.md`), `kind: "universe_add"`.
+
+See `docs/web/commands.md`'s `universe_add` section for what the drain does with the
+enqueued intent.
+
+---
+
+## `DELETE /universe/{list_name}/{symbol}`
+
+Remove a symbol from a universe list. A thin wrapper over `POST /commands`
+(`kind: "universe_remove"`) — same enqueue-and-poll shape as the `POST` route above, not
+a synchronous mutation.
+
+**Auth:** owner only (same reasoning as `POST` above).
+
+Same `422`/`404` as `POST` above, plus one more check specific to removal: removing a
+symbol that is in `actively_wheeling` **from `would_own`** is `409` with
+`{"reason": "actively_wheeling", "symbol": ...}` — you cannot stop being willing to own
+something you are actively wheeling. This guard is scoped to `would_own` only, mirroring
+`effective_universe()`'s own remove-guard: removing the same symbol from `watchlist` is
+harmless and is **not** blocked.
+
+| Status | When |
+|---|---|
+| 201 | command enqueued — always, even on a repeat request (no `dedupe_key`, same reasoning as `POST` above) |
+| 404 | `symbol` is not a known SEC filer |
+| 409 | `list_name == "would_own"` and `symbol` is in `actively_wheeling` |
+| 422 | `list_name` is not `would_own`/`watchlist` |
+
+**Response (201):** `CommandStatus`, `kind: "universe_remove"`.
 
 ---
 

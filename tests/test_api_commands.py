@@ -33,6 +33,22 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(dbmod, "_SessionLocal", None)
     monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{trading_db}")
     dbmod.init_db()
+
+    # Research DB — isolated + seeded, so the universe_add/universe_remove boundary check
+    # (Fix 2) has a real symbol directory to check an unknown symbol against, mirroring
+    # tests/test_drain_universe.py's fixture.
+    from src.research.store.models import SymbolRow
+    from src.research.store.session import init_research_db, research_session
+
+    monkeypatch.setattr(
+        "src.research.store.session._resolve_url",
+        lambda: f"sqlite:///{(tmp_path / 'research.db').as_posix()}",
+    )
+    monkeypatch.setattr("src.research.store.session._engine", None)
+    init_research_db()
+    with research_session() as s:
+        s.add(SymbolRow(symbol="NVDA", cik="1", name="NVIDIA Corp"))
+
     return TestClient(create_app())
 
 
@@ -316,6 +332,56 @@ def test_post_halt_with_an_over_length_reason_is_422_and_creates_no_row(client) 
 
     with session_scope() as s:
         assert s.query(AppCommandRow).count() == 0
+
+
+def test_post_universe_add_with_an_unknown_symbol_is_404_and_creates_no_row(client) -> None:
+    """M7 final-review Fix 2: routers/universe.py's thin POST/DELETE wrappers already 404 on
+    an unknown symbol, but the generic POST /commands route accepted a universe_add/
+    universe_remove payload directly with no such check — an owner could smuggle an override
+    for a symbol that doesn't exist in the research directory straight past those wrappers.
+    """
+    r = client.post(
+        "/commands",
+        json={"kind": "universe_add", "payload": {"symbol": "ZZZZZZ", "list_name": "would_own"}},
+        headers=AUTH,
+    )
+    assert r.status_code == 404
+
+    from src.storage.db import session_scope
+    from src.storage.models import AppCommandRow
+
+    with session_scope() as s:
+        assert s.query(AppCommandRow).count() == 0
+
+
+def test_post_universe_remove_with_an_unknown_symbol_is_404_and_creates_no_row(client) -> None:
+    r = client.post(
+        "/commands",
+        json={
+            "kind": "universe_remove",
+            "payload": {"symbol": "ZZZZZZ", "list_name": "watchlist"},
+        },
+        headers=AUTH,
+    )
+    assert r.status_code == 404
+
+    from src.storage.db import session_scope
+    from src.storage.models import AppCommandRow
+
+    with session_scope() as s:
+        assert s.query(AppCommandRow).count() == 0
+
+
+def test_post_universe_add_with_a_known_symbol_still_works_via_the_generic_route(client) -> None:
+    """The Fix 2 guard must not refuse a symbol that genuinely exists — NVDA is seeded into
+    the research DB by the client fixture."""
+    r = client.post(
+        "/commands",
+        json={"kind": "universe_add", "payload": {"symbol": "NVDA", "list_name": "would_own"}},
+        headers=AUTH,
+    )
+    assert r.status_code == 201
+    assert r.json()["kind"] == "universe_add"
 
 
 def test_post_halt_in_live_mode_needs_no_confirmation(client, monkeypatch) -> None:

@@ -55,6 +55,7 @@ from src.common.schemas import (
     TechnicalStats,
     TradeCandidate,
 )
+from src.common.universe import effective_universe
 from src.engine.decision_engine import select_top_candidates_detailed
 from src.engine.risk_engine import validate_candidates
 from src.engine.scoring import score_candidates
@@ -1115,7 +1116,7 @@ async def _run_scan_body(
     await tracker.tick("account", "✅")
 
     # --- 2. Symbol universe ---
-    would_own: list[str] = cfg.universe.get("would_own", [])
+    would_own: list[str] = effective_universe()["would_own"]
     actively_wheeling: list[str] = cfg.universe.get("actively_wheeling", [])
     dip_watch: list[str] = sorted(set(would_own) - set(actively_wheeling))
     holdings_symbols: set[str] = {

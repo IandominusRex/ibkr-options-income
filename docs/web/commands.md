@@ -21,9 +21,11 @@ means:
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row. |
+| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/refresh/universe_add/universe_remove — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
 | `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
+| `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
+| `DELETE` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_remove` intent. Same `422`/`404` as above, plus `409` when removing an `actively_wheeling` symbol from `would_own`. See the `universe_remove` section below. |
 
 Every route requires the `owner` role. A viewer token gets `403`.
 
@@ -320,33 +322,79 @@ to the new approval.
 ### `universe_add` — add a symbol to a universe list
 
 - **Payload:** `{ symbol: str, list_name: "would_own" | "watchlist" }`
-- **Dedupe key:** `universe_add:{list_name}:{symbol}`
-- **Applied by:** M7. Creates a `UniverseOverrideRow`. **`sectors` and
-  `leveraged_etfs` are rejected at the type level** — only `would_own` and
-  `watchlist` may be edited from the web (spec §7.2).
+- **Dedupe key:** `None` (may repeat — an add/remove is an idempotent upsert, same shape
+  as halt/resume/set_autonomy; repeating one just re-applies). Fixed in the M7 final-review
+  round: a stable `universe_add:{list_name}:{symbol}` key let a later, semantically different
+  request against the same symbol dedupe to an already-`applied` row from an earlier request
+  (e.g. remove -> add -> remove would silently no-op on the second remove).
+- **Reachable from the console since Task 7.4:** `POST /universe/{list_name}/{symbol}` is a
+  thin wrapper that validates and enqueues this exact intent, returning the same
+  `CommandStatus` shape `POST /commands` returns — see the route in the table above.
+- **Applied by:** M7 Task 7.4. The drain handler (`src/notify/command_drain.py`'s
+  `_universe_add`) upserts a `UniverseOverrideRow` with `action="add"` via
+  `src.storage.universe_overrides.set_override`, then calls
+  `invalidate_universe_cache()` so the edit is live in this process at once, not up to 60s
+  later. Idempotent: repeating it re-applies the same upsert, same idempotency shape as
+  halt/resume/set_autonomy. Sends no Telegram notification — a universe edit is reversible,
+  non-urgent config, not a safety-critical control. Applies with `ib is None`.
 - **Live mode:** No confirmation needed.
-- **Failure modes:** `unknown_symbol`, `already_in_list`.
-- **Milestone:** M7.
+- **Failure modes:** none — all real validation happens **before** a command row can exist,
+  at the API boundary: `list_name` outside `{would_own, watchlist}` is `422` (enforced by
+  `Literal` typing on both the `POST /universe/{list_name}/{symbol}` path parameter and
+  `UniversePayload.list_name`, so `sectors`/`leveraged_etfs`/`strike_bands`/
+  `actively_wheeling` can never become a command), and an unknown `symbol` (not in the
+  research symbol directory) is `404` — checked both by `POST /universe/{list_name}/{symbol}`
+  and, since the M7 final-review round, by the generic `POST /commands` route too
+  (`src/api/deps.py::assert_known_symbol`, shared by both), so the generic route can no
+  longer be used to bypass the thin wrapper's symbol check. A command that reaches the drain
+  is therefore always valid and always applies.
+- **Milestone:** M7, built (Task 7.4; boundary check closed at the generic route in the
+  final-review round).
 
 ### `universe_remove` — remove a symbol from a universe list
 
 - **Payload:** `{ symbol: str, list_name: "would_own" | "watchlist" }`
-- **Dedupe key:** `universe_remove:{list_name}:{symbol}`
-- **Applied by:** M7. Removes the `UniverseOverrideRow` (or the base entry, if the
-  symbol is in `universe.yaml`).
+- **Dedupe key:** `None` (may repeat — an add/remove is an idempotent upsert, same shape
+  as halt/resume/set_autonomy; repeating one just re-applies).
+- **Reachable from the console since Task 7.4:** `DELETE /universe/{list_name}/{symbol}` is
+  a thin wrapper that validates and enqueues this exact intent.
+- **Applied by:** M7 Task 7.4. The drain handler (`_universe_remove`) upserts a
+  `UniverseOverrideRow` with `action="remove"` — **never `clear_override`**: a remove always
+  means "record an override that suppresses this symbol," whether it started in the YAML
+  base or was itself an override-add; deleting the row would silently do nothing for a
+  YAML-base symbol. Also calls `invalidate_universe_cache()`. Sends no Telegram
+  notification. Applies with `ib is None`.
 - **Live mode:** No confirmation needed.
-- **Failure modes:** `not_in_list`.
-- **Milestone:** M7.
+- **Failure modes:** none — same boundary-first validation as `universe_add` (including the
+  generic `POST /commands` route's `404` check since the final-review round), plus one more
+  check specific to removal: removing a symbol that is in `actively_wheeling` **from
+  `would_own`** is `409` with `{"reason": "actively_wheeling", "symbol": ...}` — you cannot
+  stop being willing to own something you are actively wheeling. This guard is
+  `would_own`-only, mirroring the composer's own remove-guard (`src/common/universe.py`):
+  removing the same symbol from `watchlist` is harmless and is not blocked. It is enforced
+  only by the thin `DELETE /universe/{list_name}/{symbol}` wrapper, not by the generic
+  `POST /commands` route — the composer's own remove-guard in `effective_universe()` makes
+  that asymmetry safe regardless of which route an override row came in through, so only the
+  symbol-existence check needed closing at the generic route. As with `universe_add`, a
+  command that reaches the drain is always valid and always applies.
+- **Milestone:** M7, built (Task 7.4; boundary check closed at the generic route in the
+  final-review round).
 
 ### `refresh` — request a scan refresh
 
 - **Payload:** `{}` (empty)
 - **Dedupe key:** `None` (may repeat — multiple refresh requests are harmless, only
   one scan runs at a time thanks to the scan lease)
-- **Applied by:** M6. Triggers a full scan on the next cycle.
+- **Applied by:** nobody yet — `refresh` parses and enqueues fine (`CommandKind.REFRESH` is a
+  valid kind, `RefreshPayload` is `{}`), but no handler is registered for it in
+  `command_drain.py`. A submitted `refresh` command reaches the drain and fails with
+  `unknown_kind`, the same as any other unregistered kind would — it does **not** trigger a
+  scan. Spec §6.6 describes the intended behaviour (ask the trading process to refresh
+  positions and quotes on its next cycle); no milestone has implemented it yet.
 - **Live mode:** No confirmation needed.
-- **Failure modes:** `scan_already_running`.
-- **Milestone:** M6.
+- **Failure modes:** `unknown_kind` (today, always — see above). `scan_already_running` is the
+  intended failure mode once a handler exists, not a current one.
+- **Milestone:** none — spec §6.6 only, unbuilt.
 
 ---
 
