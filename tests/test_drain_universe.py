@@ -456,3 +456,66 @@ def test_actively_wheeling_never_carries_override_metadata_even_with_a_stray_row
     entry = next(e for e in wheeling["entries"] if e["symbol"] == "NVDA")
     assert entry["overridden"] is False
     assert entry["removed"] is False
+
+
+def test_a_guarded_remove_on_an_actively_wheeling_symbol_shows_overridden_but_not_removed(
+    client, yaml_universe
+) -> None:
+    """A `remove` override row on a `would_own` symbol that is also `actively_wheeling` is kept
+    effectively present by the composer's guard (src/common/universe.py) — the row exists (an
+    operator did ask to remove it) but had no practical effect, so entries must show
+    `overridden=True, removed=False`, not silently drop the row's existence."""
+    from src.storage.db import session_scope
+    from src.storage.models import UniverseOverrideRow
+
+    wheeling = yaml_universe["actively_wheeling"][0]
+    assert wheeling in yaml_universe["would_own"]
+
+    with session_scope() as s:
+        s.add(
+            UniverseOverrideRow(
+                symbol=wheeling, list_name="would_own", action="remove", created_by="owner"
+            )
+        )
+
+    body = client.get("/universe", headers=AUTH).json()
+    would_own = next(lst for lst in body["lists"] if lst["name"] == "would_own")
+    entry = next(e for e in would_own["entries"] if e["symbol"] == wheeling)
+    assert entry["overridden"] is True
+    assert entry["removed"] is False
+    assert entry["created_by"] == "owner"
+
+    # Sanity: the composer itself really did keep it present, so this is exercising the guard's
+    # effect and not an accident of test setup.
+    from src.common.universe import effective_universe, invalidate_universe_cache
+
+    invalidate_universe_cache()
+    assert wheeling in effective_universe()["would_own"]
+
+
+def test_a_removed_non_base_symbol_still_appears_in_entries(client, yaml_universe) -> None:
+    """set_override upserts: an operator who POSTs a not-in-base symbol and then DELETEs it
+    again leaves exactly one row, action="remove", for a symbol that was never in the YAML
+    base. That row must still surface in entries (union semantics) rather than vanish — it is
+    real provenance an operator would want to see, and the only trace that the symbol was ever
+    added at all."""
+    from src.storage.db import session_scope
+    from src.storage.models import UniverseOverrideRow
+
+    symbol = "ZZZQ"
+    assert symbol not in yaml_universe["would_own"]
+
+    with session_scope() as s:
+        s.add(
+            UniverseOverrideRow(
+                symbol=symbol, list_name="would_own", action="remove", created_by="owner"
+            )
+        )
+
+    body = client.get("/universe", headers=AUTH).json()
+    would_own = next(lst for lst in body["lists"] if lst["name"] == "would_own")
+    entry = next((e for e in would_own["entries"] if e["symbol"] == symbol), None)
+    assert entry is not None, "a non-base remove-only override row must not vanish from entries"
+    assert entry["overridden"] is True
+    assert entry["removed"] is True
+    assert entry["created_by"] == "owner"

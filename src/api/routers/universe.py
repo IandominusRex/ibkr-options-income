@@ -121,17 +121,29 @@ def _overridable_entries(
                 )
             )
 
+    # Every override row for a symbol NOT in the YAML base — regardless of action. `set_override`
+    # is an upsert (src/storage/models.py's UniverseOverrideRow docstring: "an add followed by a
+    # remove is one row with action='remove', never two rows"), so an operator who POSTs a
+    # not-in-base symbol and then DELETEs it again leaves exactly this shape: a single
+    # action="remove" row for a symbol that was never in `base`. That row still belongs in the
+    # union (it is real provenance an operator would want to see/revert), so it is not filtered
+    # out here just because its action isn't "add" — only `add` rows produce a *visible* addition
+    # (`removed=False`); a non-base `remove` row is the same symbol, currently suppressed
+    # (`removed=True`). Both kinds share one created_at-ascending append order, matching
+    # `_compose_list`'s own ordering for the `add` ones (a non-base `remove` row never appears in
+    # `effective_universe()`'s composed list at all, so this ordering choice only affects this
+    # router's richer `entries` view, not the composer).
     base_set = set(base)
-    added = sorted(
-        (row for row in overrides if row.action == "add" and row.symbol not in base_set),
+    non_base = sorted(
+        (row for row in overrides if row.symbol not in base_set),
         key=lambda row: row.created_at,
     )
-    for row in added:
+    for row in non_base:
         entries.append(
             UniverseEntry(
                 symbol=row.symbol,
                 overridden=True,
-                removed=False,
+                removed=row.action == "remove",
                 created_by=row.created_by,
                 created_at=row.created_at,
             )
