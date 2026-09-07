@@ -975,14 +975,23 @@ def controls(
     # web halt's moment is recorded without a new settings key. A halt tripped by a
     # circuit breaker has no command row, so this is null and the banner honestly
     # renders no time rather than a fabricated one. Only meaningful while `halted`
-    # is true; resume's row is ignored so a past halt cannot shadow a fresh one.
+    # is true. The halt search is bounded to after the most recent APPLIED `resume`
+    # command: without that bound, a resume followed by a fresh, command-row-less
+    # halt (a circuit-breaker trip, or a Telegram /halt — neither writes a row) would
+    # surface the *previous* halt episode's timestamp instead of an honest null.
     halted_at: datetime | None = None
     if halted:
-        halted_at = db.execute(
+        last_resume_at = db.execute(
             select(func.max(AppCommandRow.applied_at)).where(
-                AppCommandRow.kind == "halt", AppCommandRow.status == "applied"
+                AppCommandRow.kind == "resume", AppCommandRow.status == "applied"
             )
         ).scalar_one_or_none()
+        halt_query = select(func.max(AppCommandRow.applied_at)).where(
+            AppCommandRow.kind == "halt", AppCommandRow.status == "applied"
+        )
+        if last_resume_at is not None:
+            halt_query = halt_query.where(AppCommandRow.applied_at > last_resume_at)
+        halted_at = db.execute(halt_query).scalar_one_or_none()
 
     from src.api.models.options import AutonomyRung
 

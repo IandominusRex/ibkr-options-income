@@ -194,3 +194,46 @@ def test_halted_at_is_null_for_a_halt_with_no_command_row(client) -> None:
         assert body["halted_at"] is None
     finally:
         set_halted(False)
+
+
+def test_halted_at_does_not_leak_a_stale_timestamp_from_a_prior_halt_cycle(client) -> None:
+    """A resumed web halt must not shadow a later, command-row-less halt.
+
+    Without a lower bound on the halt search, the max-applied-halt query would keep
+    returning the *first* halt's timestamp forever, even after a resume and a brand
+    new (breaker-tripped) halt — fabricating a stale time instead of the honest null
+    the earlier test above requires for a halt with no command row.
+    """
+    from src.storage.system_settings import set_halted
+
+    old_halt = datetime.now(UTC) - timedelta(hours=2)
+    old_resume = datetime.now(UTC) - timedelta(hours=1)
+    with session_scope() as s:
+        s.add(
+            AppCommandRow(
+                kind="halt",
+                payload={"reason": "earlier web halt"},
+                requested_by="owner",
+                status="applied",
+                applied_at=old_halt,
+            )
+        )
+        s.add(
+            AppCommandRow(
+                kind="resume",
+                payload={},
+                requested_by="owner",
+                status="applied",
+                applied_at=old_resume,
+                result={"released_by": "owner"},
+            )
+        )
+    # A fresh halt with no command row of its own — e.g. a circuit breaker trip.
+    set_halted(True, reason="circuit breaker, second episode")
+    try:
+        r = client.get("/options/controls", headers=AUTH)
+        body = r.json()
+        assert body["halted"] is True
+        assert body["halted_at"] is None
+    finally:
+        set_halted(False)

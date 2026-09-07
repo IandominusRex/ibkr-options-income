@@ -380,3 +380,44 @@ from `HALT_KEY` would give the system two halt flags, one of which nothing reads
 >   Telegram does, none needs the broker; (4) `ConfirmAction`'s docstring corrected.
 > - Gate at completion: `python -m pytest -q` (1856 passed) · `ruff check .` · `mypy src` ·
 >   `cd web && npx vitest run` (185 passed) · `npm run lint` · `npm run build` — all green.
+
+---
+
+> **Verification (2026-09-07, Claude Sonnet 5):** independently re-checked every claim above
+> against the tree and re-ran the full gate; all six commands reproduced exactly (1856/185
+> passed, ruff/mypy/lint/build clean) and every behavioural claim in 6.1–6.4 held up, with one
+> exception:
+>
+> **Bug found and fixed — `halted_at` could leak a stale timestamp from a *previous* halt
+> episode.** `routers/options.py`'s `GET /options/controls` derived `halted_at` as the max
+> `applied_at` over every applied `halt` command ever, with no lower bound. Sequence that broke
+> it: a web halt is applied, then resumed (from the web, Telegram, or elsewhere), then a later,
+> *command-row-less* halt occurs — a circuit-breaker trip, or a Telegram `/halt` (neither writes
+> an `AppCommandRow`). The query still found the *first* halt's `applied_at` and returned it,
+> instead of the `null` design decision 1 explicitly promised for exactly this case ("an honest
+> 'unknown' beats a wrong timestamp"). The existing test
+> (`test_halted_at_is_null_for_a_halt_with_no_command_row`) only covered a fresh DB with zero
+> prior halt rows, so it never exercised the halt→resume→halt sequence and missed it.
+>
+> Fixed by bounding the halt lookup to applied strictly after the most recent APPLIED `resume`
+> row (`routers/options.py`, `controls()`); a halt with no qualifying row after that bound still
+> renders `null`. Added a regression test,
+> `test_halted_at_does_not_leak_a_stale_timestamp_from_a_prior_halt_cycle`
+> (`tests/test_api_controls.py`), that seeds an old applied halt+resume pair and asserts a
+> subsequent command-row-less halt reports `halted_at: null`. Added the field to
+> `ARCHITECTURE.md`'s `routers/options.py` entry, which had never mentioned `halted_at`.
+>
+> Gate after the fix: `python -m pytest -q` → **1857 passed** (the one new test) ·
+> `ruff check .` clean · `mypy src` clean, 151 files. Web gate unaffected (no frontend files
+> touched) and not re-run.
+>
+> Everything else in the completion record above is accurate as written: the idempotency,
+> no-broker, reason-defaulting, `released_by`, `promotion_blockers`/`promotion_refused`,
+> best-effort-notify, single-`HALT_KEY`, schema-hardening (200-char cap, `extra="forbid"`,
+> `dedupe_key_for → None`, `_LIVE_CONFIRM_KINDS` exclusion with its comment), confirmation-weight
+> asymmetry (one-click halt, typed-word resume, click-through autonomy), unmissable banner
+> (fill + text, mounted above the tab nav on `/options`), `drain_healthy` messaging, and the
+> `controls_drain_env` fixture-aliasing pattern were all read in full and hold up exactly as
+> claimed. Test counts matched exactly: 13 in `test_drain_controls.py`, 44 across
+> `test_command_schemas.py`/`test_api_commands.py`, 22 across the three frontend test files, 3
+> in `test_write_path_invariants.py`.
