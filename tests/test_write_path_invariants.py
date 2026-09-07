@@ -33,6 +33,11 @@ from tests.test_drain_promote import _payload as _promote_payload
 from tests.test_drain_promote import drain_env as promote_drain_env  # noqa: F401
 from tests.test_drain_promote import fake_chain  # noqa: F401
 
+# M5 Task 5.4: same sanctioned reuse for the roll degradation tests — the roll_request handler's
+# `drain_env`/`fake_chain` live in tests/test_drain_roll.py.
+from tests.test_drain_roll import drain_env as roll_drain_env  # noqa: F401
+from tests.test_drain_roll import fake_chain as roll_fake_chain  # noqa: F401
+
 _EXPIRY = date.today() + timedelta(days=30)
 
 
@@ -340,3 +345,115 @@ def test_promotable_stages_match_the_spec_exactly() -> None:
     from src.api.routers.commands import PROMOTABLE_STAGES
 
     assert PROMOTABLE_STAGES == frozenset({"score_floor", "dedupe", "top_n"})
+
+
+# ---------------------------------------------------------------------------
+# 7. Roll degradation tests (M5 Task 5.4)
+#
+# The console proposes a roll; only an approved OrderRow reaches execute_roll. The handler is a
+# thin resolver around queue_roll_for_approval; it must not reimplement the roll's economics, and
+# the web path must run the same defensive policy the monitor does. Three invariants, each pinned
+# by one test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_roll_request_never_reaches_execute_roll_directly(
+    roll_drain_env,  # noqa: F811
+    roll_fake_chain,  # noqa: F811
+) -> None:
+    """The console proposes. Only an approved OrderRow reaches execute_roll.
+
+    Belt and braces: a behavioral tripwire (a `wraps`-spy on `execute_roll` is never called when a
+    roll_request is drained, and no OrderRow is created) plus a source scan proving neither the
+    drain nor the roll pipeline imports `execute_roll` at all. If a future edit wired the
+    executor into the propose path, the spy would catch it at runtime and the grep at lint time.
+    """
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from src.execution.roll_executor import execute_roll
+    from src.notify.command_drain import drain_once
+
+    pos = roll_drain_env.seed_short("NVDA  261017C00180000", underlying="NVDA", delta=-0.45, dte=9)
+    roll_fake_chain.will_offer_roll(pos, strike=175.0, dte=21, credit=0.35)
+    cid = roll_drain_env.enqueue("roll_request", {"position_symbol": "NVDA  261017C00180000"})
+
+    with patch("src.execution.roll_executor.execute_roll", wraps=execute_roll) as spy:
+        await drain_once(roll_drain_env.ib, roll_drain_env.bot, "chat")
+
+    assert roll_drain_env.status(cid) == "applied"
+    assert not spy.called
+    assert roll_drain_env.total_order_count() == 0
+
+    root = Path(__file__).resolve().parents[1]
+    for rel in ("src/notify/command_drain.py", "src/execution/roll_pipeline.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        # The propose path must not import the executor or call execute_roll. Docstring mentions
+        # of the function name are fine (the roll_pipeline module documents the gap it closes);
+        # a code-level import or call is what would wire the two together.
+        assert "import roll_executor" not in text, f"{rel} imports the roll executor"
+        assert "from src.execution.roll_executor" not in text, f"{rel} imports the roll executor"
+        assert "execute_roll(" not in text, f"{rel} calls execute_roll directly"
+
+
+def test_the_roll_handler_adds_no_economic_bounds_of_its_own() -> None:
+    """The roll's economic bounds live in rolling.py. The handler must not reimplement, tighten,
+    or relax them. A source scan is the structural half of this; the behavioral half is the
+    `defensive=True` spy test below proving the handler delegates to the same generator the
+    pipeline uses."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "src" / "notify" / "command_drain.py").read_text(encoding="utf-8")
+    for token in ("max_debit", "min_delta_reduction", "roc_pct"):
+        assert token not in text, f"roll economics leaked into the drain: {token}"
+
+
+@pytest.mark.asyncio
+async def test_the_web_and_the_monitor_share_one_roll_policy(
+    roll_drain_env,  # noqa: F811
+    roll_fake_chain,  # noqa: F811
+) -> None:
+    """defensive=True in both paths. A web roll is not a different roll.
+
+    The handler pre-checks by calling `generate_roll_candidates(..., defensive=True)` itself, and
+    `queue_roll_for_approval` calls it again internally with the same flag. Wrapping the generator
+    at both call sites (the handler's deferred-import source module and the pipeline's
+    module-bound name) and asserting every recorded call passed `defensive=True` proves the web
+    path and the monitor's path run one policy. The monitor shares it because it goes through the
+    same `queue_roll_for_approval`.
+    """
+    from unittest.mock import patch
+
+    from src.notify.command_drain import drain_once
+    from src.strategies.rolling import generate_roll_candidates as real_generate
+
+    pos = roll_drain_env.seed_short("NVDA  261017C00180000", underlying="NVDA", delta=-0.45, dte=9)
+    roll_fake_chain.will_offer_roll(pos, strike=175.0, dte=21, credit=0.35)
+    cid = roll_drain_env.enqueue("roll_request", {"position_symbol": "NVDA  261017C00180000"})
+
+    handler_calls: list[bool] = []
+    pipeline_calls: list[bool] = []
+
+    def handler_spy(*args: object, **kwargs: object) -> object:
+        handler_calls.append(bool(kwargs.get("defensive")))
+        return real_generate(*args, **kwargs)
+
+    def pipeline_spy(*args: object, **kwargs: object) -> object:
+        pipeline_calls.append(bool(kwargs.get("defensive")))
+        return real_generate(*args, **kwargs)
+
+    import src.execution.roll_pipeline as roll_pipeline
+
+    with (
+        patch("src.strategies.rolling.generate_roll_candidates", handler_spy),
+        patch.object(roll_pipeline, "generate_roll_candidates", pipeline_spy),
+    ):
+        await drain_once(roll_drain_env.ib, roll_drain_env.bot, "chat")
+
+    assert roll_drain_env.status(cid) == "applied"
+    assert handler_calls, "the handler must pre-check by generating candidates itself"
+    assert all(handler_calls), "the handler's generation call must pass defensive=True"
+    assert pipeline_calls, "the pipeline must generate candidates internally"
+    assert all(pipeline_calls), "the pipeline's generation call must pass defensive=True"
