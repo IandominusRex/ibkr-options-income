@@ -209,7 +209,12 @@ through the read-only trading-database engine, never the write-scoped command en
   `generate_roll_candidates(..., defensive=True)`, picks the best by ROC, and raises a **PENDING**
   `ApprovalRow` with the frozen snapshot. Two steps, never one: this proposes; the operator
   approves the proposal through the same path as every other approval (§6.1). No order is placed
-  by a roll request.
+  by a roll request. **Under `defensive=True` every candidate's `roc_pct` is 0** (D4: a defensive
+  roll is judged on risk reduction, not yield) — `generate_roll_candidates`'s ROC-desc sort is
+  therefore a no-op tie, and "picks the best" really means "picks whichever qualifying quote the
+  chain listed first." Two fetches taken minutes apart can list qualifying strikes in a different
+  order even when neither stops qualifying — see the in-flight check below, which accounts for
+  this rather than assuming a stable "best."
 - **Result on success:** `{"approval_id": int, "candidate_id": str}` — link the receipt to
   `/options/{approval_id}`.
 - **The web roll is the monitor's roll.** `defensive=True` in both paths; the roll's own net-debit
@@ -238,10 +243,15 @@ specific reason available:
 `roll_already_working` covers both an active order (the monitor's proposal was approved and is
 working) and an existing PENDING approval (the monitor's proposal is awaiting the operator's
 decision). The latter is the case `has_active_order` alone would miss — it only sees `OrderRow`s —
-so the handler also checks for a PENDING approval on the same deterministic candidate id, which is
-what prevents a web request from racing the monitor into two approvals for the same position
-(M5's headline acceptance criterion). A sixth reason, `position_not_found`, fires when the OCC
-symbol is not in the live portfolio at all.
+so the handler also checks for a PENDING approval on the same deterministic candidate id. This
+check runs against **every candidate `generate_roll_candidates` returns for this position, not
+just the top-ranked one** — since ranking is a no-op tie under `defensive=True` (see above), the
+monitor's earlier proposal can still be sitting in this fetch's candidate list without being
+first. Checking only the top-ranked candidate would let a web request race the monitor into a
+second approval whenever the chain lists strikes in a different order between the two fetches
+(`tests/test_drain_roll.py::test_an_in_flight_roll_is_caught_even_when_no_longer_top_ranked`
+pins this). A sixth reason, `position_not_found`, fires when the OCC symbol is not in the live
+portfolio at all.
 
 A `no_qualifying_roll` outcome is a correct answer rendered as one, not an error: no roll on the
 current chain clears the roll's own bounds. The frontend renders it as a plain sentence, not red

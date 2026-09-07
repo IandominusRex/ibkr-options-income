@@ -407,3 +407,61 @@ async def test_the_web_and_the_monitor_share_one_roll_policy() -> None:
 >      expensive chain fetch happens once, in `fetch_roll_inputs`).
 > - Gate at completion: `python -m pytest -q` (1826 passed) · `ruff check .` · `mypy src` ·
 >   `cd web && npx vitest run` (163 passed) · `npm run lint` · `npm run build` — all green.
+
+---
+
+## Verification pass (Sonnet, 2026-09-07)
+
+Checked the opencode/glm-5.2 build above against this plan and against the live gate before
+trusting the completion record's claims (per the standing practice after a prior handoff's gate
+claims did not hold up under independent re-run). Everything reproduced exactly: `python -m
+pytest -q` (1826 passed), `ruff check .`, `mypy src`, `cd web && npx vitest run` (163 passed),
+`npm run lint`, `npm run build` — no gap between what was claimed and what the tree actually
+does. The `Taken-by`/per-task notes, the two flagged design decisions, and the `docs/web/
+commands.md`/`ARCHITECTURE.md`/`STATUS.md` updates all matched the code. Every task's tests are
+substantive (real spies/wraps and source scans, not vacuous assertions).
+
+**One real defect found and fixed, in Task 5.1's own new code.** `_roll_request` derived the
+candidate `queue_roll_for_approval` would pick via `generate_roll_candidates(..., defensive=True)`
+and checked only that single, top-ranked candidate (`candidates[0]`) against
+`_existing_roll_in_flight` before deciding whether a roll was already working. This assumed the
+"top-ranked candidate" is a stable, economically-meaningful pick — but it is not: under
+`defensive=True`, `generate_roll_candidates` (`src/strategies/rolling.py`) hardcodes every
+candidate's `roc_pct` to `0.0` (defensive rolls are judged on risk reduction, not yield, per D4),
+so the function's own `candidates.sort(key=lambda c: c.roc_pct, reverse=True)` sorts an all-zero
+key — a no-op tie. Python's stable sort then just preserves whatever order the quotes came back
+from the chain in, so `candidates[0]` is "whichever qualifying strike the chain listed first,"
+not "the best roll." Two chain fetches taken minutes apart (the monitor's at alert time, the
+web's at request time) can list the same set of qualifying strikes in a different order without
+either one stopping to qualify — so the monitor's already-PENDING candidate can silently drop to
+second (or later) in the web's fresh fetch. The pre-fix handler would then find no match for
+`candidates[0]`'s id, fall through to `queue_roll_for_approval`, and raise a **second** PENDING
+approval for the same position — exactly the outcome the milestone's headline acceptance
+criterion ("a monitor alert and a web request produce exactly one approval") exists to prevent.
+Confirmed by temporarily reverting the fix and re-running the new regression test: the pre-fix
+handler let the second approval through (`res["reason"] == "applied"`, two `ApprovalRow`s for one
+position) instead of failing with `roll_already_working`.
+
+**Fix:** check every candidate `generate_roll_candidates` returns (not just `candidates[0]`)
+against `_existing_roll_in_flight`, both in the initial pre-check and in the narrow
+`queued is None` re-derivation. Cost is negligible — bounded to the handful of strikes/expiries a
+single chain fetch returns, and no new DB round-trips beyond one `_existing_roll_in_flight` call
+per candidate. `src/notify/command_drain.py`'s `_roll_request` is the only file touched. New
+regression test: `tests/test_drain_roll.py::test_an_in_flight_roll_is_caught_even_when_no_longer_top_ranked`
+(and a new `_FakeChain.will_offer_two_rolls` fixture helper to construct a chain with two
+qualifying candidates whose order flips between the "monitor" fetch and the "web" fetch).
+`docs/web/commands.md`, `ARCHITECTURE.md`, and this file's Task 5.1 note are updated to describe
+checking every candidate, not the single best one, and to name the `roc_pct = 0.0` tie as the
+reason ranking is not stable across fetches.
+
+**Flagged, not fixed — out of scope for this pass.** The same `roc_pct = 0.0` fact means
+`rolling.py`'s defensive-roll generator has never actually picked the "best" roll by any economic
+measure, for the monitor's alert path either — only the first qualifying quote the chain happens
+to list. This predates M5 entirely (it is part of the existing N20 roll-pipeline economics, not
+code this milestone wrote) and changes which contract gets proposed on both the Telegram and web
+paths, a bigger-blast-radius decision than a handler-level fix — worth a human look at whether
+defensive rolls should rank by delta-reduction magnitude, liquidity, or credit instead of an
+always-tied ROC, but deliberately not changed here.
+
+Gate after the fix: `python -m pytest -q` (1827 passed) · `ruff check .` · `mypy src` ·
+`cd web && npx vitest run` (163 passed) · `npm run lint` · `npm run build` — all green.

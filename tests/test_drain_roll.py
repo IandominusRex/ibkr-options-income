@@ -106,6 +106,59 @@ class _FakeChain:
         self.side_effect = None
         self._wire()
 
+    def will_offer_two_rolls(
+        self,
+        position: PositionSnapshot,
+        *,
+        first: tuple[float, int, float],
+        second: tuple[float, int, float],
+        new_delta: float = -0.30,
+        current_mid: float = 0.65,
+    ) -> None:
+        """A chain offering two distinct qualifying roll targets — ``first``/``second`` are
+        ``(strike, dte, credit)`` tuples, both clearing the real defensive bounds. Used to prove
+        the in-flight check considers every qualifying candidate, not just the current best:
+        under ``defensive=True`` every candidate's ``roc_pct`` is 0 (rolls are judged on risk
+        reduction, not yield, per D4), so ``generate_roll_candidates``'s ROC-desc sort is a
+        no-op tie and ``candidates[0]`` is really just whichever quote the chain listed first —
+        which can differ between two fetches taken minutes apart on a moving chain even though
+        both quotes still qualify.
+        """
+        new_expiry_current = position.expiry or (date.today() + timedelta(days=9))
+        quotes = [
+            OptionQuote(
+                underlying=position.underlying or position.symbol,
+                right=position.right or OptionRight.CALL,
+                strike=position.strike or 180.0,
+                expiry=new_expiry_current,
+                bid=round(current_mid - 0.05, 2),
+                ask=round(current_mid + 0.05, 2),
+                volume=500,
+                open_interest=2000,
+                delta=position.delta,
+                iv=0.30,
+            )
+        ]
+        for strike, dte, credit in (first, second):
+            new_mid = round(current_mid + credit, 2)
+            quotes.append(
+                OptionQuote(
+                    underlying=position.underlying or position.symbol,
+                    right=position.right or OptionRight.CALL,
+                    strike=strike,
+                    expiry=date.today() + timedelta(days=dte),
+                    bid=round(new_mid - 0.05, 2),
+                    ask=round(new_mid + 0.05, 2),
+                    volume=500,
+                    open_interest=2000,
+                    delta=new_delta,
+                    iv=0.30,
+                )
+            )
+        self.quotes = quotes
+        self.side_effect = None
+        self._wire()
+
     def will_offer_no_roll(
         self,
         position: PositionSnapshot,
@@ -498,6 +551,50 @@ async def test_a_monitor_alert_and_a_web_request_produce_one_approval(
     )
     monitor_approval_id = queued[0]
 
+    cid = drain_env.enqueue("roll_request", {"position_symbol": "NVDA  261017C00180000"})
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    res = drain_env.result(cid)
+    assert res["reason"] == "roll_already_working"
+    assert res["detail"]["approval_id"] == monitor_approval_id
+    assert drain_env.pending_approval_count(underlying="NVDA") == 1
+
+
+@pytest.mark.asyncio
+async def test_an_in_flight_roll_is_caught_even_when_no_longer_top_ranked(
+    drain_env, fake_chain
+) -> None:
+    """The race above still closes when the chain has moved enough, between the monitor's fetch
+    and this one, that the monitor's candidate is no longer the top-ranked one.
+
+    Under ``defensive=True`` every candidate's ``roc_pct`` is 0 (D4: a defensive roll is judged
+    on risk reduction, not yield), so ``generate_roll_candidates``'s ROC-desc sort is a no-op tie
+    and ``candidates[0]`` is really just whichever qualifying quote the chain listed first. Two
+    fetches taken minutes apart can list qualifying strikes in a different order (or with a
+    different one leading) even without either strike stopping being valid. A handler that only
+    checked the single best candidate's id would miss this and race the monitor into a second
+    approval for the same position; checking every qualifying candidate is what actually
+    satisfies the milestone's "exactly one approval" acceptance criterion.
+    """
+    from src.execution.roll_pipeline import queue_roll_for_approval
+    from src.notify.command_drain import drain_once
+
+    pos = drain_env.seed_short("NVDA  261017C00180000", underlying="NVDA", delta=-0.45, dte=9)
+
+    # At t1 (the monitor's fetch) 172.5 is listed first and becomes the approval. Both dte 21
+    # and dte 25 sit inside the covered_call dte window (7-28), so both quotes qualify.
+    fake_chain.will_offer_two_rolls(pos, first=(172.5, 21, 0.50), second=(175.0, 25, 0.35))
+    queued = queue_roll_for_approval(
+        pos, fake_chain.quotes, fake_chain.iv, fake_chain.tech, chat_id="chat", ttl_minutes=120
+    )
+    assert queued is not None
+    monitor_approval_id, monitor_cand = queued
+    assert monitor_cand.strike == 172.5, "the test's premise: 172.5 must be first at t1"
+
+    # At t2 (the web request) the chain lists 175 first instead. 172.5 — the monitor's
+    # already-pending approval — still qualifies, just no longer first.
+    fake_chain.will_offer_two_rolls(pos, first=(175.0, 25, 0.60), second=(172.5, 21, 0.50))
     cid = drain_env.enqueue("roll_request", {"position_symbol": "NVDA  261017C00180000"})
     await drain_once(drain_env.ib, drain_env.bot, "chat")
 

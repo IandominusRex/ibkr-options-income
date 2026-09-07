@@ -424,20 +424,27 @@ async def _roll_request(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: A
         raise CommandFailed("chain_unavailable", {"detail": "the chain returned no quotes"})
 
     # Disambiguate the pipeline's None BEFORE calling it (Task 5.1 design point): derive the same
-    # best candidate the pipeline will pick — same function, same inputs, same deterministic id —
-    # and check what is already in flight for it. The roll's economics stay in rolling.py; this
-    # call only asks "would anything qualify, and what would its id be".
+    # candidates the pipeline will choose from — same function, same inputs, same deterministic
+    # ids — and check what is already in flight for any of them, not just the current best.
+    # Two fetches taken minutes apart see different chain snapshots, so the top-ranked candidate
+    # at fetch time is not guaranteed to be the same contract the monitor's earlier PENDING
+    # approval named — but that earlier contract is still in this list as long as it still
+    # qualifies, just possibly no longer first. Checking every candidate (bounded — a handful of
+    # strikes/expiries from one chain) is what actually closes the monitor-vs-web race; checking
+    # only the best would miss it whenever ranking shifts between the two fetches. The roll's
+    # economics stay in rolling.py; this call only asks "would anything qualify, and what would
+    # each one's id be".
     from src.strategies.rolling import generate_roll_candidates
 
     candidates = generate_roll_candidates(position, quotes, iv_stats, tech_stats, defensive=True)
     if not candidates:
         raise CommandFailed("no_qualifying_roll")
-    best = candidates[0]
 
     with session_scope() as s:
-        in_flight = _existing_roll_in_flight(s, best.candidate_id)
-    if in_flight is not None:
-        raise CommandFailed("roll_already_working", in_flight)
+        for cand in candidates:
+            in_flight = _existing_roll_in_flight(s, cand.candidate_id)
+            if in_flight is not None:
+                raise CommandFailed("roll_already_working", in_flight)
 
     ttl_minutes = get_config().approval.ttl_minutes
     queued = queue_roll_for_approval(
@@ -450,9 +457,10 @@ async def _roll_request(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: A
         # pipeline error — it never raises) surface it as a handler error rather than inventing
         # a sixth reason.
         with session_scope() as s:
-            in_flight = _existing_roll_in_flight(s, best.candidate_id)
-        if in_flight is not None:
-            raise CommandFailed("roll_already_working", in_flight)
+            for cand in candidates:
+                in_flight = _existing_roll_in_flight(s, cand.candidate_id)
+                if in_flight is not None:
+                    raise CommandFailed("roll_already_working", in_flight)
         raise RuntimeError(
             "queue_roll_for_approval returned None with no order or pending approval in flight"
         )
