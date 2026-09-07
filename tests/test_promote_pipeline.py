@@ -119,9 +119,11 @@ def test_queue_promoted_for_approval_upserts_the_candidate_row(tmp_path, monkeyp
     queue_promoted_for_approval(reprice, chat_id="1", ttl_minutes=60)
 
     with session_scope() as s:
-        rows = s.execute(
-            select(CandidateRow).where(CandidateRow.candidate_id == cand.candidate_id)
-        ).scalars().all()
+        rows = (
+            s.execute(select(CandidateRow).where(CandidateRow.candidate_id == cand.candidate_id))
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].payload["premium"] == 2.75
 

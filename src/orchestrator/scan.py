@@ -1984,9 +1984,7 @@ async def run_ticker_scan(
     try:
         priced = await _price_and_gate_ticker(ib, ticker)
     except TickerPricingAborted as exc:
-        await _ticker_edit_msg(
-            bot, chat_id, progress_msg_id, f"❌ *Scan failed* — {exc.detail}\\."
-        )
+        await _ticker_edit_msg(bot, chat_id, progress_msg_id, f"❌ *Scan failed* — {exc.detail}\\.")
         return
 
     quotes = priced.quotes

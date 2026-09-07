@@ -466,3 +466,113 @@ async def _roll_request(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: A
         )
     approval_id, cand = queued
     return {"approval_id": approval_id, "candidate_id": cand.candidate_id}
+
+
+# ---------------------------------------------------------------------------
+# M6 Task 6.1 — halt / resume / set_autonomy.
+#
+# The three control-plane handlers. None of them touches an order path: they flip the
+# same `system_settings` keys the Telegram /halt, /resume and /autonomy commands flip
+# (`set_halted`, `set_autonomy_level`), so there is exactly one halt flag and one
+# autonomy rung, read through `system_settings.HALT_KEY` / `get_autonomy_level` by every
+# consumer. Two halt flags would be a catastrophe — one of them would silently stop
+# being read. The reference behaviour is `handle_halt_command` / `handle_resume_command`
+# / `handle_autonomy_command` in approval_service.py.
+#
+# The asymmetry that shapes them (M6): halting when you did not mean to costs some
+# missed premium; failing to halt when you meant to can cost a great deal more. So
+# halt/resume are idempotent and always `applied` (the operator's intent is satisfied),
+# and never fail for lack of a broker — TWS being down is a common shape of "something
+# is wrong", which is exactly when halting matters most. set_autonomy enforces the same
+# promotion evidence gate Telegram does (`promotion_blockers`), so the web is not the
+# rung ladder's back door.
+#
+# Each handler sends a Telegram notification — the one place a handler notifies,
+# because these are control-plane changes with no order-poll loop to report them later.
+# A halt raised from the browser must be visible to the operator wherever they are.
+# ---------------------------------------------------------------------------
+
+
+def _notify(bot: Any, chat_id: str, text: str) -> None:
+    """Best-effort Telegram send. A control must apply even when Telegram is down too.
+
+    The bot's send_message is async in production; the call is scheduled without
+    blocking the drain either way (fire-and-forget through the event loop).
+    """
+    try:
+        import asyncio
+
+        coro = bot.send_message(chat_id=chat_id, text=text)
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+    except Exception:
+        log.warning("control notification failed", exc_info=True)
+
+
+@register("halt")
+def _halt(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
+    """Set the kill switch. Never needs the broker, never fails for lack of one.
+
+    Idempotent: halting an already-halted system is `applied` — the operator's intent
+    is satisfied, not an error. The reason (defaulted to a readable sentence when empty,
+    so `/status` and the console always say something useful) is recorded in
+    `HALT_REASON_KEY` through `set_halted`, exactly like Telegram's /halt.
+    """
+    from src.api.models.commands import HaltPayload
+    from src.storage.system_settings import set_halted
+
+    payload = HaltPayload(**command.payload)
+    reason = (payload.reason or "").strip() or "halted from the web console"
+    set_halted(True, reason)
+    log.warning("Kill switch ENGAGED via web command %s — %s", command.id, reason)
+    _notify(bot, chat_id, f"Execution HALTED from the web console: {reason}")
+    return {"halted": True, "reason": reason}
+
+
+@register("resume")
+def _resume(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
+    """Release the kill switch. Also idempotent and broker-free.
+
+    Records who released it in the command's `result` (`requested_by`), because
+    releasing the kill switch re-arms execution and the ledger should say who did.
+    """
+    from src.storage.system_settings import set_halted
+
+    set_halted(False)
+    log.warning("Kill switch RELEASED via web command %s (by %s)", command.id, command.requested_by)
+    _notify(
+        bot,
+        chat_id,
+        "Execution RESUMED from the web console. QUEUED orders resume on the next poll cycle.",
+    )
+    return {"halted": False, "released_by": command.requested_by}
+
+
+@register("set_autonomy")
+def _set_autonomy(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
+    """Move the autonomy rung. The four `AutonomyLevel` values are enforced at parse
+    time (M1's `SetAutonomyPayload.level: AutonomyLevel`); this handler never coerces
+    an unknown value. Promotion is refused the same way Telegram refuses it —
+    `promotion_blockers` must be empty — so the web is not a back door around the
+    evidence gate. Demotion (including a same-rung no-op) always applies.
+    """
+    from src.api.models.commands import SetAutonomyPayload
+    from src.storage.system_settings import (
+        get_autonomy_level,
+        promotion_blockers,
+        set_autonomy_level,
+    )
+
+    payload = SetAutonomyPayload(**command.payload)
+    blockers = promotion_blockers(payload.level)
+    if blockers:
+        raise CommandFailed("promotion_refused", {"blockers": blockers})
+    set_autonomy_level(payload.level)
+    log.warning(
+        "Autonomy level set to %s via web command %s (by %s)",
+        payload.level.value,
+        command.id,
+        command.requested_by,
+    )
+    _notify(bot, chat_id, f"Autonomy set to {payload.level.value.upper()} from the web console.")
+    return {"level": payload.level.value, "previous": get_autonomy_level().value}

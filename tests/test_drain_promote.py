@@ -161,9 +161,7 @@ class _FakeChain:
             mock = AsyncMock(return_value=self.quotes)
         mp.setattr(scanmod, "get_option_chain_quotes_async", mock)
         mp.setattr(scanmod, "get_positions", lambda ib: [self.position] if self.position else [])
-        mp.setattr(
-            scanmod, "get_account_snapshot_async", AsyncMock(return_value=self.account)
-        )
+        mp.setattr(scanmod, "get_account_snapshot_async", AsyncMock(return_value=self.account))
         mp.setattr(
             scanmod,
             "get_iv_stats",
