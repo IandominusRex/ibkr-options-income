@@ -8,9 +8,10 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
  * Anything that can reach an order confirms here before the intent is created.
  * The summary renders the exact contract and contract count — never summarised
  * away. With `requireTypedWord`, the confirm control stays disabled until the
- * word matches exactly, case-sensitive (used by `halt` in M6). Escape and the
- * cancel control both call `onCancel`. Focus is trapped while open and returns
- * to the trigger on close. The entry transition is disabled under
+ * word matches exactly, case-sensitive (used by `resume` in M6: releasing the
+ * kill switch re-arms execution; halting does not — halt is one click). Escape
+ * and the cancel control both call `onCancel`. Focus is trapped while open and
+ * returns to the trigger on close. The entry transition is disabled under
  * prefers-reduced-motion.
  */
 export type ConfirmActionProps = {

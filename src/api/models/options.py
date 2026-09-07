@@ -241,6 +241,11 @@ class ControlsResponse(Envelope):
     rungs: list[AutonomyRung] = Field(default_factory=list)
     halted: bool
     halt_reason: str | None = None
+    # When the current halt was engaged: the most recent applied `halt` command's
+    # applied_at. Null when halted by a circuit breaker (no command row) — the
+    # console then renders the banner without a time rather than fabricating one
+    # (M6 Task 6.3). No separate settings key exists for this, by design.
+    halted_at: datetime | None = None
     mode: Literal["paper", "live"]
     drain_healthy: bool
     drain_last_seen: datetime | None = None

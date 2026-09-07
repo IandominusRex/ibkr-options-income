@@ -970,6 +970,20 @@ def controls(
         select(func.count()).select_from(AppCommandRow).where(AppCommandRow.status == "pending")
     ).scalar_one()
 
+    # halted_at (M6 Task 6.3): the time the current halt was engaged, derived from the
+    # most recent APPLIED `halt` command row — the command queue is the one place a
+    # web halt's moment is recorded without a new settings key. A halt tripped by a
+    # circuit breaker has no command row, so this is null and the banner honestly
+    # renders no time rather than a fabricated one. Only meaningful while `halted`
+    # is true; resume's row is ignored so a past halt cannot shadow a fresh one.
+    halted_at: datetime | None = None
+    if halted:
+        halted_at = db.execute(
+            select(func.max(AppCommandRow.applied_at)).where(
+                AppCommandRow.kind == "halt", AppCommandRow.status == "applied"
+            )
+        ).scalar_one_or_none()
+
     from src.api.models.options import AutonomyRung
 
     rungs = [AutonomyRung(level=lvl, label=lbl) for lvl, lbl in _RUNGS]
@@ -984,6 +998,7 @@ def controls(
         rungs=rungs,
         halted=halted,
         halt_reason=halt_reason,
+        halted_at=halted_at,
         mode=mode,  # type: ignore[arg-type]
         drain_healthy=drain_healthy,
         drain_last_seen=drain_last_seen,

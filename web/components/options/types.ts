@@ -178,6 +178,7 @@ export type ControlsResponse = {
   rungs: { level: string; label: string }[];
   halted: boolean;
   halt_reason: string | null;
+  halted_at: string | null;
   mode: "paper" | "live";
   drain_healthy: boolean;
   drain_last_seen: string | null;

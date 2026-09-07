@@ -151,3 +151,46 @@ def test_halted_and_halt_reason(client) -> None:
     assert body["halt_reason"] == "manual kill switch"
     # cleanup
     set_halted(False)
+
+
+def test_halted_at_derives_from_the_most_recent_applied_halt_command(client) -> None:
+    """M6 Task 6.3: the banner shows when the halt was engaged, derived from the
+    command queue (no separate settings key). A breaker-tripped halt has no command
+    row, so it renders no time rather than a fabricated one."""
+    from src.storage.system_settings import set_halted
+
+    when = datetime.now(UTC) - timedelta(minutes=3)
+    with session_scope() as s:
+        s.add(
+            AppCommandRow(
+                kind="halt",
+                payload={"reason": "from the web"},
+                requested_by="owner",
+                status="applied",
+                applied_at=when,
+            )
+        )
+    set_halted(True, reason="from the web")
+    try:
+        r = client.get("/options/controls", headers=AUTH)
+        body = r.json()
+        assert body["halted"] is True
+        assert body["halted_at"] is not None
+        # The exact second survives the JSON round trip (server stores naive UTC).
+        assert body["halted_at"].startswith(when.strftime("%Y-%m-%dT%H:%M:%S"))
+    finally:
+        set_halted(False)
+
+
+def test_halted_at_is_null_for_a_halt_with_no_command_row(client) -> None:
+    """A circuit-breaker halt has no command row: honest null, no fabricated time."""
+    from src.storage.system_settings import set_halted
+
+    set_halted(True, reason="circuit breaker")
+    try:
+        r = client.get("/options/controls", headers=AUTH)
+        body = r.json()
+        assert body["halted"] is True
+        assert body["halted_at"] is None
+    finally:
+        set_halted(False)
