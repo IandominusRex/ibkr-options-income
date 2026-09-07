@@ -737,7 +737,13 @@ P&L over the position's total cost (not per-share cost). `alerts` is empty, not
 
 The autonomy rung, halt state, mode, and command-drain health.
 
-**Response — `ControlsResponse`:** `{ as_of, autonomy: { level, label }, rungs: { level, label }[], halted, halt_reason, mode, drain_healthy, drain_last_seen, pending_commands }`.
+**Response — `ControlsResponse`:** `{ as_of, autonomy: { level, label }, rungs: { level, label }[], halted, halt_reason, halted_at, mode, drain_healthy, drain_last_seen, pending_commands }`.
+
+`halted_at` (M6) is when the current halt was engaged: the most recent applied
+`halt` command's `applied_at`, derived from the command queue (no separate
+settings key). A halt tripped by a circuit breaker has no command row, so
+`halted_at` is `null` there — the console's banner then says "at an unknown time"
+rather than fabricating one. Only meaningful while `halted` is true.
 
 `drain_healthy` reads the `command_drain_heartbeat` system_settings key (written
 by the command drain after every cycle) and compares it against twice

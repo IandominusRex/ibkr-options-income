@@ -260,33 +260,62 @@ to the new approval.
 
 ### `halt` — halt the system
 
-- **Payload:** `{ reason: str = "" }`
-- **Dedupe key:** `None` (may repeat — halting an already-halted system is harmless)
-- **Applied by:** M6. Sets the `execution_halted` kill switch in `system_settings`.
-  Auto-close still runs (closing risk should never wait for a human tap).
-- **Live mode:** No confirmation needed.
-- **Failure modes:** none.
-- **Milestone:** M6.
+- **Payload:** `{ reason: str = "" }` — capped at 200 characters (`422` past that:
+  the reason is rendered by `/status` and the console's halt banner, and an
+  unbounded string in a settings value is a rendering bug waiting to happen).
+  Unknown keys are `422`. An empty reason is stored as
+  `"halted from the web console"` so `/status` and the console always say something.
+- **Dedupe key:** `None` (may repeat — halting an already-halted system is `applied`,
+  not `failed`; the operator's intent is satisfied either way).
+- **Applied by:** M6 Task 6.1. Sets the same `execution_halted` kill switch
+  Telegram's `/halt` sets (`system_settings.set_halted`) — one halt flag, read
+  through `HALT_KEY` by every consumer. Auto-close still runs (closing risk should
+  never wait for a human tap). Applies with TWS down: halting matters most
+  exactly when something is wrong, and "TWS is unreachable" is a common shape of
+  wrong.
+- **Live mode:** No confirmation needed, by design — a halt must never be slowed by
+  a second step (the live token is for intents that can reach an order; a halt is
+  not one). Pinned by `tests/test_write_path_invariants.py::
+  test_control_kinds_never_require_live_confirmation`.
+- **Notification:** the handler sends a Telegram message, so a halt raised from the
+  browser is visible to the operator wherever they are.
+- **Failure modes:** none (beyond a dead drain, which the receipt states in words).
+- **Milestone:** M6, built.
 
 ### `resume` — resume the system after a halt
 
-- **Payload:** `{}` (empty)
-- **Dedupe key:** `None` (may repeat)
-- **Applied by:** M6. Clears the `execution_halted` kill switch.
-- **Live mode:** No confirmation needed.
-- **Failure modes:** `not_halted`.
-- **Milestone:** M6.
+- **Payload:** `{}` (empty; unknown keys are `422`, so a client typo is caught
+  rather than ignored).
+- **Dedupe key:** `None` (may repeat). Resuming an un-halted system is `applied`,
+  not `failed` — the same idempotency shape as halt.
+- **Applied by:** M6 Task 6.1. Clears the kill switch via `set_halted(False)` and
+  records who released it in the command's `result` (`released_by`), because
+  releasing the kill switch re-arms execution. Applies with TWS down.
+- **Live mode:** No confirmation needed (same asymmetry as halt). The console side
+  is deliberately heavier: resume requires the typed word RESUME while halt is one
+  click — failing to halt when you meant to costs far more than halting when you
+  did not.
+- **Notification:** the handler sends a Telegram message.
+- **Failure modes:** none (beyond a dead drain).
+- **Milestone:** M6, built.
 
 ### `set_autonomy` — change the autonomy level
 
-- **Payload:** `{ level: "observe" | "manual" | "whitelist" | "full" }`
-- **Dedupe key:** `None` (may repeat — setting the same level twice is harmless)
-- **Applied by:** M6. Persists the new level to `system_settings`. Promotion to
-  `whitelist`/`full` is blocked until the account shows ≥20 fills, ≥60% fill rate,
-  and ≥1 buy-to-close — the same evidence `promotion_blockers` checks.
-- **Live mode:** No confirmation needed.
-- **Failure modes:** `promotion_blocked` (the blockers aren't met).
-- **Milestone:** M6.
+- **Payload:** `{ level: "observe" | "manual" | "whitelist" | "full" }` — anything
+  outside the four rungs is `422` at parse time, before a command row exists, and
+  is never coerced. Unknown keys are `422`.
+- **Dedupe key:** `None` (may repeat — setting the same level twice is harmless).
+- **Applied by:** M6 Task 6.1. Persists the new level through
+  `system_settings.set_autonomy_level`, the same key Telegram's `/autonomy` writes.
+  Promotion is refused the same way Telegram refuses it — `promotion_blockers` must
+  be empty — so the web is not the rung ladder's back door. Demotion (including a
+  same-rung no-op) always applies.
+- **Live mode:** No confirmation needed (control kind).
+- **Notification:** the handler sends a Telegram message.
+- **Failure modes:** `promotion_refused` (`result.detail.blockers` carries the
+  unmet criteria, rendered by the receipt). Reads the trading DB (local SQLite),
+  never the broker.
+- **Milestone:** M6, built.
 
 ### `universe_add` — add a symbol to a universe list
 

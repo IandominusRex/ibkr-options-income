@@ -83,6 +83,9 @@ app/                App Router pages and the root layout
                     "Propose a roll" control per row (<ShortsRow/>) through the same
                     confirm-then-receipt shape; no_qualifying_roll renders as a plain
                     answer, roll_already_working links to the in-flight approval.
+                    Since M6 the strip is live: <HaltControl/> and <AutonomyControl/>
+                    sit in it, and a halted system renders an unmissable banner at
+                    the top of the console with the reason and the time as text.
   options/[approvalId]/  Approval detail: <ApprovalDetailCard/> with the five review
                     fields as labelled sections (<ReviewPanel/>), the ideal zone bar
                     (<IdealZoneBar/>), humanised gate reasons, the alternatives
@@ -122,11 +125,28 @@ components/
                     tracked count renders "n/a samples", never a fabricated "0")
   options/          ApprovalsList (react-query on GET /options/approvals, renders
                     ApprovalCard per pending approval; empty state is one line of
-                    text), ApprovalCard (contract label, contracts, premium per share
+                    text),                     ApprovalCard (contract label, contracts, premium per share
                     and total, score, DTE, order state; links to the detail page;
                     mounts DecideControls), ControlsStrip (react-query on GET /options/controls,
-                    read-only mode/autonomy/halt/drain pills; says "unhealthy" in
-                    words when drain_healthy is false), StageBadge (text label + distinct
+                    read-only mode/drain pills; since M6 also hosts the live controls -
+                    <HaltControl/> and <AutonomyControl/> - plus the halted banner
+                    rendered above the strip when halted is true, with the reason and
+                    time as text, fill and text never colour alone, and a
+                    "the trading service is not draining commands" line beside the
+                    controls whenever drain_healthy is false),
+                    HaltControl (M6: halt is ONE CLICK, no dialog - speed is the
+                    feature, a test name says so; resume requires the typed word
+                    RESUME through ConfirmAction and stays disabled until it matches
+                    exactly; the deliberate M6 asymmetry, and the test names state
+                    why so a later reader does not "fix" it; both disable while
+                    their own command is in flight and render a CommandReceipt;
+                    live-mode responses route through the same second LIVE
+                    confirmation shape as every other control), AutonomyControl
+                    (M6: the four rungs render from the API's rungs array, never
+                    hardcoded; a rung change click-through confirms showing the
+                    current and target rungs; a refused promotion renders
+                    "promotion refused" with the blockers through the receipt - the
+                    web is not the rung ladder's back door), StageBadge (text label + distinct
                     fill per AssessmentStage, never colour alone — reuses the check
                     ribbon's visual language), EmptyState (one line of text, no icon
                     circle), AssessedBrowser (grouped-by-symbol collapsible list with
@@ -186,13 +206,14 @@ components/
                     orders cache as the OrderListResponse shape <OrdersTable/>
                     stores — NOT a bare OrderSummary[] — and invalidates the
                     orders query when a command goes terminal so the next poll
-                    sees the new OrderRow the drain created), ConfirmAction
+                    sees the new OrderRow the drain created),                     ConfirmAction
                     (the confirmation dialog: exact contract and contract count in the
-                    summary, optional case-sensitive typed-word gate for halt in M6,
-                    Escape/cancel call onCancel, focus trapped while open and
-                    returned to the trigger on close, aria-modal + labelled +
-                    visible focus ring, reduced motion disables the entry
-                    transition), CommandReceipt (P2's signature component: state
+                    summary, optional case-sensitive typed-word gate (used by resume
+                    in M6: releasing the kill switch re-arms execution; halting does
+                    not - halt is one click), Escape/cancel call onCancel, focus
+                    trapped while open and returned to the trigger on close,
+                    aria-modal + labelled + visible focus ring, reduced motion
+                    disables the entry transition), CommandReceipt (P2's signature component: state
                     from receiptState — pending never renders as applied, submitted
                     only when an order is working, filled only when a fill exists,
                     stalled stated in words with no spinner, intent id always

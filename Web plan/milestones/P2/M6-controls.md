@@ -8,6 +8,60 @@
 **Spec:** `Web plan/P2-design.md` §6.4, §9.3. **Index:** `Web plan/P2-IMPLEMENTATION-PLAN.md`.
 **Depends on:** Milestone 5.
 
+> **Taken by:** opencode (glm-5.3 via Ollama Cloud) — **all four tasks, 6.1 through 6.4, now
+> complete** (see the completion record at the bottom of this file for per-task notes and the
+> outcomes of the four design decisions flagged below). The `[SONNET]`/`[GLM]` tags are
+> cost-tier routing hints, not capability gates — same
+> convention M1–M5 used, where opencode took every task regardless of tag. All four are
+> honestly within reach here:
+>
+> - **6.1** is trading-system code, but of the lightest kind: `system_settings` already owns
+>   every helper (`set_halted`, `get_halt_reason`, `set_autonomy_level` — verified in the tree),
+>   the Telegram `handle_halt_command` / `handle_resume_command` / `handle_autonomy_command`
+>   (`approval_service.py`) are the reference behaviour, and the drain's `register` /
+>   `drain_once` / `CommandFailed` machinery plus the `drain_env` fixture pattern exist from
+>   M3–M5 (`tests/test_drain_approve_reject.py` etc.). The handlers are thin resolvers over
+>   existing helpers, same shape as `_reject`, with no order path anywhere near them.
+> - **6.2** is pure Pydantic-schema hardening on models that already exist from M1, with the
+>   required behaviours given verbatim; the `needs_confirmation` asymmetry pins what
+>   `_LIVE_CONFIRM_KINDS` already does (halt/resume/set_autonomy are simply not in the set).
+> - **6.3** is judgment-weight work, but the weight table above is the specification and
+>   `ConfirmAction`'s typed-word gate (`requireTypedWord`, "stays disabled until the word
+>   matches exactly") already exists from M3, as do `CommandReceipt`, `submitCommand`,
+>   `useCommandStatus` and the live-mode second-confirmation wiring in `DecideControls`. The
+>   asymmetry (halt one click, resume typed) deliberately refines design §9.3's first draft
+>   ("halt takes a typed word") — this milestone's table is the later, considered word.
+> - **6.4** is pure test authoring against machinery 6.1 builds; the three test bodies are
+>   concrete, and the token-grep pattern is already proven in M5's
+>   `test_the_roll_handler_adds_no_economic_bounds_of_its_own` (same file).
+>
+> **Four design decisions worth flagging up front** (each resolved below, recorded here so the
+> resolution is visible before the diff):
+>
+> 1. **"No new setting keys" vs. the banner's "time it was halted".** Task 6.1 says "write no
+>    new setting keys"; Task 6.3's banner requires "the time it was halted". No halt timestamp
+>    exists anywhere today. Resolution: the resume-side and display-side data is already
+>    sufficient without a new key — the **command row** carries `created_at`/`applied_at`, so
+>    `GET /options/controls` gains `halted_at` derived from the **most recent applied `halt`
+>    command** (a join the read path already knows how to do), and `set_halted` is called
+>    unchanged. A halt tripped by a circuit breaker (no command row) renders the banner without
+>    a time rather than fabricating one — an honest "unknown" beats a wrong timestamp.
+> 2. **`promotion_blockers` on the web rung change.** Telegram's `/autonomy` refuses a
+>    promotion with unmet evidence criteria. The web `set_autonomy` must enforce the same
+>    policy — otherwise the browser becomes the rung ladder's back door — but the milestone
+>    text is silent on it. Resolution: the handler calls `promotion_blockers(target)` exactly
+>    as Telegram does, and unmet criteria fail the command with reason `promotion_refused`
+>    carrying the blocker list, so the receipt can render them. Demotion is always applied.
+> 3. **"Never fails for lack of one" vs. `promotion_blockers`' DB read.** The halt handler
+>    must work with the broker down (design point 1); `promotion_blockers` reads the trading
+>    DB, which is local SQLite and does not need the broker — but it can raise, and its own
+>    fallback returns `["could not read fill history"]`. The handlers keep 6.1's rule absolute:
+>    `halt` and `resume` touch nothing but `system_settings` and never fail for lack of a
+>    broker; only `set_autonomy` reads history, exactly like Telegram does today.
+> 4. **`ConfirmAction`'s docstring says the typed word is "used by `halt` in M6".** The
+>    milestone moved the typed word to `resume`. The component is untouched functionally; its
+>    docstring is corrected to say `resume`, so a later reader does not re-attach it to halt.
+
 **The asymmetry that shapes this milestone:** halting when you did not mean to costs you some
 missed premium. Failing to halt when you meant to can cost a great deal more. So the halt path is
 built to be fast and hard to miss, and the resume path is built to be deliberate. They are not
@@ -16,6 +70,10 @@ mirror images and should not be implemented as one toggle.
 ---
 
 ## Task 6.1 — The `halt`, `resume` and `set_autonomy` handlers `[SONNET]`
+
+> **Taken by:** opencode (glm-5.3). Trading-system code, but the lightest kind: the
+> `system_settings` helpers and the drain machinery are verified in the tree, the Telegram
+> reference behaviour is read, and no order path is reachable from any of the three handlers.
 
 **Trading-system code, and one of them is the kill switch.**
 
@@ -59,7 +117,10 @@ def _set_autonomy(*, command, **_) -> dict: ...
    visible to the operator wherever they are. This is the one place a handler notifies, and the
    reason is that these are control-plane changes with no order-poll loop to report them later.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** (13 tests in `tests/test_drain_controls.py` —
+  the six specified plus resume-when-not-halted, missing-reason-key, promotion-refused,
+  demotion-always-applies, both-other-kinds-notify, and the parametrised
+  all-three-with-no-broker)
 
 ```python
 """The kill switch works when everything else does not."""
@@ -120,16 +181,24 @@ async def test_a_control_change_notifies_telegram(drain_env) -> None:
     assert any("halt" in m.lower() for m in drain_env.bot.sent)
 ```
 
-- [ ] **Step 2:** Implement. Reuse the existing `system_settings` helpers; write no new setting
-  keys.
+- [x] **Step 2:** Implement. Reuse the existing `system_settings` helpers; write no new setting
+  keys. (`_halt`/`_resume`/`_set_autonomy` in `src/notify/command_drain.py`; the one deliberate
+  deviation from the M1 forward-declaration in `docs/web/commands.md` is that resuming an
+  un-halted system is `applied` like every other idempotent intent, not `not_halted` — see the
+  completion record.)
 
-- [ ] **Step 3:** Run the full suite, including every pre-existing autonomy and halt test.
+- [x] **Step 3:** Run the full suite, including every pre-existing autonomy and halt test.
 
-- [ ] **Step 4:** Update `docs/web/commands.md`. Commit.
+- [x] **Step 4:** Update `docs/web/commands.md`. Commit.
 
 ---
 
 ## Task 6.2 — Control-kind payload validation `[GLM]`
+
+> **Taken by:** opencode (glm-5.3). The M1 schema layer already carries the control kinds
+> (`CommandKind.HALT/RESUME/SET_AUTONOMY`, their payload models, `dedupe_key_for → None`);
+> the delta is the 200-character reason cap, `extra="forbid"` on the empty-payload kinds, and
+> pinning the live-confirmation asymmetry against `_LIVE_CONFIRM_KINDS` drift.
 
 **Files:** Modify `src/api/routers/commands.py`, `src/api/models/commands.py`. Test
 `tests/test_command_schemas.py`.
@@ -149,11 +218,22 @@ Required behaviours, each with a test:
 That last one is a deliberate asymmetry and it is worth stating in a comment where it is
 implemented, because it looks like an oversight otherwise.
 
-- [ ] Write the tests, implement, run the gate, commit.
+- [x] Write the tests, implement, run the gate, commit. (Schema tests in
+  `tests/test_command_schemas.py`; API-level no-row-created and live-mode-halt tests in
+  `tests/test_api_commands.py`; the `dedupe_key_for → None` assertions already existed from
+  M1 and still pass. The asymmetry comment lives at `_LIVE_CONFIRM_KINDS` in
+  `src/api/routers/commands.py`.)
 
 ---
 
 ## Task 6.3 — The controls panel `[SONNET]`
+
+> **Taken by:** opencode (glm-5.3). The confirmation-weight table above is the specification,
+> and every component it composes from already exists: `ConfirmAction`'s typed-word gate,
+> `CommandReceipt`, `submitCommand` / `useCommandStatus`, and the live-mode second-confirmation
+> shape from `DecideControls`. The judgment call the tag warns about — the asymmetry itself —
+> is made above in the table and in the claim block (design decisions 1 and 4); the
+> implementation follows it, and the test names state why so a later reader does not "fix" it.
 
 **A judgment call about confirmation weight, which is why this is not routed to GLM.**
 
@@ -187,15 +267,25 @@ Required behaviours, each with a test:
 - The autonomy control renders the four rungs from the API's `rungs` array, never hardcoded.
 - Each control is disabled while its own command is in flight and shows a `CommandReceipt`.
 
-- [ ] Write the tests, implement, run all six gate commands, commit.
+- [x] Write the tests, implement, run all six gate commands, commit. (22 new tests across
+  `HaltControl.test.tsx`, `AutonomyControl.test.tsx`, and a new `ControlsStrip.test.tsx` for
+  the banner and drain-dead behaviours; `halted_at` added to `GET /options/controls` — see
+  the completion record for the no-new-setting-key resolution.)
 
 ---
 
 ## Task 6.4 — Controls tests `[GLM]`
 
+> **Taken by:** opencode (glm-5.3). Pure test authoring against machinery 6.1 builds. The
+> `ROOT` in the plan's token-grep snippet resolves to the same local
+> `Path(__file__).resolve().parents[1]` M5's identical token-grep test already uses; the
+> `drain_env` fixture is reused from `tests/test_drain_controls.py` under the sanctioned
+> cross-file alias M4 Task 4.4 / M5 Task 5.4 established.
+
 **Files:** Modify `tests/test_write_path_invariants.py`.
 
-- [ ] Add:
+- [x] Add: (all three, in `tests/test_write_path_invariants.py`, with the fixture
+  aliased `controls_drain_env` from `tests/test_drain_controls.py`)
 
 ```python
 @pytest.mark.asyncio
@@ -218,20 +308,75 @@ def test_the_halt_key_is_the_same_one_telegram_uses() -> None:
 That last test matters more than it looks. A hardcoded `"execution_halted"` string that drifts
 from `HALT_KEY` would give the system two halt flags, one of which nothing reads.
 
-- [ ] Run the full suite. Commit.
+- [x] Run the full suite. Commit.
 
 ---
 
 ## Milestone 6 acceptance
 
-- [ ] Halt, resume and autonomy all apply with no exec connection.
-- [ ] Halting an already-halted system is `applied`, not `failed`.
-- [ ] Halt is one click; resume requires a typed word. The asymmetry is deliberate and
+- [x] Halt, resume and autonomy all apply with no exec connection.
+- [x] Halting an already-halted system is `applied`, not `failed`.
+- [x] Halt is one click; resume requires a typed word. The asymmetry is deliberate and
   documented in the tests.
-- [ ] A halted system shows an unmissable banner with the reason and the time, using fill and
+- [x] A halted system shows an unmissable banner with the reason and the time, using fill and
   text rather than colour alone.
-- [ ] A control change notifies Telegram, so a halt raised from the browser is visible anywhere.
-- [ ] Control kinds never require live confirmation, and a test asserts it.
-- [ ] There is exactly one halt flag, read through `system_settings.HALT_KEY`.
-- [ ] Full gate green, all six commands, with the full Python suite run because this milestone
+- [x] A control change notifies Telegram, so a halt raised from the browser is visible anywhere.
+- [x] Control kinds never require live confirmation, and a test asserts it.
+- [x] There is exactly one halt flag, read through `system_settings.HALT_KEY`.
+- [x] Full gate green, all six commands, with the full Python suite run because this milestone
   modifies trading code.
+
+---
+
+> **Completion record (2026-09-07, opencode/glm-5.3):** all four tasks (6.1–6.4) implemented,
+> gated, and committed. Notes for the record:
+>
+> - **6.1**: `_halt` / `_resume` / `_set_autonomy` live in `src/notify/command_drain.py`,
+>   thin resolvers over `set_halted` / `set_autonomy_level` — the same keys Telegram's
+>   `/halt`, `/resume`, `/autonomy` write, so there is exactly one halt flag and one rung
+>   (the token-grep test in 6.4 pins that the `execution_halted` literal never appears in
+>   the drain). All three apply with `ib is None`. Halt/resume are idempotent in both
+>   directions: halting an already-halted system and resuming an un-halted one are both
+>   `applied` — the operator's intent is satisfied either way. (The M1 forward-declaration in
+>   `docs/web/commands.md` listed `not_halted` as resume's failure mode; that would make a
+>   harmless double-resume render as failed chrome, contradicting this milestone's own
+>   design point 2, so the doc was updated rather than the behaviour shaped to it.) An empty
+>   or missing halt reason becomes `"halted from the web console"`. `resume` records
+>   `released_by` in its result. `set_autonomy` calls `promotion_blockers` exactly as
+>   Telegram's `/autonomy` does — unmet criteria fail the command with
+>   `promotion_refused` + `detail.blockers` (the M1 doc's `promotion_blocked` code was a
+>   placeholder; the implemented code matches what the receipt humanises), demotion always
+>   applies. Each handler sends one Telegram notification through a best-effort
+>   `_notify` (fire-and-forget; a down Telegram never fails a control).
+> - **6.2**: `HaltPayload.reason` capped at 200 chars; `HaltPayload`/`ResumePayload`/
+>   `SetAutonomyPayload`/`RefreshPayload` are `extra="forbid"`. The live-confirmation
+>   asymmetry is stated in a comment at `_LIVE_CONFIRM_KINDS` itself, and pinned three
+>   ways: the API test (halt with `cfg.is_live` true → `needs_confirmation: false`), the
+>   schema-side `_LIVE_CONFIRM_KINDS` membership test in 6.4, and the pre-existing M1
+>   tests that already covered `refresh`.
+> - **6.3**: `HaltControl` (one-click halt, typed-word RESUME), `AutonomyControl` (rungs
+>   from the API, click-through confirm with current and target labels), both hosted in
+>   `ControlsStrip` beside the read-only pills. The banner renders above the strip when
+>   `halted`, with reason and time as text; the time comes from the new `halted_at` field
+>   on `ControlsResponse`, derived from the most recent applied `halt` command's
+>   `applied_at` — the resolution of the "no new setting keys" vs "time it was halted"
+>   contradiction flagged in the claim block: the command queue already records the moment,
+>   a breaker-tripped halt (no command row) honestly renders "at an unknown time", and
+>   `system_settings` gained no key. `drain_healthy: false` renders the not-draining line
+>   both in the strip (with last-seen) and as its own statement below the controls.
+>   `ConfirmAction` is functionally untouched; its docstring now credits `resume` as the
+>   typed-word user (the milestone's weight table refines design §9.3's first draft, which
+>   had it on halt).
+> - **6.4**: the three specified tests in `tests/test_write_path_invariants.py`. The
+>   plan's `ROOT` became the local `Path(__file__).resolve().parents[1]` this file's
+>   existing token-grep tests already use; the `drain_env` fixture is imported from
+>   `tests/test_drain_controls.py` as `controls_drain_env`, the same sanctioned cross-file
+>   reuse M4 Task 4.4 / M5 Task 5.4 established.
+> - **Design-decision outcomes** (the four flagged in the claim block, all resolved as
+>   stated there): (1) `halted_at` from the command queue, no new key, honest null for a
+>   breaker trip; (2) `promotion_blockers` enforced on the web rung change —
+>   `promotion_refused` carries the blockers; (3) halt/resume touch nothing but
+>   `system_settings`, `set_autonomy` additionally reads the local trading DB exactly as
+>   Telegram does, none needs the broker; (4) `ConfirmAction`'s docstring corrected.
+> - Gate at completion: `python -m pytest -q` (1856 passed) · `ruff check .` · `mypy src` ·
+>   `cd web && npx vitest run` (185 passed) · `npm run lint` · `npm run build` — all green.
