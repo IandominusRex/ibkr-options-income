@@ -119,11 +119,15 @@ class PortfolioSnapshot(BaseModel):
     across a module boundary. `source` is which writer produced it: the intraday
     monitor ("monitor"), an operator's `refresh` command ("refresh"), or the EOD
     run ("eod").
+
+    `account` is None only on the API's `eod` fallback rung (read_portfolio), where
+    positions come from `position_snapshots` and the account block may be absent
+    from the journal payload; every writer supplies it.
     """
 
     captured_at: datetime
     source: Literal["monitor", "refresh", "eod"]
-    account: AccountSnapshot
+    account: AccountSnapshot | None = None
     positions: list[PositionSnapshot]
 
 
