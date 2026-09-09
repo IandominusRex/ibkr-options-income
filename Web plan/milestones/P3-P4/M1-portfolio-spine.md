@@ -1,7 +1,7 @@
 # Milestone 1 — Portfolio spine
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or
-> superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
+> superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax.
 
 **Goal:** The account's positions and values are recorded more than once a day, by processes that
 already hold an IB connection, into a table the API can read — and when nothing has been recorded,
@@ -11,6 +11,44 @@ every reader can tell.
 **Depends on:** P2, shipped, and **Milestone 0** — in particular Task 0.2, which made the EOD run
 idempotent. This milestone's `eod` fallback rung reads `position_snapshots` and
 `journal.payload`, and before 0.2 a repeated EOD run left both unwritten.
+
+> **CLAIMED — all six tasks (1.1–1.6), by opencode (glm-5.3), 2026-09-09.** The `[SONNET]` /
+> `[GLM]` tags were treated as capacity hints, not gates; the claim is grounded instead in a
+> dependency audit run against the tree before taking anything. Confirmed to exist, exactly as
+> each task describes them: `AccountSnapshot`/`PositionSnapshot` (`src/common/schemas.py:89,105`)
+> and no `PortfolioSnapshot` symbol anywhere yet; `PositionSnapshotRow` (`src/storage/models.py:244`)
+> and `_utcnow` (`:27`); `save_position_snapshot`'s swallow-and-log discipline to mirror
+> (`src/storage/positions.py:22`); config models `MarketDataCfg`/`StorageCfg`
+> (`src/common/config.py:99,362` — the sketch below names them `MarketData`/`Storage`; the real
+> names win, per the task's own "match their field style" instruction); the existing EOD prune
+> site to sit beside (`src/orchestrator/eod_report.py:425`, `purge_old_risk_verdicts()`);
+> `_refresh_subscriptions` with its single `get_positions` call (`src/monitor/intraday.py:313,317`);
+> `register`/`CommandFailed` (`src/notify/command_drain.py:79,54`); `RefreshPayload` and the
+> no-dedupe listing (`src/api/models/commands.py:90,134`); `as_utc_opt`
+> (`src/api/models/common.py:36`); `is_rth` (`src/common/market_hours.py:192`);
+> `get_positions`/`get_account_snapshot_async` (`src/ibkr/portfolio.py:91,150`); the journal's
+> `eod_summary` payload the fallback rung reads (`eod_report.py:276`); and fixture precedent for
+> `db`/`session` (`tests/test_eod_idempotency.py:56,75`), `drain_env` (`test_drain_promote.py:189`,
+> `test_drain_universe.py:250`), and monitor wrapping (`test_monitor.py:855–958`). Step checkboxes
+> below remain unchecked — they close as each task is actually executed and its gate run green.
+>
+> **EXECUTED — all six tasks completed 2026-09-09, same session, six commits** (`82ac98f` storage,
+> `c499059` config, `0d3e702` monitor, `8091cbb` drain, `b645e49` fallback chain, `ca1615e` docs
+> sweep). Every task followed its step order: failing test confirmed failing for the right reason
+> (`ModuleNotFoundError` / missing attribute, never an assertion), then implementation, then the
+> FULL suite, then docs, then commit. Final gate, run at HEAD: `python -m pytest -q`
+> (**1996 passed**, up from 1974 pre-milestone — 22 new tests across five new test files),
+> `ruff check .` clean, `mypy src` clean (156 files). Deviations from the sketches, all
+> within each task's own instructions: config keys landed on the real `MarketDataCfg`/
+> `StorageCfg` names; the EOD prune test drives the real `eod_report.run()` through the
+> `test_eod_idempotency.py::eod_env` pattern rather than a step-8 stub; `PortfolioSnapshot.account`
+> is optional (`AccountSnapshot | None`) because the task's own required behaviour makes the
+> account optional on the `eod` rung — writers always supply it. Acceptance boxes ticked only
+> after verification: `position_snapshots` confirmed byte-untouched by `git diff 6f15e36..HEAD --
+> src/storage/models.py` (zero touching lines); the escaping-write test makes
+> `save_portfolio_snapshot` raise through the real `_refresh_subscriptions`; `commands.md`'s
+> `refresh` section rewritten to the handler that now exists and greps clean for the old
+> "Triggers a full scan" text.
 
 **Nothing in this milestone is user-visible.** No route, no component, no nav change. It exists so
 that M2 and M3 render real numbers on their first day.
@@ -107,7 +145,7 @@ Required behaviours, each with a test:
 - **`position_snapshots` is untouched by every one of the above.** Asserted by counting rows in
   that table before and after.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The portfolio spine's storage. Separate table, append-only, never raises."""
@@ -198,26 +236,26 @@ def test_position_snapshots_is_never_touched(db, session) -> None:
     assert session.query(PositionSnapshotRow).count() == before
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail** with `ImportError` / `ModuleNotFoundError`,
+- [x] **Step 2: Run the tests and confirm they fail** with `ImportError` / `ModuleNotFoundError`,
   not with an assertion error. A test that fails for the wrong reason proves nothing.
 
   Run: `python -m pytest tests/test_portfolio_snapshots.py -v`
 
-- [ ] **Step 3: Implement** `PortfolioSnapshot` in `src/common/schemas.py`,
+- [x] **Step 3: Implement** `PortfolioSnapshot` in `src/common/schemas.py`,
   `PortfolioSnapshotRow` in `src/storage/models.py`, and `src/storage/portfolio_snapshots.py`.
   Every public function wraps its body in `try/except Exception` with `log.exception` and a safe
   return, mirroring `src/storage/positions.py`.
 
-- [ ] **Step 4: Run the full suite.** This adds a model to the trading database's `Base`; every
+- [x] **Step 4: Run the full suite.** This adds a model to the trading database's `Base`; every
   pre-existing storage and orchestrator test must still pass.
 
   Run: `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 5: Docs.** `ARCHITECTURE.md` `src/storage/` section and data-flow schemas gain
+- [x] **Step 5: Docs.** `ARCHITECTURE.md` `src/storage/` section and data-flow schemas gain
   `PortfolioSnapshotRow` and `src/storage/portfolio_snapshots.py`; `README.md`'s layout table gains
   the module. State in both that it is deliberately separate from `position_snapshots` and why.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src/storage/models.py src/storage/portfolio_snapshots.py src/common/schemas.py \
@@ -274,7 +312,7 @@ Required behaviours, each with a test:
 - Both keys are honoured when present.
 - The EOD run calls `prune_portfolio_snapshots` with the configured value.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Two config keys, both defaulted, both honoured, and the EOD run prunes."""
@@ -307,16 +345,16 @@ Build `config_without_keys` and the config override the way `tests/` already ove
 grep the existing tests for `get_config.cache_clear` and copy that fixture pattern rather than
 inventing a second one.
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement.** Add the keys, wire the prune call.
+- [x] **Step 3: Implement.** Add the keys, wire the prune call.
 
-- [ ] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
+- [x] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 5: Docs.** `ARCHITECTURE.md`'s config section gains both keys with their meaning;
+- [x] **Step 5: Docs.** `ARCHITECTURE.md`'s config section gains both keys with their meaning;
   `SETUP.md` gains them wherever `market_data` and retention settings are already documented.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ---
 
@@ -378,7 +416,7 @@ Required behaviours, each with a test:
 - **A raising account fetch does not propagate** and writes nothing.
 - `get_positions` is called exactly once per refresh pass, not twice.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The monitor may write snapshots. It may never let that interrupt its real job."""
@@ -458,21 +496,21 @@ extend that fixture rather than building a second one. `_subscriptions_were_refr
 for whatever observable the existing tests already use to prove the subscription pass completed;
 use that observable, do not add a method to production code for the test's benefit.
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement** `_maybe_write_snapshot` and call it from `_refresh_subscriptions` after
+- [x] **Step 3: Implement** `_maybe_write_snapshot` and call it from `_refresh_subscriptions` after
   the subscription work, not before. Ordering matters: if the write is somehow slow, the
   subscriptions are already correct.
 
-- [ ] **Step 4: Run the FULL suite.** This modifies a trading process.
+- [x] **Step 4: Run the FULL suite.** This modifies a trading process.
 
   Run: `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 5: Docs.** `ARCHITECTURE.md`'s `src/monitor/` section gains a paragraph: the monitor
+- [x] **Step 5: Docs.** `ARCHITECTURE.md`'s `src/monitor/` section gains a paragraph: the monitor
   now writes portfolio snapshots on its refresh cadence, rate-limited, RTH-only, and never at the
   expense of alerting.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ---
 
@@ -535,7 +573,7 @@ Required behaviours, each with a test:
   `handler_error`.
 - Two refreshes in a row both apply. There is no dedupe key and repeating is harmless.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """refresh is the phase's only write, and it is the least dangerous command in the system."""
@@ -610,14 +648,14 @@ async def test_two_refreshes_both_apply(drain_env) -> None:
 `approval_count()` and `order_count()` rather than building a second fixture — grep
 `tests/test_drain_*.py` for the existing definition.
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement** the handler.
+- [x] **Step 3: Implement** the handler.
 
-- [ ] **Step 4: Run the FULL suite.** This modifies `command_drain.py`, which every P2 command kind
+- [x] **Step 4: Run the FULL suite.** This modifies `command_drain.py`, which every P2 command kind
   runs through.
 
-- [ ] **Step 5: Docs.** Replace `docs/web/commands.md`'s `refresh` section — M0 Task 0.6 left it
+- [x] **Step 5: Docs.** Replace `docs/web/commands.md`'s `refresh` section — M0 Task 0.6 left it
   describing an unregistered kind, and this task registers it. It gets: the empty payload, no
   dedupe key, the two failure reasons (`broker_unavailable`, `snapshot_failed`), what `result`
   contains, and the explicit statement that it creates no approval and no order.
@@ -625,7 +663,7 @@ async def test_two_refreshes_both_apply(drain_env) -> None:
   already have. `STATUS.md`'s P2 row: strike the "`refresh`'s handler remains unregistered" note,
   and say where it landed.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ---
 
@@ -694,7 +732,7 @@ Required behaviours, each with a test:
 - A corrupt newest `portfolio_snapshots` payload falls through to the `eod` rung.
 - `as_of` is never within a second of `datetime.now()` when a stored snapshot is old.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Three rungs, and the bottom one must not look like an empty account."""
@@ -754,16 +792,16 @@ def test_as_of_is_the_capture_time_not_request_time(db, seed_portfolio_snapshot)
     assert read_portfolio(db).as_of == old
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
-- [ ] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
+- [x] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 5: Docs.** `README.md` layout table and `ARCHITECTURE.md` folder guide gain
+- [x] **Step 5: Docs.** `README.md` layout table and `ARCHITECTURE.md` folder guide gain
   `src/api/portfolio_source.py`, described as the fallback chain rather than as "a helper".
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ---
 
@@ -771,38 +809,38 @@ def test_as_of_is_the_capture_time_not_request_time(db, seed_portfolio_snapshot)
 
 **Files:** Modify `STATUS.md`, `ARCHITECTURE.md`, `README.md`. No tests, no code.
 
-- [ ] **Step 1:** `STATUS.md`'s web platform table gains a P3 row in the same dense style P2's
+- [x] **Step 1:** `STATUS.md`'s web platform table gains a P3 row in the same dense style P2's
   rows use, covering M1 only: the new table, the two writers, the config keys, the fallback chain,
   and the explicit statement that nothing is user-visible yet. Do not mark P3 built.
 
-- [ ] **Step 2:** Verify — do not assume — that Tasks 1.1 through 1.5 each landed their own doc
+- [x] **Step 2:** Verify — do not assume — that Tasks 1.1 through 1.5 each landed their own doc
   obligations. For each of `PortfolioSnapshotRow`, `src/storage/portfolio_snapshots.py`,
   `src/api/portfolio_source.py`, the two config keys, and the `refresh` command kind, grep the
   target doc for the entry and add whatever is missing. Task-level doc steps get skipped; this
   step exists to catch that.
 
-- [ ] **Step 3:** Confirm `docs/web/commands.md`'s `refresh` section no longer says "Triggers a
+- [x] **Step 3:** Confirm `docs/web/commands.md`'s `refresh` section no longer says "Triggers a
   full scan on the next cycle". If it does, Task 1.4's Step 5 was not done.
 
-- [ ] **Step 4:** Run the full gate and commit.
+- [x] **Step 4:** Run the full gate and commit.
 
 ---
 
 ## Milestone 1 acceptance
 
-- [ ] `portfolio_snapshots` exists, is append-only, has no unique constraint, and is pruned to the
+- [x] `portfolio_snapshots` exists, is append-only, has no unique constraint, and is pruned to the
   configured retention by the EOD run.
-- [ ] `position_snapshots` is byte-for-byte unchanged in schema and has no new writer. Assignment
+- [x] `position_snapshots` is byte-for-byte unchanged in schema and has no new writer. Assignment
   auto-detection's tests are green.
-- [ ] The monitor writes a snapshot at most once per configured interval, only during RTH, reusing
+- [x] The monitor writes a snapshot at most once per configured interval, only during RTH, reusing
   the positions it already fetched.
-- [ ] **A snapshot write that raises cannot escape into the monitor's refresh loop**, proven by a
+- [x] **A snapshot write that raises cannot escape into the monitor's refresh loop**, proven by a
   test that makes it raise.
-- [ ] `refresh` is a registered command kind. It writes a snapshot, fails `broker_unavailable`
+- [x] `refresh` is a registered command kind. It writes a snapshot, fails `broker_unavailable`
   without a broker, and creates no approval and no order.
-- [ ] `read_portfolio` resolves all three rungs, and the empty rung is distinguishable from an
+- [x] `read_portfolio` resolves all three rungs, and the empty rung is distinguishable from an
   empty account.
-- [ ] `as_of` is a capture time everywhere, never a request time.
-- [ ] `docs/web/commands.md`'s `refresh` section describes the handler that now exists.
-- [ ] Full gate green — `python -m pytest -q`, `ruff check .`, `mypy src` — with the full Python
+- [x] `as_of` is a capture time everywhere, never a request time.
+- [x] `docs/web/commands.md`'s `refresh` section describes the handler that now exists.
+- [x] Full gate green — `python -m pytest -q`, `ruff check .`, `mypy src` — with the full Python
   suite run, because this milestone modifies the monitor and the drain.
