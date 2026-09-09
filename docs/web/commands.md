@@ -385,16 +385,15 @@ to the new approval.
 - **Payload:** `{}` (empty)
 - **Dedupe key:** `None` (may repeat — multiple refresh requests are harmless, only
   one scan runs at a time thanks to the scan lease)
-- **Applied by:** nobody yet — `refresh` parses and enqueues fine (`CommandKind.REFRESH` is a
-  valid kind, `RefreshPayload` is `{}`), but no handler is registered for it in
-  `command_drain.py`. A submitted `refresh` command reaches the drain and fails with
-  `unknown_kind`, the same as any other unregistered kind would — it does **not** trigger a
-  scan. Spec §6.6 describes the intended behaviour (ask the trading process to refresh
-  positions and quotes on its next cycle); no milestone has implemented it yet.
+- **Applied by:** nobody yet — `refresh` is accepted by `POST /commands` and parses fine
+  (`CommandKind.REFRESH` is a valid kind, `RefreshPayload` is `{}`), but **no handler is
+  registered** in `src/notify/command_drain.py`. A submitted `refresh` command reaches the
+  drain and fails with `unknown_kind`, the same as any other unregistered kind would — it
+  does **not** trigger a scan. The handler will be built in M1 of the P3/P4 phase.
 - **Live mode:** No confirmation needed.
 - **Failure modes:** `unknown_kind` (today, always — see above). `scan_already_running` is the
   intended failure mode once a handler exists, not a current one.
-- **Milestone:** none — spec §6.6 only, unbuilt.
+- **Milestone:** M1 of P3/P4 (not yet built).
 
 ---
 
