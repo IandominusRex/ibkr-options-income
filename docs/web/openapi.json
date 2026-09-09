@@ -910,7 +910,7 @@
           "universe"
         ],
         "summary": "Add To Universe",
-        "description": "Enqueue a `universe_add` intent. `201` if new, `200` if a dedupe returned the\nexisting command. `404` for an unknown symbol; `422` for a non-overridable list.",
+        "description": "Enqueue a `universe_add` intent. Always `201` \u2014 universe_add/universe_remove have no\ndedupe key (M7 final-review Fix 1: they are idempotent upserts, so a repeat is always a\nfresh command, never a `200` reusing a stale one). `404` for an unknown symbol; `422`\nfor a non-overridable list.",
         "operationId": "add_to_universe_universe__list_name___symbol__post",
         "security": [
           {
@@ -969,7 +969,7 @@
           "universe"
         ],
         "summary": "Remove From Universe",
-        "description": "Enqueue a `universe_remove` intent. `409` if removing an `actively_wheeling` symbol\nfrom `would_own` \u2014 you cannot stop being willing to own something you are actively\nwheeling. `404` for an unknown symbol; `422` for a non-overridable list.",
+        "description": "Enqueue a `universe_remove` intent. Always `201` (see `add_to_universe` \u2014 no dedupe\nkey). `409` if removing an `actively_wheeling` symbol from `would_own` \u2014 you cannot stop\nbeing willing to own something you are actively wheeling. `404` for an unknown symbol;\n`422` for a non-overridable list.",
         "operationId": "remove_from_universe_universe__list_name___symbol__delete",
         "security": [
           {

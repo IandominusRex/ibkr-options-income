@@ -418,15 +418,18 @@ export interface paths {
         put?: never;
         /**
          * Add To Universe
-         * @description Enqueue a `universe_add` intent. `201` if new, `200` if a dedupe returned the
-         *     existing command. `404` for an unknown symbol; `422` for a non-overridable list.
+         * @description Enqueue a `universe_add` intent. Always `201` — universe_add/universe_remove have no
+         *     dedupe key (M7 final-review Fix 1: they are idempotent upserts, so a repeat is always a
+         *     fresh command, never a `200` reusing a stale one). `404` for an unknown symbol; `422`
+         *     for a non-overridable list.
          */
         post: operations["add_to_universe_universe__list_name___symbol__post"];
         /**
          * Remove From Universe
-         * @description Enqueue a `universe_remove` intent. `409` if removing an `actively_wheeling` symbol
-         *     from `would_own` — you cannot stop being willing to own something you are actively
-         *     wheeling. `404` for an unknown symbol; `422` for a non-overridable list.
+         * @description Enqueue a `universe_remove` intent. Always `201` (see `add_to_universe` — no dedupe
+         *     key). `409` if removing an `actively_wheeling` symbol from `would_own` — you cannot stop
+         *     being willing to own something you are actively wheeling. `404` for an unknown symbol;
+         *     `422` for a non-overridable list.
          */
         delete: operations["remove_from_universe_universe__list_name___symbol__delete"];
         options?: never;
