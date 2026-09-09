@@ -37,6 +37,7 @@ from src.api.models.options import (
     ShortListResponse,
     ShortPosition,
 )
+from src.common.assignment_risk import assignment_risk_thresholds, is_assignment_risk
 from src.common.config import get_config
 from src.common.schemas import AssessmentStage
 
@@ -831,16 +832,18 @@ def list_shorts(
         # dte is None when expiry is unknown — never 0, which would read as "expires today".
         dte = _dte(expiry) if expiry else None
         contracts = int(abs(float(p.get("position", 0) or 0)))
-        # assignment_risk: deep-ITM short near expiry. |delta| >= 0.70 and dte <= 7
-        # is the monitor's default. Unknown expiry or delta means we cannot assert it,
-        # so we surface false rather than fabricate the signal from a missing field.
+        # assignment_risk: deep-ITM short near expiry, per the one shared definition
+        # (Task 0.3, src/common/assignment_risk.py) — the monitor's configured thresholds,
+        # not a hardcoded pair. Unknown expiry or delta means we cannot assert it, so we
+        # surface false rather than fabricate the signal from a missing field.
         delta_val = p.get("delta")
-        assignment_risk = (
-            delta_val is not None
-            and expiry is not None
-            and dte is not None
-            and abs(float(delta_val)) >= 0.70
-            and dte <= 7
+        delta_threshold, dte_threshold = assignment_risk_thresholds(get_config())
+        assignment_risk = is_assignment_risk(
+            position=float(p.get("position", 0) or 0),
+            delta=float(delta_val) if delta_val is not None else None,
+            dte=dte,
+            delta_threshold=delta_threshold,
+            dte_threshold=dte_threshold,
         )
 
         # delta provenance: the snapshot may carry a greeks_source. "black_scholes"

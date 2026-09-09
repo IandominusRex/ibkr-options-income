@@ -15,6 +15,7 @@ the web renders that verbatim; no second mapping lives anywhere.
 
 from __future__ import annotations
 
+from src.common.assignment_risk import is_assignment_risk
 from src.common.market_hours import today_et
 from src.common.schemas import FundamentalStats, OptionQuote, PositionSnapshot, RollAlert
 
@@ -176,30 +177,34 @@ def check_assignment_risk(
     """Fire when a short is deep-ITM (|delta| ≥ threshold) within dte_threshold days of expiry.
 
     This combined check targets genuine assignment risk: a high-delta short near expiry where
-    the operator should act (roll out-and-up, buy to close, or let assignment proceed).
-    Missing delta is treated as data unavailable — no alert.
+    the operator should act (roll out-and-up, buy to close, or let assignment proceed). The
+    risk decision itself is delegated to ``src.common.assignment_risk.is_assignment_risk`` —
+    the one definition also read by ``/options/shorts`` (Task 0.3) — so this function only
+    computes DTE and owns the ``RollAlert`` it builds. Missing delta or expiry is treated as
+    data unavailable — no alert.
     """
-    if pos.position >= 0:
+    dte = (pos.expiry - today_et()).days if pos.expiry is not None else None
+    if not is_assignment_risk(
+        position=pos.position,
+        delta=quote.delta,
+        dte=dte,
+        delta_threshold=delta_threshold,
+        dte_threshold=dte_threshold,
+    ):
         return None
-    if pos.expiry is None:
-        return None
-    if quote.delta is None:
-        return None
-    dte = (pos.expiry - today_et()).days
+    assert quote.delta is not None and dte is not None  # guaranteed by is_assignment_risk
     abs_delta = abs(quote.delta)
-    if abs_delta >= delta_threshold and dte <= dte_threshold:
-        return RollAlert(
-            position_symbol=pos.symbol,
-            underlying=pos.underlying or pos.symbol,
-            trigger="assignment_risk",
-            detail=(
-                f"Delta {abs_delta:.2f} at or past {delta_threshold:.2f} with {dte} days "
-                f"left — assignment is a live possibility, not a tail risk"
-            ),
-            current_delta=quote.delta,
-            dte=dte,
-        )
-    return None
+    return RollAlert(
+        position_symbol=pos.symbol,
+        underlying=pos.underlying or pos.symbol,
+        trigger="assignment_risk",
+        detail=(
+            f"Delta {abs_delta:.2f} at or past {delta_threshold:.2f} with {dte} days "
+            f"left — assignment is a live possibility, not a tail risk"
+        ),
+        current_delta=quote.delta,
+        dte=dte,
+    )
 
 
 def check_all(
