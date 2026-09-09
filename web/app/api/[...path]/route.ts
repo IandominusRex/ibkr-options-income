@@ -64,7 +64,26 @@ async function proxy(
       { status: 502 },
     );
   }
-  const body = await upstream.text();
+  // The abort signal is still armed here: fetch() resolving only means
+  // headers arrived, not that the body finished. If the upstream process
+  // crashes/restarts mid-stream or the timeout fires while .text() is still
+  // reading, this rejects too — it must fail soft exactly like the fetch()
+  // failure above, not escape as an uncaught exception (-> Next.js HTML 500).
+  let body: string;
+  try {
+    body = await upstream.text();
+  } catch {
+    if (signal.aborted) {
+      return NextResponse.json(
+        { detail: "The API did not respond in time (timed out). It may be overloaded or stuck." },
+        { status: 504 },
+      );
+    }
+    return NextResponse.json(
+      { detail: "The API is not reachable. Check that it is running." },
+      { status: 502 },
+    );
+  }
   const headers = new Headers();
   const contentType = upstream.headers.get("Content-Type");
   if (contentType) {

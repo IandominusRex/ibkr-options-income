@@ -271,6 +271,35 @@ describe("API proxy", () => {
     }
   });
 
+  it("returns a JSON 502, not an uncaught exception, when the response body stream fails mid-read", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    // Regression: fetch() resolving only means headers arrived. If the
+    // upstream connection drops while the body is still streaming (e.g. the
+    // API process crashes/restarts mid-response), reading the body rejects
+    // — historically after the try/catch that guards fetch() itself, so it
+    // escaped uncaught and Next.js rendered its own HTML 500.
+    const upstream = new Response("ok", {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    vi.spyOn(upstream, "text").mockRejectedValue(new TypeError("terminated"));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(upstream));
+
+    const { GET } = await import("./route");
+    const req = new Request("http://localhost:3000/api/portfolio/summary");
+    const res = await GET(req, {
+      params: Promise.resolve({ path: ["portfolio", "summary"] }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    const body = await res.json();
+    expect(body.detail).toMatch(/not reachable/i);
+    expect(body.detail).not.toMatch(/127\.0\.0\.1|localhost|upstream\.test|Bearer/i);
+  });
+
   it("leaves a successful response untouched", async () => {
     process.env.API_TOKEN = "tok";
     process.env.API_URL = "http://upstream.test";
