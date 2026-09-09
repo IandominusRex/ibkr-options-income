@@ -365,6 +365,10 @@ writing the mapping — it returns dicts, not ORM rows. `CandidateRow` for leg d
    Say so in the docstring so a later reader does not "fix" it to match the other routes.
 3. Ordered by `opened_date` descending, open campaigns before closed ones at the same date.
 4. Query parameters: `status` (`open` | `closed` | omitted for both) and `symbol`.
+5. **`docs/web/api.md`'s write-up must document `total_premium_collected`/`total_debit_paid`/
+   `net_premium` as gross of commissions** — pinned by M0 Task 0.4. `src/storage/campaigns.py::_rollup`'s
+   docstring and `CampaignRow`'s docstring are the source of truth for the exact semantics; carry
+   that language into this route's doc section rather than re-deriving it.
 
 Required behaviours, each with a test:
 - An open campaign with three legs returns all three, in leg order.

@@ -797,9 +797,12 @@ excluded. `delta` carries its source through `Sourced` (IBKR vs computed/BS). A
 position with no snapshot data returns `null` for `mark`, `unrealized_pnl`,
 `expiry` and `dte`, never `0.0` or a fabricated `date.today()`. `assignment_risk`
 is `false` when `expiry` or `delta` is unknown — a missing field must not fabricate
-the signal. `pnl_pct` is `unrealized_pnl / (|avg_cost| * contracts)`, i.e. total
-P&L over the position's total cost (not per-share cost). `alerts` is empty, not
-`null`, when nothing has fired.
+the signal. `assignment_risk` is computed from the monitor's configured thresholds
+(`monitor.assignment_alert_delta` / `assignment_alert_dte`, currently 0.70 delta / 21
+DTE, from `config/settings.yaml`) via `src/common/assignment_risk.py`, not a fixed
+value baked into the endpoint. `pnl_pct` is `unrealized_pnl / (|avg_cost| * contracts)`,
+i.e. total P&L over the position's total cost (not per-share cost). `alerts` is empty,
+not `null`, when nothing has fired.
 
 **Response — `ShortListResponse`:** `{ as_of, shorts: ShortPosition[] }`.
 `ShortPosition`: `{ as_of, position_symbol, underlying, right, strike, expiry: date | null, dte: int | null, contracts, avg_cost, mark, unrealized_pnl, pnl_pct, delta: Sourced<float> | null, assignment_risk, alerts: RollAlertSummary[] }`.

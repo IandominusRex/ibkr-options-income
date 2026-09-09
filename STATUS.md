@@ -367,6 +367,47 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-09-09 — M0 "Baseline and pre-existing defects": idempotent EOD, one assignment-risk predicate, P2 deferred findings closed)
+
+`Web plan/milestones/P3-P4/M0-baseline-and-fixes.md`'s nine sub-tasks (0.2–0.10), all landed on
+`main`. No new capability — this milestone exists to fix defects the P2 close-out review found
+and record a baseline before P3/P4 build on top of it.
+
+- **The EOD run is now idempotent on a same-day re-run** (Task 0.2, `src/orchestrator/eod_report.py`):
+  a repeated run for the same day now upserts the journal row instead of inserting a duplicate, so
+  reconciliation still works if the job is re-triggered (retry, manual re-run) after it already
+  wrote once.
+- **`/options/shorts`'s `assignment_risk` flag now uses the monitor's real 0.70/21 thresholds**
+  (Task 0.3, `src/common/assignment_risk.py` — the one `is_assignment_risk`/
+  `assignment_risk_thresholds` definition both `src/monitor/triggers.py` and
+  `src/api/routers/options.py` read now) — **widened** from the API's previous hardcoded, wrong
+  `0.70`/`7` (under a comment incorrectly calling `7` "the monitor's default"). A short between 8
+  and 21 DTE that the monitor was already alerting on now also flips `assignment_risk` to `true`
+  in the API response — a user-visible behavior change for anything reading that endpoint.
+- **P2 M7's close-out log recorded seven minor findings as "deferred, not fixed"; four are now
+  closed** (Task 0.7): a dead `log` logger and unused `import logging` removed from
+  `src/storage/universe_overrides.py`; the unused, untyped `cfg` parameter dropped from
+  `_universe_symbols` in `src/orchestrator/eod_report.py`; the redundant local
+  `_reset_universe_cache` fixture removed from `tests/test_universe_consumers.py` (made
+  redundant by the global `_clear_effective_universe_cache` autouse fixture); a `web/CLAUDE.md`
+  doc misattribution corrected (submitUniverseCommand/CommandReceipt usage belongs to
+  `AddSymbol`/`UniverseList`, not `OverrideBadge`). The remaining three (config-relative test path
+  with no CWD guard, a config lookup called per-iteration instead of hoisted, a test pinning
+  literal config values) were reviewed and parked as low-severity/stylistic, not fixed here.
+- **The Next.js proxy (`web/app/api/[...path]/route.ts`) now fails soft on a body-read failure
+  too, not just a connect failure** (final-review fix — the fetch() call was already wrapped in
+  try/catch returning JSON 502/504, but the subsequent `await upstream.text()` was unprotected;
+  a mid-response connection drop or a timeout firing while the body is still streaming now also
+  returns the same JSON 502/504 shape instead of an uncaught exception that Next.js would render
+  as its own HTML 500).
+- Also: one shared `as_utc` helper (was duplicated between `src/api/trading_db.py` and
+  `src/api/routers/options.py`); `docs/web/commands.md`'s `refresh` runbook entry corrected;
+  `docs/web/openapi.json` pinned against the live app with a freshness test; the campaign
+  rollup's gross-of-commissions semantics documented at the source
+  (`src/storage/campaigns.py::_rollup`, `CampaignRow`).
+
+---
+
 ## Bugs fixed (2026-09-09 — health-probe diagnosis: the "half-dead socket" block mislabelled its root cause)
 
 The pre-scan health probe (`probe_market_data_health`) returned a bare `bool`, and the
@@ -465,8 +506,13 @@ route never carried it); a refused autonomy promotion does not render its `block
 through `CommandReceipt`; `GET /research/recommendations` and `GET /research/{symbol}/options`
 have no frontend consumer (the latter documented; the former is M6's "replaces the Telegram
 buy card" surface that P3+ must wire); `CommandKind.REFRESH` remains accepted-but-failing
-(`unknown_kind` at the drain) per `docs/web/commands.md`; `docs/web/architecture.md:43`
-overstates `refresh` as triggering a scan. None blocks P3.
+(`unknown_kind` at the drain) per `docs/web/commands.md`. None blocks P3.
+
+*(Corrected 2026-09-09, M0 final-review pass: this entry previously also flagged
+`docs/web/architecture.md:43` as overstating `refresh` as triggering a scan. That was fixed
+before M0 began — the diagram there now reads "refresh → no handler — accepted then failed
+(unknown_kind); not built yet", matching `docs/web/commands.md` exactly — so the line was
+removed rather than left to describe a gap that no longer exists.)
 
 ---
 

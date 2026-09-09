@@ -291,8 +291,13 @@ def test_missing_expiry_renders_null_not_today(client) -> None:
 
 
 def test_assignment_risk_requires_expiry_and_delta(client) -> None:
-    """A deep-ITM short (|delta| >= 0.70) near expiry (dte <= 7) is assignment risk;
-    a missing delta or a longer-dte position is not."""
+    """A deep-ITM short (|delta| >= the configured delta threshold) inside the configured DTE
+    window is assignment risk; a missing delta or a position outside that window is not.
+
+    Since M0 Task 0.3 (`src/common/assignment_risk.py`), the thresholds are the monitor's real
+    configured values (`assignment_risk_thresholds`, default 0.70 delta / 21 DTE) — not a
+    hardcoded `dte <= 7`, which was the wrong rule the API used to apply. This fixture's 5-DTE
+    position sits well inside that window either way."""
     with session_scope() as s:
         s.query(PositionSnapshotRow).delete()
         near = (date.today() + timedelta(days=5)).isoformat()
