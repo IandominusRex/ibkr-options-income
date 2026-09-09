@@ -30,7 +30,15 @@ def _generate_campaign_id(symbol: str) -> str:
 
 
 def _rollup(session, row: CampaignRow) -> None:
-    """Recompute financial totals from all FillRow entries for the campaign's legs."""
+    """Recompute financial totals from all FillRow entries for the campaign's legs.
+
+    Gross of commissions: this sums avg_price * filled_qty * 100 and never reads
+    FillRow.commission, so total_premium_collected/total_debit_paid/net_premium exclude it by
+    design (pinned by tests/test_campaign_rollup_semantics.py). src/reporting/ (from M4)
+    reports the same trades net of commissions, the same way src/claude/eval/reconcile.py's
+    _classify does (credit - debit - commissions) — see CampaignRow's docstring for the fuller
+    explanation of the gap between the two.
+    """
     candidate_ids = list(row.leg_candidate_ids or [])
     if not candidate_ids:
         return
