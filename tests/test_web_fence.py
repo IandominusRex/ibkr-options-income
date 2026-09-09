@@ -21,7 +21,7 @@ def _modules_under(*dirs: str) -> list[str]:
     return [
         str(p.relative_to(ROOT))
         for d in dirs
-        for p in sorted((ROOT / "src" / d).glob("*.py"))
+        for p in sorted((ROOT / "src" / d).rglob("*.py"))
         if p.name != "__init__.py"
     ]
 
@@ -44,7 +44,7 @@ def test_checks_engine_never_imports_the_summary_layer() -> None:
     assert checks_dir.is_dir(), "checks package must exist for this fence to be meaningful"
     offenders = [
         str(p.relative_to(ROOT))
-        for p in sorted(checks_dir.glob("*.py"))
+        for p in sorted(checks_dir.rglob("*.py"))
         if "src.research.summary" in p.read_text(encoding="utf-8")
     ]
     assert not offenders, f"fence violated — summary reachable from checks: {offenders}"
@@ -79,16 +79,6 @@ def test_the_api_never_constructs_a_broker_connection() -> None:
 # the actual enforceable invariant and is what test_checks_engine_never_imports_the_
 # summary_layer above already uses.
 # ---------------------------------------------------------------------------
-
-
-def test_the_checks_engine_never_imports_the_summary_layer() -> None:
-    """Already covered above, but the summary package now has real content (M7)."""
-    offenders = [
-        str(p.relative_to(ROOT))
-        for p in sorted((ROOT / "src" / "research" / "checks").glob("*.py"))
-        if "src.research.summary" in p.read_text(encoding="utf-8")
-    ]
-    assert not offenders, f"summary reachable from checks: {offenders}"
 
 
 def test_the_summary_layer_never_writes_to_any_database_but_its_own() -> None:
