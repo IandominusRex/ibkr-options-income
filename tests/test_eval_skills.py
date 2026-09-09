@@ -26,7 +26,7 @@ def _engine_path_modules() -> list[str]:
     return [
         str(p.relative_to(root))
         for d in dirs
-        for p in sorted((root / "src" / d).glob("*.py"))
+        for p in sorted((root / "src" / d).rglob("*.py"))
         if p.name != "__init__.py"
     ]
 

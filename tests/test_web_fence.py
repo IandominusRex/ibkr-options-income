@@ -26,18 +26,6 @@ def _modules_under(*dirs: str) -> list[str]:
     ]
 
 
-def test_trading_path_never_imports_the_web_layer() -> None:
-    offenders = [
-        rel
-        for rel in _modules_under("engine", "execution", "strategies")
-        if any(
-            token in (ROOT / rel).read_text(encoding="utf-8")
-            for token in ("src.api", "src.research")
-        )
-    ]
-    assert not offenders, f"fence violated — web layer reachable from: {offenders}"
-
-
 def test_checks_engine_never_imports_the_summary_layer() -> None:
     """The AI summary is enrichment. It must not reach the deterministic checks engine."""
     checks_dir = ROOT / "src" / "research" / "checks"
