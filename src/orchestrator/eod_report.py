@@ -24,6 +24,8 @@ from zoneinfo import ZoneInfo
 
 from telegram import Bot
 
+from src.claude.eval.assignment import assigned_shorts
+from src.claude.eval.reconcile import reconcile
 from src.claude.runner import write_journal_narrative
 from src.common.config import get_config
 from src.common.market_hours import today_et
@@ -36,8 +38,10 @@ from src.ibkr.portfolio import (
     get_positions,
 )
 from src.notify.formatters import format_eod_summary
+from src.storage.campaigns import mark_campaign_assigned
 from src.storage.db import init_db, session_scope
 from src.storage.models import FillRow, JournalRow
+from src.storage.positions import save_position_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -262,20 +266,36 @@ def _build_eod_summary(
 
 
 def _write_journal(summary: EODSummary, narrative: str | None, fill_ids: list[int]) -> None:
+    """Upsert the journal row for summary.date (idempotent if the EOD run repeats).
+
+    Deliberately mirrors src/storage/positions.py::save_position_snapshot, which is already
+    idempotent for exactly this reason: an EOD run that repeats must not lose the steps that
+    follow it (the reconciler, assignment auto-detection, tomorrow's position baseline).
+    """
     payload = {
         "eod_summary": summary.model_dump(mode="json"),
         "fills": fill_ids,
     }
     with session_scope() as session:
-        row = JournalRow(
-            entry_date=summary.date,
-            realized_pnl=summary.realized_pnl,
-            unrealized_pnl=summary.unrealized_pnl,
-            narrative=narrative,
-            payload=payload,
-        )
-        session.add(row)
-    logger.info("JournalRow written for %s", summary.date)
+        row = session.query(JournalRow).filter_by(entry_date=summary.date).first()
+        if row is None:
+            session.add(
+                JournalRow(
+                    entry_date=summary.date,
+                    realized_pnl=summary.realized_pnl,
+                    unrealized_pnl=summary.unrealized_pnl,
+                    narrative=narrative,
+                    payload=payload,
+                )
+            )
+        else:
+            # Every field is replaced except `created_at` (identity: when the day's row was
+            # first written is real history, not something a re-run should overwrite).
+            row.realized_pnl = summary.realized_pnl
+            row.unrealized_pnl = summary.unrealized_pnl
+            row.narrative = narrative
+            row.payload = payload
+    logger.info("JournalRow upserted for %s", summary.date)
 
 
 async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None:
@@ -384,11 +404,6 @@ async def run() -> None:
     #     positions (Phase 4) — a vanished short whose underlying stock moved ~100×contracts is
     #     assigned, not expired-worthless. Today's snapshot is then saved as tomorrow's baseline.
     try:
-        from src.claude.eval.assignment import assigned_shorts
-        from src.claude.eval.reconcile import reconcile
-        from src.storage.campaigns import mark_campaign_assigned
-        from src.storage.positions import save_position_snapshot
-
         assigned = assigned_shorts(positions, today)
         reconcile(assigned_candidate_ids={sh.candidate_id for sh in assigned})
         # C6: roll the assignment through to the wheel campaign so adjusted cost basis is
