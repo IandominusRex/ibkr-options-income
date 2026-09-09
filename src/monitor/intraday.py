@@ -29,6 +29,7 @@ from ib_async import IB
 from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.runner import review_roll
 from src.common.config import Config, get_config
+from src.common.market_hours import is_rth
 from src.common.schemas import (
     FundamentalStats,
     OptionQuote,
@@ -39,10 +40,14 @@ from src.common.schemas import (
 )
 from src.ibkr.connection import AutoReconnect, connect_with_retry
 from src.ibkr.contracts import build_option
-from src.ibkr.portfolio import get_positions
+from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.monitor.triggers import check_all
 from src.storage.db import init_db, session_scope
 from src.storage.models import CandidateRow, FillRow, RollAlertRow
+from src.storage.portfolio_snapshots import (
+    latest_capture_time,
+    save_portfolio_snapshot,
+)
 
 log = logging.getLogger(__name__)
 
@@ -310,6 +315,37 @@ class IntradayMonitor:
         self._entry_iv.clear()
         await self._refresh_subscriptions()
 
+    async def _maybe_write_snapshot(self, positions: list[PositionSnapshot]) -> None:
+        """Write a portfolio snapshot if the interval has elapsed and the market is open.
+
+        Called from _refresh_subscriptions with the positions it already fetched, so this
+        adds an account fetch and a DB write, never a second get_positions call.
+
+        NEVER RAISES. Every failure path logs and returns. The monitor's real job is
+        firing roll/assignment alerts; writing a row for a web page is strictly
+        secondary, and an exception escaping into _refresh_loop would kill the refresh
+        task — silently stopping roll alerts for every position opened after that
+        moment. That failure mode is pinned by tests/test_monitor_snapshot.py.
+        """
+        try:
+            if not is_rth():
+                return  # a monitor left running overnight writes nothing
+            last = latest_capture_time()
+            interval = self._cfg.market_data.portfolio_snapshot_interval_minutes
+            if last is not None:
+                age = datetime.now(UTC) - last
+                if age < timedelta(minutes=interval):
+                    return  # inside the interval; a refresh command's row counts too
+            account = await asyncio.wait_for(
+                get_account_snapshot_async(self._ib, self._cfg.secrets.ibkr_account),
+                timeout=self._cfg.ibkr.connect_timeout_seconds,
+            )
+            save_portfolio_snapshot(
+                account=account, positions=positions, source="monitor"
+            )
+        except Exception:
+            log.exception("Portfolio snapshot write failed — alerts unaffected")
+
     async def _refresh_subscriptions(self) -> None:
         """Load positions; subscribe to new short options, unsubscribe from closed ones."""
         loop = asyncio.get_running_loop()
@@ -373,6 +409,11 @@ class IntradayMonitor:
                         log.info("Unsubscribed market data: %s", sym)
                     except Exception:
                         log.exception("cancelMktData failed for %s", sym)
+
+        # Portfolio snapshot for the web layer — strictly secondary to the subscription
+        # work above, and ordered after it deliberately: if this write is somehow slow,
+        # the subscriptions are already correct. Never raises (see _maybe_write_snapshot).
+        await self._maybe_write_snapshot(positions)
 
     # ------------------------------------------------------------------
     # Ticker event handler
