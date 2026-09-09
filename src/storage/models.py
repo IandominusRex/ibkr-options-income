@@ -259,6 +259,26 @@ class PositionSnapshotRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class PortfolioSnapshotRow(Base):
+    """A point-in-time capture of positions and account values, for the web portfolio.
+
+    Deliberately separate from PositionSnapshotRow: that table is one row per ET trading day
+    and assignment auto-detection depends on that contract (see src/claude/eval/assignment.py).
+    This one is append-only and captured on an intraday cadence. Pruned by retention, not by
+    a unique constraint — two rows may share a captured_at (a `refresh` command moments
+    after a monitor write), and the newest id wins a tie.
+    """
+
+    __tablename__ = "portfolio_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, index=True, default=_utcnow)
+    source: Mapped[str] = mapped_column(String(8))  # "monitor" | "refresh" | "eod"
+    account: Mapped[dict] = mapped_column(JSON)  # AccountSnapshot.model_dump(mode="json")
+    positions: Mapped[list] = mapped_column(JSON)  # list[PositionSnapshot.model_dump(mode="json")]
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class FillRow(Base):
     """One row per execution fill; order may have multiple (partial fills)."""
 

@@ -112,6 +112,21 @@ class AccountSnapshot(BaseModel):
     captured_at: datetime = Field(default_factory=_utcnow)
 
 
+class PortfolioSnapshot(BaseModel):
+    """One captured portfolio state — positions + account values (P3-P4 M1 Task 1.1).
+
+    The read-side type for `portfolio_snapshots` rows; nothing passes raw ORM rows
+    across a module boundary. `source` is which writer produced it: the intraday
+    monitor ("monitor"), an operator's `refresh` command ("refresh"), or the EOD
+    run ("eod").
+    """
+
+    captured_at: datetime
+    source: Literal["monitor", "refresh", "eod"]
+    account: AccountSnapshot
+    positions: list[PositionSnapshot]
+
+
 # --------------------------------------------------------------------------- #
 # Market data
 # --------------------------------------------------------------------------- #
