@@ -380,20 +380,30 @@ to the new approval.
 - **Milestone:** M7, built (Task 7.4; boundary check closed at the generic route in the
   final-review round).
 
-### `refresh` — request a scan refresh
+### `refresh` — capture the portfolio now
 
 - **Payload:** `{}` (empty)
-- **Dedupe key:** `None` (may repeat — multiple refresh requests are harmless, only
-  one scan runs at a time thanks to the scan lease)
-- **Applied by:** nobody yet — `refresh` is accepted by `POST /commands` and parses fine
-  (`CommandKind.REFRESH` is a valid kind, `RefreshPayload` is `{}`), but **no handler is
-  registered** in `src/notify/command_drain.py`. A submitted `refresh` command reaches the
-  drain and fails with `unknown_kind`, the same as any other unregistered kind would — it
-  does **not** trigger a scan. The handler will be built in M1 of the P3/P4 phase.
-- **Live mode:** No confirmation needed.
-- **Failure modes:** `unknown_kind` (today, always — see above). `scan_already_running` is the
-  intended failure mode once a handler exists, not a current one.
-- **Milestone:** M1 of P3/P4 (not yet built).
+- **Dedupe key:** `None` (may repeat — two refreshes in a row both apply; there is nothing
+  to dedupe because each writes its own snapshot row)
+- **Applied by:** the `_refresh` handler in `src/notify/command_drain.py` (registered
+  2026-09-09, P3/P4 M1 Task 1.4). It fetches current positions and account values through
+  the drain's live IB connection and appends **one** `portfolio_snapshots` row with
+  `source="refresh"`. It ignores the monitor's interval gate — that gate is the monitor's
+  cadence control, not a rate limit on the operator — but the row it writes still counts
+  toward the gate, because the gate reads the table's newest `captured_at`.
+- **Live mode:** No confirmation needed. A refresh creates no candidate, no approval, and no
+  order — it is a data capture, not a trade intent, and it reaches no order path at any
+  point (asserted by `tests/test_drain_refresh.py`).
+- **Failure modes:** `broker_unavailable` (no IB connection at drain time — the handler
+  refuses to write a row of whatever the last known state was; also raised when the
+  positions/account fetch itself fails), and `snapshot_failed` (the write returned `None` —
+  a storage failure, reported as its own reason rather than `handler_error`).
+- **Result:** `{"captured_at": "<iso UTC>", "positions": <int>, "snapshot_id": <int>}` — the
+  receipt says what was actually captured, not just "applied".
+- **Notifications:** none. A refresh is reversible, non-urgent, and not a safety-critical
+  control (the same reasoning that keeps `universe_add`/`universe_remove` silent while
+  halt/resume notify).
+- **Milestone:** M1 of P3/P4 (built, Task 1.4).
 
 ---
 

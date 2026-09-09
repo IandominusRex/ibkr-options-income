@@ -40,7 +40,7 @@ approval_service._command_drain_loop        (every execution.poll_interval_secon
    halt / resume         → set_halted(True/False, reason)
    set_autonomy          → set_autonomy_level
     universe_add / remove → universe_overrides
-    refresh               → no handler — accepted then failed (unknown_kind); not built yet
+    refresh               → get_positions + account → portfolio_snapshots (P3-P4 M1)
 ```
 
 The drain runs inside `approval_service` (the process that holds the exec connection),

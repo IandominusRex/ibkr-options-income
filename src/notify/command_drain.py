@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from src.common.config import get_config
 from src.common.schemas import ApprovalStatus
+from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.app_commands import (
     expire_stale_commands,
     mark_applied,
@@ -44,6 +45,7 @@ from src.storage.app_commands import (
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, RiskVerdictRow
 from src.storage.orders import active_order_for
+from src.storage.portfolio_snapshots import save_portfolio_snapshot
 from src.storage.system_settings import set_setting
 
 log = logging.getLogger(__name__)
@@ -635,3 +637,61 @@ def _universe_remove(*, command: Any, **_: Any) -> dict:
         )
     invalidate_universe_cache()
     return {"symbol": payload.symbol.upper(), "list_name": payload.list_name, "action": "remove"}
+
+
+# ---------------------------------------------------------------------------
+# P3-P4 M1 Task 1.4 — refresh.
+#
+# The phase's only write, and the least dangerous command in the system: capture positions
+# and account values NOW and append one `portfolio_snapshots` row (source="refresh"). It
+# creates no candidate, no approval, and no order — pinned by test_drain_refresh.py — so
+# it needs no live-mode confirm_token and sends no Telegram notification (a refresh is
+# reversible, non-urgent, and not a safety-critical control; this matches how
+# universe_add/universe_remove deliberately stay silent while halt/resume do not).
+#
+# It ignores the monitor's interval gate: the gate is the monitor's cadence control, not
+# a rate limit on the operator. But a refresh command's row still counts toward the
+# monitor's gate, because that gate reads the table's newest captured_at — free, by
+# construction. There is no dedupe key, so two refreshes in a row both apply.
+# ---------------------------------------------------------------------------
+
+
+@register("refresh")
+async def _refresh(*, command: Any, ib: IB | None, **_: Any) -> dict:
+    """Capture positions and account values now and write one portfolio snapshot.
+
+    Ignores the monitor's interval gate: an operator asking for a fetch gets one.
+    Raises CommandFailed("broker_unavailable") when ib is None.
+
+    Returns {"captured_at": "<iso>", "positions": <int>, "snapshot_id": <int>}.
+    """
+    from datetime import UTC as _UTC
+
+    if ib is None:
+        # Must not write a row containing whatever the last known state was — a
+        # refresh that silently writes stale data is worse than one that says it
+        # could not run.
+        raise CommandFailed("broker_unavailable")
+
+    try:
+        positions = get_positions(ib)
+        account = await get_account_snapshot_async(ib, get_config().secrets.ibkr_account)
+    except Exception as exc:
+        raise CommandFailed("broker_unavailable", {"detail": str(exc)}) from exc
+
+    captured_at = datetime.now(_UTC)
+    snapshot_id = save_portfolio_snapshot(
+        account=account,
+        positions=positions,
+        source="refresh",
+        captured_at=captured_at,
+    )
+    if snapshot_id is None:
+        # save_portfolio_snapshot swallows its own failures and returns None; a
+        # failed write is the command's failure, not a handler bug.
+        raise CommandFailed("snapshot_failed")
+    return {
+        "captured_at": captured_at.isoformat(),
+        "positions": len(positions),
+        "snapshot_id": snapshot_id,
+    }
