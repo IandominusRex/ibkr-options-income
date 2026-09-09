@@ -54,6 +54,30 @@ cd web && npx vitest run     209 passed (29 files)
 
 Every task below must leave those green, and the Python count must only ever go **up**.
 
+**Baseline as executed, 2026-09-09.** At execution time `git status` was already clean on `main`
+(commit `b72d9e4`, "feat: IBKR market data fallback chain + research ingest fixes"). Diffing that
+commit's file list against Task 0.1's "17 modified files and 2 untracked paths" table shows an
+exact match — every file named there (`ARCHITECTURE.md`, `How the scan works.md`, `README.md`,
+`SETUP.md`, `STATUS.md`, `docs/web/architecture.md`, `src/common/config.py`,
+`src/ibkr/market_data.py`, `src/notify/approval_service.py`, `src/research/ingest/jobs.py`,
+`src/research/ingest/quotes.py`, `tests/test_ingest_quotes.py`, `tests/test_market_data.py`,
+`tests/test_notify.py`, `web/app/api/[...path]/route.ts`, `web/app/api/[...path]/route.test.ts`,
+`web/lib/api.ts`, `web/lib/api.test.ts`, `web/data/`) is present in that commit. The operator chose
+**option 1** (commit the in-flight work themselves first) before this milestone began executing.
+Re-measuring the six gate commands against that commit gives:
+
+```
+python -m pytest -q          1944 passed
+ruff check .                 All checks passed
+mypy src                     Success: no issues found in 153 source files
+cd web && npx vitest run     209 passed (29 files)
+cd web && npm run lint       No ESLint warnings or errors
+cd web && npm run build      Compiled successfully, 7 routes generated
+```
+
+Identical to the pre-execution numbers above. This milestone proceeds from that baseline; every
+later task's gate re-run compares against these six results.
+
 ---
 
 ## Task 0.1 — Establish a known baseline `[SONNET]`

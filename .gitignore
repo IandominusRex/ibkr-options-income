@@ -34,6 +34,7 @@ logs/*.log.*
 # Tooling artifacts (temp agent worktrees, Playwright MCP snapshots)
 .claude/worktrees/
 .playwright-mcp/
+.superpowers/
 
 # Google Drive desktop sync staging (this repo lives in a synced folder)
 .tmp.driveupload/
