@@ -154,7 +154,11 @@ class MarketDataCfg(BaseModel):
     # health_probe_*: before each intraday scan, one snapshot quote on health_probe_symbol
     #   must return a usable tick/close within health_probe_timeout_seconds; if not, the
     #   cycle is skipped and a forced reconnect is triggered (drops the half-dead socket so
-    #   AutoReconnect rebuilds it).
+    #   AutoReconnect rebuilds it). The probe also classifies the failure from the IBKR
+    #   error codes observed during its window (2026-09-09): 1100 lost-farm, 10197
+    #   competing live session (reconnect won't fix — close the other login), 354/10089-91
+    #   no subscription, 1101/1102 flap, or generic. That diagnosis reaches the operator
+    #   messages only, never any gating.
     # max_consecutive_chain_timeouts: mid-scan circuit breaker — this many symbols timing
     #   out back-to-back aborts the run (ScanResult.aborted_unhealthy) instead of plowing
     #   through the rest. 0 disables the breaker.

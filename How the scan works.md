@@ -241,7 +241,7 @@ cycle is skipped entirely (no scan, no probes) when any of these is true:
 | Outside RTH, weekend, or market holiday | Nothing runs |
 | Past `scheduler.entry_cutoff` (**15:00 ET**) | Profit-take + loss-exit checks still run; **no new-entry scan** |
 | Execution halted (`/halt`) | Same — closing risk is always allowed, opening it is not |
-| IBKR data-farm health probe on SPY fails | Cycle skipped, forced reconnect, operator notified |
+| IBKR data-farm health probe on SPY fails | Cycle skipped, forced reconnect, operator notified **with a root-cause diagnosis** (Error 1100 lost-farm vs 10197 competing-live-session vs no-subscription vs flap vs generic — from the codes the probe observed; a 10197 block says right in the message that a reconnect won't fix it) |
 | The previous cycle's scan is still running | Cycle lost, counted, operator warned (throttled) |
 
 So the last chain fetch of the day happens at **14:45**, not 16:00.

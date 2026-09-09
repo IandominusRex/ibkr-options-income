@@ -25,7 +25,8 @@ async function proxy(
   }
 
   const { path } = await ctx.params;
-  const target = `${UPSTREAM}/${path.join("/")}`;
+  const qs = new URL(req.url).search;
+  const target = `${UPSTREAM}/${path.join("/")}${qs}`;
 
   const init: RequestInit = {
     method,
@@ -42,10 +43,18 @@ async function proxy(
   // Never log the request body — command payloads are not secret, but the habit is.
   const upstream = await fetch(target, init);
   const body = await upstream.text();
-  return new Response(body, {
-    status: upstream.status,
-    headers: { "Content-Type": upstream.headers.get("Content-Type") ?? "application/json" },
-  });
+  const headers = new Headers();
+  const contentType = upstream.headers.get("Content-Type");
+  if (contentType) {
+    headers.set("Content-Type", contentType);
+  }
+  // 204/304 and empty bodies must pass a null body through: constructing a
+  // Response with a body (even "") at these statuses throws, which would turn
+  // a successful live-mode confirm (204) or watchlist remove into a 500.
+  if (upstream.status === 204 || upstream.status === 304 || body.length === 0) {
+    return new Response(null, { status: upstream.status, headers });
+  }
+  return new Response(body, { status: upstream.status, headers });
 }
 
 export async function GET(

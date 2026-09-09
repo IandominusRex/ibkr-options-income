@@ -16,7 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.common.config import get_config
 from src.research.ingest.materialize import drain_ingest_jobs
-from src.research.ingest.quotes import refresh_quotes
+from src.research.ingest.quotes import refresh_quotes, refresh_warm_tier
 from src.research.ingest.symbols import refresh_symbol_directory
 from src.research.store.models import WorkerHeartbeatRow
 from src.research.store.session import research_session
@@ -56,9 +56,18 @@ def build_scheduler() -> BackgroundScheduler:
     cfg = get_config().research.tiers
     sched = BackgroundScheduler(timezone=get_config().scheduler.timezone)
 
+    # Symbol directory: the default 7-day cadence is the Sunday 03:00 cron
+    # (clock-aligned, predictable); any other configured cadence falls back to
+    # a plain interval from process start. Either way the key is consumed.
+    if cfg.directory_refresh_days == 7:
+        directory_trigger: CronTrigger | IntervalTrigger = CronTrigger(
+            day_of_week="sun", hour=3, minute=0
+        )
+    else:
+        directory_trigger = IntervalTrigger(days=max(1, cfg.directory_refresh_days))
     sched.add_job(
         lambda: run_job("symbols", refresh_symbol_directory),
-        CronTrigger(day_of_week="sun", hour=3, minute=0),
+        directory_trigger,
         id="symbol_directory",
         replace_existing=True,
     )
@@ -68,12 +77,19 @@ def build_scheduler() -> BackgroundScheduler:
         id="drain_ingest_jobs",
         replace_existing=True,
     )
-    # Warm-tier refresh is registered in Milestone 4.
+    # Nightly warm-tier refresh: daily bars + news for watchlisted and recently
+    # viewed symbols (the design's warm tier). One job, so the heartbeat covers
+    # the whole pass. Per-symbol failures are isolated inside refresh_warm_tier.
+    sched.add_job(
+        lambda: run_job("warm_refresh", refresh_warm_tier),
+        CronTrigger(hour=cfg.warm_refresh_hour_et, minute=0),
+        id="warm_refresh",
+        replace_existing=True,
+    )
     sched.add_job(
         lambda: run_job("quotes", refresh_quotes),
         IntervalTrigger(minutes=15),
         id="refresh_quotes",
         replace_existing=True,
     )
-    del cfg
     return sched

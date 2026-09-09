@@ -13,6 +13,7 @@ import math
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -34,6 +35,40 @@ from src.ibkr.contracts import (
 )
 
 log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Health-probe result (probe_market_data_health)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProbeHealth:
+    """Outcome of one pre-scan data-farm health probe.
+
+    ``healthy`` is the old boolean verdict everything downstream keys on. On failure the
+    remaining fields separate *what actually happened* from *what to do about it* —
+    ``diagnosis`` names the most likely root cause (from the IBKR error codes observed
+    during the probe window), ``action_hint`` tells the operator the fix that actually helps.
+    This exists because the pre-2026-09-09 probe collapsed every failure into "half-dead
+    socket / Error 1100", which on 2026-09-08 mislabelled an Error 10197
+    competing-live-session block (another login held the live-data entitlement) — a case
+    where a reconnect does nothing and the operator's real fix is closing the other session.
+    """
+
+    healthy: bool
+    diagnosis: str = ""
+    action_hint: str = ""
+    # IBKR error codes observed during the probe window, de-duplicated, sorted.
+    error_codes: list[int] = field(default_factory=list)
+    # The symbol the probe quoted and the timeout it waited — echoed into operator
+    # messages so the numbers are traceable to config.
+    probe_symbol: str = ""
+    probe_timeout: float = 0.0
+
+    def __bool__(self) -> bool:
+        """Truthiness is health, so existing `if not await probe(...)` call sites stay valid."""
+        return self.healthy
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +357,31 @@ def _spot_ready(ticker: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def probe_market_data_health(ib: IB, timeout: float | None = None) -> bool:
+# Health-probe diagnosis (2026-09-09). "No tick within Ns" is a symptom with several distinct
+# root causes this account has actually hit, and they need different operator responses, so
+# the probe classifies from the IBKR error codes it observed during its window:
+#
+#   1100  TWS/Gateway lost its upstream link to IBKR — the original "half-dead" socket
+#         (isConnected() stays True; every data-farm request silently never ticks). Operator:
+#         check the Gateway window's own connectivity banner; the forced reconnect usually
+#         recovers once Gateway's link is back.
+#   10197 "No market data during competing live session" — this account holds the live-data
+#         entitlement in ANOTHER login (IBKR Mobile app, a second TWS, Client Portal web
+#         session, or a just-restarted Gateway that lost the race to its own predecessor).
+#         A reconnect does NOT fix this; the other session must be closed (or the bot moved
+#         to a second username, which IBKR supports precisely for this). Mislabelled as 1100
+#         on 2026-09-08; kept distinct ever since.
+#   354 / 10089 / 10090 / 10091  No market-data subscription for the probe symbol — a config
+#         or entitlement problem on this account, not a socket problem at all.
+#   1101/1102 flaps observed during the window mean the farm connection is being (re)built
+#         right now — treat as "not settled yet" rather than pinning a cause.
+#   no codes + no tick  The data farm is unreachable without IBKR naming a reason — the
+#         generic half-dead state (covers, e.g., a silently wedged socket).
+_HEALTH_FATAL_CODES = {10197, 354, 10089, 10090, 10091}
+_HEALTH_CONNECTIVITY_CODES = {1100, 1101, 1102}
+
+
+async def probe_market_data_health(ib: IB, timeout: float | None = None) -> ProbeHealth:
     """Cheap, fully-bounded liveness check for the IBKR data farm before a full scan.
 
     ``ib.isConnected()`` only reflects the exec-socket/TCP handshake. On a *half-dead* socket
@@ -333,39 +392,138 @@ async def probe_market_data_health(ib: IB, timeout: float | None = None) -> bool
     loop so every subsequent 15-min cycle is starved (observed 2026-06-24 02:00 SGT).
 
     This fires one ``reqMktData`` snapshot on ``market_data.health_probe_symbol`` and waits up
-    to *timeout* seconds for any usable tick or prior close. Returns ``True`` if data flows,
-    ``False`` if the request never resolves (the caller should force a reconnect rather than
-    start the scan). Both the qualify and the tick wait are bounded, so the probe itself can
-    never hang, and it always reclaims its market-data line.
+    to *timeout* seconds for any usable tick or prior close. Returns a ``ProbeHealth`` record:
+    ``healthy=True`` if data flows, else ``healthy=False`` plus a ``diagnosis`` naming the most
+    likely root cause and an ``action_hint`` telling the operator what actually helps. Both
+    the qualify and the tick wait are bounded, so the probe itself can never hang, and it
+    always reclaims its market-data line. Any IBKR error codes observed during the probe
+    window (on any reqId) are recorded in ``error_codes`` — 1100/10197/354 arriving for the
+    probe's own snapshot is what lets the diagnosis distinguish the three failure modes
+    instead of lumping them under "half-dead socket" (2026-09-08 misdiagnosis fix).
     """
     cfg = get_config()
     if timeout is None:
         timeout = cfg.market_data.health_probe_timeout_seconds
     symbol = cfg.market_data.health_probe_symbol
+
+    # Capture every IBKR error fired during the probe window. errorEvent emits
+    # (reqId, errorCode, errorString, contract) from ib_async's wrapper — 1100/10197 arrive
+    # as errorEvent emissions, NOT exceptions, so the only way to see *why* the farm is
+    # silent is to listen while the probe runs. Codes on any reqId count: a competing-session
+    # or farm-lost error is global, not per-request.
+    seen_codes: list[int] = []
+
+    def _on_error(req_id: int, error_code: int, error_string: str, contract: Any) -> None:
+        seen_codes.append(error_code)
+
+    ib.errorEvent += _on_error
     try:
-        # A half-dead socket can hang qualify (TimeoutError) or surface a transport error;
-        # either way the farm isn't answering, so treat both as unhealthy.
-        stock = await asyncio.wait_for(qualify_stock_async(ib, symbol), timeout)
-    except Exception:
+        try:
+            # A half-dead socket can hang qualify (TimeoutError) or surface a transport
+            # error; either way the farm isn't answering, so treat both as unhealthy.
+            stock = await asyncio.wait_for(qualify_stock_async(ib, symbol), timeout)
+        except Exception:
+            log.error(
+                "health probe: could not qualify %s within %.0fs — socket appears half-dead",
+                symbol,
+                timeout,
+            )
+            return ProbeHealth(
+                healthy=False,
+                diagnosis="probe could not qualify the probe symbol within the timeout",
+                action_hint=(
+                    "The TWS/Gateway socket accepted the handshake but is not answering "
+                    "requests at all. Forcing a reconnect is the right move."
+                ),
+                error_codes=sorted(set(seen_codes)),
+                probe_symbol=symbol,
+                probe_timeout=timeout,
+            )
+        ticker = _open_line(ib, stock, snapshot=True)
+        try:
+            await _await_ready(lambda: _spot_ready(ticker), timeout)
+            healthy = _spot_ready(ticker)
+        finally:
+            _close_line(ib, stock)
+        if healthy:
+            return ProbeHealth(
+                healthy=True,
+                diagnosis="ok",
+                action_hint="",
+                error_codes=sorted(set(seen_codes)),
+                probe_symbol=symbol,
+                probe_timeout=timeout,
+            )
+        diagnosis, action_hint = _diagnose_probe_failure(seen_codes, symbol)
         log.error(
-            "health probe: could not qualify %s within %.0fs — socket appears half-dead",
+            "health probe: no market-data tick for %s within %.0fs — %s",
             symbol,
             timeout,
+            diagnosis,
         )
-        return False
-    ticker = _open_line(ib, stock, snapshot=True)
-    try:
-        await _await_ready(lambda: _spot_ready(ticker), timeout)
-        healthy = _spot_ready(ticker)
+        return ProbeHealth(
+            healthy=False,
+            diagnosis=diagnosis,
+            action_hint=action_hint,
+            error_codes=sorted(set(seen_codes)),
+            probe_symbol=symbol,
+            probe_timeout=timeout,
+        )
     finally:
-        _close_line(ib, stock)
-    if not healthy:
-        log.error(
-            "health probe: no market-data tick for %s within %.0fs — socket appears half-dead",
-            symbol,
-            timeout,
+        # Always unhook: a probe listener left attached would double-log every later IBKR
+        # error and slowly leak closure refs for the life of the process.
+        ib.errorEvent -= _on_error
+
+
+def _diagnose_probe_failure(seen_codes: list[int], symbol: str) -> tuple[str, str]:
+    """Turn "the probe got no tick" + observed error codes into (diagnosis, action hint).
+
+    Ordering matters — checked top to bottom, first match wins:
+      1. 1100 seen          → the classic half-dead socket (Gateway lost its upstream link).
+      2. competing-session / subscription codes → NOT a socket problem; a reconnect won't help.
+      3. 1101/1102 seen    → connectivity flapping right now; retry next cycle.
+      4. nothing seen      → farm unreachable, IBKR said nothing — the generic half-dead state.
+    """
+    codes = set(seen_codes)
+    if 1100 in codes:
+        return (
+            "TWS/Gateway has lost its upstream link to IBKR (Error 1100) — the socket "
+            "handshake stays up, but no market data can arrive",
+            "Check the Gateway window: it should show a connectivity-lost banner. "
+            "The forced reconnect below recovers it once Gateway's own link is back; "
+            "if Gateway stays stuck, restart Gateway itself.",
         )
-    return healthy
+    fatal = codes & _HEALTH_FATAL_CODES
+    if fatal:
+        if 10197 in fatal:
+            return (
+                "Another login on this IBKR account is holding the live market-data "
+                "entitlement (Error 10197: no market data during competing live session) — "
+                "commonly the IBKR Mobile app, a second TWS/Gateway instance, or a Client "
+                "Portal web session",
+                "A reconnect will NOT fix this. Close the other logged-in session (or "
+                "register a second username for the bot — IBKR supports this for exactly "
+                "this case), then wait for the next cycle.",
+            )
+        return (
+            "No market-data subscription for the probe symbol on this account "
+            f"({', '.join(str(c) for c in sorted(fatal))}) — a config or entitlement "
+            "problem, not a connectivity problem",
+            "Check the market-data subscriptions on the account, or change "
+            "market_data.health_probe_symbol in settings.yaml to something subscribed.",
+        )
+    if codes & _HEALTH_CONNECTIVITY_CODES:  # 1101/1102 only — 1100 was handled above
+        return (
+            "Gateway's data-farm connection is flapping (Errors 1101/1102 seen during the "
+            "probe) — the link is being rebuilt right now",
+            "Usually transient; the next 15-min cycle should recover on its own.",
+        )
+    return (
+        "The data farm is not answering and IBKR reported no specific error — the socket "
+        "appears half-dead (handshake up, no data flowing)",
+        "Forcing a reconnect; the next 15-min cycle should recover. If it repeats "
+        "back-to-back, restart Gateway.",
+    )
 
 
 def _get_spot(ib: IB, stock: Any) -> float:

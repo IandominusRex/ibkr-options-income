@@ -39,8 +39,8 @@ approval_service._command_drain_loop        (every execution.poll_interval_secon
    roll_request          → chain → generate_roll_candidates → queue_roll_for_approval
    halt / resume         → set_halted(True/False, reason)
    set_autonomy          → set_autonomy_level
-   universe_add / remove → universe_overrides
-   refresh               → trigger scan
+    universe_add / remove → universe_overrides
+    refresh               → no handler — accepted then failed (unknown_kind); not built yet
 ```
 
 The drain runs inside `approval_service` (the process that holds the exec connection),

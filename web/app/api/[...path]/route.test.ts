@@ -140,4 +140,72 @@ describe("API proxy", () => {
     expect((init as RequestInit).method).toBe("POST");
     expect(await new Response((init as RequestInit).body).text()).toBe(body);
   });
+
+  it("forwards the query string (search params survive the proxy)", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { GET } = await import("./route");
+
+    // Regression: the catch-all params carry only path segments, so a proxy
+    // that rebuilds the target from path.join("/") alone drops ?q=app — the
+    // backend's blank-query rule then returns an empty result and the ⌘K
+    // palette shows "No match" forever.
+    const req = new Request(
+      "http://localhost:3000/api/research/search?q=app&limit=5",
+    );
+    await GET(req, {
+      params: Promise.resolve({ path: ["research", "search"] }),
+    });
+
+    const [url] = fetchSpy.mock.calls[0];
+    expect(url).toBe("http://upstream.test/research/search?q=app&limit=5");
+  });
+
+  it("passes a 204 through with a null body, not a 500", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+
+    const { DELETE } = await import("./route");
+
+    // Regression: new Response("", { status: 204 }) throws (204 requires a
+    // null body), turning a successful live-mode confirm or watchlist remove
+    // into a 500 the UI reports as "Nothing was sent".
+    const req = new Request("http://localhost:3000/api/watchlist/AAPL", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, {
+      params: Promise.resolve({ path: ["watchlist", "AAPL"] }),
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.body).toBeNull();
+  });
+
+  it("passes a 304 through with a null body", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 304 })),
+    );
+
+    const { GET } = await import("./route");
+    const req = new Request("http://localhost:3000/api/health");
+    const res = await GET(req, { params: Promise.resolve({ path: ["health"] }) });
+
+    expect(res.status).toBe(304);
+    expect(res.body).toBeNull();
+  });
 });

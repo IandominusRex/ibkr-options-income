@@ -397,9 +397,11 @@ async def _notify_manual_scan_outcome(
                 message_id=prog_msg_id,
                 text=(
                     "\U0001f6d1 *Scan blocked mid\\-run*\n\n"
-                    f"IBKR data farm stopped responding \\(half\\-dead socket\\) after "
+                    f"IBKR data farm stopped responding after "
                     f"{processed}/{result.total_symbols} symbols — results below are "
-                    f"partial\\. Forcing a reconnect; try again in a moment\\."
+                    f"partial\\. Forcing a reconnect; try again in a moment\\. If it repeats, "
+                    f"check logs/system\\.log for Error 10197 \\(competing live session\\) or "
+                    f"Error 1100 \\(Gateway lost its IBKR link\\)\\."
                 ),
                 parse_mode="MarkdownV2",
             )
@@ -1242,18 +1244,28 @@ async def _run_intraday_scan(
             if result.aborted_unhealthy:
                 # Circuit breaker fired mid-sweep: the socket went half-dead after the
                 # pre-scan probe passed. Notify and force a reconnect (same recovery path).
+                # The mid-scan case has no single observable error code (three symbols in a
+                # row timed out; the cause can be 1100, 10197, or a wedged socket), so the
+                # message names the symptom precisely and points at the log for the specific
+                # codes this run saw — unlike the pre-scan block, which diagnoses the code.
                 threshold = get_config().market_data.max_consecutive_chain_timeouts
                 await _notify_scan_blocked(
                     bot,
                     chat_id,
-                    "IBKR data farm stopped responding mid-scan (half-dead socket)",
+                    "IBKR data farm stopped responding mid-scan",
                     f"{threshold} option\\-chain fetches timed out back\\-to\\-back, so the "
-                    f"run was aborted instead of grinding the rest of the universe\\.",
+                    f"run was aborted instead of grinding the rest of the universe\\. If this "
+                    f"keeps repeating, check logs/system\\.log for Error 10197 "
+                    f"\\(competing live session — close the other IBKR login\\) or Error 1100 "
+                    f"\\(Gateway lost its link to IBKR — restart Gateway\\)\\.",
                     retry_symbols=result.unreached_symbols,
                 )
                 await _force_scan_reconnect(ib_scan)
                 await _note_intraday_skip(
-                    bot_data, bot, chat_id, "circuit breaker aborted scan (half-dead socket)"
+                    bot_data,
+                    bot,
+                    chat_id,
+                    "circuit breaker aborted scan (data farm not responding)",
                 )
             else:
                 bot_data["intraday_scans_run"] = bot_data.get("intraday_scans_run", 0) + 1
@@ -1362,23 +1374,31 @@ async def _intraday_scan_loop(
             # handshake even when TWS has lost its IBKR data farm (Error 1100), in which case
             # every chain fetch would time out and the scan would monopolise the loop for ~2h.
             # Probe the data farm with one bounded snapshot quote first; if it's dead, notify
-            # the operator, force a reconnect, and skip this cycle so the loop stays free.
+            # the operator with the diagnosed root cause (not just "half-dead" — the probe
+            # classifies Error 1100 vs 10197 competing-session vs no-subscription vs generic,
+            # since their fixes differ), force a reconnect, and skip this cycle so the loop
+            # stays free.
             from src.ibkr.market_data import probe_market_data_health
 
-            if not await probe_market_data_health(ib_scan):
-                probe_symbol = get_config().market_data.health_probe_symbol
-                probe_timeout = get_config().market_data.health_probe_timeout_seconds
+            probe = await probe_market_data_health(ib_scan)
+            if not probe:
+                code_line = (
+                    f"IBKR error code\\(s\\) observed: "
+                    f"{_md_escape(', '.join(str(c) for c in probe.error_codes))}\\."
+                    if probe.error_codes
+                    else "No IBKR error code was reported\\."
+                )
                 await _notify_scan_blocked(
                     bot,
                     chat_id,
-                    "IBKR data farm not responding (half-dead socket)",
-                    f"Pre\\-scan health probe on {probe_symbol} returned no quote within "
-                    f"{probe_timeout:.0f}s, though the TWS socket still reports connected\\. "
-                    f"This is the Error 1100 \\(lost connectivity to IBKR\\) state\\.",
+                    probe.diagnosis,
+                    f"Pre\\-scan health probe on {probe.probe_symbol} returned no quote within "
+                    f"{probe.probe_timeout:.0f}s, though the socket still reports connected\\. "
+                    f"{code_line}\n\n{probe.action_hint}",
                 )
                 await _force_scan_reconnect(ib_scan)
                 await _note_intraday_skip(
-                    bot_data, bot, chat_id, "data-farm health probe failed (half-dead socket)"
+                    bot_data, bot, chat_id, f"data-farm health probe failed ({probe.diagnosis})"
                 )
                 continue
 

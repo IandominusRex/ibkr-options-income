@@ -2013,6 +2013,70 @@ async def test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle():
     assert app.bot_data.get("startup_full_sweep_done") is True
 
 
+async def test_intraday_loop_probe_block_reports_diagnosis_and_codes():
+    """Regression (2026-09-08): the pre-scan probe block hardcoded "half-dead socket /
+    Error 1100" — on that date the actual cause was Error 10197 (competing live session),
+    where a reconnect is useless and the operator's real fix is closing the other IBKR
+    login. The block message must now carry the probe's diagnosis, the observed error
+    codes, and the action hint — and a reconnecting message must not be sent when the
+    diagnosis says a reconnect won't help (it still forces one as a best-effort, since
+    10197 is sometimes a transient post-Gateway-restart race)."""
+    from types import SimpleNamespace
+
+    import src.notify.approval_service as approval_service
+    from src.ibkr.market_data import ProbeHealth
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    bot = AsyncMock()
+    app = SimpleNamespace(bot=bot, bot_data={})
+
+    probe = ProbeHealth(
+        healthy=False,
+        diagnosis="Another login on this IBKR account is holding the live market-data "
+        "entitlement (Error 10197: no market data during competing live session)",
+        action_hint="A reconnect will NOT fix this. Close the other logged-in session.",
+        error_codes=[10197],
+        probe_symbol="SPY",
+        probe_timeout=15.0,
+    )
+
+    with (
+        patch.object(approval_service, "is_rth", return_value=True),
+        patch.object(approval_service, "is_halted", return_value=False),
+        patch.object(approval_service, "is_new_entry_window", return_value=True),
+        patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
+        patch.object(approval_service, "_check_profit_takes", AsyncMock()),
+        patch.object(approval_service, "_check_loss_exits", AsyncMock()),
+        patch("src.ibkr.market_data.probe_market_data_health", AsyncMock(return_value=probe)),
+        patch("src.orchestrator.scan.run_scan", AsyncMock()) as mock_run_scan,
+    ):
+        loop_task = asyncio.create_task(
+            approval_service._intraday_scan_loop(app, ib_scan, None, "123")
+        )
+        try:
+            for _ in range(200):
+                if bot.send_message.call_count >= 1:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task
+
+    assert bot.send_message.call_count >= 1
+    texts = [c.kwargs["text"] for c in bot.send_message.call_args_list]
+    blocked = next(t for t in texts if "Scan blocked" in t)
+    assert "10197" in blocked, "diagnosis must name the real error code, not 1100"
+    assert "Error 1100" not in blocked, "must not mislabel a competing-session block as 1100"
+    assert "reconnect will NOT fix" in blocked
+    assert "SPY" in blocked and "15s" in blocked  # probe symbol + timeout echoed
+    # The scan never ran, the cycle was counted as skipped, and a forced reconnect fired.
+    mock_run_scan.assert_not_called()
+    assert app.bot_data.get("intraday_scans_skipped") == 1
+    ib_scan.disconnect.assert_called_once()
+
+
 async def test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running():
     """Regression for 2026-08-13: a full, legitimately slow sweep (e.g. right after a restart,
     before any symbol has a scan_state baseline) used to be `await`ed inline, so the loop could

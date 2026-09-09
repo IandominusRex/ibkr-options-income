@@ -182,6 +182,13 @@ Each phase gets its own design → plan → implementation cycle. **P0 + P1 are 
 together** in `P0-P1-design.md`, because P1 cannot ship without a shell and designing the
 navbar with P2–P4 stubbed is what stops the later sections forcing a rewrite.
 
+**P3 + P4 are likewise designed together** in `P3-P4-design.md` (2026-09-09). The note above that
+P3 is "largely a rendering of data `approval_service` already persists" turned out to be half
+right: campaigns, fills and orders are all persisted, but positions are captured only once a day
+and account values are persisted nowhere at all. Both phases need the same missing piece — a
+record of what the account held and what it was worth, captured more than daily — so specifying it
+once, under both sets of requirements, is what stops P4 rewriting P3's data spine.
+
 ---
 
 ## 7. Risks carried into the design

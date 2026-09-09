@@ -1108,12 +1108,17 @@ async def test_probe_healthy_when_tick_arrives(monkeypatch):
     ib = MagicMock()
     ib.reqMktData.return_value = _StockTicker(price=500.0)
 
-    assert await probe_market_data_health(ib, timeout=0.5) is True
+    probe = await probe_market_data_health(ib, timeout=0.5)
+    assert probe.healthy is True
+    assert bool(probe) is True  # truthiness contract for legacy call sites
 
 
 @pytest.mark.asyncio
 async def test_probe_unhealthy_when_no_tick(monkeypatch):
-    """Qualify succeeds but the snapshot never produces a price/close — a half-dead farm."""
+    """Qualify succeeds but the snapshot never produces a price/close — a half-dead farm.
+
+    No error codes arrive, so the diagnosis is the generic half-dead state, with an
+    action hint pointing at the forced reconnect (2026-09-09 diagnosis fix)."""
     monkeypatch.setattr(
         "src.ibkr.market_data.qualify_stock_async",
         AsyncMock(return_value=MagicMock(symbol="SPY")),
@@ -1121,9 +1126,150 @@ async def test_probe_unhealthy_when_no_tick(monkeypatch):
     ib = MagicMock()
     ib.reqMktData.return_value = _StockTicker(price=float("nan"), close=0.0)
 
-    assert await probe_market_data_health(ib, timeout=0.2) is False
+    probe = await probe_market_data_health(ib, timeout=0.2)
+    assert probe.healthy is False
+    assert bool(probe) is False
+    assert probe.error_codes == []
+    assert probe.probe_symbol == "SPY"
+    assert probe.probe_timeout == 0.2
+    assert "no specific error" in probe.diagnosis
+    assert probe.action_hint  # the operator message always names a next step
     # The probe must always reclaim its line, even on failure.
     ib.cancelMktData.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_probe_diagnoses_error_1100(monkeypatch):
+    """A 1100 arriving during the probe window names the classic half-dead socket:
+    Gateway lost its upstream link; the hint points at the Gateway window."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    listeners = []
+    ib.errorEvent.__iadd__.side_effect = lambda fn: listeners.append(fn) or ib.errorEvent
+    ib.errorEvent.__isub__.side_effect = lambda fn: listeners.remove(fn) or ib.errorEvent
+
+    def _emit_1100(contract, **kwargs):
+        for fn in listeners:
+            fn(-1, 1100, "Connectivity between IBKR and TWS has been lost", contract)
+        return _StockTicker(price=float("nan"), close=0.0)
+
+    ib.reqMktData.side_effect = _emit_1100
+    probe = await probe_market_data_health(ib, timeout=0.05)
+    assert probe.healthy is False
+    assert probe.error_codes == [1100]
+    assert "1100" in probe.diagnosis
+    assert "lost its upstream link" in probe.diagnosis
+    assert "Gateway" in probe.action_hint
+    assert listeners == []
+
+
+@pytest.mark.asyncio
+async def test_probe_diagnoses_error_10197_competing_session(monkeypatch):
+    """10197 must NOT be labelled a half-dead socket — the fix is closing the other login,
+    and the action hint must say a reconnect won't help (2026-09-08 misdiagnosis fix)."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    ib.reqMktData.return_value = _StockTicker(price=float("nan"), close=0.0)
+    # _await_ready polls with real sleeps; make the probe's wait instant by having the
+    # error land synchronously when reqMktData opens the line.
+    listeners = []
+    ib.errorEvent.__iadd__.side_effect = lambda fn: listeners.append(fn) or ib.errorEvent
+    ib.errorEvent.__isub__.side_effect = lambda fn: listeners.remove(fn) or ib.errorEvent
+
+    def _emit_10197(contract, **kwargs):
+        for fn in listeners:
+            fn(4, 10197, "No market data during competing live session", contract)
+        return _StockTicker(price=float("nan"), close=0.0)
+
+    ib.reqMktData.side_effect = _emit_10197
+    probe = await probe_market_data_health(ib, timeout=0.05)
+    assert probe.healthy is False
+    assert probe.error_codes == [10197]
+    assert "10197" in probe.diagnosis
+    assert "competing live session" in probe.diagnosis
+    assert "reconnect will NOT fix" in probe.action_hint
+    # The listener must be unhooked after the probe, win or lose.
+    assert listeners == []
+
+
+@pytest.mark.asyncio
+async def test_probe_diagnoses_no_subscription_codes(monkeypatch):
+    """354/10089-10091 mean an entitlement problem, not a socket problem."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    ib.reqMktData.return_value = _StockTicker(price=float("nan"), close=0.0)
+    listeners = []
+    ib.errorEvent.__iadd__.side_effect = lambda fn: listeners.append(fn) or ib.errorEvent
+    ib.errorEvent.__isub__.side_effect = lambda fn: listeners.remove(fn) or ib.errorEvent
+
+    def _emit_354(contract, **kwargs):
+        for fn in listeners:
+            fn(4, 354, "Requested market data is not subscribed", contract)
+        return _StockTicker(price=float("nan"), close=0.0)
+
+    ib.reqMktData.side_effect = _emit_354
+    probe = await probe_market_data_health(ib, timeout=0.05)
+    assert probe.healthy is False
+    assert probe.error_codes == [354]
+    assert "subscription" in probe.diagnosis
+    assert listeners == []
+
+
+@pytest.mark.asyncio
+async def test_probe_diagnoses_connectivity_flap(monkeypatch):
+    """1102 (connectivity restored) during the window means the link is being rebuilt —
+    the hint should say transient, not tell the operator to restart things."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(return_value=MagicMock(symbol="SPY")),
+    )
+    ib = MagicMock()
+    ib.reqMktData.return_value = _StockTicker(price=float("nan"), close=0.0)
+    listeners = []
+    ib.errorEvent.__iadd__.side_effect = lambda fn: listeners.append(fn) or ib.errorEvent
+    ib.errorEvent.__isub__.side_effect = lambda fn: listeners.remove(fn) or ib.errorEvent
+
+    def _emit_1102(contract, **kwargs):
+        for fn in listeners:
+            fn(-1, 1102, "Connectivity between IBKR and TWS has been restored", contract)
+        return _StockTicker(price=float("nan"), close=0.0)
+
+    ib.reqMktData.side_effect = _emit_1102
+    probe = await probe_market_data_health(ib, timeout=0.05)
+    assert probe.healthy is False
+    assert probe.error_codes == [1102]
+    assert "flapping" in probe.diagnosis
+    assert "transient" in probe.action_hint
+    assert listeners == []
+
+
+@pytest.mark.asyncio
+async def test_probe_diagnoses_hung_qualify_with_codes(monkeypatch):
+    """A half-dead socket can hang qualify itself — the probe stays bounded, returns
+    unhealthy, and still reports any codes the socket managed to emit."""
+    monkeypatch.setattr(
+        "src.ibkr.market_data.qualify_stock_async",
+        AsyncMock(side_effect=TimeoutError()),
+    )
+    ib = MagicMock()
+    listeners = []
+    ib.errorEvent.__iadd__.side_effect = lambda fn: listeners.append(fn) or ib.errorEvent
+    ib.errorEvent.__isub__.side_effect = lambda fn: listeners.remove(fn) or ib.errorEvent
+
+    probe = await probe_market_data_health(ib, timeout=0.1)
+    assert probe.healthy is False
+    assert "qualify" in probe.diagnosis
+    assert probe.action_hint
+    assert listeners == []
 
 
 @pytest.mark.asyncio
@@ -1137,4 +1283,5 @@ async def test_probe_unhealthy_when_qualify_hangs(monkeypatch):
     monkeypatch.setattr("src.ibkr.market_data.qualify_stock_async", _hangs)
     ib = MagicMock()
 
-    assert await asyncio.wait_for(probe_market_data_health(ib, timeout=0.1), timeout=2.0) is False
+    probe = await asyncio.wait_for(probe_market_data_health(ib, timeout=0.1), timeout=2.0)
+    assert probe.healthy is False
