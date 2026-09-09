@@ -30,9 +30,8 @@ from src.api.auth import User
 from src.api.commands import get_status, submit
 from src.api.deps import CurrentUser, OwnerUser, ResearchDb, assert_known_symbol
 from src.api.models.commands import CommandKind, UniversePayload, dedupe_key_for
-from src.api.models.common import Envelope
+from src.api.models.common import Envelope, as_utc
 from src.api.routers.commands import CommandResponse
-from src.api.routers.options import _as_utc
 from src.common.config import get_config
 from src.common.universe import effective_universe
 from src.storage.db import session_scope
@@ -127,7 +126,7 @@ def _overridable_entries(
                     overridden=True,
                     removed=not guarded,
                     created_by=row.created_by,
-                    created_at=_as_utc(row.created_at),
+                    created_at=as_utc(row.created_at),
                 )
             )
         else:
@@ -137,7 +136,7 @@ def _overridable_entries(
                     overridden=row is not None,
                     removed=False,
                     created_by=row.created_by if row else None,
-                    created_at=_as_utc(row.created_at) if row else None,
+                    created_at=as_utc(row.created_at) if row else None,
                 )
             )
 
@@ -165,7 +164,7 @@ def _overridable_entries(
                 overridden=True,
                 removed=row.action == "remove",
                 created_by=row.created_by,
-                created_at=_as_utc(row.created_at),
+                created_at=as_utc(row.created_at),
             )
         )
     return entries

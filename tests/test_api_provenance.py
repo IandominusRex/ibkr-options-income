@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
-from src.api.models.common import Envelope, Source, Sourced
+from src.api.models.common import Envelope, Source, Sourced, as_utc, as_utc_opt
 
 
 def test_sourced_is_generic_over_value_type() -> None:
@@ -72,3 +73,35 @@ def test_envelope_carries_top_level_as_of() -> None:
     p = Payload(symbol="AAPL", as_of=datetime.now(UTC))
     assert p.symbol == "AAPL"
     assert p.as_of is not None
+
+
+def test_as_utc_on_naive_returns_same_wall_clock_time_tz_aware_utc() -> None:
+    naive = datetime(2026, 9, 9, 12, 0)
+    result = as_utc(naive)
+    assert result.tzinfo is not None
+    assert result == naive.replace(tzinfo=UTC)
+
+
+def test_an_aware_datetime_survives_unchanged() -> None:
+    aware = datetime(2026, 9, 9, 12, 0, tzinfo=timezone(timedelta(hours=-4)))
+    assert as_utc(aware) is aware or as_utc(aware) == aware
+    assert as_utc(aware).utcoffset() == timedelta(hours=-4)
+
+
+def test_the_optional_variant_passes_none_through() -> None:
+    assert as_utc_opt(None) is None
+
+
+def test_the_optional_variant_matches_as_utc_for_a_naive_datetime() -> None:
+    naive = datetime(2026, 9, 9, 12, 0)
+    assert as_utc_opt(naive) == as_utc(naive)
+
+
+def test_no_module_defines_its_own_as_utc() -> None:
+    """Two implementations became two signatures. A third would become three."""
+    offenders = [
+        str(p)
+        for p in Path("src/api").rglob("*.py")
+        if "def _as_utc" in p.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"local _as_utc copies remain: {offenders}"

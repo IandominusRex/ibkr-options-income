@@ -23,9 +23,19 @@ class Source(StrEnum):
     COMPUTED = "computed"
 
 
-def _as_utc(dt: datetime) -> datetime:
-    """SQLite returns naive datetimes. Treat naive as UTC rather than raising."""
+def as_utc(dt: datetime) -> datetime:
+    """Treat a naive datetime as UTC rather than raising.
+
+    SQLite returns naive datetimes. A naive datetime serialises without an offset, which a
+    browser's Date parser reads as LOCAL time — silently shifting a displayed age by the
+    viewer's UTC offset instead of reporting it correctly.
+    """
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def as_utc_opt(dt: datetime | None) -> datetime | None:
+    """as_utc, passing None through. The shape router code actually needs."""
+    return None if dt is None else as_utc(dt)
 
 
 class Sourced[T](BaseModel):
@@ -52,7 +62,7 @@ class Sourced[T](BaseModel):
         browser's `Date` parser reads as *local* time — silently shifting the displayed
         age by the viewer's UTC offset instead of reporting it correctly.
         """
-        utc_as_of = _as_utc(as_of)
+        utc_as_of = as_utc(as_of)
         age = datetime.now(UTC) - utc_as_of
         return cls(value=value, source=source, as_of=utc_as_of, stale=age > fresh_for)
 

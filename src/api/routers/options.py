@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
 
 from src.api.deps import OwnerUser, TradingDb
-from src.api.models.common import Source, Sourced
+from src.api.models.common import Source, Sourced, as_utc, as_utc_opt
 from src.api.models.options import (
     AlternativeStrike,
     ApprovalDetail,
@@ -108,13 +108,6 @@ def _humanize_reasons(codes: list[str] | None) -> list[str]:
     return out
 
 
-def _as_utc(dt: datetime | None) -> datetime | None:
-    """SQLite returns naive datetimes. Treat naive as UTC so they serialize with a Z."""
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-
-
 def _dte(expiry: date) -> int:
     """Days to expiry, in the exchange timezone (ET) so a UTC server at 11 PM is correct."""
     return (expiry - datetime.now(_ET).date()).days
@@ -200,8 +193,8 @@ def _build_summary(
         contracts=contracts,
         premium=premium,
         blended_score=blended_score,
-        expires_at=_as_utc(approval.expires_at),
-        decided_at=_as_utc(approval.decided_at),
+        expires_at=as_utc_opt(approval.expires_at),
+        decided_at=as_utc_opt(approval.decided_at),
         order_state=order_state,
         source=_source_from_run_id(run_id),
     )
@@ -451,7 +444,7 @@ def _latest_run_id(db: TradingDb) -> tuple[str | None, datetime | None]:
     ).first()
     if row is None:
         return None, None
-    return row[0], _as_utc(row[1])
+    return row[0], as_utc_opt(row[1])
 
 
 def _promotable_for(stage: str, min_candidate_score: float) -> tuple[bool, str | None]:
@@ -498,7 +491,7 @@ def list_assessed(
         row = db.execute(
             select(func.max(RiskVerdictRow.created_at)).where(RiskVerdictRow.run_id == run)
         ).scalar_one_or_none()
-        computed_at = _as_utc(row) if row is not None else None
+        computed_at = as_utc_opt(row)
 
     if run_id is None:
         return AssessedResponse(as_of=now, run_id=None, computed_at=None, groups=[])
@@ -706,8 +699,8 @@ def list_orders(
                 avg_fill_price=avg_fill,
                 is_live=bool(o.is_live),
                 detail=o.detail,
-                created_at=_as_utc(o.created_at) or now,
-                updated_at=_as_utc(o.updated_at) or now,
+                created_at=as_utc_opt(o.created_at) or now,
+                updated_at=as_utc_opt(o.updated_at) or now,
             )
         )
     return OrderListResponse(as_of=now, orders=out)
@@ -747,7 +740,7 @@ def list_fills(
             avg_price=r.avg_price,
             commission=r.commission,
             is_live=bool(r.is_live),
-            filled_at=_as_utc(r.filled_at) or now,
+            filled_at=as_utc_opt(r.filled_at) or now,
         )
         for r in rows
     ]
@@ -782,7 +775,7 @@ def list_shorts(
         return ShortListResponse(as_of=datetime.now(UTC), shorts=[])
 
     # as_of is the snapshot's capture time, not request time.
-    as_of = _as_utc(snap_row.created_at) or datetime.now(UTC)
+    as_of = as_utc_opt(snap_row.created_at) or datetime.now(UTC)
 
     positions: list[dict[str, Any]] = snap_row.payload or []
     short_opts = [
@@ -815,7 +808,7 @@ def list_shorts(
                 trigger_label=humanize_trigger(a.trigger),
                 detail=a.detail,
                 claude_recommendation=a.claude_recommendation,
-                created_at=_as_utc(a.created_at) or as_of,
+                created_at=as_utc_opt(a.created_at) or as_of,
             )
         )
 
@@ -934,7 +927,7 @@ def _parse_setting_dt(raw: str | None) -> datetime | None:
         return None
     try:
         dt = datetime.fromisoformat(raw)
-        return _as_utc(dt)
+        return as_utc(dt)
     except (ValueError, TypeError):
         return None
 
