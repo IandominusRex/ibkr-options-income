@@ -151,6 +151,11 @@ market_data:
   # of every cycle is fixed = 23% at 15 min, 34% at 10 min, 69% at 5 min).
   chain_fetch_budget_seconds: 600
 
+  # Minimum minutes between automatic portfolio snapshots written by the intraday
+  # monitor. A `refresh` command ignores this — an operator asking for a fetch
+  # gets one. P3-P4 M1; see Web plan/P3-P4-design.md §4.
+  portfolio_snapshot_interval_minutes: 15
+
 claude:
   cli_command: "claude"
   timeout_seconds: 180
@@ -193,6 +198,10 @@ storage:
   # SQLAlchemy URL. SQLite for v1; swap for postgresql://... later.
   db_url: "sqlite:///data/income_system.db"
   iv_history_parquet: "data/iv_history.parquet"
+  # Days of intraday portfolio history kept. Pruned by the EOD run. See
+  # Web plan/P3-P4-design.md §4.2: a year of intraday history needs a rollup,
+  # not a longer retention here. P3-P4 M1.
+  portfolio_snapshot_retention_days: 30
 
 logging:
   level: "INFO"

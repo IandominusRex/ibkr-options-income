@@ -734,7 +734,9 @@ last-run date is persisted to `data/eod_scheduler_state.json`, so:
 > It is short-lived (exits when done). It also covers tasks the always-on daemon does not: P&L
 > accounting, journal writing, daily IV/price append, verdict ledger reconciliation, and the
 > nightly DB backup. (No morning job is needed — the daemon runs a full scan every 15 minutes
-> during RTH.)
+> during RTH.) It also prunes two audit-history tables: `risk_verdicts` (14 days) and the
+> intraday `portfolio_snapshots` (default 30 days — `storage.portfolio_snapshot_retention_days`
+> in `config/settings.yaml`; a year of intraday history needs a rollup, not a longer retention).
 
 **Requirement:** keep `scripts.start` running across the close so the scheduler can fire. The
 launchd / systemd recipes below keep it alive across reboots and crashes.

@@ -221,6 +221,12 @@ class MarketDataCfg(BaseModel):
     # operator-initiated and expected to sweep in full.
     chain_fetch_budget_seconds: float = 600.0
 
+    # P3-P4 M1 — minimum minutes between automatic portfolio snapshots written by the
+    # intraday monitor. A `refresh` command ignores this: an operator asking for a
+    # fetch gets one. The gate reads `portfolio_snapshots`' newest captured_at from the
+    # DB, so a monitor restart cannot burst snapshots.
+    portfolio_snapshot_interval_minutes: int = 15
+
     @model_validator(mode="after")
     def _enforce_line_budget(self) -> MarketDataCfg:
         """`max_concurrent_lines` is the account's ~100-line market-data cap. A single chain
@@ -362,6 +368,10 @@ class ResearchCfg(BaseModel):
 class StorageCfg(BaseModel):
     db_url: str = "sqlite:///data/income_system.db"
     iv_history_parquet: str = "data/iv_history.parquet"
+    # P3-P4 M1 — days of intraday portfolio history kept. Pruned by the EOD run; see
+    # Web plan/P3-P4-design.md §4.2: a year of intraday history needs a rollup, not a
+    # longer retention here.
+    portfolio_snapshot_retention_days: int = 30
 
 
 class LoggingCfg(BaseModel):

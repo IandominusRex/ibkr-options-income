@@ -419,10 +419,14 @@ async def run() -> None:
 
     # 8. Prune the write-only audit table so SQLite stays bounded. Forensics-only — no
     # production code reads it back, so a bounded window costs nothing operationally.
+    # Also prune the intraday portfolio snapshots to the configured retention (P3-P4 M1)
+    # — the web portfolio needs days of history, not years (a year needs a rollup).
     from src.storage.maintenance import backup_database
+    from src.storage.portfolio_snapshots import prune_portfolio_snapshots
     from src.storage.risk_verdicts import purge_old_risk_verdicts
 
     purge_old_risk_verdicts()
+    prune_portfolio_snapshots(get_config().storage.portfolio_snapshot_retention_days)
 
     # 9. Nightly backup of the system of record (orders, fills, learning history).
     backup_database()
