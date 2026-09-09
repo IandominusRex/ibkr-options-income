@@ -6,6 +6,10 @@ import { NextResponse } from "next/server";
 
 const UPSTREAM = process.env.API_URL ?? "http://127.0.0.1:8787";
 const ALLOWED_METHODS = ["GET", "POST", "DELETE"] as const;
+// Generous: POST /research/{symbol}/summary runs a model call, and a proxy
+// that gives up before the backend does would turn a slow success into a
+// fabricated failure.
+const UPSTREAM_TIMEOUT_MS = 30_000;
 
 async function proxy(
   method: string,
@@ -41,7 +45,25 @@ async function proxy(
   }
 
   // Never log the request body — command payloads are not secret, but the habit is.
-  const upstream = await fetch(target, init);
+  // signal.aborted (not the caught error's shape) is what tells a real connection
+  // failure apart from our own timeout firing — robust regardless of how the
+  // underlying fetch implementation represents either case.
+  const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, { ...init, signal });
+  } catch {
+    if (signal.aborted) {
+      return NextResponse.json(
+        { detail: "The API did not respond in time (timed out). It may be overloaded or stuck." },
+        { status: 504 },
+      );
+    }
+    return NextResponse.json(
+      { detail: "The API is not reachable. Check that it is running." },
+      { status: 502 },
+    );
+  }
   const body = await upstream.text();
   const headers = new Headers();
   const contentType = upstream.headers.get("Content-Type");

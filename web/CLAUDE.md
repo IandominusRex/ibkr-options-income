@@ -39,6 +39,20 @@ bundle). This works under `next start` behind Tailscale. It does **not** survive
 Vercel-hosted frontend, because a route handler running in Vercel's cloud cannot reach
 a private API at `127.0.0.1:8787`. The proxy fails closed when `API_TOKEN` is unset.
 
+**The proxy fails soft, never with an HTML 500, when the upstream API is unreachable
+or slow.** The bare `fetch()` to the upstream is wrapped in a `try`/`catch` with
+`AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)` (30s — generous, because
+`POST /research/{symbol}/summary` runs a model call and a proxy that gives up too
+early would turn a slow success into a fabricated failure). A connection failure
+(FastAPI not running, crashed, restarting) returns `502` with `{"detail": "..."}`
+JSON; a timeout returns `504` with `{"detail": "..."}` JSON. `apiFetch` (`lib/api.ts`)
+surfaces `detail` as the `ApiError` message, so the UI renders a sentence, never a
+page of markup. The `detail` text never includes the upstream URL, an exception
+stack trace, or the word "Bearer" — the browser has no business seeing any of them.
+P3/P4 poll this proxy continuously (portfolio refresh, command polling every 2s), so
+this is the failure mode an API restart or outage produces constantly, not an edge
+case.
+
 ## Scripts
 
 | Command | What it does |

@@ -208,4 +208,91 @@ describe("API proxy", () => {
     expect(res.status).toBe(304);
     expect(res.body).toBeNull();
   });
+
+  it("returns a JSON 502 when the API cannot be reached", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    // Mirrors what Node's fetch actually throws on a refused connection.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+
+    const { GET } = await import("./route");
+    const req = new Request("http://localhost:3000/api/portfolio/summary");
+    const res = await GET(req, {
+      params: Promise.resolve({ path: ["portfolio", "summary"] }),
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    const body = await res.json();
+    expect(body.detail).toMatch(/not reachable/i);
+    // No token, no upstream host/URL, no stack trace — the browser has no
+    // business seeing any of those.
+    expect(body.detail).not.toMatch(/127\.0\.0\.1|localhost|upstream\.test|Bearer/i);
+  });
+
+  it("returns a JSON 504 when the API does not answer in time", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    vi.useFakeTimers();
+    try {
+      // A realistic hung upstream: the fetch promise never settles on its
+      // own, but (like real fetch) rejects once the passed AbortSignal fires.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(
+                (init.signal as AbortSignal).reason ??
+                  new DOMException("The operation was aborted.", "TimeoutError"),
+              );
+            });
+          });
+        }),
+      );
+
+      const { GET } = await import("./route");
+      const req = new Request("http://localhost:3000/api/portfolio/summary");
+
+      const resPromise = GET(req, {
+        params: Promise.resolve({ path: ["portfolio", "summary"] }),
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const res = await resPromise;
+
+      expect(res.status).toBe(504);
+      expect(res.headers.get("Content-Type")).toContain("application/json");
+      const body = await res.json();
+      expect(body.detail).toMatch(/timed out/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a successful response untouched", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response('{"ok":true}', {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const { GET } = await import("./route");
+    const req = new Request("http://localhost:3000/api/portfolio/summary");
+    const res = await GET(req, {
+      params: Promise.resolve({ path: ["portfolio", "summary"] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    expect(await res.text()).toBe('{"ok":true}');
+  });
 });
