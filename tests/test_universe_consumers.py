@@ -122,15 +122,6 @@ def db_session(tmp_path, monkeypatch):
         session.close()
 
 
-@pytest.fixture(autouse=True)
-def _reset_universe_cache():
-    """Every test starts and ends with a clean module-level cache — tests run in one pytest
-    process and would otherwise leak a computed result (or lack of one) across each other."""
-    invalidate_universe_cache()
-    yield
-    invalidate_universe_cache()
-
-
 # --------------------------------------------------------------------------- #
 # The consequential edit: an override must actually change strategy-generator output
 # --------------------------------------------------------------------------- #
@@ -210,7 +201,7 @@ def test_eod_report_watchlist_reflects_an_override(db_session) -> None:
 
     cfg = get_config()
     assert "ZZZZ" not in cfg.universe["watchlist"]
-    assert "ZZZZ" not in _universe_symbols(cfg)
+    assert "ZZZZ" not in _universe_symbols()
 
     set_override(
         db_session, symbol="ZZZZ", list_name="watchlist", action="add", created_by="owner"
@@ -218,4 +209,4 @@ def test_eod_report_watchlist_reflects_an_override(db_session) -> None:
     db_session.commit()
     invalidate_universe_cache()
 
-    assert "ZZZZ" in _universe_symbols(cfg)
+    assert "ZZZZ" in _universe_symbols()

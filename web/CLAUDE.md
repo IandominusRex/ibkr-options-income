@@ -231,13 +231,14 @@ components/
                     backend's own gating), OverrideBadge (author + timestamp +
                     revert for an overridden entry; the YAML base row stays visible,
                     never hidden, even when removed; revert fires the opposite
-                    action - add for a removed entry, remove for a present one),
-                    AddSymbol (typeahead over GET /research/search so a typo cannot
-                    reach the write route as a raw symbol; adding to would_own opens
-                    a ConfirmAction naming the cash-secured-put/assignment
-                    consequence, adding to watchlist fires immediately with no
-                    dialog). All three route mutations through
-                    submitUniverseCommand (lib/commands.ts) and render a
+                    action - add for a removed entry, remove for a present one; purely
+                    presentational - onRevert is a callback prop, not a mutation of
+                    its own), AddSymbol (typeahead over GET /research/search so a
+                    typo cannot reach the write route as a raw symbol; adding to
+                    would_own opens a ConfirmAction naming the cash-secured-put/
+                    assignment consequence, adding to watchlist fires immediately
+                    with no dialog). AddSymbol and UniverseList route mutations
+                    through submitUniverseCommand (lib/commands.ts) and render a
                     CommandReceipt.
 lib/
   api.ts            apiFetch + ApiError

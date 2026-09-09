@@ -7,14 +7,10 @@ controls the transaction.
 
 from __future__ import annotations
 
-import logging
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.storage.models import UniverseOverrideRow, _utcnow
-
-log = logging.getLogger(__name__)
 
 
 def _find(session: Session, symbol: str, list_name: str) -> UniverseOverrideRow | None:

@@ -106,7 +106,7 @@ def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
     return realized, len(fill_ids), fill_ids
 
 
-def _universe_symbols(cfg) -> list[str]:
+def _universe_symbols() -> list[str]:
     """Indexes ∪ watchlist ∪ would_own — the symbols whose IV history we keep fresh."""
     u = effective_universe()
     return sorted(
@@ -351,7 +351,7 @@ async def run() -> None:
             logger.exception("EOD: greeks enrichment failed — net delta may read 0")
         # Keep the IV-rank window current (N4) while the connection is open.
         try:
-            await _append_daily_iv(ib, _universe_symbols(cfg))
+            await _append_daily_iv(ib, _universe_symbols())
         except Exception:
             logger.exception("EOD: daily IV append failed — iv_history may age")
     logger.info("Disconnected from IBKR")
@@ -360,7 +360,7 @@ async def run() -> None:
     # OHLCV fetch. Uses yfinance (the technical layer's source), not IBKR — runs after the
     # disconnect. Best-effort: a failure just means the next scan fetches the tail itself.
     try:
-        await _append_daily_prices(_universe_symbols(cfg))
+        await _append_daily_prices(_universe_symbols())
     except Exception:
         logger.exception("EOD: daily price append failed — price_history may age")
 
