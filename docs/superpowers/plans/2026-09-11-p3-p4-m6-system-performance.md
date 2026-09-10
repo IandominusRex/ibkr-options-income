@@ -397,7 +397,7 @@ export type VerdictAgreementData = components["schemas"]["VerdictAgreement"];
 calls (no `QueryClientProvider`, no `renderWithQuery`). `PnlShell` owns the `useQuery` call and
 the since/until window state, exactly as it owns the equity/ledger fetches.
 
-- [ ] **Step 0: Regenerate `docs/web/openapi.json` (already done in 6.1) and `web/lib/api-types.ts`.**
+- [x] **Step 0: Regenerate `docs/web/openapi.json` (already done in 6.1) and `web/lib/api-types.ts`.**
   Start the API against a throwaway DB, run `gen:api`, stop it:
 
 ```bash
@@ -414,9 +414,9 @@ kill $API_PID
   the five new `SystemPerformanceResponse`/`ScoreOutcomeReport`/`ScoreBucket`/`SignalCorrelation`/
   `VerdictAgreement` schemas and nothing else changed.)
 
-- [ ] **Step 1: Add the type aliases to `web/components/pnl/types.ts`** (block above).
+- [x] **Step 1: Add the type aliases to `web/components/pnl/types.ts`** (block above).
 
-- [ ] **Step 2: Write the failing tests — `web/components/pnl/SystemPanel.test.tsx`.**
+- [x] **Step 2: Write the failing tests — `web/components/pnl/SystemPanel.test.tsx`.**
 
 ```tsx
 import { render, screen, within } from "@testing-library/react";
@@ -580,10 +580,10 @@ describe("SystemPanel", () => {
   strings collide in one render; adjust the test, not the component, if so — the component must
   not avoid a legitimate coincidence of rendered numbers.)
 
-- [ ] **Step 3: Confirm failure.** `cd web && npx vitest run components/pnl/SystemPanel.test.tsx`
+- [x] **Step 3: Confirm failure.** `cd web && npx vitest run components/pnl/SystemPanel.test.tsx`
   — fails (modules don't exist).
 
-- [ ] **Step 4: Implement `ScoreBucketTable.tsx`.**
+- [x] **Step 4: Implement `ScoreBucketTable.tsx`.**
 
 ```tsx
 "use client";
@@ -644,7 +644,7 @@ export function ScoreBucketTable({ buckets, label }: { buckets: ScoreBucketData[
 }
 ```
 
-- [ ] **Step 5: Implement `CorrelationTable.tsx`.**
+- [x] **Step 5: Implement `CorrelationTable.tsx`.**
 
 ```tsx
 "use client";
@@ -708,7 +708,7 @@ export function CorrelationTable({ correlations }: { correlations: SignalCorrela
 }
 ```
 
-- [ ] **Step 6: Implement `SystemPanel.tsx`.**
+- [x] **Step 6: Implement `SystemPanel.tsx`.**
 
 ```tsx
 "use client";
@@ -822,13 +822,13 @@ function Headline({ label, children }: { label: string; children: React.ReactNod
 }
 ```
 
-- [ ] **Step 7: Run the component tests.**
+- [x] **Step 7: Run the component tests.**
   `cd web && npx vitest run components/pnl/SystemPanel.test.tsx` — all pass. Fix any text
   collisions (e.g. two `60%` strings) by scoping assertions with `within(container)` on the
   specific block, per the note in Step 2 — never by changing the component to avoid a legitimate
   coincidence.
 
-- [ ] **Step 8: Wire the tab into `PnlShell.tsx`.** Add `"system"` to the `Tab` union and `TABS`
+- [x] **Step 8: Wire the tab into `PnlShell.tsx`.** Add `"system"` to the `Tab` union and `TABS`
   array (`{ key: "system", label: "System" }`), add `since`/`until` state, a `useQuery` for
   `/pnl/system`, and a `tab === "system"` render block:
 
@@ -877,10 +877,10 @@ const system = useQuery({
 
   `Tab` type becomes `"ledger" | "equity" | "system"`.
 
-- [ ] **Step 9: Run the full frontend gate.**
+- [x] **Step 9: Run the full frontend gate.**
   `cd web && npx vitest run && npm run lint && npm run build`.
 
-- [ ] **Step 10: Update `web/CLAUDE.md`'s `components/pnl/` bullet** in the layout table to add
+- [x] **Step 10: Update `web/CLAUDE.md`'s `components/pnl/` bullet** in the layout table to add
   `SystemPanel` (fetched by `PnlShell`'s third tab, since/until window state owned by the shell,
   panel itself presentational), `ScoreBucketTable` (small-sample labelling below n=5), and
   `CorrelationTable` (null `pearson_r`/half-splits render n/a). Update the `PnlShell` bullet's

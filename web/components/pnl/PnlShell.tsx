@@ -7,14 +7,17 @@ import { EquityChart } from "./EquityChart";
 import { LedgerFilters } from "./LedgerFilters";
 import { LedgerTable } from "./LedgerTable";
 import { SummaryPanel } from "./SummaryPanel";
-import type { EquityResponse, LedgerResponseData, PnlLegData } from "./types";
+import { SystemPanel } from "./SystemPanel";
+import type { EquityResponse, LedgerResponseData, PnlLegData, SystemPerformanceResponse } from "./types";
 
 /**
  * The /pnl page frame: `SummaryPanel` mounts once, above the tab bar, and
  * stays mounted across tab changes (`PortfolioShell`'s convention — switching
  * tabs never remounts or refetches the summary query). The tab bar swaps
  * which panel renders below it: Ledger (every trade the system has opened
- * and closed, so it is the default tab) or the equity curve.
+ * and closed, so it is the default tab), the equity curve, or System (P3-P4
+ * M6 Task 6.2) — the score-vs-outcome report and verdict agreement, the one
+ * surface reading behind the src/claude/eval/ fence.
  *
  * The shell owns the filter state and composes it into ONE query string that
  * drives the ledger fetch, the summary fetch, the equity fetch, AND the CSV
@@ -22,13 +25,16 @@ import type { EquityResponse, LedgerResponseData, PnlLegData } from "./types";
  * and a second composition would let them drift. `book` starts as "all":
  * the ledger may list both, and the summary renders its own book-choice UI
  * when the backend refuses a mixed total (`422 mixed_book`), so the shell
- * never has to guess the operator's book for it.
+ * never has to guess the operator's book for it. The System tab's since/until
+ * window is a separate, independent piece of state — `GET /pnl/system` windows
+ * by outcome_date, a different axis than the ledger/equity/summary filters.
  */
-type Tab = "ledger" | "equity";
+type Tab = "ledger" | "equity" | "system";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "ledger", label: "Ledger" },
   { key: "equity", label: "Equity curve" },
+  { key: "system", label: "System" },
 ];
 
 export function PnlShell() {
@@ -61,6 +67,21 @@ export function PnlShell() {
   const equity = useQuery({
     queryKey: ["pnl", "equity", qsString],
     queryFn: () => apiFetch<EquityResponse>(`/pnl/equity?${qsString}`),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+
+  const [systemWindow, setSystemWindow] = useState<{ since: string; until: string }>({
+    since: "",
+    until: "",
+  });
+  const systemQs = new URLSearchParams();
+  if (systemWindow.since) systemQs.set("since", systemWindow.since);
+  if (systemWindow.until) systemQs.set("until", systemWindow.until);
+
+  const system = useQuery({
+    queryKey: ["pnl", "system", systemWindow.since, systemWindow.until],
+    queryFn: () => apiFetch<SystemPerformanceResponse>(`/pnl/system?${systemQs.toString()}`),
     placeholderData: (prev) => prev,
     refetchInterval: 30_000,
   });
@@ -129,6 +150,24 @@ export function PnlShell() {
           ) : (
             <EquityChart curve={equity.data?.curve ?? { points: [], gaps: [], starts_at: null }} />
           )}
+        </section>
+      )}
+
+      {tab === "system" && (
+        <section data-testid="pnl-system-section">
+          {system.isLoading ? (
+            <p className="text-sm text-muted">Loading the system performance report</p>
+          ) : system.isError ? (
+            <p className="text-sm text-muted">Could not load the system performance report.</p>
+          ) : system.data ? (
+            <SystemPanel
+              data={system.data}
+              since={systemWindow.since}
+              until={systemWindow.until}
+              onSinceChange={(v) => setSystemWindow((w) => ({ ...w, since: v }))}
+              onUntilChange={(v) => setSystemWindow((w) => ({ ...w, until: v }))}
+            />
+          ) : null}
         </section>
       )}
     </div>

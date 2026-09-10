@@ -133,19 +133,31 @@ app/                App Router pages and the root layout
                     neither field (`{as_of, campaigns}` only), so <CampaignsPanel/>
                     reads neither. <RefreshControl/> mounts in the header and fires
                     `POST /commands` with kind "refresh" - one click, no dialog.
-  pnl/              P&L console (P4 M5 Tasks 5.4-5.6). <PnlShell/> mounts
-                    <SummaryPanel/> (the pnl one, not the portfolio one) and
-                    <EquityChart/> above a tab bar (Ledger / Equity curve) that never
-                    remounts them. The shell owns ONE filter state and composes it
-                    into one query string driving the ledger fetch, the summary
-                    fetch, the equity fetch, AND the CSV export href - the export
-                    must carry the same filters the table renders, and a second
-                    composition would let them drift. `book` starts "all": the
-                    ledger may list both books, and when the summary refuses a
-                    mixed total (`422 mixed_book`) its panel renders the book
-                    choice itself - the shell never guesses the operator's book.
-                    No write anywhere on this page; the CSV link is a plain
-                    download, not a command.
+  pnl/              P&L console (P4 M5 Tasks 5.4-5.6; P3-P4 M6 Task 6.2 adds the
+                    System tab). <PnlShell/> mounts <SummaryPanel/> (the pnl one,
+                    not the portfolio one) and <EquityChart/> above a tab bar
+                    (Ledger / Equity curve / System) that never remounts them. The
+                    shell owns ONE filter state and composes it into one query
+                    string driving the ledger fetch, the summary fetch, the
+                    equity fetch, AND the CSV export href - the export must carry
+                    the same filters the table renders, and a second composition
+                    would let them drift. `book` starts "all": the ledger may
+                    list both books, and when the summary refuses a mixed total
+                    (`422 mixed_book`) its panel renders the book choice itself -
+                    the shell never guesses the operator's book. No write
+                    anywhere on this page; the CSV link is a plain download, not
+                    a command. The System tab is a second, independent filter
+                    axis owned by the shell (since/until on outcome_date, not the
+                    ledger's filters) driving its own `GET /pnl/system` fetch;
+                    <SystemPanel/> itself is presentational (data prop in, like
+                    <EquityChart/>, unlike the self-fetching <SummaryPanel/>) and
+                    renders the score-vs-outcome report's notes in full and in
+                    order, the blended-score and per-component buckets through
+                    <ScoreBucketTable/> (n below 5 labelled "small sample" in
+                    words), signal correlations through <CorrelationTable/> (null
+                    `pearson_r`/half-splits render n/a), and the Claude-vs-
+                    baseline agreement block - no control anywhere on the tab can
+                    change a scoring weight, only the two date-window inputs.
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -319,12 +331,14 @@ components/
                     with no dialog). AddSymbol and UniverseList route mutations
                     through submitUniverseCommand (lib/commands.ts) and render a
                     CommandReceipt.
-  pnl/              P4 M5 Tasks 5.4-5.6. PnlShell (the /pnl page frame - one
-                    filter state composed into one query string for the ledger,
-                    summary, equity and CSV export; SummaryPanel mounts above
-                    the tab bar and never remounts, matching PortfolioShell's
-                    convention - the tab bar swaps Ledger/Equity curve below
-                    it), SummaryPanel
+  pnl/              P4 M5 Tasks 5.4-5.6; P3-P4 M6 Task 6.2 adds System. PnlShell
+                    (the /pnl page frame - one filter state composed into one
+                    query string for the ledger, summary, equity and CSV
+                    export; a second, independent since/until window state for
+                    the System tab's own GET /pnl/system fetch; SummaryPanel
+                    mounts above the tab bar and never remounts, matching
+                    PortfolioShell's convention - the tab bar swaps
+                    Ledger/Equity curve/System below it), SummaryPanel
                     (react-query on GET /pnl/summary - the pnl one; headline
                     figures, by-strategy/by-symbol breakdowns, best/worst legs
                     each rendered as a button that jumps the shell to the
@@ -366,9 +380,30 @@ components/
                     headers; every numeric column carries .tabular),
                     LedgerFilters (drives the query string, never client-side
                     array filtering, so the CSV export gets the same rows;
-                    upper-cases the symbol; book choices all/paper/live). No
-                    second Money component here - pnl/ reuses
-                    portfolio/Money, adding a prop if a variant is needed.
+                    upper-cases the symbol; book choices all/paper/live),
+                    SystemPanel (P3-P4 M6 Task 6.2: presentational - takes
+                    `data: SystemPerformanceResponse` as a prop like
+                    EquityChart, not self-fetching like SummaryPanel, since
+                    PnlShell owns the GET /pnl/system query and the
+                    since/until window state; renders every note in
+                    report.notes in full and in order - the read-only
+                    "re-derive scoring_weights.yaml by hand" sentence is why
+                    the surface is allowed to exist - then the agreement
+                    block, then ScoreBucketTable/CorrelationTable only when
+                    n_closed > 0 (no empty tables, no n/a rows, just the
+                    note); the two date inputs carry
+                    `data-role="window-control"` and are the ONLY
+                    button/input/select anywhere in the panel - no apply
+                    button, no suggested weight, no editable field),
+                    ScoreBucketTable (blended-score bands or per-component
+                    high/low split; a bucket with n below 5 renders "small
+                    sample" in words beside the count - a win rate from a
+                    handful of trades is not evidence), CorrelationTable
+                    (signal, n, pearson_r, low/high-half mean P&L; null
+                    pearson_r or either half-mean renders n/a, never a
+                    fabricated correlation or average). No second Money
+                    component here - pnl/ reuses portfolio/Money, adding a
+                    prop if a variant is needed.
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`

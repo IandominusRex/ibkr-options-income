@@ -603,6 +603,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pnl/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl System
+         * @description The score-vs-outcome evidence's human reader (P3-P4 M6 Task 6.1).
+         *
+         *     Reads behind the fence CLAUDE.md draws around `src/claude/eval/`: this is the one route in
+         *     the phase where that is the intended use, not a breach — `score_outcome_report`'s own notes
+         *     already say the weights must be re-derived by hand, and this route only renders them. It
+         *     calls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no
+         *     correlation re-derived, no note filtered. `verdict_ledger` and `scoring_weights.yaml` are
+         *     read-only from here — `tests/test_web_fence.py` (Task 6.3) asserts no module under `src/api/`
+         *     can write either.
+         */
+        get: operations["pnl_system_pnl_system_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -2202,6 +2230,50 @@ export interface components {
              */
             created_at: string;
         };
+        /**
+         * ScoreBucket
+         * @description Realized performance of the closed trades whose signal value fell in one band.
+         *
+         *     Used by the score-vs-outcome report (N22) to check whether a higher `blended_score` — or a
+         *     higher per-component score — actually corresponds to better realized P&L / win rate. If it
+         *     doesn't, the scoring weights are not earning their keep and should be re-derived from this
+         *     evidence (human-edited config, per the fence).
+         */
+        ScoreBucket: {
+            /** Label */
+            label: string;
+            /** N */
+            n: number;
+            /** Win Rate */
+            win_rate: number;
+            /** Mean Pnl */
+            mean_pnl: number;
+            /** Total Pnl */
+            total_pnl: number;
+        };
+        /**
+         * ScoreOutcomeReport
+         * @description Score-vs-outcome evidence (N22): does the blended score / its components predict P&L?
+         *
+         *     Closed trades only (executed + settled). Read-only analysis that informs whether
+         *     `scoring_weights.yaml` should change — it never feeds the engine.
+         */
+        ScoreOutcomeReport: {
+            /** N Closed */
+            n_closed: number;
+            /** Period Start */
+            period_start?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Blended Score Buckets */
+            blended_score_buckets?: components["schemas"]["ScoreBucket"][];
+            /** Component Buckets */
+            component_buckets?: components["schemas"]["ScoreBucket"][];
+            /** Signal Correlations */
+            signal_correlations?: components["schemas"]["SignalCorrelation"][];
+            /** Notes */
+            notes?: string[];
+        };
         /** SearchHit */
         SearchHit: {
             /**
@@ -2416,6 +2488,26 @@ export interface components {
             alerts?: components["schemas"]["RollAlertSummary"][];
         };
         /**
+         * SignalCorrelation
+         * @description How one signal relates to realized P&L over closed trades.
+         *
+         *     `pearson_r` is the linear correlation of the signal with realized P&L; the low/high split
+         *     contrasts mean P&L for the bottom vs top half of the signal's range — a coarse, robust
+         *     read that doesn't assume linearity.
+         */
+        SignalCorrelation: {
+            /** Signal */
+            signal: string;
+            /** N */
+            n: number;
+            /** Pearson R */
+            pearson_r?: number | null;
+            /** Low Half Mean Pnl */
+            low_half_mean_pnl?: number | null;
+            /** High Half Mean Pnl */
+            high_half_mean_pnl?: number | null;
+        };
+        /**
          * Source
          * @description Where a number came from. A Black-Scholes delta must not look like an IBKR one.
          * @enum {string}
@@ -2502,6 +2594,23 @@ export interface components {
              * Format: date-time
              */
             data_as_of: string;
+        };
+        /**
+         * SystemPerformanceResponse
+         * @description The score-vs-outcome report plus verdict agreement — P3-P4 M6's fenced read (Task 6.1).
+         */
+        SystemPerformanceResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            report: components["schemas"]["ScoreOutcomeReport"];
+            agreement: components["schemas"]["VerdictAgreement"];
+            /** Since */
+            since?: string | null;
+            /** Until */
+            until?: string | null;
         };
         /** TechnicalStats */
         TechnicalStats: {
@@ -2607,6 +2716,22 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * VerdictAgreement
+         * @description How often Claude's verdict matched the deterministic baseline, and how each did.
+         */
+        VerdictAgreement: {
+            /** N Closed */
+            n_closed: number;
+            /** N Agreed */
+            n_agreed: number;
+            /** Agreement Rate */
+            agreement_rate?: number | null;
+            /** Claude Win Rate */
+            claude_win_rate?: number | null;
+            /** Baseline Win Rate */
+            baseline_win_rate?: number | null;
         };
         /**
          * VerdictOutcome
@@ -3453,6 +3578,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pnl_system_pnl_system_get: {
+        parameters: {
+            query?: {
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemPerformanceResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

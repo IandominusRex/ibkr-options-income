@@ -18,3 +18,10 @@ export type PnlBucketData = components["schemas"]["PnlBucket"];
 export type EquityResponse = components["schemas"]["EquityResponse"];
 export type EquityCurveData = components["schemas"]["EquityCurve"];
 export type EquityPointData = components["schemas"]["EquityPoint"];
+
+// P3-P4 M6 Task 6.2 — the score-vs-outcome surface.
+export type SystemPerformanceResponse = components["schemas"]["SystemPerformanceResponse"];
+export type ScoreOutcomeReportData = components["schemas"]["ScoreOutcomeReport"];
+export type ScoreBucketData = components["schemas"]["ScoreBucket"];
+export type SignalCorrelationData = components["schemas"]["SignalCorrelation"];
+export type VerdictAgreementData = components["schemas"]["VerdictAgreement"];
