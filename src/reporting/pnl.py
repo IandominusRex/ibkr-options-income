@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 from src.common.schemas import (
     CampaignPnl,
     OptionRight,
+    PnlBucket,
     PnlLeg,
+    PnlSummary,
     PortfolioSnapshot,
     Strategy,
     VerdictOutcome,
@@ -357,3 +359,79 @@ def build_campaigns(
         )
 
     return campaigns
+
+
+def _bucket(legs: list[PnlLeg], key: Callable[[PnlLeg], str]) -> list[PnlBucket]:
+    """Realised buckets ordered by realised descending, ties broken by label."""
+    groups: dict[str, list[PnlLeg]] = {}
+    for leg in legs:
+        if leg.net_pnl is None:
+            continue  # an open leg has no result to bucket
+        groups.setdefault(key(leg), []).append(leg)
+    buckets = []
+    for label, closed in groups.items():
+        n = len(closed)
+        pnls = [leg.net_pnl for leg in closed]
+        assert all(v is not None for v in pnls)  # only closed legs were grouped
+        wins = sum(1 for v in pnls if v is not None and v > 0)
+        rocs = [leg.roc_pct for leg in closed if leg.roc_pct is not None]
+        buckets.append(
+            PnlBucket(
+                label=label,
+                n_closed=n,
+                realized=sum(v for v in pnls if v is not None),
+                win_rate=(wins / n) if n else None,
+                mean_days_held=sum(leg.days_held for leg in closed) / n,
+                mean_roc_pct=(sum(rocs) / len(rocs)) if rocs else None,
+            )
+        )
+    buckets.sort(key=lambda b: (-b.realized, b.label))
+    return buckets
+
+
+def build_summary(
+    legs: list[PnlLeg],
+    campaigns: list[CampaignPnl],
+) -> PnlSummary:
+    """Aggregate. Pure — no session, no database, no config.
+
+    Raises ValueError when `legs` mixes paper and live. A total across both is not a
+    number that means anything, and returning one silently is the failure this guards.
+    """
+    is_live_values = {leg.is_live for leg in legs}
+    if len(is_live_values) > 1:
+        raise ValueError(
+            "build_summary refuses to total a leg list mixing paper and live fills; "
+            "filter with build_legs(include_paper=…, include_live=…)"
+        )
+
+    closed = [leg for leg in legs if leg.net_pnl is not None]
+    open_legs = [leg for leg in legs if leg.net_pnl is None]
+    realized_total = sum(leg.net_pnl for leg in closed if leg.net_pnl is not None)
+
+    marked = [leg.unrealized_pnl for leg in open_legs if leg.unrealized_pnl is not None]
+    unmarked_open = [leg for leg in open_legs if leg.unrealized_pnl is None]
+    unrealized_total: float | None = float(sum(marked)) if marked and not unmarked_open else None
+
+    n_closed = len(closed)
+    win_rate = (
+        sum(1 for leg in closed if leg.net_pnl is not None and leg.net_pnl > 0) / n_closed
+        if n_closed
+        else None
+    )
+
+    best = max(closed, key=lambda leg: leg.net_pnl or 0.0) if closed else None
+    worst = min(closed, key=lambda leg: leg.net_pnl or 0.0) if closed else None
+
+    return PnlSummary(
+        realized_total=realized_total,
+        unrealized_total=unrealized_total,
+        commissions_complete=all(leg.commissions_complete for leg in legs),
+        n_open=len(open_legs),
+        n_closed=n_closed,
+        win_rate=win_rate,
+        by_strategy=_bucket(legs, lambda leg: leg.strategy.value),
+        by_symbol=_bucket(legs, lambda leg: leg.underlying),
+        best=best,
+        worst=worst,
+    )
