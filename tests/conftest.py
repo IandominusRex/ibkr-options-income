@@ -418,3 +418,157 @@ def stock(
         "market_value": None,
         "unrealized_pnl": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# P&L engine fixtures (P3-P4 M4 Tasks 4.3/4.4/4.7). Shared by the reporting
+# builder tests and the wheel-scenario suite — one copy, beside the M2 Task 2.1
+# fixtures, so a second copy in each test file cannot drift from this one.
+# Same DB-isolation pattern as the M2 fixtures above: patch the storage engine
+# to a tmp-file SQLite so seeds land in the DB build_legs reads.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def db(tmp_path, monkeypatch):
+    """An isolated trading DB; yields a session-maker scoped to it.
+
+    Yields `session_scope` itself — tests call `with db() as s:` to seed, and pass
+    `db` (the session-maker) to the reporting builders, whose `session` parameter
+    is exactly that: a callable yielding a session.
+    """
+    import src.storage.db as dbmod
+    from src.common.config import Config
+
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 't.db'}")
+    dbmod.init_db()
+    return dbmod.session_scope
+
+
+@pytest.fixture()
+def seed_leg(db):
+    """Seed one option leg: CandidateRow + SELL/BUY FillRows, optionally a campaign.
+
+    `sold`/`bought` are `(qty, price)` or `(qty, price, commission)` tuples — one FillRow
+    each. `expiry_in_days` is relative to today (negative = already expired).
+    `prune_candidate=True` skips the CandidateRow, simulating a pruned candidate whose
+    fills survive. `days_held` overrides the natural opened→closed span (0 = same-day).
+    `strike=None` seeds a candidate with no strike — collateral is unknown.
+    """
+
+    def _seed(
+        *,
+        candidate_id: str,
+        sold: tuple[float, float] | tuple[float, float, float] | None = None,
+        bought: tuple[float, float] | tuple[float, float, float] | None = None,
+        expiry_in_days: int = 30,
+        campaign_id: str | None = None,
+        prune_candidate: bool = False,
+        strike: float | None = 170.0,
+        strategy: str = "cash_secured_put",
+        right: str = "P",
+        symbol: str = "NVDA",
+        is_live: bool = False,
+        days_held: int | None = None,
+    ) -> None:
+        from datetime import datetime, timedelta
+
+        from src.storage.models import CampaignRow, CandidateRow, FillRow
+
+        expiry = date.today() + timedelta(days=expiry_in_days)
+        opened = datetime.now() - timedelta(days=(days_held if days_held is not None else 5))
+
+        def _fills(spec, action):
+            if spec is None:
+                return []
+            qty, price = spec[0], spec[1]
+            commission = spec[2] if len(spec) > 2 else 1.0
+            close_offset = days_held if days_held is not None else 1
+            return [
+                FillRow(
+                    order_id=1,
+                    candidate_id=candidate_id,
+                    action=action,
+                    filled_qty=qty,
+                    avg_price=price,
+                    commission=commission,
+                    is_live=is_live,
+                    filled_at=opened if action == "SELL" else opened + timedelta(days=close_offset),
+                )
+            ]
+
+        with db() as s:
+            if not prune_candidate:
+                s.add(
+                    CandidateRow(
+                        candidate_id=candidate_id,
+                        run_id="run-1",
+                        strategy=strategy,
+                        underlying=symbol,
+                        right=right,
+                        strike=strike if strike is not None else 0.0,
+                        expiry=expiry,
+                        payload={},
+                    )
+                )
+            for f in _fills(sold, "SELL") + _fills(bought, "BUY"):
+                s.add(f)
+            if campaign_id is not None:
+                s.add(
+                    CampaignRow(
+                        campaign_id=campaign_id,
+                        symbol=symbol,
+                        status="open",
+                        opened_date=opened.date(),
+                        leg_candidate_ids=[candidate_id],
+                        payload={"first_strategy": strategy},
+                    )
+                )
+
+    return _seed
+
+
+@pytest.fixture()
+def set_campaign(db):
+    """Flip a seeded campaign's `assigned` flag — proves build_legs reads it, not a recompute."""
+
+    def _set(campaign_id: str, *, assigned: bool) -> None:
+        from sqlalchemy import select
+
+        from src.storage.models import CampaignRow
+
+        with db() as s:
+            row = s.execute(
+                select(CampaignRow).where(CampaignRow.campaign_id == campaign_id)
+            ).scalar_one()
+            row.assigned = assigned
+
+    return _set
+
+
+@pytest.fixture()
+def seed_candidate_only(db):
+    """Seed a CandidateRow with no fills — never a position, so never a leg."""
+
+    def _seed(candidate_id: str, *, symbol: str = "NVDA") -> None:
+        from datetime import timedelta
+
+        from src.storage.models import CandidateRow
+
+        with db() as s:
+            s.add(
+                CandidateRow(
+                    candidate_id=candidate_id,
+                    run_id="run-1",
+                    strategy="cash_secured_put",
+                    underlying=symbol,
+                    right="P",
+                    strike=170.0,
+                    expiry=date.today() + timedelta(days=30),
+                    payload={},
+                )
+            )
+
+    return _seed

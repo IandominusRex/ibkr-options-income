@@ -1,0 +1,200 @@
+"""Read-only P&L builders over the trading DB (P3-P4 M4).
+
+Pure functions returning the `src/common/schemas.py` P&L types. Nothing here writes,
+nothing here takes a snapshot the caller did not hand in, and no figure is invented:
+unknown means `None`, never `0.0`. Computed on read, never materialized (spec §6.6).
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from datetime import date, datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from src.common.schemas import OptionRight, PnlLeg, Strategy, VerdictOutcome
+from src.reporting.legs import classify_outcome, fill_economics
+from src.storage.models import (
+    ApprovalRow,
+    CampaignRow,
+    CandidateRow,
+    FillRow,
+    OrderRow,
+)
+
+log = logging.getLogger(__name__)
+
+_SessionFactory = Callable[[], Session]
+
+
+def _annualize(net_pnl: float, collateral: float, days_held: int) -> float | None:
+    if days_held <= 0 or collateral <= 0:
+        return None
+    roc = net_pnl / collateral
+    return roc * (365.0 / days_held) * 100.0
+
+
+def build_legs(
+    session: _SessionFactory,
+    *,
+    since: date | None = None,
+    symbol: str | None = None,
+    include_paper: bool = True,
+    include_live: bool = True,
+) -> list[PnlLeg]:
+    """Every option leg the system has fills for, newest first.
+
+    One leg per candidate_id that has at least one fill. A candidate with no fill was
+    never a position and does not appear.
+
+    `net_pnl` is `None` for every open leg — an open leg has a mark, not a result.
+    `unrealized_pnl` is always `None` here; Task 4.4's `build_campaigns` fills it from
+    the snapshot it is given, and only for open legs.
+    """
+    stmt = select(FillRow).order_by(FillRow.filled_at.desc(), FillRow.id.desc())
+    if symbol is not None:
+        stmt = stmt.where(
+            FillRow.candidate_id.in_(
+                select(CandidateRow.candidate_id).where(CandidateRow.underlying == symbol)
+            )
+        )
+    with session() as sess:
+        fills_by_candidate: dict[str, list[FillRow]] = {}
+        for f in sess.execute(stmt).scalars():
+            fills_by_candidate.setdefault(f.candidate_id, []).append(f)
+
+        candidate_rows: dict[str, CandidateRow] = {
+            c.candidate_id: c for c in sess.execute(select(CandidateRow)).scalars()
+        }
+        campaigns: list[CampaignRow] = list(sess.execute(select(CampaignRow)).scalars())
+        orders_by_candidate: dict[str, list[OrderRow]] = {}
+        for o in sess.execute(select(OrderRow)).scalars():
+            orders_by_candidate.setdefault(o.candidate_id, []).append(o)
+        approvals_by_candidate: dict[str, list[ApprovalRow]] = {}
+        for a in sess.execute(select(ApprovalRow)).scalars():
+            approvals_by_candidate.setdefault(a.candidate_id, []).append(a)
+
+    # candidate_id -> campaign (a candidate belongs to at most one campaign's leg list)
+    campaign_by_candidate: dict[str, CampaignRow] = {}
+    for row in campaigns:
+        for cid in row.leg_candidate_ids or []:
+            campaign_by_candidate[cid] = row
+
+    today = date.today()
+    legs: list[PnlLeg] = []
+    for cid, fills in fills_by_candidate.items():
+        cand = candidate_rows.get(cid)
+        campaign = campaign_by_candidate.get(cid)
+
+        # Paper/live filter — a candidate's fills all share one book.
+        leg_is_live = bool(fills[0].is_live)
+        if not include_paper and not leg_is_live:
+            continue
+        if not include_live and leg_is_live:
+            continue
+
+        opened_at = min(f.filled_at for f in fills)
+        if since is not None and opened_at.date() < since:
+            continue
+
+        approval = (
+            ApprovalRow(status=approvals_by_candidate[cid][-1].status)
+            if cid in approvals_by_candidate
+            else None
+        )
+        order = (
+            OrderRow(state=orders_by_candidate[cid][-1].state)
+            if cid in orders_by_candidate
+            else None
+        )
+        expiry = (
+            cand.expiry
+            if cand is not None
+            else (campaign.opened_date if campaign is not None else today)
+        )
+        assigned = bool(campaign.assigned) if campaign is not None else False
+
+        out = classify_outcome(cid, fills, approval, order, expiry, today, assigned)
+        econ = fill_economics(fills)
+
+        closed_at = (
+            max(f.filled_at for f in fills if _is_buy(f))
+            if any(_is_buy(f) for f in fills)
+            else None
+        )
+        if out.outcome in (VerdictOutcome.EXPIRED_WORTHLESS, VerdictOutcome.ASSIGNED):
+            closed_at = datetime.combine(expiry, datetime.min.time())
+
+        days_held = (
+            (closed_at.date() - opened_at.date()).days
+            if closed_at is not None
+            else (today - opened_at.date()).days
+        )
+
+        # Collateral: strike x contracts x 100 for a CSP or a CC's assigned-away
+        # obligation. Unknown strike -> no collateral -> None, not 0.0.
+        strike = cand.strike if cand is not None else None
+        collateral = (
+            strike * out.contracts * 100.0
+            if strike is not None and strike > 0 and out.contracts
+            else None
+        )
+        roc_pct = None
+        annualized_pct = None
+        if collateral:
+            roc_pct = econ.credit / collateral * 100.0
+            if out.realized_pnl is not None:
+                annualized_pct = _annualize(out.realized_pnl, collateral, days_held)
+
+        legs.append(
+            PnlLeg(
+                candidate_id=cid,
+                campaign_id=campaign.campaign_id if campaign is not None else None,
+                symbol=_option_symbol(cand, campaign, fills),
+                underlying=(
+                    cand.underlying
+                    if cand is not None
+                    else (campaign.symbol if campaign is not None else "")
+                ),
+                strategy=(
+                    Strategy(cand.strategy) if cand is not None else Strategy.CASH_SECURED_PUT
+                ),
+                right=(OptionRight(cand.right) if cand is not None else OptionRight.PUT),
+                strike=strike if strike is not None else 0.0,
+                expiry=expiry,
+                contracts=out.contracts or 0,
+                opened_at=opened_at,
+                closed_at=closed_at,
+                credit=econ.credit,
+                debit=econ.debit,
+                commissions=econ.commissions,
+                commissions_complete=econ.commissions_complete,
+                net_pnl=out.realized_pnl,
+                unrealized_pnl=None,
+                days_held=max(days_held, 0),
+                roc_pct=roc_pct,
+                annualized_pct=annualized_pct,
+                outcome=out.outcome,
+                is_live=leg_is_live,
+            )
+        )
+
+    legs.sort(key=lambda leg: leg.opened_at, reverse=True)
+    return legs
+
+
+def _is_buy(f: FillRow) -> bool:
+    return (f.action or "SELL").upper() == "BUY"
+
+
+def _option_symbol(
+    cand: CandidateRow | None, campaign: CampaignRow | None, fills: list[FillRow]
+) -> str:
+    """Best-effort OCC-style symbol; a pruned candidate yields a stable placeholder."""
+    if cand is not None:
+        expiry_str = cand.expiry.strftime("%y%m%d")
+        return f"{cand.underlying} {expiry_str}{cand.right}{int(cand.strike * 1000):08d}"
+    sym = campaign.symbol if campaign is not None else "UNKNOWN"
+    return f"{sym} PRUNED"
