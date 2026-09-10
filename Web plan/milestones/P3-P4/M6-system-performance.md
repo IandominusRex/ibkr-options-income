@@ -86,7 +86,7 @@ Required behaviours, each with a test:
 - `since` and `until` window the report and are echoed back.
 - A non-owner gets `403`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The fence's own words reach the page unedited."""
@@ -135,9 +135,9 @@ def test_a_non_owner_is_refused(client) -> None:
     assert client.get("/pnl/system", headers=VIEWER).status_code == 403
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Run the gate.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Run the gate.**
 
-- [ ] **Step 5:** `docs/web/api.md` documents the route **and states why reading a fenced table
+- [x] **Step 5:** `docs/web/api.md` documents the route **and states why reading a fenced table
   here is the intended use**: the fence forbids the loop closing automatically, and this route is a
   `GET` that closes nothing. Commit.
 
@@ -167,7 +167,7 @@ Required behaviours, each with a test:
   suggested weight, and no editable field. Asserted by a test that queries for any button or input
   in the panel and finds none beyond the date-window controls.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 it("renders every note in full and in order", () => {
@@ -196,7 +196,7 @@ it("renders nothing but the note when no trades have closed", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -207,7 +207,7 @@ it("renders nothing but the note when no trades have closed", () => {
 
 **Files:** Modify `tests/test_web_fence.py`.
 
-- [ ] **Step 1: Add these tests**
+- [x] **Step 1: Add these tests**
 
 ```python
 def test_no_web_module_can_write_the_verdict_ledger() -> None:
@@ -258,13 +258,13 @@ def test_the_portfolio_snapshot_writers_are_the_two_we_intended() -> None:
     }
 ```
 
-- [ ] **Step 2: Run them.** Every one must pass against the code as built. A failure here is a real
+- [x] **Step 2: Run them.** Every one must pass against the code as built. A failure here is a real
   finding, not a test to adjust — investigate the module that trips it before touching the
   assertion.
 
-- [ ] **Step 3:** Run the full suite, `ruff check .`, `mypy src`.
+- [x] **Step 3:** Run the full suite, `ruff check .`, `mypy src`.
 
-- [ ] **Step 4:** Root `CLAUDE.md`'s "The web layer and the trading database" section gains one
+- [x] **Step 4:** Root `CLAUDE.md`'s "The web layer and the trading database" section gains one
   sentence: P3 and P4 added no write beyond the `refresh` command, and the API still writes exactly
   one table. Commit.
 
@@ -280,7 +280,7 @@ This is a verification pass, not a writing pass. **Check each item rather than a
 that owned it did its job** — a previous phase's close-out found stale entries, an unregistered
 handler documented as working, and schema artifacts three endpoints out of date.
 
-- [ ] **Step 1: Re-derive, do not re-assert.** For each of the following, run the check and record
+- [x] **Step 1: Re-derive, do not re-assert.** For each of the following, run the check and record
   the result:
 
 ```bash
@@ -299,56 +299,56 @@ diff /tmp/openapi.json docs/web/openapi.json && echo "openapi current"
 cd web && npm run gen:api && git diff --exit-code lib/api-types.ts && echo "types current"
 ```
 
-- [ ] **Step 2:** `STATUS.md`'s web platform table: P3 and P4 rows written in the same dense style
+- [x] **Step 2:** `STATUS.md`'s web platform table: P3 and P4 rows written in the same dense style
   P2's rows use, covering every milestone. The "Not built" sentence names what is still deferred:
   **P5 (mobile), operator notes on legs and campaigns, a materialised P&L table, intraday equity
   history beyond the snapshot retention window, and any Tailscale or remote hosting.** State
   plainly that the ledger's numbers have not been reconciled against a broker statement.
 
-- [ ] **Step 3:** Root `CLAUDE.md`: confirm the analytics-tier section names `src/reporting/` (Task
+- [x] **Step 3:** Root `CLAUDE.md`: confirm the analytics-tier section names `src/reporting/` (Task
   4.1) and the web-layer section carries Task 6.3's sentence. Add a doc-update trigger row: **"New
   module under `src/reporting/` → `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier
   section"**, so the next person extending the reporting layer has the same obligation the other
   layers already carry.
 
-- [ ] **Step 4:** `README.md`'s layout table: confirm rows exist for `src/reporting/`,
+- [x] **Step 4:** `README.md`'s layout table: confirm rows exist for `src/reporting/`,
   `src/storage/portfolio_snapshots.py`, `src/api/portfolio_source.py`,
   `src/common/assignment_risk.py`, `src/api/routers/portfolio.py`, `src/api/routers/pnl.py`,
   `web/app/portfolio/` and `web/app/pnl/`. Add whatever is missing.
 
-- [ ] **Step 5:** `ARCHITECTURE.md`: confirm the folder guide describes what shipped, not what was
+- [x] **Step 5:** `ARCHITECTURE.md`: confirm the folder guide describes what shipped, not what was
   planned mid-flight. Check the entries for `src/monitor/intraday.py` (it writes snapshots now),
   `src/notify/command_drain.py` (it has a `refresh` handler now), and
   `src/claude/eval/reconcile.py` (its accounting moved).
 
-- [ ] **Step 6:** Tick the checkboxes in all six milestone files and in this plan's index. A
+- [x] **Step 6:** Tick the checkboxes in all six milestone files and in this plan's index. A
   closed-out phase whose milestone files show zero completed tasks misrepresents its own status to
   the next reader.
 
-- [ ] **Step 7:** Write an implementation log at the foot of
+- [x] **Step 7:** Write an implementation log at the foot of
   `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`, in the shape P2's M7 log uses: what each task shipped,
   what was escalated, every ruling made along the way, minor findings deferred rather than fixed,
   and the final gate numbers for all six commands.
 
-- [ ] **Step 8:** Run all six gate commands, record the numbers in the log, and commit.
+- [x] **Step 8:** Run all six gate commands, record the numbers in the log, and commit.
 
 ---
 
 ## Milestone 6 acceptance
 
-- [ ] `/pnl/system` renders the score-vs-outcome report and the verdict agreement, read-only.
-- [ ] **Every note the report produces appears on the page in full and in order**, including the
+- [x] `/pnl/system` renders the score-vs-outcome report and the verdict agreement, read-only.
+- [x] **Every note the report produces appears on the page in full and in order**, including the
   sentence saying the weights must be re-derived by hand.
-- [ ] The surface offers no control that could change a weight, asserted by a test that counts
+- [x] The surface offers no control that could change a weight, asserted by a test that counts
   controls.
-- [ ] A small bucket is labelled as a small sample rather than presented as evidence.
-- [ ] No module under `src/api/` can write `verdict_ledger` or reference `scoring_weights`.
-- [ ] `src/reporting/` writes nothing to the database.
-- [ ] `save_portfolio_snapshot` has exactly two callers, and they are the monitor and the drain.
-- [ ] The API still writes exactly one table.
-- [ ] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, verified by
+- [x] A small bucket is labelled as a small sample rather than presented as evidence.
+- [x] No module under `src/api/` can write `verdict_ledger` or reference `scoring_weights`.
+- [x] `src/reporting/` writes nothing to the database.
+- [x] `save_portfolio_snapshot` has exactly two callers, and they are the monitor and the drain.
+- [x] The API still writes exactly one table.
+- [x] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, verified by
   running the regeneration rather than by trusting a previous task.
-- [ ] `STATUS.md` records P3 and P4 as built, names what is still deferred, and states that the
+- [x] `STATUS.md` records P3 and P4 as built, names what is still deferred, and states that the
   ledger has not been reconciled against a broker statement.
-- [ ] Every milestone file's checkboxes reflect what actually landed.
-- [ ] Full gate green, all six commands, with the numbers recorded in the implementation log.
+- [x] Every milestone file's checkboxes reflect what actually landed.
+- [x] Full gate green, all six commands, with the numbers recorded in the implementation log.

@@ -361,7 +361,7 @@ def pnl_system(
   `python -c "import json; from src.api.main import create_app; print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json`.
   Leave `web/lib/api-types.ts` for Task 6.2 (needs a live server; do both together).
 
-- [ ] **Step 9: Commit.** `git add src/api/models/pnl.py src/api/routers/pnl.py tests/conftest.py tests/test_api_pnl_system.py docs/web/api.md docs/web/openapi.json`.
+- [x] **Step 9: Commit.** `git add src/api/models/pnl.py src/api/routers/pnl.py tests/conftest.py tests/test_api_pnl_system.py docs/web/api.md docs/web/openapi.json`.
 
 ---
 
@@ -887,7 +887,7 @@ const system = useQuery({
   `app/pnl/` description in the same file to mention the third "System" tab. Update the
   `app/pnl/` line under `app/` too if it names only Ledger/Equity curve tabs.
 
-- [ ] **Step 11: Commit.**
+- [x] **Step 11: Commit.**
   `git add web/components/pnl/{SystemPanel,ScoreBucketTable,CorrelationTable,SystemPanel.test}.tsx web/components/pnl/{types,PnlShell}.tsx web/lib/api-types.ts web/CLAUDE.md`.
 
 ---
@@ -985,7 +985,7 @@ correct (documented below per item); still run the check live, since state may h
 **Files:** `STATUS.md`, `README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `docs/web/architecture.md`,
 `docs/web/commands.md`, `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`, `Web plan/milestones/P3-P4/M6-system-performance.md`.
 
-- [ ] **Step 1: Re-derive, do not re-assert.**
+- [x] **Step 1: Re-derive, do not re-assert.**
 
 ```bash
 grep -c "^### " docs/web/api.md
@@ -1003,7 +1003,7 @@ cd web && npm run gen:api && git diff --exit-code lib/api-types.ts && echo "type
   Record the actual output of each command in the implementation log (Step 7), not a summary of
   what was expected.
 
-- [ ] **Step 2: `STATUS.md`'s web platform table.** Extend the `P4 — Profitability tracker` row's
+- [x] **Step 2: `STATUS.md`'s web platform table.** Extend the `P4 — Profitability tracker` row's
   heading to add `; M6 — system performance and close-out — built <date>` and append a dense
   paragraph in the same style as the M4/M5 paragraphs already there, describing Task 6.1
   (`/pnl/system`, the fence rationale), 6.2 (the panel + tab), and 6.3 (the five fence tests). Add
@@ -1013,26 +1013,26 @@ cd web && npm run gen:api && git diff --exit-code lib/api-types.ts && echo "type
   Tailscale or remote hosting. State plainly that the ledger's numbers have not been reconciled
   against a broker statement.
 
-- [ ] **Step 3: Root `CLAUDE.md` — confirm, don't duplicate.** The analytics-tier section
+- [x] **Step 3: Root `CLAUDE.md` — confirm, don't duplicate.** The analytics-tier section
   already names `src/reporting/` as the third tier (from M4) — confirm this, do not re-add it.
   Confirm the web-layer section carries Task 6.3's sentence (added in 6.3 Step 4). Add one new
   doc-update trigger row to the table near the top of the file: "New module under
   `src/reporting/` → `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section".
 
-- [ ] **Step 4: `README.md`'s layout table.** Confirmed during planning: rows for `src/reporting/`
+- [x] **Step 4: `README.md`'s layout table.** Confirmed during planning: rows for `src/reporting/`
   (line ~518), `src/storage/portfolio_snapshots.py` (in the `src/storage/` row), `src/api/portfolio_source.py`
   and `src/api/routers/{portfolio,pnl}.py` (in the `src/api/` row), `src/common/assignment_risk.py`
   (in the `src/common/` row), and `web/app/portfolio/`/`web/app/pnl/` (in the `web/` row) all
   already exist. Re-run `grep` for each to confirm still true as of this pass; add whatever is
   actually found missing (expected: nothing).
 
-- [ ] **Step 5: `ARCHITECTURE.md`.** Confirmed during planning: `src/monitor/intraday.py`'s entry
+- [x] **Step 5: `ARCHITECTURE.md`.** Confirmed during planning: `src/monitor/intraday.py`'s entry
   (line ~252) already documents `_maybe_write_snapshot`; `src/notify/command_drain.py`'s entry
   (line ~218) already documents the `refresh`/`_refresh` handler; `src/claude/eval/reconcile.py`'s
   entry (line ~185) already documents the accounting-rule move to `src/reporting/legs.py`.
   Re-read each during this pass to confirm still accurate; fix only what has actually drifted.
 
-- [ ] **Step 6: Tick checkboxes.** Confirmed during planning: `M2`-`M5` milestone files are
+- [x] **Step 6: Tick checkboxes.** Confirmed during planning: `M2`-`M5` milestone files are
   already fully ticked; `M1` is fully ticked; `M0-baseline-and-fixes.md` is out of this task's
   literal file scope (six files means M1-M6) and is a pre-existing gap — note it as a deferred
   finding in the log rather than silently fixing or silently ignoring it. Tick all of `M6`'s own
@@ -1040,7 +1040,7 @@ cd web && npm run gen:api && git diff --exit-code lib/api-types.ts && echo "type
   bottom. Confirm `Web plan/P3-P4-IMPLEMENTATION-PLAN.md` has no stray unticked boxes (confirmed
   none during planning).
 
-- [ ] **Step 7: Write the implementation log** at the foot of `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`,
+- [x] **Step 7: Write the implementation log** at the foot of `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`,
   in the shape `Web plan/P2-IMPLEMENTATION-PLAN.md`'s "## Implementation log — M7" section uses:
   a one-paragraph intro, "### What each task shipped" (one paragraph per task, 6.1-6.4), "### What
   was escalated" (or "none" if truly clean), "### Every ruling made along the way" (numbered —
@@ -1048,7 +1048,7 @@ cd web && npm run gen:api && git diff --exit-code lib/api-types.ts && echo "type
   checkbox-scope ruling from Step 6), "### Minor findings deferred, not fixed", and "### Final
   gate (<date>)" with the actual six command outputs.
 
-- [ ] **Step 8: Run all six gate commands, record the numbers in the log, and commit.**
+- [x] **Step 8: Run all six gate commands, record the numbers in the log, and commit.**
 
 ```bash
 python -m pytest -q
@@ -1063,19 +1063,19 @@ npm run build
 
 ## Milestone 6 acceptance
 
-- [ ] `/pnl/system` renders the score-vs-outcome report and the verdict agreement, read-only.
-- [ ] Every note the report produces appears on the page in full and in order, including the
+- [x] `/pnl/system` renders the score-vs-outcome report and the verdict agreement, read-only.
+- [x] Every note the report produces appears on the page in full and in order, including the
   sentence saying the weights must be re-derived by hand.
-- [ ] The surface offers no control that could change a weight, asserted by a test that counts
+- [x] The surface offers no control that could change a weight, asserted by a test that counts
   controls.
-- [ ] A small bucket is labelled as a small sample rather than presented as evidence.
-- [ ] No module under `src/api/` can write `verdict_ledger` or reference `scoring_weights`.
-- [ ] `src/reporting/` writes nothing to the database.
-- [ ] `save_portfolio_snapshot` has exactly two callers, and they are the monitor and the drain.
-- [ ] The API still writes exactly one table.
-- [ ] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, verified by
+- [x] A small bucket is labelled as a small sample rather than presented as evidence.
+- [x] No module under `src/api/` can write `verdict_ledger` or reference `scoring_weights`.
+- [x] `src/reporting/` writes nothing to the database.
+- [x] `save_portfolio_snapshot` has exactly two callers, and they are the monitor and the drain.
+- [x] The API still writes exactly one table.
+- [x] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, verified by
   running the regeneration rather than by trusting a previous task.
-- [ ] `STATUS.md` records P3 and P4 as built, names what is still deferred, and states that the
+- [x] `STATUS.md` records P3 and P4 as built, names what is still deferred, and states that the
   ledger has not been reconciled against a broker statement.
-- [ ] Every milestone file's checkboxes reflect what actually landed.
-- [ ] Full gate green, all six commands, with the numbers recorded in the implementation log.
+- [x] Every milestone file's checkboxes reflect what actually landed.
+- [x] Full gate green, all six commands, with the numbers recorded in the implementation log.

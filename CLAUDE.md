@@ -51,6 +51,7 @@ row that matches:
 | Bug fix that changes behaviour users would notice | `SETUP.md` troubleshooting table if relevant |
 | **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
 | **New command kind registered** in `command_drain.py` | `docs/web/commands.md` |
+| **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
