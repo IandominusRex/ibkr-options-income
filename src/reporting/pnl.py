@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from src.common.schemas import (
     CampaignPnl,
+    EquityCurve,
+    EquityPoint,
     OptionRight,
     PnlBucket,
     PnlLeg,
@@ -435,3 +437,80 @@ def build_summary(
         best=best,
         worst=worst,
     )
+
+
+def _net_liquidation_from_payload(payload: dict) -> float | None:
+    """journal.payload["eod_summary"]["account"], validated through AccountSnapshot.
+
+    A payload that does not parse surfaces as None — a missing value at render time,
+    never a KeyError, and never a fabricated number.
+    """
+    from src.common.schemas import AccountSnapshot
+
+    try:
+        account = (payload or {}).get("eod_summary", {}).get("account")
+        if not isinstance(account, dict):
+            return None
+        return AccountSnapshot.model_validate(account).net_liquidation
+    except Exception:
+        return None
+
+
+def equity_curve(
+    session: _SessionFactory,
+    legs: list[PnlLeg],
+    *,
+    since: date | None = None,
+) -> EquityCurve:
+    """One point per JournalRow, plus the trading days between them that have none.
+
+    Reads net_liquidation from journal.payload["eod_summary"]["account"], validated
+    through AccountSnapshot rather than indexed field by field, so a schema drift
+    surfaces as a missing value rather than a KeyError at render time.
+    """
+    from src.common.market_hours import is_trading_day
+    from src.storage.models import JournalRow
+
+    with session() as sess:
+        rows = (
+            sess.execute(select(JournalRow).order_by(JournalRow.entry_date.asc())).scalars().all()
+        )
+
+    if since is not None:
+        rows = [r for r in rows if r.entry_date >= since]
+
+    if not rows:
+        return EquityCurve(points=[], gaps=[], starts_at=None)
+
+    # Realised P&L closed on or before each point's date — legs' close dates only.
+    closed_by_date: list[tuple[date, float]] = []
+    for leg in legs:
+        if leg.net_pnl is None or leg.closed_at is None:
+            continue
+        closed_by_date.append((leg.closed_at.date(), leg.net_pnl))
+    closed_by_date.sort(key=lambda pair: pair[0])
+
+    points: list[EquityPoint] = []
+    for r in rows:
+        cumulative = sum(pnl for closed_on, pnl in closed_by_date if closed_on <= r.entry_date)
+        points.append(
+            EquityPoint(
+                entry_date=r.entry_date,
+                net_liquidation=_net_liquidation_from_payload(r.payload),
+                unrealized_pnl=r.unrealized_pnl,
+                cumulative_realized=cumulative,
+                premium_cashflow=r.realized_pnl,
+            )
+        )
+
+    # Gaps: trading days strictly between the first and last journal date with no row.
+    journal_dates = {r.entry_date for r in rows}
+    gaps: list[date] = []
+    first, last = rows[0].entry_date, rows[-1].entry_date
+    cur = date.fromordinal(first.toordinal() + 1)
+    while cur < last:
+        if cur not in journal_dates and is_trading_day(cur):
+            gaps.append(cur)
+        cur = date.fromordinal(cur.toordinal() + 1)
+
+    return EquityCurve(points=points, gaps=gaps, starts_at=first)

@@ -639,3 +639,41 @@ def snapshot_mark():
         )
 
     return _make
+
+
+@pytest.fixture()
+def seed_journal_day(db):
+    """Insert one JournalRow for an arbitrary date with a configurable payload.
+
+    The default payload carries a valid eod_summary account block (the same shape
+    `seed_journal` writes); `payload=` overrides it entirely (e.g. a corrupt account
+    for the unreadable-payload test), `realized_pnl=` sets the premium-cashflow column.
+    """
+
+    def _seed(
+        entry_date: date,
+        *,
+        realized_pnl: float | None = 0.0,
+        net_liq: float = 100_000.0,
+        unrealized_pnl: float | None = 0.0,
+        payload: dict | None = None,
+    ) -> None:
+        from src.storage.models import JournalRow
+
+        if payload is None:
+            payload = {
+                "fills": [],
+                "eod_summary": {"account": _account_dict(net_liq, 80_000.0)},
+            }
+        with db() as s:
+            s.add(
+                JournalRow(
+                    entry_date=entry_date,
+                    realized_pnl=realized_pnl,
+                    unrealized_pnl=unrealized_pnl,
+                    narrative=None,
+                    payload=payload,
+                )
+            )
+
+    return _seed
