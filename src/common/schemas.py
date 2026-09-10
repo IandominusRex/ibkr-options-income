@@ -681,3 +681,103 @@ class ScoreOutcomeReport(BaseModel):
     component_buckets: list[ScoreBucket] = Field(default_factory=list)
     signal_correlations: list[SignalCorrelation] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# P&L engine schemas (P3-P4 M4 Task 4.2) — the read-side types src/reporting/pnl.py
+# builds. Same package as VerdictOutcome because PnlLeg.outcome IS a VerdictOutcome:
+# the reporting layer and the outcome ledger agree by construction.
+# --------------------------------------------------------------------------- #
+
+
+class PnlLeg(BaseModel):
+    """One option contract position, from the fill that opened it to whatever closed it.
+
+    `net_pnl` is None while the leg is open — never 0.0. An open leg has an unrealised
+    mark, not a realised result, and a zero in a realised column is a claim.
+    """
+
+    candidate_id: str
+    campaign_id: str | None = None
+    symbol: str
+    underlying: str
+    strategy: Strategy
+    right: OptionRight
+    strike: float
+    expiry: date
+    contracts: int
+    opened_at: datetime
+    closed_at: datetime | None = None
+    credit: float
+    debit: float
+    commissions: float
+    commissions_complete: bool
+    net_pnl: float | None = None
+    unrealized_pnl: float | None = None
+    days_held: int
+    roc_pct: float | None = None
+    annualized_pct: float | None = None
+    outcome: VerdictOutcome
+    is_live: bool
+
+
+class CampaignPnl(BaseModel):
+    """A wheel cycle: every option leg on a symbol, plus the stock leg."""
+
+    campaign_id: str
+    symbol: str
+    status: Literal["open", "closed"]
+    opened_date: date
+    closed_date: date | None = None
+    legs: list[PnlLeg] = Field(default_factory=list)
+    option_realized: float = 0.0
+    option_unrealized: float | None = None
+    stock_realized: float | None = None
+    stock_unrealized: float | None = None
+    assigned: bool = False
+    adjusted_cost_basis: float | None = None
+    total_net: float = 0.0
+
+
+class PnlBucket(BaseModel):
+    """Realised performance grouped by one key (a symbol, a strategy)."""
+
+    label: str
+    n_closed: int
+    realized: float
+    win_rate: float | None = None  # None when n_closed is 0, never 0.0
+    mean_days_held: float | None = None
+    mean_roc_pct: float | None = None
+
+
+class PnlSummary(BaseModel):
+    realized_total: float
+    unrealized_total: float | None = None
+    commissions_complete: bool
+    n_open: int
+    n_closed: int
+    win_rate: float | None = None
+    by_strategy: list[PnlBucket] = Field(default_factory=list)
+    by_symbol: list[PnlBucket] = Field(default_factory=list)
+    best: PnlLeg | None = None
+    worst: PnlLeg | None = None
+
+
+class EquityPoint(BaseModel):
+    entry_date: date
+    net_liquidation: float | None = None
+    unrealized_pnl: float | None = None
+    cumulative_realized: float
+    premium_cashflow: float | None = None  # journal.realized_pnl — NOT paired realised P&L
+
+
+class EquityCurve(BaseModel):
+    """Points, and the days between the first and last point that have no point.
+
+    `gaps` exists so the chart can render a gap rather than a straight line across a week
+    nobody measured.
+    """
+
+    points: list[EquityPoint] = Field(default_factory=list)
+    gaps: list[date] = Field(default_factory=list)
+    starts_at: date | None = None
