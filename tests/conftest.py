@@ -677,3 +677,71 @@ def seed_journal_day(db):
             )
 
     return _seed
+
+
+@pytest.fixture()
+def seed_wheel_ledger(seed_leg):
+    """Seed a closed-trade book AND a verdict-ledger row per leg, for the M4 cross-check.
+
+    Two closed legs (one expired worthless, one bought back) so `reconcile()` has
+    rows to settle and the ledger-vs-reporting-layer cross-check has both branches.
+    """
+
+    def _seed() -> None:
+        from datetime import timedelta
+
+        from src.claude.eval.ledger import record_verdicts
+        from src.common.schemas import OptionRight, Strategy, VerdictRecord
+
+        seed_leg(candidate_id="led1", sold=(1, 2.40, 1.30), expiry_in_days=-3, strike=170.0)
+        seed_leg(
+            candidate_id="led2",
+            sold=(1, 1.50, 1.10),
+            bought=(1, 0.90, 0.90),
+            expiry_in_days=-10,
+            strike=175.0,
+        )
+
+        records = [
+            VerdictRecord(
+                candidate_id="led1",
+                run_id="run1",
+                scan_date=date.today() - timedelta(days=40),
+                underlying="NVDA",
+                strategy=Strategy.CASH_SECURED_PUT,
+                right=OptionRight.PUT,
+                strike=170.0,
+                expiry=date.today() - timedelta(days=3),
+                dte=30,
+                signals={"blended_score": 80, "iv_rank": 55, "delta": 0.28, "vrp": 4},
+                claude_recommendation="sell",
+                claude_priority=1,
+                claude_confidence=0.7,
+                claude_rationale="because",
+                baseline_recommendation="sell",
+                baseline_rank=1,
+                baseline_score=80.0,
+            ),
+            VerdictRecord(
+                candidate_id="led2",
+                run_id="run1",
+                scan_date=date.today() - timedelta(days=40),
+                underlying="NVDA",
+                strategy=Strategy.CASH_SECURED_PUT,
+                right=OptionRight.PUT,
+                strike=175.0,
+                expiry=date.today() - timedelta(days=10),
+                dte=30,
+                signals={"blended_score": 75, "iv_rank": 50, "delta": 0.30, "vrp": 3},
+                claude_recommendation="sell",
+                claude_priority=2,
+                claude_confidence=0.6,
+                claude_rationale="because",
+                baseline_recommendation="sell",
+                baseline_rank=2,
+                baseline_score=75.0,
+            ),
+        ]
+        record_verdicts(records)
+
+    return _seed
