@@ -420,9 +420,9 @@ def pnl_system(
     the phase where that is the intended use, not a breach — `score_outcome_report`'s own notes
     already say the weights must be re-derived by hand, and this route only renders them. It
     calls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no
-    correlation re-derived, no note filtered. `verdict_ledger` and `scoring_weights.yaml` are
-    read-only from here — `tests/test_web_fence.py` (Task 6.3) asserts no module under `src/api/`
-    can write either.
+    correlation re-derived, no note filtered. `verdict_ledger` and the human-edited scoring
+    config are read-only from here — `tests/test_web_fence.py` (Task 6.3) asserts no module
+    under `src/api/` can write either or even name the scoring config by filename.
     """
     report = score_outcome_report(since=since, until=until)
     agreement = _verdict_agreement(since=since, until=until)

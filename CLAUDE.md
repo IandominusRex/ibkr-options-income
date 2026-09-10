@@ -279,6 +279,10 @@ Universe overrides (P2 M7, `src/common/universe.py::effective_universe()`) cover
 engine's concentration limits stay unreachable from the web, at every layer (API `422`, the
 schema's `Literal` type, and the composer's byte-identical passthrough for every other key).
 
+P3 and P4 (portfolio, P&L, and `GET /pnl/system`'s read behind the `src/claude/eval/` fence)
+added no write beyond the `refresh` command (Task 1.4) — the API still writes exactly one table
+(`tests/test_web_fence.py::test_the_api_still_writes_exactly_one_table`, P3-P4 M6 Task 6.3).
+
 ## How Claude is invoked in production (not the API)
 
 `src/claude/runner.py` shells out to `claude -p "<prompt>" --output-format json`, passing context

@@ -896,7 +896,7 @@ const system = useQuery({
 
 **Files:** Modify `tests/test_web_fence.py`, root `CLAUDE.md`.
 
-- [ ] **Step 1: Add the tests below to `tests/test_web_fence.py`, at the end of the file.** The
+- [x] **Step 1: Add the tests below to `tests/test_web_fence.py`, at the end of the file.** The
   milestone's literal `test_the_api_still_writes_exactly_one_table` skips only `commands.py`;
   `src/api/trading_db.py` **defines** `get_command_engine`/`command_session` (it is the module
   the docstring at the top of `test_only_the_command_module_holds_a_write_handle`, line ~104,
@@ -955,7 +955,7 @@ def test_the_portfolio_snapshot_writers_are_the_two_we_intended() -> None:
     }
 ```
 
-- [ ] **Step 2: Run them.**
+- [x] **Step 2: Run them.**
   `python -m pytest tests/test_web_fence.py -v`. Pre-verified during planning: no file under
   `src/api/` currently contains `record_verdicts`/`update_outcome`/`mark_filled`/
   `VerdictLedgerRow(`/`scoring_weights`, and `save_portfolio_snapshot`'s only two callers outside
@@ -965,14 +965,14 @@ def test_the_portfolio_snapshot_writers_are_the_two_we_intended() -> None:
   stop and investigate the offending module before touching the assertion, per the milestone's
   own instruction.
 
-- [ ] **Step 3:** `python -m pytest -q`, `ruff check .`, `mypy src`.
+- [x] **Step 3:** `python -m pytest -q`, `ruff check .`, `mypy src`.
 
-- [ ] **Step 4: Root `CLAUDE.md`.** In "## The web layer and the trading database" section, add
+- [x] **Step 4: Root `CLAUDE.md`.** In "## The web layer and the trading database" section, add
   one sentence after the existing paragraph: P3 and P4 added no write beyond the `refresh`
   command (Task 1.4), and the API still writes exactly one table
   (`tests/test_web_fence.py::test_the_api_still_writes_exactly_one_table`).
 
-- [ ] **Step 5: Commit.** `git add tests/test_web_fence.py CLAUDE.md`.
+- [x] **Step 5: Commit.** `git add tests/test_web_fence.py CLAUDE.md`.
 
 ---
 

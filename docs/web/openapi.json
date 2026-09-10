@@ -1588,7 +1588,7 @@
     "/pnl/system": {
       "get": {
         "summary": "Pnl System",
-        "description": "The score-vs-outcome evidence's human reader (P3-P4 M6 Task 6.1).\n\nReads behind the fence CLAUDE.md draws around `src/claude/eval/`: this is the one route in\nthe phase where that is the intended use, not a breach \u2014 `score_outcome_report`'s own notes\nalready say the weights must be re-derived by hand, and this route only renders them. It\ncalls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no\ncorrelation re-derived, no note filtered. `verdict_ledger` and `scoring_weights.yaml` are\nread-only from here \u2014 `tests/test_web_fence.py` (Task 6.3) asserts no module under `src/api/`\ncan write either.",
+        "description": "The score-vs-outcome evidence's human reader (P3-P4 M6 Task 6.1).\n\nReads behind the fence CLAUDE.md draws around `src/claude/eval/`: this is the one route in\nthe phase where that is the intended use, not a breach \u2014 `score_outcome_report`'s own notes\nalready say the weights must be re-derived by hand, and this route only renders them. It\ncalls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no\ncorrelation re-derived, no note filtered. `verdict_ledger` and the human-edited scoring\nconfig are read-only from here \u2014 `tests/test_web_fence.py` (Task 6.3) asserts no module\nunder `src/api/` can write either or even name the scoring config by filename.",
         "operationId": "pnl_system_pnl_system_get",
         "security": [
           {

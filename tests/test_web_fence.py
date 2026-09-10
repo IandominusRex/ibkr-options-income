@@ -220,3 +220,66 @@ def test_the_trading_path_never_imports_reporting() -> None:
         for path in pkg_dir.rglob("*.py"):
             text = path.read_text()
             assert "src.reporting" not in text, f"{path} imports the reporting layer"
+
+
+# ---------------------------------------------------------------------------
+# P3-P4 M6 — GET /pnl/system reads behind the src/claude/eval/ fence (Task 6.1).
+# These lock down the read-only guarantee that makes that route not a breach.
+# See Web plan/P3-P4-design.md §7.5.
+# ---------------------------------------------------------------------------
+
+
+def test_no_web_module_can_write_the_verdict_ledger() -> None:
+    """P4 reads the outcome ledger. Nothing in the web layer may write it."""
+    writers = ("record_verdicts", "update_outcome", "mark_filled", "VerdictLedgerRow(")
+    for path in Path("src/api").rglob("*.py"):
+        text = path.read_text()
+        for writer in writers:
+            assert writer not in text, f"{path} can write the verdict ledger via {writer}"
+
+
+def test_no_web_module_can_write_a_scoring_weight() -> None:
+    """The fence's whole point: the loop does not close automatically."""
+    for path in Path("src/api").rglob("*.py"):
+        text = path.read_text()
+        assert "scoring_weights" not in text, f"{path} references scoring weights"
+
+
+def test_the_api_still_writes_exactly_one_table() -> None:
+    """P3 and P4 add no write. The P2 guarantee is unchanged, re-asserted here because
+    this is the phase that had the most reason to relax it.
+
+    ``trading_db.py`` is skipped alongside ``commands.py`` because it DEFINES
+    ``get_command_engine``/``command_session`` (see
+    ``test_only_the_command_module_holds_a_write_handle`` above, which already carries the
+    same exception) — this mirrors that existing P2 test's allowed set, not a relaxation of
+    the invariant.
+    """
+    skip = {"commands.py", "trading_db.py"}
+    for path in Path("src/api").rglob("*.py"):
+        if path.name in skip:
+            continue
+        text = path.read_text()
+        assert "get_command_engine" not in text
+        assert "command_session" not in text
+
+
+def test_reporting_never_writes_anything() -> None:
+    """src/reporting/ computes. It does not persist, and a cache is not an exception."""
+    for path in Path("src/reporting").rglob("*.py"):
+        text = path.read_text()
+        for writer in ("session.add", "session.merge", "session.delete", "session.commit"):
+            assert writer not in text, f"{path} writes to the database"
+
+
+def test_the_portfolio_snapshot_writers_are_the_two_we_intended() -> None:
+    """A third writer means a third cadence nobody reasoned about."""
+    callers = [
+        path
+        for path in Path("src").rglob("*.py")
+        if "save_portfolio_snapshot" in path.read_text() and path.name != "portfolio_snapshots.py"
+    ]
+    assert {p.as_posix() for p in callers} == {
+        "src/monitor/intraday.py",
+        "src/notify/command_drain.py",
+    }
