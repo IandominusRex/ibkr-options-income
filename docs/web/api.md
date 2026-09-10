@@ -88,7 +88,7 @@ The navigation manifest that drives the web app's left rail. Lists every section
     { "as_of": "2026-09-03T10:00:00Z", "key": "research", "label": "Research", "available": true, "note": null },
     { "as_of": "2026-09-03T10:00:00Z", "key": "options", "label": "Options", "available": true, "note": null },
     { "as_of": "2026-09-03T10:00:00Z", "key": "portfolio", "label": "Portfolio", "available": true, "note": null },
-    { "as_of": "2026-09-03T10:00:00Z", "key": "pnl", "label": "P&L", "available": false, "note": "Arrives in P4" },
+    { "as_of": "2026-09-03T10:00:00Z", "key": "pnl", "label": "P&L", "available": true, "note": null },
     { "as_of": "2026-09-03T10:00:00Z", "key": "universe", "label": "Universe", "available": true, "note": null }
   ]
 }
@@ -987,3 +987,117 @@ Degradation behaviour: the `none` rung returns `days: []` with
 `{ as_of, source, degraded, horizon_days, days: CalendarDay[] }`.
 `CalendarDay`: `{ as_of, expiry, dte, entries: CalendarEntry[] }`.
 `CalendarEntry`: `{ as_of, symbol, underlying, right, strike, contracts, short, moneyness: "itm"|"atm"|"otm"|null, consequence: "assigned"|"called_away"|"expires_worthless"|"unknown", assignment_risk }`.
+
+---
+
+## P&L (P4 Milestone 5)
+
+The P&L read surfaces. Every route is a thin renderer over `src/reporting/pnl.py` (M4):
+`build_legs` → `build_campaigns` / `build_summary` / `equity_curve`. **No route computes a
+P&L figure of its own** — the ledger's rows, the summary's totals, and the curve's
+cumulative line all read one accounting rule, so they can never disagree. All routes are
+**owner-only** (403 for viewers, 401 for missing token) and read through the `mode=ro`
+trading engine. None reaches IBKR.
+
+Shared conventions, set by `GET /pnl/ledger`:
+
+- **`as_of` is request time** on every P&L route, because the ledger is computed on read.
+  **`marks_as_of` is a different field**: the capture time of the portfolio snapshot
+  backing every unrealised figure, coerced through `as_utc_opt` like every other stored
+  timestamp. Two fields, both present, deliberately different — do not merge them to match
+  the portfolio routes (which read the capture time alone and carry no computed figures).
+- **Marks come from `read_portfolio`, never a second query.** `marks_as_of` is that
+  reading's `as_of`, so the ledger's unrealised figures and the portfolio page's agree by
+  construction. When no snapshot exists (`source="none"`), the route passes `snapshot=None`
+  into `build_campaigns` and returns `marks_as_of: null` with every unrealised field
+  `null` — an unmarked position is not worth zero.
+- **`book` defaults to `"all"` on the ledger and CSV; the summary refuses a mixed total.**
+  A `book=all` summary with both paper and live fills present returns **`422`** with
+  `{"detail": {"reason": "mixed_book", ...}}` — never a mixed total and never a 500. The
+  ledger and the CSV may list both books; only the headline total is refused (a CSV has
+  no headline total, and each row carries a `book` column so paper rows are identifiable
+  after export).
+- **Filters are echoed back verbatim** on every response (`filters`), so a client that sent
+  `since` and got a full history can see its own bug.
+- **`n_legs` is the sum of every campaign's leg count.** M4 Task 4.4 guarantees every leg
+  lands in exactly one thread (campaign-less legs land in a synthetic per-symbol thread);
+  this field is where the client checks that guarantee at the boundary it actually reads.
+
+Shared query parameters (all optional, all echoed back):
+
+| Param | Type | Notes |
+|---|---|---|
+| `symbol` | string | upper-cased; matched against the leg's underlying |
+| `strategy` | string | `covered_call` \| `cash_secured_put` \| `roll` |
+| `outcome` | string | one of the `VerdictOutcome` values (`still_open`, `expired_worthless`, `assigned`, `closed_early`, ...) |
+| `since` | date | legs opened on or after it (UTC calendar day) |
+| `until` | date | legs opened on or before it |
+| `book` | `paper` \| `live` \| `all` | default `all`; see the mixed-book rule above |
+
+### `GET /pnl/ledger`
+
+Leg rows grouped under their campaign threads — the "Excel-shaped ledger of every
+position opened and closed", readable in a browser. The grouping is what stops an
+assignment reading as a leg that ended for no reason.
+
+**Response — `LedgerResponse`:** `{ as_of, filters, campaigns: CampaignPnl[], marks_as_of, n_legs }`.
+`CampaignPnl`: `{ campaign_id, symbol, status, opened_date, closed_date, legs: PnlLeg[], option_realized, option_unrealized, stock_realized, stock_unrealized, assigned, adjusted_cost_basis, total_net }`.
+`PnlLeg`: `{ candidate_id, campaign_id, symbol, underlying, strategy, right, strike, expiry, contracts, opened_at, closed_at, credit, debit, commissions, commissions_complete, net_pnl, unrealized_pnl, days_held, roc_pct, annualized_pct, outcome, is_live }`.
+
+`net_pnl` is `null` while a leg is open — never `0.0`. An open leg has a mark, not a
+result. `unrealized_pnl` is filled from the snapshot only for open legs; a closed leg's
+stays `null` forever. `commissions_complete: false` marks a figure gross of commissions.
+A campaign-less leg lands in a synthetic thread with `campaign_id: "synthetic:SYMBOL"`.
+
+### `GET /pnl/summary`
+
+The totals and breakdowns — realised total, unrealised total, open/closed counts, win
+rate, by-strategy and by-symbol buckets, best and worst closed legs — computed from the
+same `PnlLeg` list the ledger renders, so a total can never disagree with the rows above
+it.
+
+**Response — `SummaryResponse`:** `{ as_of, filters, summary: PnlSummary, marks_as_of }`.
+`PnlSummary`: `{ realized_total, unrealized_total, commissions_complete, n_open, n_closed, win_rate, by_strategy: PnlBucket[], by_symbol: PnlBucket[], best, worst }`.
+`PnlBucket`: `{ label, n_closed, realized, win_rate, mean_days_held, mean_roc_pct }`.
+
+`win_rate` is `null` when nothing is closed — never `0.0`. `commissions_complete` is the
+AND of every leg's flag. A single-book summary over an empty list is a valid empty
+summary (a 200), not an error. `book=all` with both kinds of fill present is the **`422`
+`mixed_book`** refusal described above.
+
+### `GET /pnl/equity`
+
+The equity curve — one point per journal day, plus the trading days between them that
+have no point (`gaps`), so the chart can render a gap rather than a fabricated straight
+line. `book=all` is fine **here**, deliberately unlike `/pnl/summary`: the curve's
+`cumulative_realized` sums `net_pnl` per point, and mixing books in a *curve* is a display
+choice the client makes, not a headline total. Do not "fix" one to match the other.
+
+**Response — `EquityResponse`:** `{ as_of, filters, curve: EquityCurve }`.
+`EquityCurve`: `{ points: EquityPoint[], gaps: date[], starts_at: date | null }`.
+`EquityPoint`: `{ entry_date, net_liquidation, unrealized_pnl, cumulative_realized, premium_cashflow }`.
+
+`premium_cashflow` is the journal day's premium cash movement (`journal.realized_pnl`) —
+**not paired realised P&L**, and named so it cannot be confused with
+`cumulative_realized`, which sums only legs closed on or before each point. The two will
+disagree, by design. `starts_at` is the first point's date (`null` with no points), and
+`gaps` lists missed **trading days** only — weekends and holidays are not gaps.
+
+### `GET /pnl/ledger.csv`
+
+The same rows `/pnl/ledger` returns, under the same filters, as CSV — built from the same
+`build_legs` call, so the two cannot drift. There is no mixed-book refusal here (no
+headline total; the `book` column identifies each row after export).
+
+**Response:** `text/csv; charset=utf-8` with
+`Content-Disposition: attachment; filename="pnl-ledger-YYYY-MM-DD.csv"`.
+
+Column contract: the header row names the units — `credit_usd`, `debit_usd`,
+`commissions_usd`, `net_pnl_usd`, `unrealized_usd`, `roc_pct`, `annualized_pct`,
+`days_held` — beside `candidate_id`, `campaign_id`, `underlying`, `symbol`, `strategy`,
+`right`, `strike`, `expiry`, `book` (`paper` \| `live`), `opened_at`, `closed_at`,
+`contracts`, `outcome`. **`None` serialises as an empty cell, never `0`**: a spreadsheet
+zero where the value was unknown is the same lie as `$0.00` on the page, and harder to
+spot. The web proxy (`web/app/api/[...path]/route.ts`) forwards exactly two response
+headers, `Content-Type` and `Content-Disposition`, per its explicit allowlist — a CSV
+download keeps its dated filename, and nothing about the upstream server leaks.

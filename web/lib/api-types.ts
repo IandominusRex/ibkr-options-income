@@ -499,6 +499,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pnl/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Ledger
+         * @description Leg rows grouped under their campaign threads — OVERVIEW's "Excel-shaped
+         *     ledger of every position opened and closed", readable in a browser.
+         *
+         *     The grouping is what stops an assignment reading as a leg that ended for
+         *     no reason: a campaign-less leg lands in a synthetic per-symbol thread (M4
+         *     Task 4.4), so `n_legs` always equals the sum of every campaign's leg count.
+         */
+        get: operations["pnl_ledger_pnl_ledger_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pnl/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Summary
+         * @description The totals and breakdowns, computed from the same `PnlLeg` list the
+         *     ledger renders — a total can never disagree with the rows above it.
+         *
+         *     `build_summary` raises `ValueError` on a mixed paper/live list (M4 Task
+         *     4.5); this route turns that into a `422` naming `mixed_book`, so the
+         *     operator picks a book instead of reading a wrong number. A single-book
+         *     summary over an empty list is a valid empty summary, not an error.
+         */
+        get: operations["pnl_summary_pnl_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pnl/equity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Equity
+         * @description The equity curve — one point per journal day, plus the trading days
+         *     between them that have no point, so the chart can render a gap rather than
+         *     a fabricated straight line.
+         *
+         *     The route computes nothing: `build_legs` feeds `equity_curve` exactly as it
+         *     feeds the ledger. `book=all` is fine *here*, deliberately unlike
+         *     `/pnl/summary`: the curve's `cumulative_realized` sums `net_pnl` per point,
+         *     and mixing books in a curve is a display choice the client makes, not a
+         *     headline total. Do not "fix" one to match the other.
+         */
+        get: operations["pnl_equity_pnl_equity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pnl/ledger.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Ledger Csv
+         * @description The same rows `/pnl/ledger` returns, under the same filters, as CSV.
+         *
+         *     Built from the same `build_legs` call the JSON route uses — a second query
+         *     would let the two drift. There is no mixed-book refusal here because a CSV
+         *     has no headline total to be wrong; the `book` column identifies each row
+         *     after export.
+         */
+        get: operations["pnl_ledger_csv_pnl_ledger_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -1127,6 +1231,53 @@ export interface components {
             /** Known */
             known: boolean;
         };
+        /**
+         * CampaignPnl
+         * @description A wheel cycle: every option leg on a symbol, plus the stock leg.
+         */
+        CampaignPnl: {
+            /** Campaign Id */
+            campaign_id: string;
+            /** Symbol */
+            symbol: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
+            /**
+             * Opened Date
+             * Format: date
+             */
+            opened_date: string;
+            /** Closed Date */
+            closed_date?: string | null;
+            /** Legs */
+            legs?: components["schemas"]["PnlLeg"][];
+            /**
+             * Option Realized
+             * @default 0
+             */
+            option_realized: number;
+            /** Option Unrealized */
+            option_unrealized?: number | null;
+            /** Stock Realized */
+            stock_realized?: number | null;
+            /** Stock Unrealized */
+            stock_unrealized?: number | null;
+            /**
+             * Assigned
+             * @default false
+             */
+            assigned: boolean;
+            /** Adjusted Cost Basis */
+            adjusted_cost_basis?: number | null;
+            /**
+             * Total Net
+             * @default 0
+             */
+            total_net: number;
+        };
         /** CampaignSummary */
         CampaignSummary: {
             /**
@@ -1406,6 +1557,47 @@ export interface components {
             /** Pending Commands */
             pending_commands: number;
         };
+        /**
+         * EquityCurve
+         * @description Points, and the days between the first and last point that have no point.
+         *
+         *     `gaps` exists so the chart can render a gap rather than a straight line across a week
+         *     nobody measured.
+         */
+        EquityCurve: {
+            /** Points */
+            points?: components["schemas"]["EquityPoint"][];
+            /** Gaps */
+            gaps?: string[];
+            /** Starts At */
+            starts_at?: string | null;
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /**
+             * Entry Date
+             * Format: date
+             */
+            entry_date: string;
+            /** Net Liquidation */
+            net_liquidation?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
+            /** Cumulative Realized */
+            cumulative_realized: number;
+            /** Premium Cashflow */
+            premium_cashflow?: number | null;
+        };
+        /** EquityResponse */
+        EquityResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            filters: components["schemas"]["LedgerFilters"];
+            curve: components["schemas"]["EquityCurve"];
+        };
         /** ExposureBlock */
         ExposureBlock: {
             /**
@@ -1506,6 +1698,48 @@ export interface components {
             hi?: number | null;
             /** Min Credit */
             min_credit?: number | null;
+        };
+        /**
+         * LedgerFilters
+         * @description Echoed back on every response so the client can prove what it is looking at.
+         */
+        LedgerFilters: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol?: string | null;
+            /** Strategy */
+            strategy?: string | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Since */
+            since?: string | null;
+            /** Until */
+            until?: string | null;
+            /**
+             * Book
+             * @default all
+             * @enum {string}
+             */
+            book: "paper" | "live" | "all";
+        };
+        /** LedgerResponse */
+        LedgerResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            filters: components["schemas"]["LedgerFilters"];
+            /** Campaigns */
+            campaigns: components["schemas"]["CampaignPnl"][];
+            /** Marks As Of */
+            marks_as_of?: string | null;
+            /** N Legs */
+            n_legs: number;
         };
         /**
          * LineItemValue
@@ -1641,6 +1875,11 @@ export interface components {
             assignment_risk: boolean;
         };
         /**
+         * OptionRight
+         * @enum {string}
+         */
+        OptionRight: "C" | "P";
+        /**
          * OptionsCoverage
          * @description What the on-demand options lens could actually check.
          *
@@ -1774,6 +2013,101 @@ export interface components {
          * @enum {string}
          */
         Phase: "base" | "uptrend" | "distribution" | "downtrend";
+        /**
+         * PnlBucket
+         * @description Realised performance grouped by one key (a symbol, a strategy).
+         */
+        PnlBucket: {
+            /** Label */
+            label: string;
+            /** N Closed */
+            n_closed: number;
+            /** Realized */
+            realized: number;
+            /** Win Rate */
+            win_rate?: number | null;
+            /** Mean Days Held */
+            mean_days_held?: number | null;
+            /** Mean Roc Pct */
+            mean_roc_pct?: number | null;
+        };
+        /**
+         * PnlLeg
+         * @description One option contract position, from the fill that opened it to whatever closed it.
+         *
+         *     `net_pnl` is None while the leg is open — never 0.0. An open leg has an unrealised
+         *     mark, not a realised result, and a zero in a realised column is a claim.
+         */
+        PnlLeg: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Campaign Id */
+            campaign_id?: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Underlying */
+            underlying: string;
+            strategy: components["schemas"]["Strategy"];
+            right: components["schemas"]["OptionRight"];
+            /** Strike */
+            strike: number;
+            /**
+             * Expiry
+             * Format: date
+             */
+            expiry: string;
+            /** Contracts */
+            contracts: number;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Credit */
+            credit: number;
+            /** Debit */
+            debit: number;
+            /** Commissions */
+            commissions: number;
+            /** Commissions Complete */
+            commissions_complete: boolean;
+            /** Net Pnl */
+            net_pnl?: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl?: number | null;
+            /** Days Held */
+            days_held: number;
+            /** Roc Pct */
+            roc_pct?: number | null;
+            /** Annualized Pct */
+            annualized_pct?: number | null;
+            outcome: components["schemas"]["VerdictOutcome"];
+            /** Is Live */
+            is_live: boolean;
+        };
+        /** PnlSummary */
+        PnlSummary: {
+            /** Realized Total */
+            realized_total: number;
+            /** Unrealized Total */
+            unrealized_total?: number | null;
+            /** Commissions Complete */
+            commissions_complete: boolean;
+            /** N Open */
+            n_open: number;
+            /** N Closed */
+            n_closed: number;
+            /** Win Rate */
+            win_rate?: number | null;
+            /** By Strategy */
+            by_strategy?: components["schemas"]["PnlBucket"][];
+            /** By Symbol */
+            by_symbol?: components["schemas"]["PnlBucket"][];
+            best?: components["schemas"]["PnlLeg"] | null;
+            worst?: components["schemas"]["PnlLeg"] | null;
+        };
         /** PortfolioSummaryResponse */
         PortfolioSummaryResponse: {
             /**
@@ -2126,6 +2460,11 @@ export interface components {
             unrealized_pnl_adjusted: number | null;
         };
         /**
+         * Strategy
+         * @enum {string}
+         */
+        Strategy: "covered_call" | "cash_secured_put" | "roll";
+        /**
          * SummaryOut
          * @description The AI narrative over computed values. Enrichment — influences nothing.
          *
@@ -2163,32 +2502,6 @@ export interface components {
              * Format: date-time
              */
             data_as_of: string;
-        };
-        /**
-         * SummaryResponse
-         * @description ``GET/POST /research/{symbol}/summary``.
-         *
-         *     ``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),
-         *     ``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST
-         *     generation was attempted but failed soft). ``reason`` explains ``unavailable``/
-         *     ``pending`` so the panel can show why and prompt a Generate/retry action.
-         */
-        SummaryResponse: {
-            /**
-             * As Of
-             * Format: date-time
-             */
-            as_of: string;
-            /** Symbol */
-            symbol: string;
-            /**
-             * State
-             * @enum {string}
-             */
-            state: "ready" | "stale" | "unavailable" | "pending";
-            summary?: components["schemas"]["SummaryOut"] | null;
-            /** Reason */
-            reason?: string | null;
         };
         /** TechnicalStats */
         TechnicalStats: {
@@ -2296,6 +2609,11 @@ export interface components {
             ctx?: Record<string, never>;
         };
         /**
+         * VerdictOutcome
+         * @enum {string}
+         */
+        VerdictOutcome: "still_open" | "expired_worthless" | "assigned" | "closed_early" | "not_filled" | "user_rejected" | "risk_rejected";
+        /**
          * Warning
          * @description One surfaced caveat. ``level`` drives the icon/tint; never colour-only.
          */
@@ -2348,6 +2666,44 @@ export interface components {
              * @default []
              */
             items: components["schemas"]["WatchlistItem"][];
+        };
+        /** SummaryResponse */
+        src__api__models__pnl__SummaryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            filters: components["schemas"]["LedgerFilters"];
+            summary: components["schemas"]["PnlSummary"];
+            /** Marks As Of */
+            marks_as_of?: string | null;
+        };
+        /**
+         * SummaryResponse
+         * @description ``GET/POST /research/{symbol}/summary``.
+         *
+         *     ``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),
+         *     ``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST
+         *     generation was attempted but failed soft). ``reason`` explains ``unavailable``/
+         *     ``pending`` so the panel can show why and prompt a Generate/retry action.
+         */
+        src__api__models__research__SummaryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "stale" | "unavailable" | "pending";
+            summary?: components["schemas"]["SummaryOut"] | null;
+            /** Reason */
+            reason?: string | null;
         };
     };
     responses: never;
@@ -2613,7 +2969,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SummaryResponse"];
+                    "application/json": components["schemas"]["src__api__models__research__SummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2644,7 +3000,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SummaryResponse"];
+                    "application/json": components["schemas"]["src__api__models__research__SummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2962,6 +3318,149 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PositionsResponse"];
+                };
+            };
+        };
+    };
+    pnl_ledger_pnl_ledger_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                strategy?: string | null;
+                outcome?: string | null;
+                since?: string | null;
+                until?: string | null;
+                book?: "paper" | "live" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pnl_summary_pnl_summary_get: {
+        parameters: {
+            query?: {
+                /** @description Which fills to total. 'all' is refused with 422 mixed_book when both paper and live fills are present, because a total across both is not a number that means anything. */
+                book?: "paper" | "live" | "all";
+                symbol?: string | null;
+                strategy?: string | null;
+                outcome?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["src__api__models__pnl__SummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pnl_equity_pnl_equity_get: {
+        parameters: {
+            query?: {
+                since?: string | null;
+                until?: string | null;
+                symbol?: string | null;
+                strategy?: string | null;
+                outcome?: string | null;
+                book?: "paper" | "live" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EquityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pnl_ledger_csv_pnl_ledger_csv_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                strategy?: string | null;
+                outcome?: string | null;
+                since?: string | null;
+                until?: string | null;
+                book?: "paper" | "live" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -745,3 +745,62 @@ def seed_wheel_ledger(seed_leg):
         record_verdicts(records)
 
     return _seed
+
+
+# ---------------------------------------------------------------------------
+# API + storage on one file (P3-P4 M5). The M4 `db` fixture points the storage
+# engine at `tmp_path/t.db` while the `client` fixture's API reads
+# `tmp_path/income_system.db` — two different files, invisible as long as the
+# reporting builders are called with `db` directly (M4's tests never cross the
+# boundary). The M5 route tests DO cross it: `seed_leg` writes through the
+# storage engine and `/pnl/ledger` reads through the API's read-only engine.
+# These fixtures put both engines on one file, then reuse `seed_leg` unchanged —
+# no second copy of any seed can drift.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def api_db(monkeypatch, tmp_path, client):
+    """The storage session-maker, bound to the same DB the API client reads.
+
+    The M4 `db` fixture above points the storage engine at a private `t.db`
+    while the `client` fixture's API reads `income_system.db` — two different
+    files, invisible while the reporting builders were called with `db`
+    directly (M4's tests never cross the boundary) but wrong the moment an M5
+    route test does: `seed_leg` writes through the storage engine and
+    `/pnl/*` reads through the API's read-only engine. This fixture rebinds
+    the storage engine to the client's `income_system.db` (already
+    initialised by the `client` fixture) and yields `session_scope` exactly
+    like the M4 fixture, so `seed_leg` and friends work unchanged beside a
+    live TestClient. Tests that need both sides request `api_db` explicitly
+    in place of `db`.
+    """
+    import src.storage.db as dbmod
+    from src.common.config import Config
+
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(
+        Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 'income_system.db'}"
+    )
+    dbmod.init_db()
+    return dbmod.session_scope
+
+
+@pytest.fixture()
+def seed_wheel(seed_leg):
+    """A three-leg wheel across two symbols: one campaigned, one campaign-less
+    (synthetic thread), one on another symbol. The M5 route tests' shared shape."""
+
+    def _seed() -> None:
+        seed_leg(
+            candidate_id="w1",
+            sold=(1, 1.5, 1.0),
+            bought=(1, 0.5, 1.0),
+            campaign_id="NVDA-wheel",
+            expiry_in_days=-3,
+        )
+        seed_leg(candidate_id="w2", sold=(1, 2.0, 1.0), expiry_in_days=-2)
+        seed_leg(candidate_id="w3", sold=(1, 1.0, 1.0), symbol="AAPL", expiry_in_days=-1)
+
+    return _seed

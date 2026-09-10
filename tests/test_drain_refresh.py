@@ -172,9 +172,7 @@ async def test_a_failed_write_fails_with_its_own_reason(drain_env, monkeypatch) 
     from src.notify.command_drain import drain_once
 
     cid = drain_env.enqueue("refresh", {})
-    monkeypatch.setattr(
-        "src.notify.command_drain.save_portfolio_snapshot", lambda **kwargs: None
-    )
+    monkeypatch.setattr("src.notify.command_drain.save_portfolio_snapshot", lambda **kwargs: None)
     await drain_once(drain_env.ib, drain_env.bot, "chat")
 
     assert drain_env.status(cid) == "failed"

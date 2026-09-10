@@ -44,11 +44,12 @@ class NavResponse(Envelope):
 # shape of the product is legible from milestone 1. See design §9.
 # "options" flipped to available=True in P2 M2 (the console ships read surfaces).
 # "portfolio" flipped to available=True in P3 M3 (the console ships read surfaces).
+# "pnl" flipped to available=True in P4 M5 (the P&L surfaces ship).
 _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("research", "Research", True, None),
     ("options", "Options", True, None),
     ("portfolio", "Portfolio", True, None),
-    ("pnl", "P&L", False, "Arrives in P4"),
+    ("pnl", "P&L", True, None),
     ("universe", "Universe", True, None),
 ]
 

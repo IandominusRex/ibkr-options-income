@@ -10,10 +10,18 @@ from src.common.schemas import CampaignPnl, PnlLeg
 from src.reporting.pnl import build_summary
 
 
-def _leg(candidate_id: str, *, net_pnl: float | None, is_live: bool = False,
-         strategy: str = "cash_secured_put", symbol: str = "NVDA",
-         commissions_complete: bool = True, credit: float = 100.0, debit: float = 0.0,
-         commissions: float = 1.30) -> PnlLeg:
+def _leg(
+    candidate_id: str,
+    *,
+    net_pnl: float | None,
+    is_live: bool = False,
+    strategy: str = "cash_secured_put",
+    symbol: str = "NVDA",
+    commissions_complete: bool = True,
+    credit: float = 100.0,
+    debit: float = 0.0,
+    commissions: float = 1.30,
+) -> PnlLeg:
     return PnlLeg(
         candidate_id=candidate_id,
         symbol=f"{symbol} 261016P00170000",
@@ -122,7 +130,7 @@ def test_bucket_means_average_only_closed_legs() -> None:
     o = _leg("c", net_pnl=None, symbol="NVDA", strategy="covered_call")
     summary = build_summary([a, b, o], [])
     bucket = summary.by_strategy[0]
-    assert bucket.mean_days_held == pytest.approx(16.0)   # the closed legs only
+    assert bucket.mean_days_held == pytest.approx(16.0)  # the closed legs only
     assert bucket.mean_roc_pct == pytest.approx(1.0)
 
 
@@ -144,8 +152,12 @@ def test_campaigns_parameter_is_accepted_but_the_totals_come_from_legs() -> None
     """A total can never disagree with the rows above it — legs are the source."""
     legs = [_leg("a", net_pnl=100.0)]
     campaign = CampaignPnl(
-        campaign_id="camp1", symbol="NVDA", status="closed",
-        opened_date=date(2026, 9, 16), legs=legs, option_realized=999.0,
+        campaign_id="camp1",
+        symbol="NVDA",
+        status="closed",
+        opened_date=date(2026, 9, 16),
+        legs=legs,
+        option_realized=999.0,
     )
     summary = build_summary(legs, [campaign])
     assert summary.realized_total == pytest.approx(100.0)  # not 999.0

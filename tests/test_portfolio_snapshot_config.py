@@ -141,9 +141,7 @@ def test_defaults_when_absent(patched_config) -> None:
 
 def test_values_are_honoured(patched_config) -> None:
     settings = _settings_without_keys()
-    settings["market_data"] = dict(
-        settings["market_data"], portfolio_snapshot_interval_minutes=5
-    )
+    settings["market_data"] = dict(settings["market_data"], portfolio_snapshot_interval_minutes=5)
     settings["storage"] = dict(settings["storage"], portfolio_snapshot_retention_days=7)
     patched_config(settings)
     cfg = get_config()

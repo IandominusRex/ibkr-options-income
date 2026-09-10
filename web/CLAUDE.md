@@ -53,6 +53,16 @@ P3/P4 poll this proxy continuously (portfolio refresh, command polling every 2s)
 this is the failure mode an API restart or outage produces constantly, not an edge
 case.
 
+**Response headers go through an explicit two-name allowlist, not a passthrough**
+(`FORWARDED_RESPONSE_HEADERS` in `route.ts`): `Content-Type` and
+`Content-Disposition`, nothing else. `Content-Disposition` rides along (M5 Task 5.3) so
+a `/pnl/ledger.csv` download keeps its dated `pnl-ledger-YYYY-MM-DD.csv` filename
+instead of saving as `ledger.csv` only by luck of the URL. Forwarding every upstream
+header would leak server details (`Server`, `X-Powered-By`, trace headers) the browser
+has no business seeing — the allowlist is the point, and a regression to a copy-all
+would pass every other test in `route.test.ts` except the one that pins it. Adding a
+third name is a separate decision with its own reason.
+
 ## Scripts
 
 | Command | What it does |
@@ -123,6 +133,19 @@ app/                App Router pages and the root layout
                     neither field (`{as_of, campaigns}` only), so <CampaignsPanel/>
                     reads neither. <RefreshControl/> mounts in the header and fires
                     `POST /commands` with kind "refresh" - one click, no dialog.
+  pnl/              P&L console (P4 M5 Tasks 5.4-5.6). <PnlShell/> mounts
+                    <SummaryPanel/> (the pnl one, not the portfolio one) and
+                    <EquityChart/> above a tab bar (Ledger / Equity curve) that never
+                    remounts them. The shell owns ONE filter state and composes it
+                    into one query string driving the ledger fetch, the summary
+                    fetch, the equity fetch, AND the CSV export href - the export
+                    must carry the same filters the table renders, and a second
+                    composition would let them drift. `book` starts "all": the
+                    ledger may list both books, and when the summary refuses a
+                    mixed total (`422 mixed_book`) its panel renders the book
+                    choice itself - the shell never guesses the operator's book.
+                    No write anywhere on this page; the CSV link is a plain
+                    download, not a command.
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -296,6 +319,56 @@ components/
                     with no dialog). AddSymbol and UniverseList route mutations
                     through submitUniverseCommand (lib/commands.ts) and render a
                     CommandReceipt.
+  pnl/              P4 M5 Tasks 5.4-5.6. PnlShell (the /pnl page frame - one
+                    filter state composed into one query string for the ledger,
+                    summary, equity and CSV export; SummaryPanel mounts above
+                    the tab bar and never remounts, matching PortfolioShell's
+                    convention - the tab bar swaps Ledger/Equity curve below
+                    it), SummaryPanel
+                    (react-query on GET /pnl/summary - the pnl one; headline
+                    figures, by-strategy/by-symbol breakdowns, best/worst legs
+                    each rendered as a button that jumps the shell to the
+                    Ledger tab filtered to that leg's symbol - the ledger has
+                    no per-candidate filter, so symbol is the closest real
+                    cross-reference; renders as plain text instead when no
+                    `onSelectLeg` is wired;
+                    `win_rate: null` renders n/a never "0%"; a 422 mixed_book
+                    renders a labelled book-choice group and an explanation in
+                    plain words, NOT alert chrome - having both books is a
+                    normal situation, not a failure; `commissions_complete:
+                    false` renders the gross qualifier on the headline realised
+                    figure through Money's `complete` prop), BreakdownTable
+                    (buckets in build_summary's own order - realised descending,
+                    ties by label; a bucket with n_closed 0 renders n/a in its
+                    rate columns, never 0%), EquityChart (Recharts line chart
+                    over GET /pnl/equity - connectNulls OFF so a gap renders as
+                    a gap not a fabricated bridge, isAnimationActive false on
+                    every series, colours read from CSS custom properties at
+                    mount like PriceChart, premium_cashflow labelled "premium
+                    cashflow" never "realised P&L", the start date stated in
+                    words beneath since the curve is the system's history, an
+                    empty curve renders one line of text not an empty frame;
+                    Recharts does not expose connectNulls/isAnimationActive as
+                    DOM attributes so each series mirrors its real props onto
+                    hidden data-series elements for the tests to read),
+                    LedgerTable (the filter echo so a client can prove what it
+                    is looking at; marks_as_of null renders "no marks
+                    available" beside the unrealised column and every
+                    unrealised cell renders n/a; an empty ledger renders one
+                    line of text, no icon circle), CampaignRow (one campaign
+                    thread collapsed with symbol/status/net/leg count,
+                    expanding through <button aria-expanded> to its legs in
+                    order; a null option_unrealized renders n/a never $0.00),
+                    LegRow (one leg row; an open leg's realised column renders
+                    n/a never $0.00 - an open leg has a mark, not a result;
+                    commissions_complete false renders the gross qualifier;
+                    realised and unrealised are separate columns with distinct
+                    headers; every numeric column carries .tabular),
+                    LedgerFilters (drives the query string, never client-side
+                    array filtering, so the CSV export gets the same rows;
+                    upper-cases the symbol; book choices all/paper/live). No
+                    second Money component here - pnl/ reuses
+                    portfolio/Money, adding a prop if a variant is needed.
 lib/
   api.ts            apiFetch + ApiError
   api-types.ts      Generated from /openapi.json by `npm run gen:api`

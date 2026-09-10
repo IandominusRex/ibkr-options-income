@@ -18,3 +18,14 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     }),
   });
 }
+
+// jsdom has no ResizeObserver either. Recharts' ResponsiveContainer (the
+// equity chart, M5 Task 5.5) subscribes to one on mount; without a stub every
+// chart render throws before a single assertion runs.
+if (typeof window !== "undefined" && typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}

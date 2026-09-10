@@ -138,9 +138,7 @@ def test_a_would_own_add_makes_a_symbol_csp_eligible(db_session) -> None:
     result = generate_csp_candidates("LABU", [_put_quote()], _account(), _iv(), _tech(), _fund())
     assert result == []
 
-    set_override(
-        db_session, symbol="LABU", list_name="would_own", action="add", created_by="owner"
-    )
+    set_override(db_session, symbol="LABU", list_name="would_own", action="add", created_by="owner")
     db_session.commit()
     invalidate_universe_cache()
     assert "LABU" in effective_universe()["would_own"]
@@ -203,9 +201,7 @@ def test_eod_report_watchlist_reflects_an_override(db_session) -> None:
     assert "ZZZZ" not in cfg.universe["watchlist"]
     assert "ZZZZ" not in _universe_symbols()
 
-    set_override(
-        db_session, symbol="ZZZZ", list_name="watchlist", action="add", created_by="owner"
-    )
+    set_override(db_session, symbol="ZZZZ", list_name="watchlist", action="add", created_by="owner")
     db_session.commit()
     invalidate_universe_cache()
 

@@ -403,7 +403,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryResponse"
+                  "$ref": "#/components/schemas/src__api__models__research__SummaryResponse"
                 }
               }
             }
@@ -449,7 +449,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryResponse"
+                  "$ref": "#/components/schemas/src__api__models__research__SummaryResponse"
                 }
               }
             }
@@ -1056,6 +1056,533 @@
             "HTTPBearer": []
           }
         ]
+      }
+    },
+    "/pnl/ledger": {
+      "get": {
+        "summary": "Pnl Ledger",
+        "description": "Leg rows grouped under their campaign threads \u2014 OVERVIEW's \"Excel-shaped\nledger of every position opened and closed\", readable in a browser.\n\nThe grouping is what stops an assignment reading as a leg that ended for\nno reason: a campaign-less leg lands in a synthetic per-symbol thread (M4\nTask 4.4), so `n_legs` always equals the sum of every campaign's leg count.",
+        "operationId": "pnl_ledger_pnl_ledger_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "paper",
+                "live",
+                "all"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Book"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pnl/summary": {
+      "get": {
+        "summary": "Pnl Summary",
+        "description": "The totals and breakdowns, computed from the same `PnlLeg` list the\nledger renders \u2014 a total can never disagree with the rows above it.\n\n`build_summary` raises `ValueError` on a mixed paper/live list (M4 Task\n4.5); this route turns that into a `422` naming `mixed_book`, so the\noperator picks a book instead of reading a wrong number. A single-book\nsummary over an empty list is a valid empty summary, not an error.",
+        "operationId": "pnl_summary_pnl_summary_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "paper",
+                "live",
+                "all"
+              ],
+              "type": "string",
+              "description": "Which fills to total. 'all' is refused with 422 mixed_book when both paper and live fills are present, because a total across both is not a number that means anything.",
+              "default": "all",
+              "title": "Book"
+            },
+            "description": "Which fills to total. 'all' is refused with 422 mixed_book when both paper and live fills are present, because a total across both is not a number that means anything."
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/src__api__models__pnl__SummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pnl/equity": {
+      "get": {
+        "summary": "Pnl Equity",
+        "description": "The equity curve \u2014 one point per journal day, plus the trading days\nbetween them that have no point, so the chart can render a gap rather than\na fabricated straight line.\n\nThe route computes nothing: `build_legs` feeds `equity_curve` exactly as it\nfeeds the ledger. `book=all` is fine *here*, deliberately unlike\n`/pnl/summary`: the curve's `cumulative_realized` sums `net_pnl` per point,\nand mixing books in a curve is a display choice the client makes, not a\nheadline total. Do not \"fix\" one to match the other.",
+        "operationId": "pnl_equity_pnl_equity_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "paper",
+                "live",
+                "all"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Book"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EquityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pnl/ledger.csv": {
+      "get": {
+        "summary": "Pnl Ledger Csv",
+        "description": "The same rows `/pnl/ledger` returns, under the same filters, as CSV.\n\nBuilt from the same `build_legs` call the JSON route uses \u2014 a second query\nwould let the two drift. There is no mixed-book refusal here because a CSV\nhas no headline total to be wrong; the `book` column identifies each row\nafter export.",
+        "operationId": "pnl_ledger_csv_pnl_ledger_csv_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "strategy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strategy"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "paper",
+                "live",
+                "all"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Book"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/universe": {
@@ -2760,6 +3287,118 @@
         ],
         "title": "CampaignLeg"
       },
+      "CampaignPnl": {
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "title": "Campaign Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "opened_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Opened Date"
+          },
+          "closed_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Date"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/PnlLeg"
+            },
+            "type": "array",
+            "title": "Legs"
+          },
+          "option_realized": {
+            "type": "number",
+            "title": "Option Realized",
+            "default": 0.0
+          },
+          "option_unrealized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Unrealized"
+          },
+          "stock_realized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Realized"
+          },
+          "stock_unrealized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Unrealized"
+          },
+          "assigned": {
+            "type": "boolean",
+            "title": "Assigned",
+            "default": false
+          },
+          "adjusted_cost_basis": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis"
+          },
+          "total_net": {
+            "type": "number",
+            "title": "Total Net",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "campaign_id",
+          "symbol",
+          "status",
+          "opened_date"
+        ],
+        "title": "CampaignPnl",
+        "description": "A wheel cycle: every option leg on a symbol, plus the stock leg."
+      },
       "CampaignSummary": {
         "properties": {
           "as_of": {
@@ -3407,6 +4046,114 @@
         ],
         "title": "ControlsResponse"
       },
+      "EquityCurve": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "type": "array",
+            "title": "Points"
+          },
+          "gaps": {
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "starts_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts At"
+          }
+        },
+        "type": "object",
+        "title": "EquityCurve",
+        "description": "Points, and the days between the first and last point that have no point.\n\n`gaps` exists so the chart can render a gap rather than a straight line across a week\nnobody measured."
+      },
+      "EquityPoint": {
+        "properties": {
+          "entry_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Entry Date"
+          },
+          "net_liquidation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Liquidation"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "cumulative_realized": {
+            "type": "number",
+            "title": "Cumulative Realized"
+          },
+          "premium_cashflow": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Premium Cashflow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_date",
+          "cumulative_realized"
+        ],
+        "title": "EquityPoint"
+      },
+      "EquityResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/LedgerFilters"
+          },
+          "curve": {
+            "$ref": "#/components/schemas/EquityCurve"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "filters",
+          "curve"
+        ],
+        "title": "EquityResponse"
+      },
       "ExposureBlock": {
         "properties": {
           "as_of": {
@@ -3651,6 +4398,131 @@
         "type": "object",
         "title": "IdealZonePayload",
         "description": "The denormalised ideal zone from ``RiskVerdictRow`` (lo / hi / min_credit)."
+      },
+      "LedgerFilters": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          },
+          "book": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "live",
+              "all"
+            ],
+            "title": "Book",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of"
+        ],
+        "title": "LedgerFilters",
+        "description": "Echoed back on every response so the client can prove what it is looking at."
+      },
+      "LedgerResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/LedgerFilters"
+          },
+          "campaigns": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignPnl"
+            },
+            "type": "array",
+            "title": "Campaigns"
+          },
+          "marks_as_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks As Of"
+          },
+          "n_legs": {
+            "type": "integer",
+            "title": "N Legs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "filters",
+          "campaigns",
+          "n_legs"
+        ],
+        "title": "LedgerResponse"
       },
       "LineItemValue": {
         "properties": {
@@ -4069,6 +4941,14 @@
         ],
         "title": "OptionLeg"
       },
+      "OptionRight": {
+        "type": "string",
+        "enum": [
+          "C",
+          "P"
+        ],
+        "title": "OptionRight"
+      },
       "OptionsCoverage": {
         "properties": {
           "iv_history": {
@@ -4330,6 +5210,302 @@
           "downtrend"
         ],
         "title": "Phase"
+      },
+      "PnlBucket": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "realized": {
+            "type": "number",
+            "title": "Realized"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "mean_days_held": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Days Held"
+          },
+          "mean_roc_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Roc Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "n_closed",
+          "realized"
+        ],
+        "title": "PnlBucket",
+        "description": "Realised performance grouped by one key (a symbol, a strategy)."
+      },
+      "PnlLeg": {
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/Strategy"
+          },
+          "right": {
+            "$ref": "#/components/schemas/OptionRight"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "expiry": {
+            "type": "string",
+            "format": "date",
+            "title": "Expiry"
+          },
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Opened At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "credit": {
+            "type": "number",
+            "title": "Credit"
+          },
+          "debit": {
+            "type": "number",
+            "title": "Debit"
+          },
+          "commissions": {
+            "type": "number",
+            "title": "Commissions"
+          },
+          "commissions_complete": {
+            "type": "boolean",
+            "title": "Commissions Complete"
+          },
+          "net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Pnl"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "days_held": {
+            "type": "integer",
+            "title": "Days Held"
+          },
+          "roc_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roc Pct"
+          },
+          "annualized_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualized Pct"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/VerdictOutcome"
+          },
+          "is_live": {
+            "type": "boolean",
+            "title": "Is Live"
+          }
+        },
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "symbol",
+          "underlying",
+          "strategy",
+          "right",
+          "strike",
+          "expiry",
+          "contracts",
+          "opened_at",
+          "credit",
+          "debit",
+          "commissions",
+          "commissions_complete",
+          "days_held",
+          "outcome",
+          "is_live"
+        ],
+        "title": "PnlLeg",
+        "description": "One option contract position, from the fill that opened it to whatever closed it.\n\n`net_pnl` is None while the leg is open \u2014 never 0.0. An open leg has an unrealised\nmark, not a realised result, and a zero in a realised column is a claim."
+      },
+      "PnlSummary": {
+        "properties": {
+          "realized_total": {
+            "type": "number",
+            "title": "Realized Total"
+          },
+          "unrealized_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Total"
+          },
+          "commissions_complete": {
+            "type": "boolean",
+            "title": "Commissions Complete"
+          },
+          "n_open": {
+            "type": "integer",
+            "title": "N Open"
+          },
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "by_strategy": {
+            "items": {
+              "$ref": "#/components/schemas/PnlBucket"
+            },
+            "type": "array",
+            "title": "By Strategy"
+          },
+          "by_symbol": {
+            "items": {
+              "$ref": "#/components/schemas/PnlBucket"
+            },
+            "type": "array",
+            "title": "By Symbol"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PnlLeg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worst": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PnlLeg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "realized_total",
+          "commissions_complete",
+          "n_open",
+          "n_closed"
+        ],
+        "title": "PnlSummary"
       },
       "PortfolioSummaryResponse": {
         "properties": {
@@ -5280,6 +6456,15 @@
         ],
         "title": "StockLeg"
       },
+      "Strategy": {
+        "type": "string",
+        "enum": [
+          "covered_call",
+          "cash_secured_put",
+          "roll"
+        ],
+        "title": "Strategy"
+      },
       "SummaryOut": {
         "properties": {
           "thesis": {
@@ -5336,58 +6521,6 @@
         ],
         "title": "SummaryOut",
         "description": "The AI narrative over computed values. Enrichment \u2014 influences nothing.\n\nEvery number the model used was passed in via ``ResearchContext``; the model never\ncalculates. ``caveats`` always carries the quantitative limit. ``model`` and\n``data_as_of`` make a stale summary visibly stale."
-      },
-      "SummaryResponse": {
-        "properties": {
-          "as_of": {
-            "type": "string",
-            "format": "date-time",
-            "title": "As Of"
-          },
-          "symbol": {
-            "type": "string",
-            "title": "Symbol"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "ready",
-              "stale",
-              "unavailable",
-              "pending"
-            ],
-            "title": "State"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SummaryOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          }
-        },
-        "type": "object",
-        "required": [
-          "as_of",
-          "symbol",
-          "state"
-        ],
-        "title": "SummaryResponse",
-        "description": "``GET/POST /research/{symbol}/summary``.\n\n``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),\n``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST\ngeneration was attempted but failed soft). ``reason`` explains ``unavailable``/\n``pending`` so the panel can show why and prompt a Generate/retry action."
       },
       "TechnicalStats": {
         "properties": {
@@ -5701,6 +6834,19 @@
         ],
         "title": "ValidationError"
       },
+      "VerdictOutcome": {
+        "type": "string",
+        "enum": [
+          "still_open",
+          "expired_worthless",
+          "assigned",
+          "closed_early",
+          "not_filled",
+          "user_rejected",
+          "risk_rejected"
+        ],
+        "title": "VerdictOutcome"
+      },
       "Warning": {
         "properties": {
           "level": {
@@ -5818,6 +6964,92 @@
         ],
         "title": "WatchlistResponse",
         "description": "``GET /watchlist`` \u2014 the user's tracked symbols, scoped to their user_id."
+      },
+      "src__api__models__pnl__SummaryResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/LedgerFilters"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PnlSummary"
+          },
+          "marks_as_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks As Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "filters",
+          "summary"
+        ],
+        "title": "SummaryResponse"
+      },
+      "src__api__models__research__SummaryResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "stale",
+              "unavailable",
+              "pending"
+            ],
+            "title": "State"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SummaryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "symbol",
+          "state"
+        ],
+        "title": "SummaryResponse",
+        "description": "``GET/POST /research/{symbol}/summary``.\n\n``state`` is ``ready`` (summary present), ``stale`` (cached but past TTL),\n``unavailable`` (no summary; a GET made no model call), or ``pending`` (a POST\ngeneration was attempted but failed soft). ``reason`` explains ``unavailable``/\n``pending`` so the panel can show why and prompt a Generate/retry action."
       }
     },
     "securitySchemes": {

@@ -3,6 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Tests for the server-side proxy at app/api/[...path]/route.ts.
 // The browser never holds a credential — the proxy injects API_TOKEN server-side.
 
+function req(url: string): Request {
+  return new Request(`http://localhost:3000${url}`);
+}
+
+function ctx(path: string[]): { params: Promise<{ path: string[] }> } {
+  return { params: Promise.resolve({ path }) };
+}
+
 describe("API proxy", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -323,5 +331,63 @@ describe("API proxy", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/json");
     expect(await res.text()).toBe('{"ok":true}');
+  });
+
+  // M5 Task 5.3 — the two-name response-header allowlist. A CSV download keeps
+  // its Content-Disposition filename, and nothing else about the upstream
+  // server leaks to the browser.
+
+  it("forwards Content-Disposition so a download keeps its filename", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("a,b\n1,2\n", {
+          status: 200,
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": 'attachment; filename="pnl-ledger-2026-09-11.csv"',
+          },
+        }),
+      ),
+    );
+
+    const { GET } = await import("./route");
+    const res = await GET(req("/api/pnl/ledger.csv"), ctx(["pnl", "ledger.csv"]));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/csv");
+    expect(res.headers.get("Content-Disposition")).toContain("pnl-ledger-2026-09-11.csv");
+  });
+
+  it("does not forward headers outside the allowlist", async () => {
+    process.env.API_TOKEN = "tok";
+    process.env.API_URL = "http://upstream.test";
+
+    // The allowlist is the point: a regression to a passthrough would pass
+    // every other test in this file, so this is the one that stops it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("a,b\n1,2\n", {
+          status: 200,
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            Server: "uvicorn",
+            "X-Powered-By": "something",
+          },
+        }),
+      ),
+    );
+
+    const { GET } = await import("./route");
+    const res = await GET(req("/api/pnl/ledger.csv"), ctx(["pnl", "ledger.csv"]));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("text/csv");
+    expect(res.headers.get("Server")).toBeNull();
+    expect(res.headers.get("X-Powered-By")).toBeNull();
   });
 });

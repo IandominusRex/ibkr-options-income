@@ -340,9 +340,7 @@ class IntradayMonitor:
                 get_account_snapshot_async(self._ib, self._cfg.secrets.ibkr_account),
                 timeout=self._cfg.ibkr.connect_timeout_seconds,
             )
-            save_portfolio_snapshot(
-                account=account, positions=positions, source="monitor"
-            )
+            save_portfolio_snapshot(account=account, positions=positions, source="monitor")
         except Exception:
             log.exception("Portfolio snapshot write failed — alerts unaffected")
 

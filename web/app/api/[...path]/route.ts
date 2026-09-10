@@ -11,6 +11,15 @@ const ALLOWED_METHODS = ["GET", "POST", "DELETE"] as const;
 // fabricated failure.
 const UPSTREAM_TIMEOUT_MS = 30_000;
 
+// The response-header allowlist (M5 Task 5.3). Deliberately an explicit
+// allowlist, NOT a passthrough: forwarding every upstream header would leak
+// server details (Server, X-Powered-By, trace headers) the browser has no
+// business seeing. Content-Disposition rides beside Content-Type so a CSV
+// download keeps its dated filename instead of saving as "ledger.csv" only
+// by luck of the URL. Adding a third name is a separate decision with its
+// own reason — do not "fix" this into a copy-all.
+const FORWARDED_RESPONSE_HEADERS = ["Content-Type", "Content-Disposition"] as const;
+
 async function proxy(
   method: string,
   req: Request,
@@ -85,9 +94,11 @@ async function proxy(
     );
   }
   const headers = new Headers();
-  const contentType = upstream.headers.get("Content-Type");
-  if (contentType) {
-    headers.set("Content-Type", contentType);
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value) {
+      headers.set(name, value);
+    }
   }
   // 204/304 and empty bodies must pass a null body through: constructing a
   // Response with a body (even "") at these statuses throws, which would turn

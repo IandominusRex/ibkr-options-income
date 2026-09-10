@@ -1,0 +1,136 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api";
+import { EquityChart } from "./EquityChart";
+import { LedgerFilters } from "./LedgerFilters";
+import { LedgerTable } from "./LedgerTable";
+import { SummaryPanel } from "./SummaryPanel";
+import type { EquityResponse, LedgerResponseData, PnlLegData } from "./types";
+
+/**
+ * The /pnl page frame: `SummaryPanel` mounts once, above the tab bar, and
+ * stays mounted across tab changes (`PortfolioShell`'s convention — switching
+ * tabs never remounts or refetches the summary query). The tab bar swaps
+ * which panel renders below it: Ledger (every trade the system has opened
+ * and closed, so it is the default tab) or the equity curve.
+ *
+ * The shell owns the filter state and composes it into ONE query string that
+ * drives the ledger fetch, the summary fetch, the equity fetch, AND the CSV
+ * export href — the export must carry the same filters the table renders,
+ * and a second composition would let them drift. `book` starts as "all":
+ * the ledger may list both, and the summary renders its own book-choice UI
+ * when the backend refuses a mixed total (`422 mixed_book`), so the shell
+ * never has to guess the operator's book for it.
+ */
+type Tab = "ledger" | "equity";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "ledger", label: "Ledger" },
+  { key: "equity", label: "Equity curve" },
+];
+
+export function PnlShell() {
+  const [tab, setTab] = useState<Tab>("ledger");
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [book, setBook] = useState("all");
+
+  // The summary's best/worst legs "link to their legs in the ledger" (Task
+  // 5.6) by switching to the ledger tab and filtering to that leg's symbol —
+  // the ledger has no per-candidate filter, so the symbol is the closest
+  // real cross-reference the API exposes.
+  function viewLegInLedger(leg: PnlLegData) {
+    setTab("ledger");
+    setFilters((prev) => ({ ...prev, symbol: leg.underlying }));
+  }
+
+  const qs = new URLSearchParams(
+    Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null)),
+  );
+  qs.set("book", book);
+  const qsString = qs.toString();
+
+  const ledger = useQuery({
+    queryKey: ["pnl", "ledger", qsString],
+    queryFn: () => apiFetch<LedgerResponseData>(`/pnl/ledger?${qsString}`),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+
+  const equity = useQuery({
+    queryKey: ["pnl", "equity", qsString],
+    queryFn: () => apiFetch<EquityResponse>(`/pnl/equity?${qsString}`),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+
+  return (
+    <div className="px-8 py-6">
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-mono text-2xl text-content">P&amp;L</h1>
+          <p className="mt-1 text-sm text-muted">
+            Every trade the system has opened and closed, what it earned, and the
+            equity curve. Read-only; the CSV export carries the same filters.
+          </p>
+        </div>
+        <a
+          href={`/api/pnl/ledger.csv?${qsString}`}
+          className="rounded border border-border bg-surface px-3 py-1.5 text-xs text-content hover:bg-elevated"
+          data-testid="ledger-export-link"
+        >
+          Export CSV
+        </a>
+      </header>
+
+      <section className="mb-6" data-testid="pnl-summary-section">
+        <SummaryPanel book={book} onBookChange={setBook} onSelectLeg={viewLegInLedger} />
+      </section>
+
+      <nav className="mb-4 flex gap-1 border-b border-border" aria-label="P&L sections">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={
+              "border-b-2 px-3 py-2 text-sm transition-colors " +
+              (tab === t.key
+                ? "border-focus text-content"
+                : "border-transparent text-muted hover:text-content")
+            }
+            aria-current={tab === t.key ? "page" : undefined}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "ledger" && (
+        <section className="space-y-4">
+          <LedgerFilters filters={ledger.data?.filters} onChange={setFilters} />
+          {ledger.isLoading ? (
+            <p className="text-sm text-muted">Loading the ledger</p>
+          ) : ledger.isError ? (
+            <p className="text-sm text-muted">Could not load the ledger.</p>
+          ) : ledger.data ? (
+            <LedgerTable data={ledger.data} />
+          ) : null}
+        </section>
+      )}
+
+      {tab === "equity" && (
+        <section data-testid="pnl-equity-section">
+          {equity.isLoading ? (
+            <p className="text-sm text-muted">Loading the equity curve</p>
+          ) : equity.isError ? (
+            <p className="text-sm text-muted">Could not load the equity curve.</p>
+          ) : (
+            <EquityChart curve={equity.data?.curve ?? { points: [], gaps: [], starts_at: null }} />
+          )}
+        </section>
+      )}
+    </div>
+  );
+}

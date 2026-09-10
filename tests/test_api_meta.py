@@ -55,9 +55,10 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     # P3 M3 ships the portfolio console read surfaces — the rail is now available.
     assert sections["portfolio"]["available"] is True
     assert sections["portfolio"]["note"] is None
-    # P4 still renders a placeholder.
-    assert sections["pnl"]["available"] is False
-    assert sections["pnl"]["note"]
+    # P4 M5 ships the P&L surfaces — every section is now available, none carries a note.
+    assert sections["pnl"]["available"] is True
+    assert sections["pnl"]["note"] is None
+    assert all(s["available"] and s["note"] is None for s in sections.values())
 
 
 def test_unknown_route_returns_json_not_html(client) -> None:
