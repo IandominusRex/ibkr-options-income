@@ -18,3 +18,14 @@ export type PositionsResponse = components["schemas"]["PositionsResponse"];
 export type PositionGroupData = components["schemas"]["PositionGroup"];
 export type StockLeg = components["schemas"]["StockLeg"];
 export type OptionLeg = components["schemas"]["OptionLeg"];
+
+// Task 3.4 — GET /portfolio/campaigns. Unlike `PositionGroupData` above, no
+// `Data` suffix is needed: this folder's components are named `CampaignsPanel`
+// and `CampaignThread`, neither of which collides with `CampaignSummary` or
+// `CampaignLeg`. `CampaignsResponse` carries only `{ as_of, campaigns }` - no
+// `source`/`degraded`/`note` - because campaigns come from a live SQL read
+// (`src/storage/campaigns.py::load_campaigns()`), not the portfolio-snapshot
+// freshness spine `PositionsResponse`/`PortfolioSummaryResponse` read from.
+export type CampaignsResponse = components["schemas"]["CampaignsResponse"];
+export type CampaignSummary = components["schemas"]["CampaignSummary"];
+export type CampaignLeg = components["schemas"]["CampaignLeg"];

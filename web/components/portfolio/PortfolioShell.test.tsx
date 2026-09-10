@@ -21,6 +21,12 @@ function positionsResponse() {
   return { as_of: new Date().toISOString(), source: "monitor", degraded: false, groups: [] };
 }
 
+// Task 3.4 wired CampaignsPanel into the Campaigns tab, which self-fetches
+// GET /portfolio/campaigns - mounting that tab now needs this mocked too.
+function campaignsResponse() {
+  return { as_of: new Date().toISOString(), campaigns: [] };
+}
+
 // Not named in the task brief's Files list (SummaryPanel.test.tsx and
 // DegradedNotice.test.tsx were), but "the tab bar renders three tabs and
 // switching does not refetch the summary" is one of the brief's required,
@@ -31,6 +37,7 @@ describe("PortfolioShell", () => {
     renderWithQuery(<PortfolioShell />, {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
+      "/portfolio/campaigns": campaignsResponse(),
     });
     expect(await screen.findByRole("button", { name: "Positions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Campaigns" })).toBeInTheDocument();
@@ -41,6 +48,7 @@ describe("PortfolioShell", () => {
     renderWithQuery(<PortfolioShell />, {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
+      "/portfolio/campaigns": campaignsResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
 
@@ -59,6 +67,7 @@ describe("PortfolioShell", () => {
     renderWithQuery(<PortfolioShell />, {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
+      "/portfolio/campaigns": campaignsResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
     // Task 3.3: the Positions tab now renders the real PositionsPanel, not
@@ -67,7 +76,10 @@ describe("PortfolioShell", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/no open positions/i);
 
     fireEvent.click(screen.getByRole("button", { name: "Campaigns" }));
-    expect(screen.getByText(/Campaigns - coming/i)).toBeInTheDocument();
+    // Task 3.4: the Campaigns tab now renders the real CampaignsPanel, not
+    // placeholder text - an empty response reads through EmptyState (no
+    // role="status", unlike PositionsPanel's empty rung).
+    expect(await screen.findByText(/no campaigns/i)).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
   });
 });

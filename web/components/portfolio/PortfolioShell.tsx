@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CampaignsPanel } from "./CampaignsPanel";
 import { PositionsPanel } from "./PositionsPanel";
 import { SummaryPanel } from "./SummaryPanel";
 
@@ -21,7 +22,8 @@ const TABS: { key: Tab; label: string }[] = [
  *
  * Positions/Campaigns/Calendar are Tasks 3.3-3.5. Since Task 3.3, the Positions
  * tab mounts the real `PositionsPanel` (self-fetching, same convention as
- * `SummaryPanel`); Campaigns/Calendar (3.4-3.5) still render placeholder text.
+ * `SummaryPanel`); since Task 3.4, the Campaigns tab mounts the real
+ * `CampaignsPanel`. Calendar (3.5) still renders placeholder text.
  */
 export function PortfolioShell() {
   const [tab, setTab] = useState<Tab>("positions");
@@ -59,9 +61,7 @@ export function PortfolioShell() {
       </nav>
 
       {tab === "positions" && <PositionsPanel />}
-      {tab === "campaigns" && (
-        <p className="text-sm text-muted">Campaigns - coming in Task 3.4.</p>
-      )}
+      {tab === "campaigns" && <CampaignsPanel />}
       {tab === "calendar" && (
         <p className="text-sm text-muted">Calendar - coming in Task 3.5.</p>
       )}
