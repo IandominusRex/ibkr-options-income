@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { CalendarPanel } from "./CalendarPanel";
 import { CampaignsPanel } from "./CampaignsPanel";
 import { PositionsPanel } from "./PositionsPanel";
+import { RefreshControl } from "./RefreshControl";
 import { SummaryPanel } from "./SummaryPanel";
 
 type Tab = "positions" | "campaigns" | "calendar";
@@ -23,18 +25,28 @@ const TABS: { key: Tab; label: string }[] = [
  * Positions/Campaigns/Calendar are Tasks 3.3-3.5. Since Task 3.3, the Positions
  * tab mounts the real `PositionsPanel` (self-fetching, same convention as
  * `SummaryPanel`); since Task 3.4, the Campaigns tab mounts the real
- * `CampaignsPanel`. Calendar (3.5) still renders placeholder text.
+ * `CampaignsPanel`; since Task 3.5, the Calendar tab mounts the real
+ * `CalendarPanel`.
+ *
+ * `RefreshControl` (Task 3.5) mounts in the header, next to the title - a
+ * refresh is a page-level action, not scoped to one panel, so it stays
+ * visible regardless of which tab is active. It is the one write this page
+ * offers; every panel below it stays a read-only view onto whatever snapshot
+ * is current.
  */
 export function PortfolioShell() {
   const [tab, setTab] = useState<Tab>("positions");
 
   return (
     <div className="px-8 py-6">
-      <header className="mb-6">
-        <h1 className="font-mono text-2xl text-content">Portfolio</h1>
-        <p className="mt-1 text-sm text-muted">
-          Positions, campaigns and the expiry calendar. Read-only.
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-mono text-2xl text-content">Portfolio</h1>
+          <p className="mt-1 text-sm text-muted">
+            Positions, campaigns and the expiry calendar. Read-only, aside from a manual refresh.
+          </p>
+        </div>
+        <RefreshControl />
       </header>
 
       <section className="mb-6">
@@ -62,9 +74,7 @@ export function PortfolioShell() {
 
       {tab === "positions" && <PositionsPanel />}
       {tab === "campaigns" && <CampaignsPanel />}
-      {tab === "calendar" && (
-        <p className="text-sm text-muted">Calendar - coming in Task 3.5.</p>
-      )}
+      {tab === "calendar" && <CalendarPanel />}
     </div>
   );
 }

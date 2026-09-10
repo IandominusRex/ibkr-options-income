@@ -29,3 +29,10 @@ export type OptionLeg = components["schemas"]["OptionLeg"];
 export type CampaignsResponse = components["schemas"]["CampaignsResponse"];
 export type CampaignSummary = components["schemas"]["CampaignSummary"];
 export type CampaignLeg = components["schemas"]["CampaignLeg"];
+
+// Task 3.5 — GET /portfolio/calendar. Like PositionsResponse, carries its own
+// `source`/`degraded`/`as_of` (the same portfolio-snapshot freshness spine),
+// so CalendarPanel renders FreshnessLabel the same way PositionsPanel does.
+export type CalendarResponse = components["schemas"]["CalendarResponse"];
+export type CalendarDay = components["schemas"]["CalendarDay"];
+export type CalendarEntry = components["schemas"]["CalendarEntry"];

@@ -122,4 +122,54 @@ describe("CommandReceipt", () => {
     expect(screen.getByText(/approval not found/)).toBeDefined();
     expect(screen.getByText(/no longer pending/)).toBeDefined();
   });
+
+  it("renders a plainReasons failure as a plain answer, not red failed chrome (M3 3.5)", () => {
+    render(
+      <CommandReceipt
+        command={command({
+          status: "failed",
+          result: { reason: "broker_unavailable" },
+        })}
+        order={null}
+        drainHealthy={true}
+        plainReasons={["broker_unavailable"]}
+      />,
+    );
+    const receipt = screen.getByTestId("command-receipt");
+    // Not the red failed state - a distinct, neutral data-state.
+    expect(receipt.getAttribute("data-state")).not.toBe("failed");
+    expect(screen.queryByText("Failed")).toBeNull();
+    // No text-loss class anywhere in the receipt for a plain reason.
+    expect(receipt.innerHTML).not.toContain("text-loss");
+  });
+
+  it("a reason not listed in plainReasons still renders the normal red failed state", () => {
+    render(
+      <CommandReceipt
+        command={command({
+          status: "failed",
+          result: { reason: "broker_unavailable" },
+        })}
+        order={null}
+        drainHealthy={true}
+        plainReasons={["some_other_reason"]}
+      />,
+    );
+    const receipt = screen.getByTestId("command-receipt");
+    expect(receipt.getAttribute("data-state")).toBe("failed");
+    expect(screen.getByText("Failed")).toBeDefined();
+  });
+
+  it("plainReasons defaults to empty - every existing call site stays byte-identical", () => {
+    render(
+      <CommandReceipt
+        command={command({ status: "failed", result: { reason: "broker_unavailable" } })}
+        order={null}
+        drainHealthy={true}
+      />,
+    );
+    const receipt = screen.getByTestId("command-receipt");
+    expect(receipt.getAttribute("data-state")).toBe("failed");
+    expect(screen.getByText("Failed")).toBeDefined();
+  });
 });

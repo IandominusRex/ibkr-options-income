@@ -27,6 +27,18 @@ function campaignsResponse() {
   return { as_of: new Date().toISOString(), campaigns: [] };
 }
 
+// Task 3.5 wired CalendarPanel into the Calendar tab, which self-fetches
+// GET /portfolio/calendar - mounting that tab now needs this mocked too.
+function calendarResponse() {
+  return {
+    as_of: new Date().toISOString(),
+    source: "monitor",
+    degraded: false,
+    horizon_days: 45,
+    days: [],
+  };
+}
+
 // Not named in the task brief's Files list (SummaryPanel.test.tsx and
 // DegradedNotice.test.tsx were), but "the tab bar renders three tabs and
 // switching does not refetch the summary" is one of the brief's required,
@@ -38,6 +50,7 @@ describe("PortfolioShell", () => {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
+      "/portfolio/calendar": calendarResponse(),
     });
     expect(await screen.findByRole("button", { name: "Positions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Campaigns" })).toBeInTheDocument();
@@ -49,6 +62,7 @@ describe("PortfolioShell", () => {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
+      "/portfolio/calendar": calendarResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
 
@@ -68,6 +82,7 @@ describe("PortfolioShell", () => {
       "/portfolio/summary": summaryResponse(),
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
+      "/portfolio/calendar": calendarResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
     // Task 3.3: the Positions tab now renders the real PositionsPanel, not
@@ -81,5 +96,24 @@ describe("PortfolioShell", () => {
     // role="status", unlike PositionsPanel's empty rung).
     expect(await screen.findByText(/no campaigns/i)).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    // Task 3.5: the Calendar tab now renders the real CalendarPanel, not
+    // placeholder text.
+    expect(await screen.findByText(/no option expiries/i)).toBeInTheDocument();
+  });
+
+  it("mounts the refresh control in the header, visible regardless of the active tab", async () => {
+    renderWithQuery(<PortfolioShell />, {
+      "/portfolio/summary": summaryResponse(),
+      "/portfolio/positions": positionsResponse(),
+      "/portfolio/campaigns": campaignsResponse(),
+      "/portfolio/calendar": calendarResponse(),
+    });
+    await screen.findByRole("button", { name: "Positions" });
+    expect(screen.getByRole("button", { name: /refresh/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    expect(screen.getByRole("button", { name: /refresh/i })).toBeInTheDocument();
   });
 });
