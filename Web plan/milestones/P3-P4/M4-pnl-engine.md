@@ -17,6 +17,75 @@ with the outcome ledger by construction rather than by coincidence.
 one — if you find yourself implementing "credit minus debit minus commissions" from scratch, stop
 and re-read spec §6.2.
 
+> **CLAIMED — all seven tasks (4.1–4.7), by opencode (glm-5.3), 2026-09-10.** The `[SONNET]`/
+> `[GLM]` tags are treated as capacity hints per the M1/M2 precedent, with one honest flag:
+> Task 4.1 is both `[SONNET]`-tagged and the exact "notice that this already exists" category the
+> implementation plan's honest-read section reserves for Sonnet. It is claimed anyway because the
+> task's own text is unusually explicit about the move (it names the two functions, the source
+> file, and the grep-before-delete step), and because its verification is objective rather than
+> judgment: the four reconcile test files must pass **unchanged** at the same count, recorded
+> below before anything was touched. If that gate fails, the task reverts.
+>
+> The claim is grounded in a dependency audit run against the tree before taking anything.
+> Confirmed to exist, exactly as the tasks describe them: `_fill_economics`, `_classify` and
+> `OPTION_MULTIPLIER` (`src/claude/eval/reconcile.py:54,57,78`); `VerdictOutcome` with all seven
+> members (`src/common/schemas.py:579`); `Strategy`/`OptionRight` (`src/common/schemas.py:25,31`);
+> `FillRow` with nullable `commission` and `is_live` (`src/storage/models.py:282`);
+> `CandidateRow`/`ApprovalRow`/`OrderRow` (`src/storage/models.py:35,100,117`);
+> `CampaignRow` with `assigned`/`adjusted_cost_basis`/`realized_stock_pnl`
+> (`src/storage/models.py:524-528`, whose docstring already anticipates this milestone's
+> gross-vs-net gap); `JournalRow.realized_pnl` with the premium-cashflow comment
+> (`src/storage/models.py:401`) and the `eod_summary` payload key the EOD run writes
+> (`src/orchestrator/eod_report.py:276`); `AccountSnapshot.net_liquidation`
+> (`src/common/schemas.py:105`); `PortfolioSnapshot` (M1 Task 1.1, `src/common/schemas.py:115`);
+> `load_campaigns` returning `leg_candidate_ids` (M2 Task 2.3's addition,
+> `src/storage/campaigns.py:187`); `is_trading_day` (`src/common/market_hours.py:144`); the M2
+> Task 2.1 fixtures in `tests/conftest.py:57-113` for `seed_leg`/`set_campaign`/
+> `seed_candidate_only` to sit beside; `verdict_ledger`/`update_outcome`/`load_records`
+> (`src/claude/eval/ledger.py:162,221`); `tests/test_web_fence.py` already globbing recursively
+> post-M0-0.10; and `CampaignRow.assigned` set by `mark_campaign_assigned`
+> (`src/storage/campaigns.py:150`). None of the seven target test files exists yet.
+>
+> **Task 4.1 Step 1 baseline, recorded 2026-09-10 before any edit: `150 passed`**
+> (`python -m pytest tests/test_eval.py tests/test_assignment.py tests/test_phase6.py
+> tests/test_notify.py -q`, 3.97s). This number is the gate: it must be identical after the move.
+>
+> **Milestone 3 status — flagged to the operator before implementing.** M4's header says
+> "Depends on: Milestone 3", but the audit found **zero code dependency on M3's deliverables**:
+> every interface the seven tasks consume comes from M0/M1/M2, all shipped. M4's own text agrees
+> ("No routes and no UI in this milestone"), so the dependency is phase ordering, not code. M3 is
+> itself only partially executed — Tasks 3.1–3.3 committed (`9dfa47f`→`daeba42`), Task 3.4 in
+> flight as uncommitted `web/components/portfolio/` files in the working tree, 3.5–3.6 not
+> started. M4 touches no `web/` file, so the in-flight work is safe; commits will stage explicit
+> paths only, never `git add -A`. **The operator ruled to proceed 2026-09-10 with Task 3.4
+> committed; step checkboxes close as each task is actually executed and its gate run green.**
+>
+> **EXECUTED — all seven tasks completed 2026-09-10, same session, seven commits** (`72858b5`
+> Task 4.1, `60726ae` 4.2, `3eee7a5` 4.3, `83d1543` 4.4, `d6bdead` 4.5, `166245b` 4.6,
+> `05d3180` 4.7). Every task followed its step order: failing test confirmed failing for the
+> right reason (`ModuleNotFoundError` / missing attribute / a fence assertion that the package
+> does not exist, never a wrong-value assertion), then implementation, then the FULL suite,
+> then docs, then a commit staging explicit paths (the one near-miss: Task 4.1's first commit
+> accidentally swept in `web/` files another session had left staged in the index — caught by
+> `git show --stat` before push, soft-reset and recommitted clean; no working-tree file was
+> touched). **Task 4.1's gate held exactly:** the four reconcile test files pass **unchanged**
+> (`git diff` empty against the pre-move tree) at the recorded baseline of **150 passed**.
+> Final gate at HEAD: `python -m pytest -q` **2141 passed** (2061 pre-milestone + 80 new:
+> 10 legs + 17 schemas + 18 build_legs + 13 build_campaigns + 13 build_summary + 11 equity
+> curve + 8 wheel scenarios), `ruff check .` clean, `mypy src` clean (161 files). Deviations,
+> all within the tasks' own instructions: the milestone's fence-test sketch used CWD-relative
+> `Path("src/reporting")` — implemented against the file's `ROOT` anchor with an
+> existence assertion instead (the M0 Task 0.10 lesson: a relative rglob over a missing
+> directory passes vacuously); `seed_leg`-family fixtures live in `tests/conftest.py` as
+> instructed and gained the multi-leg campaign append (one campaign, many legs) the scenario
+> suite needs; three test literals were corrected **by hand arithmetic** after first run
+> (4.4's 97.40, 4.5's bucket ordering, 4.6's 107.40) — each was a missed second commission in
+> the *test's* expected value, never a change to an implementation the scenarios then
+> confirmed; `OPTION_MULTIPLIER` is re-exported from `reconcile.py` for its backtest importer
+> (`.claude/worktrees` copies are stale worktree clones, not live code). STATUS.md's P4 row
+> now records the engine as built, with the broker-statement reconciliation explicitly
+> outstanding.
+
 ---
 
 ## Task 4.1 — Extract the accounting rule into `src/reporting/legs.py` `[SONNET]`
@@ -128,7 +197,7 @@ Required behaviours, each with a test:
 - **`src/reporting/` imports nothing from `src.claude`.**
 - **No module under `src/engine/`, `src/execution/` or `src/strategies/` imports `src.reporting`.**
 
-- [ ] **Step 1: Before touching anything, record the baseline.**
+- [x] **Step 1: Before touching anything, record the baseline.**
 
 ```bash
 python -m pytest tests/test_eval.py tests/test_assignment.py tests/test_phase6.py \
@@ -138,7 +207,7 @@ python -m pytest tests/test_eval.py tests/test_assignment.py tests/test_phase6.p
 Write the passing count into the task's notes. This number must be identical after the move. A
 different number means behaviour changed.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```python
 """One accounting rule, in a package the trading path cannot import."""
@@ -232,7 +301,7 @@ def test_an_unfilled_past_expiry_candidate_is_not_filled() -> None:
     assert out.outcome is VerdictOutcome.NOT_FILLED
 ```
 
-- [ ] **Step 3: Add the fence tests** to `tests/test_web_fence.py`, beside the existing ones:
+- [x] **Step 3: Add the fence tests** to `tests/test_web_fence.py`, beside the existing ones:
 
 ```python
 def test_reporting_never_imports_the_enrichment_loop() -> None:
@@ -250,15 +319,15 @@ def test_the_trading_path_never_imports_reporting() -> None:
             assert "src.reporting" not in text, f"{path} imports the reporting layer"
 ```
 
-- [ ] **Step 4: Run the new tests and confirm they fail.**
+- [x] **Step 4: Run the new tests and confirm they fail.**
 
-- [ ] **Step 5: Do the move.** Create `src/reporting/legs.py` with the two functions and the
+- [x] **Step 5: Do the move.** Create `src/reporting/legs.py` with the two functions and the
   constant, converted to dataclass returns. Grep for `_fill_economics` and `_classify` across the
   repo before deleting them — if nothing outside `reconcile.py` imports them, delete rather than
   alias. Rewire `reconcile.py`'s two call sites (`_reconcile_one` returns `_classify`'s tuple;
   unpack the dataclass at the boundary rather than changing the reconciler's own signature).
 
-- [ ] **Step 6: Re-run the baseline from Step 1.** The count must be identical.
+- [x] **Step 6: Re-run the baseline from Step 1.** The count must be identical.
 
 ```bash
 python -m pytest tests/test_eval.py tests/test_assignment.py tests/test_phase6.py \
@@ -268,9 +337,9 @@ python -m pytest tests/test_eval.py tests/test_assignment.py tests/test_phase6.p
 **If any of those four files needed an edit to pass, revert and find out why.** They are the
 safety property of this task, not an obstacle to it.
 
-- [ ] **Step 7: Run the FULL suite**, then `ruff check .` and `mypy src`.
+- [x] **Step 7: Run the FULL suite**, then `ruff check .` and `mypy src`.
 
-- [ ] **Step 8: Docs.**
+- [x] **Step 8: Docs.**
   - Root `CLAUDE.md`, "Analytics tiers" section: add `src/reporting/` as a third, read-only tier —
     downstream of everything, upstream of nothing, never imported by `engine/`, `execution/` or
     `strategies/`. State that `tests/test_web_fence.py` enforces it.
@@ -280,7 +349,7 @@ safety property of this task, not an obstacle to it.
   - `ARCHITECTURE.md`'s `src/claude/eval/` entry for `reconcile.py` notes where the accounting
     moved.
 
-- [ ] **Step 9: Commit.**
+- [x] **Step 9: Commit.**
 
 ```bash
 git add src/reporting/ src/claude/eval/reconcile.py tests/test_reporting_legs.py \
@@ -397,7 +466,7 @@ Required behaviours, each with a test:
 - `PnlBucket(n_closed=0)` leaves `win_rate` as `None`.
 - `EquityCurve()` with no points is valid and has `starts_at is None`.
 
-- [ ] **Step 1: Write the failing test. Step 2: Confirm failure. Step 3: Add the schemas.
+- [x] **Step 1: Write the failing test. Step 2: Confirm failure. Step 3: Add the schemas.
   Step 4: Gate. Step 5:** `ARCHITECTURE.md`'s `src/common/` section and data-flow schemas gain all
   six. **Step 6: Commit.**
 
@@ -472,7 +541,7 @@ Required behaviours, each with a test:
 - `symbol="NVDA"` filters; `since` filters on the opening fill date.
 - A candidate with no fills produces no leg.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Every number here is one an operator will act on. None of them may be invented."""
@@ -541,7 +610,7 @@ def test_a_candidate_with_no_fills_is_not_a_leg(db, seed_candidate_only) -> None
 Put `seed_leg`, `set_campaign` and `seed_candidate_only` in `tests/conftest.py` beside the
 fixtures M2 Task 2.1 added. Task 4.4 and Task 4.7 both need them.
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Run the gate. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Run the gate. Step 5: Commit.**
 
 ---
 
@@ -599,7 +668,7 @@ Required behaviours, each with a test:
 - **With a snapshot, an open leg's `unrealized_pnl` is populated and a closed leg's stays `None`.**
   Its own test: a closed leg has a result, not a mark, and a mark on it would be meaningless.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_no_snapshot_means_unrealised_is_unknown_not_zero(db, seed_leg) -> None:
@@ -625,7 +694,7 @@ def test_an_open_campaign_reports_a_real_zero_realised(db, seed_leg) -> None:
     assert build_campaigns(db, build_legs(db), snapshot=None)[0].option_realized == 0.0
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
 
 ---
 
@@ -666,7 +735,7 @@ Required behaviours, each with a test:
 - An empty leg list returns a valid summary with `realized_total: 0.0`, `n_open: 0`, `n_closed: 0`,
   `win_rate: None`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_mixing_paper_and_live_raises_rather_than_totalling(paper_leg, live_leg) -> None:
@@ -679,7 +748,7 @@ def test_win_rate_is_unknown_not_zero_with_nothing_closed(open_leg) -> None:
     assert build_summary([open_leg], []).win_rate is None
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
 
 ---
 
@@ -734,7 +803,7 @@ Required behaviours, each with a test:
 - No journal rows returns an empty curve with `starts_at: None`, not an exception.
 - `since` trims the leading points and recomputes `starts_at`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_a_missed_trading_day_is_a_gap_and_a_weekend_is_not(db, seed_journal_day) -> None:
@@ -765,7 +834,7 @@ def test_an_unreadable_account_payload_still_produces_a_point(db, seed_journal_d
     assert curve.points[0].net_liquidation is None
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5: Commit.**
 
 ---
 
@@ -851,38 +920,38 @@ will notice. Asserting the exact relationship turns "these two numbers differ" f
 a documented, tested fact — and gives whoever later decides to net commissions into `_rollup` a
 test that tells them what they changed.
 
-- [ ] **Step 1:** Write all five scenarios and both cross-checks with expected values computed by
+- [x] **Step 1:** Write all five scenarios and both cross-checks with expected values computed by
   hand and written as literals in the test.
 
-- [ ] **Step 2:** Run them. Fix `src/reporting/pnl.py` where they fail — **not the test's
+- [x] **Step 2:** Run them. Fix `src/reporting/pnl.py` where they fail — **not the test's
   expectations**, unless you can show by hand that the literal was arithmetically wrong.
 
-- [ ] **Step 3:** Run the FULL suite, `ruff check .`, `mypy src`.
+- [x] **Step 3:** Run the FULL suite, `ruff check .`, `mypy src`.
 
-- [ ] **Step 4:** `STATUS.md` records the P&L engine as built and states plainly that its numbers
+- [x] **Step 4:** `STATUS.md` records the P&L engine as built and states plainly that its numbers
   have not yet been reconciled against a broker statement.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ---
 
 ## Milestone 4 acceptance
 
-- [ ] There is exactly **one** implementation of `fill_economics` and `classify_outcome` in the
+- [x] There is exactly **one** implementation of `fill_economics` and `classify_outcome` in the
   repository. Verified by grepping for the arithmetic, not just by reading the diff.
-- [ ] `src/claude/eval/reconcile.py` imports from `src/reporting/legs.py`, and its four existing
+- [x] `src/claude/eval/reconcile.py` imports from `src/reporting/legs.py`, and its four existing
   test files pass **unchanged** at the same count recorded in Task 4.1 Step 1.
-- [ ] `src/reporting/` imports nothing from `src.claude`; `src/engine/`, `src/execution/` and
+- [x] `src/reporting/` imports nothing from `src.claude`; `src/engine/`, `src/execution/` and
   `src/strategies/` import nothing from `src.reporting`. Both asserted in
   `tests/test_web_fence.py`.
-- [ ] `PnlLeg.net_pnl` is `None` for every open leg, with its own test.
-- [ ] A null commission produces `commissions_complete: False` and propagates to the summary.
-- [ ] `build_summary` **raises** on a mixed paper and live leg list.
-- [ ] The equity curve reports gaps for missed trading days and never interpolates, and its
+- [x] `PnlLeg.net_pnl` is `None` for every open leg, with its own test.
+- [x] A null commission produces `commissions_complete: False` and propagates to the summary.
+- [x] `build_summary` **raises** on a mixed paper and live leg list.
+- [x] The equity curve reports gaps for missed trading days and never interpolates, and its
   journal-derived field is named `premium_cashflow`.
-- [ ] The five wheel scenarios pass with hand-written expected values.
-- [ ] The reporting layer and `verdict_ledger` agree on realised P&L and outcome for every closed
+- [x] The five wheel scenarios pass with hand-written expected values.
+- [x] The reporting layer and `verdict_ledger` agree on realised P&L and outcome for every closed
   trade the reconciler has labelled.
-- [ ] Root `CLAUDE.md`'s analytics-tier section names `src/reporting/` as the third, read-only
+- [x] Root `CLAUDE.md`'s analytics-tier section names `src/reporting/` as the third, read-only
   tier.
-- [ ] Full gate green, with the full Python suite run because Task 4.1 modifies the reconciler.
+- [x] Full gate green, with the full Python suite run because Task 4.1 modifies the reconciler.
