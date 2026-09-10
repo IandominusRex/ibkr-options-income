@@ -9,6 +9,44 @@ risk, and how old the answer is — with no number on the page claiming more tha
 **Spec:** `Web plan/P3-P4-design.md` §9. **Index:** `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`.
 **Depends on:** Milestone 2.
 
+> **EXECUTED — all six tasks (3.1–3.6), by Claude Sonnet 5 via
+> superpowers:subagent-driven-development, 2026-09-10.** A fresh implementer subagent per task,
+> a task-scoped spec+quality review after each (with a fix round where the review found real
+> gaps), and a final whole-branch review at the end — see
+> `.superpowers/sdd/M3-portfolio-ui/progress.md` for the full ledger of rulings and findings
+> before that workspace was deleted. Commits: 3.1 `9dfa47f`, 3.2 `52d5ce7`, 3.3 `1d07e86` + fix
+> `daeba42`, 3.4 `6936a38`, 3.5 `b5c27de`, 3.6 `7c62bfa` + fix `f583345`, final-review fix wave
+> `67408a7`. Also committed first: an independent M2 audit/fix pass (`a7897c1`) that was sitting
+> finished-but-uncommitted at session start.
+>
+> **This run executed concurrently, in the same working tree, with an unrelated process building
+> Milestone 4** (`src/reporting/`, interleaved commits throughout). No file conflict occurred —
+> the two milestones touch disjoint code — but every review package in this run had to be
+> constructed carefully (each task's own commit diffed against its own direct parent, never a
+> naive `BASE..HEAD` range) to keep M4's commits out of M3's reviews. The final whole-branch
+> review package was the union of M3's 8 commits' own diffs, concatenated in landing order.
+>
+> **Two real, load-bearing plan/reality gaps found during execution, both resolved before or
+> during the affected task (not discovered by review after the fact):** (1) the plan's own
+> `Interfaces` lines for `PositionsPanel` (3.3) and `CalendarPanel` (3.5) implied self-fetching
+> panels, but each task's illustrative example code showed a stale `data`-prop signature — ruled
+> in favour of self-fetch, matching the convention `SummaryPanel` (3.2) established. (2)
+> `CommandReceipt.tsx`'s own docstring claimed a `plainReasons` prop already existed for
+> `ShortsRow`'s `no_qualifying_roll` case; it did not — `ShortsRow.tsx` had instead forked the
+> component with a hand-built parallel div. Task 3.5 added the prop for real (used for
+> `broker_unavailable`) rather than repeating the fork; `ShortsRow.tsx`'s existing fork was left
+> as pre-existing, out-of-scope debt.
+>
+> **The final whole-branch review found six cross-cutting Important findings** that no single
+> task's narrower review could see, all fixed in one pass (`67408a7`, re-reviewed clean): a
+> hardcoded `drainHealthy` on the refresh control that made a dead command drain invisible on
+> this page (a regression of a bug already fixed once elsewhere in this codebase); none of the
+> four panels polled, so the freshness label froze at mount instead of aging (spec §9.4); a stale
+> pre-flip `GET /nav` example in `docs/web/api.md`; two doc files overclaiming which panels read
+> `source`/`degraded`; `Money`'s `complete={false}` gross-qualifier never passed on the
+> unconditionally-gross `/portfolio/campaigns` figures; and an em dash reaching rendered UI copy
+> through the one note `DegradedNotice` ever shows in production.
+
 **The shape of this milestone in one sentence:** P1's differentiator was the check ribbon and P2's
 was the command receipt; this milestone's is the **money cell**, and its job is to make it
 impossible for an unknown value to render as `$0.00`.
@@ -73,7 +111,7 @@ formatter.
    stale in words.
 7. **`asOf: null` renders "not captured", not "just now".**
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { render, screen } from "@testing-library/react";
@@ -136,11 +174,11 @@ describe("FreshnessLabel", () => {
 });
 ```
 
-- [ ] **Step 2:** `cd web && npx vitest run components/portfolio` — confirm failure.
+- [x] **Step 2:** `cd web && npx vitest run components/portfolio` — confirm failure.
 
-- [ ] **Step 3: Implement.** Semantic tokens only. No hex literals, no `text-gray-*`.
+- [x] **Step 3: Implement.** Semantic tokens only. No hex literals, no `text-gray-*`.
 
-- [ ] **Step 4:** `npx vitest run` · `npm run lint` · `npm run build`. Commit.
+- [x] **Step 4:** `npx vitest run` · `npm run lint` · `npm run build`. Commit.
 
 ---
 
@@ -183,7 +221,7 @@ Required behaviours, each with a test:
 - `buying_power_utilisation_pct: null` renders `n/a`, not `0%`.
 - The tab bar renders three tabs and switching does not refetch the summary.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 it("renders the empty state and no figures when nothing has been captured", () => {
@@ -219,7 +257,7 @@ it("renders unknown utilisation as n/a, not as zero percent", () => {
 Reuse the query-wrapper helper P1 and P2's component tests already use; grep
 `web/components/options/*.test.tsx` for it rather than writing a second one.
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -247,7 +285,7 @@ Required behaviours, each with a test:
 - An empty `groups` array with `source: "none"` renders the empty state; with `source: "monitor"`
   it renders "no open positions". **These two are different strings** and each has a test.
 
-- [ ] **Step 1: Write the failing tests, one per bullet.**
+- [x] **Step 1: Write the failing tests, one per bullet.**
 
 ```typescript
 it("renders no adjusted-basis row when the shares did not come from an assignment", () => {
@@ -266,7 +304,7 @@ it("distinguishes an empty account from an uncaptured one", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -293,7 +331,7 @@ Required behaviours, each with a test:
 - Filters for status and symbol drive the query, not client-side array filtering.
 - Empty renders one line of text, no icon circle.
 
-- [ ] **Step 1: Write the failing tests. Step 2: Confirm failure. Step 3: Implement. Step 4: All
+- [x] **Step 1: Write the failing tests. Step 2: Confirm failure. Step 3: Implement. Step 4: All
   six gate commands. Step 5: Commit.**
 
 ---
@@ -327,7 +365,7 @@ Required behaviours, each with a test:
   snapshot.
 - Polling stops at a terminal status.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 it("renders an unknown consequence distinctly from expires-worthless", () => {
@@ -346,7 +384,7 @@ it("renders a missing broker as an answer, not as an error", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -355,7 +393,7 @@ it("renders a missing broker as an answer, not as an error", () => {
 **Files:** Modify `src/api/routers/meta.py`, `web/CLAUDE.md`, `README.md`, `STATUS.md`,
 `docs/web/architecture.md`. Test `tests/test_api_meta.py`.
 
-- [ ] **Step 1:** Flip the `portfolio` section in `src/api/routers/meta.py`'s `_SECTIONS` to
+- [x] **Step 1:** Flip the `portfolio` section in `src/api/routers/meta.py`'s `_SECTIONS` to
   `available: True` and drop its `"Arrives in P3"` note. Leave `pnl` alone — it flips in Milestone
   5, not here.
 
@@ -364,37 +402,37 @@ it("renders a missing broker as an answer, not as an error", () => {
 ("pnl", "P&L", False, "Arrives in P4"),
 ```
 
-- [ ] **Step 2:** Update `tests/test_api_meta.py`'s expectation. If no test asserts the section
+- [x] **Step 2:** Update `tests/test_api_meta.py`'s expectation. If no test asserts the section
   states, add one — the nav manifest is what the rail renders, and a section flipped early would
   route an operator to a page that does not exist.
 
-- [ ] **Step 3:** `web/CLAUDE.md`'s Layout section gains `app/portfolio/` and
+- [x] **Step 3:** `web/CLAUDE.md`'s Layout section gains `app/portfolio/` and
   `components/portfolio/`, described in the same detail as the existing `components/options/`
   entry. Name every component and say what each one refuses to do — the existing entries do this
   and it is what makes the file useful.
 
-- [ ] **Step 4:** `README.md`'s layout table gains `web/app/portfolio/`. `STATUS.md`'s P3 row
+- [x] **Step 4:** `README.md`'s layout table gains `web/app/portfolio/`. `STATUS.md`'s P3 row
   records M1-M3 as built with the portfolio surface live. `docs/web/architecture.md` gains the
   snapshot spine in its data-flow description.
 
-- [ ] **Step 5:** Run all six gate commands and commit.
+- [x] **Step 5:** Run all six gate commands and commit.
 
 ---
 
 ## Milestone 3 acceptance
 
-- [ ] `/portfolio` renders account values, positions grouped by underlying, campaign threads and
+- [x] `/portfolio` renders account values, positions grouped by underlying, campaign threads and
   the expiry calendar.
-- [ ] **No unknown value anywhere on the page renders as `$0.00` or `0`.** Proven by the `Money`
+- [x] **No unknown value anywhere on the page renders as `$0.00` or `0`.** Proven by the `Money`
   tests and by the panel tests for `dte`, `moneyness`, `utilisation` and `realized_stock_pnl`.
-- [ ] The page states how old its data is, in words, at the top.
-- [ ] An uncaptured portfolio renders an explicit empty state that reads differently from an empty
+- [x] The page states how old its data is, in words, at the top.
+- [x] An uncaptured portfolio renders an explicit empty state that reads differently from an empty
   account.
-- [ ] A degraded reading renders the backend's own note verbatim.
-- [ ] Assigned shares show both cost bases; ordinary shares show only one.
-- [ ] `consequence: "unknown"` is visible and distinct on the calendar.
-- [ ] The refresh control reuses P2's `submitCommand` and `CommandReceipt` without forking either.
-- [ ] The rail shows Portfolio as available and P&L as still arriving in P4.
-- [ ] No raw `bg-gray-*`, no hex literals, no em dashes in UI copy, no decorative status dots, no
+- [x] A degraded reading renders the backend's own note verbatim.
+- [x] Assigned shares show both cost bases; ordinary shares show only one.
+- [x] `consequence: "unknown"` is visible and distinct on the calendar.
+- [x] The refresh control reuses P2's `submitCommand` and `CommandReceipt` without forking either.
+- [x] The rail shows Portfolio as available and P&L as still arriving in P4.
+- [x] No raw `bg-gray-*`, no hex literals, no em dashes in UI copy, no decorative status dots, no
   banned words. Checked by reading the diff, not assumed.
-- [ ] Full gate green, all six commands.
+- [x] Full gate green, all six commands.
