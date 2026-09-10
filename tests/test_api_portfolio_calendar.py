@@ -10,11 +10,15 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from tests.conftest import OWNER, long_put, short_call, short_put, stock
+from tests.conftest import OWNER, _et_today, long_put, short_call, short_put, stock
 
 
 def _day(offset: int) -> date:
-    return date.today() + timedelta(days=offset)
+    """Offsets from the ET date — the one clock the route's dte and horizon gate
+    measure in. A local-clock `_day` disagrees with the route by one day
+    whenever the two calendars straddle midnight, silently dropping a position
+    past the 45-day horizon the test never meant to exercise."""
+    return _et_today() + timedelta(days=offset)
 
 
 def test_an_itm_short_put_maps_to_assigned(client, seed_portfolio_snapshot) -> None:
@@ -169,7 +173,7 @@ def test_horizon_boundary_uses_the_same_clock_as_dte(client, seed_portfolio_snap
     )
     body = client.get("/portfolio/calendar?horizon_days=7", headers=OWNER).json()
     expiries = [d["expiry"] for d in body["days"]]
-    assert (date.today() + timedelta(days=7)).isoformat() in expiries  # boundary is inclusive
-    assert (date.today() + timedelta(days=8)).isoformat() not in expiries
+    assert (_et_today() + timedelta(days=7)).isoformat() in expiries  # boundary is inclusive
+    assert (_et_today() + timedelta(days=8)).isoformat() not in expiries
     for d in body["days"]:
         assert d["dte"] <= 7  # the rendered dte agrees with the gate that let it in

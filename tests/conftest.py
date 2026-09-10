@@ -322,6 +322,17 @@ def seed_assigned_campaign():
 # worth counting, a non-trivial delta) so tests only override what they assert.
 
 
+def _et_today() -> date:
+    """The exchange-calendar today — the one clock the portfolio routes measure
+    dte and horizon gates in (`routers/portfolio.py::_today_et`). A builder
+    default seeded from the local clock disagrees with the route's ET clock by
+    one day whenever the two calendars straddle midnight, silently dropping the
+    position past a horizon gate the test did not intend to exercise."""
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
 def short_put(
     *,
     symbol: str = "NVDA  260918 00190000P",
@@ -333,7 +344,7 @@ def short_put(
     market_price: float | None = 2.10,
     expiry: date | None = None,
 ) -> dict[str, Any]:
-    exp = expiry or (date.today() + timedelta(days=dte if dte is not None else 45))
+    exp = expiry or (_et_today() + timedelta(days=dte if dte is not None else 45))
     return {
         "symbol": symbol,
         "sec_type": "OPT",
@@ -361,7 +372,7 @@ def short_call(
     market_price: float | None = 1.50,
     expiry: date | None = None,
 ) -> dict[str, Any]:
-    exp = expiry or (date.today() + timedelta(days=dte if dte is not None else 45))
+    exp = expiry or (_et_today() + timedelta(days=dte if dte is not None else 45))
     return {
         "symbol": symbol,
         "sec_type": "OPT",
@@ -385,7 +396,7 @@ def long_put(
     contracts: int = 1,
     underlying: str = "AAPL",
 ) -> dict[str, Any]:
-    exp = (date.today() + timedelta(days=45)).isoformat()
+    exp = (_et_today() + timedelta(days=45)).isoformat()
     return {
         "symbol": symbol,
         "sec_type": "OPT",
