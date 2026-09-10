@@ -273,7 +273,9 @@ components/
                     and expiry grid with consequence text per entry, "unknown"
                     consequence is a named state), RefreshControl (one click no dialog,
                     fires POST /commands kind "refresh", invalidates portfolio queries
-                    on terminal, reuses submitCommand/useCommandStatus/CommandReceipt).
+                    on terminal, `broker_unavailable` renders as plain answer through
+                    `CommandReceipt`'s `plainReasons` prop not red failed chrome,
+                    reuses submitCommand/useCommandStatus/CommandReceipt).
   universe/         M7 Task 7.5. UniverseList (one GET /universe section: heading with
                     entry count, a row per entry with sector tag, strike-band
                     override, and, for would_own only, a wheeling/dip-watch tag; a

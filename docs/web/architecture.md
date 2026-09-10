@@ -50,6 +50,33 @@ about (spec §4.2). The drain writes `command_drain_heartbeat` to `system_settin
 at the end of every cycle (after the work, never before), so M2's `/options/controls`
 can tell an operator their click is queued and nothing is picking it up.
 
+## The portfolio snapshot spine (P3–P4)
+
+The **write side** (P3–P4 M1) captures positions and account values into a `portfolio_snapshots`
+table via two paths: the intraday monitor writes a row every 15 minutes (rate-gated, RTH-only),
+and the operator can trigger an on-demand `refresh` command through the web console. The **read
+side** (P3–P4 M2) serves four routes (`/portfolio/{summary,positions,campaigns,calendar}`) from a
+three-rung fallback chain:
+
+```
+newest portfolio_snapshots row            source="monitor" | "refresh"
+  ↓ (if empty)
+newest position_snapshots + account       source="eod"
+  ↓ (if both empty)
+explicit empty state                      source="none", note="No snapshot captured yet"
+```
+
+The third rung is deliberate: a portfolio page rendering zeros from an empty database is
+indistinguishable from a portfolio that is genuinely empty. The API's `read_portfolio` helper
+returns a `PortfolioReading` with `source` and an optional plain-words `note`, so the UI can
+render each rung distinctly — a monitored/refreshed account (fresh or stale), an EOD fallback
+(daily snapshot), or "nothing captured yet" (brand new, no data at all). All values carry an
+`as_of` timestamp derived from the row's capture time, never the request time, so the UI states
+how old the data is. P3 M3 wires the four routes into the `/portfolio` console — `PortfolioShell`
+mounts `SummaryPanel` once at the top (stays mounted across tab changes), and three tabs
+(`PositionsPanel`, `CampaignsPanel`, `CalendarPanel`) each self-fetch their own route and read
+their own `source`/`degraded` fields rather than inheriting a page-level assumption.
+
 ## The API proxy
 
 `web/lib/api.ts` fetches from `/api`, not from the upstream API directly. The proxy at
