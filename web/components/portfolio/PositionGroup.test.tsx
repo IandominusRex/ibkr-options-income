@@ -139,6 +139,13 @@ describe("PositionGroup", () => {
     expect(screen.getByTestId("option-dte")).not.toHaveTextContent(/^0$/);
   });
 
+  it("renders dte: 0 as a real 0, not n/a - a null and a real zero must not be conflated", () => {
+    render(<PositionGroup group={aGroup({ stock: null, options: [anOption({ dte: 0 })] })} />);
+
+    expect(screen.getByTestId("option-dte-value")).toHaveTextContent("0");
+    expect(screen.getByTestId("option-dte")).not.toHaveTextContent(/n\/a/i);
+  });
+
   it("renders moneyness: null as n/a, never otm", () => {
     render(
       <PositionGroup
@@ -163,6 +170,22 @@ describe("PositionGroup", () => {
     const el = screen.getByTestId("option-delta");
     expect(el).toHaveTextContent("-0.32");
     expect(el).toHaveTextContent("ibkr");
+  });
+
+  it("renders a delta value with no source span when delta_source is null", () => {
+    render(
+      <PositionGroup
+        group={aGroup({
+          stock: null,
+          options: [anOption({ delta: -0.15, delta_source: null })],
+        })}
+      />,
+    );
+
+    const el = screen.getByTestId("option-delta");
+    expect(el).toHaveTextContent("-0.15");
+    // No source label rendered beside it - a null source must not fabricate one.
+    expect(el.querySelector("span.ml-1")).toBeNull();
   });
 });
 
@@ -196,6 +219,23 @@ describe("PositionsPanel", () => {
     const empty = (await screen.findByRole("status")).textContent;
 
     expect(empty).not.toEqual(uncaptured);
+  });
+
+  it("renders a freshness label driven by the response's own as_of, marking an old EOD-fallback reading as stale", async () => {
+    // The concrete concern: read_portfolio's `eod` fallback rung can return real,
+    // non-empty groups with degraded=true and a capture time up to a day old - the
+    // Positions tab must not render that pixel-identical to a live `monitor` read.
+    const old = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    renderWithQuery(<PositionsPanel />, {
+      "/portfolio/positions": {
+        as_of: old,
+        source: "eod",
+        degraded: true,
+        groups: [aGroup()],
+      },
+    });
+
+    expect(await screen.findByText(/stale/i)).toBeInTheDocument();
   });
 
   it("renders one PositionGroup per group in the response", async () => {

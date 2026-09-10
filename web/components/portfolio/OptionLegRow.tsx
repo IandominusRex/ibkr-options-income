@@ -55,7 +55,7 @@ export function OptionLegRow({ option }: { option: OptionLeg }) {
         <span className="tabular text-content">{option.contracts}</span>
       </Field>
       <Field label="DTE" testId="option-dte">
-        <span className="tabular text-content">
+        <span className="tabular text-content" data-testid="option-dte-value">
           {option.dte != null ? option.dte : <Unknown />}
         </span>
       </Field>
