@@ -16,7 +16,7 @@ MagicMock IB) rather than building a second harness.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -126,12 +126,27 @@ async def test_nothing_is_written_inside_the_interval(monitor_env) -> None:
 @pytest.mark.asyncio
 async def test_a_failing_snapshot_write_never_reaches_the_refresh_loop(monitor_env) -> None:
     """If this escapes, the refresh task dies and roll alerts stop for new positions."""
+    from src.common.schemas import OptionRight, PositionSnapshot
+
     mock_ib = monitor_env._ib
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
     with (
         patch("src.monitor.intraday.is_rth", return_value=True),
         patch("src.monitor.intraday.latest_capture_time", return_value=None),
         patch("src.monitor.intraday.get_account_snapshot_async", new=_patch_account_fetch()),
-        patch("src.monitor.intraday.get_positions", return_value=[]),
+        patch("src.monitor.intraday.get_positions", return_value=[pos]),
+        patch("src.monitor.intraday._load_entry_iv", return_value=None),
+        patch("src.monitor.intraday.get_fundamental_stats", return_value=MagicMock()),
+        patch("src.monitor.intraday.build_option", return_value=MagicMock()),
         patch(
             "src.monitor.intraday.save_portfolio_snapshot",
             side_effect=RuntimeError("database is locked"),
@@ -139,13 +154,11 @@ async def test_a_failing_snapshot_write_never_reaches_the_refresh_loop(monitor_e
     ):
         await monitor_env._refresh_subscriptions()  # must not raise
 
-    # The real work still happened: the subscription pass ran to completion (the
-    # refresh did its bookkeeping against the IB object — the observable the
-    # existing monitor tests use, e.g. cancelMktData for closed positions and
-    # reqMktData for new ones; with no positions there is nothing to subscribe,
-    # so the pass completing is proven by the absence of an exception above and
-    # by the account fetch having run inside the same pass).
-    assert mock_ib is not None
+    # The real work still happened, proven by the observable the existing monitor
+    # tests use (tests/test_monitor.py's double-subscribe test asserts on the same
+    # call): reqMktData fired for the new short option — the subscription pass ran
+    # to completion despite the snapshot write raising underneath it.
+    mock_ib.reqMktData.assert_called_once()
 
 
 @pytest.mark.asyncio

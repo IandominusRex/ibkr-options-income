@@ -12,7 +12,7 @@ HANDLERS saved/restored), extended with snapshot/approval/order counters.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -202,7 +202,7 @@ async def test_the_written_row_is_a_refresh_source_with_positions(drain_env) -> 
     from src.notify.command_drain import drain_once
     from src.storage.models import PortfolioSnapshotRow
 
-    drain_env.enqueue("refresh", {})
+    cid = drain_env.enqueue("refresh", {})
     await drain_once(drain_env.ib, drain_env.bot, "chat")
 
     with dbmod.session_scope() as s:
@@ -212,4 +212,9 @@ async def test_the_written_row_is_a_refresh_source_with_positions(drain_env) -> 
         captured = row.captured_at
     assert captured is not None
     assert isinstance(captured, datetime)
-    assert captured.tzinfo is not None or True  # SQLite stores naive; loader coerces
+    # SQLite returns the stored instant naive; the receipt reported it UTC-aware. The
+    # receipt's captured_at must be the row's capture time — the same instant, not a
+    # second now() — so a refresh receipt can never claim a fresher capture than the
+    # row the API's fallback chain will actually serve.
+    result_captured = datetime.fromisoformat(drain_env.result(cid)["captured_at"])
+    assert captured.replace(tzinfo=UTC) == result_captured

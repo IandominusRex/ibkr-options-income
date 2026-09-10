@@ -37,7 +37,12 @@ idempotent. This milestone's `eod` fallback rung reads `position_snapshots` and
 > sweep). Every task followed its step order: failing test confirmed failing for the right reason
 > (`ModuleNotFoundError` / missing attribute, never an assertion), then implementation, then the
 > FULL suite, then docs, then commit. Final gate, run at HEAD: `python -m pytest -q`
-> (**1996 passed**, up from 1974 pre-milestone — 22 new tests across five new test files),
+> (**1996 passed** — 1967 pre-milestone + **29 new tests** across five new test files:
+> 7 storage + 3 config + 6 monitor + 6 drain + 7 fallback chain; the "22" this note originally
+> claimed was miscounted and is corrected 2026-09-10, the post-milestone verification pass, which
+> also replaced a vacuous `assert mock_ib is not None` in the monitor's most important test with
+> the `reqMktData` observable the plan's own Step 1 demanded, and a tautological
+> `tzinfo is not None or True` in the drain test with a real receipt-vs-row capture-time check),
 > `ruff check .` clean, `mypy src` clean (156 files). Deviations from the sketches, all
 > within each task's own instructions: config keys landed on the real `MarketDataCfg`/
 > `StorageCfg` names; the EOD prune test drives the real `eod_report.run()` through the

@@ -665,8 +665,6 @@ async def _refresh(*, command: Any, ib: IB | None, **_: Any) -> dict:
 
     Returns {"captured_at": "<iso>", "positions": <int>, "snapshot_id": <int>}.
     """
-    from datetime import UTC as _UTC
-
     if ib is None:
         # Must not write a row containing whatever the last known state was — a
         # refresh that silently writes stale data is worse than one that says it
@@ -679,7 +677,7 @@ async def _refresh(*, command: Any, ib: IB | None, **_: Any) -> dict:
     except Exception as exc:
         raise CommandFailed("broker_unavailable", {"detail": str(exc)}) from exc
 
-    captured_at = datetime.now(_UTC)
+    captured_at = datetime.now(UTC)
     snapshot_id = save_portfolio_snapshot(
         account=account,
         positions=positions,
