@@ -51,8 +51,8 @@ class PortfolioSummaryResponse(Envelope):
 
 class OptionLeg(Envelope):
     symbol: str  # the OCC option symbol
-    right: Literal["C", "P"]
-    strike: float
+    right: Literal["C", "P"] | None = None  # None when the snapshot carried none — never fabricated
+    strike: float | None = None  # None when the snapshot carried none — never 0.0
     expiry: date | None
     dte: int | None
     contracts: int  # absolute; `short` carries the direction

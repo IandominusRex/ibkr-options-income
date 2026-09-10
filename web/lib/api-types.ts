@@ -433,6 +433,10 @@ export interface paths {
          *     exactly the commission total. A leg whose `CandidateRow` was pruned still
          *     renders with `known: false` — the financials are rolled up from `FillRow` and
          *     survive pruning, so the leg count must not silently disagree with them.
+         *
+         *     `limit` (default 50, max 200) caps the read because campaigns are never
+         *     pruned — the table grows forever, and a response that materialises every row
+         *     ever written is an unbounded JSON payload, not a "latest threads" list.
          */
         get: operations["portfolio_campaigns_portfolio_campaigns_get"];
         put?: never;
@@ -1609,13 +1613,10 @@ export interface components {
             as_of: string;
             /** Symbol */
             symbol: string;
-            /**
-             * Right
-             * @enum {string}
-             */
-            right: "C" | "P";
+            /** Right */
+            right?: ("C" | "P") | null;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Expiry */
             expiry: string | null;
             /** Dte */
@@ -2886,6 +2887,7 @@ export interface operations {
             query?: {
                 status?: ("open" | "closed") | null;
                 symbol?: string | null;
+                limit?: number;
             };
             header?: never;
             path?: never;

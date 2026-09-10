@@ -160,3 +160,74 @@ def test_delta_source_rides_alongside_delta(client, seed_portfolio_snapshot) -> 
     leg = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]["options"][0]
     assert leg["delta"] == -0.22
     assert leg["delta_source"] == "ibkr"
+
+
+def test_missing_right_and_stay_null_never_fabricated(client, seed_portfolio_snapshot) -> None:
+    """The shorts route's null-stays-null discipline: a snapshot that carried no
+    right/strike must not render a fabricated "C"/0.0 pair — moneyness guessed against
+    a fabricated strike is a guess wearing a measurement's clothes."""
+    pos = short_put(underlying="NVDA")
+    pos["right"] = None
+    pos["strike"] = None
+    seed_portfolio_snapshot(
+        positions=[pos, stock(symbol="NVDA", market_price=176.0)]  # spot IS known
+    )
+    leg = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]["options"][0]
+    assert leg["right"] is None
+    assert leg["strike"] is None
+    assert leg["moneyness"] is None  # spot known but strike/right are not — no guess
+
+
+def test_adjusted_basis_reads_through_the_read_only_engine(
+    client, seed_assigned_campaign, seed_portfolio_snapshot, monkeypatch
+) -> None:
+    """The route must not open the storage engine's own read-write session_scope from
+    inside the API process (design §4.2 — the universe composer is the one documented
+    exception, and this route is not it). If the storage path is unavailable, the
+    basis still renders through the route's own read-only session."""
+    import src.storage.db as dbmod
+
+    seed_assigned_campaign(symbol="NVDA", assignment_price=180.0, adjusted_basis=173.50)
+    seed_portfolio_snapshot(positions=[stock(symbol="NVDA", shares=100, avg_cost=180.0)])
+
+    def _refused(*a: object, **k: object):
+        raise AssertionError("the API process must not open the storage engine's session")
+
+    monkeypatch.setattr(dbmod, "session_scope", _refused)
+    group = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]
+    assert group["stock"]["adjusted_cost_basis"] == 173.50
+
+
+def test_newest_assigned_campaign_wins_the_basis(
+    client, seed_assigned_campaign, seed_portfolio_snapshot
+) -> None:
+    """Two open assigned campaigns on one symbol (a second assignment while the first
+    thread is still open) must render the newest thread's basis, not raise into None."""
+    from datetime import date, timedelta
+
+    from src.storage.db import session_scope
+    from src.storage.models import CampaignRow
+
+    seed_assigned_campaign(symbol="NVDA", assignment_price=180.0, adjusted_basis=173.50)
+    with session_scope() as s:
+        s.add(
+            CampaignRow(
+                campaign_id="NVDA-newer",
+                symbol="NVDA",
+                status="open",
+                opened_date=date.today() - timedelta(days=2),
+                closed_date=None,
+                leg_candidate_ids=[],
+                total_premium_collected=100.0,
+                total_debit_paid=0.0,
+                net_premium=100.0,
+                assigned=True,
+                adjusted_cost_basis=179.0,
+                realized_stock_pnl=None,
+                payload={},
+            )
+        )
+    seed_portfolio_snapshot(positions=[stock(symbol="NVDA", shares=100, avg_cost=180.0)])
+
+    group = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]
+    assert group["stock"]["adjusted_cost_basis"] == 179.0

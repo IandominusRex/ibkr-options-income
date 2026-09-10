@@ -906,7 +906,10 @@ substituted for the other**: `avg_cost` is what IBKR says;
 `unrealized_pnl` is against the former, `unrealized_pnl_adjusted` against the
 latter. `adjusted_cost_basis` is `null` for shares that did not come from an
 assignment, and `unrealized_pnl_adjusted` is `null` with it — not a copy of
-`unrealized_pnl`, and not zero.
+`unrealized_pnl`, and not zero. The basis is read through the API's own
+read-only engine (mirroring `storage.campaigns.adjusted_cost_basis_for`'s
+newest-open-assigned-campaign rule exactly), never through the storage
+engine's read-write session.
 
 `moneyness` (`itm`/`atm`/`otm`) needs the underlying's price: the group's own
 stock leg first, else the latest settled close in `price_history` — both from
@@ -923,13 +926,15 @@ the account holds nothing.
 `{ as_of, source, degraded, groups: PositionGroup[] }`.
 `PositionGroup`: `{ as_of, underlying, stock: StockLeg | null, options: OptionLeg[] }`.
 `StockLeg`: `{ as_of, shares, avg_cost, adjusted_cost_basis: float | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, unrealized_pnl_adjusted: float | null }`.
-`OptionLeg`: `{ as_of, symbol, right, strike, expiry: date | null, dte: int | null, contracts, short, delta: float | null, delta_source: string | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, moneyness: "itm"|"atm"|"otm"|null, assignment_risk }`.
+`OptionLeg`: `{ as_of, symbol, right: "C"|"P"|null, strike: float | null, expiry: date | null, dte: int | null, contracts, short, delta: float | null, delta_source: string | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, moneyness: "itm"|"atm"|"otm"|null, assignment_risk }`. `right`/`strike` are `null` when the snapshot carried none — never a fabricated `"C"`/`0.0` pair, and `moneyness` is `null` with them (all three of spot/right/strike are needed; no guessing against a fabricated strike).
 
 ### `GET /portfolio/campaigns`
 
 The wheel threads — what Telegram's `/campaigns` renders as text and renders
-badly. Query parameters: `status` (`open` | `closed`; omit for both) and
-`symbol`. Ordered by `opened_date` descending, open campaigns before closed
+badly. Query parameters: `status` (`open` | `closed`; omit for both), `symbol`,
+and `limit` (default 50, maximum 200 — campaigns are never pruned, so the read
+is capped rather than materialising every row ever written). Ordered by
+`opened_date` descending, open campaigns before closed
 ones at the same date. `as_of` is **request time** here, not a snapshot time:
 campaigns are written on fill, not captured, so there is no capture time to
 read.
@@ -956,7 +961,9 @@ leg count must not silently disagree with them.
 Option expiries grouped by date over a horizon — "what happens next". Query
 parameter `horizon_days` (default 45, maximum 365). Days are ordered nearest
 first; an expiry outside the horizon is excluded; an already-expired position
-is not "what happens next" and is skipped.
+is not "what happens next" and is skipped. Both `dte` and the horizon gate are
+measured on the **exchange calendar (ET)** — the same single clock, so the dte
+a rendered entry carries always agrees with the gate that let it in.
 
 The `consequence` column — what expiry would mean if nothing changes:
 

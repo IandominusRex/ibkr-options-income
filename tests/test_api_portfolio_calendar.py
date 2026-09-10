@@ -154,3 +154,22 @@ def test_assignment_risk_flags_ride_on_calendar_entries(client, seed_portfolio_s
     day = client.get("/portfolio/calendar", headers=OWNER).json()["days"][0]
     assert day["entries"][0]["assignment_risk"] is True
     assert day["entries"][0]["moneyness"] == "itm"
+
+
+def test_horizon_boundary_uses_the_same_clock_as_dte(client, seed_portfolio_snapshot) -> None:
+    """`dte` is measured in ET; the horizon cutoff must use the same clock. A
+    boundary expiry at exactly `horizon_days` is IN, one past it is OUT — the
+    inclusion decision must not disagree with the dte the response renders."""
+    seed_portfolio_snapshot(
+        positions=[
+            stock(symbol="NVDA", market_price=176.0),
+            short_put(strike=190.0, underlying="NVDA", expiry=_day(7)),
+            short_put(strike=195.0, underlying="NVDA", expiry=_day(8)),
+        ]
+    )
+    body = client.get("/portfolio/calendar?horizon_days=7", headers=OWNER).json()
+    expiries = [d["expiry"] for d in body["days"]]
+    assert (date.today() + timedelta(days=7)).isoformat() in expiries  # boundary is inclusive
+    assert (date.today() + timedelta(days=8)).isoformat() not in expiries
+    for d in body["days"]:
+        assert d["dte"] <= 7  # the rendered dte agrees with the gate that let it in

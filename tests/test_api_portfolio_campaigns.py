@@ -154,3 +154,37 @@ def test_a_non_owner_is_refused(client, monkeypatch) -> None:
     viewer = User(id="viewer", role=Role.VIEWER)
     monkeypatch.setattr("src.api.deps.authenticate", lambda token: viewer if token else None)
     assert client.get("/portfolio/campaigns", headers=OWNER).status_code == 403
+
+
+def test_limit_caps_the_read_not_the_table(client, seed_campaign) -> None:
+    """Campaigns are never pruned — the table grows forever. The route must cap the
+    read (default 50), not materialise every row ever written."""
+    from src.storage.db import session_scope
+    from src.storage.models import CampaignRow
+
+    with session_scope() as s:
+        for i in range(5):
+            s.add(
+                CampaignRow(
+                    campaign_id=f"AAA-{i:02d}",
+                    symbol="AAA",
+                    status="open",
+                    opened_date=date.today() - timedelta(days=i),
+                    closed_date=None,
+                    leg_candidate_ids=[],
+                    total_premium_collected=0.0,
+                    total_debit_paid=0.0,
+                    net_premium=0.0,
+                    assigned=False,
+                    payload={},
+                )
+            )
+
+    body = client.get("/portfolio/campaigns?limit=3", headers=OWNER).json()
+    assert len(body["campaigns"]) == 3
+    assert body["campaigns"][0]["campaign_id"] == "AAA-00"  # newest opened_date first
+    assert body["campaigns"][2]["campaign_id"] == "AAA-02"
+
+
+def test_limit_over_200_is_refused(client) -> None:
+    assert client.get("/portfolio/campaigns?limit=201", headers=OWNER).status_code == 422

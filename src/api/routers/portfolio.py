@@ -76,10 +76,19 @@ def _thresholds() -> tuple[float, int]:
 
 def _dte(expiry: date) -> int:
     """Days to expiry in ET — the same rule as routers/options.py, never 0 for unknown."""
+    return (expiry - _today_et()).days
+
+
+def _today_et() -> date:
+    """The exchange-calendar today (ET), the one clock this router measures days in.
+
+    `_dte` has always used ET; the calendar's horizon cutoff must use the same
+    clock — a UTC cutoff disagrees with the ET dte by one day for any expiry whose
+    date the two clocks straddle, silently dropping or keeping a day inconsistently.
+    """
     from zoneinfo import ZoneInfo
 
-    et = ZoneInfo("America/New_York")
-    return (expiry - datetime.now(et).date()).days
+    return datetime.now(ZoneInfo("America/New_York")).date()
 
 
 def _consequence(  # noqa: PLR0911
@@ -136,10 +145,14 @@ def _underlying_price(
 
 
 def _moneyness(
-    spot: float | None, right: str, strike: float
+    spot: float | None, right: str | None, strike: float | None
 ) -> Literal["itm", "atm", "otm"] | None:
-    """None when the underlying price is unknown — no guessing from the strike alone."""
-    if spot is None or spot <= 0:
+    """None when the underlying price is unknown — no guessing from the strike alone.
+
+    Also None when right or strike is unknown: moneyness needs all three, and a
+    fabricated value would read as a real measurement.
+    """
+    if spot is None or spot <= 0 or right is None or strike is None:
         return None
     if abs(spot - strike) / spot <= _UNDERLYING_ATM_BAND:
         return "atm"
@@ -274,6 +287,7 @@ def portfolio_campaigns(
     db: TradingDb,
     status: Literal["open", "closed"] | None = None,
     symbol: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> CampaignsResponse:
     """The wheel threads — one thread per symbol, legs in order.
 
@@ -286,6 +300,10 @@ def portfolio_campaigns(
     exactly the commission total. A leg whose `CandidateRow` was pruned still
     renders with `known: false` — the financials are rolled up from `FillRow` and
     survive pruning, so the leg count must not silently disagree with them.
+
+    `limit` (default 50, max 200) caps the read because campaigns are never
+    pruned — the table grows forever, and a response that materialises every row
+    ever written is an unbounded JSON payload, not a "latest threads" list.
     """
     now = datetime.now(UTC)
     try:
@@ -299,7 +317,7 @@ def portfolio_campaigns(
             stmt = stmt.where(CampaignRow.status == status)
         if symbol is not None:
             stmt = stmt.where(CampaignRow.symbol == symbol.upper())
-        rows = list(db.execute(stmt).scalars().all())
+        rows = list(db.execute(stmt.limit(limit)).scalars().all())
         rows.sort(key=lambda r: (r.opened_date, r.status == "open", -r.id), reverse=True)
     except Exception:
         return CampaignsResponse(as_of=now, campaigns=[])
@@ -390,7 +408,7 @@ def portfolio_calendar(
 
     as_of = reading.as_of or datetime.now(UTC)
     snapshot = reading.snapshot
-    today = datetime.now(UTC).date()
+    today = _today_et()  # the same clock _dte measures in — one route, one calendar
     cutoff = today + timedelta(days=horizon_days)
     delta_threshold, dte_threshold = _thresholds()
 
@@ -411,7 +429,7 @@ def portfolio_calendar(
             if dte < 0:
                 continue  # already expired; not "what happens next"
             right = p.right.value if isinstance(p.right, OptionRight) else str(p.right)
-            moneyness = _moneyness(spot, right, float(p.strike))
+            moneyness = _moneyness(spot, right, p.strike if p.strike is not None else None)
             by_expiry.setdefault(p.expiry, []).append(
                 CalendarEntry(
                     as_of=as_of,
@@ -535,18 +553,13 @@ def portfolio_positions(user: OwnerUser, db: TradingDb) -> PositionsResponse:  #
 def _stock_leg(
     db: TradingDb, underlying: str, stock_pos: PositionSnapshot | None, as_of: datetime
 ) -> StockLeg | None:
-    from src.storage.campaigns import adjusted_cost_basis_for
-
     if stock_pos is None:
         return None
-    try:
-        adjusted = adjusted_cost_basis_for(underlying)
-    except Exception:
-        adjusted = None
-    if adjusted is None:
-        # adjusted_cost_basis_for reads through its own session_scope; fall back to the
-        # reading the route already holds when that path is unavailable.
-        adjusted = _campaign_basis_from_reading(db, underlying)
+    # The read-only engine the route already holds is the primary path — the design's
+    # invariant (§4.2). `storage.campaigns.adjusted_cost_basis_for` opens the storage
+    # engine's own read-write session_scope, which an API process must not do; the
+    # universe composer is the one documented exception, and this route is not it.
+    adjusted = _campaign_basis_from_reading(db, underlying)
     return StockLeg(
         as_of=as_of,
         shares=stock_pos.position,
@@ -564,14 +577,22 @@ def _stock_leg(
 
 
 def _campaign_basis_from_reading(db: TradingDb, underlying: str) -> float | None:
-    """Adjusted basis read through the route's own read-only session."""
+    """Adjusted basis read through the route's own read-only session.
+
+    Mirrors `storage.campaigns.adjusted_cost_basis_for` exactly — newest open assigned
+    campaign for the symbol, basis kept only when positive — so the two readers cannot
+    disagree about which campaign's basis a stock leg renders.
+    """
     try:
         val = db.execute(
-            select(CampaignRow.adjusted_cost_basis).where(
+            select(CampaignRow.adjusted_cost_basis)
+            .where(
                 CampaignRow.symbol == underlying,
                 CampaignRow.status == "open",
                 CampaignRow.assigned.is_(True),
             )
+            .order_by(CampaignRow.opened_date.desc(), CampaignRow.id.desc())
+            .limit(1)
         ).scalar_one_or_none()
         return float(val) if val is not None and float(val) > 0 else None
     except Exception:
@@ -594,13 +615,18 @@ def _option_legs(
     legs: list[OptionLeg] = []
     for p in options:
         dte = _dte(p.expiry) if p.expiry else None
-        moneyness = _moneyness(spot, p.right.value if p.right else "C", float(p.strike or 0.0))
+        # right/strike stay None when the snapshot carried none — the shorts route's
+        # null-stays-null discipline. Moneyness needs all three of spot/right/strike;
+        # a fabricated pair would guess "otm" against a strike that is not real.
+        right = p.right.value if p.right is not None else None
+        strike = float(p.strike) if p.strike is not None else None
+        moneyness = _moneyness(spot, right, strike) if (right is not None and strike) else None
         legs.append(
             OptionLeg(
                 as_of=as_of,
                 symbol=p.symbol,
-                right=(p.right.value if p.right else "C") or "C",
-                strike=float(p.strike or 0.0),
+                right=right,  # type: ignore[arg-type]  # OptionRight values are "C"/"P"
+                strike=strike,
                 expiry=p.expiry,
                 dte=dte,
                 contracts=int(abs(p.position)),

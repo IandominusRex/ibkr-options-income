@@ -83,6 +83,41 @@ the freshness contract M1 built is already broken.
 > -400.0. (5) The campaigns `status` filter rides as a query parameter validated by
 > FastAPI's `Literal` (422 on anything but `open`/`closed`/omitted), and `symbol` is
 > upper-cased server-side. Commit follows the docs sweep in the same change.
+>
+> **VERIFIED — 2026-09-10, independent audit pass (opencode/glm-5.3, post-build).**
+> Every artifact the EXECUTED note names was confirmed to exist at (or within a few
+> lines of) its claimed location: the four routes + models, the 47 tests, the shared
+> fixtures, the docs sections, `docs/web/openapi.json` + `web/lib/api-types.ts`
+> regeneration, `ARCHITECTURE.md`/`README.md`/`STATUS.md` entries, and the full gate
+> (reproduced exactly: 2043 passed, ruff clean, mypy clean, `test_openapi_current`
+> green). The build is real and the milestone's non-negotiables all hold (owner-only
+> ×4, `none` rungs are 200-with-explicit-emptiness, no numeric assignment-risk
+> threshold in the router, `consequence: "unknown"` reachable, both cost bases,
+> request-time `as_of` on campaigns documented in the route). The audit found **four
+> defects in the built code** and fixed them, each with its own regression test (47 →
+> 53 tests in the four files):
+> 1. **`_stock_leg` opened the storage engine's read-write `session_scope` from inside
+>    the API process** — `storage.campaigns.adjusted_cost_basis_for` was the *primary*
+>    path with the route's read-only query demoted to a fallback that fired on every
+>    ordinary share. The executed note itself pinned the read-only-engine invariant as
+>    "the stronger constraint", and then the code inverted it. The read-only query is now
+>    primary, mirroring `adjusted_cost_basis_for`'s newest-open-assigned-campaign rule
+>    exactly (which also fixes a latent `MultipleResultsFound` when two assigned
+>    campaigns exist for one symbol — the old query ordered nothing and would have
+>    raised had the fallback not swallowed it into a silent `None`).
+> 2. **`OptionLeg.right`/`strike` fabricated `"C"`/`0.0`** for snapshots that carried
+>    neither, then computed `moneyness` against the fabricated pair — violating the
+>    null-stays-null discipline the shorts route pins. Both fields are now nullable
+>    and `moneyness` is `None` unless all three of spot/right/strike are known.
+> 3. **The calendar used two clocks**: `_dte` measured in ET (the exchange calendar,
+>    matching `routers/options.py`) but the horizon cutoff in UTC — for any expiry whose
+>    date the two clocks straddle, the gate and the rendered `dte` disagreed. Both now
+>    use ET.
+> 4. **`/campaigns` read the never-pruned `campaigns` table unbounded** — every row
+>    ever written materialised into one JSON payload. Added `limit` (default 50, max
+>    200), the same cap discipline `load_campaigns` (limit 20) and the other list
+>    routes (`/fills`, `/orders`) already follow.
+> Schema artifacts regenerated after the model change; `test_openapi_current` green.
 
 ---
 

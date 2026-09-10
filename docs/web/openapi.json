@@ -905,7 +905,7 @@
     "/portfolio/campaigns": {
       "get": {
         "summary": "Portfolio Campaigns",
-        "description": "The wheel threads \u2014 one thread per symbol, legs in order.\n\n`as_of` is request time here, NOT a snapshot time: campaigns are written on\nfill, not captured, so there is no capture time to read. Do not \"fix\" this to\nmatch the other portfolio routes. Financials are gross of commissions (M0\nTask 0.4's pinned semantics \u2014 see `src/storage/campaigns.py::_rollup`'s and\n`CampaignRow`'s docstrings); `src/reporting/` nets commissions on the same\ntrades, so a campaign's `net_premium` and the net P&L of its legs differ by\nexactly the commission total. A leg whose `CandidateRow` was pruned still\nrenders with `known: false` \u2014 the financials are rolled up from `FillRow` and\nsurvive pruning, so the leg count must not silently disagree with them.",
+        "description": "The wheel threads \u2014 one thread per symbol, legs in order.\n\n`as_of` is request time here, NOT a snapshot time: campaigns are written on\nfill, not captured, so there is no capture time to read. Do not \"fix\" this to\nmatch the other portfolio routes. Financials are gross of commissions (M0\nTask 0.4's pinned semantics \u2014 see `src/storage/campaigns.py::_rollup`'s and\n`CampaignRow`'s docstrings); `src/reporting/` nets commissions on the same\ntrades, so a campaign's `net_premium` and the net P&L of its legs differ by\nexactly the commission total. A leg whose `CandidateRow` was pruned still\nrenders with `known: false` \u2014 the financials are rolled up from `FillRow` and\nsurvive pruning, so the leg count must not silently disagree with them.\n\n`limit` (default 50, max 200) caps the read because campaigns are never\npruned \u2014 the table grows forever, and a response that materialises every row\never written is an unbounded JSON payload, not a \"latest threads\" list.",
         "operationId": "portfolio_campaigns_portfolio_campaigns_get",
         "security": [
           {
@@ -947,6 +947,18 @@
                 }
               ],
               "title": "Symbol"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
             }
           }
         ],
@@ -3907,15 +3919,29 @@
             "title": "Symbol"
           },
           "right": {
-            "type": "string",
-            "enum": [
-              "C",
-              "P"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "C",
+                  "P"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Right"
           },
           "strike": {
-            "type": "number",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Strike"
           },
           "expiry": {
@@ -4029,8 +4055,6 @@
         "required": [
           "as_of",
           "symbol",
-          "right",
-          "strike",
           "expiry",
           "dte",
           "contracts",
