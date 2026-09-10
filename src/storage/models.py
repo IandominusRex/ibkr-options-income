@@ -499,8 +499,8 @@ class CampaignRow(Base):
     per fill and never reads `FillRow.commission` — it is deliberately not subtracted. This is
     pinned by `tests/test_campaign_rollup_semantics.py` so it cannot silently drift; netting
     commissions into these fields would be a deliberate trading-behaviour change, not a bug fix.
-    `src/reporting/` (from M4, not yet in the tree) reports the same underlying trades net of
-    commissions, matching `src/claude/eval/reconcile.py::_classify`'s `credit - debit -
+    `src/reporting/legs.py` (from M4) reports the same underlying trades net of
+    commissions, matching its `classify_outcome`'s `credit - debit -
     commissions` — so a campaign's `net_premium` and the net P&L of its legs differ by exactly
     the commission total; readers comparing the two must account for that gap explicitly.
     """

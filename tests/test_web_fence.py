@@ -201,3 +201,22 @@ def test_the_overridable_set_matches_the_spec_exactly() -> None:
         assert frozenset(typing.get_args(hints["list_name"])) == expected, (
             f"{route_fn.__name__}'s list_name parameter has drifted from the spec's overridable set"
         )
+
+
+def test_reporting_never_imports_the_enrichment_loop() -> None:
+    """src/reporting/ is downstream of everything and upstream of nothing."""
+    reporting = ROOT / "src" / "reporting"
+    assert reporting.is_dir(), "src/reporting/ does not exist (M4 Task 4.1 not run)"
+    for path in reporting.rglob("*.py"):
+        text = path.read_text()
+        assert "src.claude" not in text, f"{path} imports the enrichment layer"
+
+
+def test_the_trading_path_never_imports_reporting() -> None:
+    """A report reads the whole book, including enrichment tables. It stays on the read side."""
+    for pkg in ("engine", "execution", "strategies"):
+        pkg_dir = ROOT / "src" / pkg
+        assert pkg_dir.is_dir(), f"src/{pkg}/ does not exist"
+        for path in pkg_dir.rglob("*.py"):
+            text = path.read_text()
+            assert "src.reporting" not in text, f"{path} imports the reporting layer"

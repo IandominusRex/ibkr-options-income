@@ -74,3 +74,13 @@ layer exists. `tests/test_web_fence.py` enforces this by grepping `engine/`,
 `execution/`, and `strategies/` for `src.api` or `src.research` imports. `src/notify/`
 is the exception — the drain loop lives there precisely because it is allowed to know
 about both sides.
+
+`src/reporting/` (P3-P4 M4) is the web layer's P&L engine — the paired realised-P&L builders the
+`/pnl/*` surfaces read. It sits on the same read side of the fence as `src/api/` and
+`src/research/`: it imports nothing from `src.claude`, and `engine/`/`execution/`/`strategies/`
+may never import it (both asserted in `tests/test_web_fence.py`). One inversion is deliberate and
+allowed: the fenced reconciler `src/claude/eval/reconcile.py` now imports the accounting rule
+(`fill_economics` / `classify_outcome`) from the neutral read-only `src/reporting/legs.py`, not
+the reverse — M4 Task 4.1 moved those functions **verbatim** out of the reconciler so both
+consumers share one implementation. The fence stops `eval/` reaching the **engine**; it does not
+stop `eval/` importing a read-only module.

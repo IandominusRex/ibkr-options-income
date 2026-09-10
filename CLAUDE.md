@@ -168,6 +168,23 @@ merely reorder candidates, it would move `min_credit` and let news tone and crow
 `fair_value.py` still has no reject path of its own: it computes and returns numbers, and the Rules
 Engine is what refuses the order. The Rules Engine remains the sole path to an order.
 
+### The third, read-only tier — `src/reporting/`
+
+`src/reporting/` is downstream of everything and upstream of nothing. It holds the **paired
+realised-P&L accounting rule** (`legs.py` — `fill_economics` and `classify_outcome`, **moved
+verbatim** out of `src/claude/eval/reconcile.py` in P3-P4 M4 Task 4.1 so the reconciler and the
+reporting layer share one implementation; `reconcile.py` imports them from there) plus the
+read-only P&L builders over the trading DB (`pnl.py` — legs, campaigns, summary, equity curve).
+It reads the whole book, including enrichment-side tables, which is why it stays on the read
+side of the tier line exactly as `src/api/` and `src/research/` do:
+
+- `src/reporting/` imports nothing from `src.claude`;
+- `src/engine/`, `src/execution/` and `src/strategies/` may never import `src.reporting`.
+
+Both asserted in `tests/test_web_fence.py`. The one inversion the fence allows:
+`src/claude/eval/reconcile.py` imports the neutral read-only accounting module — the fence stops
+`eval/` reaching the **engine**, not `eval/` importing a read-only module.
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this
