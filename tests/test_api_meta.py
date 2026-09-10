@@ -52,9 +52,12 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     # P2 M2 ships the options console read surfaces — the rail is now available.
     assert sections["options"]["available"] is True
     assert sections["options"]["note"] is None
-    # P3/P4 still render a placeholder.
-    assert sections["portfolio"]["available"] is False
-    assert sections["portfolio"]["note"]
+    # P3 M3 ships the portfolio console read surfaces — the rail is now available.
+    assert sections["portfolio"]["available"] is True
+    assert sections["portfolio"]["note"] is None
+    # P4 still renders a placeholder.
+    assert sections["pnl"]["available"] is False
+    assert sections["pnl"]["note"]
 
 
 def test_unknown_route_returns_json_not_html(client) -> None:

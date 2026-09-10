@@ -111,6 +111,15 @@ app/                App Router pages and the root layout
                     table, and the same <DecideControls/> as the card — both
                     surfaces decide through one code path. 404 renders a not-found
                     state with a link back to the list.
+  portfolio/        Portfolio console (P3 M3 Tasks 3.1-3.5). <PortfolioShell/> mounts
+                    <SummaryPanel/> once above the tab bar (stays mounted across tab
+                    changes), then tabs between Positions / Campaigns / Calendar. Each
+                    panel self-fetches its own data from `GET /portfolio/{summary,
+                    positions, campaigns, calendar}` and reads its own `source` and
+                    `degraded` fields; <SummaryPanel/> also reads page-level
+                    `as_of` and renders <DegradedNotice/> with the backend's own
+                    note verbatim. <RefreshControl/> mounts in the header and fires
+                    `POST /commands` with kind "refresh" - one click, no dialog.
 components/
   shell/            Rail, RailSection
   search/           CommandPalette
@@ -237,6 +246,34 @@ components/
                     only when an order is working, filled only when a fill exists,
                     stalled stated in words with no spinner, intent id always
                     visible, failed renders the humanised reason plus detail codes)
+  portfolio/        Money (null/NaN renders "n/a" with `.hatch` texture never "$0.00",
+                    genuine zero renders "$0", colour never alone, `kind` renders as
+                    word), FreshnessLabel (renders age in words - null says "not
+                    captured", stale (>freshForMinutes) says "stale", never a dot),
+                    PortfolioShell (mounts SummaryPanel once above tabs, swaps
+                    Positions/Campaigns/Calendar tab content without remounting,
+                    RefreshControl in header stays visible across tabs),
+                    SummaryPanel (fetches GET /portfolio/summary, renders page-level
+                    freshness and degraded notice once, empty-state renders one line
+                    of text not decorative elements), DegradedNotice (renders note
+                    verbatim, no paraphrase, styled as notice not error),
+                    PositionsPanel (fetches GET /portfolio/positions, renders
+                    freshness label unconditionally above content even when empty,
+                    empty state distinguishes "no snapshot" from "no positions"),
+                    PositionGroup (pure, prop-driven, renders ticker once above stock
+                    and option legs), StockLegRow (shows shares, avg_cost always,
+                    adjusted cost only when non-null with label in words),
+                    OptionLegRow (direction/DTE/moneyness render as word or "n/a"
+                    never implied or zeroed, delta renders with source, unknown state
+                    renders "Assignment risk" in words), CampaignsPanel (fetches
+                    GET /portfolio/campaigns, status/symbol filters flow into URL and
+                    query key for real backend refetch not client-side .filter()),
+                    CampaignThread (pure, renders symbol + rolled-up financials),
+                    CalendarPanel (fetches GET /portfolio/calendar, renders freshness
+                    and expiry grid with consequence text per entry, "unknown"
+                    consequence is a named state), RefreshControl (one click no dialog,
+                    fires POST /commands kind "refresh", invalidates portfolio queries
+                    on terminal, reuses submitCommand/useCommandStatus/CommandReceipt).
   universe/         M7 Task 7.5. UniverseList (one GET /universe section: heading with
                     entry count, a row per entry with sector tag, strike-band
                     override, and, for would_own only, a wheeling/dip-watch tag; a

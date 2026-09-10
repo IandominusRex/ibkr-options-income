@@ -46,7 +46,7 @@ class NavResponse(Envelope):
 _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("research", "Research", True, None),
     ("options", "Options", True, None),
-    ("portfolio", "Portfolio", False, "Arrives in P3"),
+    ("portfolio", "Portfolio", True, None),
     ("pnl", "P&L", False, "Arrives in P4"),
     ("universe", "Universe", True, None),
 ]
