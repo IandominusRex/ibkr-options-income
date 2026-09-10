@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PositionsPanel } from "./PositionsPanel";
 import { SummaryPanel } from "./SummaryPanel";
 
 type Tab = "positions" | "campaigns" | "calendar";
@@ -18,8 +19,9 @@ const TABS: { key: Tab; label: string }[] = [
  * query. Matches how `/options` does tabs (ControlsStrip above, tab bar below),
  * so the two consoles feel like one product.
  *
- * Positions/Campaigns/Calendar are Tasks 3.3-3.5 - out of scope here, so each
- * tab renders placeholder text for now.
+ * Positions/Campaigns/Calendar are Tasks 3.3-3.5. Since Task 3.3, the Positions
+ * tab mounts the real `PositionsPanel` (self-fetching, same convention as
+ * `SummaryPanel`); Campaigns/Calendar (3.4-3.5) still render placeholder text.
  */
 export function PortfolioShell() {
   const [tab, setTab] = useState<Tab>("positions");
@@ -56,9 +58,7 @@ export function PortfolioShell() {
         ))}
       </nav>
 
-      {tab === "positions" && (
-        <p className="text-sm text-muted">Positions - coming in Task 3.3.</p>
-      )}
+      {tab === "positions" && <PositionsPanel />}
       {tab === "campaigns" && (
         <p className="text-sm text-muted">Campaigns - coming in Task 3.4.</p>
       )}

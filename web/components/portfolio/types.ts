@@ -10,3 +10,11 @@ export type PortfolioSummaryResponse = components["schemas"]["PortfolioSummaryRe
 export type AccountBlock = components["schemas"]["AccountBlock"];
 export type ExposureBlock = components["schemas"]["ExposureBlock"];
 export type SourcedFloat = components["schemas"]["Sourced_float_"];
+
+// Task 3.3 — GET /portfolio/positions. Named `PositionGroupData` (not `PositionGroup`)
+// because the `PositionGroup` component in this folder owns that identifier; the
+// component's `group` prop is typed against this alias instead.
+export type PositionsResponse = components["schemas"]["PositionsResponse"];
+export type PositionGroupData = components["schemas"]["PositionGroup"];
+export type StockLeg = components["schemas"]["StockLeg"];
+export type OptionLeg = components["schemas"]["OptionLeg"];

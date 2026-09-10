@@ -14,6 +14,13 @@ function summaryResponse() {
   };
 }
 
+// Task 3.3 wired PositionsPanel into the Positions tab, which self-fetches
+// GET /portfolio/positions - every render of <PortfolioShell/> now needs this
+// mocked too, since Positions is the default active tab.
+function positionsResponse() {
+  return { as_of: new Date().toISOString(), source: "monitor", degraded: false, groups: [] };
+}
+
 // Not named in the task brief's Files list (SummaryPanel.test.tsx and
 // DegradedNotice.test.tsx were), but "the tab bar renders three tabs and
 // switching does not refetch the summary" is one of the brief's required,
@@ -21,14 +28,20 @@ function summaryResponse() {
 // lands here, next to the component it exercises.
 describe("PortfolioShell", () => {
   it("renders three tabs: Positions, Campaigns, Calendar", async () => {
-    renderWithQuery(<PortfolioShell />, { "/portfolio/summary": summaryResponse() });
+    renderWithQuery(<PortfolioShell />, {
+      "/portfolio/summary": summaryResponse(),
+      "/portfolio/positions": positionsResponse(),
+    });
     expect(await screen.findByRole("button", { name: "Positions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Campaigns" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Calendar" })).toBeInTheDocument();
   });
 
   it("switching tabs does not refetch the summary", async () => {
-    renderWithQuery(<PortfolioShell />, { "/portfolio/summary": summaryResponse() });
+    renderWithQuery(<PortfolioShell />, {
+      "/portfolio/summary": summaryResponse(),
+      "/portfolio/positions": positionsResponse(),
+    });
     await screen.findByRole("button", { name: "Positions" });
 
     const callsToSummary = () =>
@@ -43,12 +56,18 @@ describe("PortfolioShell", () => {
   });
 
   it("switching tabs changes the panel content below the summary", async () => {
-    renderWithQuery(<PortfolioShell />, { "/portfolio/summary": summaryResponse() });
+    renderWithQuery(<PortfolioShell />, {
+      "/portfolio/summary": summaryResponse(),
+      "/portfolio/positions": positionsResponse(),
+    });
     await screen.findByRole("button", { name: "Positions" });
-    expect(screen.getByText(/Positions - coming/i)).toBeInTheDocument();
+    // Task 3.3: the Positions tab now renders the real PositionsPanel, not
+    // placeholder text - an empty, captured account reads "No open positions."
+    // through role="status".
+    expect(await screen.findByRole("status")).toHaveTextContent(/no open positions/i);
 
     fireEvent.click(screen.getByRole("button", { name: "Campaigns" }));
     expect(screen.getByText(/Campaigns - coming/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Positions - coming/i)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
