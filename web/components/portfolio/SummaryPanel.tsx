@@ -36,6 +36,11 @@ export function SummaryPanel() {
     queryKey: ["portfolio", "summary"],
     queryFn: () => apiFetch<PortfolioSummaryResponse>("/portfolio/summary"),
     placeholderData: (prev) => prev,
+    // Design spec §9.4: the portfolio refreshes on the snapshot cadence, not a
+    // tighter poll that would return identical rows - 30s matches every other
+    // self-fetching panel's convention (ApprovalsList, ShortsTable,
+    // ControlsStrip, AssessedBrowser, ApprovalDetailCard, the universe page).
+    refetchInterval: 30_000,
   });
 
   if (isError) {

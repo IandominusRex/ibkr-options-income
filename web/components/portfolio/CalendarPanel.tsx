@@ -90,6 +90,9 @@ export function CalendarPanel() {
     queryKey: ["portfolio", "calendar", horizon],
     queryFn: () => apiFetch<CalendarResponse>(`/portfolio/calendar?horizon_days=${horizon}`),
     placeholderData: (prev) => prev,
+    // Design spec §9.4 / matches SummaryPanel and every other self-fetching
+    // panel's 30s poll - the freshness label must not freeze at mount.
+    refetchInterval: 30_000,
   });
 
   if (isError) {

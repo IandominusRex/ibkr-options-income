@@ -74,8 +74,12 @@ render each rung distinctly — a monitored/refreshed account (fresh or stale), 
 `as_of` timestamp derived from the row's capture time, never the request time, so the UI states
 how old the data is. P3 M3 wires the four routes into the `/portfolio` console — `PortfolioShell`
 mounts `SummaryPanel` once at the top (stays mounted across tab changes), and three tabs
-(`PositionsPanel`, `CampaignsPanel`, `CalendarPanel`) each self-fetch their own route and read
-their own `source`/`degraded` fields rather than inheriting a page-level assumption.
+(`PositionsPanel`, `CampaignsPanel`, `CalendarPanel`) each self-fetch their own route rather than
+inheriting a page-level assumption. What each panel reads from its response differs, though:
+`SummaryPanel` reads both `source` and `degraded`; `PositionsPanel`/`CalendarPanel` read `source`
+only (for empty-state wording); `CampaignsResponse` carries neither field (`{as_of, campaigns}`
+only — campaigns come from a live SQL read, not the snapshot freshness spine the other three
+share), so `CampaignsPanel` reads neither.
 
 ## The API proxy
 

@@ -7,6 +7,21 @@ import { RefreshControl } from "./RefreshControl";
 
 const ISO = new Date().toISOString();
 
+function controlsResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    as_of: ISO,
+    autonomy: { level: "manual", label: "Manual" },
+    rungs: [],
+    halted: false,
+    halt_reason: null,
+    mode: "paper",
+    drain_healthy: true,
+    drain_last_seen: null,
+    pending_commands: 0,
+    ...overrides,
+  };
+}
+
 function pendingCommand(id: number) {
   return {
     id,
@@ -45,6 +60,7 @@ describe("RefreshControl", () => {
     renderWithQuery(<RefreshControl />, {
       "/commands": pendingCommand(101),
       "/commands/101": pendingCommand(101),
+      "/options/controls": controlsResponse(),
     });
 
     fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
@@ -67,6 +83,7 @@ describe("RefreshControl", () => {
     renderWithQuery(<RefreshControl />, {
       "/commands": pendingCommand(102),
       "/commands/102": terminalCommand(102, "failed", { reason: "broker_unavailable" }),
+      "/options/controls": controlsResponse(),
     });
 
     fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
@@ -84,6 +101,7 @@ describe("RefreshControl", () => {
       if (path === "/commands/103") {
         return terminalCommand(103, "applied", { captured_at: ISO, positions: 3, snapshot_id: 9 });
       }
+      if (path === "/options/controls") return controlsResponse();
       throw new Error(`unmocked path ${path}`);
     });
 
@@ -113,6 +131,7 @@ describe("RefreshControl", () => {
         getCalls += 1;
         return terminalCommand(104, "failed", { reason: "broker_unavailable" });
       }
+      if (path === "/options/controls") return controlsResponse();
       throw new Error(`unmocked path ${path}`);
     });
 
@@ -143,6 +162,7 @@ describe("RefreshControl", () => {
       (path: string) =>
         new Promise((r) => {
           if (path === "/commands") resolve = r;
+          if (path === "/options/controls") r(controlsResponse());
         }),
     );
     render(
@@ -155,5 +175,26 @@ describe("RefreshControl", () => {
     fireEvent.click(button);
     await waitFor(() => expect(button.disabled).toBe(true));
     resolve(pendingCommand(105));
+  });
+
+  it("renders a stalled receipt when the drain is unhealthy (not hardcoded healthy)", async () => {
+    // Regression (I1): RefreshControl used to default drainHealthy={true} with
+    // nothing ever passing a real value, so a dead drain during a refresh always
+    // rendered "Queued" and polled forever instead of stating "the trading
+    // service is not draining commands" - see ApprovalDetail.test.tsx's own
+    // regression guard for the sibling bug this codebase already fixed once.
+    renderWithQuery(<RefreshControl />, {
+      "/commands": pendingCommand(106),
+      "/commands/106": pendingCommand(106),
+      "/options/controls": controlsResponse({ drain_healthy: false }),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+
+    const receipt = await screen.findByTestId("command-receipt");
+    await waitFor(() => expect(receipt.getAttribute("data-state")).toBe("stalled"));
+    expect(
+      screen.getAllByText("the trading service is not draining commands").length,
+    ).toBeGreaterThan(0);
   });
 });

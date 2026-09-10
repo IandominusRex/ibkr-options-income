@@ -152,6 +152,29 @@ describe("CampaignThread", () => {
     expect(el).toHaveTextContent(/n\/a/i);
     expect(el).not.toHaveTextContent("$0");
   });
+
+  it("I5: marks net premium, adjusted cost basis and realized stock P&L as gross of commissions", () => {
+    // GET /portfolio/campaigns documents these three figures as gross
+    // (src/api/routers/portfolio.py:296-299) - Money's `complete` prop defaults
+    // to true, an affirmative "net" claim, so all three must pass
+    // complete={false} to surface the qualifier rather than misstate the gap.
+    render(
+      <CampaignThread
+        campaign={aCampaign({
+          net_premium: 500,
+          assigned: true,
+          adjusted_cost_basis: 175,
+          realized_stock_pnl: 320,
+        })}
+      />,
+    );
+
+    // net_premium sits in the collapsed header, outside any testid wrapper -
+    // assert against the whole rendered thread.
+    expect(screen.getByTestId("campaign-thread")).toHaveTextContent(/gross/i);
+    expect(screen.getByTestId("campaign-adjusted-basis")).toHaveTextContent(/gross/i);
+    expect(screen.getByTestId("campaign-realized-pnl")).toHaveTextContent(/gross/i);
+  });
 });
 
 describe("CampaignsPanel", () => {

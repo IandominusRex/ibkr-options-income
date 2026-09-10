@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiFetch, ApiError } from "@/lib/api";
 import { submitCommand, useCommandStatus, type CommandStatus } from "@/lib/commands";
 import { CommandReceipt } from "@/components/options/CommandReceipt";
+import type { ControlsResponse } from "@/components/options/types";
 
 /**
  * The page-level manual refresh control (P3-P4 M3 Task 3.5), mounted in
@@ -28,6 +29,15 @@ import { CommandReceipt } from "@/components/options/CommandReceipt";
  * IB connection when a refresh is asked for is an ordinary state, matching
  * how `no_qualifying_roll` renders on the shorts list.
  *
+ * Fetches `GET /options/controls` itself, same "fetches its own" convention as
+ * `ApprovalsList`/`AssessedBrowser`/`ShortsTable`/`ApprovalDetailCard`, and passes
+ * the real `drain_healthy` into `CommandReceipt` - a hardcoded `true` here used to
+ * mean a real drain outage was invisible on this control (a click while
+ * `approval_service` is down rendered "Queued" and polled forever instead of
+ * stating "the trading service is not draining commands"). `drain_healthy`
+ * defaults to `true` while the controls query is loading, matching every other
+ * self-fetching panel, so an unloaded drain is not falsely reported as dead.
+ *
  * On a terminal status the portfolio queries invalidate under the
  * `["portfolio"]` key prefix - TanStack's default prefix matching catches
  * `["portfolio","summary"]`, `["portfolio","positions"]`,
@@ -38,12 +48,21 @@ import { CommandReceipt } from "@/components/options/CommandReceipt";
  * lib/commands.ts's own `TERMINAL` gate), and `CommandReceipt` - no second
  * receipt, poller, or submit helper here.
  */
-export function RefreshControl({ drainHealthy = true }: { drainHealthy?: boolean }) {
+export function RefreshControl() {
   const [command, setCommand] = useState<CommandStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const qc = useQueryClient();
+
+  // The drain's health drives the receipt's `stalled` state (spec §9.2 rule 3).
+  const controls = useQuery({
+    queryKey: ["options", "controls"],
+    queryFn: () => apiFetch<ControlsResponse>("/options/controls"),
+    placeholderData: (prev) => prev,
+    refetchInterval: 30_000,
+  });
+  const drainHealthy = controls.data?.drain_healthy ?? true;
 
   // Poll every 2s while pending; stop once terminal (lib/commands.ts).
   const commandQuery = useCommandStatus(command?.id ?? null);

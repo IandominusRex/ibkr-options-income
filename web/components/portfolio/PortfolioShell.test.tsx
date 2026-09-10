@@ -39,6 +39,25 @@ function calendarResponse() {
   };
 }
 
+// I1 fix: RefreshControl now self-fetches GET /options/controls (same "fetches
+// its own" convention as ApprovalsList/ApprovalDetailCard) to drive the real
+// drain_healthy value instead of a hardcoded true - every render of
+// <PortfolioShell/> now needs this mocked too, since RefreshControl mounts
+// unconditionally in the header.
+function controlsResponse() {
+  return {
+    as_of: new Date().toISOString(),
+    autonomy: { level: "manual", label: "Manual" },
+    rungs: [],
+    halted: false,
+    halt_reason: null,
+    mode: "paper",
+    drain_healthy: true,
+    drain_last_seen: null,
+    pending_commands: 0,
+  };
+}
+
 // Not named in the task brief's Files list (SummaryPanel.test.tsx and
 // DegradedNotice.test.tsx were), but "the tab bar renders three tabs and
 // switching does not refetch the summary" is one of the brief's required,
@@ -51,6 +70,7 @@ describe("PortfolioShell", () => {
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
       "/portfolio/calendar": calendarResponse(),
+      "/options/controls": controlsResponse(),
     });
     expect(await screen.findByRole("button", { name: "Positions" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Campaigns" })).toBeInTheDocument();
@@ -63,6 +83,7 @@ describe("PortfolioShell", () => {
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
       "/portfolio/calendar": calendarResponse(),
+      "/options/controls": controlsResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
 
@@ -83,6 +104,7 @@ describe("PortfolioShell", () => {
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
       "/portfolio/calendar": calendarResponse(),
+      "/options/controls": controlsResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
     // Task 3.3: the Positions tab now renders the real PositionsPanel, not
@@ -109,6 +131,7 @@ describe("PortfolioShell", () => {
       "/portfolio/positions": positionsResponse(),
       "/portfolio/campaigns": campaignsResponse(),
       "/portfolio/calendar": calendarResponse(),
+      "/options/controls": controlsResponse(),
     });
     await screen.findByRole("button", { name: "Positions" });
     expect(screen.getByRole("button", { name: /refresh/i })).toBeInTheDocument();

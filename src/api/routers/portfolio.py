@@ -55,7 +55,7 @@ from src.storage.models import CampaignRow, CandidateRow
 router = APIRouter()
 
 _NONE_NOTE = "No portfolio snapshot has been captured yet."
-_EOD_NOTE = "No intraday snapshot found — serving the last end-of-day positions and account."
+_EOD_NOTE = "No intraday snapshot found - serving the last end-of-day positions and account."
 _UNDERLYING_ATM_BAND = 0.01  # |spot - strike| / spot within 1% reads "atm", not a guess
 
 

@@ -67,6 +67,14 @@ function CampaignLegRow({ leg }: { leg: CampaignLeg }) {
  * `ChecksSection`, which allows only one category open at a time - nothing
  * in the brief asks for mutual exclusion between campaigns, and a reader
  * comparing two threads needs both open at once.
+ *
+ * `net_premium`, `adjusted_cost_basis` and `realized_stock_pnl` all render
+ * through `Money` with `complete={false}`: `GET /portfolio/campaigns`
+ * (`src/api/routers/portfolio.py:296-299`) states plainly that these
+ * financials are gross of commissions - `Money`'s `complete` prop defaults to
+ * `true`, an affirmative claim of "net", so leaving it at the default here
+ * would misstate a documented gap. `src/reporting/`'s netted figures are a
+ * different route entirely.
  */
 export function CampaignThread({ campaign }: { campaign: CampaignSummary }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -87,7 +95,13 @@ export function CampaignThread({ campaign }: { campaign: CampaignSummary }) {
         >
           {campaign.status}
         </span>
-        <Money value={campaign.net_premium} kind="realized" signed asOf={campaign.as_of} />
+        <Money
+          value={campaign.net_premium}
+          kind="realized"
+          signed
+          complete={false}
+          asOf={campaign.as_of}
+        />
         <span className="text-xs text-muted" data-testid="campaign-leg-count">
           {legCount} {legCount === 1 ? "leg" : "legs"}
         </span>
@@ -96,13 +110,19 @@ export function CampaignThread({ campaign }: { campaign: CampaignSummary }) {
       {campaign.assigned && (
         <div className="flex flex-wrap gap-4 border-t border-border px-4 py-2">
           <Field label="Adjusted cost basis" testId="campaign-adjusted-basis">
-            <Money value={campaign.adjusted_cost_basis} kind="basis" asOf={campaign.as_of} />
+            <Money
+              value={campaign.adjusted_cost_basis}
+              kind="basis"
+              complete={false}
+              asOf={campaign.as_of}
+            />
           </Field>
           <Field label="Realized stock P&L" testId="campaign-realized-pnl">
             <Money
               value={campaign.realized_stock_pnl}
               kind="realized"
               signed
+              complete={false}
               asOf={campaign.as_of}
             />
           </Field>

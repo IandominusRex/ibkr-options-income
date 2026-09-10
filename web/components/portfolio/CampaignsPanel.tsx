@@ -38,6 +38,9 @@ export function CampaignsPanel() {
       return apiFetch<CampaignsResponse>(`/portfolio/campaigns${qs ? `?${qs}` : ""}`);
     },
     placeholderData: (prev) => prev,
+    // Design spec §9.4 / matches SummaryPanel and every other self-fetching
+    // panel's 30s poll - the freshness label must not freeze at mount.
+    refetchInterval: 30_000,
   });
 
   if (isError) {

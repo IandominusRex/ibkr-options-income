@@ -115,10 +115,13 @@ app/                App Router pages and the root layout
                     <SummaryPanel/> once above the tab bar (stays mounted across tab
                     changes), then tabs between Positions / Campaigns / Calendar. Each
                     panel self-fetches its own data from `GET /portfolio/{summary,
-                    positions, campaigns, calendar}` and reads its own `source` and
-                    `degraded` fields; <SummaryPanel/> also reads page-level
-                    `as_of` and renders <DegradedNotice/> with the backend's own
-                    note verbatim. <RefreshControl/> mounts in the header and fires
+                    positions, campaigns, calendar}`, but what each reads from its
+                    response differs: <SummaryPanel/> reads both `source` and
+                    `degraded` (and renders <DegradedNotice/> with the backend's own
+                    note verbatim); <PositionsPanel/>/<CalendarPanel/> read `source`
+                    only, for empty-state wording; `CampaignsResponse` carries
+                    neither field (`{as_of, campaigns}` only), so <CampaignsPanel/>
+                    reads neither. <RefreshControl/> mounts in the header and fires
                     `POST /commands` with kind "refresh" - one click, no dialog.
 components/
   shell/            Rail, RailSection
