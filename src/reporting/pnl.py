@@ -14,7 +14,14 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.common.schemas import OptionRight, PnlLeg, Strategy, VerdictOutcome
+from src.common.schemas import (
+    CampaignPnl,
+    OptionRight,
+    PnlLeg,
+    PortfolioSnapshot,
+    Strategy,
+    VerdictOutcome,
+)
 from src.reporting.legs import classify_outcome, fill_economics
 from src.storage.models import (
     ApprovalRow,
@@ -198,3 +205,155 @@ def _option_symbol(
         return f"{cand.underlying} {expiry_str}{cand.right}{int(cand.strike * 1000):08d}"
     sym = campaign.symbol if campaign is not None else "UNKNOWN"
     return f"{sym} PRUNED"
+
+
+def _mark_for_leg(leg: PnlLeg, snapshot: PortfolioSnapshot | None) -> float | None:
+    """The open leg's mark from the snapshot — None when it knows no such position.
+
+    Matches on (underlying, right, strike, expiry) — the identifying quadruple of the
+    contract, independent of how either side formats its symbol string.
+    """
+    if snapshot is None:
+        return None
+    for pos in snapshot.positions:
+        if pos.sec_type != "OPT":
+            continue
+        if (
+            pos.underlying == leg.underlying
+            and pos.right is not None
+            and pos.right.value == leg.right.value
+            and pos.strike == leg.strike
+            and pos.expiry == leg.expiry
+        ):
+            return pos.unrealized_pnl
+    return None
+
+
+def _stock_mark(symbol: str, snapshot: PortfolioSnapshot | None) -> float | None:
+    if snapshot is None:
+        return None
+    for pos in snapshot.positions:
+        if pos.sec_type == "STK" and pos.symbol == symbol:
+            return pos.unrealized_pnl
+    return None
+
+
+def _marked_copy(leg: PnlLeg, snapshot: PortfolioSnapshot | None) -> PnlLeg:
+    """A copy carrying the snapshot's mark — only ever applied to an open leg."""
+    if leg.net_pnl is not None:
+        return leg  # a closed leg has a result, not a mark
+    return leg.model_copy(update={"unrealized_pnl": _mark_for_leg(leg, snapshot)})
+
+
+def _threads_total(
+    option_realized: float,
+    option_unrealized: float | None,
+    stock_realized: float | None,
+    stock_unrealized: float | None,
+) -> float:
+    total = option_realized
+    if option_unrealized is not None:
+        total += option_unrealized
+    if stock_realized is not None:
+        total += stock_realized
+    if stock_unrealized is not None:
+        total += stock_unrealized
+    return total
+
+
+def build_campaigns(
+    session: _SessionFactory,
+    legs: list[PnlLeg],
+    *,
+    snapshot: PortfolioSnapshot | None = None,
+) -> list[CampaignPnl]:
+    """Group legs into campaign threads and attach the stock leg.
+
+    `snapshot` supplies the marks for open legs and open stock. When it is None, every
+    unrealised field is None — never zero, and never a stale mark from somewhere else.
+    The stock leg is read from the campaign row, never recomputed. A leg with no campaign
+    is not dropped: it lands in a synthetic per-symbol thread.
+    """
+    with session() as sess:
+        rows = list(sess.execute(select(CampaignRow)).scalars())
+    by_id = {row.campaign_id: row for row in rows}
+
+    # Legs grouped by their campaign; campaign-less legs get a synthetic per-symbol thread.
+    grouped: dict[str, list[PnlLeg]] = {}
+    synthetic: dict[str, list[PnlLeg]] = {}
+    for leg in legs:
+        if leg.campaign_id is not None and leg.campaign_id in by_id:
+            grouped.setdefault(leg.campaign_id, []).append(leg)
+        else:
+            # A leg whose campaign is None, or names a campaign that no longer exists.
+            synthetic.setdefault(leg.underlying, []).append(leg)
+
+    campaigns: list[CampaignPnl] = []
+
+    for campaign_id, c_legs in grouped.items():
+        row = by_id[campaign_id]
+        c_legs = sorted(c_legs, key=lambda leg: leg.opened_at)  # leg order, earliest first
+        option_realized = sum(leg.net_pnl for leg in c_legs if leg.net_pnl is not None)
+        open_marks = [_mark_for_leg(leg, snapshot) for leg in c_legs if leg.net_pnl is None]
+        option_unrealized = (
+            float(sum(m for m in open_marks if m is not None))
+            if open_marks and all(m is not None for m in open_marks)
+            else None
+        )
+        stock_unrealized = _stock_mark(row.symbol, snapshot)
+
+        campaigns.append(
+            CampaignPnl(
+                campaign_id=campaign_id,
+                symbol=row.symbol,
+                status="open" if row.status == "open" else "closed",
+                opened_date=row.opened_date,
+                closed_date=row.closed_date,
+                legs=[_marked_copy(leg, snapshot) for leg in c_legs],
+                option_realized=option_realized,
+                option_unrealized=option_unrealized,
+                stock_realized=row.realized_stock_pnl,
+                stock_unrealized=stock_unrealized,
+                assigned=bool(row.assigned),
+                adjusted_cost_basis=row.adjusted_cost_basis,
+                total_net=_threads_total(
+                    option_realized,
+                    option_unrealized,
+                    row.realized_stock_pnl,
+                    stock_unrealized,
+                ),
+            )
+        )
+
+    # Synthetic threads: campaign-less legs grouped by symbol, in a stable derived order.
+    for symbol in sorted(synthetic):
+        s_legs = sorted(synthetic[symbol], key=lambda leg: leg.opened_at)
+        option_realized = sum(leg.net_pnl for leg in s_legs if leg.net_pnl is not None)
+        all_closed = all(leg.net_pnl is not None for leg in s_legs)
+        open_marks = [_mark_for_leg(leg, snapshot) for leg in s_legs if leg.net_pnl is None]
+        option_unrealized = (
+            float(sum(m for m in open_marks if m is not None))
+            if open_marks and all(m is not None for m in open_marks)
+            else None
+        )
+        stock_unrealized = _stock_mark(symbol, snapshot)
+        campaigns.append(
+            CampaignPnl(
+                campaign_id=f"synthetic:{symbol}",
+                symbol=symbol,
+                status="closed" if all_closed else "open",
+                opened_date=min(leg.opened_at.date() for leg in s_legs),
+                legs=[_marked_copy(leg, snapshot) for leg in s_legs],
+                option_realized=option_realized,
+                option_unrealized=option_unrealized,
+                stock_realized=None,
+                stock_unrealized=stock_unrealized,
+                assigned=False,
+                adjusted_cost_basis=None,
+                total_net=_threads_total(
+                    option_realized, option_unrealized, None, stock_unrealized
+                ),
+            )
+        )
+
+    return campaigns

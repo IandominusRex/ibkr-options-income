@@ -475,6 +475,8 @@ def seed_leg(db):
     ) -> None:
         from datetime import datetime, timedelta
 
+        from sqlalchemy import select
+
         from src.storage.models import CampaignRow, CandidateRow, FillRow
 
         expiry = date.today() + timedelta(days=expiry_in_days)
@@ -516,16 +518,26 @@ def seed_leg(db):
             for f in _fills(sold, "SELL") + _fills(bought, "BUY"):
                 s.add(f)
             if campaign_id is not None:
-                s.add(
-                    CampaignRow(
-                        campaign_id=campaign_id,
-                        symbol=symbol,
-                        status="open",
-                        opened_date=opened.date(),
-                        leg_candidate_ids=[candidate_id],
-                        payload={"first_strategy": strategy},
+                existing = s.execute(
+                    select(CampaignRow).where(CampaignRow.campaign_id == campaign_id)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    # Append to the existing campaign's leg list — one campaign, many legs.
+                    leg_ids = list(existing.leg_candidate_ids or [])
+                    if candidate_id not in leg_ids:
+                        leg_ids.append(candidate_id)
+                        existing.leg_candidate_ids = leg_ids
+                else:
+                    s.add(
+                        CampaignRow(
+                            campaign_id=campaign_id,
+                            symbol=symbol,
+                            status="open",
+                            opened_date=opened.date(),
+                            leg_candidate_ids=[candidate_id],
+                            payload={"first_strategy": strategy},
+                        )
                     )
-                )
 
     return _seed
 
@@ -572,3 +584,58 @@ def seed_candidate_only(db):
             )
 
     return _seed
+
+
+@pytest.fixture()
+def snapshot_mark():
+    """Build a PortfolioSnapshot carrying one OPT position (and optional STK position).
+
+    The mark source `build_campaigns` reads — the same snapshot the portfolio page
+    renders, so the two surfaces agree by construction.
+    """
+
+    def _make(
+        *,
+        underlying: str,
+        strike: float,
+        right: str,
+        unrealized_pnl: float,
+        stock_unrealized: float | None = None,
+        expiry_in_days: int = 30,
+    ):
+        from datetime import timedelta
+
+        from src.common.schemas import PortfolioSnapshot, PositionSnapshot
+
+        positions = [
+            PositionSnapshot(
+                symbol=f"{underlying} OPT",
+                sec_type="OPT",
+                position=-1.0,
+                avg_cost=1.50,
+                market_price=1.05,
+                unrealized_pnl=unrealized_pnl,
+                right=right,  # type: ignore[arg-type]
+                strike=strike,
+                expiry=date.today() + timedelta(days=expiry_in_days),
+                underlying=underlying,
+            )
+        ]
+        if stock_unrealized is not None:
+            positions.append(
+                PositionSnapshot(
+                    symbol=underlying,
+                    sec_type="STK",
+                    position=100.0,
+                    avg_cost=170.0,
+                    market_price=175.0,
+                    unrealized_pnl=stock_unrealized,
+                )
+            )
+        return PortfolioSnapshot(
+            captured_at=datetime.now(UTC),
+            source="monitor",
+            positions=positions,
+        )
+
+    return _make
