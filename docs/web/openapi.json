@@ -878,6 +878,174 @@
         ]
       }
     },
+    "/portfolio/summary": {
+      "get": {
+        "summary": "Portfolio Summary",
+        "description": "Account values as `Sourced` + the exposure the operator needs before deciding.\n\nThe `none` rung is a 200, not a 404: there is no error, there is simply nothing\ncaptured yet, and the client needs a well-formed response saying so in words.",
+        "operationId": "portfolio_summary_portfolio_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioSummaryResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/portfolio/campaigns": {
+      "get": {
+        "summary": "Portfolio Campaigns",
+        "description": "The wheel threads \u2014 one thread per symbol, legs in order.\n\n`as_of` is request time here, NOT a snapshot time: campaigns are written on\nfill, not captured, so there is no capture time to read. Do not \"fix\" this to\nmatch the other portfolio routes. Financials are gross of commissions (M0\nTask 0.4's pinned semantics \u2014 see `src/storage/campaigns.py::_rollup`'s and\n`CampaignRow`'s docstrings); `src/reporting/` nets commissions on the same\ntrades, so a campaign's `net_premium` and the net P&L of its legs differ by\nexactly the commission total. A leg whose `CandidateRow` was pruned still\nrenders with `known: false` \u2014 the financials are rolled up from `FillRow` and\nsurvive pruning, so the leg count must not silently disagree with them.",
+        "operationId": "portfolio_campaigns_portfolio_campaigns_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/portfolio/calendar": {
+      "get": {
+        "summary": "Portfolio Calendar",
+        "description": "Option expiries grouped by date over a horizon, with what expiry would mean.\n\nThe `consequence` mapping, exactly as specified: an ITM short put is\n`assigned`; an ITM short call is `called_away` only when the stock is held to\ndeliver \u2014 a naked short call assignment is a short stock position, not a\ncall-away; any short OTM/ATM is `expires_worthless`; a long option is\n`expires_worthless` only when OTM; unknown moneyness is `unknown`, never a\ndefault to `expires_worthless`.",
+        "operationId": "portfolio_calendar_portfolio_calendar_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "horizon_days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "default": 45,
+              "title": "Horizon Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/portfolio/positions": {
+      "get": {
+        "summary": "Portfolio Positions",
+        "description": "Every position, grouped by underlying \u2014 the unit the operator thinks in.\n\nBoth cost bases are reported, never one substituted for the other: `avg_cost`\nis what IBKR says, `adjusted_cost_basis` is what the collected premium makes\nit. The empty rung returns `groups: []` with `source=\"none\"` \u2014 an empty list\nplus `source=\"monitor\"` would be a claim that the account holds nothing.",
+        "operationId": "portfolio_positions_portfolio_positions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/universe": {
       "get": {
         "tags": [
@@ -1289,6 +1457,40 @@
   },
   "components": {
     "schemas": {
+      "AccountBlock": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "net_liquidation": {
+            "$ref": "#/components/schemas/Sourced_float_"
+          },
+          "total_cash": {
+            "$ref": "#/components/schemas/Sourced_float_"
+          },
+          "buying_power": {
+            "$ref": "#/components/schemas/Sourced_float_"
+          },
+          "maintenance_margin": {
+            "$ref": "#/components/schemas/Sourced_float_"
+          },
+          "excess_liquidity": {
+            "$ref": "#/components/schemas/Sourced_float_"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "net_liquidation",
+          "total_cash",
+          "buying_power",
+          "maintenance_margin",
+          "excess_liquidity"
+        ],
+        "title": "AccountBlock"
+      },
       "AlternativeStrike": {
         "properties": {
           "candidate_id": {
@@ -2319,6 +2521,359 @@
         "title": "BuyCandidateOut",
         "description": "One buy-to-own recommendation, rendered exactly as the scan scored it.\n\nThe web layer does no re-scoring: every field below is the value\n``generate_buy_candidates`` produced at scan time, persisted via\n``BuyCandidateRow`` and read back unmodified so the site and Telegram can never\ndisagree about what the system thinks."
       },
+      "CalendarDay": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "expiry": {
+            "type": "string",
+            "format": "date",
+            "title": "Expiry"
+          },
+          "dte": {
+            "type": "integer",
+            "title": "Dte"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "expiry",
+          "dte",
+          "entries"
+        ],
+        "title": "CalendarDay"
+      },
+      "CalendarEntry": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "right": {
+            "type": "string",
+            "enum": [
+              "C",
+              "P"
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
+          },
+          "short": {
+            "type": "boolean",
+            "title": "Short"
+          },
+          "moneyness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "itm",
+                  "atm",
+                  "otm"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moneyness"
+          },
+          "consequence": {
+            "type": "string",
+            "enum": [
+              "assigned",
+              "called_away",
+              "expires_worthless",
+              "unknown"
+            ],
+            "title": "Consequence"
+          },
+          "assignment_risk": {
+            "type": "boolean",
+            "title": "Assignment Risk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "symbol",
+          "underlying",
+          "right",
+          "strike",
+          "contracts",
+          "short",
+          "moneyness",
+          "consequence",
+          "assignment_risk"
+        ],
+        "title": "CalendarEntry"
+      },
+      "CalendarResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "monitor",
+              "refresh",
+              "eod",
+              "none"
+            ],
+            "title": "Source"
+          },
+          "degraded": {
+            "type": "boolean",
+            "title": "Degraded"
+          },
+          "horizon_days": {
+            "type": "integer",
+            "title": "Horizon Days"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarDay"
+            },
+            "type": "array",
+            "title": "Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "source",
+          "degraded",
+          "horizon_days",
+          "days"
+        ],
+        "title": "CalendarResponse"
+      },
+      "CampaignLeg": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "candidate_id": {
+            "type": "string",
+            "title": "Candidate Id"
+          },
+          "strategy": {
+            "type": "string",
+            "title": "Strategy"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "C",
+                  "P"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
+          },
+          "known": {
+            "type": "boolean",
+            "title": "Known"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "candidate_id",
+          "strategy",
+          "right",
+          "strike",
+          "expiry",
+          "known"
+        ],
+        "title": "CampaignLeg"
+      },
+      "CampaignSummary": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "campaign_id": {
+            "type": "string",
+            "title": "Campaign Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "opened_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Opened Date"
+          },
+          "closed_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed Date"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignLeg"
+            },
+            "type": "array",
+            "title": "Legs"
+          },
+          "total_premium_collected": {
+            "type": "number",
+            "title": "Total Premium Collected"
+          },
+          "total_debit_paid": {
+            "type": "number",
+            "title": "Total Debit Paid"
+          },
+          "net_premium": {
+            "type": "number",
+            "title": "Net Premium"
+          },
+          "assigned": {
+            "type": "boolean",
+            "title": "Assigned"
+          },
+          "adjusted_cost_basis": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis"
+          },
+          "realized_stock_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Stock Pnl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "campaign_id",
+          "symbol",
+          "status",
+          "opened_date",
+          "closed_date",
+          "legs",
+          "total_premium_collected",
+          "total_debit_paid",
+          "net_premium",
+          "assigned",
+          "adjusted_cost_basis",
+          "realized_stock_pnl"
+        ],
+        "title": "CampaignSummary"
+      },
+      "CampaignsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "campaigns": {
+            "items": {
+              "$ref": "#/components/schemas/CampaignSummary"
+            },
+            "type": "array",
+            "title": "Campaigns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "campaigns"
+        ],
+        "title": "CampaignsResponse"
+      },
       "CategoryPayload": {
         "properties": {
           "category": {
@@ -2840,6 +3395,62 @@
         ],
         "title": "ControlsResponse"
       },
+      "ExposureBlock": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "open_positions": {
+            "type": "integer",
+            "title": "Open Positions"
+          },
+          "open_shorts": {
+            "type": "integer",
+            "title": "Open Shorts"
+          },
+          "open_campaigns": {
+            "type": "integer",
+            "title": "Open Campaigns"
+          },
+          "net_delta_exposure": {
+            "type": "number",
+            "title": "Net Delta Exposure"
+          },
+          "cash_secured_against_puts": {
+            "type": "number",
+            "title": "Cash Secured Against Puts"
+          },
+          "buying_power_utilisation_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buying Power Utilisation Pct"
+          },
+          "shorts_at_assignment_risk": {
+            "type": "integer",
+            "title": "Shorts At Assignment Risk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "open_positions",
+          "open_shorts",
+          "open_campaigns",
+          "net_delta_exposure",
+          "cash_secured_against_puts",
+          "buying_power_utilisation_pct",
+          "shorts_at_assignment_risk"
+        ],
+        "title": "ExposureBlock"
+      },
       "FillListResponse": {
         "properties": {
           "as_of": {
@@ -3284,6 +3895,156 @@
         ],
         "title": "NormalizedFinancials"
       },
+      "OptionLeg": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "right": {
+            "type": "string",
+            "enum": [
+              "C",
+              "P"
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
+          },
+          "dte": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dte"
+          },
+          "contracts": {
+            "type": "integer",
+            "title": "Contracts"
+          },
+          "short": {
+            "type": "boolean",
+            "title": "Short"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "delta_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Source"
+          },
+          "market_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Price"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "moneyness": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "itm",
+                  "atm",
+                  "otm"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moneyness"
+          },
+          "assignment_risk": {
+            "type": "boolean",
+            "title": "Assignment Risk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "symbol",
+          "right",
+          "strike",
+          "expiry",
+          "dte",
+          "contracts",
+          "short",
+          "delta",
+          "delta_source",
+          "market_price",
+          "market_value",
+          "unrealized_pnl",
+          "moneyness",
+          "assignment_risk"
+        ],
+        "title": "OptionLeg"
+      },
       "OptionsCoverage": {
         "properties": {
           "iv_history": {
@@ -3545,6 +4306,146 @@
           "downtrend"
         ],
         "title": "Phase"
+      },
+      "PortfolioSummaryResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "monitor",
+              "refresh",
+              "eod",
+              "none"
+            ],
+            "title": "Source"
+          },
+          "degraded": {
+            "type": "boolean",
+            "title": "Degraded"
+          },
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exposure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "source",
+          "degraded",
+          "account",
+          "exposure",
+          "note"
+        ],
+        "title": "PortfolioSummaryResponse"
+      },
+      "PositionGroup": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "stock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StockLeg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/OptionLeg"
+            },
+            "type": "array",
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "underlying",
+          "stock",
+          "options"
+        ],
+        "title": "PositionGroup"
+      },
+      "PositionsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "monitor",
+              "refresh",
+              "eod",
+              "none"
+            ],
+            "title": "Source"
+          },
+          "degraded": {
+            "type": "boolean",
+            "title": "Degraded"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PositionGroup"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "source",
+          "degraded",
+          "groups"
+        ],
+        "title": "PositionsResponse"
       },
       "RecommendationsResponse": {
         "properties": {
@@ -4270,6 +5171,90 @@
           "as_of"
         ],
         "title": "Sourced[float]"
+      },
+      "StockLeg": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "shares": {
+            "type": "number",
+            "title": "Shares"
+          },
+          "avg_cost": {
+            "type": "number",
+            "title": "Avg Cost"
+          },
+          "adjusted_cost_basis": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis"
+          },
+          "market_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Price"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value"
+          },
+          "unrealized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl"
+          },
+          "unrealized_pnl_adjusted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pnl Adjusted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "shares",
+          "avg_cost",
+          "adjusted_cost_basis",
+          "market_price",
+          "market_value",
+          "unrealized_pnl",
+          "unrealized_pnl_adjusted"
+        ],
+        "title": "StockLeg"
       },
       "SummaryOut": {
         "properties": {

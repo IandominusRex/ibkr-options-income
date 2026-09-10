@@ -390,6 +390,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/portfolio/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Summary
+         * @description Account values as `Sourced` + the exposure the operator needs before deciding.
+         *
+         *     The `none` rung is a 200, not a 404: there is no error, there is simply nothing
+         *     captured yet, and the client needs a well-formed response saying so in words.
+         */
+        get: operations["portfolio_summary_portfolio_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portfolio/campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Campaigns
+         * @description The wheel threads — one thread per symbol, legs in order.
+         *
+         *     `as_of` is request time here, NOT a snapshot time: campaigns are written on
+         *     fill, not captured, so there is no capture time to read. Do not "fix" this to
+         *     match the other portfolio routes. Financials are gross of commissions (M0
+         *     Task 0.4's pinned semantics — see `src/storage/campaigns.py::_rollup`'s and
+         *     `CampaignRow`'s docstrings); `src/reporting/` nets commissions on the same
+         *     trades, so a campaign's `net_premium` and the net P&L of its legs differ by
+         *     exactly the commission total. A leg whose `CandidateRow` was pruned still
+         *     renders with `known: false` — the financials are rolled up from `FillRow` and
+         *     survive pruning, so the leg count must not silently disagree with them.
+         */
+        get: operations["portfolio_campaigns_portfolio_campaigns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portfolio/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Calendar
+         * @description Option expiries grouped by date over a horizon, with what expiry would mean.
+         *
+         *     The `consequence` mapping, exactly as specified: an ITM short put is
+         *     `assigned`; an ITM short call is `called_away` only when the stock is held to
+         *     deliver — a naked short call assignment is a short stock position, not a
+         *     call-away; any short OTM/ATM is `expires_worthless`; a long option is
+         *     `expires_worthless` only when OTM; unknown moneyness is `unknown`, never a
+         *     default to `expires_worthless`.
+         */
+        get: operations["portfolio_calendar_portfolio_calendar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/portfolio/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Positions
+         * @description Every position, grouped by underlying — the unit the operator thinks in.
+         *
+         *     Both cost bases are reported, never one substituted for the other: `avg_cost`
+         *     is what IBKR says, `adjusted_cost_basis` is what the collected premium makes
+         *     it. The empty rung returns `groups: []` with `source="none"` — an empty list
+         *     plus `source="monitor"` would be a claim that the account holds nothing.
+         */
+        get: operations["portfolio_positions_portfolio_positions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -556,6 +661,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AccountBlock */
+        AccountBlock: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            net_liquidation: components["schemas"]["Sourced_float_"];
+            total_cash: components["schemas"]["Sourced_float_"];
+            buying_power: components["schemas"]["Sourced_float_"];
+            maintenance_margin: components["schemas"]["Sourced_float_"];
+            excess_liquidity: components["schemas"]["Sourced_float_"];
+        };
         /**
          * AlternativeStrike
          * @description Another contract assessed on the same underlying during the same run.
@@ -917,6 +1035,142 @@ export interface components {
             /** Technical Score */
             technical_score?: number | null;
         };
+        /** CalendarDay */
+        CalendarDay: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Expiry
+             * Format: date
+             */
+            expiry: string;
+            /** Dte */
+            dte: number;
+            /** Entries */
+            entries: components["schemas"]["CalendarEntry"][];
+        };
+        /** CalendarEntry */
+        CalendarEntry: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol: string;
+            /** Underlying */
+            underlying: string;
+            /**
+             * Right
+             * @enum {string}
+             */
+            right: "C" | "P";
+            /** Strike */
+            strike: number;
+            /** Contracts */
+            contracts: number;
+            /** Short */
+            short: boolean;
+            /** Moneyness */
+            moneyness: ("itm" | "atm" | "otm") | null;
+            /**
+             * Consequence
+             * @enum {string}
+             */
+            consequence: "assigned" | "called_away" | "expires_worthless" | "unknown";
+            /** Assignment Risk */
+            assignment_risk: boolean;
+        };
+        /** CalendarResponse */
+        CalendarResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "monitor" | "refresh" | "eod" | "none";
+            /** Degraded */
+            degraded: boolean;
+            /** Horizon Days */
+            horizon_days: number;
+            /** Days */
+            days: components["schemas"]["CalendarDay"][];
+        };
+        /** CampaignLeg */
+        CampaignLeg: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Strategy */
+            strategy: string;
+            /** Right */
+            right: ("C" | "P") | null;
+            /** Strike */
+            strike: number | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Known */
+            known: boolean;
+        };
+        /** CampaignSummary */
+        CampaignSummary: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Campaign Id */
+            campaign_id: string;
+            /** Symbol */
+            symbol: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
+            /**
+             * Opened Date
+             * Format: date
+             */
+            opened_date: string;
+            /** Closed Date */
+            closed_date: string | null;
+            /** Legs */
+            legs: components["schemas"]["CampaignLeg"][];
+            /** Total Premium Collected */
+            total_premium_collected: number;
+            /** Total Debit Paid */
+            total_debit_paid: number;
+            /** Net Premium */
+            net_premium: number;
+            /** Assigned */
+            assigned: boolean;
+            /** Adjusted Cost Basis */
+            adjusted_cost_basis: number | null;
+            /** Realized Stock Pnl */
+            realized_stock_pnl: number | null;
+        };
+        /** CampaignsResponse */
+        CampaignsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Campaigns */
+            campaigns: components["schemas"]["CampaignSummary"][];
+        };
         /** CategoryPayload */
         CategoryPayload: {
             /** Category */
@@ -1148,6 +1402,28 @@ export interface components {
             /** Pending Commands */
             pending_commands: number;
         };
+        /** ExposureBlock */
+        ExposureBlock: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Open Positions */
+            open_positions: number;
+            /** Open Shorts */
+            open_shorts: number;
+            /** Open Campaigns */
+            open_campaigns: number;
+            /** Net Delta Exposure */
+            net_delta_exposure: number;
+            /** Cash Secured Against Puts */
+            cash_secured_against_puts: number;
+            /** Buying Power Utilisation Pct */
+            buying_power_utilisation_pct: number | null;
+            /** Shorts At Assignment Risk */
+            shorts_at_assignment_risk: number;
+        };
         /** FillListResponse */
         FillListResponse: {
             /**
@@ -1324,6 +1600,45 @@ export interface components {
              */
             quarterly: components["schemas"]["PeriodStatement"][];
         };
+        /** OptionLeg */
+        OptionLeg: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Symbol */
+            symbol: string;
+            /**
+             * Right
+             * @enum {string}
+             */
+            right: "C" | "P";
+            /** Strike */
+            strike: number;
+            /** Expiry */
+            expiry: string | null;
+            /** Dte */
+            dte: number | null;
+            /** Contracts */
+            contracts: number;
+            /** Short */
+            short: boolean;
+            /** Delta */
+            delta: number | null;
+            /** Delta Source */
+            delta_source: string | null;
+            /** Market Price */
+            market_price: number | null;
+            /** Market Value */
+            market_value: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl: number | null;
+            /** Moneyness */
+            moneyness: ("itm" | "atm" | "otm") | null;
+            /** Assignment Risk */
+            assignment_risk: boolean;
+        };
         /**
          * OptionsCoverage
          * @description What the on-demand options lens could actually check.
@@ -1458,6 +1773,55 @@ export interface components {
          * @enum {string}
          */
         Phase: "base" | "uptrend" | "distribution" | "downtrend";
+        /** PortfolioSummaryResponse */
+        PortfolioSummaryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "monitor" | "refresh" | "eod" | "none";
+            /** Degraded */
+            degraded: boolean;
+            account: components["schemas"]["AccountBlock"] | null;
+            exposure: components["schemas"]["ExposureBlock"] | null;
+            /** Note */
+            note: string | null;
+        };
+        /** PositionGroup */
+        PositionGroup: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Underlying */
+            underlying: string;
+            stock: components["schemas"]["StockLeg"] | null;
+            /** Options */
+            options: components["schemas"]["OptionLeg"][];
+        };
+        /** PositionsResponse */
+        PositionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "monitor" | "refresh" | "eod" | "none";
+            /** Degraded */
+            degraded: boolean;
+            /** Groups */
+            groups: components["schemas"]["PositionGroup"][];
+        };
         /**
          * RecommendationsResponse
          * @description ``GET /research/recommendations`` — the buy list the scan produced.
@@ -1737,6 +2101,28 @@ export interface components {
              * @default false
              */
             stale: boolean;
+        };
+        /** StockLeg */
+        StockLeg: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Shares */
+            shares: number;
+            /** Avg Cost */
+            avg_cost: number;
+            /** Adjusted Cost Basis */
+            adjusted_cost_basis: number | null;
+            /** Market Price */
+            market_price: number | null;
+            /** Market Value */
+            market_value: number | null;
+            /** Unrealized Pnl */
+            unrealized_pnl: number | null;
+            /** Unrealized Pnl Adjusted */
+            unrealized_pnl_adjusted: number | null;
         };
         /**
          * SummaryOut
@@ -2471,6 +2857,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlsResponse"];
+                };
+            };
+        };
+    };
+    portfolio_summary_portfolio_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioSummaryResponse"];
+                };
+            };
+        };
+    };
+    portfolio_campaigns_portfolio_campaigns_get: {
+        parameters: {
+            query?: {
+                status?: ("open" | "closed") | null;
+                symbol?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    portfolio_calendar_portfolio_calendar_get: {
+        parameters: {
+            query?: {
+                horizon_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    portfolio_positions_portfolio_positions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PositionsResponse"];
                 };
             };
         };

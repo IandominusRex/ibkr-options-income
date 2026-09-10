@@ -825,3 +825,158 @@ by the command drain after every cycle) and compares it against twice
 `drain_last_seen: null` — it must never default to `true`. **Do not reuse
 `/health`'s `worker_heartbeat`**: that reports the research worker and would show
 green while the command drain is dead.
+
+---
+
+## Portfolio (P3 Milestone 2)
+
+Four owner-only read routes that answer "what do I hold, what is it worth, what
+is at risk, and what happens next". All four serve from the snapshot spine M1
+built — `read_portfolio` (`src/api/portfolio_source.py`) resolves the freshest
+portfolio state through its three-rung chain (newest `portfolio_snapshots` row →
+`position_snapshots` + the journal's account block → an explicit empty reading)
+and these routes render what it found, adding nothing to it. None reaches IBKR.
+
+Shared conventions, set by `GET /portfolio/summary`:
+
+- **`source` / `degraded` / `note`** ride on every snapshot-derived response:
+  `source` is which rung served (`"monitor"`, `"refresh"`, `"eod"`, `"none"`),
+  `degraded` is true on the `eod` and `none` rungs, and `note` states the
+  degradation in plain words. A missing `note` means the data is fresh.
+- **`as_of` is the reading's capture time**, not request time. On the `none`
+  rung (nothing captured yet) request time is used with `degraded: true` — the
+  envelope needs a valid stamp, but nothing in the body claims to be a
+  measurement.
+- **Sourced values use `Source.IBKR`** — that is where the numbers came from,
+  even though a database served them; `as_of` and `stale` carry the age.
+  `fresh_for` is twice `market_data.portfolio_snapshot_interval_minutes`
+  (default 15 → stale after 30 minutes), so a portfolio that has missed one
+  capture reads stale.
+- **The `none` rung is a `200`, never a `404` and never zeros.** "Nothing
+  captured yet" is not an error, and zeros would be a claim about the account.
+- **`assignment_risk` comes from `src/common/assignment_risk.py`** with the
+  monitor's configured thresholds (`monitor.assignment_alert_delta` /
+  `assignment_alert_dte`, 0.70 / 21) — the same single definition
+  `GET /options/shorts` and the Telegram alerts use. No route defines a
+  threshold of its own.
+
+### `GET /portfolio/summary`
+
+The account block — net liquidation, total cash, buying power, maintenance
+margin, excess liquidity — each as a `Sourced` value so a stale figure is
+visibly stale rather than merely old. Beside it, the exposure the operator
+needs before deciding anything.
+
+Degradation behaviour: a fresh snapshot yields `source="monitor"`,
+`degraded=false`, no `note`. The `eod` rung yields `source="eod"`,
+`degraded=true` and a `note` saying so. Nothing captured yields `200` with
+`source="none"`, `account: null`, `exposure: null` and the note
+"No portfolio snapshot has been captured yet." — never zeros.
+
+Exposure semantics:
+
+- `open_positions` counts every position in the reading (stock and options).
+- `open_shorts` counts short option positions only.
+- `open_campaigns` counts open rows in `campaigns`.
+- `net_delta_exposure` is `Σ delta × position × 100` over options plus the
+  share count over stock — the same formula the EOD summary computes.
+- `cash_secured_against_puts` counts **short puts only**, at
+  `strike × contracts × 100`. Long options and stock are not cash-secured
+  obligations.
+- `buying_power_utilisation_pct` is `null` when buying power is zero or
+  unknown — never `0.0`, which would read as "nothing committed".
+- `shorts_at_assignment_risk` counts positions passing the shared predicate
+  (`is_assignment_risk`).
+
+**Response — `PortfolioSummaryResponse`:**
+`{ as_of, source, degraded, account: AccountBlock | null, exposure: ExposureBlock | null, note: string | null }`.
+`AccountBlock`: `{ as_of, net_liquidation: Sourced<float>, total_cash: Sourced<float>, buying_power: Sourced<float>, maintenance_margin: Sourced<float>, excess_liquidity: Sourced<float> }`.
+`ExposureBlock`: `{ as_of, open_positions, open_shorts, open_campaigns, net_delta_exposure, cash_secured_against_puts, buying_power_utilisation_pct: float | null, shorts_at_assignment_risk }`.
+
+### `GET /portfolio/positions`
+
+Every position, **grouped by underlying** — the stock leg beside its option
+legs, because that is the unit the operator thinks in. An option whose
+`underlying` is `null` groups under its own symbol rather than being dropped.
+
+Adjusted-basis semantics — **both cost bases are reported, never one
+substituted for the other**: `avg_cost` is what IBKR says;
+`adjusted_cost_basis` is what the collected premium makes it (from
+`campaigns.adjusted_cost_basis`, when the shares came from an assignment).
+`unrealized_pnl` is against the former, `unrealized_pnl_adjusted` against the
+latter. `adjusted_cost_basis` is `null` for shares that did not come from an
+assignment, and `unrealized_pnl_adjusted` is `null` with it — not a copy of
+`unrealized_pnl`, and not zero.
+
+`moneyness` (`itm`/`atm`/`otm`) needs the underlying's price: the group's own
+stock leg first, else the latest settled close in `price_history` — both from
+the reading and the read-only engine, never a second live path. `moneyness` is
+`null` when no price is known; there is no guessing from the strike alone.
+`dte` is `null` when expiry is unknown, never `0` (which would read as
+"expires today").
+
+Degradation behaviour: the `none` rung returns `groups: []` with
+`source="none"` — an empty list plus `source="monitor"` would be a claim that
+the account holds nothing.
+
+**Response — `PositionsResponse`:**
+`{ as_of, source, degraded, groups: PositionGroup[] }`.
+`PositionGroup`: `{ as_of, underlying, stock: StockLeg | null, options: OptionLeg[] }`.
+`StockLeg`: `{ as_of, shares, avg_cost, adjusted_cost_basis: float | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, unrealized_pnl_adjusted: float | null }`.
+`OptionLeg`: `{ as_of, symbol, right, strike, expiry: date | null, dte: int | null, contracts, short, delta: float | null, delta_source: string | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, moneyness: "itm"|"atm"|"otm"|null, assignment_risk }`.
+
+### `GET /portfolio/campaigns`
+
+The wheel threads — what Telegram's `/campaigns` renders as text and renders
+badly. Query parameters: `status` (`open` | `closed`; omit for both) and
+`symbol`. Ordered by `opened_date` descending, open campaigns before closed
+ones at the same date. `as_of` is **request time** here, not a snapshot time:
+campaigns are written on fill, not captured, so there is no capture time to
+read.
+
+**`total_premium_collected` / `total_debit_paid` / `net_premium` are gross of
+commissions** (pinned by `tests/test_campaign_rollup_semantics.py` and M0 Task
+0.4): `_rollup` (`src/storage/campaigns.py`) sums `avg_price × filled_qty × 100`
+per fill and never reads `FillRow.commission` — it is deliberately not
+subtracted. `src/reporting/` reports the same trades net of commissions, so a
+campaign's `net_premium` and the net P&L of its legs differ by exactly the
+commission total; readers comparing the two must account for that gap.
+
+A leg whose `CandidateRow` has been pruned (candidates are pruned; campaigns
+are not) still renders with `known: false` and null contract fields — the
+campaign's financials are rolled up from `FillRow` and survive pruning, so the
+leg count must not silently disagree with them.
+
+**Response — `CampaignsResponse`:** `{ as_of, campaigns: CampaignSummary[] }`.
+`CampaignSummary`: `{ as_of, campaign_id, symbol, status, opened_date, closed_date: date | null, legs: CampaignLeg[], total_premium_collected, total_debit_paid, net_premium, assigned, adjusted_cost_basis: float | null, realized_stock_pnl: float | null }`.
+`CampaignLeg`: `{ as_of, candidate_id, strategy, right: "C"|"P"|null, strike: float | null, expiry: date | null, known }`.
+
+### `GET /portfolio/calendar`
+
+Option expiries grouped by date over a horizon — "what happens next". Query
+parameter `horizon_days` (default 45, maximum 365). Days are ordered nearest
+first; an expiry outside the horizon is excluded; an already-expired position
+is not "what happens next" and is skipped.
+
+The `consequence` column — what expiry would mean if nothing changes:
+
+| Position | Moneyness | `consequence` |
+|---|---|---|
+| Short put | `itm` | `assigned` |
+| Short call, stock held | `itm` | `called_away` |
+| Short call, no stock held | `itm` | `assigned` — a naked short call assignment is a short stock position, not a call-away |
+| Any short | `otm` or `atm` | `expires_worthless` |
+| Any | unknown | `unknown` |
+| Long option | `otm` | `expires_worthless`; else `unknown` |
+
+**`unknown` is a real value and renders as such** — "we do not know what
+happens on Friday" is materially different from "nothing happens on Friday",
+so it is never defaulted to `expires_worthless`.
+
+Degradation behaviour: the `none` rung returns `days: []` with
+`source="none"`.
+
+**Response — `CalendarResponse`:**
+`{ as_of, source, degraded, horizon_days, days: CalendarDay[] }`.
+`CalendarDay`: `{ as_of, expiry, dte, entries: CalendarEntry[] }`.
+`CalendarEntry`: `{ as_of, symbol, underlying, right, strike, contracts, short, moneyness: "itm"|"atm"|"otm"|null, consequence: "assigned"|"called_away"|"expires_worthless"|"unknown", assignment_risk }`.

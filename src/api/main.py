@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from src.api.routers import commands, meta, options, research, universe, watchlist
+from src.api.routers import commands, meta, options, portfolio, research, universe, watchlist
 from src.common.config import get_config
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(meta.router)
     app.include_router(research.router)
     app.include_router(options.router)
+    app.include_router(portfolio.router, prefix="/portfolio")
     app.include_router(universe.router)
     app.include_router(watchlist.router)
     app.include_router(commands.router)

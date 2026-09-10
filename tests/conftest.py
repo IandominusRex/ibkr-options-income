@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -48,3 +51,370 @@ def _mock_telegram_sender(monkeypatch):
     executor tests make real HTTP round-trips (~1–2 s each) to Telegram.
     """
     monkeypatch.setattr("src.notify.sender.send_order_notification", AsyncMock())
+
+
+# ---------------------------------------------------------------------------
+# Web API fixtures (P3-P4 M2 Task 2.1). Shared by the portfolio route tests
+# (2.1, 2.2, 2.4) and reused by M4's tests — one copy, per the milestone's own
+# instruction, so a second copy in each test file cannot drift from this one.
+# ---------------------------------------------------------------------------
+
+OWNER_TOKEN = "owner-horse-battery"
+OWNER = {"Authorization": f"Bearer {OWNER_TOKEN}"}
+
+
+def _trading_db_client(monkeypatch, tmp_path: Path):
+    """A TestClient over an isolated trading DB (the test_api_shorts.py pattern).
+
+    Patches the token, the API's read-only engine, and the storage engine to a
+    tmp-file SQLite so seeds lands in the DB the routes read, then returns the
+    client. Callers seed through `src.storage.db.session_scope()`.
+    """
+    from fastapi.testclient import TestClient
+
+    from src.api.main import create_app
+    from src.common.config import Config
+
+    monkeypatch.setattr("src.api.auth._configured_token", lambda: OWNER_TOKEN)
+    trading_db = tmp_path / "income_system.db"
+    monkeypatch.setattr("src.api.trading_db._engine", None)
+    monkeypatch.setattr("src.api.trading_db._SessionLocal", None)
+    monkeypatch.setattr("src.api.trading_db._resolve_path", lambda: trading_db.as_posix())
+    monkeypatch.setattr("src.api.trading_db._cmd_engine", None)
+    monkeypatch.setattr("src.api.trading_db._cmd_session_factory", None)
+    import src.storage.db as dbmod
+
+    monkeypatch.setattr(dbmod, "_engine", None)
+    monkeypatch.setattr(dbmod, "_SessionLocal", None)
+    monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{trading_db}")
+    dbmod.init_db()
+    return TestClient(create_app())
+
+
+@pytest.fixture()
+def client(monkeypatch, tmp_path):
+    """Owner-token TestClient over an empty, isolated trading DB."""
+    return _trading_db_client(monkeypatch, tmp_path)
+
+
+def _account_dict(net_liq: float, buying_power: float) -> dict[str, Any]:
+    from src.common.schemas import AccountSnapshot
+
+    return AccountSnapshot(
+        account="DU123",
+        net_liquidation=net_liq,
+        total_cash=50_000.0,
+        buying_power=buying_power,
+        maintenance_margin=5_000.0,
+        excess_liquidity=75_000.0,
+    ).model_dump(mode="json")
+
+
+@pytest.fixture()
+def seed_portfolio_snapshot():
+    """Insert one `portfolio_snapshots` row — rung 1 of read_portfolio's chain.
+
+    Everything defaults to a fresh, monitor-captured snapshot 3 minutes old; tests pass
+    captured_at/source/net_liq/buying_power/positions to vary it. `positions` takes the
+    dicts the short_put/short_call/long_put/stock builders below return.
+    """
+    from src.storage.db import session_scope
+    from src.storage.models import PortfolioSnapshotRow
+
+    def _seed(
+        *,
+        captured_at: datetime | None = None,
+        source: str = "monitor",
+        net_liq: float = 250_000.0,
+        buying_power: float = 80_000.0,
+        positions: list[dict[str, Any]] | None = None,
+    ) -> None:
+        when = captured_at or datetime.now(UTC) - timedelta(minutes=3)
+        with session_scope() as s:
+            s.add(
+                PortfolioSnapshotRow(
+                    captured_at=when,
+                    source=source,
+                    account=_account_dict(net_liq, buying_power),
+                    positions=positions or [],
+                )
+            )
+
+    return _seed
+
+
+@pytest.fixture()
+def seed_position_snapshot():
+    """Insert one `position_snapshots` row — the positions half of rung 2."""
+
+    def _seed(*, symbols: list[str]) -> None:
+        from src.storage.db import session_scope
+        from src.storage.models import PositionSnapshotRow
+
+        with session_scope() as s:
+            s.add(
+                PositionSnapshotRow(
+                    snapshot_date=date.today(),
+                    payload=[
+                        {
+                            "symbol": sym,
+                            "sec_type": "STK",
+                            "position": 100.0,
+                            "avg_cost": 170.0,
+                        }
+                        for sym in symbols
+                    ],
+                )
+            )
+
+    return _seed
+
+
+@pytest.fixture()
+def seed_journal():
+    """Insert one journal row whose payload carries the eod_summary account block."""
+
+    def _seed(*, net_liq: float = 100_000.0) -> None:
+        from src.storage.db import session_scope
+        from src.storage.models import JournalRow
+
+        with session_scope() as s:
+            s.add(
+                JournalRow(
+                    entry_date=date.today(),
+                    realized_pnl=0.0,
+                    unrealized_pnl=0.0,
+                    narrative=None,
+                    payload={
+                        "fills": [],
+                        "eod_summary": {"account": _account_dict(net_liq, 80_000.0)},
+                    },
+                )
+            )
+
+    return _seed
+
+
+@pytest.fixture()
+def seed_campaign():
+    """Insert one campaign row (Task 2.3's shape) with optional CandidateRows.
+
+    `leg_candidate_ids` populates the leg list; `seed_candidates` names which of those
+    ids actually have a CandidateRow — the rest are the "pruned" legs that must still
+    render with `known: false`.
+    """
+
+    def _seed(
+        *,
+        symbol: str = "NVDA",
+        leg_candidate_ids: list[str] | None = None,
+        seed_candidates: list[str] | None = None,
+        status: str = "open",
+        strategy: str = "cash_secured_put",
+        right: str = "P",
+        strike: float = 190.0,
+        dte: int = 30,
+        assigned: bool = False,
+        adjusted_cost_basis: float | None = None,
+        realized_stock_pnl: float | None = None,
+        total_premium_collected: float = 0.0,
+        total_debit_paid: float = 0.0,
+        net_premium: float = 0.0,
+        opened: date | None = None,
+        closed_date: date | None = None,
+    ) -> None:
+        import uuid
+
+        from src.storage.db import session_scope
+        from src.storage.models import CampaignRow, CandidateRow
+
+        with session_scope() as s:
+            for cid in seed_candidates or []:
+                s.add(
+                    CandidateRow(
+                        candidate_id=cid,
+                        run_id="run-1",
+                        strategy=strategy,
+                        underlying=symbol,
+                        right=right,
+                        strike=strike,
+                        expiry=date.today() + timedelta(days=dte),
+                        payload={},
+                    )
+                )
+            s.add(
+                CampaignRow(
+                    campaign_id=f"{symbol}-{uuid.uuid4().hex[:8]}",
+                    symbol=symbol,
+                    status=status,
+                    opened_date=opened or (date.today() - timedelta(days=10)),
+                    closed_date=closed_date if status == "closed" else None,
+                    leg_candidate_ids=leg_candidate_ids or [],
+                    total_premium_collected=total_premium_collected,
+                    total_debit_paid=total_debit_paid,
+                    net_premium=net_premium,
+                    assigned=assigned,
+                    adjusted_cost_basis=adjusted_cost_basis,
+                    realized_stock_pnl=realized_stock_pnl,
+                    payload={"first_strategy": strategy},
+                )
+            )
+
+    return _seed
+
+
+@pytest.fixture()
+def seed_assigned_campaign():
+    """Insert one open, assigned campaign with an adjusted cost basis — Task 2.2's
+    adjusted-basis join and Task 2.3's leg rendering both read this shape."""
+
+    def _seed(
+        *,
+        symbol: str = "NVDA",
+        assignment_price: float = 180.0,
+        adjusted_basis: float = 173.50,
+        leg_candidate_ids: list[str] | None = None,
+        seed_candidates: list[str] | None = None,
+        status: str = "open",
+        strategy: str = "cash_secured_put",
+    ) -> None:
+        from src.storage.db import session_scope
+        from src.storage.models import CampaignRow, CandidateRow
+
+        ids = leg_candidate_ids or []
+        with session_scope() as s:
+            for cid in seed_candidates or []:
+                s.add(
+                    CandidateRow(
+                        candidate_id=cid,
+                        run_id="run-1",
+                        strategy=strategy,
+                        underlying=symbol,
+                        right="P",
+                        strike=190.0,
+                        expiry=date.today() + timedelta(days=30),
+                        payload={},
+                    )
+                )
+            s.add(
+                CampaignRow(
+                    campaign_id=f"{symbol}-test01",
+                    symbol=symbol,
+                    status=status,
+                    opened_date=date.today() - timedelta(days=10),
+                    closed_date=date.today() if status == "closed" else None,
+                    leg_candidate_ids=ids,
+                    total_premium_collected=650.0,
+                    total_debit_paid=0.0,
+                    net_premium=650.0,
+                    assigned=True,
+                    adjusted_cost_basis=adjusted_basis,
+                    realized_stock_pnl=None,
+                    payload={"first_strategy": strategy},
+                )
+            )
+
+    return _seed
+
+
+# Position builders: minimal PositionSnapshot-shaped dicts with every field the
+# portfolio routes read. Defaults exercise the interesting rules (a short put
+# worth counting, a non-trivial delta) so tests only override what they assert.
+
+
+def short_put(
+    *,
+    symbol: str = "NVDA  260918 00190000P",
+    strike: float = 100.0,
+    contracts: int = 1,
+    delta: float | None = -0.22,
+    dte: int | None = 45,
+    underlying: str = "NVDA",
+    market_price: float | None = 2.10,
+    expiry: date | None = None,
+) -> dict[str, Any]:
+    exp = expiry or (date.today() + timedelta(days=dte if dte is not None else 45))
+    return {
+        "symbol": symbol,
+        "sec_type": "OPT",
+        "position": -float(contracts),
+        "avg_cost": 3.25,
+        "market_price": market_price,
+        "market_value": None,
+        "unrealized_pnl": 115.0,
+        "right": "P",
+        "strike": strike,
+        "expiry": exp.isoformat(),
+        "delta": delta,
+        "underlying": underlying,
+    }
+
+
+def short_call(
+    *,
+    symbol: str = "NVDA  260918 00200000C",
+    strike: float = 200.0,
+    contracts: int = 1,
+    delta: float | None = 0.30,
+    dte: int | None = 45,
+    underlying: str = "NVDA",
+    market_price: float | None = 1.50,
+    expiry: date | None = None,
+) -> dict[str, Any]:
+    exp = expiry or (date.today() + timedelta(days=dte if dte is not None else 45))
+    return {
+        "symbol": symbol,
+        "sec_type": "OPT",
+        "position": -float(contracts),
+        "avg_cost": 2.50,
+        "market_price": market_price,
+        "market_value": None,
+        "unrealized_pnl": None,
+        "right": "C",
+        "strike": strike,
+        "expiry": exp.isoformat(),
+        "delta": delta,
+        "underlying": underlying,
+    }
+
+
+def long_put(
+    *,
+    symbol: str = "AAPL  260918 0015000P",
+    strike: float = 90.0,
+    contracts: int = 1,
+    underlying: str = "AAPL",
+) -> dict[str, Any]:
+    exp = (date.today() + timedelta(days=45)).isoformat()
+    return {
+        "symbol": symbol,
+        "sec_type": "OPT",
+        "position": float(contracts),
+        "avg_cost": 1.10,
+        "market_price": 0.90,
+        "market_value": None,
+        "unrealized_pnl": None,
+        "right": "P",
+        "strike": strike,
+        "expiry": exp,
+        "delta": -0.15,
+        "underlying": underlying,
+    }
+
+
+def stock(
+    *,
+    symbol: str = "NVDA",
+    shares: float = 100.0,
+    avg_cost: float = 180.0,
+    market_price: float | None = 176.0,
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "sec_type": "STK",
+        "position": shares,
+        "avg_cost": avg_cost,
+        "market_price": market_price,
+        "market_value": None,
+        "unrealized_pnl": None,
+    }

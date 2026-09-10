@@ -193,8 +193,8 @@ def load_campaigns(
     """Return a list of campaign dicts ordered by opened_date descending.
 
     Each dict contains: campaign_id, symbol, status, opened_date, closed_date,
-    leg_count, total_premium_collected, total_debit_paid, net_premium, assigned,
-    adjusted_cost_basis, realized_stock_pnl.
+    leg_candidate_ids, leg_count, total_premium_collected, total_debit_paid,
+    net_premium, assigned, adjusted_cost_basis, realized_stock_pnl.
     """
     try:
         with session_scope() as session:
@@ -211,6 +211,7 @@ def load_campaigns(
                     "status": r.status,
                     "opened_date": r.opened_date,
                     "closed_date": r.closed_date,
+                    "leg_candidate_ids": list(r.leg_candidate_ids or []),
                     "leg_count": len(r.leg_candidate_ids or []),
                     "total_premium_collected": r.total_premium_collected,
                     "total_debit_paid": r.total_debit_paid,

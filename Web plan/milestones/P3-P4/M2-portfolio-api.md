@@ -17,6 +17,73 @@ not run and this milestone cannot start.
 returns and add nothing to it — if a route reaches past `PortfolioReading` to a table of its own,
 the freshness contract M1 built is already broken.
 
+> **CLAIMED — all five tasks (2.1–2.5), by opencode (glm-5.3), 2026-09-10.** The `[SONNET]`/
+> `[GLM]` tags were treated as capacity hints, not gates (the P3-P4 implementation plan's own
+> honest-read section reserves them for routing, and M1 was claimed the same way); the claim is
+> grounded in a dependency audit run against the tree before taking anything. Confirmed to
+> exist, exactly as each task describes them: `read_portfolio`/`PortfolioReading` with its
+> three-rung chain and never-zeros empty rung (`src/api/portfolio_source.py:56,40`); the one
+> assignment-risk predicate and its config-read thresholds
+> (`src/common/assignment_risk.py:31,55`); `Sourced.of`/`Envelope`/`Source.IBKR`/`as_utc_opt`
+> (`src/api/models/common.py:49,70,16,36`); `OwnerUser`/`TradingDb` (`src/api/deps.py:43,59`);
+> `AccountSnapshot`/`PositionSnapshot`/`PortfolioSnapshot` (`src/common/schemas.py:105,89,115`);
+> `load_campaigns` — which returns **dicts without `leg_candidate_ids`**, so Task 2.3 must add
+> that key to its return (a storage-layer change inside the campaign reader's own docstring
+> contract, not a new data path — the financial rollup fields it already returns are the ones
+> the route maps) (`src/storage/campaigns.py:187`); `adjusted_cost_basis_for`
+> (`src/storage/campaigns.py:229`); `CampaignRow` with `leg_candidate_ids` and the M0-0.4-pinned
+> gross-of-commissions docstring (`src/storage/models.py:489`); `CandidateRow`
+> (`src/storage/models.py:35`); the `dte is None, never 0` rule at `src/api/routers/options.py:825`;
+> the net-delta formula the EOD summary already computes (`src/orchestrator/eod_report.py:236`);
+> `market_data.portfolio_snapshot_interval_minutes` (`config/settings.yaml:157`); the OpenAPI
+> freshness test (`tests/test_openapi_current.py`) and the `gen:api` script (`web/package.json`);
+> fixture precedent for the API client + trading-DB monkeypatch pattern
+> (`tests/test_api_shorts.py:80`) and for the viewer-role 403 (`test_api_shorts.py:122`);
+> `PriceHistoryRow` (`src/storage/models.py:153`) as the read-only moneyness price source (the
+> same table `routers/research.py::_hv30_for` already reads through the read-only engine — no
+> second data path and no new price source). Step checkboxes below remain unchecked — they
+> close as each task is actually executed and its gate run green.
+>
+> **EXECUTED — all five tasks completed 2026-09-10, same session, one commit.** Every task
+> followed its step order: the 47 tests were written first and confirmed failing for the right
+> reason (`404`/missing-route, never an import or assertion error), then implemented, then the
+> FULL suite plus the web gate ran, then docs, then the schema artifacts regenerated. Final
+> gate, run at the working tree after all five tasks: `python -m pytest -q` (**2043 passed** —
+> 1996 pre-milestone + **47 new** across four new test files: 9 summary + 13 positions + 13
+> campaigns + 12 calendar; every shared fixture the plan demanded lives in `tests/conftest.py`
+> — `seed_portfolio_snapshot`, `seed_position_snapshot`, `seed_journal`, `seed_campaign`,
+> `seed_assigned_campaign`, and the `short_put`/`short_call`/`long_put`/`stock` builders),
+> `ruff check .` clean, `mypy src` clean (158 files), `cd web && npx vitest run` (213 passed),
+> `npm run lint` clean, `npm run build` compiled successfully. Acceptance verified, not
+> assumed: the router greps clean for any numeric delta/DTE threshold (the only numeric
+> literal in it is the 1% ATM band, a moneyness display convention, not an assignment-risk
+> threshold — thresholds come from `assignment_risk_thresholds(get_config())`); all four
+> routes are owner-only with the non-owner 403 asserted per route; every `none` rung is a
+> 200 with explicit emptiness and a plain-words note; `consequence: "unknown"` is reachable
+> and rendered (its own test); `docs/web/openapi.json` + `web/lib/api-types.ts` were
+> regenerated and M0 Task 0.5's `tests/test_openapi_current.py` is green against them.
+> Deviations from the sketches, all within each task's own instructions: (1) Task 2.3 — the
+> route queries `CampaignRow`/`CandidateRow` through the API's **read-only** engine rather
+> than calling `load_campaigns`, whose `session_scope()` opens the storage engine's own
+> connection; the read-only-engine invariant (`trading_db.py`, design §4.2) is the stronger
+> constraint and the route mirrors `load_campaigns`' semantics exactly. `load_campaigns`
+> itself gained `leg_candidate_ids` in its return dicts (the additive key Task 2.3's leg
+> join needs), with its docstring updated; every existing consumer (`approval_service`,
+> `tests/test_phase4.py`, `test_phase6.py`) indexes by key and is unaffected — all green.
+> (2) Task 2.2's `moneyness` price source — the plan pins "None when the underlying price
+> is unknown" but names no source; resolved as: the group's own stock leg first, else the
+> latest settled close in `price_history` read through the same read-only engine
+> (`routers/research.py::_hv30_for`'s precedent), documented in `docs/web/api.md`. (3) The
+> `gen:api` script's URL target needs a live server; `openapi-typescript` was pointed at
+> the freshly generated `docs/web/openapi.json` directly, producing the same artifact.
+> (4) Two of the sketch's own test typos were corrected in execution, not the
+> implementation: the sketch's OTM-short-put fixture (spot 150 / strike 190) is actually ITM
+> for a put, so `expires_worthless` needed spot 200; and the assigned-shares sketch seeded
+> `unrealized_pnl: None` while asserting `< 0`, so the fixture now supplies the real
+> -400.0. (5) The campaigns `status` filter rides as a query parameter validated by
+> FastAPI's `Literal` (422 on anything but `open`/`closed`/omitted), and `symbol` is
+> upper-cased server-side. Commit follows the docs sweep in the same change.
+
 ---
 
 ## Task 2.1 — `GET /portfolio/summary` `[SONNET]`
@@ -99,7 +166,7 @@ Required behaviours, each with a test:
   0.75 counting as one.
 - **A non-owner role gets `403`.** Its own test.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """The first portfolio route. Empty is reported as empty, never as zero."""
@@ -183,13 +250,13 @@ builders as fixtures in `tests/conftest.py` — Tasks 2.3, 2.5, 4.3 and 4.4 all 
 second copy in each test file is how the wheel-scenario suite in Task 4.7 ends up disagreeing with
 this one.
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement** the models, the router, and its registration in `src/api/main.py`.
+- [x] **Step 3: Implement** the models, the router, and its registration in `src/api/main.py`.
 
-- [ ] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
+- [x] **Step 4: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 5:** `docs/web/api.md` gains the route with its response shape and its degradation
+- [x] **Step 5:** `docs/web/api.md` gains the route with its response shape and its degradation
   behaviour spelled out. Commit.
 
 ---
@@ -278,7 +345,7 @@ Required behaviours, each with a test:
 - The empty rung returns `groups: []` and `source="none"`.
 - A non-owner gets `403`.
 
-- [ ] **Step 1: Write the failing test.** Cover each bullet above with its own named test. The
+- [x] **Step 1: Write the failing test.** Cover each bullet above with its own named test. The
   adjusted-basis pair needs two: one proving both figures are present and different for assigned
   shares, one proving both adjusted fields are `None` for ordinary shares.
 
@@ -305,13 +372,13 @@ def test_ordinary_shares_report_no_adjusted_basis(client, seed_portfolio_snapsho
     assert stock_leg["unrealized_pnl_adjusted"] is None
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
-- [ ] **Step 4: Run the gate.**
+- [x] **Step 4: Run the gate.**
 
-- [ ] **Step 5:** `docs/web/api.md`. Commit.
+- [x] **Step 5:** `docs/web/api.md`. Commit.
 
 ---
 
@@ -382,7 +449,7 @@ Required behaviours, each with a test:
 - Empty database returns `campaigns: []` and a valid `as_of`.
 - A non-owner gets `403`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_a_pruned_candidate_still_renders_as_a_leg(client, seed_campaign) -> None:
@@ -398,7 +465,7 @@ def test_a_pruned_candidate_still_renders_as_a_leg(client, seed_campaign) -> Non
 
 Write the remaining six as their own named tests following this shape.
 
-- [ ] **Step 2: Run, confirm failure. Step 3: Implement. Step 4: Gate. Step 5: `docs/web/api.md`,
+- [x] **Step 2: Run, confirm failure. Step 3: Implement. Step 4: Gate. Step 5: `docs/web/api.md`,
   commit.**
 
 ---
@@ -464,7 +531,7 @@ Required behaviours, each with a test:
 - The empty rung returns `days: []` with `source="none"`.
 - A non-owner gets `403`.
 
-- [ ] **Step 1: Write the failing tests, one per bullet. Step 2: Confirm they fail. Step 3:
+- [x] **Step 1: Write the failing tests, one per bullet. Step 2: Confirm they fail. Step 3:
   Implement. Step 4: Gate. Step 5: `docs/web/api.md`, commit.**
 
 ---
@@ -474,11 +541,11 @@ Required behaviours, each with a test:
 **Files:** Modify `docs/web/api.md`, `docs/web/openapi.json`, `web/lib/api-types.ts`,
 `ARCHITECTURE.md`, `README.md`.
 
-- [ ] **Step 1:** Confirm all four routes are documented in `docs/web/api.md` with request
+- [x] **Step 1:** Confirm all four routes are documented in `docs/web/api.md` with request
   parameters, response shapes, and degradation behaviour. Tasks 2.2-2.5 each own their section;
   this step verifies rather than assumes.
 
-- [ ] **Step 2:** Regenerate the schema artifacts from the live app, in-process, no server needed:
+- [x] **Step 2:** Regenerate the schema artifacts from the live app, in-process, no server needed:
 
 ```bash
 python -c "import json; from src.api.main import create_app; \
@@ -486,31 +553,31 @@ print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
 cd web && npm run gen:api
 ```
 
-- [ ] **Step 3:** Confirm the four new routes and every new model appear in both files. A previous
+- [x] **Step 3:** Confirm the four new routes and every new model appear in both files. A previous
   milestone found `api-types.ts` stale by three whole endpoints; check rather than trust.
 
-- [ ] **Step 4:** `ARCHITECTURE.md`'s `src/api/` section gains `routers/portfolio.py` and
+- [x] **Step 4:** `ARCHITECTURE.md`'s `src/api/` section gains `routers/portfolio.py` and
   `models/portfolio.py`; `README.md`'s layout table gains them too.
 
-- [ ] **Step 5:** Run all six gate commands and commit.
+- [x] **Step 5:** Run all six gate commands and commit.
 
 ---
 
 ## Milestone 2 acceptance
 
-- [ ] Four `/portfolio/*` routes serve from `read_portfolio` and add no second data path.
-- [ ] Every assignment-risk figure on those routes comes from M0 Task 0.3's
+- [x] Four `/portfolio/*` routes serve from `read_portfolio` and add no second data path.
+- [x] Every assignment-risk figure on those routes comes from M0 Task 0.3's
   `src/common/assignment_risk.py`. **No route in this milestone defines a threshold of its own** —
   verified by grepping the new router for a numeric delta or DTE literal and finding none.
-- [ ] Every one of them is `owner_only`, proven with a non-owner role.
-- [ ] Every one of them returns `200` with an explicit `source="none"` when nothing is captured.
+- [x] Every one of them is `owner_only`, proven with a non-owner role.
+- [x] Every one of them returns `200` with an explicit `source="none"` when nothing is captured.
   **None of them returns zeros in that case.**
-- [ ] `as_of` is a capture time on the three snapshot-derived routes and request time on
+- [x] `as_of` is a capture time on the three snapshot-derived routes and request time on
   `/campaigns`, with the difference documented.
-- [ ] Assigned shares report both cost bases; ordinary shares report `adjusted_cost_basis: None`.
-- [ ] `consequence: "unknown"` is reachable and rendered.
-- [ ] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, and M0 Task
+- [x] Assigned shares report both cost bases; ordinary shares report `adjusted_cost_basis: None`.
+- [x] `consequence: "unknown"` is reachable and rendered.
+- [x] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff, and M0 Task
   0.5's `tests/test_openapi_current.py` is green.
-- [ ] Full gate green, all six commands. **This milestone touches no trading code** — every
+- [x] Full gate green, all six commands. **This milestone touches no trading code** — every
   trading-side change it once carried moved to M0 — so a failure outside `src/api/` here means
   something unrelated broke.
