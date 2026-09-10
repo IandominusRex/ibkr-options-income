@@ -13,6 +13,67 @@ it earned, watch the equity curve, and take the whole thing to a spreadsheet.
 `src/reporting/` — if a route computes a P&L figure of its own, the single-accounting-rule
 invariant Milestone 4 established has already been broken.
 
+> **CLAIMED — all seven tasks (5.1–5.7), by opencode (glm-5.3), 2026-09-11 — session limit hit
+> mid-milestone.** All seven tasks' code, tests, and documentation edits (`ARCHITECTURE.md`,
+> `README.md`, `STATUS.md`, `docs/web/api.md`, `docs/web/openapi.json`, `web/CLAUDE.md`) were
+> present and passing in the working tree, but nothing was committed and this plan file itself was
+> never updated — every checkbox below was still unticked and no EXECUTED note existed, the two
+> facts the next session's audit was asked to confirm. Nothing here is grounded in that session's
+> own narrative because it left none.
+>
+> **VERIFIED AND EXECUTED — by Claude Sonnet 5, 2026-09-11, one independent audit pass plus three
+> fix commits.** The audit (a dedicated subagent, read-only) confirmed Tasks 5.1, 5.2, 5.3, 5.5, and
+> 5.7 correct and complete against this file, then found three real gaps and one doc overclaim in
+> Tasks 5.4/5.5/5.6, closed here:
+>
+> 1. **Task 5.4 violation:** `LegRow`/`CampaignRow` hand-rolled their own currency formatting
+>    instead of reusing `Money` (`components/portfolio/Money.tsx`), contradicting this task's own
+>    "no second money component" rule and `web/CLAUDE.md`'s pnl/ note. Both now render every money
+>    figure through `Money` (`kind="realized"`/`"unrealized"`/`"value"`, `complete` carrying the
+>    gross qualifier) — `LegRow`'s local `fmtMoney` deleted.
+> 2. **Task 5.6 gap:** "best and worst link to their legs in the ledger" was unimplemented —
+>    `BestWorstRow` rendered plain text, and its own test only checked for the candidate id's text
+>    presence, never a real control. `SummaryPanel` now takes an optional `onSelectLeg` prop;
+>    `BestWorstRow` renders each figure as a button (`aria-label="View {contract} in the ledger"`)
+>    when it's wired, plain text otherwise. `PnlShell` wires it to `viewLegInLedger`, which switches
+>    to the Ledger tab and sets the symbol filter to that leg's `underlying` — the ledger has no
+>    per-candidate filter, so symbol is the closest real cross-reference the API exposes. This
+>    exposed a second, unrelated bug in `PnlShell` while fixing it: the Ledger and Equity-curve
+>    sections were rendering unconditionally regardless of `tab`, making the tab bar (and this new
+>    link's tab switch) inert. Fixed to gate each section on `tab === "ledger"` / `"equity"`,
+>    matching `PortfolioShell`'s established convention (`SummaryPanel` alone stays mounted above
+>    the tab bar); no test previously covered `PnlShell`'s tab-gating, so none broke.
+> 3. **Weak test, Task 5.5:** the equity chart's "does not connect across a gap" test used a `gaps`
+>    date that did not align with any of its fixture's actual points, so the component's real
+>    gap-insertion logic (`nextIso`) never fired — the test only proved the always-false
+>    `connect-nulls` mirror attribute, not that a null point lands at the right spot. `EquityChart`
+>    now mirrors its computed series data onto `data-chart-points` (the same "mirror real props for
+>    tests" convention the file already used for `connectNulls`/`isAnimationActive`), and two new
+>    tests assert a real null point is inserted between its correct neighbours for an aligned gap,
+>    and that nothing extra is inserted when there are none.
+> 4. **Doc overclaim:** `STATUS.md`'s M5 entry claimed `Money`/`FreshnessLabel`/`DegradedNotice` were
+>    all "reused from `components/portfolio/`" — only `Money` ever was. Corrected to name only
+>    `Money`, note that `FreshnessLabel`/`DegradedNotice` are not used on this page, and record the
+>    best/worst-to-ledger link. `web/CLAUDE.md`'s pnl/ entry corrected to describe the real
+>    `PnlShell` tab-gating (was describing the pre-fix, always-mounted-equity behaviour) and the new
+>    link.
+>
+> One out-of-scope-but-legitimate change rode along in the original session's working tree and is
+> kept as-is rather than reverted: `tests/conftest.py` and `tests/test_api_portfolio_calendar.py`
+> gained `_et_today()` and rewired the `short_put`/`short_call`/`long_put` builders and the calendar
+> boundary assertions off it, fixing a genuine local-clock-vs-ET-clock midnight flake in M3/M4-era
+> tests (the calendar route's horizon gate runs on the ET exchange calendar; the old builders seeded
+> off the local clock, so any evening after 8pm ET or a non-ET test machine pushed a default-dte
+> position one day past the horizon and failed `days[0]`). It touches no M5 file and was verified
+> to not silently mask anything — see the standalone commit that carries it.
+>
+> **Final gate, run at HEAD after the three fix commits:** `python -m pytest -q` — **2175 passed**
+> (unchanged from the session that left the working tree — the fixes were web-only), `ruff check .`
+> clean, `mypy src` clean. `cd web && npx vitest run` — **337 passed, 42 files** (334 + 3 new: two
+> `EquityChart` gap-insertion tests, one `SummaryPanel` no-callback test), `npm run lint` clean,
+> `npm run build` clean (`/pnl` bundles at 109 kB, 219 kB first load). `docs/web/openapi.json` and
+> `web/lib/api-types.ts` reconfirmed to regenerate to an empty diff.
+
 ---
 
 ## Task 5.1 — `GET /pnl/ledger` and `GET /pnl/summary` `[SONNET]`
@@ -87,7 +148,7 @@ Required behaviours, each with a test:
   guarantee is checked at the boundary the client actually reads.
 - A non-owner gets `403` on both routes.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_a_mixed_book_summary_is_refused_not_totalled(client, seed_leg) -> None:
@@ -128,7 +189,7 @@ def test_filters_are_echoed_back(client) -> None:
     assert body["filters"]["book"] == "paper"
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5:** `docs/web/api.md`,
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: Gate. Step 5:** `docs/web/api.md`,
   documenting the `as_of` versus `marks_as_of` distinction explicitly. **Commit.**
 
 ---
@@ -167,7 +228,7 @@ Required behaviours, each with a test:
   `realized_pnl`. Its own test.
 - A non-owner gets `403`.
 
-- [ ] **Step 1: Write the failing tests. Step 2: Confirm failure. Step 3: Implement. Step 4:
+- [x] **Step 1: Write the failing tests. Step 2: Confirm failure. Step 3: Implement. Step 4:
   Gate. Step 5:** `docs/web/api.md`, **commit.**
 
 ---
@@ -237,7 +298,7 @@ Required behaviours, each with a test:
   forwarded. Its own test — the allowlist is the point, and a regression to a passthrough would
   pass every other test in this file.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_an_open_legs_net_pnl_cell_is_empty_not_zero(client, seed_leg) -> None:
@@ -275,12 +336,12 @@ it("does not forward headers outside the allowlist", async () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement both sides.**
+- [x] **Step 2: Confirm failure. Step 3: Implement both sides.**
 
-- [ ] **Step 4: Run all six gate commands.** The proxy has its own existing test file; every test
+- [x] **Step 4: Run all six gate commands.** The proxy has its own existing test file; every test
   in it must still pass.
 
-- [ ] **Step 5:** `docs/web/api.md` documents the CSV route. `web/CLAUDE.md`'s "API proxy" section
+- [x] **Step 5:** `docs/web/api.md` documents the CSV route. `web/CLAUDE.md`'s "API proxy" section
   gains the allowlist and why it is an allowlist. **Commit.**
 
 ---
@@ -308,7 +369,7 @@ Required behaviours, each with a test:
 - An empty ledger renders one line of text, no icon circle.
 - Every numeric column carries `.tabular`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 it("renders an open leg's realised cell as unknown, never as zero", () => {
@@ -328,7 +389,7 @@ it("states that no marks are available rather than showing zeros", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -359,7 +420,7 @@ price chart and is the wrong tool for a few dozen daily points.
    hover either.
 7. An empty curve renders one line of text, not an empty chart frame.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 it("does not connect across a gap", () => {
@@ -392,7 +453,7 @@ Recharts does not expose `connect-nulls` as a DOM attribute; add `data-*` attrib
 wrapper elements so these assertions read real props rather than Recharts internals, and say so in
 a comment.
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -417,7 +478,7 @@ Required behaviours, each with a test:
 - `best` and `worst` link to their legs in the ledger.
 - Empty renders one line of text.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 it("treats a mixed book as a choice to make, not as an error", () => {
@@ -435,7 +496,7 @@ it("renders an unknown win rate as unknown, not as zero percent", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
+- [x] **Step 2: Confirm failure. Step 3: Implement. Step 4: All six gate commands. Step 5: Commit.**
 
 ---
 
@@ -444,7 +505,7 @@ it("renders an unknown win rate as unknown, not as zero percent", () => {
 **Files:** Modify `src/api/routers/meta.py`, `tests/test_api_meta.py`, `docs/web/api.md`,
 `docs/web/openapi.json`, `web/lib/api-types.ts`, `web/CLAUDE.md`, `README.md`, `STATUS.md`.
 
-- [ ] **Step 1:** Flip the `pnl` section to `available: True` and drop its `"Arrives in P4"` note.
+- [x] **Step 1:** Flip the `pnl` section to `available: True` and drop its `"Arrives in P4"` note.
 
 ```python
 ("pnl", "P&L", True, None),
@@ -453,10 +514,10 @@ it("renders an unknown win rate as unknown, not as zero percent", () => {
 Update `tests/test_api_meta.py`. Both `portfolio` and `pnl` are now available; no section carries
 a note.
 
-- [ ] **Step 2:** Confirm every route from Tasks 5.1-5.3 is in `docs/web/api.md`, including the
+- [x] **Step 2:** Confirm every route from Tasks 5.1-5.3 is in `docs/web/api.md`, including the
   `as_of` versus `marks_as_of` distinction and the `mixed_book` refusal.
 
-- [ ] **Step 3:** Regenerate the schema artifacts and confirm the new routes and models appear in
+- [x] **Step 3:** Regenerate the schema artifacts and confirm the new routes and models appear in
   both:
 
 ```bash
@@ -465,31 +526,31 @@ print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
 cd web && npm run gen:api
 ```
 
-- [ ] **Step 4:** `web/CLAUDE.md`'s Layout section gains `app/pnl/` and `components/pnl/`, in the
+- [x] **Step 4:** `web/CLAUDE.md`'s Layout section gains `app/pnl/` and `components/pnl/`, in the
   same detail as the existing entries, naming every component and what each refuses to do.
   `README.md`'s layout table gains `web/app/pnl/` and `src/api/routers/pnl.py`.
 
-- [ ] **Step 5:** `STATUS.md` records P4's ledger, summary, equity curve and export as built, with
+- [x] **Step 5:** `STATUS.md` records P4's ledger, summary, equity curve and export as built, with
   the reconciliation-against-a-broker-statement caveat from M4 Task 4.7 still standing.
 
-- [ ] **Step 6:** Run all six gate commands and commit.
+- [x] **Step 6:** Run all six gate commands and commit.
 
 ---
 
 ## Milestone 5 acceptance
 
-- [ ] `/pnl` renders the ledger grouped by campaign, the summary breakdowns, and the equity curve.
-- [ ] **No unknown value on the page or in the CSV renders as a zero.** Proven for `net_pnl`,
+- [x] `/pnl` renders the ledger grouped by campaign, the summary breakdowns, and the equity curve.
+- [x] **No unknown value on the page or in the CSV renders as a zero.** Proven for `net_pnl`,
   `win_rate`, unrealised marks, and the CSV's empty cells.
-- [ ] A mixed paper-and-live total is refused at the API with `mixed_book` and rendered in the UI
+- [x] A mixed paper-and-live total is refused at the API with `mixed_book` and rendered in the UI
   as a book choice, never as a wrong number and never as an error.
-- [ ] The ledger's unrealised marks and the portfolio page's come from the same snapshot, proven by
+- [x] The ledger's unrealised marks and the portfolio page's come from the same snapshot, proven by
   a test comparing the two responses.
-- [ ] The equity curve renders gaps as gaps, does not animate, and labels `premium_cashflow` under
+- [x] The equity curve renders gaps as gaps, does not animate, and labels `premium_cashflow` under
   that name.
-- [ ] The CSV export downloads with a dated filename, and the proxy forwards exactly two response
+- [x] The CSV export downloads with a dated filename, and the proxy forwards exactly two response
   headers.
-- [ ] No route computes a P&L figure of its own; every number comes from `src/reporting/`.
-- [ ] The rail shows both Portfolio and P&L as available.
-- [ ] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff.
-- [ ] Full gate green, all six commands.
+- [x] No route computes a P&L figure of its own; every number comes from `src/reporting/`.
+- [x] The rail shows both Portfolio and P&L as available.
+- [x] `docs/web/openapi.json` and `web/lib/api-types.ts` regenerate to an empty diff.
+- [x] Full gate green, all six commands.
