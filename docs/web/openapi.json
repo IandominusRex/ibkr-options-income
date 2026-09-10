@@ -1585,6 +1585,76 @@
         }
       }
     },
+    "/pnl/system": {
+      "get": {
+        "summary": "Pnl System",
+        "description": "The score-vs-outcome evidence's human reader (P3-P4 M6 Task 6.1).\n\nReads behind the fence CLAUDE.md draws around `src/claude/eval/`: this is the one route in\nthe phase where that is the intended use, not a breach \u2014 `score_outcome_report`'s own notes\nalready say the weights must be re-derived by hand, and this route only renders them. It\ncalls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no\ncorrelation re-derived, no note filtered. `verdict_ledger` and `scoring_weights.yaml` are\nread-only from here \u2014 `tests/test_web_fence.py` (Task 6.3) asserts no module under `src/api/`\ncan write either.",
+        "operationId": "pnl_system_pnl_system_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemPerformanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/universe": {
       "get": {
         "tags": [
@@ -5738,6 +5808,106 @@
         ],
         "title": "RollAlertSummary"
       },
+      "ScoreBucket": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "win_rate": {
+            "type": "number",
+            "title": "Win Rate"
+          },
+          "mean_pnl": {
+            "type": "number",
+            "title": "Mean Pnl"
+          },
+          "total_pnl": {
+            "type": "number",
+            "title": "Total Pnl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "n",
+          "win_rate",
+          "mean_pnl",
+          "total_pnl"
+        ],
+        "title": "ScoreBucket",
+        "description": "Realized performance of the closed trades whose signal value fell in one band.\n\nUsed by the score-vs-outcome report (N22) to check whether a higher `blended_score` \u2014 or a\nhigher per-component score \u2014 actually corresponds to better realized P&L / win rate. If it\ndoesn't, the scoring weights are not earning their keep and should be re-derived from this\nevidence (human-edited config, per the fence)."
+      },
+      "ScoreOutcomeReport": {
+        "properties": {
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "blended_score_buckets": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreBucket"
+            },
+            "type": "array",
+            "title": "Blended Score Buckets"
+          },
+          "component_buckets": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreBucket"
+            },
+            "type": "array",
+            "title": "Component Buckets"
+          },
+          "signal_correlations": {
+            "items": {
+              "$ref": "#/components/schemas/SignalCorrelation"
+            },
+            "type": "array",
+            "title": "Signal Correlations"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_closed"
+        ],
+        "title": "ScoreOutcomeReport",
+        "description": "Score-vs-outcome evidence (N22): does the blended score / its components predict P&L?\n\nClosed trades only (executed + settled). Read-only analysis that informs whether\n`scoring_weights.yaml` should change \u2014 it never feeds the engine."
+      },
       "SearchHit": {
         "properties": {
           "as_of": {
@@ -6326,6 +6496,58 @@
         ],
         "title": "ShortPosition"
       },
+      "SignalCorrelation": {
+        "properties": {
+          "signal": {
+            "type": "string",
+            "title": "Signal"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "pearson_r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pearson R"
+          },
+          "low_half_mean_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Half Mean Pnl"
+          },
+          "high_half_mean_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Half Mean Pnl"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal",
+          "n"
+        ],
+        "title": "SignalCorrelation",
+        "description": "How one signal relates to realized P&L over closed trades.\n\n`pearson_r` is the linear correlation of the signal with realized P&L; the low/high split\ncontrasts mean P&L for the bottom vs top half of the signal's range \u2014 a coarse, robust\nread that doesn't assume linearity."
+      },
       "Source": {
         "type": "string",
         "enum": [
@@ -6521,6 +6743,53 @@
         ],
         "title": "SummaryOut",
         "description": "The AI narrative over computed values. Enrichment \u2014 influences nothing.\n\nEvery number the model used was passed in via ``ResearchContext``; the model never\ncalculates. ``caveats`` always carries the quantitative limit. ``model`` and\n``data_as_of`` make a stale summary visibly stale."
+      },
+      "SystemPerformanceResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ScoreOutcomeReport"
+          },
+          "agreement": {
+            "$ref": "#/components/schemas/VerdictAgreement"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "report",
+          "agreement"
+        ],
+        "title": "SystemPerformanceResponse",
+        "description": "The score-vs-outcome report plus verdict agreement \u2014 P3-P4 M6's fenced read (Task 6.1)."
       },
       "TechnicalStats": {
         "properties": {
@@ -6833,6 +7102,58 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VerdictAgreement": {
+        "properties": {
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "n_agreed": {
+            "type": "integer",
+            "title": "N Agreed"
+          },
+          "agreement_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agreement Rate"
+          },
+          "claude_win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claude Win Rate"
+          },
+          "baseline_win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Win Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n_closed",
+          "n_agreed"
+        ],
+        "title": "VerdictAgreement",
+        "description": "How often Claude's verdict matched the deterministic baseline, and how each did."
       },
       "VerdictOutcome": {
         "type": "string",

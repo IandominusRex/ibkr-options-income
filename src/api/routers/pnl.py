@@ -25,6 +25,12 @@ Shared conventions, set by Task 5.1:
 - **Filters are echoed back verbatim** on every response, so a client that
   sent `since` and got a full history can see its own bug.
 - Every route is `owner_only`.
+
+`GET /pnl/system` (P3-P4 M6 Task 6.1) is the one exception to "no route computes a figure of
+its own": it reads behind the `src/claude/eval/` fence, returning `score_outcome_report`'s
+score-vs-outcome evidence and a Claude-vs-baseline agreement figure computed here from the
+ledger. This is the fence's intended use, not a breach — see the route's own docstring and
+`docs/web/api.md`.
 """
 
 from __future__ import annotations
@@ -41,14 +47,24 @@ from fastapi.responses import Response
 
 from src.api.deps import OwnerUser, TradingDb
 from src.api.models.common import as_utc_opt
-from src.api.models.pnl import EquityResponse, LedgerFilters, LedgerResponse, SummaryResponse
+from src.api.models.pnl import (
+    EquityResponse,
+    LedgerFilters,
+    LedgerResponse,
+    SummaryResponse,
+    SystemPerformanceResponse,
+    VerdictAgreement,
+)
 from src.api.portfolio_source import read_portfolio
+from src.claude.eval.ledger import load_records
+from src.claude.eval.score_metrics import score_outcome_report
 from src.common.schemas import (
     CampaignPnl,
     EquityCurve,
     PnlLeg,
     PnlSummary,
     PortfolioSnapshot,
+    VerdictRecord,
 )
 from src.reporting.pnl import build_campaigns, build_legs, build_summary, equity_curve
 
@@ -359,4 +375,61 @@ def pnl_ledger_csv(
         content=body,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _win_rate(records: list[VerdictRecord]) -> float | None:
+    """Fraction of records with positive realized P&L. None with nothing to rate — never 0.0."""
+    if not records:
+        return None
+    wins = sum(1 for r in records if (r.realized_pnl or 0.0) > 0)
+    return round(wins / len(records), 4)
+
+
+def _verdict_agreement(*, since: date | None, until: date | None) -> VerdictAgreement:
+    """Claude-vs-baseline agreement over the same closed, since/until-windowed population
+    the report windows by outcome_date. Reads the `agreement` flag scan.py already computed
+    on each ledger row at scan time — never recomputed here.
+    """
+    records = load_records(closed_only=True)
+    if since is not None:
+        records = [r for r in records if r.outcome_date and r.outcome_date >= since]
+    if until is not None:
+        records = [r for r in records if r.outcome_date and r.outcome_date <= until]
+    if not records:
+        return VerdictAgreement(n_closed=0, n_agreed=0)
+    n_agreed = sum(1 for r in records if r.agreement)
+    return VerdictAgreement(
+        n_closed=len(records),
+        n_agreed=n_agreed,
+        agreement_rate=round(n_agreed / len(records), 4),
+        claude_win_rate=_win_rate([r for r in records if r.claude_recommendation == "sell"]),
+        baseline_win_rate=_win_rate([r for r in records if r.baseline_recommendation == "sell"]),
+    )
+
+
+@router.get("/system", response_model=SystemPerformanceResponse)
+def pnl_system(
+    user: OwnerUser,  # noqa: ARG001
+    since: date | None = None,
+    until: date | None = None,
+) -> SystemPerformanceResponse:
+    """The score-vs-outcome evidence's human reader (P3-P4 M6 Task 6.1).
+
+    Reads behind the fence CLAUDE.md draws around `src/claude/eval/`: this is the one route in
+    the phase where that is the intended use, not a breach — `score_outcome_report`'s own notes
+    already say the weights must be re-derived by hand, and this route only renders them. It
+    calls `score_outcome_report` and returns exactly what it gets: no bucket recomputed, no
+    correlation re-derived, no note filtered. `verdict_ledger` and `scoring_weights.yaml` are
+    read-only from here — `tests/test_web_fence.py` (Task 6.3) asserts no module under `src/api/`
+    can write either.
+    """
+    report = score_outcome_report(since=since, until=until)
+    agreement = _verdict_agreement(since=since, until=until)
+    return SystemPerformanceResponse(
+        as_of=datetime.now(UTC),
+        report=report,
+        agreement=agreement,
+        since=since,
+        until=until,
     )

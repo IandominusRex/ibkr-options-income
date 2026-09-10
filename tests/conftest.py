@@ -758,6 +758,72 @@ def seed_wheel_ledger(seed_leg):
     return _seed
 
 
+@pytest.fixture()
+def seed_closed_ledger_rows(client):  # noqa: ARG001 - binds storage engine to the client's DB
+    """Write `n` closed verdict-ledger rows spanning the blended-score bands (P3-P4 M6 Task 6.1).
+
+    Alternates win/loss and sell/skip so the report's buckets, correlations, and the route's
+    agreement figure all have real spread. `offset_days` sets how many days ago `outcome_date`
+    falls, and namespaces candidate_id, so a test can call this twice to build two date cohorts
+    for a since/until window test without the second call's upsert clobbering the first.
+    """
+
+    def _seed(*, n: int = 10, offset_days: int = 1) -> None:
+        from src.claude.eval.ledger import record_verdicts
+        from src.common.schemas import OptionRight, Strategy, VerdictOutcome, VerdictRecord
+
+        records = []
+        for i in range(n):
+            win = i % 2 == 0
+            score = 55.0 + (i % 5) * 10.0
+            records.append(
+                VerdictRecord(
+                    candidate_id=f"score-{offset_days}-{i}",
+                    run_id="run-score",
+                    scan_date=date.today() - timedelta(days=offset_days + 30),
+                    underlying="NVDA",
+                    strategy=Strategy.CASH_SECURED_PUT,
+                    right=OptionRight.PUT,
+                    strike=170.0,
+                    expiry=date.today() - timedelta(days=offset_days),
+                    dte=30,
+                    signals={
+                        "blended_score": score,
+                        "iv_rank": 50.0 + i,
+                        "delta": 0.25,
+                        "vrp": 3.0,
+                        "prob_otm": 0.7,
+                        "roc_pct": 2.0,
+                        "scores": {
+                            "iv": score,
+                            "technical": score - 5,
+                            "fundamental": score - 10,
+                            "liquidity": score + 5,
+                            "assignment_safety": score,
+                            "sentiment": score - 2,
+                        },
+                    },
+                    claude_recommendation="sell" if win else "skip",
+                    claude_priority=1,
+                    claude_confidence=0.7,
+                    claude_rationale="because",
+                    baseline_recommendation="sell",
+                    baseline_rank=1,
+                    baseline_score=score,
+                    agreement=win,
+                    outcome=(
+                        VerdictOutcome.EXPIRED_WORTHLESS if win else VerdictOutcome.ASSIGNED
+                    ),
+                    outcome_date=date.today() - timedelta(days=offset_days),
+                    realized_pnl=150.0 if win else -50.0,
+                    filled=True,
+                )
+            )
+        record_verdicts(records)
+
+    return _seed
+
+
 # ---------------------------------------------------------------------------
 # API + storage on one file (P3-P4 M5). The M4 `db` fixture points the storage
 # engine at `tmp_path/t.db` while the `client` fixture's API reads

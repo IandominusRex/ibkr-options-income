@@ -1101,3 +1101,30 @@ zero where the value was unknown is the same lie as `$0.00` on the page, and har
 spot. The web proxy (`web/app/api/[...path]/route.ts`) forwards exactly two response
 headers, `Content-Type` and `Content-Disposition`, per its explicit allowlist — a CSV
 download keeps its dated filename, and nothing about the upstream server leaks.
+
+### `GET /pnl/system` (P4 Milestone 6)
+
+The score-vs-outcome evidence's human reader — the one P&L route that reads behind the
+`src/claude/eval/` fence, and the reason is written down here because `CLAUDE.md` requires
+it: everything `eval/` produces "is read by a human, never auto-applied," and a browser page
+is exactly that human reader, a better one than `scripts/evaluate_scores.py`. Nothing here
+closes the loop — the route is a `GET`, the API's only writable table is `app_commands`, and
+no command kind touches a scoring weight (`tests/test_web_fence.py`, Task 6.3).
+
+The route calls `score_outcome_report(since=since, until=until)` and returns exactly what it
+gets — no bucket recomputed, no correlation re-derived, no note filtered or truncated. Its
+own `notes` carry, verbatim, "Read-only: re-derive `scoring_weights.yaml` from this evidence
+by hand (the fence forbids any automatic feedback into the engine)" — the most important
+sentence on the page, and not the UI's to paraphrase.
+
+**Response — `SystemPerformanceResponse`:** `{ as_of, report: ScoreOutcomeReport, agreement: VerdictAgreement, since, until }`.
+`ScoreOutcomeReport`: `{ n_closed, period_start, period_end, blended_score_buckets: ScoreBucket[], component_buckets: ScoreBucket[], signal_correlations: SignalCorrelation[], notes: string[] }`.
+`ScoreBucket`: `{ label, n, win_rate, mean_pnl, total_pnl }`. `SignalCorrelation`: `{ signal, n, pearson_r, low_half_mean_pnl, high_half_mean_pnl }`.
+`VerdictAgreement`: `{ n_closed, n_agreed, agreement_rate, claude_win_rate, baseline_win_rate }`.
+
+`agreement` is computed here, beside the report, from
+`src/claude/eval/ledger.py::load_records(closed_only=True)`, windowed by the same
+`since`/`until` on `outcome_date` the report uses — `agreement_rate` is `null` with zero
+closed rows in the window, never `0.0`, matching every other rate in this phase. With no
+closed trades, the response is the report's own empty case (`n_closed: 0` plus its own
+"nothing to correlate yet" note) — never a `404` or a hand-written empty message. Owner-only.
