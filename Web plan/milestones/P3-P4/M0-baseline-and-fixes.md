@@ -1,13 +1,42 @@
 # Milestone 0 — Baseline and pre-existing defects
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or
-> superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
+> superpowers:executing-plans. Steps use checkbox (`- [x]`) syntax.
 
 **Goal:** Fix the things P3 and P4 would otherwise be built on top of, and start the phase from a
 tree whose state is known.
 
 **Spec:** `Web plan/P3-P4-design.md`. **Index:** `Web plan/P3-P4-IMPLEMENTATION-PLAN.md`.
 **Depends on:** nothing. **Blocks:** everything.
+
+> **EXECUTED — all ten tasks (0.1–0.10), committed to `main` 2026-09-09, ten commits:** `3ef1026`
+> (Task 0.1 baseline decision), `919af6b` (0.2 idempotent EOD), `5f43f89` (0.3 one assignment-risk
+> predicate), `4e5ea77` (0.4 campaign gross/net pin), `6d9cd96` (0.5 openapi freshness test),
+> `79ee64c` (0.6 refresh runbook fix), `bd8c9ac` (0.7 P2 deferred-findings cleanup), `965a7b7` +
+> `67ecd3d` (0.8 proxy fails soft, plus a mid-response follow-up fix), `55b5ec1` (0.9 one `as_utc`),
+> `faa135f` + `e57e8c0` (0.10 fence consolidation, plus a second duplicate-pair/glob hole found in
+> `eval_skills` while doing it), `6f15e36` (final-review doc fixes: `STATUS.md`, a stale threshold
+> docstring, an M2 plan note, the shorts API doc).
+>
+> **This file's own checkboxes were left unticked when the work landed** — the tasks were executed
+> individually across that session rather than closed out as a milestone, and M6 Task 6.4 later
+> found the gap and deliberately left it alone (M6's own doc step named "all six milestone files",
+> M1–M6, and M0 predates that count — see `P3-P4-IMPLEMENTATION-PLAN.md`'s "Every ruling made along
+> the way" item 6). **Closed out here, 2026-09-11**, by verifying each task's deliverable against
+> the tree rather than re-asserting the commit log: `src/common/assignment_risk.py`,
+> `tests/test_eod_idempotency.py`, `tests/test_assignment_risk.py`,
+> `tests/test_campaign_rollup_semantics.py` and `tests/test_openapi_current.py` all exist and pass;
+> `src/api/routers/options.py` imports `is_assignment_risk`/`assignment_risk_thresholds` rather than
+> hardcoding a threshold; no `def _as_utc` remains anywhere under `src/api/`;
+> `tests/test_web_fence.py` has one copy of the checks-engine test and every directory walk in the
+> file uses `rglob`; the BFF proxy returns JSON `502`/`504` and the missing-`API_TOKEN` `500` is
+> unchanged (`web/app/api/[...path]/route.ts`); `docs/web/commands.md`'s `refresh` section describes
+> the real handler; `src/storage/universe_overrides.py` carries no dead logger; `CampaignRow` and
+> `_rollup` both document `net_premium` as gross of commissions. Final gate, re-run 2026-09-11:
+> `python -m pytest -q` — **2187 passed**; `ruff check .` — clean; `mypy src` — clean (163 source
+> files); `cd web && npx vitest run` — **347 passed (43 files)**; `npm run lint` — clean; `npm run
+> build` — clean, all routes compile. Identical to M6's own recorded final-gate numbers, confirming
+> nothing has drifted since.
 
 **Why this milestone exists.** Writing the P3/P4 design meant reading the code the design sits on,
 then auditing what P0, P1 and P2 actually shipped. That turned up nine defects that predate this
@@ -119,7 +148,7 @@ it overlaps.
 
 **Files:** none. This is a checkpoint.
 
-- [ ] **Step 1: Re-measure.** The numbers above were taken on 2026-09-09 and the tree has moved
+- [x] **Step 1: Re-measure.** The numbers above were taken on 2026-09-09 and the tree has moved
   since if anyone has worked in it. Run all six and record what you actually get:
 
 ```bash
@@ -129,7 +158,7 @@ mypy src
 cd web && npx vitest run && npm run lint && npm run build
 ```
 
-- [ ] **Step 2: Report the tree state to the operator and stop.** List what is modified and
+- [x] **Step 2: Report the tree state to the operator and stop.** List what is modified and
   untracked, and say plainly that the web-proxy changes look like a deliberate bug fix (the query
   string and the `204` handling), not stray edits. **Do not commit it, do not stash it, and do not
   revert it** — it is somebody's in-flight work and an agent cannot know its intent. Ask which of
@@ -144,12 +173,12 @@ cd web && npx vitest run && npm run lint && npm run build
   revert the query-string fix, and that whoever runs 0.8 must re-read the file rather than working
   from this plan's quoted version of it.
 
-- [ ] **Step 3: Only after the operator answers**, record the decision and the six gate numbers at
+- [x] **Step 3: Only after the operator answers**, record the decision and the six gate numbers at
   the top of this file under a "Baseline as executed" heading, with the date. Every later
   milestone compares against these numbers, so a milestone that reports "the suite still passes"
   has something concrete to have passed against.
 
-- [ ] **Step 4:** No commit. This task produces a recorded decision, not a change.
+- [x] **Step 4:** No commit. This task produces a recorded decision, not a change.
 
 ---
 
@@ -218,7 +247,7 @@ Required behaviours, each with a test:
 - A different date creates a second row.
 - `created_at` is unchanged by the second write; `payload` and `narrative` are replaced.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """A repeated EOD run must not silently skip reconciliation and tomorrow's baseline."""
@@ -284,21 +313,21 @@ Build `an_eod_summary` and `eod_env` as fixtures. Grep `tests/` for existing EOD
 `tests/test_phase6.py` and whichever file already exercises `run_eod` will have most of what you
 need, and a second EOD harness is how the two end up disagreeing.
 
-- [ ] **Step 2: Run the tests and confirm they fail.** The first should fail with `IntegrityError`,
+- [x] **Step 2: Run the tests and confirm they fail.** The first should fail with `IntegrityError`,
   which is the defect reproducing. If it fails some other way, you have not reproduced it.
 
-- [ ] **Step 3: Implement the upsert.**
+- [x] **Step 3: Implement the upsert.**
 
-- [ ] **Step 4: Run the FULL suite.** This modifies the EOD orchestrator, which the reconciler,
+- [x] **Step 4: Run the FULL suite.** This modifies the EOD orchestrator, which the reconciler,
   assignment detection and the Telegram EOD report all run through. The count must go up by the
   number of tests you added and nothing may fail.
 
-- [ ] **Step 5: Docs.** `ARCHITECTURE.md`'s `src/orchestrator/` section notes that the EOD run is
+- [x] **Step 5: Docs.** `ARCHITECTURE.md`'s `src/orchestrator/` section notes that the EOD run is
   idempotent and why (a repeat must not lose reconciliation or tomorrow's baseline).
   `SETUP.md`'s troubleshooting table gains a row: re-running `python -m scripts.run_eod` for a day
   that already has a journal entry replaces it rather than failing.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src/orchestrator/eod_report.py tests/test_eod_idempotency.py ARCHITECTURE.md SETUP.md
@@ -388,7 +417,7 @@ Required behaviours, each with a test:
   position, and `None` otherwise.
 - **The API and the monitor agree**, asserted over a matrix of (delta, dte) pairs.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """One definition. Before this file, /options/shorts and the monitor disagreed by 14 days."""
@@ -440,19 +469,19 @@ def test_the_api_and_the_monitor_agree(client, seed_short_position) -> None:
         assert expected == _risk(-1.0, delta, dte)
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail.**
+- [x] **Step 2: Run the tests and confirm they fail.**
 
-- [ ] **Step 3: Implement**, then rewire both callers. **Delete the inline expression in
+- [x] **Step 3: Implement**, then rewire both callers. **Delete the inline expression in
   `src/api/routers/options.py` and its now-wrong comment.**
 
-- [ ] **Step 4: Run the FULL suite.** This modifies a trading process and changes an existing API
+- [x] **Step 4: Run the FULL suite.** This modifies a trading process and changes an existing API
   response.
 
-- [ ] **Step 5: Docs.** `README.md` layout table and `ARCHITECTURE.md` folder guide gain
+- [x] **Step 5: Docs.** `README.md` layout table and `ARCHITECTURE.md` folder guide gain
   `src/common/assignment_risk.py`. `ARCHITECTURE.md`'s `/options/shorts` description notes the flag
   now uses the monitor's configured thresholds, and that this widened what it reports.
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ---
 
@@ -487,7 +516,7 @@ that a future decision to net commissions is a deliberate one.
 **Files:** Modify `src/storage/campaigns.py`, `src/storage/models.py`, `ARCHITECTURE.md`,
 `docs/web/api.md`. Test `tests/test_campaign_rollup_semantics.py`.
 
-- [ ] **Step 1: Write the pinning test**
+- [x] **Step 1: Write the pinning test**
 
 ```python
 """campaigns.net_premium is GROSS of commissions. Pinned so it cannot drift silently.
@@ -526,26 +555,26 @@ def test_the_gross_and_net_figures_differ_by_exactly_the_commissions(db) -> None
     assert net_of_commissions == pytest.approx(199.35)
 ```
 
-- [ ] **Step 2: Run them.** They should **pass immediately** against the current code. That is
+- [x] **Step 2: Run them.** They should **pass immediately** against the current code. That is
   expected — this task pins existing behaviour rather than fixing it. If either fails, the rollup
   does something other than what this task documents, and that is a finding to report before going
   further.
 
-- [ ] **Step 3: Make the semantics explicit in the code.** `CampaignRow`'s docstring
+- [x] **Step 3: Make the semantics explicit in the code.** `CampaignRow`'s docstring
   (`src/storage/models.py:469`) currently says the fields let "the operator see cumulative income
   per symbol". Amend it to state plainly that `total_premium_collected`, `total_debit_paid` and
   `net_premium` are **gross of commissions**, that `FillRow.commission` is deliberately not
   subtracted, and that `src/reporting/` (from M4) reports the same trades net. Add the same
   sentence to `_rollup`'s own docstring.
 
-- [ ] **Step 4: Docs.** `ARCHITECTURE.md`'s `src/storage/` section records the gross/net
+- [x] **Step 4: Docs.** `ARCHITECTURE.md`'s `src/storage/` section records the gross/net
   distinction beside the `campaigns` entry. `docs/web/api.md`'s `/portfolio/campaigns` section
   (once M2 writes it) must say the same; if that section does not exist yet, note the obligation in
   M2's task rather than writing it early.
 
-- [ ] **Step 5: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
+- [x] **Step 5: Run the gate.** `python -m pytest -q` · `ruff check .` · `mypy src`
 
-- [ ] **Step 6: Commit.**
+- [x] **Step 6: Commit.**
 
 ```bash
 git add src/storage/campaigns.py src/storage/models.py \
@@ -605,7 +634,7 @@ def test_the_checked_in_openapi_matches_the_live_app() -> None:
    couple the Python suite to the Node toolchain. The milestone acceptance still requires
    regenerating it.
 
-- [ ] **Step 1: Write the test.**
+- [x] **Step 1: Write the test.**
 
 ```python
 """A generated artifact that drifts is worse than no artifact: the frontend reads it."""
@@ -630,11 +659,11 @@ def test_the_checked_in_openapi_matches_the_live_app() -> None:
     assert live == disk, f"docs/web/openapi.json is stale. Regenerate:\n  {REGEN}"
 ```
 
-- [ ] **Step 2: Run it and confirm it FAILS**, naming the two universe route descriptions. If it
+- [x] **Step 2: Run it and confirm it FAILS**, naming the two universe route descriptions. If it
   passes, someone regenerated the file between this plan being written and you running it — say so
   and move on.
 
-- [ ] **Step 3: Regenerate both artifacts.**
+- [x] **Step 3: Regenerate both artifacts.**
 
 ```bash
 python -c "import json; from src.api.main import create_app; \
@@ -642,10 +671,10 @@ print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
 cd web && npm run gen:api
 ```
 
-- [ ] **Step 4: Run the test again** and confirm it passes. Then run all six gate commands —
+- [x] **Step 4: Run the test again** and confirm it passes. Then run all six gate commands —
   `web/lib/api-types.ts` may have changed, so the frontend build must be re-run.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ---
 
@@ -667,12 +696,12 @@ trigger a scan. `STATUS.md`'s P2 row already flags the unregistered handler.
 layer that can move money". A runbook entry that describes a feature that does not exist is worse
 than a missing one.
 
-- [ ] **Step 1:** Rewrite the `refresh` section to describe **what is true today**: the kind is
+- [x] **Step 1:** Rewrite the `refresh` section to describe **what is true today**: the kind is
   accepted by `POST /commands`, carries an empty payload and no dedupe key, and **has no registered
   handler**, so a submitted `refresh` stays `pending` indefinitely. Say that M1 of the P3/P4 phase
   registers it.
 
-- [ ] **Step 2:** Check the rest of the file the same way rather than assuming only `refresh` is
+- [x] **Step 2:** Check the rest of the file the same way rather than assuming only `refresh` is
   wrong. For each documented kind, confirm a `@register("<kind>")` exists in
   `src/notify/command_drain.py`:
 
@@ -684,7 +713,7 @@ grep -oE '^### `[a-z_]+`' docs/web/commands.md | sort
 Report any other mismatch rather than silently fixing it — a second undocumented or unimplemented
 kind is a finding, not a typo.
 
-- [ ] **Step 3:** Run the full gate (documentation changes still get the gate run; a stray edit to
+- [x] **Step 3:** Run the full gate (documentation changes still get the gate run; a stray edit to
   a fenced code block can break nothing, and confirming that costs a minute) and commit.
 
 ---
@@ -701,12 +730,12 @@ when the log was written.
 **Files:** Modify `src/storage/universe_overrides.py`, `src/orchestrator/eod_report.py`,
 `tests/test_universe_consumers.py`, `web/CLAUDE.md`.
 
-- [ ] **Step 1: Dead logger.** `src/storage/universe_overrides.py` defines
+- [x] **Step 1: Dead logger.** `src/storage/universe_overrides.py` defines
   `log = logging.getLogger(__name__)` at line 17 and never uses it — `grep -c "log\." ` returns 0.
   Ruff does not flag it because the name is assigned. Remove both the assignment and the
   `import logging` at line 10.
 
-- [ ] **Step 2: Unused, untyped parameter.** `src/orchestrator/eod_report.py:105`:
+- [x] **Step 2: Unused, untyped parameter.** `src/orchestrator/eod_report.py:105`:
 
 ```python
 def _universe_symbols(cfg) -> list[str]:
@@ -718,19 +747,19 @@ def _universe_symbols(cfg) -> list[str]:
 annotation, which `CLAUDE.md`'s "type-hint everything" forbids. Drop the parameter and update both
 call sites (lines 334 and 343).
 
-- [ ] **Step 3: Redundant fixture.** `tests/test_universe_consumers.py` has a local autouse
+- [x] **Step 3: Redundant fixture.** `tests/test_universe_consumers.py` has a local autouse
   cache-reset fixture made redundant by the global one M7 Task 7.3 added to `tests/conftest.py`.
   Remove the local one and confirm the file still passes — if it does not, the global fixture does
   not cover this case and the local one stays, which is a finding to record.
 
-- [ ] **Step 4: Doc over-attribution.** `web/CLAUDE.md`'s `components/universe/` bullet attributes
+- [x] **Step 4: Doc over-attribution.** `web/CLAUDE.md`'s `components/universe/` bullet attributes
   `submitUniverseCommand` and `CommandReceipt` behaviour to `OverrideBadge`, which is purely
   presentational. Correct the attribution to `AddSymbol` and `UniverseList`.
 
-- [ ] **Step 5:** Run all six gate commands. The Python count must be unchanged except for any test
+- [x] **Step 5:** Run all six gate commands. The Python count must be unchanged except for any test
   removed in Step 3, and nothing may fail.
 
-- [ ] **Step 6:** Commit as one change with a message naming it as P2 deferred-findings cleanup.
+- [x] **Step 6:** Commit as one change with a message naming it as P2 deferred-findings cleanup.
 
 ---
 
@@ -800,7 +829,7 @@ Required behaviours, each with a test:
   one.
 - The missing-`API_TOKEN` `500` from P2 still fires and is unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 it("returns a JSON 502 when the API cannot be reached", async () => {
@@ -831,14 +860,14 @@ it("leaves a successful response untouched", async () => {
 
 Use fake timers for the timeout test rather than waiting 30 seconds.
 
-- [ ] **Step 2: Run and confirm failure.**
+- [x] **Step 2: Run and confirm failure.**
 
-- [ ] **Step 3: Implement** with `AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)` and a `try`/`catch`
+- [x] **Step 3: Implement** with `AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)` and a `try`/`catch`
   distinguishing an abort from a connection error.
 
-- [ ] **Step 4:** Run all six gate commands. Every pre-existing proxy test must still pass.
+- [x] **Step 4:** Run all six gate commands. Every pre-existing proxy test must still pass.
 
-- [ ] **Step 5:** `web/CLAUDE.md`'s "API proxy" section gains the failure contract: `502`
+- [x] **Step 5:** `web/CLAUDE.md`'s "API proxy" section gains the failure contract: `502`
   unreachable, `504` timeout, JSON `detail` in both, never markup. Commit.
 
 ---
@@ -899,10 +928,10 @@ Required behaviours, each with a test:
 - **`tests/test_api_provenance.py` passes unchanged.** The existing tests are the regression net.
 - No module under `src/api/` defines a local `_as_utc` any more, asserted by grep in the test.
 
-- [ ] **Step 1: Record the baseline.** `python -m pytest tests/test_api_provenance.py -q` and note
+- [x] **Step 1: Record the baseline.** `python -m pytest tests/test_api_provenance.py -q` and note
   the count. It must be identical afterwards.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```python
 def test_no_module_defines_its_own_as_utc() -> None:
@@ -923,7 +952,7 @@ def test_the_optional_variant_passes_none_through() -> None:
     assert as_utc_opt(None) is None
 ```
 
-- [ ] **Step 3: Confirm failure. Step 4: Implement and rewire. Step 5:** Re-run the provenance
+- [x] **Step 3: Confirm failure. Step 4: Implement and rewire. Step 5:** Re-run the provenance
   baseline; the count must match. **Step 6:** Run the gate and commit.
 
 ---
@@ -949,53 +978,53 @@ in the file whose entire job is catching this class of mistake.
 
 **Files:** Modify `tests/test_web_fence.py`.
 
-- [ ] **Step 1: Prove the gap before closing it.** Create a throwaway
+- [x] **Step 1: Prove the gap before closing it.** Create a throwaway
   `src/research/checks/_fence_probe/leak.py` containing the line
   `from src.research.summary import service`, run the two checks tests, and confirm **both pass** —
   demonstrating the fence does not see it. Delete the probe file immediately afterwards. Record the
   result in the task notes; do not commit the probe.
 
-- [ ] **Step 2: Delete the duplicate.** Keep the line-41 version, which has the better docstring and
+- [x] **Step 2: Delete the duplicate.** Keep the line-41 version, which has the better docstring and
   the `checks_dir.is_dir()` assertion that stops the test passing vacuously if the package is ever
   renamed. Delete the line-84 version.
 
-- [ ] **Step 3: Switch every directory walk in the file to `rglob`.** Check each test, not just the
+- [x] **Step 3: Switch every directory walk in the file to `rglob`.** Check each test, not just the
   two: any `glob("*.py")` over a package directory has the same hole.
 
-- [ ] **Step 4: Re-run the probe from Step 1** and confirm the fence now **fails**. Delete the probe
+- [x] **Step 4: Re-run the probe from Step 1** and confirm the fence now **fails**. Delete the probe
   again. This is the only evidence that the change did anything.
 
-- [ ] **Step 5:** Run the full suite. The count drops by exactly one (the deleted duplicate) and
+- [x] **Step 5:** Run the full suite. The count drops by exactly one (the deleted duplicate) and
   nothing else changes. **A drop of more than one means `rglob` caught a real violation** — stop and
   report it rather than reverting to `glob`.
 
-- [ ] **Step 6:** Run the gate and commit.
+- [x] **Step 6:** Run the gate and commit.
 
 ---
 
 ## Milestone 0 acceptance
 
-- [ ] The six gate numbers are recorded at the top of this file under "Baseline as executed", with
+- [x] The six gate numbers are recorded at the top of this file under "Baseline as executed", with
   a date, and the operator has ruled on the in-flight working-tree changes.
-- [ ] A repeated EOD run for the same ET day leaves one journal row and **still runs the reconciler
+- [x] A repeated EOD run for the same ET day leaves one journal row and **still runs the reconciler
   and `save_position_snapshot`**, proven by a test that asserts those two were called on the second
   run.
-- [ ] One definition of assignment risk exists in `src/common/assignment_risk.py`, used by both the
+- [x] One definition of assignment risk exists in `src/common/assignment_risk.py`, used by both the
   monitor and the API, reading thresholds from config in both.
-- [ ] `/options/shorts` now flags a 10-DTE, 0.75-delta short as at risk where it previously did
+- [x] `/options/shorts` now flags a 10-DTE, 0.75-delta short as at risk where it previously did
   not, and the false comment claiming 7 DTE was "the monitor's default" is gone.
-- [ ] `campaigns.net_premium` is documented as gross of commissions, in the model docstring, in
+- [x] `campaigns.net_premium` is documented as gross of commissions, in the model docstring, in
   `_rollup`'s docstring, and in `ARCHITECTURE.md`, with a test pinning it.
-- [ ] `tests/test_openapi_current.py` passes, and it failed before the artifacts were regenerated.
-- [ ] `docs/web/commands.md`'s `refresh` section describes what is true today, and every other
+- [x] `tests/test_openapi_current.py` passes, and it failed before the artifacts were regenerated.
+- [x] `docs/web/commands.md`'s `refresh` section describes what is true today, and every other
   documented kind has been checked against `@register` in `command_drain.py`.
-- [ ] P2's four open deferred findings are closed.
-- [ ] The BFF proxy returns a JSON `502` when the API is unreachable and a `504` when it times out,
+- [x] P2's four open deferred findings are closed.
+- [x] The BFF proxy returns a JSON `502` when the API is unreachable and a `504` when it times out,
   and neither body leaks the upstream URL or the token. A successful response is unchanged.
-- [ ] Exactly one `as_utc` implementation exists under `src/api/`, asserted by a test, and
+- [x] Exactly one `as_utc` implementation exists under `src/api/`, asserted by a test, and
   `tests/test_api_provenance.py` passes unchanged.
-- [ ] `tests/test_web_fence.py` has no duplicated test and walks packages recursively, **proven by
+- [x] `tests/test_web_fence.py` has no duplicated test and walks packages recursively, **proven by
   a probe file that passed the fence before the change and fails it after**.
-- [ ] Full gate green, all six commands, with the Python count up by the tests this milestone added
+- [x] Full gate green, all six commands, with the Python count up by the tests this milestone added
   and down by exactly two removals: the redundant fixture in Task 0.7 and the duplicated fence test
   in Task 0.10.

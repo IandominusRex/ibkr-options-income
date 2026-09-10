@@ -472,11 +472,15 @@ escalated past it).
    the duration of this work and was left alone rather than restarted. The output is identical
    either way, since both paths feed the same JSON into the same generator; documented here so
    a future `git blame` on `api-types.ts` doesn't wonder why `gen:api` wasn't run literally.
-6. M0's (`M0-baseline-and-fixes.md`) own checkboxes are still unticked (0 of ~60) despite the
-   milestone plainly being shipped (M1 already depends on it and is itself fully built). Left
-   untouched: the milestone's own file list for this task names "all six milestone files"
-   (M1-M6), and M0 predates that count. Recorded here as a deferred finding rather than fixed
-   silently or ignored silently.
+6. M0's (`M0-baseline-and-fixes.md`) own checkboxes were still unticked (0 of ~60) at this pass's
+   close, despite the milestone plainly being shipped (M1 already depended on it and was itself
+   fully built). Left untouched here: the milestone's own file list for this task names "all six
+   milestone files" (M1-M6), and M0 predates that count. Recorded as a deferred finding rather
+   than fixed silently or ignored silently. **Closed out 2026-09-11**, in a follow-up pass: every
+   task's deliverable re-verified against the tree (not re-asserted from the commit log), all 62
+   step checkboxes and the milestone's acceptance list ticked, and an EXECUTED summary added to
+   the top of the file in the same style M1-M6 already carry — see
+   `milestones/P3-P4/M0-baseline-and-fixes.md`'s own header note for the detail.
 7. The `ScoreBucketTable`/`CorrelationTable` "small sample" and n/a rendering rules apply
    per-bucket/per-signal, not to the whole panel — a report can show one small-sample band
    beside several well-populated ones, and the UI says so band by band rather than flagging the
@@ -526,3 +530,11 @@ Task 6.1/6.2's own regeneration. `STATUS.md` records P3 and P4 as built, names f
 items, and states the broker-reconciliation caveat plainly. Every milestone file's checkboxes
 (M1-M6) reflect what actually landed; M0's pre-existing gap is recorded above, not silently
 fixed. Full gate green, all six commands, numbers recorded above.
+
+**M0's gap, closed 2026-09-11 (same day, follow-up pass):** every task's deliverable in
+`milestones/P3-P4/M0-baseline-and-fixes.md` was re-verified against the tree, all step and
+acceptance checkboxes ticked, and an EXECUTED summary added naming the ten landing commits — see
+item 6 above and the milestone file itself. Full gate re-run at that point and unchanged from the
+numbers recorded above (`pytest` 2187, `vitest` 347/43, `ruff`/`mypy`/`lint`/`build` all clean),
+confirming no drift between the two passes. Every milestone file in P3-P4, M0 through M6, now
+reflects what actually landed.
