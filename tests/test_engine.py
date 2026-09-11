@@ -448,12 +448,11 @@ class TestValidateCandidates:
     # --- Cumulative / portfolio-aware enforcement (S2) ---
 
     def test_cumulative_concentration_across_same_ticker(self) -> None:
-        # D1: max_ticker_risk = 5% of 100k = 5,000 RISK UNITS. Three AAPL CSPs, each
-        # $10,000 collateral at 80% IV / 28 DTE ~= 2,216 risk units (10000 * 0.80 *
-        # sqrt(28/365)): the first two fit (2,216, then a cumulative 4,432 <= 5,000) and
-        # are charged; the third sees a cumulative ~6,648 > 5,000 and is rejected
-        # (charge() only runs on PASS, so a rejected candidate never raises the running
-        # tally further).
+        # Two-pass design (2026-09-11): identical-score candidates for the same
+        # (underlying, strategy) are deduped to a single representative BEFORE the
+        # cumulative budget is ever checked, so only one of the three ever reaches it —
+        # and it fits comfortably (one candidate's ~2,216 risk units vs the 5,000 cap).
+        # The other two are rejected pre-gate, not by the budget.
         cands = [
             _candidate(
                 candidate_id=f"c{i}",
@@ -466,10 +465,10 @@ class TestValidateCandidates:
         ]
         verdicts = validate_candidates(cands, _account(net_liquidation=100_000.0), [])
         passed = [v for v in verdicts if v.verdict == Verdict.PASS]
-        assert len(passed) == 2
-        assert all(
-            "concentration_limit" in v.reasons for v in verdicts if v.verdict == Verdict.REJECT
-        )
+        assert len(passed) == 1
+        rejected = [v for v in verdicts if v.verdict == Verdict.REJECT]
+        assert len(rejected) == 2
+        assert all(v.reasons == ["dedupe_pre_gate"] for v in rejected)
 
     def test_cumulative_buying_power_buffer(self) -> None:
         # D1 + Task 9: deployable cash = excess_liquidity(16,000) minus the reserve. Task 9
@@ -681,10 +680,12 @@ class TestConcentrationInRiskUnits:
         assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
 
     def test_gate_rejects_a_cheap_high_vol_name_that_is_large_in_risk_units(self) -> None:
-        """MARA at 110% IV must be charged for its volatility, not just its collateral."""
+        """MARA at 110% IV must be charged for its volatility, not just its collateral.
+        With 10 contracts (the max) at strike 70, collateral is $70k at 110% IV / 21 DTE
+        ~= $18.4k risk units, past the $15k cap."""
         cand = _csp_candidate(
-            underlying="MARA", strike=15.0, contracts=40, current_iv=110.0, dte=21
-        )  # $60k collateral, ~$15.8k risk units vs a $15k cap
+            underlying="MARA", strike=70.0, contracts=10, current_iv=110.0, dte=21
+        )
         account = _account(net_liq=300_000.0, cash=100_000.0)
         verdicts = validate_candidates([cand], account, [])
         assert verdicts[0].verdict.value == "reject"
@@ -817,6 +818,136 @@ class TestConcentrationInRiskUnits:
         assert vm[cand_b.candidate_id].verdict.value == "reject"
         assert "large_position_slot_full" in vm[cand_b.candidate_id].reasons
         assert "concentration_limit" not in vm[cand_b.candidate_id].reasons
+
+
+class TestBudgetDedupeAcrossSameSymbol:
+    """The 2026-09-11 fix: a symbol's own candidates must not compete against each other
+    for its shared per-ticker/sector/CSP/cash budget. Exactly one candidate per
+    (underlying, strategy) — the highest-scoring pass-1 survivor — ever reaches the
+    cumulative checks; every other survivor in the group is rejected with
+    "dedupe_pre_gate" without the shared budget being touched at all."""
+
+    def test_only_the_best_scoring_sibling_reaches_the_budget(self) -> None:
+        # Three TQQQ CSPs, same collateral/IV/DTE as the old
+        # test_cumulative_concentration_across_same_ticker fixture (each ~2,216 risk units,
+        # well under the 5,000 ticker-risk cap on its own) but DIFFERENT blended_score, so
+        # there's an unambiguous "best" one. Under the old greedy-per-candidate design all
+        # three would be walked through the budget in list order and the first two would
+        # both pass (4,432 <= 5,000); under the two-pass design only the highest-scoring one
+        # (c_best) is ever tested against the budget, and it must pass alone.
+        c_low = _candidate(
+            candidate_id="c_low",
+            underlying="TQQQ",
+            collateral=10_000.0,
+            dte=28,
+            current_iv=80.0,
+            scores=_scores(
+                iv=40, technical=40, fundamental=40, liquidity=40, assignment=40, symbol="TQQQ"
+            ),
+        )
+        c_best = _candidate(
+            candidate_id="c_best",
+            underlying="TQQQ",
+            collateral=10_000.0,
+            dte=28,
+            current_iv=80.0,
+            scores=_scores(
+                iv=90, technical=90, fundamental=90, liquidity=90, assignment=90, symbol="TQQQ"
+            ),
+        )
+        c_mid = _candidate(
+            candidate_id="c_mid",
+            underlying="TQQQ",
+            collateral=10_000.0,
+            dte=28,
+            current_iv=80.0,
+            scores=_scores(
+                iv=65, technical=65, fundamental=65, liquidity=65, assignment=65, symbol="TQQQ"
+            ),
+        )
+        # score_candidates sorts DESC by blended_score — feed validate_candidates already
+        # sorted, exactly as scan.py does.
+        scored = score_candidates([c_low, c_best, c_mid])
+        verdicts = validate_candidates(scored, _account(net_liquidation=100_000.0), [])
+        vm = {v.candidate_id: v for v in verdicts}
+
+        assert vm["c_best"].verdict == Verdict.PASS, vm["c_best"].reasons
+        assert vm["c_low"].verdict == Verdict.REJECT
+        assert vm["c_low"].reasons == ["dedupe_pre_gate"]
+        assert vm["c_mid"].verdict == Verdict.REJECT
+        assert vm["c_mid"].reasons == ["dedupe_pre_gate"]
+
+    def test_different_symbols_still_compete_for_the_shared_budget_by_score(self) -> None:
+        # Cross-symbol behaviour (the actual reason the greedy-by-score design exists) must
+        # be untouched: two DIFFERENT tickers, each individually under the ticker-risk cap,
+        # but together they blow the shared deployable-cash buffer. The higher-scored one
+        # (by feed order, since score_candidates sorts DESC) still wins the shared resource.
+        acc = _account(net_liquidation=100_000.0, cash=16_000.0, maintenance_margin=10_000.0)
+        c_a = _candidate(
+            candidate_id="a",
+            underlying="AAPL",
+            collateral=4_000.0,
+            scores=_scores(iv=90, technical=90, fundamental=90, liquidity=90, assignment=90),
+        )
+        c_b = _candidate(
+            candidate_id="b",
+            underlying="MSFT",
+            collateral=4_000.0,
+            scores=_scores(
+                iv=10, technical=10, fundamental=10, liquidity=10, assignment=10, symbol="MSFT"
+            ),
+        )
+        scored = score_candidates([c_a, c_b])
+        verdicts = validate_candidates(scored, acc, [])
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["a"].verdict == Verdict.PASS  # higher score, spends the buffer first
+        assert vm["b"].verdict == Verdict.REJECT
+        assert "buying_power_buffer" in vm["b"].reasons
+
+    def test_representative_that_fails_the_budget_is_not_replaced_by_a_sibling(self) -> None:
+        # Deliberate, documented non-goal (see the plan's Background section): if the sole
+        # representative fails a cumulative check, the whole group is done for this cycle —
+        # no retry against a lower-scored sibling.
+        acc = _account(net_liquidation=100_000.0, cash=100_000.0)
+        c_best = _candidate(
+            candidate_id="c_best",
+            underlying="MARA",
+            collateral=60_000.0,  # blows the 10%-of-NLV (10,000) raw-collateral fallback cap
+            current_iv=None,
+            scores=_scores(
+                iv=90, technical=90, fundamental=90, liquidity=90, assignment=90, symbol="MARA"
+            ),
+        )
+        c_small = _candidate(
+            candidate_id="c_small",
+            underlying="MARA",
+            collateral=1_000.0,  # would easily fit alone
+            current_iv=None,
+            scores=_scores(
+                iv=10, technical=10, fundamental=10, liquidity=10, assignment=10, symbol="MARA"
+            ),
+        )
+        scored = score_candidates([c_best, c_small])
+        verdicts = validate_candidates(scored, acc, [])
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["c_best"].verdict == Verdict.REJECT
+        assert "concentration_limit" in vm["c_best"].reasons
+        assert vm["c_small"].verdict == Verdict.REJECT
+        assert vm["c_small"].reasons == ["dedupe_pre_gate"]
+
+    def test_covered_calls_are_not_grouped_or_deduped(self) -> None:
+        # CCs never touch the shared budget (adds_new_exposure is False for them), so
+        # multiple CC strikes on the same underlying must ALL be able to pass — the
+        # pre-gate dedupe must only ever apply to strategies that add new exposure.
+        pos = PositionSnapshot(
+            symbol="AAPL", sec_type="STK", position=200.0, avg_cost=150.0, market_value=30_000.0
+        )
+        cc_a = _cc_candidate(underlying="AAPL", strike=180.0, contracts=1)
+        cc_b = _cc_candidate(underlying="AAPL", strike=190.0, contracts=1)
+        verdicts = validate_candidates(
+            score_candidates([cc_a, cc_b]), _account(net_liquidation=100_000.0), [pos]
+        )
+        assert all(v.verdict == Verdict.PASS for v in verdicts)
 
 
 # ---------------------------------------------------------------------------
