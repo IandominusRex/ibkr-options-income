@@ -112,6 +112,49 @@ class _FakeChain:
         self.account = _account(maintenance_margin=90_000.0) if gate == "reject" else _account()
         self._wire(symbol)
 
+    def will_price_two_csp_strikes(
+        self,
+        symbol: str,
+        *,
+        strikes: tuple[float, float] = (155.0, 150.0),
+        premium: float = 2.50,
+        dte: int = 21,
+    ) -> None:
+        """A put chain offering TWO strikes on one name, both individually gate-clearing.
+
+        The account is deliberately roomy (net-liq $2M, $600k excess liquidity) so nothing
+        scarce is in play: 10 lots at either strike sit under the per-ticker collateral cap
+        on their own, and both together stay under the risk-unit, cash, CSP and
+        large-position ceilings. The only thing that can reject the runner-up is the risk
+        gate's per-symbol dedupe — which the single-ticker deep-dive opts out of (C1).
+        """
+        expiry = date.today() + timedelta(days=dte)
+        self.quotes = [
+            OptionQuote(
+                underlying=symbol,
+                right=OptionRight.PUT,
+                strike=strike,
+                expiry=expiry,
+                bid=round(premium - 0.10, 2),
+                ask=round(premium + 0.10, 2),
+                volume=500,
+                open_interest=2000,
+                delta=-0.25,
+                iv=0.28,
+            )
+            for strike in strikes
+        ]
+        self.position = None  # no shares held → no covered calls, CSPs only
+        self.account = AccountSnapshot(
+            account="DU123456",
+            net_liquidation=2_000_000.0,
+            total_cash=700_000.0,
+            buying_power=800_000.0,
+            maintenance_margin=100_000.0,
+            excess_liquidity=600_000.0,
+        )
+        self._wire(symbol)
+
     def will_vanish(self, symbol: str, *, other_strike: float = 999.0) -> None:
         """The chain succeeds but no longer offers the promoted strike."""
         expiry = date.today() + timedelta(days=24)
@@ -315,6 +358,82 @@ async def test_a_still_passing_contract_becomes_a_pending_approval(drain_env, fa
     await drain_once(drain_env.ib, drain_env.bot, "chat")
 
     assert drain_env.status(cid) == "applied"
+    approval_id = drain_env.result(cid)["approval_id"]
+    assert approval_id is not None
+    assert drain_env.approval_status(approval_id) == ApprovalStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_the_deep_dive_shows_every_qualifying_strike_for_one_ticker(
+    drain_env, fake_chain
+) -> None:
+    """C1: `_price_and_gate_ticker` must not dedupe a ticker against itself.
+
+    The `/scan TICKER` deep-dive (and the promote that reuses its pricing path) exists so an
+    operator can compare the strikes on ONE name. Every strike that individually clears the
+    gate has to come back PASS; collapsing them to a single "winner" with `dedupe_pre_gate`
+    would hide the alternatives the view is for. The real execution-committing gate is the
+    order-approval re-validation, which keeps the dedupe on.
+    """
+    from src.orchestrator.scan import _price_and_gate_ticker
+
+    fake_chain.will_price_two_csp_strikes("NVDA", strikes=(155.0, 150.0))
+
+    priced = await _price_and_gate_ticker(drain_env.ib, "NVDA")
+
+    csps = [c for c in priced.scored if c.strategy.value == "cash_secured_put"]
+    assert {c.strike for c in csps} == {155.0, 150.0}, [c.strike for c in csps]
+    verdicts = [priced.verdict_map[c.candidate_id] for c in csps]
+    assert all(v.verdict.value == "pass" for v in verdicts), [
+        (v.candidate_id, v.reasons) for v in verdicts
+    ]
+    assert all("dedupe_pre_gate" not in v.reasons for v in verdicts)
+    assert {c.strike for c in priced.csp_passed} == {155.0, 150.0}
+
+
+@pytest.mark.asyncio
+async def test_promoting_the_lower_scored_sibling_still_succeeds(drain_env, fake_chain) -> None:
+    """C1, through the promote handler: the runner-up strike on a name is still promotable.
+
+    Before the opt-out, the deep-dive's gate rejected every strike but the best-scoring one
+    with `dedupe_pre_gate`, so this promote came back `gate_rejected` — an operator could
+    only ever promote whichever sibling happened to score highest.
+    """
+    from src.notify.command_drain import drain_once
+    from src.orchestrator.scan import _price_and_gate_ticker
+
+    fake_chain.will_price_two_csp_strikes("NVDA", strikes=(155.0, 150.0))
+
+    # Ask the same pricing path the handler uses which sibling the gate ranks LAST —
+    # `scored` is sorted by priority, and the pre-gate dedupe keeps the first survivor per
+    # (underlying, strategy), so the last one is exactly the strike that used to be
+    # `dedupe_pre_gate`-rejected. No assumption baked in about which strike that is.
+    priced = await _price_and_gate_ticker(drain_env.ib, "NVDA")
+    csps = [c for c in priced.scored if c.strategy.value == "cash_secured_put"]
+    assert len(csps) == 2, [c.strike for c in csps]
+    runner_up = csps[-1]
+
+    drain_env.seed_assessed(
+        "c1",
+        stage="top_n",
+        symbol="NVDA",
+        strike=runner_up.strike,
+        strategy="cash_secured_put",
+        expiry=runner_up.expiry,
+    )
+    cid = drain_env.enqueue(
+        "promote",
+        _payload(
+            symbol="NVDA",
+            strategy="cash_secured_put",
+            strike=runner_up.strike,
+            expiry=runner_up.expiry,
+        ),
+    )
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "applied", drain_env.result(cid)
     approval_id = drain_env.result(cid)["approval_id"]
     assert approval_id is not None
     assert drain_env.approval_status(approval_id) == ApprovalStatus.PENDING

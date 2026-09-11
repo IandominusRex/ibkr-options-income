@@ -94,6 +94,12 @@ def test_humanize_known_reason() -> None:
     assert _humanize_reject_reason("iv_rank_below_minimum") == "IV rank too low (poor premium)"
 
 
+def test_dedupe_pre_gate_has_a_readable_label():
+    assert _humanize_reject_reason("dedupe_pre_gate") == (
+        "a better strike on this name already claimed the shared risk budget"
+    )
+
+
 def test_humanize_unknown_reason_falls_back_to_desnaked() -> None:
     assert _humanize_reject_reason("some_new_gate") == "some new gate"
 

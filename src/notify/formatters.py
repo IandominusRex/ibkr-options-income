@@ -529,6 +529,11 @@ def format_data_provenance(
 # Human-readable labels for the raw risk-gate / filter reason codes surfaced when a
 # single-ticker /scan turns up no qualifying option. Codes not listed fall back to a
 # de-snake-cased version of the code itself.
+#
+# Deliberately duplicated in ``src.api.routers.options._REASON_LABELS`` — this module is
+# Telegram-coupled (MarkdownV2 escaping, chat-length constraints) and the web layer must not
+# import it. ``tests/test_reason_label_parity.py`` fails the build if the two diverge: add a
+# code to one, add it to the other, with the identical phrase.
 _REJECT_REASON_LABELS: dict[str, str] = {
     "iv_rank_below_minimum": "IV rank too low (poor premium)",
     "iv_rv_below_minimum": "IV/RV ratio too low (premium not rich vs realized)",
@@ -557,7 +562,8 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",
-    # Post-gate drops — the trade was fine, the slate was not.
+    # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
+    "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",
 }

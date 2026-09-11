@@ -369,6 +369,98 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-09-11 — risk gate: a symbol's own candidates were competing against each other for its own shared budget)
+
+Two weeks of paper-scan rejects showed 95 of 96 `concentration_limit` rejects were TQQQ — a
+symbol the account held **zero** position in. `validate_candidates` (`src/engine/risk_engine.py`)
+walked *every* pass-1 survivor through the cumulative, shared-budget checks (per-ticker/sector
+risk units, the large-position slot, total CSP collateral, the cash buffer) individually, in
+score order, exactly as designed for cross-symbol competition — but a single busy scan cycle can
+produce a dozen-plus strikes/expiries for one active name, and nothing kept those siblings from
+walking the same per-ticker budget one after another until it was gone, rejecting the rest of its
+own name's candidates as "concentrated" against exposure that was never real.
+
+- **Two-pass split.** Pass 1 (independent per-candidate gates: ROC/yield/VRP, IV rank/RV, DTE,
+  delta, contracts, earnings, margin) is unchanged. Before pass 2, a new
+  `_select_budget_representatives` helper groups pass-1 survivors by `(underlying, strategy)` and
+  keeps only the single highest-scoring one per group — candidates are pre-sorted by
+  `blended_score` desc, so the first survivor seen per group wins. Every other survivor in the
+  group is rejected with a new reason, `dedupe_pre_gate`, *before* it ever touches `budgets`/
+  `caps` — it never had a chance to compete for the shared budget at all, unlike before.
+- **Covered calls and rolls are excluded from grouping entirely** — they never reached the shared
+  budget checks before this fix either, so there's nothing on them to dedupe.
+- **Cross-symbol competition is untouched.** Representatives from different symbols still walk
+  pass 2 in the same score-sorted order as before, competing for the shared sector/CSP/cash caps
+  exactly as D1/Phase B intended — this fix only stops a name from competing against itself.
+- **New reason code labelled.** `dedupe_pre_gate` → "a better strike on this name already claimed
+  the shared risk budget" in both `src/notify/formatters.py`'s `_REJECT_REASON_LABELS` and
+  `src/api/routers/options.py`'s `_REASON_LABELS`, so the Telegram card and the web options view
+  read it the same way instead of falling back to a de-snake-cased reject code.
+- **Tests:** `tests/test_engine.py::TestBudgetDedupeAcrossSameSymbol` (4 new tests — only the
+  best-scoring sibling reaches the budget, a representative that fails the cumulative gate is not
+  replaced by a sibling, covered calls are never grouped, different symbols still compete by
+  score) plus a rewritten `test_cumulative_concentration_across_same_ticker`;
+  `tests/test_ticker_scan_format.py::test_dedupe_pre_gate_has_a_readable_label`. Full suite:
+  `python -m pytest -q` — 2191 passed, 1 failed
+  (`tests/test_write_path_invariants.py::test_every_options_route_requires_owner`, a pre-existing
+  FastAPI internal `Dependant`-attribute break unrelated to this change).
+
+### Follow-up, same day: where the dedupe applies, and where it deliberately does not
+
+A whole-branch review of the change above found that putting the dedupe *inside*
+`validate_candidates` applied it to every caller, including one that must never have it. Fixed,
+plus two behaviour notes worth recording as accepted rather than rediscovered later.
+
+- **The single-ticker deep-dive opts out.** `validate_candidates` now takes a keyword-only
+  `dedupe_same_symbol: bool = True`. The default is what every batch caller wants. With `False`,
+  every pass-1 survivor is its own budget representative, nothing is ever given
+  `dedupe_pre_gate`, and the cumulative budgets are consumed greedily in score order exactly as
+  before the two-pass split. `scan._price_and_gate_ticker` — the `/scan TICKER` deep-dive, and the
+  `promote` handler that reuses its pricing path — passes `False`: it hands the gate every CC+CSP
+  strike of **one** ticker, so the dedupe collapsed the whole view to a single "winning" strike and
+  hid exactly the alternatives an operator opens it to compare. It also made the runner-up strike
+  unpromotable (a `RISK_GATE` reject is not in `PROMOTABLE_STAGES`). That view is a browse/compare
+  surface, not an execution-committing one — the real gate for anything promoted out of it is the
+  order-approval re-validation below.
+- **The order-approval re-gate deliberately keeps the dedupe ON.** `execution/approval.py` batches
+  the whole pending-order queue through `validate_candidates` with the default. That queue can
+  hold two approved-but-unexecuted orders on one underlying, approved in different scan cycles
+  (`has_active_order` dedupes per `candidate_id`, not per name); only one of them should reach the
+  shared budget, so collapsing them here is an extra safety property and fails closed. `dedupe_
+  pre_gate` means something narrower at that gate than on a scan card, so the cancellation detail
+  and the thread-58 failure notification now append "another approved order on the same underlying
+  outranked this one" for that one reason — message only, no new reason code.
+- **Accepted behaviour change: a full-scan dedupe loser is now REJECTED, not PASS-but-unpicked.**
+  Before this fix, a same-symbol CSP runner-up that cleared the gate could be dropped from the
+  final slate later, at the post-gate `"dedupe"` stage (`AssessmentStage.DEDUPE`,
+  `dedupe_not_surfaced`) — a promotable stage. Moving the dedupe *before* the budget gate
+  necessarily means the non-representative is now a `RISK_GATE` reject with reason
+  `dedupe_pre_gate` instead, and is no longer promotable the way a pre-fix runner-up was. This is
+  intended, not a regression: the runner-up is being set aside for the same reason it always was,
+  just earlier and honestly. `AssessmentStage.DEDUPE` is now effectively unreachable for CSPs in
+  the full-scan pipeline (`select_top_candidates_detailed` still emits it, but the gate no longer
+  hands it two survivors from one group to choose between); it remains reachable for covered
+  calls, which are never grouped. Nothing about the stage, the schema, or `PROMOTABLE_STAGES`
+  changed.
+- **`dedupe_pre_gate` is kept out of the "why did this scan find nothing" surfaces.** A contract
+  whose only reason is `dedupe_pre_gate` cleared every economic gate and lost to a sibling — a
+  useless "closest miss". `scan._lost_only_to_a_sibling` excludes it from `_near_misses` (the
+  digest shows exactly one contract, so one busy name could otherwise take the slot from a genuine
+  economic near-miss) and from both per-strategy/per-symbol rejection tallies. It stays in
+  `result.assessed` and the persisted audit trail in full.
+- **Tests:** `tests/test_engine.py::TestDedupeOptOut` (3) and
+  `::TestBudgetDedupeAcrossSameSymbol::test_rolls_are_not_grouped_or_deduped`;
+  `tests/test_drain_promote.py::test_the_deep_dive_shows_every_qualifying_strike_for_one_ticker`
+  and `::test_promoting_the_lower_scored_sibling_still_succeeds` (both fail against the pre-fix
+  code); `tests/test_scan_near_misses.py` (3); `tests/test_execution.py`'s two re-gate message
+  tests; `tests/test_reason_label_parity.py` (4 — the two duplicated reason-label dicts can no
+  longer drift apart silently). Full suite: `python -m pytest -q` — **2206 passed, 1 failed**. The
+  one failure is the same pre-existing `test_write_path_invariants.py::test_every_options_route_requires_owner`
+  break recorded above (a FastAPI internal `Dependant`-attribute error) — confirmed still
+  reproducing on the current environment; it was never related to this work.
+
+---
+
 ## Bugs fixed (2026-09-09 — M0 "Baseline and pre-existing defects": idempotent EOD, one assignment-risk predicate, P2 deferred findings closed)
 
 `Web plan/milestones/P3-P4/M0-baseline-and-fixes.md`'s nine sub-tasks (0.2–0.10), all landed on

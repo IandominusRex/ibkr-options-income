@@ -214,6 +214,14 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         # --- Second Rules Engine pass (batched, cumulative-aware) ---
         # Sort by blended_score desc so the greedy cumulative budgets are consumed in
         # priority order, matching how the decision-time gate ran.
+        #
+        # The gate's per-symbol dedupe stays ON here (`dedupe_same_symbol` defaults True),
+        # deliberately: this batch is the whole pending-order queue, which can hold two
+        # approved-but-unexecuted orders on one underlying that were approved in different
+        # scan cycles (`has_active_order` dedupes per candidate_id, not per name). Only one
+        # of them should reach the shared budget, so collapsing them here is an extra
+        # safety property, and it fails closed. The single-ticker deep-dive opts out
+        # instead — it is a browse/compare view, and this gate is its backstop.
         ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
         verdicts = validate_candidates([c for _, c in ordered], account_snap, positions)
         verdict_map = {v.candidate_id: v for v in verdicts}
@@ -222,16 +230,29 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             verdict = verdict_map.get(candidate.candidate_id)
             if verdict is None or verdict.verdict != Verdict.PASS:
                 reasons = verdict.reasons if verdict else ["unknown"]
+                # `dedupe_pre_gate` means something narrower at this gate than it does on a
+                # scan card: the batch here is the pending-order queue, so the candidate
+                # that displaced this one is another *approved* order on the same name, not
+                # a better strike from a fresh scan. The bare reason code says nothing and
+                # the scan-side humanised label ("a better strike ... claimed the shared
+                # risk budget") would tell the wrong story, so the one opaque reason at this
+                # call site gets a clarifying clause. Message only — no new reason code, and
+                # the verdict itself is untouched.
+                note = (
+                    " — another approved order on the same underlying outranked this one"
+                    if "dedupe_pre_gate" in reasons
+                    else ""
+                )
                 log.warning(
                     "Re-validation REJECT for candidate=%s reasons=%s",
                     order_row.candidate_id,
                     reasons,
                 )
                 order_row.state = OrderState.CANCELLED
-                order_row.detail = f"Re-validation failed: {reasons}"
+                order_row.detail = f"Re-validation failed: {reasons}{note}"
                 record_outcome(order_row.candidate_id, RISK_REJECTED)
                 thread58_failures.append(
-                    (order_row.id, candidate, f"Re-validation failed: {', '.join(reasons)}")
+                    (order_row.id, candidate, f"Re-validation failed: {', '.join(reasons)}{note}")
                 )
                 continue
 
