@@ -40,7 +40,12 @@ scheduler:
   # Close a short option position when this fraction of max profit has been captured.
   profit_take_pct: 50
   # No new-entry scans after this ET time — profit-take checks still run until close.
-  entry_cutoff: "15:00"
+  # 16:00 == RTH close, so this no longer trims anything off the trading day: the last
+  # 15-min cycle (15:45) is now the last one, same as `is_rth` would allow anyway. That
+  # also means new entries can now be surfaced in the closing minutes (last-hour gamma
+  # risk + wide spreads) that a tighter cutoff used to keep out — a deliberate choice
+  # (2026-09-11), not an oversight.
+  entry_cutoff: "16:00"
 
 market_data:
   # Stay under the retail concurrent-line limit (~100). Chains are requested in

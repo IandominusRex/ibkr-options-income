@@ -258,3 +258,37 @@ def test_scheduler_honours_a_custom_warm_refresh_hour(monkeypatch) -> None:
     finally:
         if sched.running:
             sched.shutdown(wait=False)
+
+
+def test_a_job_discovered_days_late_still_runs_instead_of_misfiring(db) -> None:
+    """Regression: 2026-09-08 to 2026-09-11 the worker sat frozen through a macOS sleep and
+    never resumed on its own. APScheduler's own default (misfire_grace_time=1s) silently
+    drops any run discovered more than a second late instead of executing it — after a
+    multi-day sleep every job is always "late", so nothing ever ran again until a human
+    noticed and restarted the process by hand. build_scheduler() sets
+    misfire_grace_time=None precisely so a job found days overdue still executes the moment
+    the process next gets CPU time, rather than being dropped forever."""
+    from apscheduler.events import EVENT_JOB_MISSED
+    from apscheduler.executors.base import run_job as execute_due_job
+
+    from src.research.ingest.jobs import build_scheduler, read_heartbeat
+
+    assert read_heartbeat() is None  # nothing has run yet in this temp DB
+
+    sched = build_scheduler()
+    try:
+        # misfire_grace_time from job_defaults is only merged onto a job once the scheduler
+        # actually adds it to a jobstore, which happens on start() — an unstarted scheduler's
+        # pending job hasn't resolved the attribute yet.
+        sched.start()
+        job = next(j for j in sched.get_jobs() if j.id == "drain_ingest_jobs")
+        assert job.misfire_grace_time is None
+        three_days_overdue = datetime.now(UTC) - timedelta(days=3)
+        events = execute_due_job(
+            job, job._jobstore_alias, [three_days_overdue], "apscheduler.executors.default"
+        )
+        assert not any(e.code == EVENT_JOB_MISSED for e in events)
+        assert read_heartbeat() is not None  # the job's func actually ran, not just skipped
+    finally:
+        if sched.running:
+            sched.shutdown(wait=False)

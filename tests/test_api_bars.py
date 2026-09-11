@@ -121,8 +121,58 @@ def test_unknown_symbol_is_404(client) -> None:
     assert client.get("/research/ZZZZ/bars", headers=AUTH).status_code == 404
 
 
-def test_empty_bars_returns_an_empty_list(client) -> None:
+def test_a_cold_symbol_triggers_an_on_demand_backfill(client, monkeypatch) -> None:
+    """Regression: a symbol with zero daily_bars rows (viewed for the first time, or
+    viewed while the nightly warm-tier cron was down) used to render a permanently blank
+    chart until the next night's cron ran. The endpoint now backfills once, synchronously,
+    the same way `materialize()` already does for fundamentals."""
+
+    def _fake_ingest(symbol: str) -> int:
+        with research_session() as s:
+            s.add(_bar("2026-01-05", 220.0))
+        return 1
+
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", _fake_ingest)
+    body = client.get("/research/AAPL/bars?range=1y", headers=AUTH).json()
+    assert len(body["bars"]) == 1
+    assert body["bars"][0]["time"] == "2026-01-05"
+
+
+def test_bars_stays_empty_when_the_on_demand_backfill_finds_nothing(client, monkeypatch) -> None:
+    """A genuinely unpriceable/delisted symbol must still degrade to empty lists, not an
+    error — the on-demand backfill is best-effort, mirroring ingest_daily_bars' own
+    contract of leaving history untouched (never raising) on an empty provider fetch."""
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", lambda symbol: 0)
     body = client.get("/research/AAPL/bars?range=1y", headers=AUTH).json()
     assert body["bars"] == []
     assert body["sma50"] == []
     assert body["sma200"] == []
+
+
+def test_bars_stays_empty_when_the_on_demand_backfill_raises(client, monkeypatch) -> None:
+    """A provider exception during the on-demand backfill must not 500 the chart — it
+    falls through to the existing 'no bars -> empty lists' contract."""
+
+    def _boom(symbol: str) -> int:
+        raise RuntimeError("yfinance is down")
+
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", _boom)
+    r = client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bars"] == []
+
+
+def test_a_warm_symbol_with_existing_bars_does_not_re_fetch(client, monkeypatch) -> None:
+    """The on-demand backfill is only for a symbol with zero rows — a symbol that already
+    has history must not pay a fetch on every chart view."""
+    with research_session() as s:
+        s.add(_bar("2026-01-05", 220.0))
+
+    def _boom(symbol: str) -> int:
+        raise AssertionError("ingest_daily_bars must not be called when bars already exist")
+
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", _boom)
+    r = client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    assert r.status_code == 200
+    assert len(r.json()["bars"]) == 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 
 import pytest
@@ -442,6 +443,29 @@ class TestCashSecuredPut:
         result = generate_csp_candidates("AAPL", [q1, q2], _account(), _iv(), _tech(), _fund())
         assert len(result) == 2
         assert result[0].roc_pct >= result[1].roc_pct
+
+    def test_symbolwide_outage_logs_distinct_warning(self, caplog):
+        """When IBKR delivers no live market for the ENTIRE chain, that's a data-feed
+        outage, not real illiquidity (2026-09-11 root cause: TQQQ/UPRO/AMZN/RKLB scan
+        cycles where every quote came back with no bid/ask were silently folded into the
+        ordinary 'illiquid' tally, making a data-feed outage indistinguishable from a
+        genuinely thin market)."""
+        quote = _put_quote(bid=None, ask=None, volume=None, oi=None)
+        with caplog.at_level(logging.WARNING, logger="src.strategies.cash_secured_put"):
+            result = screen_csp_candidates("AAPL", [quote], _account(), _iv(), _tech(), _fund())
+        assert result.passed == []
+        outage_msgs = [r.message for r in caplog.records if "data-feed outage" in r.message]
+        assert outage_msgs, caplog.text
+
+    def test_thin_but_real_market_does_not_log_outage_warning(self, caplog):
+        """A genuine thin-liquidity reject (real bid/ask, just below the OI/volume floor)
+        must not be mislabeled as a data-feed outage."""
+        quote = _put_quote(bid=2.10, ask=2.30, volume=1, oi=1)
+        with caplog.at_level(logging.WARNING, logger="src.strategies.cash_secured_put"):
+            result = screen_csp_candidates("AAPL", [quote], _account(), _iv(), _tech(), _fund())
+        assert result.passed == []
+        outage_msgs = [r.message for r in caplog.records if "data-feed outage" in r.message]
+        assert not outage_msgs, caplog.text
 
 
 # --------------------------------------------------------------------------- #

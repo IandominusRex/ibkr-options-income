@@ -61,6 +61,21 @@ class ScreenResult:
                 counts[r] = counts.get(r, 0) + 1
         return counts
 
+    def market_data_outage(self) -> bool:
+        """True when every evaluated quote came back with no live bid/ask.
+
+        A missing market forces ``illiquid`` to fire too (spread can't be computed without
+        a market), so a symbol-wide IBKR data-feed outage is otherwise indistinguishable in
+        the reason tally from a chain that is genuinely, individually illiquid contract by
+        contract (2026-09-11: TQQQ/UPRO/AMZN/RKLB scan cycles where the entire chain came
+        back with no market were silently counted the same as ordinary thin-liquidity
+        rejects). Only meaningful when nothing passed — call after the loop, once
+        ``evaluated`` is final.
+        """
+        if self.evaluated == 0:
+            return False
+        return self.tally().get(REASON_NO_MARKET, 0) == self.evaluated
+
 
 def rank_rejects(
     rejects: list[tuple[TradeCandidate, list[str]]],

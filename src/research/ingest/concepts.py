@@ -82,22 +82,29 @@ def parse_facts(payload: dict, concept: str, units: list[str]) -> list[Fact]:
                     fp=str(entry["fp"]) if entry.get("fp") else None,
                     form=str(entry.get("form") or ""),
                     filed=filed,
+                    concept=concept,
                 )
             )
     return facts
 
 
-def resolve_line_item(payload: dict, spec: LineItemSpec) -> tuple[str, list[Fact]] | None:
-    """First candidate concept that actually has facts. None when none do.
+def resolve_line_item(payload: dict, spec: LineItemSpec) -> list[Fact] | None:
+    """Every fact for this line item, pooled across every alias concept. None when none report.
 
-    None is the honest answer for a filer that reports nothing we recognise, and the caller
-    renders UNKNOWN rather than a zero.
+    A filer can — and does — switch which us-gaap concept it tags a line item under between
+    fiscal years (NVIDIA tags revenue `RevenueFromContractWithCustomerExcludingAssessedTax`
+    for FY19-22 and `Revenues` for FY23-26; neither alone covers the company's full history).
+    Stopping at the first alias with *any* facts silently drops every other alias's periods,
+    which is exactly backwards for a company still actively filing under the second tag. Every
+    concept's facts are pooled instead; :func:`select_periods`'s existing "latest filed wins"
+    rule already arbitrates a period two aliases both happen to report, so pooling never needs
+    its own precedence logic. None is the honest answer for a filer that reports nothing we
+    recognise under any alias, and the caller renders UNKNOWN rather than a zero.
     """
-    for concept in spec.concepts:
-        facts = parse_facts(payload, concept, spec.units)
-        if facts:
-            return concept, facts
-    return None
+    facts = [
+        fact for concept in spec.concepts for fact in parse_facts(payload, concept, spec.units)
+    ]
+    return facts or None
 
 
 # Duration windows, in days. Filers' fiscal years and quarters are not exactly 365/91 days,

@@ -54,7 +54,22 @@ def run_job(name: str, fn: Callable[[], object]) -> bool:
 
 def build_scheduler() -> BackgroundScheduler:
     cfg = get_config().research.tiers
-    sched = BackgroundScheduler(timezone=get_config().scheduler.timezone)
+    # APScheduler's own default (misfire_grace_time=1 second) silently drops any run whose
+    # due time is discovered more than a second late and just reschedules for the next
+    # occurrence — it never actually executes. This process holds no IBKR connection and is
+    # commonly left running unattended on a laptop: a macOS sleep (lid closed, no
+    # `caffeinate`) freezes every thread for as long as the machine is asleep, so by the
+    # time it wakes, every job is already "late" and the default grace period drops it,
+    # forever, until someone notices and restarts the process by hand (observed 2026-09-08
+    # to 2026-09-11: three days of dead quotes/warm-tier refresh with no error logged).
+    # `misfire_grace_time=None` removes the grace window entirely — a job is never
+    # considered missed, so whenever the process next gets CPU time (immediately on wake)
+    # it runs. `coalesce` (default True) still collapses a multi-day backlog into one run
+    # instead of replaying every missed occurrence.
+    sched = BackgroundScheduler(
+        timezone=get_config().scheduler.timezone,
+        job_defaults={"misfire_grace_time": None},
+    )
 
     # Symbol directory: the default 7-day cadence is the Sunday 03:00 cron
     # (clock-aligned, predictable); any other configured cadence falls back to

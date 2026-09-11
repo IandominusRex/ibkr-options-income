@@ -21,6 +21,14 @@ class Fact:
     fp: str | None
     form: str
     filed: date
+    # The us-gaap concept this fact was actually tagged under. A filer can switch which
+    # concept it reports a line item under between fiscal years (e.g. NVIDIA tags revenue
+    # `RevenueFromContractWithCustomerExcludingAssessedTax` for FY19-22 and switches to the
+    # older `Revenues` tag for FY23-26) — `resolve_line_item` merges facts across every
+    # alias concept, so this field is what lets each period keep an accurate, per-fact
+    # concept rather than one label borrowed from whichever alias happened to be checked
+    # first.
+    concept: str
 
 
 class LineItemValue(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
@@ -30,9 +31,12 @@ from src.common.universe import effective_universe
 from src.research.checks.metrics import build_metrics
 from src.research.checks.payload import ChecksPayload, build_checks_payload
 from src.research.ingest.materialize import materialize
+from src.research.ingest.prices import ingest_daily_bars
 from src.research.schemas import NormalizedFinancials
 from src.research.store.models import DailyBarRow, QuoteRow, RecentlyViewedRow, SymbolRow
 from src.storage.buy_candidates import SINGLE_TICKER_PREFIX, latest_buy_candidates_from
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/research", tags=["research"])
 
@@ -314,6 +318,24 @@ def bars(
     row = db.get(SymbolRow, upper)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
+
+    # Cold symbol: daily_bars is otherwise only populated by the nightly warm-tier cron
+    # (research.ingest.jobs), which only covers symbols already "warm" (watchlisted, or
+    # viewed on a *prior* day) — a symbol viewed here for the first time today would
+    # otherwise render a permanently blank chart until tomorrow night's run. One on-demand
+    # fetch makes this endpoint self-sufficient, the same way `materialize()` already does a
+    # synchronous cold-path fetch for fundamentals. `ingest_daily_bars` degrades to a no-op
+    # on a provider failure (never raises in normal operation), but the guard stays so a
+    # transient error still falls through to the existing "no bars -> empty lists" contract
+    # instead of 500ing the whole chart.
+    has_any_bars = (
+        db.query(DailyBarRow.symbol).filter(DailyBarRow.symbol == upper).first() is not None
+    )
+    if not has_any_bars:
+        try:
+            ingest_daily_bars(upper)
+        except Exception:
+            log.warning("On-demand daily-bar backfill failed for %s", upper, exc_info=True)
 
     days = _RANGE_DAYS.get(range, 365)
     display_cutoff = date.today().toordinal() - days

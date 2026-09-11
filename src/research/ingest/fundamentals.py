@@ -51,17 +51,16 @@ def normalize(
 
     for name, spec in concept_map.items():
         assert_units_supported(spec)
-        resolved = resolve_line_item(payload, spec)
-        if resolved is None:
+        facts = resolve_line_item(payload, spec)
+        if facts is None:
             continue  # the filer reports nothing we recognise; absent, never zero
-        concept, facts = resolved
 
         for period_type, limit in (("annual", annual_limit), ("quarterly", quarterly_limit)):
             for fact in select_periods(facts, kind=spec.kind, period_type=period_type, limit=limit):
                 buckets[period_type][fact.end][name] = LineItemValue(
                     line_item=name,
                     value=fact.value,
-                    concept=concept,
+                    concept=fact.concept,
                     accn=fact.accn,
                     filed=fact.filed,
                     form=fact.form,

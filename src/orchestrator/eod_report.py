@@ -121,12 +121,22 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
     trailing-year window ages silently — and IV rank is both the largest score weight and a hard
     gate. Reuses the backfill's `OPTION_IMPLIED_VOLATILITY` daily bar; `append_observation` skips
     a date already present, so a re-run (or a second EOD) is idempotent. Best-effort per symbol.
+
+    A run of consecutive failures no longer aborts the rest of *symbols* unconditionally — it
+    used to, and a chronic single-symbol failure (a delisted ticker, a contract IBKR can't
+    qualify) silently froze `iv_history` for every symbol alphabetically after it for a month
+    (2026-09-11 incident: only AAPL/AMZN, first in sort order, kept updating past 2026-08-12).
+    The failure run now triggers ``probe_market_data_health`` — a cheap, already-used check —
+    to tell a genuinely dead farm (bail, as before) from a handful of bad symbols on an
+    otherwise-healthy connection (log it, reset the counter, keep going).
     """
     from src.ibkr.contracts import qualify_stock_async
+    from src.ibkr.market_data import probe_market_data_health
     from src.storage.iv_history import append_observation
 
     inserted = 0
     consecutive_failures = 0
+    failed_symbols: list[str] = []
     for sym in symbols:
         try:
             stock = await qualify_stock_async(ib, sym)
@@ -150,20 +160,40 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
             if append_observation(sym, bar_date, float(last.close)):
                 inserted += 1
         except Exception:
-            logger.debug("EOD IV append failed for %s", sym, exc_info=True)
+            logger.warning("EOD IV append failed for %s", sym, exc_info=True)
             consecutive_failures += 1
+            failed_symbols.append(sym)
             if consecutive_failures >= _IV_MAX_CONSECUTIVE_FAILURES:
-                # HMDS data farm is almost certainly down for this session — every remaining
-                # symbol would burn the full per-request timeout. Bail so the (IV-independent)
-                # P&L summary and Telegram send are not delayed by ~1 hour of dead requests.
+                probe = await probe_market_data_health(ib)
+                if not probe.healthy:
+                    # The farm itself is down (confirmed, not assumed) — every remaining
+                    # symbol would burn the full per-request timeout for nothing. Bail so the
+                    # (IV-independent) P&L summary and Telegram send are not delayed.
+                    logger.warning(
+                        "EOD: aborting IV append after %d consecutive failures — health probe "
+                        "confirms the data farm is down (%s); iv_history will age until the "
+                        "next run",
+                        consecutive_failures,
+                        probe.diagnosis or "unhealthy",
+                    )
+                    break
+                # Connection is fine — this is a cluster of bad symbols, not a dead farm.
+                # Skip them (already counted as failed) and keep going with the rest.
                 logger.warning(
-                    "EOD: aborting IV append after %d consecutive failures — historical-data "
-                    "farm appears unavailable; iv_history will age until the next run",
+                    "EOD: %d consecutive IV-append failures (%s) but the health probe says "
+                    "the connection is fine — treating as isolated bad symbols and continuing",
                     consecutive_failures,
+                    ", ".join(failed_symbols[-consecutive_failures:]),
                 )
-                break
+                consecutive_failures = 0
         await asyncio.sleep(0.2)  # pace reqHistoricalData calls
-    logger.info("EOD: appended %d new IV observation(s) across %d symbols", inserted, len(symbols))
+    logger.info(
+        "EOD: appended %d new IV observation(s) across %d symbols (%d failed: %s)",
+        inserted,
+        len(symbols),
+        len(failed_symbols),
+        ", ".join(failed_symbols) or "none",
+    )
 
 
 async def _append_daily_prices(symbols: list[str]) -> None:

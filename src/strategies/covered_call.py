@@ -240,7 +240,16 @@ def screen_cc_candidates(
             result.passed.append(candidate)
 
     if not result.passed:
-        tally = ScreenResult(rejected=rejected).tally()
+        interim = ScreenResult(rejected=rejected, evaluated=result.evaluated)
+        if interim.market_data_outage():
+            log.warning(
+                "data-feed outage suspected for %s: none of %d call quotes had a live bid/ask "
+                "this cycle — treat the illiquid/no_two_sided_market tally below as an IBKR "
+                "market-data gap, not genuine illiquidity",
+                symbol,
+                result.evaluated,
+            )
+        tally = interim.tally()
         log.warning(
             "No CC candidates passed filters for %s (%d call quotes evaluated) — rejections: %s",
             symbol,

@@ -9,7 +9,14 @@ from src.research.schemas import Fact
 
 
 def _fact(
-    *, start: date | None, end: date, val: float, filed: date, form: str = "10-K", accn: str = "a"
+    *,
+    start: date | None,
+    end: date,
+    val: float,
+    filed: date,
+    form: str = "10-K",
+    accn: str = "a",
+    concept: str = "TestConcept",
 ) -> Fact:
     return Fact(
         value=val,
@@ -21,6 +28,7 @@ def _fact(
         fp="FY",
         form=form,
         filed=filed,
+        concept=concept,
     )
 
 

@@ -694,28 +694,38 @@ async def test_send_eod_telegram_skips_when_no_credentials() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _append_daily_iv — fail-fast when the historical-data farm is unavailable
+# _append_daily_iv — fail-fast on a genuine dead farm, but never let a few chronically
+# -bad symbols starve the rest of the alphabet (2026-09-11 root cause: iv_history froze for
+# ~95% of the universe for a month because one early-alphabet symbol failed daily and the old
+# breaker aborted everything after it, unconditionally, forever).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_append_daily_iv_circuit_breaker_trips_on_dead_farm() -> None:
-    """A down HMDS farm fails every symbol; the loop must bail after the breaker threshold
-    instead of grinding through all symbols (the ~1-hour EOD hang we are fixing)."""
+    """A down HMDS farm fails every symbol AND the health probe confirms it's down — the loop
+    must bail after the breaker threshold instead of grinding through all symbols (the ~1-hour
+    EOD hang we are fixing)."""
     from src.orchestrator import eod_report
 
     symbols = [f"SYM{i}" for i in range(30)]
     ib = MagicMock()
     ib.reqHistoricalDataAsync = AsyncMock(side_effect=RuntimeError("hmds down"))
+    dead_probe = MagicMock(healthy=False, diagnosis="half-dead socket")
 
     with (
         patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(return_value=MagicMock())),
         patch("src.storage.iv_history.append_observation", return_value=False),
         patch("src.orchestrator.eod_report.asyncio.sleep", new=AsyncMock()),
+        patch(
+            "src.ibkr.market_data.probe_market_data_health",
+            new=AsyncMock(return_value=dead_probe),
+        ),
     ):
         await eod_report._append_daily_iv(ib, symbols)
 
-    # Stops at the breaker threshold, not after all 30 symbols.
+    # Stops at the breaker threshold, not after all 30 symbols, because the probe agrees
+    # the farm is actually down.
     assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES
 
 
@@ -729,6 +739,7 @@ async def test_append_daily_iv_caps_slow_request_with_timeout() -> None:
 
     ib = MagicMock()
     ib.reqHistoricalDataAsync = AsyncMock(side_effect=_never_returns)
+    dead_probe = MagicMock(healthy=False, diagnosis="half-dead socket")
 
     # NB: do not patch asyncio.sleep here — eod_report.asyncio is the global module, so patching
     # it would also neutralise the sleep inside _never_returns and defeat the timeout being tested.
@@ -736,6 +747,10 @@ async def test_append_daily_iv_caps_slow_request_with_timeout() -> None:
         patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(return_value=MagicMock())),
         patch("src.storage.iv_history.append_observation", return_value=False),
         patch.object(eod_report, "_IV_REQUEST_TIMEOUT_S", 0.05),
+        patch(
+            "src.ibkr.market_data.probe_market_data_health",
+            new=AsyncMock(return_value=dead_probe),
+        ),
     ):
         # Would take 60s+ per symbol without the wait_for cap; the breaker then bails fast.
         await asyncio.wait_for(
@@ -744,3 +759,52 @@ async def test_append_daily_iv_caps_slow_request_with_timeout() -> None:
         )
 
     assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES
+
+
+@pytest.mark.asyncio
+async def test_append_daily_iv_skips_isolated_bad_symbols_and_keeps_going() -> None:
+    """A handful of chronically-bad symbols must not starve the rest of the universe.
+
+    Regression test for the production bug (2026-09-11): symbols alphabetically after the
+    first bad run trip the old breaker's unconditional `break` and never get a fresh IV
+    observation again — iv_history froze at 2026-08-12 for ~95% of the universe for a month.
+    Here the health probe reports the farm is fine, so the isolated failures must be skipped
+    (not fatal) and every remaining symbol still gets attempted.
+    """
+    from src.orchestrator import eod_report
+
+    n_bad = eod_report._IV_MAX_CONSECUTIVE_FAILURES + 2
+    symbols = [f"BAD{i}" for i in range(n_bad)] + [f"GOOD{i}" for i in range(10)]
+
+    async def _req(contract, **kwargs):
+        if contract.symbol.startswith("BAD"):
+            raise RuntimeError("no security definition")
+        bar = MagicMock()
+        bar.date = date(2026, 9, 11)
+        bar.close = 0.30
+        return [bar]
+
+    ib = MagicMock()
+    ib.reqHistoricalDataAsync = AsyncMock(side_effect=_req)
+    healthy_probe = MagicMock(healthy=True, diagnosis="")
+
+    async def _qualify(_ib, sym):
+        stock = MagicMock()
+        stock.symbol = sym
+        return stock
+
+    with (
+        patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(side_effect=_qualify)),
+        patch("src.storage.iv_history.append_observation", return_value=True) as append_mock,
+        patch("src.orchestrator.eod_report.asyncio.sleep", new=AsyncMock()),
+        patch(
+            "src.ibkr.market_data.probe_market_data_health",
+            new=AsyncMock(return_value=healthy_probe),
+        ),
+    ):
+        await eod_report._append_daily_iv(ib, symbols)
+
+    # Every symbol was attempted — the bad run did not truncate the remaining alphabet.
+    assert ib.reqHistoricalDataAsync.call_count == len(symbols)
+    # Every GOOD symbol still got its observation appended.
+    assert append_mock.call_count == 10

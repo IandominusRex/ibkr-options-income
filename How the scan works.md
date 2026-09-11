@@ -4,7 +4,9 @@
 46 to 32 `would_own` names later the same day — membership counts below reflect the trim, but the
 measured timing figures (percentiles, the `56s + 29.9s × n` fit, "5 times in 66 runs", etc.) were
 captured before it and describe the pre-trim 46-name universe; the per-symbol cost model itself
-doesn't change, only how many symbols there are to multiply it by). Reflects
+doesn't change, only how many symbols there are to multiply it by), updated 2026-09-11
+(`scheduler.entry_cutoff` moved from 15:00 to 16:00 ET — it now equals the RTH close, so it no
+longer trims the trading day; the last 15-min cycle, 15:45, is the last one either way). Reflects
 `src/orchestrator/scan.py`, `src/notify/approval_service.py` (`_intraday_scan_loop`),
 `config/universe.yaml`, and `config/settings.yaml → market_data` / `scheduler` as they stand
 today.*
@@ -69,7 +71,8 @@ first, then live candidates, then whoever dropped furthest relative to its own t
 rest are deferred to next cycle, where they go first. So the cycle always finishes on time instead
 of overrunning and costing me the next scan entirely.
 
-5. New-entry scans stop after 15:00 ET, so the last chain fetch of the day is at 14:45. Profit-take
+5. New-entry scans stop after 16:00 ET — the RTH close — so the last chain fetch of the day is at
+15:45; `entry_cutoff` no longer trims anything off the day. Profit-take
 and loss-exit checks keep running until the close. Also, if a scan takes longer than 15 minutes,
 the next cycle's SCAN is skipped entirely (profit-take and loss-exit checks still run — they
 happen before the scan in the loop) — a sweep of all 46 takes ~28 min at measured cost,
@@ -181,7 +184,8 @@ Since it has been >120 minutes since SOXL and PLTR received a full options fetch
 There are some valid options for PLTR that pass the gate, gets sent to user via telegram
 ===
 
-...continues until 245pm. After 3pm no new-entry scans run at all.
+...continues in the same pattern for the rest of the day. After 16:00 ET (the close) no new-entry
+scans run at all.
 
 ---
 
@@ -233,18 +237,19 @@ scan.
 
 ### When the 15-minute loop actually runs
 
-Cycles land on ET clock marks: **09:30, 09:45, 10:00 … 14:45** — 22 new-entry cycles a day. A
+Cycles land on ET clock marks: **09:30, 09:45, 10:00 … 15:45** — 26 new-entry cycles a day. A
 cycle is skipped entirely (no scan, no probes) when any of these is true:
 
 | Skip reason | Effect |
 |---|---|
 | Outside RTH, weekend, or market holiday | Nothing runs |
-| Past `scheduler.entry_cutoff` (**15:00 ET**) | Profit-take + loss-exit checks still run; **no new-entry scan** |
+| Past `scheduler.entry_cutoff` (**16:00 ET**, the close) | In practice never fires on its own during RTH — `is_rth` already goes false at the same instant. Profit-take + loss-exit checks still run at close; **no new-entry scan** |
 | Execution halted (`/halt`) | Same — closing risk is always allowed, opening it is not |
 | IBKR data-farm health probe on SPY fails | Cycle skipped, forced reconnect, operator notified **with a root-cause diagnosis** (Error 1100 lost-farm vs 10197 competing-live-session vs no-subscription vs flap vs generic — from the codes the probe observed; a 10197 block says right in the message that a reconnect won't fix it) |
 | The previous cycle's scan is still running | Cycle lost, counted, operator warned (throttled) |
 
-So the last chain fetch of the day happens at **14:45**, not 16:00.
+So the last chain fetch of the day happens at **15:45**, the last 15-min mark before the 16:00
+close — `entry_cutoff` and `is_rth` now agree, so nothing is trimmed off the trading day.
 
 ---
 
@@ -526,8 +531,8 @@ price gets *easier* to trip as the day goes on, not harder.
 | 10:45 | 4 | AAPL (−3% dip pull-in), SPY (+2% rally), NVDA, HOOD |
 | 11:00–11:45 | 1–2 | mostly HOOD |
 | 12:15 | 1 | NVDA — staleness net (133 min since its 10:02 stamp) |
-| 12:30–14:45 | 1–3 | ordinary moves + staleness, spread out |
-| 15:00 onward | **0** | past `entry_cutoff` — profit-take and loss-exit checks continue, no new-entry scan |
+| 12:30–15:45 | 1–3 | ordinary moves + staleness, spread out |
+| 16:00 onward | **0** | market closed (`is_rth` false) — profit-take and loss-exit checks continue, no new-entry scan |
 
 Roughly **3 fetches at the open, then 1–4 per cycle**, versus 5 every cycle if held names were
 unconditional and all 15 dip-watch names sat on the 0.5% gate. The startup sweep is now cheaper
@@ -628,7 +633,7 @@ for the next one rather than losing the day. Manual `/scan` always sends the ful
 | Number | Config key | Meaning |
 |---|---|---|
 | **15 min** | `scheduler.intraday_loop_minutes` | How often a scan cycle runs during RTH |
-| **15:00 ET** | `scheduler.entry_cutoff` | Last new-entry scan is 14:45 |
+| **16:00 ET** | `scheduler.entry_cutoff` | Equals the RTH close; last new-entry scan is 15:45 either way — `entry_cutoff` no longer trims the day |
 | **120 min** | `market_data.force_full_scan_minutes` | Per-symbol staleness net; `actively_wheeling` ∪ held only. 0 disables |
 | **0.5%** | `market_data.intraday_rescan_move_pct` | `actively_wheeling`, not held — either direction |
 | **2%** | `market_data.held_position_move_pct` | Held stock — **up only**, and *added to* the name's other bucket rule rather than replacing it |
