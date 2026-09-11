@@ -57,46 +57,53 @@ def _right_lit(raw: Any) -> Literal["C", "P"]:
 _ROLL_RUN_PREFIX = "roll-"
 
 
+# Human-readable labels for the raw risk-gate / filter reason codes surfaced on the web.
+#
+# Mirrors ``src.notify.formatters._REJECT_REASON_LABELS`` but is duplicated here
+# deliberately: the formatters module is Telegram-coupled (MarkdownV2 escaping,
+# chat-length constraints) and importing it would pull the web layer into the notify
+# layer's concerns. The duplication is a deliberate cost, not an accident — so
+# ``tests/test_reason_label_parity.py`` fails the build if the two ever diverge. Add a code
+# to one, add it to the other, with the identical phrase.
+_REASON_LABELS: dict[str, str] = {
+    "iv_rank_below_minimum": "IV rank too low (poor premium)",
+    "iv_rv_below_minimum": "IV/RV ratio too low (premium not rich vs realized)",
+    "delta_out_of_range": "delta outside target band",
+    "delta_missing": "no delta available (illiquid / no Greeks)",
+    "delta_sign_mismatch": "delta sign wrong for strategy",
+    "dte_out_of_range": "no expiries in the target DTE window",
+    "roc_below_minimum": "return-on-capital below floor",
+    "yield_below_minimum": "annualized yield below floor",
+    "premium_below_fair_value": "credit is below fair value for the risk (no variance premium)",
+    "earnings_blackout": "earnings inside the window",
+    "no_contracts": "no contracts at the target strike",
+    "negative_bid_sentinel": "no real bid (stale / illiquid quote)",
+    "buying_power_buffer": "not enough buying-power headroom",
+    "concentration_limit": "per-ticker concentration cap hit",
+    "large_position_slot_full": "the single large-position slot is already taken",
+    "sector_limit": "per-sector concentration cap hit",
+    "csp_allocation_limit": "total CSP allocation cap hit",
+    "margin_limit": "margin limit hit",
+    "contracts_exceeds_max": "size exceeds max contracts",
+    "score_below_minimum": "blended score below quality floor",
+    "no_two_sided_market": "no live bid/ask (can't price it)",
+    "illiquid": "fails liquidity gates (spread / OI / volume)",
+    "strike_below_basis": "strike below cost basis (would lock in a loss)",
+    "insufficient_cash": "not enough cash to secure one contract",
+    "no_headroom": "no room under the concentration or budget caps",
+    "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
+    "dedupe_not_surfaced": "a better strike on this name won the slot",
+    "top_n_not_surfaced": "max new positions per run already full",
+}
+
+
 def _humanize_reason(code: str) -> str:
     """Map a raw gate/filter reason code to a readable phrase.
 
-    Mirrors ``src.notify.formatters._humanize_reject_reason`` but is duplicated here
-    deliberately: the formatters module is Telegram-coupled (MarkdownV2 escaping,
-    chat-length constraints) and importing it would pull the web layer into the
-    notify layer's concerns. The fallback — de-snake-cased code, never an empty
-    string — matches the formatters' behaviour exactly.
+    The fallback — de-snake-cased code, never an empty string — matches
+    ``src.notify.formatters._humanize_reject_reason``'s behaviour exactly.
     """
-    _LABELS: dict[str, str] = {
-        "iv_rank_below_minimum": "IV rank too low (poor premium)",
-        "iv_rv_below_minimum": "IV/RV ratio too low (premium not rich vs realized)",
-        "delta_out_of_range": "delta outside target band",
-        "delta_missing": "no delta available (illiquid / no Greeks)",
-        "delta_sign_mismatch": "delta sign wrong for strategy",
-        "dte_out_of_range": "no expiries in the target DTE window",
-        "roc_below_minimum": "return-on-capital below floor",
-        "yield_below_minimum": "annualized yield below floor",
-        "premium_below_fair_value": "credit is below fair value for the risk (no variance premium)",
-        "earnings_blackout": "earnings inside the window",
-        "no_contracts": "no contracts at the target strike",
-        "negative_bid_sentinel": "no real bid (stale / illiquid quote)",
-        "buying_power_buffer": "not enough buying-power headroom",
-        "concentration_limit": "per-ticker concentration cap hit",
-        "large_position_slot_full": "the single large-position slot is already taken",
-        "sector_limit": "per-sector concentration cap hit",
-        "csp_allocation_limit": "total CSP allocation cap hit",
-        "margin_limit": "margin limit hit",
-        "contracts_exceeds_max": "size exceeds max contracts",
-        "score_below_minimum": "blended score below quality floor",
-        "no_two_sided_market": "no live bid/ask (can't price it)",
-        "illiquid": "fails liquidity gates (spread / OI / volume)",
-        "strike_below_basis": "strike below cost basis (would lock in a loss)",
-        "insufficient_cash": "not enough cash to secure one contract",
-        "no_headroom": "no room under the concentration or budget caps",
-        "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
-        "dedupe_not_surfaced": "a better strike on this name won the slot",
-        "top_n_not_surfaced": "max new positions per run already full",
-    }
-    return _LABELS.get(code, code.replace("_", " "))
+    return _REASON_LABELS.get(code, code.replace("_", " "))
 
 
 def _humanize_reasons(codes: list[str] | None) -> list[str]:

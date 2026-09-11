@@ -529,6 +529,11 @@ def format_data_provenance(
 # Human-readable labels for the raw risk-gate / filter reason codes surfaced when a
 # single-ticker /scan turns up no qualifying option. Codes not listed fall back to a
 # de-snake-cased version of the code itself.
+#
+# Deliberately duplicated in ``src.api.routers.options._REASON_LABELS`` — this module is
+# Telegram-coupled (MarkdownV2 escaping, chat-length constraints) and the web layer must not
+# import it. ``tests/test_reason_label_parity.py`` fails the build if the two diverge: add a
+# code to one, add it to the other, with the identical phrase.
 _REJECT_REASON_LABELS: dict[str, str] = {
     "iv_rank_below_minimum": "IV rank too low (poor premium)",
     "iv_rv_below_minimum": "IV/RV ratio too low (premium not rich vs realized)",
