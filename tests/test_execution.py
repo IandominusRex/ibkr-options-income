@@ -749,6 +749,113 @@ async def test_process_queued_orders_cancels_if_revalidation_fails(monkeypatch, 
     assert "Re-validation failed" in (order.detail or "")
 
 
+async def test_a_dedupe_pre_gate_cancel_says_what_actually_displaced_the_order(
+    monkeypatch, tmp_path
+):
+    """I1: the re-gate keeps the per-symbol dedupe ON; the message must stay honest.
+
+    The batch here is the pending-order queue, so a `dedupe_pre_gate` reject means another
+    *approved* order on the same underlying outranked this one — not "a better strike from a
+    fresh scan won", which is what the scan-side humanised label for this code says. The bare
+    code says nothing at all. The cancellation message names the real cause; the verdict and
+    the gate call itself are untouched.
+    """
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.approval.validate_candidates",
+        lambda candidates, account, positions: [
+            RiskVerdict(
+                candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["dedupe_pre_gate"]
+            )
+        ],
+    )
+
+    sent: list[dict] = []
+
+    async def _capture(kind, **kwargs):
+        sent.append({"kind": kind, **kwargs})
+
+    monkeypatch.setattr("src.notify.sender.send_order_notification", _capture)
+
+    candidate = _make_candidate()
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _, order_id = _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    await process_queued_orders(mock_ib, AsyncMock(), "99999")
+
+    with dbmod.session_scope() as s:
+        detail = s.get(OrderRow, order_id).detail or ""
+
+    assert "Re-validation failed" in detail
+    assert "dedupe_pre_gate" in detail  # the raw code stays in the audit record
+    assert "another approved order on the same underlying outranked this one" in detail
+    assert sent and "another approved order on the same underlying" in sent[0]["failure_reason"]
+
+
+async def test_a_non_dedupe_cancel_message_is_unchanged(monkeypatch, tmp_path):
+    """The clarifying clause is scoped to the one reason that needs it."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.approval.validate_candidates",
+        lambda candidates, account, positions: [
+            RiskVerdict(candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["margin_limit"])
+        ],
+    )
+
+    candidate = _make_candidate()
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _, order_id = _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    await process_queued_orders(mock_ib, AsyncMock(), "99999")
+
+    with dbmod.session_scope() as s:
+        detail = s.get(OrderRow, order_id).detail or ""
+
+    assert detail == "Re-validation failed: ['margin_limit']"
+
+
 async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, tmp_path):
     _db_setup(tmp_path, monkeypatch)
 
