@@ -866,6 +866,24 @@ def _rank_assessed(assessed: list[AssessedContract]) -> list[AssessedContract]:
     return sorted(assessed, key=key)
 
 
+def _lost_only_to_a_sibling(reasons: list[str]) -> bool:
+    """True when a contract's ONLY problem was that a better strike on its own name won.
+
+    ``risk_engine.validate_candidates`` appends ``dedupe_pre_gate`` only to a candidate that
+    already cleared every per-candidate gate, so it is always the sole reason — but the check
+    is written as "nothing else is in the list" rather than "it is in the list" so a future
+    reason appended alongside it would keep the contract visible rather than silently hide it.
+
+    Such a contract is not an informative answer to "why did this scan find nothing": it says
+    a sibling outranked it for the shared budget, not that its economics came close. Counting
+    it would let one active name's own strikes crowd out the genuine economic near-misses, so
+    the near-miss digest and the rejection tallies both skip it. It stays in
+    ``result.assessed`` (and in the persisted audit trail) in full — this filters what gets
+    *surfaced as the closest miss*, not what gets recorded.
+    """
+    return reasons == ["dedupe_pre_gate"]
+
+
 def _near_misses(
     assessed: list[AssessedContract], strategy_value: str
 ) -> tuple[list[tuple[TradeCandidate, list[str]]], int]:
@@ -875,7 +893,11 @@ def _near_misses(
     ranked by :func:`_rank_assessed`.
     """
     rejected = [
-        a for a in assessed if not a.passed and a.candidate.strategy.value == strategy_value
+        a
+        for a in assessed
+        if not a.passed
+        and a.candidate.strategy.value == strategy_value
+        and not _lost_only_to_a_sibling(a.reasons)
     ]
     shown = [(a.candidate, a.reasons) for a in rejected[:_NEAR_MISS_LIMIT]]
     return shown, max(0, len(rejected) - len(shown))
@@ -1476,10 +1498,14 @@ async def _run_scan_body(
             )
             # Tally rejection reasons per strategy and per symbol (C7).
             # The per-symbol map drives the skip-reasons card sent at the end of each scan.
+            # Contracts that lost only to a better sibling on their own name are skipped —
+            # see `_lost_only_to_a_sibling`: "a better strike won" is not an answer to "why
+            # did this scan find nothing", and one busy name throws off enough strikes to
+            # dominate both tallies with it.
             per_symbol_skip: dict[str, list[str]] = {}
             for c in cc_candidates:
                 v = verdict_map.get(c.candidate_id)
-                if v and v.verdict.value != "pass":
+                if v and v.verdict.value != "pass" and not _lost_only_to_a_sibling(list(v.reasons)):
                     for r in v.reasons:
                         cc_rejection_tally[r] = cc_rejection_tally.get(r, 0) + 1
                     bucket = per_symbol_skip.setdefault(c.underlying, [])
@@ -1488,7 +1514,7 @@ async def _run_scan_body(
                             bucket.append(r)
             for c in csp_candidates:
                 v = verdict_map.get(c.candidate_id)
-                if v and v.verdict.value != "pass":
+                if v and v.verdict.value != "pass" and not _lost_only_to_a_sibling(list(v.reasons)):
                     for r in v.reasons:
                         csp_rejection_tally[r] = csp_rejection_tally.get(r, 0) + 1
                     bucket = per_symbol_skip.setdefault(c.underlying, [])
