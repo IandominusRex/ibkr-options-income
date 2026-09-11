@@ -1863,7 +1863,13 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
     if all_option_candidates:
         try:
             scored = score_candidates(all_option_candidates)  # sorted DESC by blended_score
-            verdicts = validate_candidates(scored, account, positions)
+            # `dedupe_same_symbol=False`: every candidate here is a strike/expiry of the ONE
+            # ticker under discussion, so the gate's per-symbol dedupe would collapse the
+            # whole deep-dive to a single "winning" strike — hiding exactly the alternatives
+            # this view exists to let an operator compare. This is a browse/compare surface,
+            # not an execution-committing one: anything promoted out of it is re-gated at
+            # order-approval time (`execution/approval.py`), which keeps the dedupe ON.
+            verdicts = validate_candidates(scored, account, positions, dedupe_same_symbol=False)
             verdict_map = {v.candidate_id: v for v in verdicts}
             min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [

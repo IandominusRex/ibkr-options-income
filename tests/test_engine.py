@@ -949,6 +949,126 @@ class TestBudgetDedupeAcrossSameSymbol:
         )
         assert all(v.verdict == Verdict.PASS for v in verdicts)
 
+    def test_rolls_are_not_grouped_or_deduped(self) -> None:
+        # M1: a ROLL replaces an existing short leg that `positions` already counts, so it
+        # adds no new exposure and never reaches the shared budget — exactly like a CC.
+        # Two rolls on one underlying, each with collateral far past the 10%-of-NLV
+        # raw-collateral cap, must therefore BOTH pass: neither may be charged against the
+        # budget, and neither may be dedupe_pre_gate'd out of the way of the other.
+        roll_a = _candidate(
+            candidate_id="roll_a",
+            strategy=Strategy.ROLL,
+            underlying="MARA",
+            collateral=60_000.0,
+            scores=_scores(
+                iv=90, technical=90, fundamental=90, liquidity=90, assignment=90, symbol="MARA"
+            ),
+        )
+        roll_b = _candidate(
+            candidate_id="roll_b",
+            strategy=Strategy.ROLL,
+            underlying="MARA",
+            collateral=60_000.0,
+            scores=_scores(
+                iv=10, technical=10, fundamental=10, liquidity=10, assignment=10, symbol="MARA"
+            ),
+        )
+        verdicts = validate_candidates(
+            score_candidates([roll_a, roll_b]), _account(net_liquidation=100_000.0), []
+        )
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["roll_a"].verdict == Verdict.PASS, vm["roll_a"].reasons
+        assert vm["roll_b"].verdict == Verdict.PASS, vm["roll_b"].reasons
+        assert all("dedupe_pre_gate" not in v.reasons for v in verdicts)
+
+
+class TestDedupeOptOut:
+    """C1 (final-review fix): `dedupe_same_symbol=False` restores the pre-fix single-pass
+    behaviour for the one caller that must never pick a winner — the `/scan TICKER`
+    deep-dive, a browse/compare view whose whole point is showing every strike that
+    individually qualifies. The real safety backstop for that path is the order-approval
+    re-validation gate, which keeps the dedupe ON."""
+
+    def _two_siblings(self) -> list[TradeCandidate]:
+        # Two TQQQ CSPs that BOTH fit the shared budget together: ~2,216 risk units each
+        # against the 5,000 ticker-risk cap, and 20,000 of collateral against the 20,000
+        # deployable-cash / CSP caps. Nothing here is scarce — the only thing that can
+        # reject the runner-up is the pre-gate dedupe itself.
+        low = _candidate(
+            candidate_id="c_low",
+            underlying="TQQQ",
+            collateral=10_000.0,
+            dte=28,
+            current_iv=80.0,
+            scores=_scores(
+                iv=40, technical=40, fundamental=40, liquidity=40, assignment=40, symbol="TQQQ"
+            ),
+        )
+        best = _candidate(
+            candidate_id="c_best",
+            underlying="TQQQ",
+            collateral=10_000.0,
+            dte=28,
+            current_iv=80.0,
+            scores=_scores(
+                iv=90, technical=90, fundamental=90, liquidity=90, assignment=90, symbol="TQQQ"
+            ),
+        )
+        return score_candidates([low, best])
+
+    def test_opting_out_lets_every_qualifying_sibling_pass(self) -> None:
+        verdicts = validate_candidates(
+            self._two_siblings(),
+            _account(net_liquidation=100_000.0),
+            [],
+            dedupe_same_symbol=False,
+        )
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["c_best"].verdict == Verdict.PASS, vm["c_best"].reasons
+        assert vm["c_low"].verdict == Verdict.PASS, vm["c_low"].reasons
+        assert all("dedupe_pre_gate" not in v.reasons for v in verdicts)
+
+    def test_the_default_still_dedupes_the_identical_input(self) -> None:
+        # Same fixture, default argument — proves the opt-out is what changed the outcome,
+        # not the fixture being too easy to reject.
+        verdicts = validate_candidates(
+            self._two_siblings(), _account(net_liquidation=100_000.0), []
+        )
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["c_best"].verdict == Verdict.PASS, vm["c_best"].reasons
+        assert vm["c_low"].verdict == Verdict.REJECT
+        assert vm["c_low"].reasons == ["dedupe_pre_gate"]
+
+    def test_opting_out_still_consumes_the_shared_budget_greedily(self) -> None:
+        # The opt-out removes the grouping, NOT the cumulative budget: with the deployable
+        # cash sized for one of the two, the higher-scored sibling still wins it and the
+        # other is rejected for the real economic reason, not for being a duplicate.
+        acc = _account(net_liquidation=100_000.0, cash=16_000.0, maintenance_margin=10_000.0)
+        c_a = _candidate(
+            candidate_id="a",
+            underlying="TQQQ",
+            collateral=4_000.0,
+            scores=_scores(
+                iv=90, technical=90, fundamental=90, liquidity=90, assignment=90, symbol="TQQQ"
+            ),
+        )
+        c_b = _candidate(
+            candidate_id="b",
+            underlying="TQQQ",
+            collateral=4_000.0,
+            scores=_scores(
+                iv=10, technical=10, fundamental=10, liquidity=10, assignment=10, symbol="TQQQ"
+            ),
+        )
+        verdicts = validate_candidates(
+            score_candidates([c_a, c_b]), acc, [], dedupe_same_symbol=False
+        )
+        vm = {v.candidate_id: v for v in verdicts}
+        assert vm["a"].verdict == Verdict.PASS, vm["a"].reasons
+        assert vm["b"].verdict == Verdict.REJECT
+        assert "buying_power_buffer" in vm["b"].reasons
+        assert "dedupe_pre_gate" not in vm["b"].reasons
+
 
 # ---------------------------------------------------------------------------
 # risk_engine.py — validate_live_quote (send-time second gate, S4)

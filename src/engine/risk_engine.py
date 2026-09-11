@@ -70,8 +70,13 @@ def validate_candidates(
     account: AccountSnapshot,
     positions: list[PositionSnapshot],
     iv_by_symbol: dict[str, float] | None = None,
+    *,
+    dedupe_same_symbol: bool = True,
 ) -> list[RiskVerdict]:
     """Gate each candidate against hard limits. One RiskVerdict per candidate.
+
+    Every ``candidate_id`` in *candidates* must be unique — the per-candidate reason lists
+    are keyed by it, so a duplicate id would silently overwrite an earlier candidate's gates.
 
     Candidates should be pre-sorted by priority (blended_score desc). Two passes:
 
@@ -92,6 +97,20 @@ def validate_candidates(
     cross-symbol behaviour this cumulative design was built for (D1/Phase B: "multiple
     candidates can't each claim the whole account") is unchanged: representatives from
     different symbols still compete for the shared sector/CSP/cash caps in score order.
+
+    *dedupe_same_symbol* (default ``True``) controls pass 1's grouping only. When ``True``,
+    same-symbol candidates are deduped to a single representative before the shared
+    cumulative budget runs, as described above — the behaviour every batch caller wants (the
+    full scan sweep, and the order-approval re-gate, which deliberately keeps it on so two
+    approved-but-unexecuted orders on one underlying cannot both slip through). When
+    ``False``, every pass-1 survivor is its own representative and no candidate is ever given
+    the "dedupe_pre_gate" reason, restoring the pre-split greedy behaviour: the cumulative
+    budgets are still consumed in score order, siblings included. That is what the
+    single-ticker deep-dive (`/scan TICKER`, and the promote that reuses its pricing path)
+    passes — it is a browse/compare view whose entire purpose is showing the operator every
+    strike that individually qualifies, not picking a winner among them. The real
+    execution-committing gate for anything promoted out of that view is the order-approval
+    re-validation, which runs with the dedupe on.
 
     *iv_by_symbol* (optional) lets an existing option position charge the RISK-UNIT tallies,
     not just the raw-collateral one. Without it `budgets.ticker_risk` starts empty, so a
@@ -189,14 +208,20 @@ def validate_candidates(
     # shared cumulative budgets. Every other pass-1 survivor in the same group is rejected
     # right here, before ever touching `budgets` or `caps`. Only strategies that add new
     # exposure are grouped at all — a covered call never reaches the shared budget either
-    # way, so there is nothing to dedupe among CC candidates.
+    # way, so there is nothing to dedupe among CC candidates. With *dedupe_same_symbol*
+    # False every survivor is its own representative, so the loop below appends nothing and
+    # pass 2 runs for all of them in score order — the pre-split behaviour, verbatim.
     survivor_ids = {
         cand.candidate_id
         for cand in candidates
         if not candidate_reasons[cand.candidate_id]
         and cand.strategy not in (Strategy.COVERED_CALL, Strategy.ROLL)
     }
-    representative_ids = _select_budget_representatives(candidates, survivor_ids)
+    representative_ids = (
+        _select_budget_representatives(candidates, survivor_ids)
+        if dedupe_same_symbol
+        else survivor_ids
+    )
     for cand in candidates:
         if cand.candidate_id in survivor_ids and cand.candidate_id not in representative_ids:
             candidate_reasons[cand.candidate_id].append("dedupe_pre_gate")
