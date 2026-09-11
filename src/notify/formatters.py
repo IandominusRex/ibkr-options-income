@@ -557,7 +557,8 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",
-    # Post-gate drops — the trade was fine, the slate was not.
+    # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
+    "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",
 }
