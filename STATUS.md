@@ -367,6 +367,44 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-09-11 — risk gate: a symbol's own candidates were competing against each other for its own shared budget)
+
+Two weeks of paper-scan rejects showed 95 of 96 `concentration_limit` rejects were TQQQ — a
+symbol the account held **zero** position in. `validate_candidates` (`src/engine/risk_engine.py`)
+walked *every* pass-1 survivor through the cumulative, shared-budget checks (per-ticker/sector
+risk units, the large-position slot, total CSP collateral, the cash buffer) individually, in
+score order, exactly as designed for cross-symbol competition — but a single busy scan cycle can
+produce a dozen-plus strikes/expiries for one active name, and nothing kept those siblings from
+walking the same per-ticker budget one after another until it was gone, rejecting the rest of its
+own name's candidates as "concentrated" against exposure that was never real.
+
+- **Two-pass split.** Pass 1 (independent per-candidate gates: ROC/yield/VRP, IV rank/RV, DTE,
+  delta, contracts, earnings, margin) is unchanged. Before pass 2, a new
+  `_select_budget_representatives` helper groups pass-1 survivors by `(underlying, strategy)` and
+  keeps only the single highest-scoring one per group — candidates are pre-sorted by
+  `blended_score` desc, so the first survivor seen per group wins. Every other survivor in the
+  group is rejected with a new reason, `dedupe_pre_gate`, *before* it ever touches `budgets`/
+  `caps` — it never had a chance to compete for the shared budget at all, unlike before.
+- **Covered calls and rolls are excluded from grouping entirely** — they never reached the shared
+  budget checks before this fix either, so there's nothing on them to dedupe.
+- **Cross-symbol competition is untouched.** Representatives from different symbols still walk
+  pass 2 in the same score-sorted order as before, competing for the shared sector/CSP/cash caps
+  exactly as D1/Phase B intended — this fix only stops a name from competing against itself.
+- **New reason code labelled.** `dedupe_pre_gate` → "a better strike on this name already claimed
+  the shared risk budget" in both `src/notify/formatters.py`'s `_REJECT_REASON_LABELS` and
+  `src/api/routers/options.py`'s `_humanize_reason` `_LABELS`, so the Telegram card and the web
+  options view read it the same way instead of falling back to a de-snake-cased reject code.
+- **Tests:** `tests/test_engine.py::TestBudgetDedupeAcrossSameSymbol` (4 new tests — only the
+  best-scoring sibling reaches the budget, a representative that fails the cumulative gate is not
+  replaced by a sibling, covered calls are never grouped, different symbols still compete by
+  score) plus a rewritten `test_cumulative_concentration_across_same_ticker`;
+  `tests/test_ticker_scan_format.py::test_dedupe_pre_gate_has_a_readable_label`. Full suite:
+  `python -m pytest -q` — 2191 passed, 1 failed
+  (`tests/test_write_path_invariants.py::test_every_options_route_requires_owner`, a pre-existing
+  FastAPI internal `Dependant`-attribute break unrelated to this change).
+
+---
+
 ## Bugs fixed (2026-09-09 — M0 "Baseline and pre-existing defects": idempotent EOD, one assignment-risk predicate, P2 deferred findings closed)
 
 `Web plan/milestones/P3-P4/M0-baseline-and-fixes.md`'s nine sub-tasks (0.2–0.10), all landed on
