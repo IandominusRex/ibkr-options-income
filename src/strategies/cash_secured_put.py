@@ -106,7 +106,7 @@ def screen_csp_candidates(
     hard_max: int = csp_cfg.get("max_contracts", 10)
     caps = resolve_caps(account, risk)
     sector_of = cfg.universe.get("sectors", {}).get
-    budgets: Budgets = seed_budgets(positions or [], sector_of)
+    budgets: Budgets = seed_budgets(positions or [], sector_of, caps=caps)
     sector = sector_of(symbol)
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff

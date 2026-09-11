@@ -469,15 +469,24 @@ class AppCommandRow(Base):
     resume, set_autonomy, refresh, universe_add, universe_remove — the latter two
     joined this group in M7 after a stable key let a later remove dedupe to an
     earlier, already-applied command and silently no-op). A NULL key never collides.
+
+    Uniqueness on ``dedupe_key`` is enforced at the DB level by
+    ``uq_app_commands_dedupe_key_pending`` — a partial index (``src/storage/db.py``'s
+    ``_PARTIAL_INDEXES``, same shape as ``orders``' ``uq_orders_active_candidate``) scoped to
+    ``status = 'pending'``, not a plain column constraint. ``promote``/``roll_request`` key on
+    a target (``candidate_id`` / ``position_symbol``) that outlives one approval cycle, so a
+    global unique constraint permanently blocked a fresh request once the first had already
+    been applied — the exact defect STATUS.md's "Remaining known issues" described. See
+    ``storage.app_commands.enqueue_command`` and ``db._ensure_app_commands_pending_only_dedupe``
+    (the one-time rebuild that drops the old global constraint from a pre-existing table).
     """
 
     __tablename__ = "app_commands"
-    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_app_commands_dedupe_key"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(24), index=True)
     payload: Mapped[dict] = mapped_column(JSON)  # the intent's arguments
-    dedupe_key: Mapped[str | None] = mapped_column(String(96), nullable=True, unique=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(96), nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     requested_by: Mapped[str] = mapped_column(String(64))

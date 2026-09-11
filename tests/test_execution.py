@@ -18,6 +18,7 @@ from src.common.schemas import (
     OptionQuote,
     OptionRight,
     OrderState,
+    PositionSnapshot,
     ScoreCard,
     Strategy,
     TradeCandidate,
@@ -111,6 +112,21 @@ def _db_setup(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(dbmod, "_SessionLocal", None)
     monkeypatch.setattr(Config, "db_url_abs", lambda self: f"sqlite:///{tmp_path / 't.db'}")
     dbmod.init_db()
+
+
+@pytest.fixture(autouse=True)
+def _no_network_fundamentals(monkeypatch):
+    """`process_queued_orders`'s Phase 1 re-fetches earnings via `get_fundamental_stats`
+    (2026-09-11 fix) — a real network/yfinance boundary. Default every test in this file to a
+    fast, deterministic "no known earnings" result so the 14+ tests that exercise that path
+    don't silently start making real network calls; a test that specifically exercises the
+    fresh-earnings behavior overrides this with its own `monkeypatch.setattr` afterward."""
+    from src.common.schemas import FundamentalStats
+
+    monkeypatch.setattr(
+        "src.execution.approval.get_fundamental_stats",
+        lambda symbol: FundamentalStats(symbol=symbol),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -971,6 +987,262 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
     with dbmod.session_scope() as s:
         assert s.get(OrderRow, oid2).state == OrderState.CANCELLED
         assert "Re-validation failed" in (s.get(OrderRow, oid2).detail or "")
+
+
+async def test_process_queued_orders_uses_a_fresh_earnings_date_not_the_frozen_one(
+    monkeypatch, tmp_path
+):
+    """STATUS.md's former "overnight stale data" gap: a Friday-approved trade executing
+    Monday morning must not lean on the scan-time frozen `next_earnings` — a fresh
+    `get_fundamental_stats` call must feed the earnings-blackout check. The frozen candidate
+    snapshot carries no earnings date at all (as if unknown at scan time); the fresh fetch
+    reveals one that falls inside the option's life, which the REAL risk engine must reject."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    monkeypatch.setattr("src.execution.approval.get_positions", lambda ib: [])
+
+    from src.common.schemas import FundamentalStats
+
+    fresh_earnings_date = _TODAY + timedelta(days=10)  # inside the 30-DTE option's life
+    monkeypatch.setattr(
+        "src.execution.approval.get_fundamental_stats",
+        lambda symbol: FundamentalStats(symbol=symbol, next_earnings=fresh_earnings_date),
+    )
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    # Real risk engine — no mocked validate_candidates — so the earnings-blackout check
+    # actually runs against whatever `candidate.next_earnings` carries at re-validation time.
+    candidate = _make_candidate(dte=30)  # frozen next_earnings defaults to None
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _, order_id = _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    mock_bot = AsyncMock()
+
+    await process_queued_orders(mock_ib, mock_bot, "99999")
+
+    assert executed == []
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        assert row.state == OrderState.CANCELLED
+        assert "earnings_blackout" in (row.detail or "")
+
+
+async def test_process_queued_orders_rejects_covered_call_without_enough_shares(
+    monkeypatch, tmp_path
+):
+    """STATUS.md's former "share ownership at execution" gap: shares sold (manually, or by an
+    assignment the reconciler hasn't caught yet) between scan and execution must not let a
+    covered call through as a naked short. 100 shares covers 1 contract; the queued order
+    wants 2."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    monkeypatch.setattr(
+        "src.execution.approval.get_positions",
+        lambda ib: [
+            PositionSnapshot(symbol="AAPL", sec_type="STK", position=100.0, avg_cost=175.0)
+        ],
+    )
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.approval.validate_candidates",
+        lambda candidates, account, positions: [
+            RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
+            for c in candidates
+        ],
+    )
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    candidate = _make_candidate(strategy=Strategy.COVERED_CALL, contracts=2)
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _, order_id = _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    mock_bot = AsyncMock()
+
+    await process_queued_orders(mock_ib, mock_bot, "99999")
+
+    assert executed == []
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        assert row.state == OrderState.CANCELLED
+        assert "insufficient_shares" in (row.detail or "")
+
+
+async def test_process_queued_orders_allows_covered_call_with_enough_shares(monkeypatch, tmp_path):
+    """Sanity check alongside the rejection test above: a well-covered call is not a false
+    positive of the new share-coverage re-check."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    monkeypatch.setattr(
+        "src.execution.approval.get_positions",
+        lambda ib: [
+            PositionSnapshot(symbol="AAPL", sec_type="STK", position=200.0, avg_cost=175.0)
+        ],
+    )
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.approval.validate_candidates",
+        lambda candidates, account, positions: [
+            RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
+            for c in candidates
+        ],
+    )
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    candidate = _make_candidate(strategy=Strategy.COVERED_CALL, contracts=2)
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, candidate)
+        _, order_id = _insert_queued_order(session, candidate.candidate_id)
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU123456"]
+    mock_bot = AsyncMock()
+
+    await process_queued_orders(mock_ib, mock_bot, "99999")
+
+    assert executed == [order_id]
+
+
+async def test_process_queued_orders_two_covered_calls_same_underlying_second_rejected(
+    monkeypatch, tmp_path
+):
+    """The share-coverage re-check must be cumulative WITHIN the batch, not just against the
+    static position snapshot: two QUEUED covered calls on the same underlying (approved from
+    different scan cycles — CC is never deduped at the risk gate) must not both execute when
+    the book only covers one of them."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.secrets.ibkr_account = ""
+    mock_cfg.execution.transmit_only_in_rth = False
+    monkeypatch.setattr("src.execution.approval.get_config", lambda: mock_cfg)
+    monkeypatch.setattr("src.execution.approval.is_rth", lambda: True)
+
+    monkeypatch.setattr(
+        "src.execution.approval.get_account_snapshot_async",
+        AsyncMock(return_value=_make_account()),
+    )
+    # 100 shares -> 1 contract of capacity, shared across both queued orders.
+    monkeypatch.setattr(
+        "src.execution.approval.get_positions",
+        lambda ib: [
+            PositionSnapshot(symbol="AAPL", sec_type="STK", position=100.0, avg_cost=175.0)
+        ],
+    )
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.approval.validate_candidates",
+        lambda candidates, account, positions: [
+            RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
+            for c in candidates
+        ],
+    )
+
+    executed: list[int] = []
+
+    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+        executed.append(order_id)
+
+    monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
+
+    c1 = _make_candidate(
+        "c1", underlying="AAPL", strategy=Strategy.COVERED_CALL, contracts=1
+    ).model_copy(update={"blended_score": 90.0})
+    c2 = _make_candidate(
+        "c2", underlying="AAPL", strategy=Strategy.COVERED_CALL, contracts=1
+    ).model_copy(update={"blended_score": 80.0})
+    with dbmod.session_scope() as session:
+        _insert_candidate_row(session, c1)
+        _insert_candidate_row(session, c2)
+        _, oid1 = _insert_queued_order(session, "c1")
+        _, oid2 = _insert_queued_order(session, "c2")
+
+    from src.execution.approval import process_queued_orders
+
+    mock_ib = MagicMock()
+    mock_ib.managedAccounts.return_value = ["DU1"]
+    mock_bot = AsyncMock()
+
+    await process_queued_orders(mock_ib, mock_bot, "99999")
+
+    assert executed == [oid1]
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, oid2)
+        assert row.state == OrderState.CANCELLED
+        assert "insufficient_shares" in (row.detail or "")
 
 
 async def test_process_queued_orders_skips_when_halted(monkeypatch, tmp_path):

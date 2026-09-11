@@ -68,7 +68,12 @@ class Budgets:
     ticker_collateral: dict[str, float] = field(default_factory=dict)
     csp_collateral: float = 0.0
     cash_used: float = 0.0
-    large_slots_used: int = 0
+    # Tickers currently occupying a large-position slot — a SET, not a count: a slot belongs
+    # to a ticker, not to a candidate, so a second candidate on an already-large name must
+    # never consume a second slot. Adding an already-present symbol is a no-op, which is
+    # exactly what makes this correct without a separate "did this just cross the threshold"
+    # check — see ``charge`` and ``seed_budgets``.
+    large_tickers: set[str] = field(default_factory=set)
 
 
 def resolve_caps(account: AccountSnapshot, risk: dict) -> Caps:
@@ -105,6 +110,8 @@ def seed_budgets(
     positions: list[PositionSnapshot],
     sector_of: Callable[[str], str | None],
     iv_of: Callable[[str], float | None] | None = None,
+    *,
+    caps: Caps | None = None,
 ) -> Budgets:
     """Seed running tallies from current positions.
 
@@ -125,6 +132,16 @@ def seed_budgets(
     Stock positions get no risk-unit seeding — they have no natural DTE — and neither does an
     option whose IV can't be resolved or whose expiry has passed. Those, and every caller that
     omits *iv_of*, are covered by ``ticker_collateral``, which is always seeded.
+
+    *caps*, when supplied, seeds ``large_tickers`` too: any symbol whose existing cumulative
+    collateral already exceeds ``caps.max_ticker_collateral`` starts the cycle already
+    occupying a large-position slot. Without this, a name that is *already* over the
+    concentration cap purely from the current book — no new candidate has touched it yet —
+    would let `max_large_positions` further names go large on top of it, silently exceeding
+    the intended cap on concentrated bets. Both production callers (`risk_engine.
+    validate_candidates`, `strategies.cash_secured_put`) already resolve `caps` before calling
+    this, so pass it; keyword-only and optional only so existing direct callers/tests that
+    don't care about slot seeding are unaffected.
     """
     budgets = Budgets()
     for p in positions:
@@ -151,6 +168,11 @@ def seed_budgets(
         sector = sector_of(key)
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
+
+    if caps is not None:
+        for key, collateral in budgets.ticker_collateral.items():
+            if collateral > caps.max_ticker_collateral:
+                budgets.large_tickers.add(key)
     return budgets
 
 
@@ -193,10 +215,14 @@ def _fits(
     # every caller that cannot seed the risk-unit tallies (no `iv_of` — the order-approval
     # re-gate, the single-ticker deep-dive, the CSP generator's sizer): whatever those paths
     # know about a candidate's IV, cumulative per-ticker collateral can never exceed
-    # `max_pct_per_ticker_large`. NOTE: this check is cumulative but `charge()` below still
-    # marks the slot used based on the candidate's own MARGINAL collateral — see its docstring.
+    # `max_pct_per_ticker_large`. A ticker that already occupies a slot (seeded from the
+    # existing book, or claimed by an earlier candidate this cycle — see `charge`) needs no
+    # NEW free slot to add another lot; only a ticker not yet counted as large does.
     if cum_collateral > caps.max_ticker_collateral:
-        if budgets.large_slots_used >= caps.max_large_positions:
+        if (
+            symbol not in budgets.large_tickers
+            and len(budgets.large_tickers) >= caps.max_large_positions
+        ):
             return "large_slot"
         if cum_collateral > caps.large_ticker_collateral:
             return "large_ceiling"
@@ -256,27 +282,24 @@ def charge(
     Mutates *budgets* in place. Mirrors the greedy consumption the risk engine has always
     done, extended to the risk-unit tallies and the large-position slot.
 
-    KNOWN LIMITATION: the large-position slot is marked used only when *this candidate's own*
-    collateral exceeds ``max_ticker_collateral`` — matching the pre-cumulative-check behaviour,
-    not the cumulative comparison ``_fits``/``validate_candidates`` now use to *require* a free
-    slot. A candidate admitted only because cumulative exposure (existing book + this lot)
-    crossed the cap, while its own marginal collateral did not, is correctly refused when no
-    slot is free but does not itself consume a slot when accepted — so more than
-    ``max_large_positions`` tickers can end up cumulatively over the 10%-of-NLV threshold. No
-    dollar cap is breached by this (the 25%-of-NLV `max_pct_per_ticker_large` ceiling, cash, the
-    CSP budget, and the risk-unit caps are all still enforced cumulatively per candidate) — it
-    is strictly safer than the pre-fix behaviour, which was marginal on both the check and the
-    charge. A correct fix needs a below-to-above-threshold transition check here, not a
-    one-line change; tracked in STATUS.md rather than fixed inline.
+    The large-position slot is marked used whenever this ticker's CUMULATIVE collateral
+    (existing book + every lot charged against it so far, including this one) exceeds
+    ``max_ticker_collateral`` — the same comparison ``_fits``/``validate_candidates`` use to
+    *require* a free slot (fixed 2026-09-11; previously this compared only the candidate's own
+    marginal collateral, so a chain of individually-small candidates on one ticker could cross
+    the cap without ever registering as large — see STATUS.md's former "Remaining known
+    issues"). Adding to a set rather than incrementing a counter means a second candidate on an
+    already-large ticker is a no-op, not a second slot consumed.
     """
+    cum_before = budgets.ticker_collateral.get(symbol, 0.0)
     collateral = unit_collateral * contracts
     budgets.cash_used += collateral
     budgets.csp_collateral += collateral
-    budgets.ticker_collateral[symbol] = budgets.ticker_collateral.get(symbol, 0.0) + collateral
+    budgets.ticker_collateral[symbol] = cum_before + collateral
     units = risk_units(collateral, current_iv, dte)
     if units is not None:
         budgets.ticker_risk[symbol] = budgets.ticker_risk.get(symbol, 0.0) + units
         if sector:
             budgets.sector_risk[sector] = budgets.sector_risk.get(sector, 0.0) + units
-    if collateral > caps.max_ticker_collateral:  # marginal, not cumulative — see docstring
-        budgets.large_slots_used += 1
+    if cum_before + collateral > caps.max_ticker_collateral:
+        budgets.large_tickers.add(symbol)

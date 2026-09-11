@@ -81,6 +81,46 @@ def test_a_sibling_with_an_economic_reason_alongside_it_is_still_shown() -> None
     assert [c.candidate_id for c, _ in shown] == ["mixed"]
 
 
+def test_an_unpriced_phantom_does_not_outrank_a_genuine_priced_near_miss() -> None:
+    """STATUS.md's known gap: a contract whose quote never priced (forced to $0.00, tagged
+    `no_two_sided_market`) can score in the normal range on the four components unrelated to
+    price and outrank a genuinely priced near-miss on `blended_score` alone. The tie-break
+    must penalize the missing live quote directly, regardless of score, within the same stage.
+    """
+    phantom = AssessedContract(
+        candidate=_cand("phantom", score=90.0, strike=100.0),
+        stage=AssessmentStage.RISK_GATE,
+        reasons=["no_two_sided_market"],
+    )
+    genuine = AssessedContract(
+        candidate=_cand("genuine", score=40.0, strike=105.0),
+        stage=AssessmentStage.RISK_GATE,
+        reasons=["premium_below_fair_value"],
+    )
+    ranked = _rank_assessed([phantom, genuine])
+    assert [a.candidate.candidate_id for a in ranked] == ["genuine", "phantom"]
+
+    shown, _ = _near_misses(ranked, "cash_secured_put")
+    assert [c.candidate_id for c, _ in shown] == ["genuine"]
+
+
+def test_two_unpriced_phantoms_still_break_ties_by_score() -> None:
+    """The de-prioritization only pushes unpriced contracts below priced ones in the same
+    stage — it must not flatten their relative order against each other."""
+    weaker = AssessedContract(
+        candidate=_cand("weaker", score=10.0),
+        stage=AssessmentStage.RISK_GATE,
+        reasons=["no_two_sided_market"],
+    )
+    stronger = AssessedContract(
+        candidate=_cand("stronger", score=90.0),
+        stage=AssessmentStage.RISK_GATE,
+        reasons=["no_two_sided_market"],
+    )
+    ranked = _rank_assessed([weaker, stronger])
+    assert [a.candidate.candidate_id for a in ranked] == ["stronger", "weaker"]
+
+
 def test_the_predicate_only_matches_the_sole_dedupe_reason() -> None:
     assert _lost_only_to_a_sibling(["dedupe_pre_gate"]) is True
     assert _lost_only_to_a_sibling([]) is False

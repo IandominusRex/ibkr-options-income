@@ -17,10 +17,11 @@ from ib_async import IB
 from sqlalchemy.orm import Session
 from telegram import Bot
 
+from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.market_hours import is_rth
-from src.common.schemas import ApprovalStatus, OrderState, TradeCandidate, Verdict
+from src.common.schemas import ApprovalStatus, OrderState, Strategy, TradeCandidate, Verdict
 from src.engine.risk_engine import validate_candidates
 from src.execution.circuit_breakers import (
     drawdown_breached,
@@ -32,6 +33,7 @@ from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
 from src.storage.system_settings import is_halted, set_halted
+from src.strategies.covered_call import uncovered_call_capacity
 
 log = logging.getLogger(__name__)
 
@@ -207,7 +209,18 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             # processed Monday has an accurate DTE at re-validation time.
             today = datetime.now(_ET).date()
             fresh_dte = (candidate.expiry - today).days
-            candidate = candidate.model_copy(update={"dte": fresh_dte})
+
+            # Re-fetch earnings too (2026-09-11): the frozen snapshot's `next_earnings` is
+            # whatever scan time saw, so a Friday-approved trade executing Monday morning
+            # never learned that earnings were announced over the weekend — the
+            # earnings-blackout check below (inside `validate_candidates`) judged a stale
+            # date. `get_fundamental_stats` is TTL-cached with an earnings-aware window (1
+            # day when a known date is within ±2 weeks, else 30), so this is a cheap DB read
+            # in the common case, not a fresh network call on every ~30s poll.
+            fresh_earnings = get_fundamental_stats(candidate.underlying).next_earnings
+            candidate = candidate.model_copy(
+                update={"dte": fresh_dte, "next_earnings": fresh_earnings}
+            )
 
             pending.append((order_row, candidate))
 
@@ -225,6 +238,16 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
         verdicts = validate_candidates([c for _, c in ordered], account_snap, positions)
         verdict_map = {v.candidate_id: v for v in verdicts}
+
+        # Share-ownership re-check for covered calls. `validate_candidates` gates cash/
+        # concentration/risk-unit budgets but never re-checks the underlying stock position —
+        # if shares were sold (manually, or by an assignment the reconciler hasn't caught yet)
+        # between scan and this poll, sending the call as-is would write a naked short. CC is
+        # never grouped/deduped by the risk gate (unlike the income strategies above), so two
+        # QUEUED calls on the same underlying from different scan cycles can both reach here;
+        # `cc_shares_committed` tracks contracts claimed so far THIS PASS so the second one is
+        # checked against what the first has already taken, not just the static snapshot.
+        cc_shares_committed: dict[str, int] = {}
 
         for order_row, candidate in ordered:
             verdict = verdict_map.get(candidate.candidate_id)
@@ -255,6 +278,29 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                     (order_row.id, candidate, f"Re-validation failed: {', '.join(reasons)}{note}")
                 )
                 continue
+
+            if candidate.strategy == Strategy.COVERED_CALL:
+                capacity = uncovered_call_capacity(positions, candidate.underlying)
+                committed = cc_shares_committed.get(candidate.underlying, 0)
+                if candidate.contracts > capacity - committed:
+                    reason = "insufficient_shares_at_execution"
+                    log.warning(
+                        "Share-coverage re-check REJECT — order_id=%s candidate=%s "
+                        "capacity=%d already_committed=%d wants=%d",
+                        order_row.id,
+                        order_row.candidate_id,
+                        capacity,
+                        committed,
+                        candidate.contracts,
+                    )
+                    order_row.state = OrderState.CANCELLED
+                    order_row.detail = f"Re-validation failed: ['{reason}']"
+                    record_outcome(order_row.candidate_id, RISK_REJECTED)
+                    thread58_failures.append(
+                        (order_row.id, candidate, f"Re-validation failed: {reason}")
+                    )
+                    continue
+                cc_shares_committed[candidate.underlying] = committed + candidate.contracts
 
             # Daily trade-count circuit breaker: once today's entry cap is reached,
             # cancel further entry orders rather than transmit them. (SYSTEM_REVIEW Phase 2)

@@ -65,7 +65,31 @@ _PARTIAL_INDEXES: list[str] = [
     # can be legitimately re-sold after a buy-to-close.
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_active_candidate "
     "ON orders (candidate_id) WHERE state IN ('queued', 'submitted')",
+    # At most one *pending* command per dedupe key. ``promote``/``roll_request`` key on a
+    # target (candidate_id / position_symbol) that outlives one approval cycle, so this must
+    # NOT be a global constraint — see ``_ensure_app_commands_pending_only_dedupe`` below,
+    # which rebuilds a pre-existing table that still carries the old global one.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_app_commands_dedupe_key_pending "
+    "ON app_commands (dedupe_key) WHERE status = 'pending'",
 ]
+
+# Columns making up the ``app_commands`` table, in schema order, before the M7.1 dedupe-key
+# fix. Used only to rebuild the table when migrating away from its old global unique
+# constraint (see ``_ensure_app_commands_pending_only_dedupe``) — kept separate from the ORM
+# model so a future column addition to ``AppCommandRow`` doesn't silently change what this
+# one-time migration copies.
+_APP_COMMANDS_COLUMNS = (
+    "id",
+    "kind",
+    "payload",
+    "dedupe_key",
+    "status",
+    "result",
+    "requested_by",
+    "confirm_token",
+    "created_at",
+    "applied_at",
+)
 
 
 def _init() -> None:
@@ -123,6 +147,67 @@ def _ensure_added_columns(engine: Engine) -> None:
                         raise
 
 
+def _ensure_app_commands_pending_only_dedupe(engine: Engine) -> None:
+    """Rebuild ``app_commands`` if it still carries the pre-fix global UNIQUE on ``dedupe_key``.
+
+    That constraint fired regardless of a row's status, so a ``promote``/``roll_request``
+    dedupe key — stable for a candidate's/position's whole lifetime, unlike ``approve``'s
+    per-decision ``approval_id`` — permanently blocked a fresh request once the first one had
+    already been applied: a re-promote after the original approval expired silently no-op'd
+    with the OLD command's stale "Applied" receipt (STATUS.md's "Remaining known issues").
+    The replacement, ``uq_app_commands_dedupe_key_pending`` in ``_PARTIAL_INDEXES``, scopes
+    the same protection to ``status = 'pending'``.
+
+    SQLite has no ``ALTER TABLE ... DROP CONSTRAINT``, so a table created before this fix is
+    rebuilt: a fresh table without the constraint, the data copied across by explicit column
+    list (order-independent, immune to a future column addition reordering anything), the old
+    table dropped, and the new one renamed into place — one transaction, so a mid-run crash
+    just leaves the untouched original table for this function to retry cleanly next startup.
+    A table created fresh by ``create_all()`` (no ``unique=True`` in the model any more) never
+    matches the detection below and this is a no-op.
+    """
+    inspector = inspect(engine)
+    if "app_commands" not in inspector.get_table_names():
+        return  # create_all will have built it without the old constraint
+    has_old_constraint = any(
+        uc["column_names"] == ["dedupe_key"] for uc in inspector.get_unique_constraints("app_commands")
+    )
+    if not has_old_constraint:
+        return
+    cols = ", ".join(_APP_COMMANDS_COLUMNS)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS app_commands__migrating"))
+        conn.execute(
+            text(
+                "CREATE TABLE app_commands__migrating ("
+                "id INTEGER NOT NULL, "
+                "kind VARCHAR(24) NOT NULL, "
+                "payload JSON NOT NULL, "
+                "dedupe_key VARCHAR(96), "
+                "status VARCHAR(10) NOT NULL, "
+                "result JSON, "
+                "requested_by VARCHAR(64) NOT NULL, "
+                "confirm_token VARCHAR(128), "
+                "created_at DATETIME NOT NULL, "
+                "applied_at DATETIME, "
+                "PRIMARY KEY (id)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                f"INSERT INTO app_commands__migrating ({cols}) "
+                f"SELECT {cols} FROM app_commands"
+            )
+        )
+        conn.execute(text("DROP TABLE app_commands"))
+        conn.execute(text("ALTER TABLE app_commands__migrating RENAME TO app_commands"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_app_commands_kind ON app_commands (kind)"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_app_commands_status ON app_commands (status)")
+        )
+
+
 def _ensure_indexes(engine: Engine) -> None:
     """Create partial/conditional indexes not expressible in the model metadata.
 
@@ -145,6 +230,7 @@ def init_db() -> None:
     assert _engine is not None
     Base.metadata.create_all(_engine)
     _ensure_added_columns(_engine)
+    _ensure_app_commands_pending_only_dedupe(_engine)
     _ensure_indexes(_engine)
 
 

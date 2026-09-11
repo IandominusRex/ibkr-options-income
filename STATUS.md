@@ -369,6 +369,192 @@ them) — this cleanup removes dead code paths, not live functionality.
 
 ---
 
+## Bugs fixed (2026-09-11 — permanent promote/roll_request dedupe keys; order-idempotency doc correction; large-position slot accounting; phantom near-miss ranking; fill-recovery doc correction; share-ownership re-check at execution; unqualified-contract subscriptions; fresh earnings re-check at execution)
+
+Worked through the "Remaining known issues" list end to end. Two items closed:
+
+- **`promote`/`roll_request` permanently dedupe against their first `applied` command.**
+  `dedupe_key_for` keys `promote` on `candidate_id` and `roll_request` on the bare
+  `position_symbol` — both stable for the life of a contract/position, unlike `approve`'s
+  per-decision `approval_id`. `enqueue_command` matched a `dedupe_key` regardless of the
+  existing row's status, so a *second* `roll_request` for a symbol — days or months later, on
+  an entirely different position — deduped to the first, already-`applied` command:
+  `200`/`created: false`/`status: "applied"`, no new command, the drain never ran, and
+  `<ShortsRow/>` rendered the OLD command's result as this request's answer. `promote` had the
+  identical shape: re-promoting after the first approval expired silently no-op'd with a stale
+  "Applied" receipt. **Fix:** `enqueue_command` (`src/storage/app_commands.py`) now scopes its
+  dedupe lookup to `status == "pending"` rows only — two clicks while one is in flight still
+  collapse to one command, but once that command is applied/failed/expired the key is live
+  again. This required a schema change: `AppCommandRow.dedupe_key` carried a **global** `UNIQUE`
+  constraint, which would have rejected the second insert outright once the app layer allowed
+  it through. Replaced with `uq_app_commands_dedupe_key_pending`, a partial unique index scoped
+  to `status = 'pending'` (`src/storage/db.py`'s `_PARTIAL_INDEXES`, the same shape as
+  `uq_orders_active_candidate`). SQLite has no `ALTER TABLE ... DROP CONSTRAINT`, so
+  `db._ensure_app_commands_pending_only_dedupe` rebuilds any table still carrying the old
+  constraint (copy rows into a fresh table, drop the old one, rename) — idempotent, runs once
+  per DB on `init_db()`, a no-op on a table already migrated or created fresh.
+  `approve`/`reject` are unaffected in practice: `_apply_approval_decision` already treats
+  re-deciding an already-decided approval as a safe no-op ("Already approved"/"Already
+  rejected"), so a fresh command row created after the first applied just replays that no-op
+  instead of reusing the old row's response.
+  **Tests:** `tests/test_storage_app_commands.py::test_a_dedupe_key_only_matches_a_pending_row`;
+  `tests/test_storage_db_migrations.py` (4 new tests covering the rebuild itself — the old
+  constraint is gone, pre-existing rows survive untouched, a re-promote after the migration
+  gets a fresh row, and running `init_db()` twice is a no-op). Full suite green (2220 passed).
+  Docs: `docs/web/commands.md`'s `promote`/`roll_request` sections, `ARCHITECTURE.md`'s
+  `app_commands`/`app_commands.py`/`db.py` entries.
+  **Operational note:** the migration runs the next time any process calls `init_db()` — it
+  was not run against the live `data/income_system.db` in this session because
+  `scripts.run_approval_service` had it open; restart that process to pick up the fix (the
+  rebuild is transactional and safe, but not designed to race a concurrent writer on the table
+  it is rebuilding).
+- **"Order idempotency" bullet corrected — the residual race it described was already closed.**
+  The bullet claimed the cross-approval race (two different approvals of the same candidate
+  both slipping past the application-level `has_active_order` check) was still open, needing "a
+  partial unique index on `orders.candidate_id`." That index (`uq_orders_active_candidate`) was
+  already shipped, along with the `except IntegrityError` handling that turns a genuine race
+  into a safe no-op, in an earlier "Harden automated-mode safety" commit — and both are covered
+  by existing tests (`test_partial_index_blocks_two_working_orders`,
+  `test_manual_approve_skips_duplicate_when_active_order_exists`). No code change; the bullet
+  above is corrected in place rather than left to mislead the next reader.
+- **Large-position slot: the check was cumulative, `charge`'s consumption of it was not — and
+  neither was the seed.** `capital._fits`/`validate_candidates` correctly *require* a free
+  slot whenever a ticker's cumulative collateral (existing book + the new lot) crosses
+  `max_collateral_per_ticker_pct`, but `capital.charge` only marked a slot **used** when the
+  accepted candidate's own *marginal* collateral crossed that threshold — so a chain of
+  individually-small candidates on one ticker could cumulatively cross the cap without ever
+  registering as large, letting more than `max_large_positions` tickers end up cumulatively
+  over the 10%-of-NLV line. A second, previously-undocumented gap: `seed_budgets` never
+  registered a ticker as large from EXISTING positions either, so a name already over the cap
+  purely from the current book (no candidate had touched it yet this scan) didn't occupy a
+  slot at all. **Fix:** `Budgets.large_slots_used: int` is now `Budgets.large_tickers: set[str]`
+  — a slot belongs to a ticker, not to a candidate, so adding an already-large symbol is a
+  no-op rather than a second slot consumed. `charge` adds the symbol whenever cumulative
+  collateral (not marginal) exceeds the cap; `seed_budgets` takes an optional keyword-only
+  `caps` and does the same for existing positions up front; both `_fits` and
+  `validate_candidates`'s inline mirror now check `symbol not in budgets.large_tickers` before
+  requiring a free slot, so a ticker that already holds one never needs a second. No dollar cap
+  was ever breached by the old gap — the 25%-of-NLV `max_pct_per_ticker_large` ceiling, cash,
+  the CSP budget, and the risk-unit caps are all still enforced cumulatively per candidate
+  regardless — this closes the slot-counting gap itself.
+  **Tests:** `tests/test_capital.py` —
+  `test_charge_marks_the_large_slot_used_on_a_cumulative_not_marginal_crossing`,
+  `test_seed_budgets_marks_a_ticker_already_over_cap_from_existing_positions_as_slotted`,
+  `test_seed_budgets_without_caps_leaves_large_tickers_empty`. Full suite green (2223 passed).
+- **"Closest near-miss" ranking could surface a phantom, unpriced contract instead of a genuine
+  near-miss.** `_rank_assessed` (`src/orchestrator/scan.py`) sorted a cycle's rejected
+  candidates by `AssessmentStage` first, then broke ties within a stage purely by
+  `blended_score` — and `blended_score` (`engine/scoring.py`) is a weighted blend of
+  iv/technical/fundamental/liquidity/assignment-safety scores with **no dependency on whether
+  the contract has a live bid/ask or a nonzero premium**. When every candidate reaching a
+  cycle's "closest" slot failed at the same early stage, a contract whose quote never priced
+  (forced to $0.00, tagged `no_two_sided_market`) could still score in the normal range on the
+  other four components and outrank a contract with a real, priced (if insufficient) premium —
+  displacing a genuine near-miss with a phantom one on the Telegram card. **Fix:** the sort key
+  now carries an extra tie-break — a contract tagged `REASON_NO_MARKET` always sorts below every
+  priced peer in the same stage, however it scored; priced-vs-priced and unpriced-vs-unpriced
+  ties still break by score exactly as before. Contracts are never excluded from
+  `result.assessed` or the audit trail — only de-prioritized as the surfaced "closest miss".
+  **Tests:** `tests/test_scan_near_misses.py` —
+  `test_an_unpriced_phantom_does_not_outrank_a_genuine_priced_near_miss`,
+  `test_two_unpriced_phantoms_still_break_ties_by_score`. Full suite green (2225 passed).
+- **"Post-reconnect fill recovery" bullet corrected — the "startup only" residual it described
+  was already closed.** The bullet claimed fill recovery ran only at process startup, so a fill
+  landing during a mid-session reconnect would wait for the next restart. SYSTEM_REVIEW F7 (see
+  below) already wired the same `reconcile_orphan_fills`/`reconcile_external_closes` into every
+  intraday RTH cycle, not just startup — recovery now happens within one
+  `intraday_loop_minutes` interval. Added
+  `test_intraday_loop_runs_periodic_fill_reconciliation_when_exec_is_connected` as a direct
+  regression guard on that wiring (previously only the recovery logic itself was tested, not
+  the loop calling it every cycle). No code change; the bullet is corrected in place.
+- **Share ownership at execution: CC candidates never re-verified underlying share ownership
+  before sending the order.** If shares were sold (manually, or by an assignment the
+  reconciler hadn't caught yet) between scan and execution, a naked call could result. **Fix:**
+  a new `strategies.covered_call.uncovered_call_capacity(positions, underlying) -> int` helper
+  (the same `floor(shares/100) - existing short calls` formula `screen_cc_candidates` sizes
+  with, extracted so a read-only caller doesn't re-derive it) is checked in
+  `execution/approval.py::process_queued_orders`'s Phase 1 re-validation — the same pass that
+  already re-checks cumulative risk/concentration budgets — against the **fresh** position
+  snapshot it already fetches for that pass (no new IBKR round-trip). Covered calls are never
+  grouped/deduped by the risk gate, so two QUEUED calls on the same underlying from different
+  scan cycles can both reach this loop; a per-underlying `cc_shares_committed` running tally
+  (mirroring `capital.py`'s greedy budget-consumption model) makes the second one see what the
+  first already claimed, not just the static snapshot, closing a batch-level gap the naive
+  per-candidate version of this check would have missed. A rejection cancels the order with
+  `insufficient_shares_at_execution` — additive only, same as every other send-time re-gate;
+  never places a smaller order on the caller's behalf.
+  **Tests:** `tests/test_strategies.py` — `test_uncovered_call_capacity_matches_the_screen`,
+  `test_uncovered_call_capacity_ignores_other_underlyings`,
+  `test_uncovered_call_capacity_zero_without_shares`; `tests/test_execution.py` —
+  `test_process_queued_orders_rejects_covered_call_without_enough_shares`,
+  `test_process_queued_orders_allows_covered_call_with_enough_shares`,
+  `test_process_queued_orders_two_covered_calls_same_underlying_second_rejected`. Full suite
+  green (2232 passed).
+- **Unqualified contracts in monitor/greeks enrichment — worse than documented, and provably
+  so without a live session.** The former bullet here said `cancelMktData` "may not match the
+  subscription, leaking lines" and that it "needs a live session to verify actual impact." It
+  didn't need one: `build_option` returns an unqualified `Option` (`conId=0`), and ib_async's
+  own `Contract.__hash__` **raises `ValueError`** for a contract with no `conId` —
+  `IB.reqMktData` hashes the contract internally (`Wrapper.startTicker`) before any network
+  call, so the crash is 100% local and reproducible with no TWS/Gateway connection at all (a
+  three-line script instantiating a real `ib_async.Option` and calling `hash()` on it
+  demonstrates it). Both `IntradayMonitor._refresh_subscriptions` and
+  `enrich_positions_with_greeks_async` built exactly this unqualified contract and passed it
+  straight to `reqMktData`, wrapped in a bare `except Exception: log.exception(...)` that
+  silently swallowed the crash — meaning **every** short-option market-data subscription in
+  the intraday monitor, and **every** call to the greeks-enrichment helper, has always failed
+  silently. Not a line leak: a complete, silent no-op. The monitor's `pendingTickersEvent`-driven
+  roll/assignment triggers were never actually receiving live ticks for options through this
+  path, and `enrich_positions_with_greeks_async`'s `.delta` output (feeding the EOD report's
+  net-delta exposure) was always `None`. **Fix:** both call sites now qualify before
+  subscribing — `enrich_positions_with_greeks_async` batches the whole request through
+  `contracts.qualify_options_async` (mutates contracts in place, so the already-qualified
+  object is reused for `reqMktData` and later `cancelMktData`, matching the pattern already
+  used correctly elsewhere — `executor._fetch_quote`, `roll_executor._fetch_leg`,
+  `profit_take._quote_short`); the monitor qualifies each newly-opened position's contract
+  individually right before subscribing (new positions per refresh cycle are typically 0–2,
+  so no batching/chunking concern the way a chain-fetch cartesian has). The monitor's own
+  comment claiming "ib_async matches by reqId... a freshly-built unqualified Contract silently
+  no-ops" was itself wrong and is corrected in place. **Tests:**
+  `tests/test_ibkr_portfolio.py` (new file) —
+  `test_enrich_positions_with_greeks_qualifies_before_subscribing`; `tests/test_monitor.py` —
+  `test_refresh_subscriptions_qualifies_before_reqmktdata`. Both use a small `_RealishIB` test
+  double that delegates to ib_async's REAL `Wrapper.startTicker`/`endTicker` instead of a
+  generic `MagicMock` — a `MagicMock`'s `reqMktData` never raises regardless of whether the
+  contract passed to it is qualified, which is exactly why this bug was invisible to every
+  existing test that mocks `ib` generically (`test_double_subscribe_prevention_on_repeated_refresh`
+  patches `build_option` to return a `MagicMock` outright). Two shared test fixtures
+  (`test_monitor.py::_make_monitor`, `test_monitor_snapshot.py::_make_monitor_env`) needed
+  `qualifyContractsAsync` added to their mock `ib` for the new `await` to resolve. Full suite
+  green (2234 passed).
+- **Overnight stale data: the send-time re-gate never re-checked earnings.**
+  `validate_live_quote` (the executor's fresh-quote re-gate) checks delta and price but not
+  DTE or earnings; those came from the scan-time DB record. A Friday-approved trade executing
+  Monday morning never re-checked whether earnings had been announced over the weekend —
+  `execution/approval.py`'s Phase 1 already recomputed a fresh `dte` from the stored expiry,
+  but `next_earnings` stayed frozen at whatever the scan saw, so the earnings-blackout check
+  inside `validate_candidates` (which Phase 1 already re-runs) judged a stale date. **Fix:**
+  Phase 1 now also re-fetches `next_earnings` via `analytics.fundamentals.get_fundamental_stats`
+  alongside the existing fresh-DTE recompute, before `validate_candidates` runs — no change to
+  `risk_engine.py` itself, since the blackout check already reads whatever `next_earnings` the
+  candidate carries. Kept cheap deliberately: `get_fundamental_stats` is TTL-cached (1 day when
+  a known earnings date is within ±2 weeks of today, else 30), so this is a DB read in the
+  common case, not a fresh yfinance call on every ~30s poll cycle for every queued order — a
+  real yfinance round-trip during this work measured ~2.7s, which at even a handful of QUEUED
+  orders per poll would have made the loop unacceptably slow if it fired unconditionally.
+  Explicitly out of scope (see the `next_earnings=None` bypass entry below, reviewed the same
+  day and left as-is by design): a candidate whose earnings date was *unknown* at scan time and
+  only gets announced over the weekend is not caught by this fix, because the persistent cache's
+  own TTL only drops to 1 day once a date is already known and imminent — `next_earnings=None`
+  stays cached for up to 30 days. That is a narrower, accepted gap, not a regression from today.
+  **Tests:** `tests/test_execution.py` —
+  `test_process_queued_orders_uses_a_fresh_earnings_date_not_the_frozen_one` (uses the REAL risk
+  engine, not a mocked verdict, so the blackout check actually runs); a new autouse
+  `_no_network_fundamentals` fixture in the same file defaults every other test's
+  `get_fundamental_stats` to a fast "no known earnings" stand-in, so the 14 pre-existing
+  `process_queued_orders` tests don't silently start making real network calls now that Phase 1
+  calls a new I/O boundary unconditionally. Full suite green (2235 passed).
+
 ## Bugs fixed (2026-09-11 — risk gate: a symbol's own candidates were competing against each other for its own shared budget)
 
 Two weeks of paper-scan rejects showed 95 of 96 `concentration_limit` rejects were TQQQ — a
@@ -1891,65 +2077,50 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   no_bid_ask / liquidity / no_cash / roc / yield).
 
 ## Remaining known issues (not fixed — require live validation or design decision)
-
-- **"Closest near-miss" ranking can surface a phantom, unpriced contract instead of a genuine
-  near-miss.** `_rank_assessed` (`src/orchestrator/scan.py`) sorts a cycle's rejected candidates
-  by `AssessmentStage` first, then breaks ties within a stage purely by `blended_score` —
-  and `blended_score` (`engine/scoring.py`) is a weighted blend of iv/technical/fundamental/
-  liquidity/assignment-safety scores with **no dependency on whether the contract has a live
-  bid/ask or a nonzero premium**. When every candidate that reaches a given cycle's "closest"
-  slot failed at the same early stage, a contract whose quote never priced (forced to $0.00,
-  tagged `no_two_sided_market` — see the 2026-09-11 data-feed-outage entry above, which is a
-  distinct diagnostic-logging fix and does not touch this ranking path) can still score in the
-  normal range on the other four components and outrank a contract with a real, priced (if
-  insufficient) premium — displacing a genuine near-miss with a phantom one on the Telegram
-  card. Fix would be either excluding unpriceable contracts from the "closest" ranking entirely,
-  or making the tie-break penalize a missing live quote directly.
-- **Overnight stale data:** `validate_live_quote` re-checks delta and price but not DTE or earnings
-  date, which are loaded from the scan-time DB record. A Friday-approved trade executing Monday morning
-  will not re-check if earnings were announced over the weekend. Mitigate: reduce `approval.ttl_minutes`.
-- **Share ownership at execution:** CC candidates do not re-verify underlying share ownership at
-  execution time. If shares are sold between scan and approval, a naked call could result. Mitigate:
-  reconcile positions manually before going live. (Scan-time sizing *does* now net out calls already
-  written against the underlying — see "Order idempotency" below — but the execution-time re-verify
-  against a fresh position snapshot is still not implemented.)
-- **Order idempotency (fixed):** `candidate_id` is a deterministic hash, so a re-scan — especially the
-  15-min automated loop — regenerates the identical candidate. Both order-creation paths
-  (`sender._auto_queue_candidates`, `approval_service._process_button`) now consult
-  `storage.orders.has_active_order` and refuse to create a second order when one is already
-  QUEUED/SUBMITTED/FILLED/PARTIAL for that candidate. Combined with covered-call sizing that nets out
-  existing short calls (`generate_cc_candidates(existing_short_calls=…)`), this closes the path where
-  the automated loop stacked duplicate writes into naked short calls. Residual: the
-  `has_active_order` check is application-level, not atomic — two concurrent callbacks for two
-  *different* approvals of the same candidate could still race. A partial unique index on
-  `orders.candidate_id` (active states) would close it fully.
-- **Unqualified contracts in monitor/greeks enrichment:** The intraday monitor and
-  `enrich_positions_with_greeks_async` subscribe market data with unqualified contracts. `cancelMktData`
-  may not match the subscription, leaking lines against the ~100-line cap over extended sessions.
-  Needs a live session to verify actual impact.
-- **Post-reconnect fill recovery (mostly addressed):** On service startup,
-  `approval_service._reconcile_orphan_fills` queries `ib.reqExecutionsAsync()` and recovers any
-  SUBMITTED order whose fill event was lost during a disconnect — matching by broker order id, then
-  by contract — writing the missing FillRow, marking the order FILLED/PARTIAL, and notifying Telegram.
-  It is strictly additive (only records proven fills; never cancels or resubmits), so it cannot cause
-  a double trade. Residual gap: recovery runs only at **startup**, not continuously, and a fill that
-  lands during a mid-session reconnect is recovered on the next restart rather than immediately —
-  still monitor `/status` after a TWS restart during an active order.
-- **`next_earnings=None` bypass:** When yfinance cannot provide an earnings date, the earnings
-  blackout gate is skipped. ETFs never earn; individual stocks without calendar data pass silently.
-- **Large-position slot: the check is cumulative, `charge`'s consumption of it is not.** Found by
-  the 2026-08-12 final-review re-review, after the fix above shipped. `capital._fits` and
-  `validate_candidates` now correctly *require* a free slot whenever a ticker's cumulative
-  collateral (existing book + the new lot) crosses `max_collateral_per_ticker_pct` — but
-  `capital.charge` still marks a slot **used** only when the accepted candidate's own *marginal*
-  collateral crosses that same threshold. A candidate admitted purely because of cumulative
-  exposure does not itself consume a slot, so more than `max_large_positions` tickers can end up
-  cumulatively over the 10%-of-NLV line. No dollar cap is breached by this on any dimension — the
-  25%-of-NLV `max_pct_per_ticker_large` ceiling, cash, the CSP budget and the risk-unit caps are
-  all still enforced cumulatively per candidate — and it is strictly safer than the pre-2026-08-12
-  behaviour, which was marginal on both the check and the charge. Fixing it properly needs a
-  below-to-above-threshold transition check in `charge`, not a one-line change; deferred rather
-  than rushed into the same commit. See `capital.charge`'s docstring.
+- **Order idempotency (fixed, including the race — this bullet was stale):** `candidate_id` is a
+  deterministic hash, so a re-scan — especially the 15-min automated loop — regenerates the
+  identical candidate. Both order-creation paths (`sender._auto_queue_candidates`,
+  `approval_service._process_button`) consult `storage.orders.has_active_order` and refuse to
+  create a second order when one is already QUEUED/SUBMITTED/FILLED/PARTIAL for that candidate.
+  Combined with covered-call sizing that nets out existing short calls
+  (`generate_cc_candidates(existing_short_calls=…)`), this closes the path where the automated
+  loop stacked duplicate writes into naked short calls. The concurrent-race residual this bullet
+  used to describe ("two concurrent callbacks for two different approvals of the same candidate
+  could still race") was **already closed** by the time this line was last edited: `db.py`'s
+  `_PARTIAL_INDEXES` has carried `uq_orders_active_candidate` — a DB-level partial unique index
+  on `orders(candidate_id) WHERE state IN ('queued','submitted')` — since the "Harden
+  automated-mode safety" commit, and `_process_button`'s `except IntegrityError` (turning the
+  race into a safe "Already processing" no-op rather than a duplicate order or a crash) has
+  covered it since the same commit. `tests/test_notify.py::test_partial_index_blocks_two_working_orders`
+  exercises the DB constraint directly; `test_manual_approve_skips_duplicate_when_active_order_exists`
+  exercises the full two-approvals-one-candidate path. Found stale during the 2026-09-11
+  known-issues review — no code change needed here, only this correction.
+- **Post-reconnect fill recovery (fixed, including the "continuously" residual — this bullet
+  was stale).** `execution/reconciliation.py::reconcile_orphan_fills` queries
+  `ib.reqExecutionsAsync()` and recovers any SUBMITTED order whose fill event was lost during a
+  disconnect — matching by broker order id, then by contract — writing the missing FillRow,
+  marking the order FILLED/PARTIAL, and notifying Telegram. It is strictly additive (only
+  records proven fills; never cancels or resubmits), so it cannot cause a double trade. The
+  "runs only at startup" residual this bullet used to describe was **already closed** by the
+  time this line was last edited: SYSTEM_REVIEW F7 (see "Addressed SYSTEM_REVIEW.md findings"
+  below) wired `reconcile_orphan_fills`/`reconcile_external_closes` into step 1b of every
+  intraday RTH cycle (`approval_service._intraday_scan_loop`), not just the startup call — a
+  fill that lands during a mid-session reconnect is recovered within one `intraday_loop_minutes`
+  interval, not only on the next restart. Found stale during the 2026-09-11 known-issues review;
+  `tests/test_notify.py::test_intraday_loop_runs_periodic_fill_reconciliation_when_exec_is_connected`
+  added as a regression guard on the wiring itself (the recovery logic was already covered by
+  `test_reconcile_recovers_missed_fill` and friends). No code change, only this correction.
+- **`next_earnings=None` bypass (reviewed 2026-09-11, kept as-is by design):** When yfinance
+  cannot provide an earnings date, the earnings blackout gate is skipped. ETFs never earn;
+  individual stocks without calendar data pass silently — the two cases are indistinguishable
+  from `FundamentalStats.next_earnings` alone (both are `None`), so there is no cheap way to
+  warn on one and not the other. Considered and deliberately not changed: an opt-in
+  `events.block_when_earnings_unknown` config flag (default off) would let an operator reject
+  non-ETF candidates with no resolvable earnings date, but the decision was to leave today's
+  permissive behavior in place rather than ship a new, off-by-default knob nobody asked to
+  turn on. The related staleness gap — a *known* earnings date going stale between scan and
+  execution — is fixed; see the "Overnight stale data" entry in the 2026-09-11 "Bugs fixed"
+  section above.
 
 **Addressed SYSTEM_REVIEW.md findings (see `IMPROVEMENT_PLAN.md`):**
 - **F7 (fixed):** `src/execution/reconciliation.py` runs **periodically** from the intraday loop (not
@@ -1972,27 +2143,6 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
 - Sync/async market-data twins (`_batch_quotes`/`_batch_quotes_async`, etc.) are **not** consolidated:
   the sync `_batch_quotes` is the version the line-cap/cancel-discipline tests exercise, so collapsing
   it risks weakening that coverage without a live session to re-validate. Deferred deliberately.
-
-- **`promote`/`roll_request` share the same permanent-dedupe-key defect M7's final-review round fixed
-  for `universe_add`/`universe_remove`, and it is not fixed here — found 2026-09-07, out of scope for
-  this milestone, tracked for a follow-up.** `dedupe_key_for` (`src/api/models/commands.py`) keys
-  `promote` on `candidate_id` (a deterministic hash — stable across re-scans) and `roll_request` on
-  the bare `position_symbol`; `enqueue_command` matches a `dedupe_key` regardless of the existing
-  row's `status`, and the key is never cleared. So a *second* `roll_request` for a symbol — days or
-  months later, on an entirely different position — dedupes to the first, already-`applied` command:
-  `200`/`created: false`/`status: "applied"`, no new command, the drain never runs, and
-  `<ShortsRow/>` renders the OLD command's result (e.g. a stale `approval_id`, or a stale
-  `no_qualifying_roll`) as this request's answer. `promote` has the identical shape: a re-scanned
-  candidate keeps its id, so re-promoting after the first approval expired silently no-ops with an
-  "Applied" receipt. `approve`/`reject` are unaffected — `approval_id` is unique per approval, and
-  re-deciding an already-decided one is a legitimate no-op, which is what that dedupe key is for.
-  The fix is the same one-liner M7 applied to `universe_add`/`universe_remove` — return `None` from
-  `dedupe_key_for` for `promote`/`roll_request` too (or, more generally, scope `enqueue_command`'s
-  dedupe lookup to `status == "pending"` rows only, which fixes every keyed kind at once and still
-  preserves "two clicks on Approve produce one command"). Not fixed here because M4/M5 (where
-  `promote`/`roll_request` were built) are already-merged milestones outside M7's diff, and a fix
-  touching the order-reaching command paths deserves its own scoped task and review, not a rushed
-  addendum to this milestone's final gate.
 
 ---
 

@@ -9,6 +9,7 @@ import pytest
 from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
 from src.engine.capital import (
+    charge,
     max_contracts,
     resolve_caps,
     risk_units,
@@ -245,7 +246,7 @@ def test_max_contracts_allows_one_lot_of_a_high_priced_name():
 def test_max_contracts_consumes_the_large_slot_and_refuses_a_second():
     caps = resolve_caps(_account(), RISK)
     budgets = seed_budgets([], lambda s: "tech")
-    budgets.large_slots_used = 1  # slot already taken
+    budgets.large_tickers.add("SOME_OTHER_TICKER")  # slot already taken by a different name
     n, binding = max_contracts(
         unit_collateral=65_000.0,  # 21.7% of net liq -> needs the large slot
         current_iv=35.0,
@@ -258,6 +259,99 @@ def test_max_contracts_consumes_the_large_slot_and_refuses_a_second():
     )
     assert n == 0
     assert binding == "large_slot"
+
+
+def test_charge_marks_the_large_slot_used_on_a_cumulative_not_marginal_crossing():
+    """STATUS.md's known gap: two candidates on the SAME ticker, each individually under the
+    large-position threshold (10% of $300k = $30,000), whose CUMULATIVE collateral crosses it.
+    The slot must be consumed once that happens, even though neither charge's own marginal
+    collateral exceeded the cap on its own."""
+    # Plenty of cash headroom so the cash cap never binds ahead of the large-slot check below.
+    caps = resolve_caps(_account(cash=300_000.0), RISK)
+    budgets = seed_budgets([], lambda s: "tech")
+
+    charge(
+        contracts=1,
+        unit_collateral=20_000.0,
+        current_iv=None,
+        dte=30,
+        symbol="AAPL",
+        sector="tech",
+        caps=caps,
+        budgets=budgets,
+    )
+    assert budgets.large_tickers == set()  # $20,000 alone doesn't cross $30,000
+
+    charge(
+        contracts=1,
+        unit_collateral=20_000.0,
+        current_iv=None,
+        dte=30,
+        symbol="AAPL",
+        sector="tech",
+        caps=caps,
+        budgets=budgets,
+    )
+    # Cumulative is now $40,000 > $30,000 -> AAPL now occupies the one large-position slot.
+    assert budgets.large_tickers == {"AAPL"}
+
+    # max_large_positions=1 and AAPL already holds it -> a different ticker needing the slot
+    # must now be refused, even though large_tickers was never set directly.
+    n, binding = max_contracts(
+        unit_collateral=65_000.0,
+        current_iv=35.0,
+        dte=30,
+        symbol="META",
+        sector="tech",
+        caps=caps,
+        budgets=budgets,
+        hard_max=10,
+    )
+    assert (n, binding) == (0, "large_slot")
+
+
+def test_seed_budgets_marks_a_ticker_already_over_cap_from_existing_positions_as_slotted():
+    """A ticker already over the collateral cap purely from EXISTING positions — no candidate
+    has touched it yet this cycle — must already occupy a large-position slot. Otherwise the
+    system would let `max_large_positions` MORE tickers go large on top of one that already is,
+    silently exceeding the intended cap on concentrated bets."""
+    caps = resolve_caps(_account(), RISK)
+    existing = [
+        PositionSnapshot(
+            symbol="TSLA",
+            sec_type="STK",
+            position=200.0,
+            avg_cost=250.0,
+            market_value=50_000.0,  # over the $30,000 cap on its own
+        )
+    ]
+    budgets = seed_budgets(existing, lambda s: "auto", caps=caps)
+    assert budgets.large_tickers == {"TSLA"}
+
+    n, binding = max_contracts(
+        unit_collateral=65_000.0,
+        current_iv=35.0,
+        dte=30,
+        symbol="META",
+        sector="tech",
+        caps=caps,
+        budgets=budgets,
+        hard_max=10,
+    )
+    assert (n, binding) == (0, "large_slot")
+
+
+def test_seed_budgets_without_caps_leaves_large_tickers_empty():
+    """Backward-compatible default: a caller that omits `caps` (there are none left in
+    production, but the parameter is optional) gets no large-slot seeding at all, rather than
+    an error."""
+    positions = [
+        PositionSnapshot(
+            symbol="TSLA", sec_type="STK", position=200.0, avg_cost=250.0, market_value=50_000.0
+        )
+    ]
+    budgets = seed_budgets(positions, lambda s: "auto")
+    assert budgets.large_tickers == set()
 
 
 def test_max_contracts_falls_back_to_collateral_when_iv_is_missing():

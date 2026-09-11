@@ -19,7 +19,7 @@ from src.common.schemas import (
 )
 from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
 from src.strategies.cash_secured_put import generate_csp_candidates, screen_csp_candidates
-from src.strategies.covered_call import generate_cc_candidates
+from src.strategies.covered_call import generate_cc_candidates, uncovered_call_capacity
 from src.strategies.rolling import generate_roll_candidates
 
 # Expiries within the [7, 28] DTE window; computed relative to today so tests
@@ -281,6 +281,34 @@ class TestCoveredCall:
             existing_short_calls=2,
         )
         assert result == []
+
+    def test_uncovered_call_capacity_matches_the_screen(self):
+        """`uncovered_call_capacity` is the same formula `screen_cc_candidates` sizes with,
+        extracted for a caller (the execution-time share-coverage re-check) that only needs
+        the number."""
+        positions = [
+            PositionSnapshot(symbol="AAPL", sec_type="STK", position=300.0, avg_cost=175.0),
+            PositionSnapshot(
+                symbol="AAPL  260918C00200000",
+                sec_type="OPT",
+                position=-2,
+                avg_cost=1.0,
+                right=OptionRight.CALL,
+                strike=200.0,
+                underlying="AAPL",
+            ),
+        ]
+        assert uncovered_call_capacity(positions, "AAPL") == 1  # 3 coverable - 2 already written
+
+    def test_uncovered_call_capacity_ignores_other_underlyings(self):
+        positions = [
+            PositionSnapshot(symbol="AAPL", sec_type="STK", position=300.0, avg_cost=175.0),
+            PositionSnapshot(symbol="MSFT", sec_type="STK", position=1000.0, avg_cost=300.0),
+        ]
+        assert uncovered_call_capacity(positions, "AAPL") == 3
+
+    def test_uncovered_call_capacity_zero_without_shares(self):
+        assert uncovered_call_capacity([], "AAPL") == 0
 
     def test_breakeven_formula(self):
         avg_cost = 175.0

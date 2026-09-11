@@ -39,7 +39,7 @@ from src.common.schemas import (
     RollReview,
 )
 from src.ibkr.connection import AutoReconnect, connect_with_retry
-from src.ibkr.contracts import build_option
+from src.ibkr.contracts import build_option, qualify_options_async
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.monitor.triggers import check_all
 from src.storage.db import init_db, session_scope
@@ -288,9 +288,12 @@ class IntradayMonitor:
         self._cfg = cfg
         self._executor = executor
         # Maps OCC symbol (localSymbol) → (PositionSnapshot, subscribed Contract).
-        # Storing the Contract object used in reqMktData is required for cancelMktData
-        # to actually cancel the right subscription (ib_async matches by reqId, not
-        # by contract equality — a freshly-built unqualified Contract silently no-ops).
+        # Storing the QUALIFIED Contract object used in reqMktData is required for
+        # cancelMktData to actually cancel the right subscription — ib_async's ticker
+        # bookkeeping keys on hash(contract), and Contract.__hash__ requires a conId
+        # (fixed 2026-09-11: this used to store the freshly-built, UNQUALIFIED contract,
+        # which made hash(contract) raise inside reqMktData itself, before any network
+        # call — every subscription attempt failed silently).
         self._subscriptions: dict[str, tuple[PositionSnapshot, Any]] = {}
         # OCC symbol → IV at entry (IV-spike baseline); underlying → fundamentals (ex-div).
         self._entry_iv: dict[str, float | None] = {}
@@ -384,14 +387,22 @@ class IntradayMonitor:
                 old_pos, old_contract = self._subscriptions[pos.symbol]
                 self._subscriptions[pos.symbol] = (pos, old_contract)
             else:
-                # New position — subscribe and store the Contract object used so that
-                # cancelMktData can use the same object (ib_async matches by reqId).
+                # New position — qualify first, then subscribe and store the QUALIFIED
+                # Contract object so cancelMktData can use the same one later. An
+                # unqualified contract (conId=0) makes ib_async's own Contract.__hash__
+                # raise inside reqMktData's ticker bookkeeping, before any network call —
+                # every other reqMktData call site in this codebase qualifies first
+                # (executor._fetch_quote, roll_executor._fetch_leg, profit_take._quote_short).
                 try:
                     contract = build_option(
                         pos.underlying or pos.symbol, pos.expiry, pos.strike, pos.right.value
                     )
-                    self._ib.reqMktData(contract, "101", False, False)
-                    self._subscriptions[pos.symbol] = (pos, contract)
+                    qualified = await qualify_options_async(self._ib, [contract])
+                    if not qualified:
+                        log.warning("Could not qualify contract for %s — skipping", pos.symbol)
+                        continue
+                    self._ib.reqMktData(qualified[0], "101", False, False)
+                    self._subscriptions[pos.symbol] = (pos, qualified[0])
                     log.info("Subscribed market data: %s", pos.symbol)
                 except Exception:
                     log.exception("reqMktData failed for %s", pos.symbol)

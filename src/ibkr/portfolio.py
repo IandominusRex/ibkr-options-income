@@ -39,10 +39,19 @@ async def enrich_positions_with_greeks_async(
     any consumer that needs net-delta exposure (the EOD report) must enrich first — otherwise
     delta is always None and net delta reads 0. Best-effort: positions whose greeks don't
     stream in time keep delta=None. Runs on the ib_async loop thread.
+
+    Contracts are qualified before subscribing (fixed 2026-09-11): ``build_option`` returns
+    an unqualified ``Option`` (``conId=0``), and ib_async's ``Contract.__hash__`` refuses to
+    hash a contract with no ``conId`` — ``reqMktData`` hashes it internally
+    (``Wrapper.startTicker``) before any network call, so every subscription raised
+    ``ValueError`` immediately, silently caught below, and this function's ``delta`` output
+    was always empty. Same qualify-then-subscribe order every other ``reqMktData`` call site
+    in this codebase already uses (``executor._fetch_quote``, ``roll_executor._fetch_leg``,
+    ``profit_take._quote_short``).
     """
     from typing import Any
 
-    from src.ibkr.contracts import build_option
+    from src.ibkr.contracts import build_option, qualify_options_async
 
     opt_positions = [
         p
@@ -52,14 +61,25 @@ async def enrich_positions_with_greeks_async(
     if not opt_positions:
         return positions
 
-    wait = get_config().market_data.quote_sleep_seconds
-    subscribed: list[tuple[PositionSnapshot, Any, Any]] = []
+    pairs: list[tuple[PositionSnapshot, Any]] = []
     for p in opt_positions:
         # Re-checked for the type-narrower; the comprehension above already guarantees these.
         if p.strike is None or p.expiry is None or p.right is None:
             continue
+        pairs.append((p, build_option(p.underlying or p.symbol, p.expiry, p.strike, p.right.value)))
+
+    # Qualifies in place — a successfully-qualified contract's own `.conId` is populated on
+    # the same object already held in `pairs`, so no correlation with the return value is
+    # needed below.
+    await qualify_options_async(ib, [c for _, c in pairs])
+
+    wait = get_config().market_data.quote_sleep_seconds
+    subscribed: list[tuple[PositionSnapshot, Any, Any]] = []
+    for p, contract in pairs:
+        if not getattr(contract, "conId", None):
+            log.warning("greeks enrich: could not qualify contract for %s", p.symbol)
+            continue
         try:
-            contract = build_option(p.underlying or p.symbol, p.expiry, p.strike, p.right.value)
             ticker = ib.reqMktData(contract, "", False, False)
             subscribed.append((p, ticker, contract))
         except Exception:

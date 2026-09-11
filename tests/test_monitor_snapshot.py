@@ -32,6 +32,7 @@ def _make_monitor_env() -> Any:
     mock_ib = MagicMock()
     mock_ib.tickers.return_value = []
     mock_ib.portfolio.return_value = []
+    mock_ib.qualifyContractsAsync = AsyncMock(side_effect=lambda *contracts: list(contracts))
     mock_cfg = MagicMock()
     mock_cfg.monitor.delta_ceiling = 0.45
     mock_cfg.monitor.dte_threshold = 7

@@ -74,6 +74,51 @@ def test_a_null_dedupe_key_may_repeat(db_session) -> None:
     assert len(pending_commands(db_session)) == 2
 
 
+def test_a_dedupe_key_only_matches_a_pending_row(db_session) -> None:
+    """promote/roll_request dedupe on a stable key (candidate_id / position_symbol) that
+    outlives any single approval cycle. Once the first command has been applied, a repeat
+    request must get a fresh row — matching an already-applied row would make a genuinely
+    new request silently no-op with the OLD command's stale result (the promote/roll_request
+    defect documented in STATUS.md's "Remaining known issues")."""
+    first, created1 = enqueue_command(
+        db_session,
+        kind="roll_request",
+        payload={"position_symbol": "NVDA"},
+        requested_by="owner",
+        dedupe_key="roll_request:NVDA",
+    )
+    db_session.commit()
+    assert created1 is True
+
+    # While pending, a repeat request still dedupes to the same row (two clicks == one command).
+    dup, created2 = enqueue_command(
+        db_session,
+        kind="roll_request",
+        payload={"position_symbol": "NVDA"},
+        requested_by="owner",
+        dedupe_key="roll_request:NVDA",
+    )
+    db_session.commit()
+    assert created2 is False
+    assert dup.id == first.id
+
+    # Once applied, the key is no longer live — months later, a new roll request for the
+    # same symbol must not resurrect the old, already-applied command.
+    mark_applied(db_session, first.id, {"status": "applied"})
+    db_session.commit()
+
+    second, created3 = enqueue_command(
+        db_session,
+        kind="roll_request",
+        payload={"position_symbol": "NVDA"},
+        requested_by="owner",
+        dedupe_key="roll_request:NVDA",
+    )
+    db_session.commit()
+    assert created3 is True
+    assert second.id != first.id
+
+
 def test_pending_excludes_applied_and_failed(db_session) -> None:
     a, _ = enqueue_command(db_session, kind="refresh", payload={}, requested_by="owner")
     b, _ = enqueue_command(db_session, kind="refresh", payload={}, requested_by="owner")

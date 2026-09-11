@@ -117,7 +117,14 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
 ### `promote` — promote an assessed contract to the approval queue
 
 - **Payload:** `{ candidate_id: str, symbol: str, strategy: str, strike: float, expiry: date }`
-- **Dedupe key:** `promote:{candidate_id}`
+- **Dedupe key:** `promote:{candidate_id}`, scoped to `status == "pending"` rows only (fixed
+  2026-09-11 — see STATUS.md's former "Remaining known issues" entry). `candidate_id` is stable
+  across rescans, so a global dedupe key used to permanently block a fresh promote of the same
+  contract once the first request had already been applied — days or months later, re-promoting
+  after the original approval expired silently no-op'd with the OLD command's stale `applied`
+  receipt instead of actually re-pricing and re-gating. `enqueue_command` now only matches an
+  existing row for this key while it is still `pending` — two clicks while one is in flight still
+  collapse to one command, but once that command is applied/failed/expired the key is live again.
 - **Applied by:** M4 Task 4.2. The drain handler (`src/notify/command_drain.py`'s `_promote`)
   re-prices and re-gates the requested contract **right now** — it re-runs the single-ticker
   pricing path (`src.orchestrator.scan._price_and_gate_ticker`: fresh chain, fresh analytics,
@@ -201,7 +208,11 @@ through the read-only trading-database engine, never the write-scoped command en
 
 - **Payload:** `{ position_symbol: str }` — the OCC symbol of the open short, exactly as
   `GET /options/shorts` returns it.
-- **Dedupe key:** `roll_request:{position_symbol}`
+- **Dedupe key:** `roll_request:{position_symbol}`, scoped to `status == "pending"` rows only
+  (fixed 2026-09-11, same defect and fix as `promote` above) — a bare symbol is a permanent key,
+  so before this fix a second `roll_request` for a symbol months later, on an entirely different
+  position, deduped to the first, already-`applied` command and silently no-op'd instead of
+  proposing a fresh roll.
 - **Applied by:** M5 Task 5.1. The drain handler (`src/notify/command_drain.py`'s `_roll_request`)
   resolves the position from a live portfolio read, fetches a fresh chain + IV/technical stats
   through the same shared helper the intraday monitor uses

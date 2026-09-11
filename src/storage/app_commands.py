@@ -30,14 +30,25 @@ def enqueue_command(
 ) -> tuple[AppCommandRow, bool]:
     """Insert a command. Returns ``(row, created)``.
 
-    On a ``dedupe_key`` collision returns the existing row with ``created=False`` —
-    never a second row, never an exception. A ``None`` dedupe_key is never deduped
-    (refresh, halt, resume, set_autonomy, universe_add, universe_remove may repeat
-    harmlessly).
+    On a ``dedupe_key`` collision against a still-``pending`` row, returns that row with
+    ``created=False`` — never a second row, never an exception. A ``None`` dedupe_key is
+    never deduped (refresh, halt, resume, set_autonomy, universe_add, universe_remove may
+    repeat harmlessly).
+
+    The lookup is scoped to ``status == "pending"`` (not "any row with this key ever"):
+    ``promote`` and ``roll_request`` key on a stable target (``candidate_id`` /
+    ``position_symbol``) that outlives any single approval cycle, so once a command has
+    been applied/failed/expired the key is no longer live — a later, semantically new
+    request for the same target must get a fresh row, not silently no-op against the old
+    one's stale result. This still preserves "two clicks produce one command" for every
+    keyed kind, since only one row can be pending for a given key at a time.
     """
     if dedupe_key is not None:
         existing = session.execute(
-            select(AppCommandRow).where(AppCommandRow.dedupe_key == dedupe_key)
+            select(AppCommandRow).where(
+                AppCommandRow.dedupe_key == dedupe_key,
+                AppCommandRow.status == "pending",
+            )
         ).scalar_one_or_none()
         if existing is not None:
             return existing, False

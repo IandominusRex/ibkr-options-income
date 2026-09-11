@@ -49,6 +49,33 @@ from src.strategies._scoring import (
 log = logging.getLogger(__name__)
 
 
+def uncovered_call_capacity(positions: list[PositionSnapshot], underlying: str) -> int:
+    """How many *fresh* call contracts *underlying*'s current book can cover right now.
+
+    ``floor(long shares / 100) - existing short calls`` — the exact sizing formula
+    ``screen_cc_candidates`` uses, extracted so a caller that only needs the number (not a
+    full screen) doesn't re-derive it. Used both at scan time (indirectly, via
+    ``screen_cc_candidates``) and at execution time by ``execution.approval.process_queued_orders``,
+    which re-checks a queued covered call against a **fresh** position snapshot immediately
+    before sending it — shares sold (manually, or by an assignment the reconciler hasn't
+    caught yet) between scan and execution must not result in a naked call.
+    """
+    shares = sum(
+        p.position
+        for p in positions
+        if (p.underlying or p.symbol) == underlying and p.sec_type == "STK" and p.position > 0
+    )
+    existing_short_calls = sum(
+        int(abs(p.position))
+        for p in positions
+        if (p.underlying or p.symbol) == underlying
+        and p.sec_type == "OPT"
+        and p.right == OptionRight.CALL
+        and p.position < 0
+    )
+    return math.floor(shares / 100) - max(0, existing_short_calls)
+
+
 def generate_cc_candidates(
     symbol: str,
     quotes: list[OptionQuote],

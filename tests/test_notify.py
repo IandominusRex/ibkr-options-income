@@ -1962,6 +1962,52 @@ async def test_run_intraday_scan_forwards_force_full_sweep():
     assert mock_run_scan.call_args.kwargs["force_full_sweep"] is True
 
 
+async def test_intraday_loop_runs_periodic_fill_reconciliation_when_exec_is_connected():
+    """SYSTEM_REVIEW F7: fill reconciliation must run every RTH cycle, not only at process
+    startup — a fill that lands during a mid-session reconnect must be recoverable within one
+    interval, not only on the next restart. Regression guard for STATUS.md's former
+    "Post-reconnect fill recovery" bullet, which had gone stale describing this as unfixed."""
+    from types import SimpleNamespace
+
+    import src.notify.approval_service as approval_service
+
+    ib_scan = MagicMock()
+    ib_scan.isConnected.return_value = True
+    ib_exec = MagicMock()
+    ib_exec.isConnected.return_value = True
+    bot = AsyncMock()
+    app = SimpleNamespace(bot=bot, bot_data={})
+
+    reconcile_fills = AsyncMock()
+    reconcile_closes = AsyncMock()
+
+    with (
+        patch.object(approval_service, "is_rth", return_value=True),
+        patch.object(approval_service, "is_halted", return_value=True),  # skip past the scan
+        patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
+        patch.object(approval_service, "_check_profit_takes", AsyncMock()),
+        patch.object(approval_service, "_check_loss_exits", AsyncMock()),
+        patch.object(approval_service, "reconcile_orphan_fills", reconcile_fills),
+        patch.object(approval_service, "reconcile_external_closes", reconcile_closes),
+    ):
+        loop_task = asyncio.create_task(
+            approval_service._intraday_scan_loop(app, ib_scan, ib_exec, "123")
+        )
+        try:
+            for _ in range(200):
+                if reconcile_fills.call_count >= 1 and reconcile_closes.call_count >= 1:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task
+
+    assert reconcile_fills.call_count >= 1
+    assert reconcile_closes.call_count >= 1
+    assert reconcile_fills.call_args.args[0] is ib_exec
+
+
 async def test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle():
     """2026-08-21: the first cycle this process actually gets to spawn a scan must force a full
     sweep (force_full_sweep=True) regardless of the staleness timer, since the timer only

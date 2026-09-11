@@ -141,7 +141,7 @@ def validate_candidates(
     caps = resolve_caps(account, risk)
     sector_of_fn = get_config().universe.get("sectors", {}).get
     budgets: Budgets = seed_budgets(
-        positions, sector_of_fn, iv_by_symbol.get if iv_by_symbol else None
+        positions, sector_of_fn, iv_by_symbol.get if iv_by_symbol else None, caps=caps
     )
 
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
@@ -296,11 +296,14 @@ def validate_candidates(
         # slot is free. This is also the raw-collateral backstop on every path that cannot
         # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
         # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
-        # `max_pct_per_ticker_large`, whatever the candidate's own IV says. NOTE: this check
-        # is cumulative but `capital.charge`'s slot-consumption bookkeeping is still
-        # marginal — see that function's docstring for the known, non-blocking gap.
+        # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
+        # holding a slot (seeded from the book, or claimed by an earlier representative this
+        # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
         if cum_collateral > caps.max_ticker_collateral:
-            if budgets.large_slots_used >= caps.max_large_positions:
+            if (
+                cand.underlying not in budgets.large_tickers
+                and len(budgets.large_tickers) >= caps.max_large_positions
+            ):
                 reasons.append("large_position_slot_full")
             elif cum_collateral > caps.large_ticker_collateral:
                 reasons.append("concentration_limit")

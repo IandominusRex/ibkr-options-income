@@ -846,6 +846,7 @@ def _make_monitor() -> tuple:
     mock_ib = MagicMock()
     mock_ib.tickers.return_value = []
     mock_ib.portfolio.return_value = []
+    mock_ib.qualifyContractsAsync = AsyncMock(side_effect=lambda *contracts: list(contracts))
     mock_cfg = MagicMock()
     mock_cfg.monitor.delta_ceiling = 0.45
     mock_cfg.monitor.dte_threshold = 7
@@ -895,6 +896,83 @@ async def test_on_reconnect_clears_subscriptions_before_refresh() -> None:
 
     assert monitor._subscriptions == {}
     assert monitor._entry_iv == {}
+
+
+class _RealishIB:
+    """Stands in for ``ib_async.IB`` using a genuine ``Wrapper`` for ticker bookkeeping.
+
+    ``reqMktData``/``cancelMktData`` delegate to the real ``Wrapper.startTicker``/``endTicker``
+    — the exact code path that raises ``ValueError`` for an unqualified contract (``conId=0``,
+    which is what ``build_option`` returns) — without needing a live TWS/Gateway connection. A
+    ``MagicMock`` standing in for ``ib`` (as every other test in this file uses) never raises
+    here regardless of whether the contract passed to it was qualified, which is exactly why
+    this bug went unnoticed.
+    """
+
+    def __init__(self) -> None:
+        from ib_async.wrapper import Wrapper
+
+        self.wrapper = Wrapper(None)
+        self._next_req_id = 1
+
+    def reqMktData(self, contract, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        req_id = self._next_req_id
+        self._next_req_id += 1
+        return self.wrapper.startTicker(req_id, contract, "mktData")
+
+    def cancelMktData(self, contract) -> None:  # noqa: ANN001
+        ticker = self.wrapper.tickers.get(hash(contract))
+        if ticker is not None:
+            self.wrapper.endTicker(ticker, "mktData")
+
+    async def qualifyContractsAsync(self, *contracts):  # noqa: ANN002
+        for i, c in enumerate(contracts):
+            c.conId = 999_000 + i
+        return list(contracts)
+
+
+async def test_refresh_subscriptions_qualifies_before_reqmktdata() -> None:
+    """Regression: before the fix, `build_option`'s unqualified contract went straight into
+    `reqMktData`, which raised inside ib_async's own ticker bookkeeping — silently caught by
+    the surrounding `except Exception`, so the monitor never actually subscribed to a single
+    short option's live ticks, and every roll/assignment trigger depending on
+    `pendingTickersEvent` never fired."""
+    from src.monitor.intraday import IntradayMonitor
+
+    ib = _RealishIB()
+    mock_cfg = MagicMock()
+    mock_cfg.monitor.delta_ceiling = 0.45
+    mock_cfg.monitor.dte_threshold = 7
+    mock_cfg.monitor.iv_spike_pct = 40.0
+    mock_cfg.monitor.ex_div_days_ahead = 5
+    mock_cfg.monitor.alert_cooldown_minutes = 60
+    mock_cfg.scheduler.intraday_poll_seconds = 60
+    mock_cfg.claude.enabled = False
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    monitor = IntradayMonitor(ib, AsyncMock(), "99999", mock_cfg, executor)
+
+    pos = PositionSnapshot(
+        symbol="AAPL  260117C00185000",
+        sec_type="OPT",
+        position=-1.0,
+        avg_cost=1.50,
+        right=OptionRight.CALL,
+        strike=185.0,
+        expiry=date.today() + timedelta(days=30),
+        underlying="AAPL",
+    )
+
+    with (
+        patch("src.monitor.intraday.get_positions", return_value=[pos]),
+        patch("src.monitor.intraday._load_entry_iv", return_value=None),
+        patch("src.monitor.intraday.get_fundamental_stats", return_value=MagicMock()),
+    ):
+        await monitor._refresh_subscriptions()
+
+    assert "AAPL  260117C00185000" in monitor._subscriptions
+    _, contract = monitor._subscriptions["AAPL  260117C00185000"]
+    assert getattr(contract, "conId", 0) != 0
 
 
 async def test_double_subscribe_prevention_on_repeated_refresh() -> None:

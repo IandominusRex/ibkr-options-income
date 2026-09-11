@@ -86,6 +86,7 @@ from src.storage.system_settings import (
     renew_scan_lease,
     set_setting,
 )
+from src.strategies._evaluation import REASON_NO_MARKET
 from src.strategies.buy_candidates import generate_buy_candidates
 from src.strategies.cash_secured_put import screen_csp_candidates
 from src.strategies.covered_call import screen_cc_candidates
@@ -853,15 +854,22 @@ def _rank_assessed(assessed: list[AssessedContract]) -> list[AssessedContract]:
     """Order assessed contracts best-first: approved, then closest-to-approved.
 
     Within the rejected set, a contract that stumbled at the last hurdle (score floor, top-N)
-    ranks above one that never cleared the delta band, and higher blended score breaks ties.
-    ``AssessmentStage`` is declared in pipeline order, so its position in the enum *is* the
-    "how far did it get" rank.
+    ranks above one that never cleared the delta band, and higher blended score breaks ties —
+    except a contract tagged ``REASON_NO_MARKET`` (no live bid/ask, quote forced to $0.00)
+    always sorts below every priced peer in the same stage, however it scored. ``blended_score``
+    has no dependency on whether a contract ever had a real quote, so without this an unpriced
+    phantom could outscore a genuine, priced near-miss on the other four components and
+    displace it as the "closest miss" shown on the Telegram card (STATUS.md's former
+    "Remaining known issues"). ``AssessmentStage`` is declared in pipeline order, so its
+    position in the enum *is* the "how far did it get" rank.
     """
     order = {stage: i for i, stage in enumerate(AssessmentStage)}
 
-    def key(a: AssessedContract) -> tuple[int, int, float]:
-        # PASSED sorts first; among rejects, later stages (got further) sort first.
-        return (0 if a.passed else 1, -order[a.stage], -a.candidate.blended_score)
+    def key(a: AssessedContract) -> tuple[int, int, int, float]:
+        unpriced = 1 if REASON_NO_MARKET in a.reasons else 0
+        # PASSED sorts first; among rejects, later stages (got further) sort first; priced
+        # sorts ahead of unpriced within a stage; higher score breaks the remaining ties.
+        return (0 if a.passed else 1, -order[a.stage], unpriced, -a.candidate.blended_score)
 
     return sorted(assessed, key=key)
 
