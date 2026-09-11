@@ -151,19 +151,40 @@ def validate_candidates(
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
 
+        # --- Income quality gates. Scoped to the income strategies: a ROLL is a defensive
+        # repair, not an income trade. A roll that pays a debit to move a challenged short
+        # out and down has roc_pct = 0.0 by construction and a premium deliberately below
+        # the new strike's fair value, so all three floors below would reject EVERY
+        # defensive roll — structurally, at the approval-queue re-gate, after the operator
+        # already approved it. Rolls carry their own purpose-built economics in
+        # `strategies/rolling.py` (max_debit + min_delta_reduction), which remain the real
+        # control for them.
         if cand.strategy in _INCOME_STRATEGIES:
             if cand.roc_pct < income.get("min_roc_pct", 1.0):
                 reasons.append("roc_below_minimum")
             if cand.annualized_yield_pct < income.get("min_annualized_yield_pct", 12.0):
                 reasons.append("yield_below_minimum")
+
+            # --- Variance-risk-premium floor. The income thesis is that implied vol exceeds
+            # realised vol; selling at or below Black-Scholes fair value priced at HV30 earns
+            # no edge for the risk taken. This replaces the flat ROC floor as the primary gate:
+            # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
+            # low-vol diversifier in the universe and pushed every trade to the top of the
+            # delta band (D2). Missing zone = data unavailable, never a rejection.
             if income.get("require_vrp_edge", True) and cand.ideal is not None:
                 floor = cand.ideal.min_credit
                 if floor is not None and floor > 0 and cand.premium < floor:
                     reasons.append("premium_below_fair_value")
 
+        # --- IV environment: only sell premium when it's relatively expensive.
+        # Enforced only when an IV rank is available (missing history is not a capital
+        # risk, just lost optimization — rejecting all would silently zero out scans).
         if min_iv_rank is not None and cand.iv_rank is not None and cand.iv_rank < min_iv_rank:
             reasons.append("iv_rank_below_minimum")
 
+        # --- IV/RV richness gate: sell only when implied vol richly exceeds realized vol.
+        # Missing ratio is treated as "data unavailable" — not a capital risk — so it never
+        # blocks the scan. Threshold configurable via risk_limits.yaml → iv → min_iv_rv_ratio.
         if (
             min_iv_rv is not None
             and cand.iv_rv_ratio is not None
@@ -171,13 +192,18 @@ def validate_candidates(
         ):
             reasons.append("iv_rv_below_minimum")
 
+        # --- DTE window (strategy-specific) ---
         if limits and not (limits.get("dte_min", 0) <= cand.dte <= limits.get("dte_max", 999)):
             reasons.append("dte_out_of_range")
 
+        # --- Delta: required for income strategies regardless of limits-dict presence ---
         if cand.strategy in _INCOME_STRATEGIES:
             if cand.delta is None:
                 reasons.append("delta_missing")
             else:
+                # Sign check: IBKR returns negative deltas for puts.
+                # A wrong-sign value (e.g. delta=+0.25 on a PUT) passes abs() checks
+                # but indicates a data error — reject rather than silently accept.
                 if cand.right == OptionRight.PUT and cand.delta > 0:
                     reasons.append("delta_sign_mismatch")
                 elif cand.right == OptionRight.CALL and cand.delta < 0:
@@ -187,15 +213,18 @@ def validate_candidates(
                 ):
                     reasons.append("delta_out_of_range")
 
+        # --- Max contracts per position ---
         max_contracts = limits.get("max_contracts") if limits else None
         if max_contracts is not None and cand.contracts > max_contracts:
             reasons.append("contracts_exceeds_max")
 
+        # --- Earnings blackout: no short premium that lives through (or just before) earnings ---
         if cand.next_earnings is not None:
             days_to_earnings = (cand.next_earnings - today).days
             if cand.next_earnings <= cand.expiry or 0 <= days_to_earnings <= blackout_days:
                 reasons.append("earnings_blackout")
 
+        # --- Contract count ---
         if cand.contracts < 1:
             reasons.append("no_contracts")
 
@@ -206,11 +235,20 @@ def validate_candidates(
 
     # --- Select the one representative per (underlying, strategy) allowed to spend the
     # shared cumulative budgets. Every other pass-1 survivor in the same group is rejected
-    # right here, before ever touching `budgets` or `caps`. Only strategies that add new
-    # exposure are grouped at all — a covered call never reaches the shared budget either
-    # way, so there is nothing to dedupe among CC candidates. With *dedupe_same_symbol*
-    # False every survivor is its own representative, so the loop below appends nothing and
-    # pass 2 runs for all of them in score order — the pre-split behaviour, verbatim.
+    # right here, before ever touching `budgets` or `caps`. With *dedupe_same_symbol* False
+    # every survivor is its own representative, so the loop below appends nothing and pass 2
+    # runs for all of them in score order — the pre-split behaviour, verbatim.
+    #
+    # Only strategies that create NEW exposure are grouped, and are also the only ones pass 2
+    # runs at all. Covered calls are written against shares the account ALREADY owns: selling
+    # a call adds no new ticker/sector exposure (those shares are already counted in
+    # `positions`) and consumes no buying power — it generates premium. Charging CC collateral
+    # against the concentration limits and the BP buffer double-counts the shares and falsely
+    # rejects calls on exactly the large holdings you most want to write against. A ROLL
+    # likewise replaces an existing short (the old leg is already counted in `positions`); it
+    # is net exposure-neutral, so charging the new leg as fresh exposure would double-count and
+    # falsely reject defensive rolls (N20). Neither ever reaches the shared budget, so there is
+    # nothing to dedupe among them either.
     survivor_ids = {
         cand.candidate_id
         for cand in candidates
@@ -235,6 +273,14 @@ def validate_candidates(
         reasons = candidate_reasons[cand.candidate_id]
         sector = _sector_of(cand.underlying)
 
+        # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
+        # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
+        # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
+        # $65k META put and a $15k MARA put on the same scale. When IV is missing we fall back
+        # to a stricter raw-collateral cap.
+        # Mirrors `capital._fits` exactly — the gate must never be looser than the sizer.
+        #
+        # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
         cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
         units = risk_units(cand.collateral, cand.current_iv, cand.dte)
         if units is None:
@@ -246,6 +292,13 @@ def validate_candidates(
             if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
                 reasons.append("sector_limit")
 
+        # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
+        # slot is free. This is also the raw-collateral backstop on every path that cannot
+        # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
+        # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
+        # `max_pct_per_ticker_large`, whatever the candidate's own IV says. NOTE: this check
+        # is cumulative but `capital.charge`'s slot-consumption bookkeeping is still
+        # marginal — see that function's docstring for the known, non-blocking gap.
         if cum_collateral > caps.max_ticker_collateral:
             if budgets.large_slots_used >= caps.max_large_positions:
                 reasons.append("large_position_slot_full")
@@ -258,12 +311,18 @@ def validate_candidates(
         if budgets.cash_used + cand.collateral > caps.deployable_cash:
             reasons.append("buying_power_buffer")
 
-        # Two independent checks above (the ticker-risk breach and the large-slot ceiling)
-        # can both append "concentration_limit" for the same candidate — collapse here,
-        # preserving order, exactly as the single-pass version always did.
+        # Dedupe: two independent checks above (the ticker-risk breach and the large-slot
+        # ceiling) can both append "concentration_limit" for the same candidate. Display
+        # already dedupes and PASS/REJECT is unaffected either way, but
+        # storage.risk_verdicts persists `reasons` verbatim — collapse here, preserving
+        # order and every distinct reason, so a duplicate never reaches the DB. Exactly as
+        # the single-pass version always did.
         reasons = list(dict.fromkeys(reasons))
         candidate_reasons[cand.candidate_id] = reasons
 
+        # Consume budget only for accepted candidates so later representatives see reduced
+        # headroom. Covered calls and rolls never get here — they are not representatives —
+        # so they touch none of these tallies.
         if not reasons:
             charge(
                 contracts=cand.contracts,
