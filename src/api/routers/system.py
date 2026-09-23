@@ -54,10 +54,12 @@ _LEVEL_PATTERN: dict[str, re.Pattern[str]] = {
     "info": re.compile(r"\|\s*(INFO|WARNING|ERROR|CRITICAL)\s*\|"),
 }
 
-# 2x the fastest research-worker job's cadence (drain_ingest_jobs, a 30s IntervalTrigger
-# in src/research/ingest/jobs.py) — the same "2x cadence" staleness rule /options/
-# controls applies to the drain heartbeat, hand-derived since that 30s interval is a
-# literal in jobs.py, not a config value.
+# A conservative multiple of the fastest research-worker job's cadence
+# (drain_ingest_jobs, a 30s IntervalTrigger in src/research/ingest/jobs.py) — wider than
+# the "2x cadence" rule every other heartbeat row in this file uses, since research jobs
+# only heartbeat on success (run_job) and a single slow/failed run should not flip this
+# row to "down". Hand-derived since that 30s interval is a literal in jobs.py, not a
+# config value.
 _RESEARCH_WORKER_MAX_AGE = timedelta(minutes=2)
 
 
@@ -77,6 +79,7 @@ class SystemLogResponse(Envelope):
     name: str
     level: Literal["warn", "info"]
     lines: list[str]
+    file_exists: bool
 
 
 def _heartbeat_row(
@@ -111,11 +114,11 @@ def _worst(states: list[State]) -> State:
 
 
 def _ibkr_leg(
-    heartbeat: datetime | None, max_age: timedelta, connected_raw: str | None
+    now: datetime, heartbeat: datetime | None, max_age: timedelta, connected_raw: str | None
 ) -> tuple[State, str]:
     if heartbeat is None:
         return "unknown", "not yet reporting"
-    if datetime.now(UTC) - heartbeat > max_age:
+    if now - heartbeat > max_age:
         return "down", "heartbeat stale"
     if connected_raw == "true":
         return "ok", "connected"
@@ -130,6 +133,7 @@ def system_status(
     cfg = get_config()
     rows: list[SystemRow] = []
 
+    trading_ok = True
     try:
         trading_db.execute(sa.text("SELECT 1"))
         rows.append(
@@ -137,11 +141,13 @@ def system_status(
                        detail="reachable", log_key=None)
         )
     except Exception:
+        trading_ok = False
         rows.append(
             SystemRow(as_of=now, key="trading_db", label="Trading DB", state="down",
                        detail="unreachable", log_key=None)
         )
 
+    research_ok = True
     try:
         research_db.execute(sa.text("SELECT 1"))
         rows.append(
@@ -149,6 +155,7 @@ def system_status(
                        detail="reachable", log_key=None)
         )
     except Exception:
+        research_ok = False
         rows.append(
             SystemRow(as_of=now, key="research_db", label="Research DB", state="down",
                        detail="unreachable", log_key=None)
@@ -187,46 +194,82 @@ def system_status(
                        detail=detail, log_key=None)
         )
 
-    drain_hb = parse_setting_dt(read_setting(trading_db, _DRAIN_HEARTBEAT_KEY))
+    # The drain/monitor/ibkr-connected rows all read `trading_db` again below (a fresh
+    # `read_setting` query, not just the `SELECT 1` above). A `Session` that already
+    # raised once is left in an aborted-transaction state — calling `.execute` on it
+    # again raises too (SQLAlchemy's `PendingRollbackError`), so a broken trading DB
+    # must gate every later read of it rather than let a second unguarded query 500 the
+    # whole endpoint. Same idea for `research_db` guarding `read_heartbeat()` below.
     drain_max_age = timedelta(seconds=cfg.execution.poll_interval_seconds * 2)
-    rows.append(
-        _heartbeat_row(now, key="command_drain", label="Command drain (approval_service)",
-                        heartbeat=drain_hb, max_age=drain_max_age, log_key="approval")
-    )
-
-    monitor_hb = parse_setting_dt(read_setting(trading_db, MONITOR_HEARTBEAT_KEY))
     monitor_max_age = timedelta(seconds=cfg.scheduler.intraday_poll_seconds * 2)
-    rows.append(
-        _heartbeat_row(now, key="intraday_monitor", label="Intraday monitor",
-                        heartbeat=monitor_hb, max_age=monitor_max_age, log_key="monitor")
-    )
+    drain_hb: datetime | None = None
+    monitor_hb: datetime | None = None
 
-    worker_hb = as_utc_opt(read_heartbeat())
-    rows.append(
-        _heartbeat_row(now, key="research_worker", label="Research worker",
-                        heartbeat=worker_hb, max_age=_RESEARCH_WORKER_MAX_AGE,
-                        log_key="research")
-    )
-
-    drain_connected_raw = read_setting(trading_db, COMMAND_DRAIN_IBKR_CONNECTED_KEY)
-    monitor_connected_raw = read_setting(trading_db, MONITOR_IBKR_CONNECTED_KEY)
-    drain_leg_state, drain_leg_detail = _ibkr_leg(drain_hb, drain_max_age, drain_connected_raw)
-    monitor_leg_state, monitor_leg_detail = _ibkr_leg(
-        monitor_hb, monitor_max_age, monitor_connected_raw
-    )
-    rows.append(
-        SystemRow(
-            as_of=now,
-            key="ibkr_connection",
-            label="IBKR connection",
-            state=_worst([drain_leg_state, monitor_leg_state]),
-            detail=(
-                f"approval_service: {drain_leg_detail}; "
-                f"intraday_monitor: {monitor_leg_detail}"
-            ),
-            log_key=None,
+    if trading_ok:
+        drain_hb = parse_setting_dt(read_setting(trading_db, _DRAIN_HEARTBEAT_KEY))
+        rows.append(
+            _heartbeat_row(now, key="command_drain", label="Command drain (approval_service)",
+                            heartbeat=drain_hb, max_age=drain_max_age, log_key="approval")
         )
-    )
+
+        monitor_hb = parse_setting_dt(read_setting(trading_db, MONITOR_HEARTBEAT_KEY))
+        rows.append(
+            _heartbeat_row(now, key="intraday_monitor", label="Intraday monitor",
+                            heartbeat=monitor_hb, max_age=monitor_max_age, log_key="monitor")
+        )
+    else:
+        unreachable_detail = "trading DB unreachable — cannot read heartbeat"
+        rows.append(
+            SystemRow(as_of=now, key="command_drain", label="Command drain (approval_service)",
+                       state="unknown", detail=unreachable_detail, log_key="approval")
+        )
+        rows.append(
+            SystemRow(as_of=now, key="intraday_monitor", label="Intraday monitor",
+                       state="unknown", detail=unreachable_detail, log_key="monitor")
+        )
+
+    if research_ok:
+        worker_hb = as_utc_opt(read_heartbeat())
+        rows.append(
+            _heartbeat_row(now, key="research_worker", label="Research worker",
+                            heartbeat=worker_hb, max_age=_RESEARCH_WORKER_MAX_AGE,
+                            log_key="research")
+        )
+    else:
+        rows.append(
+            SystemRow(as_of=now, key="research_worker", label="Research worker",
+                       state="unknown", detail="research DB unreachable — cannot read heartbeat",
+                       log_key="research")
+        )
+
+    if trading_ok:
+        drain_connected_raw = read_setting(trading_db, COMMAND_DRAIN_IBKR_CONNECTED_KEY)
+        monitor_connected_raw = read_setting(trading_db, MONITOR_IBKR_CONNECTED_KEY)
+        drain_leg_state, drain_leg_detail = _ibkr_leg(
+            now, drain_hb, drain_max_age, drain_connected_raw
+        )
+        monitor_leg_state, monitor_leg_detail = _ibkr_leg(
+            now, monitor_hb, monitor_max_age, monitor_connected_raw
+        )
+        rows.append(
+            SystemRow(
+                as_of=now,
+                key="ibkr_connection",
+                label="IBKR connection",
+                state=_worst([drain_leg_state, monitor_leg_state]),
+                detail=(
+                    f"approval_service: {drain_leg_detail}; "
+                    f"intraday_monitor: {monitor_leg_detail}"
+                ),
+                log_key=None,
+            )
+        )
+    else:
+        rows.append(
+            SystemRow(as_of=now, key="ibkr_connection", label="IBKR connection",
+                       state="unknown", detail="trading DB unreachable — cannot read heartbeat",
+                       log_key=None)
+        )
 
     return SystemStatusResponse(as_of=now, rows=rows)
 
@@ -243,7 +286,7 @@ def system_log(
     if path is None:
         raise HTTPException(status_code=404, detail=f"Unknown system {name!r}")
     if not path.exists():
-        return SystemLogResponse(as_of=now, name=name, level=level, lines=[])
+        return SystemLogResponse(as_of=now, name=name, level=level, lines=[], file_exists=False)
 
     pattern = _LEVEL_PATTERN[level]
     matched: list[str] = []
@@ -251,4 +294,6 @@ def system_log(
         for line in fh:
             if pattern.search(line):
                 matched.append(line.rstrip("\n"))
-    return SystemLogResponse(as_of=now, name=name, level=level, lines=matched[-lines:])
+    return SystemLogResponse(
+        as_of=now, name=name, level=level, lines=matched[-lines:], file_exists=True
+    )

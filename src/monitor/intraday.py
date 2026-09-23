@@ -366,83 +366,92 @@ class IntradayMonitor:
         """Load positions; subscribe to new short options, unsubscribe from closed ones."""
         loop = asyncio.get_running_loop()
         try:
-            positions = get_positions(self._ib)
-        except Exception:
-            log.exception("Failed to load positions during subscription refresh")
-            return
+            try:
+                positions = get_positions(self._ib)
+            except Exception:
+                log.exception("Failed to load positions during subscription refresh")
+                return
 
-        active_symbols: set[str] = set()
+            active_symbols: set[str] = set()
 
-        for pos in positions:
-            if pos.sec_type != "OPT" or pos.position >= 0:
-                continue
-            if pos.expiry is None or pos.strike is None or pos.right is None:
-                continue
+            for pos in positions:
+                if pos.sec_type != "OPT" or pos.position >= 0:
+                    continue
+                if pos.expiry is None or pos.strike is None or pos.right is None:
+                    continue
 
-            active_symbols.add(pos.symbol)
+                active_symbols.add(pos.symbol)
 
-            already_subscribed = pos.symbol in self._subscriptions
+                already_subscribed = pos.symbol in self._subscriptions
 
-            # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
-            if pos.symbol not in self._entry_iv:
-                self._entry_iv[pos.symbol] = _load_entry_iv(pos)
-            # Fundamentals (ex-div date) — cache once per underlying for the session.
-            underlying = pos.underlying or pos.symbol
-            if underlying not in self._fund_stats:
-                try:
-                    # yfinance is blocking — keep it off the event loop.
-                    self._fund_stats[underlying] = await loop.run_in_executor(
-                        self._executor, get_fundamental_stats, underlying
-                    )
-                except Exception:
-                    log.exception("Failed to fetch fundamentals for %s", underlying)
-
-            if already_subscribed:
-                # Update the position snapshot in-place, keeping the stored Contract.
-                old_pos, old_contract = self._subscriptions[pos.symbol]
-                self._subscriptions[pos.symbol] = (pos, old_contract)
-            else:
-                # New position — qualify first, then subscribe and store the QUALIFIED
-                # Contract object so cancelMktData can use the same one later. An
-                # unqualified contract (conId=0) makes ib_async's own Contract.__hash__
-                # raise inside reqMktData's ticker bookkeeping, before any network call —
-                # every other reqMktData call site in this codebase qualifies first
-                # (executor._fetch_quote, roll_executor._fetch_leg, profit_take._quote_short).
-                try:
-                    contract = build_option(
-                        pos.underlying or pos.symbol, pos.expiry, pos.strike, pos.right.value
-                    )
-                    qualified = await qualify_options_async(self._ib, [contract])
-                    if not qualified:
-                        log.warning("Could not qualify contract for %s — skipping", pos.symbol)
-                        continue
-                    self._ib.reqMktData(qualified[0], "101", False, False)
-                    self._subscriptions[pos.symbol] = (pos, qualified[0])
-                    log.info("Subscribed market data: %s", pos.symbol)
-                except Exception:
-                    log.exception("reqMktData failed for %s", pos.symbol)
-
-        # Unsubscribe from positions that are no longer held
-        for sym in list(self._subscriptions):
-            if sym not in active_symbols:
-                old_pos, contract = self._subscriptions.pop(sym)
-                self._entry_iv.pop(sym, None)
-                if contract is not None:
+                # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
+                if pos.symbol not in self._entry_iv:
+                    self._entry_iv[pos.symbol] = _load_entry_iv(pos)
+                # Fundamentals (ex-div date) — cache once per underlying for the session.
+                underlying = pos.underlying or pos.symbol
+                if underlying not in self._fund_stats:
                     try:
-                        self._ib.cancelMktData(contract)
-                        log.info("Unsubscribed market data: %s", sym)
+                        # yfinance is blocking — keep it off the event loop.
+                        self._fund_stats[underlying] = await loop.run_in_executor(
+                            self._executor, get_fundamental_stats, underlying
+                        )
                     except Exception:
-                        log.exception("cancelMktData failed for %s", sym)
+                        log.exception("Failed to fetch fundamentals for %s", underlying)
 
-        # Portfolio snapshot for the web layer — strictly secondary to the subscription
-        # work above, and ordered after it deliberately: if this write is somehow slow,
-        # the subscriptions are already correct. Never raises (see _maybe_write_snapshot).
-        await self._maybe_write_snapshot(positions)
+                if already_subscribed:
+                    # Update the position snapshot in-place, keeping the stored Contract.
+                    old_pos, old_contract = self._subscriptions[pos.symbol]
+                    self._subscriptions[pos.symbol] = (pos, old_contract)
+                else:
+                    # New position — qualify first, then subscribe and store the QUALIFIED
+                    # Contract object so cancelMktData can use the same one later. An
+                    # unqualified contract (conId=0) makes ib_async's own Contract.__hash__
+                    # raise inside reqMktData's ticker bookkeeping, before any network call —
+                    # every other reqMktData call site in this codebase qualifies first
+                    # (executor._fetch_quote, roll_executor._fetch_leg, profit_take._quote_short).
+                    try:
+                        contract = build_option(
+                            pos.underlying or pos.symbol,
+                            pos.expiry,
+                            pos.strike,
+                            pos.right.value,
+                        )
+                        qualified = await qualify_options_async(self._ib, [contract])
+                        if not qualified:
+                            log.warning("Could not qualify contract for %s — skipping", pos.symbol)
+                            continue
+                        self._ib.reqMktData(qualified[0], "101", False, False)
+                        self._subscriptions[pos.symbol] = (pos, qualified[0])
+                        log.info("Subscribed market data: %s", pos.symbol)
+                    except Exception:
+                        log.exception("reqMktData failed for %s", pos.symbol)
 
-        # Heartbeat for the web status card (GET /system/status) — written every cycle,
-        # connected or not, mirroring the command drain's "write after the work, never
-        # before" rule so a hung loop cannot make the monitor look healthy.
-        self._write_heartbeat()
+            # Unsubscribe from positions that are no longer held
+            for sym in list(self._subscriptions):
+                if sym not in active_symbols:
+                    old_pos, contract = self._subscriptions.pop(sym)
+                    self._entry_iv.pop(sym, None)
+                    if contract is not None:
+                        try:
+                            self._ib.cancelMktData(contract)
+                            log.info("Unsubscribed market data: %s", sym)
+                        except Exception:
+                            log.exception("cancelMktData failed for %s", sym)
+
+            # Portfolio snapshot for the web layer — strictly secondary to the subscription
+            # work above, and ordered after it deliberately: if this write is somehow slow,
+            # the subscriptions are already correct. Never raises (see _maybe_write_snapshot).
+            await self._maybe_write_snapshot(positions)
+        finally:
+            # Heartbeat for the web status card (GET /system/status) — written every cycle,
+            # connected or not, and now even when this cycle's own work raised (e.g.
+            # get_positions failing above and hitting the early return): a monitor that has
+            # stopped reporting must never be mistaken, forever, for one with nothing yet to
+            # report. Moved into this `finally` (final review fix #3, 2026-09-24) after a
+            # live probe found the early return skipped the write entirely, leaving the
+            # "Intraday monitor" status row stuck at its cold-start "unknown" reading no
+            # matter how long the underlying failure persisted.
+            self._write_heartbeat()
 
     # ------------------------------------------------------------------
     # Ticker event handler

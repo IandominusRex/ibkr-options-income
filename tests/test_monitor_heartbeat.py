@@ -101,3 +101,21 @@ async def test_refresh_subscriptions_writes_the_heartbeat(monitor_env) -> None:
     with patch("src.monitor.intraday.is_rth", return_value=False):
         await monitor._refresh_subscriptions()
     assert get_setting(MONITOR_HEARTBEAT_KEY, "") != ""
+
+
+@pytest.mark.asyncio
+async def test_refresh_subscriptions_writes_the_heartbeat_even_when_get_positions_fails(
+    monitor_env,
+) -> None:
+    """Final-review fix #3: a failing get_positions() used to hit an early `return`
+    before `_write_heartbeat()`, so the status card's "Intraday monitor" row stayed
+    stuck on "unknown" forever instead of ever going "down". The heartbeat write now
+    lives in a `finally`, so it must still land even on this failure path."""
+    monitor, mock_ib = monitor_env
+    with (
+        patch("src.monitor.intraday.get_positions", side_effect=RuntimeError("boom")),
+        patch("src.monitor.intraday.is_rth", return_value=False),
+    ):
+        await monitor._refresh_subscriptions()
+    assert get_setting(MONITOR_HEARTBEAT_KEY, "") != ""
+    assert get_setting(MONITOR_IBKR_CONNECTED_KEY, "") == "true"

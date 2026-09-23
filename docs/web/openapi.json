@@ -7070,6 +7070,10 @@
             },
             "type": "array",
             "title": "Lines"
+          },
+          "file_exists": {
+            "type": "boolean",
+            "title": "File Exists"
           }
         },
         "type": "object",
@@ -7077,7 +7081,8 @@
           "as_of",
           "name",
           "level",
-          "lines"
+          "lines",
+          "file_exists"
         ],
         "title": "SystemLogResponse"
       },
