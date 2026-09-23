@@ -39,6 +39,7 @@ from src.api.models.options import (
     ShortListResponse,
     ShortPosition,
 )
+from src.api.settings_read import parse_setting_dt, read_setting
 from src.common.assignment_risk import assignment_risk_thresholds, is_assignment_risk
 from src.common.config import get_config
 from src.common.schemas import AssessmentStage
@@ -1075,25 +1076,6 @@ _RUNGS: list[tuple[str, str]] = [
 ]
 
 
-def _read_setting(db: TradingDb, key: str) -> str | None:
-    from src.storage.models import SystemSettingRow
-
-    row = db.execute(
-        select(SystemSettingRow.value).where(SystemSettingRow.key == key)
-    ).scalar_one_or_none()
-    return row if row is not None else None
-
-
-def _parse_setting_dt(raw: str | None) -> datetime | None:
-    if not raw:
-        return None
-    try:
-        dt = datetime.fromisoformat(raw)
-        return as_utc(dt)
-    except (ValueError, TypeError):
-        return None
-
-
 @router.get("/controls", response_model=ControlsResponse)
 def controls(
     _user: OwnerUser,
@@ -1117,8 +1099,8 @@ def controls(
     # Do NOT reuse /health's worker_heartbeat — that reports the research worker
     # and would show green while the command drain is dead.
     poll_interval = get_config().execution.poll_interval_seconds
-    drain_raw = _read_setting(db, _DRAIN_HEARTBEAT_KEY)
-    drain_last_seen = _parse_setting_dt(drain_raw)
+    drain_raw = read_setting(db, _DRAIN_HEARTBEAT_KEY)
+    drain_last_seen = parse_setting_dt(drain_raw)
     drain_healthy = False
     if drain_last_seen is not None:
         age = now - drain_last_seen
