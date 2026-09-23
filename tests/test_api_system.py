@@ -186,3 +186,70 @@ def test_an_open_breaker_makes_data_providers_down(client) -> None:
         assert rows["data_providers"]["state"] == "down"
     finally:
         edgar.record_success()
+
+
+def test_log_requires_owner_auth(client) -> None:
+    assert client.get("/system/monitor/log").status_code == 401
+
+
+def test_log_rejects_an_unknown_system_name(client) -> None:
+    r = client.get("/system/api/log", headers=AUTH)
+    assert r.status_code == 404
+
+
+def test_log_returns_empty_lines_when_the_file_does_not_exist(client, tmp_path, monkeypatch):
+    from src.api.routers import system as system_router
+
+    monkeypatch.setitem(system_router._LOG_FILES, "monitor", tmp_path / "no_such_file.log")
+    r = client.get("/system/monitor/log", headers=AUTH)
+    assert r.status_code == 200
+    assert r.json()["lines"] == []
+
+
+def test_log_filters_to_warning_and_above_by_default(client, tmp_path, monkeypatch):
+    log_file = tmp_path / "monitor.log"
+    log_file.write_text(
+        "2026-09-23 10:00:00 | INFO     | src.monitor.intraday | subscribed AAPL\n"
+        "2026-09-23 10:00:01 | WARNING  | src.monitor.intraday | IV spike detected\n"
+        "2026-09-23 10:00:02 | ERROR    | src.monitor.intraday | reqMktData failed\n",
+        encoding="utf-8",
+    )
+    from src.api.routers import system as system_router
+
+    monkeypatch.setitem(system_router._LOG_FILES, "monitor", log_file)
+    r = client.get("/system/monitor/log", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["lines"]) == 2
+    assert all("INFO" not in line for line in body["lines"])
+
+
+def test_log_level_info_widens_to_include_info_lines(client, tmp_path, monkeypatch):
+    log_file = tmp_path / "monitor.log"
+    log_file.write_text(
+        "2026-09-23 10:00:00 | INFO     | src.monitor.intraday | subscribed AAPL\n"
+        "2026-09-23 10:00:01 | WARNING  | src.monitor.intraday | IV spike detected\n",
+        encoding="utf-8",
+    )
+    from src.api.routers import system as system_router
+
+    monkeypatch.setitem(system_router._LOG_FILES, "monitor", log_file)
+    r = client.get("/system/monitor/log?level=info", headers=AUTH)
+    assert len(r.json()["lines"]) == 2
+
+
+def test_log_caps_at_the_requested_line_count(client, tmp_path, monkeypatch):
+    log_file = tmp_path / "monitor.log"
+    lines = "".join(
+        f"2026-09-23 10:00:{i:02d} | WARNING  | src.monitor.intraday | alert {i}\n"
+        for i in range(10)
+    )
+    log_file.write_text(lines, encoding="utf-8")
+    from src.api.routers import system as system_router
+
+    monkeypatch.setitem(system_router._LOG_FILES, "monitor", log_file)
+    r = client.get("/system/monitor/log?lines=3", headers=AUTH)
+    body = r.json()["lines"]
+    assert len(body) == 3
+    assert "alert 9" in body[-1]
+    assert "alert 7" in body[0]

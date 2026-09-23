@@ -6,12 +6,13 @@ research data. See docs/superpowers/specs/2026-09-23-web-system-status-card-desi
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from src.api.deps import OwnerUser, ResearchDb, TradingDb
 from src.api.models.common import Envelope, as_utc_opt
@@ -45,6 +46,14 @@ _LOG_FILES: dict[str, Path] = {
 
 _MAX_LOG_LINES = 150
 
+# Matches src/common/logging.py's plain file formatter:
+# "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s". \s* around the level name
+# tolerates the -8s left-justify padding without hardcoding an exact width.
+_LEVEL_PATTERN: dict[str, re.Pattern[str]] = {
+    "warn": re.compile(r"\|\s*(WARNING|ERROR|CRITICAL)\s*\|"),
+    "info": re.compile(r"\|\s*(INFO|WARNING|ERROR|CRITICAL)\s*\|"),
+}
+
 # 2x the fastest research-worker job's cadence (drain_ingest_jobs, a 30s IntervalTrigger
 # in src/research/ingest/jobs.py) — the same "2x cadence" staleness rule /options/
 # controls applies to the drain heartbeat, hand-derived since that 30s interval is a
@@ -62,6 +71,12 @@ class SystemRow(Envelope):
 
 class SystemStatusResponse(Envelope):
     rows: list[SystemRow]
+
+
+class SystemLogResponse(Envelope):
+    name: str
+    level: Literal["warn", "info"]
+    lines: list[str]
 
 
 def _heartbeat_row(
@@ -214,3 +229,26 @@ def system_status(
     )
 
     return SystemStatusResponse(as_of=now, rows=rows)
+
+
+@router.get("/{name}/log", response_model=SystemLogResponse)
+def system_log(
+    name: str,
+    _user: OwnerUser,
+    level: Literal["warn", "info"] = Query("warn"),
+    lines: int = Query(100, ge=1, le=_MAX_LOG_LINES),
+) -> SystemLogResponse:
+    now = datetime.now(UTC)
+    path = _LOG_FILES.get(name)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"Unknown system {name!r}")
+    if not path.exists():
+        return SystemLogResponse(as_of=now, name=name, level=level, lines=[])
+
+    pattern = _LEVEL_PATTERN[level]
+    matched: list[str] = []
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if pattern.search(line):
+                matched.append(line.rstrip("\n"))
+    return SystemLogResponse(as_of=now, name=name, level=level, lines=matched[-lines:])

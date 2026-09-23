@@ -1007,6 +1007,79 @@
         ]
       }
     },
+    "/system/{name}/log": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "System Log",
+        "operationId": "system_log_system__name__log_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "warn",
+                "info"
+              ],
+              "type": "string",
+              "default": "warn",
+              "title": "Level"
+            }
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 150,
+              "minimum": 1,
+              "default": 100,
+              "title": "Lines"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemLogResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/portfolio/summary": {
       "get": {
         "summary": "Portfolio Summary",
@@ -6971,6 +7044,42 @@
         ],
         "title": "SummaryOut",
         "description": "The AI narrative over computed values. Enrichment \u2014 influences nothing.\n\nEvery number the model used was passed in via ``ResearchContext``; the model never\ncalculates. ``caveats`` always carries the quantitative limit. ``model`` and\n``data_as_of`` make a stale summary visibly stale."
+      },
+      "SystemLogResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "warn",
+              "info"
+            ],
+            "title": "Level"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Lines"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "name",
+          "level",
+          "lines"
+        ],
+        "title": "SystemLogResponse"
       },
       "SystemPerformanceResponse": {
         "properties": {
