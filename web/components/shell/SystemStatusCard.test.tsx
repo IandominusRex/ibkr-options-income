@@ -59,6 +59,45 @@ describe("SystemStatusCard", () => {
     expect(dot.getAttribute("data-state")).toBe("down");
   });
 
+  it("renders a degraded row's dot with the degraded state", async () => {
+    renderWithQuery(<SystemStatusCard />, {
+      "/system/status": statusResponse([
+        {
+          key: "data_providers",
+          label: "Data providers",
+          state: "degraded",
+          detail: "edgar recovering",
+          log_key: null,
+        },
+      ]),
+    });
+    const dot = await screen.findByTestId("status-dot");
+    expect(dot.getAttribute("data-state")).toBe("degraded");
+  });
+
+  it("renders the detail line for a non-clickable row (log_key: null)", async () => {
+    renderWithQuery(<SystemStatusCard />, {
+      "/system/status": statusResponse([
+        {
+          key: "research_db",
+          label: "Research DB",
+          state: "down",
+          detail: "unreachable",
+          log_key: null,
+        },
+        {
+          key: "data_providers",
+          label: "Data providers",
+          state: "ok",
+          detail: "no breakers tripped",
+          log_key: null,
+        },
+      ]),
+    });
+    expect(await screen.findByText("unreachable")).toBeDefined();
+    expect(screen.getByText("no breakers tripped")).toBeDefined();
+  });
+
   it("disables a row with no log_key", async () => {
     renderWithQuery(<SystemStatusCard />, {
       "/system/status": statusResponse([

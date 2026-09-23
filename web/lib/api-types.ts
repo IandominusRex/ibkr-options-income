@@ -416,6 +416,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Status */
+        get: operations["system_status_system_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/{name}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Log */
+        get: operations["system_log_system__name__log_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/portfolio/summary": {
         parameters: {
             query?: never;
@@ -2667,6 +2701,25 @@ export interface components {
              */
             data_as_of: string;
         };
+        /** SystemLogResponse */
+        SystemLogResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Name */
+            name: string;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "warn" | "info";
+            /** Lines */
+            lines: string[];
+            /** File Exists */
+            file_exists: boolean;
+        };
         /**
          * SystemPerformanceResponse
          * @description The score-vs-outcome report plus verdict agreement — P3-P4 M6's fenced read (Task 6.1).
@@ -2683,6 +2736,37 @@ export interface components {
             since?: string | null;
             /** Until */
             until?: string | null;
+        };
+        /** SystemRow */
+        SystemRow: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ok" | "degraded" | "unknown" | "down";
+            /** Detail */
+            detail: string;
+            /** Log Key */
+            log_key?: string | null;
+        };
+        /** SystemStatusResponse */
+        SystemStatusResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Rows */
+            rows: components["schemas"]["SystemRow"][];
         };
         /** TechnicalStats */
         TechnicalStats: {
@@ -3446,6 +3530,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlsResponse"];
+                };
+            };
+        };
+    };
+    system_status_system_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatusResponse"];
+                };
+            };
+        };
+    };
+    system_log_system__name__log_get: {
+        parameters: {
+            query?: {
+                level?: "warn" | "info";
+                lines?: number;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemLogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

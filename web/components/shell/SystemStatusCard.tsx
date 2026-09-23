@@ -51,20 +51,25 @@ export function SystemStatusCard() {
                 type="button"
                 disabled={row.log_key === null}
                 onClick={() => setOpenRow(row)}
-                className="flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left enabled:hover:bg-surface disabled:cursor-default"
+                className="flex w-full items-start gap-2 rounded-sm px-1 py-0.5 text-left enabled:hover:bg-surface disabled:cursor-default"
               >
                 <span
                   data-testid="status-dot"
                   data-state={row.state}
-                  className={clsx("h-2 w-2 shrink-0 rounded-full", dotClass(row.state))}
+                  className={clsx("mt-0.5 h-2 w-2 shrink-0 rounded-full", dotClass(row.state))}
                 />
-                <span className="flex-1 truncate text-xs text-content">{row.label}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs text-content">{row.label}</span>
+                  <span className="block truncate text-xs text-muted">{row.detail}</span>
+                </span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      {openRow && <SystemLogPanel row={openRow} onClose={() => setOpenRow(null)} />}
+      {openRow && (
+        <SystemLogPanel key={openRow.key} row={openRow} onClose={() => setOpenRow(null)} />
+      )}
     </div>
   );
 }

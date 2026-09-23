@@ -14,8 +14,8 @@ const row: SystemRow = {
   log_key: "approval",
 };
 
-function logResponse(lines: string[], level: "warn" | "info" = "warn") {
-  return { as_of: ISO, name: "approval", level, lines };
+function logResponse(lines: string[], level: "warn" | "info" = "warn", fileExists = true) {
+  return { as_of: ISO, name: "approval", level, lines, file_exists: fileExists };
 }
 
 describe("SystemLogPanel", () => {
@@ -26,11 +26,23 @@ describe("SystemLogPanel", () => {
     expect(await screen.findByText(/boom/)).toBeDefined();
   });
 
-  it("shows the empty-log message when the file has no matching lines", async () => {
+  it("shows 'No log file yet' when the log file does not exist", async () => {
     renderWithQuery(<SystemLogPanel row={row} onClose={() => {}} />, {
-      "/system/approval/log?level=warn": logResponse([]),
+      "/system/approval/log?level=warn": logResponse([], "warn", false),
     });
     expect(await screen.findByText("No log file yet")).toBeDefined();
+  });
+
+  it("shows 'No matching lines at this level' when the file exists but has no matches", async () => {
+    renderWithQuery(<SystemLogPanel row={row} onClose={() => {}} />, {
+      "/system/approval/log?level=warn": logResponse([], "warn", true),
+    });
+    expect(await screen.findByText("No matching lines at this level")).toBeDefined();
+  });
+
+  it("shows an error message when the log fetch fails", async () => {
+    renderWithQuery(<SystemLogPanel row={row} onClose={() => {}} />, {});
+    expect(await screen.findByText("Could not load the log")).toBeDefined();
   });
 
   it("switching to Info+ refetches at the info level", async () => {
@@ -48,7 +60,7 @@ describe("SystemLogPanel", () => {
     renderWithQuery(<SystemLogPanel row={row} onClose={() => (closed = true)} />, {
       "/system/approval/log?level=warn": logResponse([]),
     });
-    await screen.findByText("No log file yet");
+    await screen.findByText("No matching lines at this level");
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(closed).toBe(true));
   });
@@ -58,7 +70,7 @@ describe("SystemLogPanel", () => {
     renderWithQuery(<SystemLogPanel row={row} onClose={() => (closed = true)} />, {
       "/system/approval/log?level=warn": logResponse([]),
     });
-    await screen.findByText("No log file yet");
+    await screen.findByText("No matching lines at this level");
     fireEvent.click(screen.getByRole("button", { name: /close/i }));
     expect(closed).toBe(true);
   });

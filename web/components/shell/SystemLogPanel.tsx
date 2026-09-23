@@ -13,6 +13,7 @@ type SystemLogResponse = {
   name: string;
   level: LogLevel;
   lines: string[];
+  file_exists: boolean;
 };
 
 export function SystemLogPanel({ row, onClose }: { row: SystemRow; onClose: () => void }) {
@@ -22,7 +23,7 @@ export function SystemLogPanel({ row, onClose }: { row: SystemRow; onClose: () =
   const triggerRef = useRef<Element | null>(null);
   const headingId = useId();
 
-  const { data, isFetching, refetch } = useQuery({
+  const { data, isFetching, isError, refetch } = useQuery({
     queryKey: ["system", "log", row.log_key, level],
     queryFn: () => apiFetch<SystemLogResponse>(`/system/${row.log_key}/log?level=${level}`),
     enabled: row.log_key !== null,
@@ -66,69 +67,76 @@ export function SystemLogPanel({ row, onClose }: { row: SystemRow; onClose: () =
   }, [onClose]);
 
   return (
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={headingId}
-      data-testid="system-log-panel"
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-surface p-4"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <h2 id={headingId} className="text-sm text-content">
-          {row.label}
-        </h2>
-        <button
-          ref={closeRef}
-          type="button"
-          onClick={onClose}
-          className="rounded-sm border border-border bg-background px-2 py-1 text-xs text-content hover:bg-elevated focus-visible:ring-focus"
-        >
-          Close
-        </button>
-      </div>
-      <p className="mt-1 text-xs text-muted">{row.detail}</p>
-
-      <div className="mt-3 flex items-center gap-2">
-        <div className="flex gap-1" role="group" aria-label="Log level">
-          {(["warn", "info"] as const).map((lvl) => (
-            <button
-              key={lvl}
-              type="button"
-              aria-pressed={level === lvl}
-              onClick={() => setLevel(lvl)}
-              className={clsx(
-                "rounded-sm border px-2 py-1 text-xs",
-                level === lvl
-                  ? "border-focus text-content"
-                  : "border-border text-muted hover:bg-elevated",
-              )}
-            >
-              {lvl === "warn" ? "Warnings+" : "Info+"}
-            </button>
-          ))}
+    <>
+      <div className="fixed inset-0 z-40 bg-scrim" aria-hidden="true" />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        data-testid="system-log-panel"
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-border bg-surface p-4"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 id={headingId} className="text-sm text-content">
+            {row.label}
+          </h2>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="rounded-sm border border-border bg-background px-2 py-1 text-xs text-content hover:bg-elevated focus-visible:ring-focus"
+          >
+            Close
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="rounded-sm border border-border bg-background px-2 py-1 text-xs text-content enabled:hover:bg-elevated disabled:opacity-50"
-        >
-          Refresh
-        </button>
-      </div>
+        <p className="mt-1 text-xs text-muted">{row.detail}</p>
 
-      <div className="mt-3 flex-1 overflow-y-auto rounded-sm border border-border bg-background p-2">
-        {data === undefined ? (
-          <p className="text-xs text-muted">Loading…</p>
-        ) : data.lines.length === 0 ? (
-          <p className="text-xs text-muted">No log file yet</p>
-        ) : (
-          <pre className="whitespace-pre-wrap font-mono text-xs text-content">
-            {data.lines.join("\n")}
-          </pre>
-        )}
+        <div className="mt-3 flex items-center gap-2">
+          <div className="flex gap-1" role="group" aria-label="Log level">
+            {(["warn", "info"] as const).map((lvl) => (
+              <button
+                key={lvl}
+                type="button"
+                aria-pressed={level === lvl}
+                onClick={() => setLevel(lvl)}
+                className={clsx(
+                  "rounded-sm border px-2 py-1 text-xs",
+                  level === lvl
+                    ? "border-focus text-content"
+                    : "border-border text-muted hover:bg-elevated",
+                )}
+              >
+                {lvl === "warn" ? "Warnings+" : "Info+"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="rounded-sm border border-border bg-background px-2 py-1 text-xs text-content enabled:hover:bg-elevated disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="mt-3 flex-1 overflow-y-auto rounded-sm border border-border bg-background p-2">
+          {isError ? (
+            <p className="text-xs text-muted">Could not load the log</p>
+          ) : data === undefined ? (
+            <p className="text-xs text-muted">Loading…</p>
+          ) : !data.file_exists ? (
+            <p className="text-xs text-muted">No log file yet</p>
+          ) : data.lines.length === 0 ? (
+            <p className="text-xs text-muted">No matching lines at this level</p>
+          ) : (
+            <pre className="whitespace-pre-wrap font-mono text-xs text-content">
+              {data.lines.join("\n")}
+            </pre>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
