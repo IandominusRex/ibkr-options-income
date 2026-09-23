@@ -48,6 +48,11 @@ from src.storage.portfolio_snapshots import (
     latest_capture_time,
     save_portfolio_snapshot,
 )
+from src.storage.system_settings import (
+    MONITOR_HEARTBEAT_KEY,
+    MONITOR_IBKR_CONNECTED_KEY,
+    set_setting,
+)
 
 log = logging.getLogger(__name__)
 
@@ -347,6 +352,16 @@ class IntradayMonitor:
         except Exception:
             log.exception("Portfolio snapshot write failed — alerts unaffected")
 
+    def _write_heartbeat(self) -> None:
+        """Record that this refresh cycle completed and whether IBKR is connected.
+
+        Read by GET /system/status (src/api/routers/system.py) to drive the "Intraday
+        monitor" and "IBKR connection" rows on the web status card. set_setting never
+        raises, so this cannot destabilise the refresh loop.
+        """
+        set_setting(MONITOR_HEARTBEAT_KEY, datetime.now(UTC).isoformat())
+        set_setting(MONITOR_IBKR_CONNECTED_KEY, "true" if self._ib.isConnected() else "false")
+
     async def _refresh_subscriptions(self) -> None:
         """Load positions; subscribe to new short options, unsubscribe from closed ones."""
         loop = asyncio.get_running_loop()
@@ -423,6 +438,11 @@ class IntradayMonitor:
         # work above, and ordered after it deliberately: if this write is somehow slow,
         # the subscriptions are already correct. Never raises (see _maybe_write_snapshot).
         await self._maybe_write_snapshot(positions)
+
+        # Heartbeat for the web status card (GET /system/status) — written every cycle,
+        # connected or not, mirroring the command drain's "write after the work, never
+        # before" rule so a hung loop cannot make the monitor look healthy.
+        self._write_heartbeat()
 
     # ------------------------------------------------------------------
     # Ticker event handler

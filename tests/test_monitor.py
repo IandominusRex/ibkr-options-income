@@ -930,6 +930,9 @@ class _RealishIB:
             c.conId = 999_000 + i
         return list(contracts)
 
+    def isConnected(self) -> bool:  # noqa: N802
+        return True
+
 
 async def test_refresh_subscriptions_qualifies_before_reqmktdata() -> None:
     """Regression: before the fix, `build_option`'s unqualified contract went straight into

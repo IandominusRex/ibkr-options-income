@@ -25,6 +25,8 @@ HALT_KEY = "execution_halted"
 HALT_REASON_KEY = "execution_halt_reason"
 SCAN_LEASE_KEY = "scan_lease_expiry"
 HIGH_WATER_MARK_KEY = "nlv_high_water_mark"
+MONITOR_HEARTBEAT_KEY = "monitor_heartbeat"
+MONITOR_IBKR_CONNECTED_KEY = "monitor_ibkr_connected"
 
 # Sortable UTC timestamp (zero-padded) so lexicographic string comparison == chronological.
 _LEASE_TS_FMT = "%Y%m%dT%H%M%S.%f"
