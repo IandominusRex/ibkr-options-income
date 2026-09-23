@@ -981,6 +981,32 @@
         ]
       }
     },
+    "/system/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "System Status",
+        "operationId": "system_status_system_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/portfolio/summary": {
       "get": {
         "summary": "Portfolio Summary",
@@ -6992,6 +7018,79 @@
         ],
         "title": "SystemPerformanceResponse",
         "description": "The score-vs-outcome report plus verdict agreement \u2014 P3-P4 M6's fenced read (Task 6.1)."
+      },
+      "SystemRow": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "unknown",
+              "down"
+            ],
+            "title": "State"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "log_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "key",
+          "label",
+          "state",
+          "detail"
+        ],
+        "title": "SystemRow"
+      },
+      "SystemStatusResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SystemRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "rows"
+        ],
+        "title": "SystemStatusResponse"
       },
       "TechnicalStats": {
         "properties": {

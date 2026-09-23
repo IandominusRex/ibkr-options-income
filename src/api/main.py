@@ -19,6 +19,7 @@ from src.api.routers import (
     pnl,
     portfolio,
     research,
+    system,
     universe,
     watchlist,
 )
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(meta.router)
     app.include_router(research.router)
     app.include_router(options.router)
+    app.include_router(system.router)
     app.include_router(portfolio.router, prefix="/portfolio")
     app.include_router(pnl.router, prefix="/pnl")
     app.include_router(universe.router)
