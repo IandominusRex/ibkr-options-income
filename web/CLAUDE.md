@@ -82,7 +82,10 @@ app/                App Router pages and the root layout
                     overflow-hidden`, not `min-h-screen` — Rail and `<main/>`
                     each own their own `overflow-y-auto` instead of the whole
                     document scrolling as one, so the left rail stays pinned
-                    in place (2026-09-23) while a page's own content scrolls
+                    in place (2026-09-23) , and `Rail.tsx` (2026-09-23) is itself now `flex flex-col`: the nav list keeps its own
+                    `overflow-y-auto` inside a `flex-1` wrapper, with `<SystemStatusCard/>` below it as a
+                    sibling, outside the scroll area, so the status card stays visible regardless of nav-list
+                    length while a page's own content scrolls
                     underneath it.
   page.tsx          Landing page: a header row with the page title and a visible
                     search-bar button (opens the same <CommandPalette/> ⌘K does — the
@@ -240,7 +243,16 @@ app/                App Router pages and the root layout
                     the one place every other piece (tab bar, pipeline map, ties-into
                     chips) reads labels from so they can't drift apart.
 components/
-  shell/            Rail, RailSection
+  shell/            Rail, RailSection, SystemStatusCard (react-query on GET /system/status,
+                    `refetchInterval` 20s; renders one row per system with a state dot -
+                    `bg-gain` for ok, a `border-loss` outline for down, `.hatch` texture
+                    for both degraded and unknown, per this app's tri-tone rule; a row
+                    with `log_key: null` is not clickable; a failed fetch renders one
+                    `text-unknown` line, "Status unavailable", instead of the row list),
+                    SystemLogPanel (the per-row slide-over: focus-trapped `role="dialog"`
+                    matching `ConfirmAction`'s pattern, fetches `GET /system/{log_key}/log`
+                    on open only - no auto-poll inside it - with a Warnings+/Info+ toggle
+                    and a manual Refresh button; an empty tail renders "No log file yet")
   search/           CommandPalette (⌘K/Escape as before; controlled if `open`/
                     `onOpenChange` props are passed — the home page's visible search-bar
                     button drives it that way — otherwise falls back to its own internal
