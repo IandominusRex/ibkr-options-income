@@ -216,9 +216,9 @@ cumulatively across the whole account, not just one trade at a time:
 - **Concentration, measured in risk units** (`collateral × IV × √(days-to-expiry/365)`, not raw dollar
   size — so a $65,000 position in a calm stock and a $15,000 position in a wild one can be compared
   fairly). Per-ticker and per-sector caps apply.
-- **A large-position slot** — at most one position at a time is allowed to exceed the standard
-  per-ticker cap (up to a hard ceiling), so one deliberate, high-conviction bet is possible without
-  the whole book turning into a pile of oversized bets.
+- **Large-position slots** — at most two positions at a time are allowed to exceed the standard
+  per-ticker cap (each up to a hard ceiling), so a couple of deliberate, high-conviction bets are
+  possible without the whole book turning into a pile of oversized bets.
 - **The income gate** — a candidate must offer a premium above its computed fair value plus an edge
   (the VRP floor above); a couple of very low bars on return-on-capital and annualized yield exist
   only to filter out obvious noise, not as the primary test.

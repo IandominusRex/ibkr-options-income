@@ -84,25 +84,31 @@ def test_put_band_sits_below_spot_and_call_band_above() -> None:
 
 
 def test_band_width_reflects_the_configured_multipliers() -> None:
-    z = _zone()
+    z = _zone()  # defaults to a PUT zone
     assert z.expected_move is not None and z.strike_lo is not None and z.strike_hi is not None
-    # 0.30σ..1.20σ → the band spans 0.9 of an expected move.
-    assert (z.strike_hi - z.strike_lo) == pytest.approx(z.expected_move * 0.9, abs=0.05)
+    # put: 0.18σ..1.20σ → the band spans 1.02 of an expected move.
+    assert (z.strike_hi - z.strike_lo) == pytest.approx(z.expected_move * 1.02, abs=0.05)
 
 
 @pytest.mark.parametrize(
     ("spot", "vol_pct", "dte"),
     [(210.0, 38.0, 31), (100.0, 60.0, 45), (450.0, 18.0, 21), (50.0, 90.0, 40)],
 )
-@pytest.mark.parametrize("target_delta", [0.15, 0.22, 0.30])
+@pytest.mark.parametrize("target_delta", [0.20, 0.27, 0.35])
 def test_the_band_actually_contains_the_delta_range_the_screen_trades(
     spot: float, vol_pct: float, dte: int, target_delta: float
 ) -> None:
-    """The zone is calibrated to the configured CSP delta band (0.15-0.30), not picked by feel.
+    """The zone is calibrated to the configured CSP delta band (0.20-0.35), not picked by feel.
 
     This is the regression that matters: the first cut used 0.75-1.25 expected moves, which sits
-    roughly twice as far OTM as a 0.15-0.30 delta put actually does — so every real candidate
+    roughly twice as far OTM as a 0.20-0.35 delta put actually does — so every real candidate
     would have been reported "outside the ideal zone" and the feature would have read as noise.
+
+    CSP was widened 2026-09-23 from 0.15-0.30 to 0.20-0.35 to match CC. Puts and calls do not
+    map to the same sigma distance at equal delta, so the put side needed its own inner-edge
+    multiplier (`em_lo_mult_put`, 0.18) rather than sharing the call's (0.30) — see the
+    derivation note in risk_limits.yaml, and test_ideal_call_band_never_endorses_an_at_the_
+    money_write in test_output_fidelity.py for why they can't share one value.
     """
     strike = _strike_at_delta(spot, vol_pct / 100.0, dte, "P", target_delta)
     z = _zone(
@@ -333,12 +339,12 @@ def test_confidence_rises_with_available_inputs() -> None:
 
 
 def test_action_price_uses_the_band_midpoint_not_a_hard_sigma() -> None:
-    """0.30-1.20σ band → midpoint 0.75σ. Demanding a full 1σ would flag well-placed
+    """Put band 0.18-1.20σ → midpoint 0.69σ. Demanding a full 1σ would flag well-placed
     contracts as needing a better entry, which is the opposite of useful."""
     put = _zone(OptionRight.PUT)
     assert put.action_price is not None and put.strike_anchor is not None
     assert put.expected_move is not None
-    expected = put.strike_anchor + put.expected_move * 0.75
+    expected = put.strike_anchor + put.expected_move * 0.69
     assert put.action_price == pytest.approx(expected, abs=0.02)
     assert put.action_note is not None
 

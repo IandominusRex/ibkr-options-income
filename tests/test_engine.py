@@ -797,27 +797,31 @@ class TestConcentrationInRiskUnits:
         assert "sector_limit" in verdicts[0].reasons
         assert "concentration_limit" not in verdicts[0].reasons
 
-    def test_second_large_position_hits_the_slot_cap(self) -> None:
-        """max_large_positions defaults to 1. Two DIFFERENT (unmapped-sector) tickers, each
-        $40,000 collateral at 20% IV / 21 DTE (~1,919 risk units — nowhere near the 15,000
-        ticker-risk cap on its own): $40,000 clears the 30,000 ticker-collateral threshold
-        (10% of 300k) but sits well under the 75,000 large ceiling (25%), so the first
-        candidate consumes the account's one large-position slot and passes; the second,
-        on a different ticker so neither the ticker-risk nor sector caps mask it, finds the
-        slot already taken."""
+    def test_third_large_position_hits_the_slot_cap(self) -> None:
+        """max_large_positions is 2 (raised from 1 on 2026-09-23). Three DIFFERENT
+        (unmapped-sector) tickers, each $40,000 collateral at 20% IV / 21 DTE (~1,919 risk
+        units — nowhere near the 15,000 ticker-risk cap on its own): $40,000 clears the
+        30,000 ticker-collateral threshold (10% of 300k) but sits well under the 75,000
+        large ceiling (25%), so the first two candidates each consume one of the account's
+        two large-position slots and pass; the third, on a different ticker so neither the
+        ticker-risk nor sector caps mask it, finds both slots already taken."""
         cand_a = _csp_candidate(
             underlying="ZZZ1", strike=400.0, contracts=1, current_iv=20.0, dte=21
         )
         cand_b = _csp_candidate(
             underlying="ZZZ2", strike=400.0, contracts=1, current_iv=20.0, dte=21
         )
+        cand_c = _csp_candidate(
+            underlying="ZZZ3", strike=400.0, contracts=1, current_iv=20.0, dte=21
+        )
         account = _account(net_liq=300_000.0, cash=200_000.0)
-        verdicts = validate_candidates([cand_a, cand_b], account, [])
+        verdicts = validate_candidates([cand_a, cand_b, cand_c], account, [])
         vm = {v.candidate_id: v for v in verdicts}
         assert vm[cand_a.candidate_id].verdict.value == "pass", vm[cand_a.candidate_id].reasons
-        assert vm[cand_b.candidate_id].verdict.value == "reject"
-        assert "large_position_slot_full" in vm[cand_b.candidate_id].reasons
-        assert "concentration_limit" not in vm[cand_b.candidate_id].reasons
+        assert vm[cand_b.candidate_id].verdict.value == "pass", vm[cand_b.candidate_id].reasons
+        assert vm[cand_c.candidate_id].verdict.value == "reject"
+        assert "large_position_slot_full" in vm[cand_c.candidate_id].reasons
+        assert "concentration_limit" not in vm[cand_c.candidate_id].reasons
 
 
 class TestBudgetDedupeAcrossSameSymbol:
@@ -1095,7 +1099,7 @@ class TestValidateLiveQuote:
         assert v.verdict == Verdict.PASS
 
     def test_rejects_when_live_delta_out_of_range(self) -> None:
-        # Drifted deep ITM intraday: delta now 0.95, outside CSP 0.15–0.30.
+        # Drifted deep ITM intraday: delta now 0.95, outside CSP 0.20–0.35.
         v = validate_live_quote(_candidate(), self._quote(delta=-0.95))
         assert v.verdict == Verdict.REJECT
         assert "live_delta_out_of_range" in v.reasons

@@ -660,10 +660,10 @@ def _build_chain_contracts(
     """Cartesian of *expirations* x in-band *strikes*, OTM side only per right.
 
     Builds calls only at strikes >= spot and puts only at strikes <= spot instead of both
-    rights across the whole band. ``covered_call.py`` only ever keeps calls with delta in
-    ``0.20-0.35`` (OTM by construction) and ``cash_secured_put.py`` only ever keeps puts with
-    ``|delta|`` in ``0.15-0.30`` (also OTM by construction) — so the ITM half of the band was
-    always qualified, quoted, and discarded. Skipping it here roughly halves the
+    rights across the whole band. ``covered_call.py`` and ``cash_secured_put.py`` both only
+    ever keep contracts with ``|delta|`` in ``0.20-0.35`` (OTM by construction) — so the ITM
+    half of the band was always qualified, quoted, and discarded. Skipping it here roughly
+    halves the
     qualify/quote batch count per symbol, and therefore the wall-clock fetch time, since
     ``_batch_quotes``/``_batch_quotes_async`` cost is linear in contract count.
     """

@@ -53,12 +53,21 @@ log = logging.getLogger(__name__)
 
 # Fallbacks used when the `ideal_zone:` block is absent from risk_limits.yaml.
 _DEFAULTS: dict[str, float] = {
-    # Calibrated against the traded delta bands, not picked by feel: a 0.15-0.30 delta put
-    # sits at ~0.34-0.93 expected moves and a 0.20-0.35 delta call at ~0.48-1.17, measured
-    # with Black-Scholes across the spot/IV/DTE range this universe spans. See the derivation
-    # note in risk_limits.yaml. Getting this wrong is not cosmetic — a band placed outside the
-    # range actually screened would report every real candidate as "outside the ideal zone".
-    "em_lo_mult": 0.30,
+    # Calibrated against the traded delta bands, not picked by feel: both CC and CSP screen
+    # 0.20-0.35|delta|, but puts and calls do NOT map to the same sigma distance at equal
+    # delta — a 0.20-0.35 delta call sits at ~0.48-1.17 expected moves, while a 0.20-0.35
+    # delta put runs from ~0.21 (high-vol/longer-DTE names at the 0.35-delta end) to ~0.74,
+    # measured with Black-Scholes across the spot/IV/DTE range this universe spans. The inner
+    # edge is therefore split per right (em_lo_mult_call / em_lo_mult_put); a single shared
+    # floor low enough for the put range also drags the call inner edge close enough to spot
+    # to let a ~0.46-delta covered call register "in zone" — the exact bug this floor exists
+    # to prevent (test_ideal_call_band_never_endorses_an_at_the_money_write). em_hi_mult (the
+    # outer edge) stays shared — 1.20 brackets both rights' outer bound with margin, and that
+    # historical bug was inner-edge-only. See the derivation note in risk_limits.yaml. Getting
+    # this wrong is not cosmetic — a band placed outside the range actually screened would
+    # report every real candidate as "outside the ideal zone".
+    "em_lo_mult_call": 0.30,
+    "em_lo_mult_put": 0.18,
     "em_hi_mult": 1.20,
     "earnings_widen_mult": 0.25,
     "support_pull_pct": 3.0,
@@ -156,8 +165,11 @@ def _compute(
     zone.expected_move = round(em, 2)
     inputs_present += 1
 
-    # 2. Base band, in expected moves either side of spot.
-    lo_mult, hi_mult = cfg["em_lo_mult"], cfg["em_hi_mult"]
+    # 2. Base band, in expected moves either side of spot. The inner edge (lo_mult) is
+    #    per-right — puts and calls do not map to the same sigma distance at equal delta,
+    #    see the derivation note in risk_limits.yaml. The outer edge stays shared.
+    lo_mult = cfg["em_lo_mult_call"] if is_call else cfg["em_lo_mult_put"]
+    hi_mult = cfg["em_hi_mult"]
     if is_call:
         lo, hi = spot + em * lo_mult, spot + em * hi_mult
     else:
@@ -301,10 +313,11 @@ def _action_level(
 ) -> tuple[float | None, str | None]:
     """The underlying level at which *anchor* would sit mid-band.
 
-    Measured with the **midpoint of the configured band** (``mid_mult``), not a hard 1σ: the
-    band spans 0.30-1.20σ, so demanding a full expected move of cushion would flag perfectly
-    well-placed contracts as needing a better entry. When spot already gives at least that
-    cushion the note says so rather than implying you should wait.
+    Measured with the **midpoint of the configured band** (``mid_mult`` — per-right, since
+    the inner-edge multiplier it's derived from is: ``em_lo_mult_call``/``em_lo_mult_put``),
+    not a hard 1σ: demanding a full expected move of cushion would flag perfectly well-placed
+    contracts as needing a better entry. When spot already gives at least that cushion the
+    note says so rather than implying you should wait.
     """
     if em <= 0 or mid_mult <= 0:
         return None, None

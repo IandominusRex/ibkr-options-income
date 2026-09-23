@@ -549,7 +549,7 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "negative_bid_sentinel": "no real bid (stale / illiquid quote)",
     "buying_power_buffer": "not enough buying-power headroom",
     "concentration_limit": "per-ticker concentration cap hit",
-    "large_position_slot_full": "the single large-position slot is already taken",
+    "large_position_slot_full": "no large-position slot is free",
     "sector_limit": "per-sector concentration cap hit",
     "csp_allocation_limit": "total CSP allocation cap hit",
     "margin_limit": "margin limit hit",

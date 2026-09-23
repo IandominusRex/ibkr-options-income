@@ -436,13 +436,13 @@ class TestCashSecuredPut:
         assert result == []
 
     def test_filters_high_abs_delta(self):
-        # abs(delta)=0.50 exceeds the 0.30 max
+        # abs(delta)=0.50 exceeds the 0.35 max
         quote = _put_quote(delta=-0.50)
         result = generate_csp_candidates("AAPL", [quote], _account(), _iv(), _tech(), _fund())
         assert result == []
 
     def test_filters_low_abs_delta(self):
-        # abs(delta)=0.05 is below the 0.15 min
+        # abs(delta)=0.05 is below the 0.20 min
         quote = _put_quote(delta=-0.05)
         result = generate_csp_candidates("AAPL", [quote], _account(), _iv(), _tech(), _fund())
         assert result == []

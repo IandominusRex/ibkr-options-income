@@ -44,10 +44,10 @@ export function GatePanel({ onNavigate }: { onNavigate: (tab: TabKey) => void })
         <div className="mt-3 flex flex-col gap-3 rounded-md border border-border bg-surface p-4">
           <RangeBar
             label="CSP delta target"
-            lowPct={15}
-            highPct={30}
-            lowText="0.15"
-            highText="0.30"
+            lowPct={20}
+            highPct={35}
+            lowText="0.20"
+            highText="0.35"
             scaleLeft="0.0 (deep OTM)"
             scaleRight="1.0 (deep ITM)"
           />
@@ -83,9 +83,9 @@ export function GatePanel({ onNavigate }: { onNavigate: (tab: TabKey) => void })
             collateral x IV x sqrt(days-to-expiry / 365) - a calm $65k position and a wild $15k one
             are compared fairly. Per-ticker and per-sector caps apply.
           </FactCard>
-          <FactCard tag="Deliberateness" tone="info" title="One large-position slot">
-            At most one name at a time may exceed the standard per-ticker cap, so a deliberate big
-            bet is possible without the whole book drifting oversized.
+          <FactCard tag="Deliberateness" tone="info" title="Two large-position slots">
+            At most two names at a time may exceed the standard per-ticker cap, so a deliberate
+            big bet is possible without the whole book drifting oversized.
           </FactCard>
           <FactCard tag="The real floor" tone="positive" title="The income gate">
             The credit must beat the option&apos;s Black-Scholes fair value (at realized vol) by a

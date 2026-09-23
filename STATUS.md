@@ -1089,7 +1089,8 @@ Prompted by a "why does fetching a symbol take so long" investigation into
   `expirations × strikes × ("C", "P")` cartesian in `get_option_chain_quotes`/
   `get_option_chain_quotes_async` with an OTM-side-only cartesian: calls only at strikes ≥ spot,
   puts only at strikes ≤ spot. `covered_call.py`/`cash_secured_put.py` only ever keep OTM
-  contracts (delta 0.20–0.35 / |delta| 0.15–0.30), so the ITM half of every (expiration, strike)
+  contracts (delta 0.20–0.35, both strategies alike as of 2026-09-23), so the ITM half of every
+  (expiration, strike)
   pair was always qualified, quoted, and discarded downstream regardless. This is lossless —
   nothing that used to survive the strategy filters is dropped — and roughly halves the
   qualify/quote batch count (and therefore wall-clock fetch time, since `_batch_quotes`/

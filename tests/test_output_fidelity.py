@@ -181,13 +181,13 @@ def test_zone_for_contract_preserves_the_strike_independent_band() -> None:
 def test_snapping_to_resistance_keeps_the_inner_edge_outside_the_base_cushion() -> None:
     """Resistance at 248.10 used to translate the band down to 232.54 — at-the-money.
 
-    The inner edge must stay at least ``em_lo_mult`` expected moves OTM, so the band
+    The inner edge must stay at least ``em_lo_mult_call`` expected moves OTM, so the band
     stretches to reach the level instead of sliding through spot.
     """
     zone = _call_zone()
     cfg = _zone_cfg()
     assert zone.expected_move is not None
-    base_inner = _SPOT + zone.expected_move * cfg["em_lo_mult"]
+    base_inner = _SPOT + zone.expected_move * cfg["em_lo_mult_call"]
 
     assert zone.strike_lo is not None
     assert zone.strike_lo >= round(base_inner, 2)
@@ -217,7 +217,7 @@ def test_put_band_inner_edge_also_stays_outside_the_base_cushion() -> None:
     )
     cfg = _zone_cfg()
     assert zone.expected_move is not None and zone.strike_hi is not None
-    base_inner = _SPOT - zone.expected_move * cfg["em_lo_mult"]
+    base_inner = _SPOT - zone.expected_move * cfg["em_lo_mult_put"]
     assert zone.strike_hi <= round(base_inner, 2)
 
 

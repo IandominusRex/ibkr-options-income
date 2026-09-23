@@ -15,8 +15,8 @@ covered_call:
   min_strike_vs_basis: 1.00
 
 cash_secured_put:
-  delta_min: 0.15
-  delta_max: 0.30
+  delta_min: 0.20
+  delta_max: 0.35
   dte_min: 7
   dte_max: 28
   # Hard cap on contracts per single CSP candidate (prevents a single trade from
@@ -58,8 +58,9 @@ iv:
 
 # --- Ideal-price zone (analytics/fair_value.py) ---
 # TWO KINDS OF KNOB IN THIS BLOCK — do not assume it is all inert.
-#   * The strike-band and action-level knobs (em_lo_mult, em_hi_mult, earnings_widen_mult,
-#     support_pull_pct, buy_margin_of_safety_pct) are DISPLAY + OPTIONAL RANKING ONLY: they
+#   * The strike-band and action-level knobs (em_lo_mult_call, em_lo_mult_put, em_hi_mult,
+#     earnings_widen_mult, support_pull_pct, buy_margin_of_safety_pct) are DISPLAY + OPTIONAL
+#     RANKING ONLY: they
 #     shape the "ideal strike / action level" shown on every card and injected into the
 #     reasoning prompt, and feed scoring only through scoring_weights.yaml's `zone_fit`,
 #     which ships at 0.0 (off).
@@ -72,13 +73,23 @@ iv:
 ideal_zone:
   # The strike band, expressed in expected moves (1σ = spot · IV · √(DTE/365)).
   # Calibrated against the delta bands the generators actually screen — NOT picked by feel.
-  # Measured with Black-Scholes across this universe's spot/IV/DTE range, a 0.15–0.30 delta
-  # put sits at ~0.34–0.93σ and a 0.20–0.35 delta call at ~0.48–1.17σ; 0.30–1.20 brackets
-  # both with margin. Get this wrong and the feature becomes noise: a band placed outside the
-  # range actually traded reports every real candidate as "outside the ideal zone".
+  # Measured with Black-Scholes across this universe's spot/IV/DTE range. Both CC and CSP
+  # screen 0.20–0.35|Δ|, but puts and calls do NOT map to the same sigma distance at equal
+  # delta: a 0.20–0.35 delta call sits at ~0.48–1.17σ, while a 0.20–0.35 delta put runs from
+  # ~0.21σ (high-vol/longer-DTE names, e.g. 90% IV/40 DTE, at the 0.35-delta end) to ~0.74σ.
+  # That is why the inner edge is split per right below instead of one shared value: a single
+  # floor low enough to admit the widened put range (down to 0.18, with ~0.03σ margin under
+  # the 0.21σ worst case) also drags the CALL inner edge close enough to spot to let a
+  # ~0.46-delta covered call register "in zone" — the exact bug this floor exists to prevent
+  # (`tests/test_output_fidelity.py::test_ideal_call_band_never_endorses_an_at_the_money_write`).
+  # `em_hi_mult` (the outer edge) stays shared — 1.20 comfortably brackets both rights' outer
+  # bound (call ~1.17σ, put ≤0.74σ) with margin, and the historical bug was inner-edge-only.
+  # Get this wrong and the feature becomes noise: a band placed outside the range actually
+  # traded reports every real candidate as "outside the ideal zone".
   # The band is the *acceptable* range; the specificity lives in `strike_anchor`, which the
   # support/resistance snap and the SMA anchor pull to a particular level inside it.
-  em_lo_mult: 0.30    # inner edge (closer to spot)
+  em_lo_mult_call: 0.30    # inner edge (closer to spot), covered calls
+  em_lo_mult_put: 0.18     # inner edge (closer to spot), cash-secured puts
   em_hi_mult: 1.20    # outer edge (further OTM)
   # Extra cushion pushed outward when earnings fall inside the option's life.
   earnings_widen_mult: 0.25
@@ -137,7 +148,10 @@ portfolio:
   #    from live IV (the order-approval re-gate, the single-ticker deep-dive, the CSP sizer):
   #    whatever those paths know about a candidate's IV, one name can never exceed
   #    max_pct_per_ticker_large in raw collateral.
-  max_large_positions: 1
+  # Raised 1 -> 2 (2026-09-23): up to two names may now be a deliberate oversized bet at once.
+  # Each is still individually capped at max_pct_per_ticker_large — two slots means up to 50%
+  # of net liq combined across both names, not a change to either one's own ceiling.
+  max_large_positions: 2
   max_pct_per_ticker_large: 25.0
 
   max_margin_usage_pct: 50.0
