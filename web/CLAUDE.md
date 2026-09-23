@@ -82,7 +82,7 @@ app/                App Router pages and the root layout
                     overflow-hidden`, not `min-h-screen` — Rail and `<main/>`
                     each own their own `overflow-y-auto` instead of the whole
                     document scrolling as one, so the left rail stays pinned
-                    in place (2026-09-23) , and `Rail.tsx` (2026-09-23) is itself now `flex flex-col`: the nav list keeps its own
+                    in place (2026-09-23), and `Rail.tsx` (2026-09-23) is itself now `flex flex-col`: the nav list keeps its own
                     `overflow-y-auto` inside a `flex-1` wrapper, with `<SystemStatusCard/>` below it as a
                     sibling, outside the scroll area, so the status card stays visible regardless of nav-list
                     length while a page's own content scrolls
