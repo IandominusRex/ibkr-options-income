@@ -731,7 +731,7 @@ exact payload the human was shown), joined to the `CandidateRow`, `RiskVerdictRo
 and `ClaudeReviewRow` when present. A pruned candidate renders from `snapshot`
 alone — the joined rows are enrichment whose absence never 500s.
 
-**Query params:** `status=pending` (default), `approved`, `rejected`, `expired`, or `all`; `limit` (1-200, default 50). An unknown `status` returns **422**, not a silent empty list. `status=all` is ordered newest-first by `created_at` (a pending row is not promoted above a newer decided one).
+**Query params:** `status=pending` (default), `approved`, `rejected`, `expired`, or `all`; `symbol` (filters to one underlying, case-insensitive, matched via the joined `CandidateRow` — an approval whose candidate has since been pruned by the 14-day purge will not match even if its own `snapshot` still carries the symbol); `since`/`until` (UTC calendar dates, inclusive, filtered against `created_at`); `limit` (1-200, default 50). An unknown `status` returns **422**, not a silent empty list. `status=all` is ordered newest-first by `created_at` (a pending row is not promoted above a newer decided one).
 
 **Response — `ApprovalListResponse`:**
 
@@ -740,19 +740,31 @@ alone — the joined rows are enrichment whose absence never 500s.
 | `as_of` | datetime |
 | `approvals` | `ApprovalSummary[]` |
 
-`ApprovalSummary`: `{ as_of, id, candidate_id, status, underlying, strategy, right, strike, expiry, contracts, premium, blended_score, expires_at, decided_at, order_state, source }`.
+`ApprovalSummary`: `{ as_of, id, candidate_id, status, underlying, strategy, right, strike, expiry, contracts, premium, blended_score, created_at, expires_at, decided_at, order_state, source, review }`.
 `premium` is per share, always. `order_state` is `null` when no order exists.
 `source` is `"scan"` or `"roll"`, derived from the candidate's `run_id` prefix.
+`created_at` is the approval's actual raise time (`ApprovalRow.created_at`) — never
+confuse it with the envelope's `as_of`, which is `datetime.now(UTC)` at response-build
+time and therefore always "now" no matter how old the approval is. The web renders
+`created_at` as an exact date/time, not a relative age, for exactly this reason.
+`review` is the newest `ClaudeReviewRow` for the candidate (same shape as the detail
+route's, below) or `null` — carried on the **list** route, not just the detail one, so
+the card can show a why/risks preview without a click-through for every candidate;
+batch-fetched (one query for the whole page, not one per row).
 
 ### `GET /options/approvals/{id}`
 
 One approval in full, including the ideal zone, the gate reasons (humanised), the
-five Claude review fields (separately, never one blob), and the alternative strikes
-assessed on the same run.
+five Claude review fields (separately, never one blob), the alternative strikes
+assessed on the same run, and the approval-to-fill lineage.
 
-**Response — `ApprovalDetail`:** `ApprovalSummary` plus `{ snapshot, ideal, gate_reasons, review, alternatives }`.
-`ideal` is `{ lo, hi, min_credit }` from `RiskVerdictRow`. `review` is the five
-fields `{ why_attractive, risks, tradeoffs, assignment_considerations, rolling_considerations }` or `null`.
+**Response — `ApprovalDetail`:** `ApprovalSummary` plus `{ snapshot, ideal, gate_reasons, alternatives, order_id, fills }`.
+`ideal` is `{ lo, hi, min_credit }` from `RiskVerdictRow`. `review` (inherited from
+`ApprovalSummary`) is the five fields `{ why_attractive, risks, tradeoffs, assignment_considerations, rolling_considerations }` or `null`.
+`order_id` is the id of the order this approval produced, `null` when none exists yet.
+`fills` is every fill against that order (oldest first), `FillSummary[]` — carried here
+so tracing one candidate to its fill price needs no second/third request to
+`GET /options/orders` and `GET /options/fills`.
 **404** for an unknown id.
 
 ### `GET /options/assessed`
@@ -769,13 +781,27 @@ promotable with a null note; `passed` is not promotable (already surfaced).
 **Response — `AssessedResponse`:** `{ as_of, run_id, computed_at, groups: AssessedGroup[] }`.
 `AssessedGroup`: `{ as_of, symbol, contracts: AssessedContract[], counts: Record<string, int> }`.
 
+### `GET /options/assessed/runs`
+
+Past full-scan run ids, newest first, for browsing history in the Assessed tab
+(`run=latest`/a specific `run_id` above always required already knowing that id —
+this lists what to pick from). Excludes single-ticker runs the same way
+`run=latest` does (`scan-`/`ticker-` prefixes are not "a run" in this sense).
+
+**Query params:** `limit` (1-100, default 20).
+
+**Response — `AssessedRunsResponse`:** `{ as_of, runs: AssessedRunSummary[] }`.
+`AssessedRunSummary`: `{ as_of, run_id, computed_at, candidate_count }`.
+
 ### `GET /options/orders`
 
 Working orders by default. `state=working` means `queued`, `submitted` or
 `partial`; `state=all` returns everything. `underlying`/`strategy`/`strike` come
 from the order's `snapshot`, falling back to the joined `CandidateRow` so a pruned
 candidate does not blank the row. `avg_fill_price` is `null` for an unfilled
-order, never `0.0`.
+order, never `0.0`. `detail` carries the humanised reason for a `rejected`/`cancelled`
+order (e.g. a live-mode order-send-time re-gate rejection) — never a raw Python list
+repr of the gate codes.
 
 **Query params:** `state=working` (default), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `limit` (1-200, default 50).
 

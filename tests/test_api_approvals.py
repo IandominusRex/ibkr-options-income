@@ -17,6 +17,7 @@ from src.storage.models import (
     ApprovalRow,
     CandidateRow,
     ClaudeReviewRow,
+    FillRow,
     OrderRow,
     RiskVerdictRow,
 )
@@ -257,6 +258,92 @@ def test_premium_is_per_share_not_multiplied_by_100(client) -> None:
     assert a["premium"] == 3.25  # exactly the stored per-share number, not 325.0
 
 
+def test_list_approvals_includes_a_review_preview(client) -> None:
+    """The list route (not just the detail route) carries the review so the card
+    can show a why/risks preview without a click-through for every candidate."""
+    r = client.get("/options/approvals", headers=AUTH)
+    assert r.status_code == 200
+    a = r.json()["approvals"][0]
+    assert a["review"] is not None
+    assert a["review"]["why_attractive"] == "Rich IV rank, premium is above fair value."
+
+
+def test_list_approvals_review_is_null_when_no_review_exists(client) -> None:
+    with session_scope() as s:
+        _seed_candidate(s, candidate_id="c2", underlying="AAPL")
+        _seed_approval(s, candidate_id="c2", snapshot=_snapshot(underlying="AAPL"))
+    r = client.get("/options/approvals?status=all", headers=AUTH)
+    by_cid = {a["candidate_id"]: a for a in r.json()["approvals"]}
+    assert by_cid["c2"]["review"] is None
+
+
+def test_contracts_falls_back_to_candidate_payload_when_snapshot_is_null(client) -> None:
+    """A pre-freeze approval predating the snapshot feature has snapshot=None; its
+    contracts must come from the joined CandidateRow's payload, not a hardcoded 1
+    (regression: the old fallback ternary's two branches were both `1`, always)."""
+    with session_scope() as s:
+        _seed_candidate(s, candidate_id="c3", underlying="TSLA")
+        cand = s.query(CandidateRow).filter_by(candidate_id="c3").one()
+        cand.payload = {**cand.payload, "contracts": 4}
+        s.add(ApprovalRow(candidate_id="c3", status="pending", snapshot=None))
+    r = client.get("/options/approvals?status=all", headers=AUTH)
+    by_cid = {a["candidate_id"]: a for a in r.json()["approvals"]}
+    assert by_cid["c3"]["contracts"] == 4
+
+
+def test_list_approvals_filters_by_symbol_case_insensitively(client) -> None:
+    with session_scope() as s:
+        _seed_candidate(s, candidate_id="c2", underlying="AAPL")
+        _seed_approval(s, candidate_id="c2", snapshot=_snapshot(underlying="AAPL"))
+    r = client.get("/options/approvals?status=all&symbol=aapl", headers=AUTH)
+    assert r.status_code == 200
+    approvals = r.json()["approvals"]
+    assert len(approvals) == 1
+    assert approvals[0]["underlying"] == "AAPL"
+
+
+def test_list_approvals_filters_by_since_and_until(client) -> None:
+    with session_scope() as s:
+        s.add(
+            ApprovalRow(
+                candidate_id="c1",
+                status="pending",
+                snapshot=_snapshot(),
+                created_at=datetime(2020, 1, 1),
+            )
+        )
+    # `since` today excludes the 2020 row, leaving only the fixture's c1 approval.
+    r = client.get(f"/options/approvals?status=all&since={date.today().isoformat()}", headers=AUTH)
+    assert r.status_code == 200
+    assert all(not a["created_at"].startswith("2020") for a in r.json()["approvals"])
+
+    # `until` 2020-01-02 leaves only the 2020 row.
+    r2 = client.get("/options/approvals?status=all&until=2020-01-02", headers=AUTH)
+    assert r2.status_code == 200
+    approvals2 = r2.json()["approvals"]
+    assert len(approvals2) == 1
+    assert approvals2[0]["created_at"].startswith("2020-01-01")
+
+
+def test_approval_summary_reports_when_it_was_raised(client) -> None:
+    """`created_at` is the approval's actual raise time — never `as_of`, which
+    is a per-request freshness stamp (`datetime.now(UTC)` at response build
+    time) and is therefore always "just now" no matter how old the approval
+    is."""
+    with session_scope() as s:
+        ap = s.query(ApprovalRow).first()
+        stamp = ap.created_at
+
+    r = client.get("/options/approvals", headers=AUTH)
+    assert r.status_code == 200
+    a = r.json()["approvals"][0]
+    assert a["created_at"] is not None
+    assert a["created_at"] != a["as_of"]
+    assert datetime.fromisoformat(a["created_at"].replace("Z", "+00:00")) == stamp.replace(
+        tzinfo=UTC
+    )
+
+
 def test_order_state_is_null_when_no_order_exists(client) -> None:
     r = client.get("/options/approvals", headers=AUTH)
     assert r.status_code == 200
@@ -398,6 +485,54 @@ def test_detail_review_is_null_when_no_review_exists(client) -> None:
     r = client.get(f"/options/approvals/{aid}", headers=AUTH)
     assert r.status_code == 200
     assert r.json()["review"] is None
+
+
+def test_detail_order_id_and_fills_are_null_and_empty_when_no_order_exists(client) -> None:
+    r = client.get("/options/approvals/1", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["order_id"] is None
+    assert body["fills"] == []
+
+
+def test_detail_carries_the_approval_to_fill_lineage(client) -> None:
+    """The detail route chains approval -> order -> fills in one response, so
+    tracing a candidate to its fill price needs no second/third request."""
+    with session_scope() as s:
+        ap = s.query(ApprovalRow).first()
+        order = OrderRow(
+            candidate_id=ap.candidate_id,
+            approval_id=ap.id,
+            state="filled",
+            limit_price=3.25,
+            filled_qty=1.0,
+            avg_fill_price=3.20,
+            snapshot=_snapshot(),
+        )
+        s.add(order)
+        s.flush()
+        order_id = order.id
+        s.add(
+            FillRow(
+                order_id=order_id,
+                candidate_id=ap.candidate_id,
+                action="SELL",
+                filled_qty=1.0,
+                avg_price=3.20,
+                commission=0.65,
+                is_live=False,
+            )
+        )
+
+    r = client.get("/options/approvals/1", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["order_id"] == order_id
+    assert len(body["fills"]) == 1
+    fill = body["fills"][0]
+    assert fill["order_id"] == order_id
+    assert fill["avg_price"] == 3.20
+    assert fill["action"] == "SELL"
 
 
 def test_detail_alternatives_list_other_contracts_on_same_run(client) -> None:

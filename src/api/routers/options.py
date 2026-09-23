@@ -26,6 +26,8 @@ from src.api.models.options import (
     AssessedContract,
     AssessedGroup,
     AssessedResponse,
+    AssessedRunsResponse,
+    AssessedRunSummary,
     ClaudeReviewPayload,
     ControlsResponse,
     FillListResponse,
@@ -94,6 +96,12 @@ _REASON_LABELS: dict[str, str] = {
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",
+    # Order-send-time codes (risk_engine.validate_live_quote) — the second Rules Engine
+    # pass against a fresh quote, distinct from the decision-time codes above.
+    "live_no_mid": "no live two-sided market at order time (missing bid/ask)",
+    "live_greeks_required": "live mode requires IBKR-sourced greeks, unavailable at order time",
+    "live_delta_out_of_range": "delta drifted outside target band between approval and order time",
+    "live_premium_collapse": "live mid collapsed well below the approved premium (price moved against the trade)",
 }
 
 
@@ -164,6 +172,7 @@ def _build_summary(
     approval: Any,
     cand: Any | None,
     order_state: str | None,
+    review: ClaudeReviewPayload | None = None,
 ) -> ApprovalSummary:
     """Build an ``ApprovalSummary`` from the joined rows, preferring the snapshot."""
     snap = approval.snapshot or {}
@@ -174,7 +183,9 @@ def _build_summary(
     right = snap_fields.get("right") or (cand.right if cand else "")
     strike = snap_fields.get("strike") or (cand.strike if cand else 0.0)
     expiry = snap_fields.get("expiry") or (cand.expiry if cand else None)
-    contracts = snap_fields.get("contracts") or (1 if cand is None else 1)
+    contracts = snap_fields.get("contracts") or (
+        cand.payload.get("contracts", 1) if cand is not None and cand.payload else 1
+    )
     premium = snap_fields.get("premium")
     blended_score = snap_fields.get("blended_score")
     run_id = cand.run_id if cand else None
@@ -201,11 +212,63 @@ def _build_summary(
         contracts=contracts,
         premium=premium,
         blended_score=blended_score,
+        created_at=as_utc(approval.created_at),
         expires_at=as_utc_opt(approval.expires_at),
         decided_at=as_utc_opt(approval.decided_at),
         order_state=order_state,
         source=_source_from_run_id(run_id),
+        review=review,
     )
+
+
+def _review_payload(payload: dict[str, Any] | None) -> ClaudeReviewPayload | None:
+    """Build a ``ClaudeReviewPayload`` from a stored ``ClaudeReviewRow.payload`` dict."""
+    if not isinstance(payload, dict):
+        return None
+    return ClaudeReviewPayload(
+        why_attractive=str(payload.get("why_attractive", "")),
+        risks=str(payload.get("risks", "")),
+        tradeoffs=str(payload.get("tradeoffs", "")),
+        assignment_considerations=str(payload.get("assignment_considerations", "")),
+        rolling_considerations=str(payload.get("rolling_considerations", "")),
+        recommendation=payload.get("recommendation"),
+        priority=payload.get("priority"),
+        confidence=payload.get("confidence"),
+    )
+
+
+def _latest_reviews_by_candidate(db: Any, candidate_ids: set[str]) -> dict[str, ClaudeReviewPayload]:
+    """Batch-fetch the newest ``ClaudeReviewRow`` per candidate id — one query, not N.
+
+    Ordered by candidate_id then recency descending, so the first row seen per
+    candidate while iterating is its newest (same "take the newest" rule
+    ``get_approval`` already applies to a single candidate).
+    """
+    from src.storage.models import ClaudeReviewRow
+
+    if not candidate_ids:
+        return {}
+    rows = (
+        db.execute(
+            select(ClaudeReviewRow)
+            .where(ClaudeReviewRow.candidate_id.in_(candidate_ids))
+            .order_by(
+                ClaudeReviewRow.candidate_id,
+                ClaudeReviewRow.created_at.desc(),
+                ClaudeReviewRow.id.desc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, ClaudeReviewPayload] = {}
+    for row in rows:
+        if row.candidate_id in out:
+            continue
+        payload = _review_payload(row.payload)
+        if payload is not None:
+            out[row.candidate_id] = payload
+    return out
 
 
 @router.get("/approvals", response_model=ApprovalListResponse)
@@ -216,12 +279,25 @@ def list_approvals(
         default="pending",
         description="Filter by approval status, or `all` for every status (newest first).",
     ),
+    symbol: str | None = Query(
+        default=None,
+        description="Filter to one underlying (case-insensitive), matched via the joined "
+        "CandidateRow. An approval whose candidate has since been pruned (14-day purge) will "
+        "not match even if its own snapshot still carries the symbol.",
+    ),
+    # Bare `= None` rather than `Query(default=None, ...)`, matching the convention
+    # `src/api/routers/pnl.py` already uses for date params — `date | None` is not on
+    # ruff's built-in B008 immutable-annotation list, so wrapping it in `Query(...)`
+    # would (harmlessly, but needlessly) trip the mutable-default-argument lint.
+    since: date | None = None,
+    until: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> ApprovalListResponse:
     """List approvals, pending by default. ``status=all`` returns decided ones too.
 
     An unknown status value is rejected with 422 (not a silent empty list) — an
-    operator typo should surface, not look like "no approvals."
+    operator typo should surface, not look like "no approvals." ``since``/``until``
+    filter by UTC calendar date, inclusive on both ends.
     """
     from src.storage.models import ApprovalRow, CandidateRow, OrderRow
 
@@ -230,6 +306,16 @@ def list_approvals(
     stmt = select(ApprovalRow)
     if status != "all":
         stmt = stmt.where(ApprovalRow.status == status)
+    if since is not None:
+        stmt = stmt.where(ApprovalRow.created_at >= datetime.combine(since, datetime.min.time()))
+    if until is not None:
+        stmt = stmt.where(
+            ApprovalRow.created_at < datetime.combine(until, datetime.min.time()) + timedelta(days=1)
+        )
+    if symbol is not None:
+        stmt = stmt.join(
+            CandidateRow, CandidateRow.candidate_id == ApprovalRow.candidate_id
+        ).where(func.upper(CandidateRow.underlying) == symbol.upper())
     # Newest first overall. For status=all this is "newest first" as the spec
     # requires; for a single-status filter the secondary sort is redundant but
     # harmless. A pending approval is NOT promoted above a newer decided one in
@@ -240,7 +326,7 @@ def list_approvals(
     if not approvals:
         return ApprovalListResponse(as_of=now, approvals=[])
 
-    # Batch the joins: one pass for candidates, one for orders.
+    # Batch the joins: one pass each for candidates, orders, and reviews.
     candidate_ids = {a.candidate_id for a in approvals}
     approval_ids = {a.id for a in approvals}
 
@@ -262,8 +348,13 @@ def list_approvals(
         ).all()
         order_map = {row[0]: row[1] for row in orders if row[0] is not None}
 
+    review_map = _latest_reviews_by_candidate(db, candidate_ids)
+
     summaries = [
-        _build_summary(a, cand_map.get(a.candidate_id), order_map.get(a.id)) for a in approvals
+        _build_summary(
+            a, cand_map.get(a.candidate_id), order_map.get(a.id), review_map.get(a.candidate_id)
+        )
+        for a in approvals
     ]
     return ApprovalListResponse(as_of=now, approvals=summaries)
 
@@ -279,6 +370,7 @@ def get_approval(
         ApprovalRow,
         CandidateRow,
         ClaudeReviewRow,
+        FillRow,
         OrderRow,
         RiskVerdictRow,
     )
@@ -292,12 +384,40 @@ def get_approval(
     ).scalar_one_or_none()
 
     order_state: str | None = None
+    order_id: int | None = None
+    fills: list[FillSummary] = []
     if approval.id is not None:
         order_row = db.execute(
-            select(OrderRow.state).where(OrderRow.approval_id == approval.id)
-        ).scalar_one_or_none()
+            select(OrderRow.id, OrderRow.state).where(OrderRow.approval_id == approval.id)
+        ).first()
         if order_row is not None:
-            order_state = order_row
+            order_id, order_state = order_row
+            # The approval-to-fill lineage the console otherwise needs two more
+            # requests (GET /options/orders, GET /options/fills) to assemble.
+            fill_rows = (
+                db.execute(
+                    select(FillRow)
+                    .where(FillRow.order_id == order_id)
+                    .order_by(FillRow.filled_at.asc(), FillRow.id.asc())
+                )
+                .scalars()
+                .all()
+            )
+            fills = [
+                FillSummary(
+                    as_of=datetime.now(UTC),
+                    id=f.id,
+                    order_id=f.order_id,
+                    candidate_id=f.candidate_id,
+                    action=f.action,
+                    filled_qty=f.filled_qty,
+                    avg_price=f.avg_price,
+                    commission=f.commission,
+                    is_live=bool(f.is_live),
+                    filled_at=as_utc(f.filled_at),
+                )
+                for f in fill_rows
+            ]
 
     summary = _build_summary(approval, cand, order_state)
 
@@ -340,26 +460,13 @@ def get_approval(
     # Claude review — the five fields, separately, never one blob.
     # A candidate reviewed more than once (retry, re-review) has more than one row
     # here — take the newest, same reasoning as the verdict lookup above.
-    review: ClaudeReviewPayload | None = None
     review_row = db.execute(
         select(ClaudeReviewRow)
         .where(ClaudeReviewRow.candidate_id == approval.candidate_id)
         .order_by(ClaudeReviewRow.created_at.desc(), ClaudeReviewRow.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if review_row is not None:
-        payload = review_row.payload or {}
-        if isinstance(payload, dict):
-            review = ClaudeReviewPayload(
-                why_attractive=str(payload.get("why_attractive", "")),
-                risks=str(payload.get("risks", "")),
-                tradeoffs=str(payload.get("tradeoffs", "")),
-                assignment_considerations=str(payload.get("assignment_considerations", "")),
-                rolling_considerations=str(payload.get("rolling_considerations", "")),
-                recommendation=payload.get("recommendation"),
-                priority=payload.get("priority"),
-                confidence=payload.get("confidence"),
-            )
+    review = _review_payload(review_row.payload if review_row is not None else None)
 
     # Alternatives — other contracts assessed on this underlying during the same run.
     alternatives: list[AlternativeStrike] = []
@@ -411,15 +518,18 @@ def get_approval(
         contracts=summary.contracts,
         premium=summary.premium,
         blended_score=summary.blended_score,
+        created_at=summary.created_at,
         expires_at=summary.expires_at,
         decided_at=summary.decided_at,
         order_state=summary.order_state,
         source=summary.source,
+        review=review,
         snapshot=approval.snapshot or {},
         ideal=ideal,
         gate_reasons=gate_reasons,
-        review=review,
         alternatives=alternatives,
+        order_id=order_id,
+        fills=fills,
     )
 
 
@@ -470,6 +580,50 @@ def _promotable_for(stage: str, min_candidate_score: float) -> tuple[bool, str |
     if stage == AssessmentStage.PASSED.value:
         return False, "Already surfaced for approval."
     return False, None
+
+
+@router.get("/assessed/runs", response_model=AssessedRunsResponse)
+def list_assessed_runs(
+    _user: OwnerUser,
+    db: TradingDb,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> AssessedRunsResponse:
+    """Past full-scan run ids, newest first — lets the Assessed tab browse history.
+
+    Registered ahead of ``/assessed`` in this file only for reading order; the two
+    paths never collide (this one carries no path parameter). Excludes single-ticker
+    runs (``scan-``/``ticker-`` prefixes) the same way ``_latest_run_id`` does — a
+    ``/scan NVDA`` or a promote attempt is not "a run" in the sense this list means.
+    """
+    from src.storage.models import RiskVerdictRow
+
+    now = datetime.now(UTC)
+    rows = db.execute(
+        select(
+            RiskVerdictRow.run_id,
+            func.max(RiskVerdictRow.created_at),
+            func.count(RiskVerdictRow.id),
+        )
+        .where(RiskVerdictRow.run_id.isnot(None))
+        .where(~RiskVerdictRow.run_id.like("scan-%"))
+        .where(~RiskVerdictRow.run_id.like("ticker-%"))
+        .group_by(RiskVerdictRow.run_id)
+        .order_by(func.max(RiskVerdictRow.created_at).desc())
+        .limit(limit)
+    ).all()
+
+    return AssessedRunsResponse(
+        as_of=now,
+        runs=[
+            AssessedRunSummary(
+                as_of=now,
+                run_id=r[0],
+                computed_at=as_utc_opt(r[1]),
+                candidate_count=r[2],
+            )
+            for r in rows
+        ],
+    )
 
 
 @router.get("/assessed", response_model=AssessedResponse)

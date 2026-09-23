@@ -198,11 +198,19 @@ describe("LedgerTable", () => {
   });
 });
 
+// The shell's own live filter draft — Record<string,string>, distinct from
+// LedgerResponseData["filters"] (LedgerFiltersData), which is the backend's
+// echo and carries nullable fields. LedgerFilters seeds its local state from
+// the live draft (see its docstring for why), not the echo.
+function aFilterDraft(overrides: Record<string, string> = {}): Record<string, string> {
+  return { symbol: "", book: "all", outcome: "", since: "", until: "", ...overrides };
+}
+
 describe("LedgerFilters", () => {
   it("drives the query string, not client-side array filtering", () => {
     // The parent owns the query string; assert the change fires with the value.
     let seen: Record<string, string> = {};
-    render(<LedgerFilters filters={aLedger().filters} onChange={(next) => { seen = next; }} />);
+    render(<LedgerFilters filters={aFilterDraft()} onChange={(next) => { seen = next; }} />);
     fireEvent.change(screen.getByLabelText(/^symbol/i), { target: { value: "nvda" } });
     expect(seen["symbol"]).toBe("NVDA");
     expect(Object.keys(seen)).toContain("book");
@@ -210,14 +218,38 @@ describe("LedgerFilters", () => {
 
   it("upper-cases the symbol on change so the URL reads like the API's filter", () => {
     let seen: Record<string, string> = {};
-    render(<LedgerFilters filters={aLedger().filters} onChange={(next) => { seen = next; }} />);
+    render(<LedgerFilters filters={aFilterDraft()} onChange={(next) => { seen = next; }} />);
     fireEvent.change(screen.getByLabelText(/^symbol/i), { target: { value: "nvda" } });
     expect(seen["symbol"]).toBe("NVDA");
   });
 
   it("renders the book choices the summary refuses to guess", () => {
-    render(<LedgerFilters filters={aLedger().filters} onChange={() => {}} />);
+    render(<LedgerFilters filters={aFilterDraft()} onChange={() => {}} />);
     const select = screen.getByLabelText(/^book/i) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(["all", "paper", "live"]);
+  });
+
+  it("seeds every field from the filters prop, including book, on mount", () => {
+    render(
+      <LedgerFilters
+        filters={aFilterDraft({ symbol: "NVDA", book: "paper", outcome: "assigned" })}
+        onChange={() => {}}
+      />,
+    );
+    expect((screen.getByLabelText(/^symbol/i) as HTMLInputElement).value).toBe("NVDA");
+    expect((screen.getByLabelText(/^book/i) as HTMLSelectElement).value).toBe("paper");
+    expect((screen.getByLabelText(/^outcome/i) as HTMLSelectElement).value).toBe("assigned");
+  });
+
+  it("emits the selected book so it actually reaches the query, not just the echo", () => {
+    // Regression: PnlShell used to hold a second, separate `book` state and
+    // force it into the query string with qs.set("book", book), silently
+    // overwriting whatever this dropdown had just emitted — the Book filter
+    // was a complete no-op. Covered here at the emission boundary; the query
+    // composition itself lives in PnlShell, which has no test file yet.
+    let seen: Record<string, string> = {};
+    render(<LedgerFilters filters={aFilterDraft()} onChange={(next) => { seen = next; }} />);
+    fireEvent.change(screen.getByLabelText(/^book/i), { target: { value: "paper" } });
+    expect(seen["book"]).toBe("paper");
   });
 });

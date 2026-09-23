@@ -535,6 +535,57 @@ async def test_execute_candidate_marks_rejected_on_ib_reject(monkeypatch, tmp_pa
     assert "rejected" in mock_bot.send_message.call_args.kwargs["text"].lower()
 
 
+async def test_execute_candidate_humanizes_live_regate_reasons(monkeypatch, tmp_path):
+    """A live-mode re-gate rejection must store/announce humanised reasons, never a
+    bare Python list repr like "['live_premium_collapse']" — that string used to
+    land verbatim in row.detail (what the web Orders table renders) and in the
+    Telegram message and failure notification."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    from src.common.schemas import RiskVerdict
+
+    monkeypatch.setattr(
+        "src.execution.executor.validate_live_quote",
+        lambda candidate, quote: RiskVerdict(
+            candidate_id=candidate.candidate_id,
+            verdict=Verdict.REJECT,
+            reasons=["live_premium_collapse", "live_no_mid"],
+        ),
+    )
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    from src.execution.executor import execute_candidate
+
+    mock_ib = _make_mock_ib(filled=True)
+    mock_bot = _make_mock_bot()
+
+    await execute_candidate(mock_ib, mock_bot, "99999", order_id, _make_candidate())
+
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+
+    assert row.state == OrderState.REJECTED
+    assert "live_premium_collapse" not in row.detail
+    assert "collapsed well below the approved premium" in row.detail
+    assert "no live two-sided market" in row.detail
+
+    call_text = mock_bot.send_message.call_args.kwargs["text"]
+    assert "live_no_mid" not in call_text
+    assert "collapsed well below the approved premium" in call_text
+
+
 async def test_execute_candidate_marks_rejected_on_qualify_failure(monkeypatch, tmp_path):
     """Qualification failure must mark the order REJECTED without re-raising."""
     _db_setup(tmp_path, monkeypatch)

@@ -566,6 +566,12 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",
+    # Order-send-time codes (risk_engine.validate_live_quote) — the second Rules Engine
+    # pass against a fresh quote, distinct from the decision-time codes above.
+    "live_no_mid": "no live two-sided market at order time (missing bid/ask)",
+    "live_greeks_required": "live mode requires IBKR-sourced greeks, unavailable at order time",
+    "live_delta_out_of_range": "delta drifted outside target band between approval and order time",
+    "live_premium_collapse": "live mid collapsed well below the approved premium (price moved against the trade)",
 }
 
 

@@ -7,6 +7,7 @@ const HREF: Record<string, string> = {
   portfolio: "/portfolio",
   pnl: "/pnl",
   universe: "/universe",
+  explain: "/explain",
 };
 
 export function RailSection({

@@ -30,6 +30,7 @@ function approval(overrides: Partial<ApprovalSummary> = {}): ApprovalSummary {
     contracts: 2,
     premium: 3.25,
     blended_score: 72.0,
+    created_at: "2026-09-01T08:30:00Z",
     expires_at: null,
     decided_at: null,
     order_state: null,
@@ -57,6 +58,134 @@ function dialogConfirm() {
   // Cancel is first, confirm is last.
   return buttons[buttons.length - 1];
 }
+
+describe("ApprovalCard — timestamp", () => {
+  it("shows the exact date and time the approval was raised, not a relative age", () => {
+    withClient(<ApprovalCard approval={approval({ created_at: "2026-09-01T08:30:00Z" })} />);
+    expect(screen.getByText("Sep 1, 2026, 8:30 AM UTC")).toBeDefined();
+    expect(screen.queryByText(/ago$/)).toBeNull();
+    expect(screen.queryByText("just now")).toBeNull();
+  });
+});
+
+describe("ApprovalCard — initialCommand (M3b: surviving a move between tabs)", () => {
+  it("restores an in-flight receipt from initialCommand on mount, offering no fresh decision", async () => {
+    withClient(
+      <ApprovalCard
+        approval={approval()}
+        initialCommand={{
+          id: 41,
+          kind: "approve",
+          status: "pending",
+          result: null,
+          needs_confirmation: false,
+          confirm_token: null,
+          created_at: "x",
+          applied_at: null,
+          as_of: "x",
+        }}
+      />,
+    );
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    // A restored in-flight command disables the controls exactly like a
+    // command submitted this session would — no fresh decision to offer.
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("restores the live second-confirmation dialog, not a plain receipt, when initialCommand still needs confirmation", async () => {
+    // Regression: DecideControls used to always restore initialCommand into
+    // `command`, never `liveStep` — a card that moved to "Submitted" the
+    // instant a live Approve was confirmed (before its second confirmation
+    // was released) would strand that dialog on the unmounted card, with no
+    // control anywhere on the new mount to release or cancel the intent.
+    withClient(
+      <ApprovalCard
+        approval={approval()}
+        initialCommand={{
+          id: 41,
+          kind: "approve",
+          status: "pending",
+          result: null,
+          needs_confirmation: true,
+          confirm_token: "tok-abc",
+          created_at: "x",
+          applied_at: null,
+          as_of: "x",
+        }}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("LIVE");
+    // Approve/Reject are disabled while that dialog is open — otherwise a
+    // second, duplicate command could be submitted alongside it.
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+});
+
+describe("ApprovalCard — localStorage persistence (no initialCommand, e.g. the detail page)", () => {
+  it("restores an in-flight receipt from localStorage when no initialCommand is passed", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand(42, {
+      id: 41,
+      kind: "approve",
+      status: "pending",
+      result: null,
+      needs_confirmation: false,
+      confirm_token: null,
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    withClient(<ApprovalCard approval={approval()} />);
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("restores the live second-confirmation dialog from localStorage when no initialCommand is passed", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand(42, {
+      id: 41,
+      kind: "approve",
+      status: "pending",
+      result: null,
+      needs_confirmation: true,
+      confirm_token: "tok-abc",
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    withClient(<ApprovalCard approval={approval()} />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("LIVE");
+  });
+
+  it("clears the persisted command once it goes terminal, so a later fresh mount starts blank", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand(42, {
+      id: 41,
+      kind: "approve",
+      status: "applied",
+      result: { decision: "Approved" },
+      needs_confirmation: false,
+      confirm_token: null,
+      created_at: "x",
+      applied_at: "x",
+      as_of: "x",
+    });
+    withClient(<ApprovalCard approval={approval()} />);
+    await screen.findByTestId("command-receipt");
+    await waitFor(async () => {
+      const { loadPersistedCommand } = await import("@/lib/commands");
+      expect(loadPersistedCommand(42)).toBeNull();
+    });
+  });
+});
 
 describe("ApprovalCard — decide controls (M3)", () => {
   it("opens ConfirmAction before any request is made", () => {

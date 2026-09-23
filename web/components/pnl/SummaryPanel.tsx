@@ -20,16 +20,25 @@ import type { PnlLegData, PnlSummaryResponse } from "./types";
  * renders the gross qualifier on the headline realised figure (the same
  * qualifier Money renders, driven by the same flag).
  */
-export function SummaryPanel({ book, onBookChange, onSelectLeg }: {
+export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
   book: string;
+  /**
+   * The exact query string `PnlShell` composed for the ledger/equity/CSV
+   * export (symbol/strategy/outcome/since/until, `book` already included) —
+   * NOT rebuilt here. Regression: this panel used to fetch `?book=${book}`
+   * only, ignoring every other filter, so the headline totals stayed
+   * unfiltered while the ledger rows below them narrowed — the one thing
+   * `PnlShell`'s own docstring says can never happen ("a second composition
+   * would let them drift").
+   */
+  qsString: string;
   onBookChange?: (next: string) => void;
   /** Jump to this leg in the ledger tab (`PnlShell` switches tab + filters by symbol). */
   onSelectLeg?: (leg: PnlLegData) => void;
 }) {
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["pnl", "summary", book],
-    queryFn: () =>
-      apiFetch<PnlSummaryResponse>(`/pnl/summary?book=${book}`),
+    queryKey: ["pnl", "summary", qsString],
+    queryFn: () => apiFetch<PnlSummaryResponse>(`/pnl/summary?${qsString}`),
     placeholderData: (prev) => prev,
     refetchInterval: 30_000,
     retry: false,

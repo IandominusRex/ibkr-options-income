@@ -132,9 +132,12 @@ describe("AutonomyControl", () => {
         "failed",
       ),
     );
-    // The humanised reason and the blocker detail are both visible as text.
+    // The humanised reason AND the actual blockers are both visible as text —
+    // not just the top-level "refused" verdict with the reason silently dropped.
     const text = screen.getByTestId("command-receipt").textContent ?? "";
     expect(text).toContain("promotion refused");
+    expect(text).toContain("needs >=20 fills, has 3");
+    expect(text).toContain("fill rate 40% is below the 60% gate");
   });
 
   it("a 403 renders a permission message, not a generic failure", async () => {
@@ -149,5 +152,46 @@ describe("AutonomyControl", () => {
         "do not have permission",
       ),
     );
+  });
+
+  it("disables the select while the live confirmation dialog is open, before it is released", async () => {
+    // Regression: `inFlight` used to ignore `liveStep`, leaving the select
+    // clickable during the window between the first confirm and the live
+    // release — there is no command id to poll yet in that window.
+    submitCommand.mockResolvedValue(
+      appliedCommand({ status: "pending", needs_confirmation: true, confirm_token: "tok" }),
+    );
+    withClient(<AutonomyControl autonomy={RUNGS[0]} rungs={RUNGS} />);
+    fireEvent.change(screen.getByTestId("autonomy-select"), {
+      target: { value: "manual" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Set Manual" }));
+    await waitFor(() => expect(screen.getByTestId("confirm-dialog").textContent).toContain("LIVE"));
+    expect(
+      (screen.getByTestId("autonomy-select") as HTMLSelectElement).disabled,
+    ).toBe(true);
+  });
+});
+
+describe("AutonomyControl — reload persistence (localStorage)", () => {
+  it("restores an in-flight receipt from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("autonomy", appliedCommand({ status: "pending" }));
+    withClient(<AutonomyControl autonomy={RUNGS[0]} rungs={RUNGS} />);
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    expect(
+      (screen.getByTestId("autonomy-select") as HTMLSelectElement).disabled,
+    ).toBe(true);
+  });
+
+  it("restores the live second-confirmation dialog from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand(
+      "autonomy",
+      appliedCommand({ status: "pending", needs_confirmation: true, confirm_token: "tok" }),
+    );
+    withClient(<AutonomyControl autonomy={RUNGS[0]} rungs={RUNGS} />);
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(dialog.textContent).toContain("LIVE");
   });
 });

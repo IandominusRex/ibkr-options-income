@@ -1,11 +1,16 @@
 """Warm-tier data: watchlisted and recently viewed symbols.
 
 Scoped to watchlisted and recently viewed symbols so free-tier limits are respected.
-Three refreshes live here:
+Four refreshes live here:
 
-- ``refresh_quotes`` — delayed intraday quotes, every 15 minutes during regular
-  trading hours only. The RTH guard is inside the function itself so a manual
-  call outside market hours is a no-op rather than a wasted burst of provider calls.
+- ``refresh_quotes`` — delayed intraday quotes for every warm symbol, every 15 minutes
+  during regular trading hours only. The RTH guard is inside the function itself so a
+  manual call outside market hours is a no-op rather than a wasted burst of provider calls.
+- ``refresh_quote_for`` — the single-symbol counterpart, called on demand from
+  ``materialize()`` the first time a symbol with no quote row is viewed. NOT RTH-gated:
+  the point is a symbol's first-ever view must not wait up to 15 minutes for the next
+  ``refresh_quotes`` sweep, market hours or not (yfinance returns the last close when the
+  market is shut, which is exactly what a quiet-hours view should show).
 - ``refresh_warm_bars`` — nightly daily-bar refresh for the warm tier, the job
   the P0-P1 design promised for ``daily_bars`` ("Warm tier - refreshed nightly").
   A failed fetch returns 0 and never deletes history (``ingest_daily_bars``'s own
@@ -15,6 +20,12 @@ Three refreshes live here:
 
 The research worker schedules the two nightly jobs as one ``warm_refresh`` job
 at ``research.tiers.warm_refresh_hour_et``.
+
+``change_pct`` (the "Day" column/figure) is always the change versus the most recent
+*completed* trading session's close, read from ``daily_bars`` — never the delta between
+two consecutive polls, which used to be the actual behaviour: a number that drifted
+further from a real day change with every 15-minute cycle, and stayed ``None`` for a
+symbol's entire first cycle since there was no earlier poll to diff against.
 """
 
 from __future__ import annotations
@@ -22,11 +33,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from src.common.market_hours import is_rth
+from src.common.market_hours import is_rth, today_et
 from src.data.factory import get_price_provider
 from src.research.ingest.news import ingest_news
 from src.research.ingest.prices import ingest_daily_bars
-from src.research.store.models import QuoteRow, RecentlyViewedRow, WatchlistItemRow
+from src.research.store.models import DailyBarRow, QuoteRow, RecentlyViewedRow, WatchlistItemRow
 from src.research.store.session import research_session
 
 log = logging.getLogger(__name__)
@@ -46,6 +57,65 @@ def warm_symbols() -> list[str]:
             .all()
         }
     return sorted(watched | viewed)
+
+
+def _prior_close(symbol: str) -> float | None:
+    """Most recent daily-bar close strictly before today (exchange time).
+
+    Seeds ``daily_bars`` on demand when none exist yet — the same cold-path backfill the
+    ``/bars`` route uses — so a symbol's very first quote still carries a real
+    ``change_pct`` instead of one stuck ``None`` until someone happens to open the price
+    chart tab first. Never raises: a failed backfill just leaves ``change_pct`` unset,
+    same as any other missing-data case.
+    """
+    cutoff = today_et()
+
+    def _latest() -> float | None:
+        with research_session() as session:
+            row = (
+                session.query(DailyBarRow)
+                .filter(DailyBarRow.symbol == symbol, DailyBarRow.date < cutoff)
+                .order_by(DailyBarRow.date.desc())
+                .first()
+            )
+            return float(row.close) if row is not None and row.close is not None else None
+
+    close = _latest()
+    if close is not None:
+        return close
+
+    try:
+        ingest_daily_bars(symbol)
+    except Exception as exc:
+        log.warning("On-demand daily-bar backfill for day-change failed for %s: %s", symbol, exc)
+        return None
+    return _latest()
+
+
+def _day_change_pct(symbol: str, price: float) -> float | None:
+    """``(price - prior close) / prior close * 100`` — a genuine day-over-day change,
+    never a delta between two intraday polls. ``None`` (not ``0``) when no prior close
+    is available at all (e.g. a symbol with no trading history yet)."""
+    prior = _prior_close(symbol)
+    if not prior:
+        return None
+    return round((price - prior) / prior * 100.0, 4)
+
+
+def _write_quote(symbol: str, price: float, now: datetime) -> None:
+    change_pct = _day_change_pct(symbol, price)
+    with research_session() as session:
+        row = session.get(QuoteRow, symbol)
+        if row is None:
+            session.add(
+                QuoteRow(
+                    symbol=symbol, price=price, change_pct=change_pct, as_of=now, source="yfinance"
+                )
+            )
+        else:
+            row.price = price
+            row.change_pct = change_pct
+            row.as_of = now
 
 
 def refresh_quotes() -> int:
@@ -71,20 +141,32 @@ def refresh_quotes() -> int:
         if price is None:
             continue  # absent, never zero
 
-        with research_session() as session:
-            row = session.get(QuoteRow, symbol)
-            if row is None:
-                session.add(QuoteRow(symbol=symbol, price=price, as_of=now, source="yfinance"))
-            else:
-                if row.price:
-                    row.change_pct = (price - row.price) / row.price * 100.0
-                else:
-                    row.change_pct = None
-                row.price = price
-                row.as_of = now
+        _write_quote(symbol, price, now)
         written += 1
 
     return written
+
+
+def refresh_quote_for(symbol: str) -> bool:
+    """On-demand single-symbol quote seed for a cold view. Returns True iff a quote was
+    written; a missing price (``None``) writes nothing, matching ``refresh_quotes``'s own
+    contract. Never raises — a failed fetch is the caller's cue to render "no quote yet",
+    not a page failure.
+
+    Deliberately NOT RTH-gated, unlike ``refresh_quotes``'s periodic sweep: a symbol's
+    first-ever view should get a quote at any hour rather than wait for the next market-
+    hours poll.
+    """
+    provider = get_price_provider()
+    try:
+        price = provider.get_last_price(symbol)
+    except Exception as exc:
+        log.warning("On-demand quote fetch failed for %s: %s", symbol, exc)
+        return False
+    if price is None:
+        return False
+    _write_quote(symbol, price, datetime.now(UTC))
+    return True
 
 
 def refresh_warm_bars(symbols: list[str] | None = None) -> int:

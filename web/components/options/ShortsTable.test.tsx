@@ -383,6 +383,32 @@ describe("ShortsTable — live-mode second confirmation (M5 5.2, mirrors M3 3.5)
     await waitFor(() => expect(confirmCommand).toHaveBeenCalledWith(51, "tok-abc"));
   });
 
+  it("disables Propose a roll while the live confirmation dialog is open, before it is released", async () => {
+    // Regression: `inFlight` used to ignore `liveStep`, so the control stayed
+    // clickable during the window between the first confirm and the live
+    // release — there is no command id to poll yet in that window.
+    submitCommand.mockResolvedValueOnce({
+      id: 51,
+      kind: "roll_request",
+      status: "pending",
+      result: null,
+      needs_confirmation: true,
+      confirm_token: "tok-abc",
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+      created: true,
+    });
+    mockApi({ shorts: [shortState()] });
+    withClient(<ShortsTable />);
+    fireEvent.click(await screen.findByRole("button", { name: "Propose a roll" }));
+    fireEvent.click(dialogConfirm());
+    await screen.findAllByText(/LIVE/);
+    expect(
+      (screen.getByRole("button", { name: "Propose a roll" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
   it("keeps the command pending (needs_confirmation) if the live step is cancelled", async () => {
     submitCommand.mockResolvedValueOnce({
       id: 51,
@@ -405,5 +431,47 @@ describe("ShortsTable — live-mode second confirmation (M5 5.2, mirrors M3 3.5)
     expect(confirmCommand).not.toHaveBeenCalled();
     const receipt = await screen.findByTestId("command-receipt");
     expect(receipt.getAttribute("data-state")).toBe("queued");
+  });
+});
+
+describe("ShortsTable — reload persistence (localStorage)", () => {
+  it("restores an in-flight receipt from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("short:NVDA  261017C00180000", {
+      id: 51,
+      kind: "roll_request",
+      status: "pending",
+      result: null,
+      needs_confirmation: false,
+      confirm_token: null,
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    mockApi({ shorts: [shortState()] });
+    withClient(<ShortsTable />);
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "Propose a roll" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("restores the live second-confirmation dialog from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("short:NVDA  261017C00180000", {
+      id: 51,
+      kind: "roll_request",
+      status: "pending",
+      result: null,
+      needs_confirmation: true,
+      confirm_token: "tok-abc",
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    mockApi({ shorts: [shortState()] });
+    withClient(<ShortsTable />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("LIVE");
   });
 });

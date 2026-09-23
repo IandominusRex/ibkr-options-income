@@ -502,14 +502,25 @@ Two processes must stay running during market hours:
 
 ### Option A — single launcher (recommended)
 
-`scripts/start.py` starts **both** daemons together and auto-restarts either if it crashes:
+`scripts/start.py` is the one command that brings up every long-running Python service —
+the approval service, the intraday monitor, the web API (§6a), and the research worker (§6a)
+— together, auto-restarting any of them if it crashes:
 
 ```bash
 python -m scripts.start
 ```
 
-Logs are written to `logs/approval.log` and `logs/monitor.log`. Stop with Ctrl-C.
-Flags: `--no-monitor` to skip the monitor, `--no-approval` to skip the approval service.
+Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`, and
+`logs/research.log`. Stop with Ctrl-C.
+Flags: `--no-monitor`, `--no-approval`, `--no-api`, `--no-research`, each skipping one
+service (`--no-eod` skips the built-in EOD scheduler — see §7).
+
+> The web API and research worker need the `web` extra (`pip install -e ".[web,dev]"`, §6a)
+> and `WEB_API_TOKEN`/`SEC_CONTACT_EMAIL` in `.env`. If you haven't set those up yet, pass
+> `--no-api --no-research` — otherwise those two subprocesses just crash-loop (visible in
+> `logs/api.log`/`logs/research.log`) while the IBKR daemons run fine. Not started here: the
+> Next.js frontend (§6a "The web frontend") — that's a separate `npm run dev`, since it's a
+> Node process, not a Python script.
 
 > **Clean stop, guaranteed:** Ctrl-C/SIGTERM sends every daemon SIGTERM, waits up to 10s, then
 > SIGKILLs anything still alive — a hung shutdown can no longer leave an orphaned survivor behind
@@ -636,7 +647,9 @@ WEB_API_TOKEN=<that string>
 SEC_CONTACT_EMAIL=you@example.com   # SEC EDGAR requires a contact in its User-Agent
 ```
 
-Run it (loopback only by default; port 8787):
+Both processes are started automatically by `python -m scripts.start` (§6) — that's the
+normal way to run them. Run one standalone only when you want it up in isolation (e.g.
+iterating on the API without the IBKR daemons):
 
 ```bash
 python -m scripts.run_api
@@ -644,15 +657,14 @@ python -m scripts.run_api
 
 | Command | What it does |
 |---|---|
-| `python -m scripts.run_api` | Starts the web API on `config/research.yaml → api.host:port` (default `127.0.0.1:8787`). Requires `WEB_API_TOKEN` in `.env`. No IBKR connection. |
-| `python -m scripts.run_research_worker` | Runs the research ingestion worker (APScheduler). Populates `data/research.db` from SEC EDGAR — the symbol directory first, then weekly refreshes; a nightly warm-tier refresh (daily bars + news for watchlisted/recently-viewed symbols, at `research.tiers.warm_refresh_hour_et`, default 04:00 ET); delayed intraday quotes every 15 min during RTH. Holds no IBKR connection, no clientId. Requires `SEC_CONTACT_EMAIL` in `.env`. |
+| `python -m scripts.run_api` | Starts the web API on `config/research.yaml → api.host:port` (default `127.0.0.1:8787`). Requires `WEB_API_TOKEN` in `.env`. No IBKR connection. Included by default in `scripts.start` — opt out with `--no-api`. |
+| `python -m scripts.run_research_worker` | Runs the research ingestion worker (APScheduler). Populates `data/research.db` from SEC EDGAR — the symbol directory first, then weekly refreshes; a nightly warm-tier refresh (daily bars + news for watchlisted/recently-viewed symbols, at `research.tiers.warm_refresh_hour_et`, default 04:00 ET); delayed intraday quotes every 15 min during RTH. Holds no IBKR connection, no clientId. Requires `SEC_CONTACT_EMAIL` in `.env`. Included by default in `scripts.start` — opt out with `--no-research`. |
 
 Endpoints available now: `GET /health` (no auth), `GET /me`, `GET /nav`, and
 `GET /research/search?q=<ticker>` (bearer token). See `docs/web/api.md` for the full
-reference. The research worker process (`python -m scripts.run_research_worker`) populates
-the `symbols` table from SEC EDGAR so search has something to search — run it once on first
-start, then it refreshes weekly on its own. See `Web plan/OVERVIEW.md` for the roadmap; the
-options, portfolio, P&L and universe sections arrive in later milestones.
+reference. The research worker populates the `symbols` table from SEC EDGAR so search has
+something to search — on first start, give it a few moments (or run it once standalone) to
+pull the symbol directory before search will return results.
 
 ### AI summary backend (M7, optional)
 
@@ -878,8 +890,10 @@ Register-ScheduledTask -TaskName "IBKR Daemons" `
   -RunLevel Highest -Force
 ```
 
-This starts the approval service and intraday monitor at boot. Task Scheduler will not restart them
-if they crash mid-day — `scripts.start`'s built-in supervisor handles that.
+This starts the approval service, intraday monitor, web API, and research worker at boot
+(pass `--no-api`/`--no-research` in the `-Argument` string above to skip either). Task
+Scheduler will not restart them if they crash mid-day — `scripts.start`'s built-in
+supervisor handles that.
 
 ---
 
@@ -1246,3 +1260,5 @@ an 8B model, depending on prompt length and memory pressure.
 | Web search returns no results for any ticker | The research worker hasn't run yet — `data/research.db` has no `symbols` rows | Run `python -m scripts.run_research_worker` once on first start; it pulls the SEC symbol directory (~10k tickers). Search works after the first successful job |
 | The research worker (`scripts.run_research_worker`) goes quiet for hours/days with nothing in its log — no errors, no warnings, just silence — until the process is manually restarted | The Mac went to sleep (lid closed, no `caffeinate`, no launchd `KeepAlive`) and froze every thread in the process for as long as it was asleep. **Fixed 2026-09-11:** the scheduler no longer drops a job it discovers late (`misfire_grace_time=None` in `build_scheduler()`) — it runs the moment the process next gets CPU time instead of silently skipping forever, so a restart is no longer required after a sleep/wake cycle | This is a *recovery* fix, not sleep prevention — the worker still does nothing while the Mac is actually asleep, it just resumes correctly once it wakes (lid open, scheduled wake) instead of needing a manual kill + restart. To stop the Mac sleeping at all while the worker should be running, launch it under `caffeinate -is python3 -m scripts.run_research_worker` or a launchd job with `KeepAlive` and the display/system sleep disabled |
 | Ticker page's AI summary panel says "unavailable" and the Generate button does nothing | `research.summary.backend` is set to `anthropic`/`openai` but `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is missing in `.env`, or `claude_cli` is set but `claude` isn't on PATH and `claude.enabled` is false | Set the matching `.env` key, or switch `research.summary.backend` to `ollama` (requires `ollama serve` running) — a failed generation fails soft to `pending`, never an error |
+| A ticker page (or `/options`) is missing data/fields you know were just fixed in code — price, day change, checks, IV all blank, or an approval card's timestamp is empty | `scripts.run_api`/`scripts.run_research_worker` run under plain `uvicorn.run()`/APScheduler with **no hot-reload** — a process started before your latest pull or edit keeps serving the old code indefinitely, however new the files on disk are. `next dev` (the frontend) does hot-reload on its own, so this only ever looks like a frontend bug | Check how long the process has been up (`ps -o pid,lstart,command -p $(pgrep -f scripts.run_api)`) against your last commit/edit time; if the process predates it, kill and restart both `python -m scripts.run_api` and `python -m scripts.run_research_worker` |
+| Watchlist/ticker-page "Day" change is blank right after a symbol's first-ever view, or reads like a meaningless small number that drifts every 15 minutes | **Fixed 2026-09-14:** `change_pct` used to be the delta between two consecutive 15-min quote polls (`refresh_quotes`) — `None` until a second poll ever ran, and never a real day-over-day figure even once it was set. It's now `_day_change_pct()` in `ingest/quotes.py`: the change versus the most recent completed session's close in `daily_bars`, available from the very first poll. A first-ever view also no longer waits for that poll at all — `materialize()`'s `_quote()` seeds a quote on demand (`refresh_quote_for`) the moment a symbol with no `QuoteRow` is viewed | If it's still blank: the on-demand fetch itself failed (check the API log for "On-demand quote fetch failed for \<SYMBOL\>") or the symbol has no `daily_bars` history yet and the backfill also failed — retry the page, or run `python -c "from src.research.ingest.quotes import refresh_quotes; refresh_quotes()"` during market hours |

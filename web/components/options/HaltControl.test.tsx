@@ -189,4 +189,54 @@ describe("HaltControl", () => {
       "queued",
     );
   });
+
+  it("disables Resume while the live confirmation dialog is open, before it is released", async () => {
+    // Regression: `inFlight` used to ignore `liveStep`, leaving Resume
+    // clickable during the window between the first confirm and the live
+    // release — there is no command id to poll yet in that window.
+    submitCommand.mockResolvedValue(
+      appliedCommand({
+        kind: "resume",
+        status: "pending",
+        needs_confirmation: true,
+        confirm_token: "tok",
+      }),
+    );
+    withClient(<HaltControl halted={true} haltReason={null} haltedAt={null} />);
+    fireEvent.click(screen.getByTestId("resume-button"));
+    // The confirm button stays disabled until "RESUME" is typed exactly.
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "RESUME" } });
+    const resumeDialog = screen.getByTestId("confirm-dialog");
+    fireEvent.click(within(resumeDialog).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(screen.getByTestId("confirm-dialog")).toBeTruthy());
+    expect(
+      (screen.getByTestId("resume-button") as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("uses a hyphen, never an em dash, for the halt reason", () => {
+    withClient(<HaltControl halted={true} haltReason="drawdown" haltedAt={null} />);
+    expect(screen.getByText(/- drawdown/)).toBeDefined();
+  });
+});
+
+describe("HaltControl — reload persistence (localStorage)", () => {
+  it("restores an in-flight receipt from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("halt-resume", appliedCommand({ status: "pending" }));
+    withClient(<HaltControl halted={false} haltReason={null} haltedAt={null} />);
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    expect((screen.getByTestId("halt-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("restores the live second-confirmation dialog from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand(
+      "halt-resume",
+      appliedCommand({ status: "pending", needs_confirmation: true, confirm_token: "tok" }),
+    );
+    withClient(<HaltControl halted={false} haltReason={null} haltedAt={null} />);
+    const dialog = await screen.findByTestId("confirm-dialog");
+    expect(dialog.textContent).toContain("LIVE");
+  });
 });

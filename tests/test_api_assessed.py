@@ -208,6 +208,42 @@ def test_run_latest_filters_ticker_promote_runs(client) -> None:
     assert r.json()["run_id"] == _RUN
 
 
+def test_assessed_runs_requires_owner_auth(client) -> None:
+    assert client.get("/options/assessed/runs").status_code == 401
+
+
+def test_assessed_runs_lists_the_fixture_run(client) -> None:
+    r = client.get("/options/assessed/runs", headers=AUTH)
+    assert r.status_code == 200
+    runs = r.json()["runs"]
+    assert len(runs) == 1
+    assert runs[0]["run_id"] == _RUN
+    assert runs[0]["candidate_count"] == 7  # a..g seeded by the fixture
+
+
+def test_assessed_runs_excludes_single_ticker_runs(client) -> None:
+    """`scan-`/`ticker-` prefixed audit runs are not "a run" for history browsing,
+    same exclusion `run=latest` already applies."""
+    with session_scope() as s:
+        s.add(_verdict(candidate_id="s1", run_id="scan-NVDA", stage="passed"))
+        s.add(_verdict(candidate_id="t1", run_id="ticker-a1b2c3d4", stage="passed"))
+    r = client.get("/options/assessed/runs", headers=AUTH)
+    run_ids = {row["run_id"] for row in r.json()["runs"]}
+    assert run_ids == {_RUN}
+
+
+def test_assessed_runs_newest_first(client) -> None:
+    with session_scope() as s:
+        s.add(_verdict(candidate_id="older", run_id="2026-09-01T10:00:00", stage="passed"))
+        s.flush()
+        s.query(RiskVerdictRow).filter(RiskVerdictRow.run_id == "2026-09-01T10:00:00").update(
+            {"created_at": datetime.now(UTC) - timedelta(days=5)}
+        )
+    r = client.get("/options/assessed/runs", headers=AUTH)
+    run_ids = [row["run_id"] for row in r.json()["runs"]]
+    assert run_ids == [_RUN, "2026-09-01T10:00:00"]
+
+
 def test_groups_ordered_by_best_contract_first(client) -> None:
     r = client.get("/options/assessed", headers=AUTH)
     groups = r.json()["groups"]

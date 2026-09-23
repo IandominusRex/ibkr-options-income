@@ -1,14 +1,22 @@
-"""Launcher for the always-on IBKR daemons + the daily EOD report.
+"""Single-command launcher for every long-running service in this repo.
 
 Starts the long-running services as subprocesses and supervises them —
 auto-restarting any that crash with exponential back-off. Also schedules the
 end-of-day report itself: at the configured ET time on each trading day it
 spawns a one-shot ``scripts.run_eod`` subprocess. **No cron job is required.**
 
+Covers the two IBKR daemons (approval service, intraday monitor) plus the web
+API and research worker, which hold no ``ib_async`` connection or clientId and
+are just as supervisable. The one thing this does *not* start is the Next.js
+frontend (``cd web && npm run dev``) — that's a Node process, not a Python
+script, and you may not always want the dev server up.
+
 Usage:
-    python -m scripts.start              # approval service + monitor + EOD scheduler
+    python -m scripts.start              # approval + monitor + API + research worker + EOD scheduler
     python -m scripts.start --no-monitor   # skip the intraday monitor
     python -m scripts.start --no-approval  # skip the approval service
+    python -m scripts.start --no-api       # skip the web API
+    python -m scripts.start --no-research  # skip the research worker
     python -m scripts.start --no-eod       # skip the built-in EOD scheduler
 
 The EOD report fires at ``scheduler.eod_report`` (config/settings.yaml, default
@@ -55,6 +63,16 @@ SERVICES = {
         "label": "intraday_monitor",
         "module": "scripts.run_monitor",
         "log": PROJECT_ROOT / "logs" / "monitor.log",
+    },
+    "api": {
+        "label": "web_api",
+        "module": "scripts.run_api",
+        "log": PROJECT_ROOT / "logs" / "api.log",
+    },
+    "research": {
+        "label": "research_worker",
+        "module": "scripts.run_research_worker",
+        "log": PROJECT_ROOT / "logs" / "research.log",
     },
 }
 
@@ -263,14 +281,24 @@ def _start_eod() -> subprocess.Popen:
     return proc
 
 
-def main() -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="IBKR daemon launcher")
     parser.add_argument("--no-monitor", action="store_true", help="Skip intraday monitor")
     parser.add_argument("--no-approval", action="store_true", help="Skip approval service")
+    parser.add_argument("--no-api", action="store_true", help="Skip the web API")
+    parser.add_argument("--no-research", action="store_true", help="Skip the research worker")
     parser.add_argument("--no-eod", action="store_true", help="Skip the built-in EOD scheduler")
-    args = parser.parse_args()
+    return parser
 
-    active = [k for k in SERVICES if not getattr(args, f"no_{k}", False)]
+
+def _active_services(args: argparse.Namespace) -> list[str]:
+    return [k for k in SERVICES if not getattr(args, f"no_{k}", False)]
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    active = _active_services(args)
     if not active and args.no_eod:
         log.error("No services selected — nothing to start.")
         sys.exit(1)

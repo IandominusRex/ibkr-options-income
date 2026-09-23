@@ -123,6 +123,32 @@ describe("CommandReceipt", () => {
     expect(screen.getByText(/no longer pending/)).toBeDefined();
   });
 
+  it("renders set_autonomy's promotion_refused blockers, a different detail key than reasons", () => {
+    // Regression: command_drain.py::_set_autonomy raises CommandFailed with
+    // {"blockers": [...]}, not {"reasons": [...]} like promote's gate_rejected —
+    // failedReason() only checked `detail.reasons`/`detail.reason`, so every
+    // blocker silently vanished and a refused promotion rendered "Promotion
+    // refused" with no explanation of what to fix.
+    render(
+      <CommandReceipt
+        command={command({
+          status: "failed",
+          result: {
+            reason: "promotion_refused",
+            detail: {
+              blockers: ["needs >=20 fills, has 3", "fill rate 40% is below the 60% gate"],
+            },
+          },
+        })}
+        order={null}
+        drainHealthy={true}
+      />,
+    );
+    expect(screen.getByText(/promotion refused/)).toBeDefined();
+    expect(screen.getByText(/needs >=20 fills, has 3/)).toBeDefined();
+    expect(screen.getByText(/fill rate 40% is below the 60% gate/)).toBeDefined();
+  });
+
   it("renders a plainReasons failure as a plain answer, not red failed chrome (M3 3.5)", () => {
     render(
       <CommandReceipt

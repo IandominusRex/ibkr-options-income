@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { UNKNOWN } from "@/lib/format";
+import { UNKNOWN, relativeAge } from "@/lib/format";
 import { DecideControls } from "./DecideControls";
 import { IdealZoneBar } from "./IdealZoneBar";
 import { ReviewPanel } from "./ReviewPanel";
@@ -96,6 +96,36 @@ export function ApprovalDetailCard({ detail }: { detail: ApprovalDetail }) {
       <ReviewPanel review={detail.review} />
 
       <AlternativesTable alternatives={detail.alternatives} />
+
+      {detail.fills.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-xs font-medium tracking-wide text-muted">
+            Fills
+          </h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted">
+                <th className="py-2 font-medium">When</th>
+                <th className="py-2 font-medium">Action</th>
+                <th className="py-2 font-medium">Qty</th>
+                <th className="py-2 font-medium">Price</th>
+                <th className="py-2 font-medium">Mode</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {detail.fills.map((f) => (
+                <tr key={f.id}>
+                  <td className="py-2 text-xs text-muted">{relativeAge(f.filled_at)}</td>
+                  <td className="py-2 text-content">{f.action}</td>
+                  <td className="py-2 tabular text-content">{f.filled_qty.toFixed(0)}</td>
+                  <td className="py-2 tabular text-content">${f.avg_price.toFixed(2)}</td>
+                  <td className="py-2 text-xs text-muted">{f.is_live ? "live" : "paper"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <DecideControls approval={detail} drainHealthy={drainHealthy} />
     </div>

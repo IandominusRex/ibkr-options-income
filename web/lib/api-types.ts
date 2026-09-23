@@ -251,7 +251,8 @@ export interface paths {
          * @description List approvals, pending by default. ``status=all`` returns decided ones too.
          *
          *     An unknown status value is rejected with 422 (not a silent empty list) — an
-         *     operator typo should surface, not look like "no approvals."
+         *     operator typo should surface, not look like "no approvals." ``since``/``until``
+         *     filter by UTC calendar date, inclusive on both ends.
          */
         get: operations["list_approvals_options_approvals_get"];
         put?: never;
@@ -274,6 +275,31 @@ export interface paths {
          * @description One approval in full. 404 if unknown. Joined enrichment degrades to null.
          */
         get: operations["get_approval_options_approvals__approval_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/options/assessed/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Assessed Runs
+         * @description Past full-scan run ids, newest first — lets the Assessed tab browse history.
+         *
+         *     Registered ahead of ``/assessed`` in this file only for reading order; the two
+         *     paths never collide (this one carries no path parameter). Excludes single-ticker
+         *     runs (``scan-``/``ticker-`` prefixes) the same way ``_latest_run_id`` does — a
+         *     ``/scan NVDA`` or a promote attempt is not "a run" in the sense this list means.
+         */
+        get: operations["list_assessed_runs_options_assessed_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -914,6 +940,11 @@ export interface components {
             premium?: number | null;
             /** Blended Score */
             blended_score?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Expires At */
             expires_at?: string | null;
             /** Decided At */
@@ -925,6 +956,7 @@ export interface components {
              * @enum {string}
              */
             source: "scan" | "roll";
+            review?: components["schemas"]["ClaudeReviewPayload"] | null;
             /** Snapshot */
             snapshot: {
                 [key: string]: unknown;
@@ -932,9 +964,12 @@ export interface components {
             ideal?: components["schemas"]["IdealZonePayload"] | null;
             /** Gate Reasons */
             gate_reasons?: string[];
-            review?: components["schemas"]["ClaudeReviewPayload"] | null;
             /** Alternatives */
             alternatives?: components["schemas"]["AlternativeStrike"][];
+            /** Order Id */
+            order_id?: number | null;
+            /** Fills */
+            fills?: components["schemas"]["FillSummary"][];
         };
         /** ApprovalListResponse */
         ApprovalListResponse: {
@@ -981,6 +1016,11 @@ export interface components {
             premium?: number | null;
             /** Blended Score */
             blended_score?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
             /** Expires At */
             expires_at?: string | null;
             /** Decided At */
@@ -992,6 +1032,7 @@ export interface components {
              * @enum {string}
              */
             source: "scan" | "roll";
+            review?: components["schemas"]["ClaudeReviewPayload"] | null;
         };
         /** AssessedContract */
         AssessedContract: {
@@ -1058,6 +1099,33 @@ export interface components {
             computed_at?: string | null;
             /** Groups */
             groups?: components["schemas"]["AssessedGroup"][];
+        };
+        /**
+         * AssessedRunSummary
+         * @description One past full-scan run, for browsing history in the Assessed tab.
+         */
+        AssessedRunSummary: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Run Id */
+            run_id: string;
+            /** Computed At */
+            computed_at?: string | null;
+            /** Candidate Count */
+            candidate_count: number;
+        };
+        /** AssessedRunsResponse */
+        AssessedRunsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Runs */
+            runs?: components["schemas"]["AssessedRunSummary"][];
         };
         /** AutonomyRung */
         AutonomyRung: {
@@ -1658,7 +1726,11 @@ export interface components {
             /** Fills */
             fills?: components["schemas"]["FillSummary"][];
         };
-        /** FillSummary */
+        /**
+         * FillSummary
+         * @description One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)
+         *     because ``ApprovalDetail`` below references it for the approval-to-fill lineage.
+         */
         FillSummary: {
             /**
              * As Of
@@ -3144,6 +3216,10 @@ export interface operations {
             query?: {
                 /** @description Filter by approval status, or `all` for every status (newest first). */
                 status?: "pending" | "approved" | "rejected" | "expired" | "all";
+                /** @description Filter to one underlying (case-insensitive), matched via the joined CandidateRow. An approval whose candidate has since been pruned (14-day purge) will not match even if its own snapshot still carries the symbol. */
+                symbol?: string | null;
+                since?: string | null;
+                until?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -3190,6 +3266,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_assessed_runs_options_assessed_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessedRunsResponse"];
                 };
             };
             /** @description Validation Error */

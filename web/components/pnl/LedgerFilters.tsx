@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { LedgerFiltersData } from "./types";
 
 type BookFilter = "all" | "paper" | "live";
 
@@ -12,21 +11,30 @@ type BookFilter = "all" | "paper" | "live";
  * `.filter()` would let the two drift.
  *
  * The parent owns the query string (the shell composes it into both the fetch
- * and the export href); this component is a controlled form that reports the
- * next filter set and renders the echo the API returned.
+ * and the export href); this component reports the next filter set. `filters`
+ * is the shell's own live filter draft (`PnlShell`'s `filters` state) — NOT
+ * the backend's echoed response (`LedgerTable`'s separate filter-echo reads
+ * that instead), because seeding local state from a request echo would lag
+ * one round trip behind. It seeds local state only via `useState`'s lazy
+ * initializer, read once — this component stays fast to type in even while a
+ * request is in flight. The one case that needs the inputs to change without
+ * a keystroke of their own — `PnlShell`'s "view in ledger" link changing
+ * `symbol` externally — works by the parent remounting this component with a
+ * fresh `key` instead of a live-sync effect, which would risk clobbering a
+ * value the user is mid-typing when a slightly-stale response lands.
  */
 export function LedgerFilters({
   filters,
   onChange,
 }: {
-  filters: import("./types").LedgerFiltersData | undefined;
+  filters: Record<string, string> | undefined;
   onChange: (next: Record<string, string>) => void;
 }) {
-  const [symbol, setSymbol] = useState("");
-  const [book, setBook] = useState<BookFilter>("all");
-  const [outcome, setOutcome] = useState("");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
+  const [symbol, setSymbol] = useState(filters?.symbol ?? "");
+  const [book, setBook] = useState<BookFilter>((filters?.book as BookFilter) || "all");
+  const [outcome, setOutcome] = useState(filters?.outcome ?? "");
+  const [since, setSince] = useState(filters?.since ?? "");
+  const [until, setUntil] = useState(filters?.until ?? "");
 
   function emit(next: Record<string, string>) {
     onChange(next);

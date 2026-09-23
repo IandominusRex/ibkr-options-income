@@ -178,6 +178,19 @@ def test_missing_right_and_stay_null_never_fabricated(client, seed_portfolio_sna
     assert leg["moneyness"] is None  # spot known but strike/right are not — no guess
 
 
+def test_a_zero_strike_still_computes_moneyness_not_treated_as_unknown(
+    client, seed_portfolio_snapshot
+) -> None:
+    """Regression: the moneyness guard used to check `strike` truthily, so a
+    strike of exactly 0.0 (unrealistic, but not the same thing as "unknown")
+    was silently treated the same as `strike is None` and skipped."""
+    pos = short_put(underlying="NVDA", strike=0.0)
+    seed_portfolio_snapshot(positions=[pos, stock(symbol="NVDA", market_price=176.0)])
+    leg = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]["options"][0]
+    assert leg["strike"] == 0.0
+    assert leg["moneyness"] == "otm"  # a $176 spot is OTM against a $0 short put
+
+
 def test_adjusted_basis_reads_through_the_read_only_engine(
     client, seed_assigned_campaign, seed_portfolio_snapshot, monkeypatch
 ) -> None:

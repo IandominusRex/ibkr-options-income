@@ -1,29 +1,104 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 
 type Hit = { symbol: string; name: string; exchange: string | null; is_etf: boolean };
 type SearchResponse = { as_of: string; query: string; results: Hit[] };
 
-export function CommandPalette() {
+/**
+ * Controlled if `open`/`onOpenChange` are passed (the visible search-bar
+ * trigger on the home page owns the state so it can open the same modal);
+ * otherwise falls back to managing its own state so ⌘K keeps working
+ * anywhere the palette is mounted without a parent wiring it up.
+ *
+ * Never unmounts on close (it renders `null`, same component instance stays
+ * mounted so the global ⌘K listener keeps working) — so unlike
+ * `ConfirmAction` (which returns focus to the trigger via an unmount
+ * cleanup), this component watches `open` itself: on the true->false edge it
+ * clears the search term/results (reopening starts fresh, never shows a
+ * stale search from last time) and returns focus to whatever had it when the
+ * palette opened. `role="dialog"`/`aria-modal`/a Tab focus trap mirror
+ * `ConfirmAction`'s pattern — every overlay in this app traps focus and
+ * returns it on close, this one is no exception.
+ */
+export function CommandPalette({
+  open: openProp,
+  onOpenChange,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+} = {}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = openProp ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<Element | null>(null);
+  const wasOpen = useRef(false);
+  const labelId = useId();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setOpen((v) => !v);
+        setOpen(!open);
       }
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape" && open) setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open, setOpen]);
+
+  // The open/close edges: remember the trigger and focus the input on open,
+  // reset the search and return focus to the trigger on close. Deliberately
+  // NOT the native `autoFocus` prop on the input: that attribute focuses the
+  // input during React's DOM-mutation commit, which runs BEFORE this effect —
+  // by the time this effect could read `document.activeElement` to capture
+  // the trigger, autoFocus would have already overwritten it with the input
+  // itself. Focusing the input imperatively here, in the same effect and
+  // strictly after the capture, keeps the ordering correct.
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      triggerRef.current = document.activeElement;
+      inputRef.current?.focus();
+    } else if (!open && wasOpen.current) {
+      setTerm("");
+      setHits([]);
+      const trigger = triggerRef.current;
+      if (trigger instanceof HTMLElement) trigger.focus();
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  // Tab focus trap, active only while open — mirrors ConfirmAction exactly.
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = dialog.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input, [href], [tabindex]:not([tabindex='-1'])",
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   useEffect(() => {
     if (!term.trim()) {
@@ -46,10 +121,20 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]">
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={labelId}
+      className="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]"
+    >
       <div className="w-full max-w-xl rounded-lg bg-elevated p-2">
+        <label htmlFor={labelId} className="sr-only">
+          Search a ticker or company
+        </label>
         <input
-          autoFocus
+          id={labelId}
+          ref={inputRef}
           value={term}
           onChange={(e) => setTerm(e.target.value)}
           placeholder="Search a ticker or company"

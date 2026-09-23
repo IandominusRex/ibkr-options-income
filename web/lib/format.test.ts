@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatMoney, formatPeriod, relativeAge } from "./format";
+import { formatDateTime, formatMoney, formatPeriod, relativeAge } from "./format";
 
 describe("formatMoney", () => {
   it("compacts billions", () => expect(formatMoney(391035000000)).toBe("$391.0B"));
@@ -43,5 +43,29 @@ describe("relativeAge", () => {
 
   it("renders months once past 30 days", () => {
     expect(relativeAge(new Date(NOW.getTime() - 45 * 86400000).toISOString())).toBe("1mo ago");
+  });
+});
+
+describe("formatDateTime", () => {
+  it("renders an empty string for a missing timestamp", () => {
+    expect(formatDateTime(null)).toBe("");
+    expect(formatDateTime(undefined)).toBe("");
+  });
+
+  it("renders an empty string for an unparseable timestamp", () => {
+    expect(formatDateTime("not a date")).toBe("");
+  });
+
+  it("renders the exact UTC date and time, never a relative age", () => {
+    expect(formatDateTime("2026-09-12T14:05:00Z")).toBe("Sep 12, 2026, 2:05 PM UTC");
+  });
+
+  it("pads single-digit minutes", () => {
+    expect(formatDateTime("2026-01-03T09:07:00Z")).toBe("Jan 3, 2026, 9:07 AM UTC");
+  });
+
+  it("renders midnight as 12 AM and noon as 12 PM", () => {
+    expect(formatDateTime("2026-06-15T00:00:00Z")).toBe("Jun 15, 2026, 12:00 AM UTC");
+    expect(formatDateTime("2026-06-15T12:00:00Z")).toBe("Jun 15, 2026, 12:00 PM UTC");
   });
 });

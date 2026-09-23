@@ -47,7 +47,14 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     r = client.get("/nav", headers=AUTH)
     assert r.status_code == 200
     sections = {s["key"]: s for s in r.json()["sections"]}
-    assert set(sections) == {"research", "options", "portfolio", "pnl", "universe"}
+    assert set(sections) == {
+        "research",
+        "options",
+        "portfolio",
+        "pnl",
+        "universe",
+        "explain",
+    }
     assert sections["research"]["available"] is True
     # P2 M2 ships the options console read surfaces — the rail is now available.
     assert sections["options"]["available"] is True
@@ -58,6 +65,10 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     # P4 M5 ships the P&L surfaces — every section is now available, none carries a note.
     assert sections["pnl"]["available"] is True
     assert sections["pnl"]["note"] is None
+    # System Explanation is a static walkthrough, not a data surface — ships available
+    # from day one, same as every other section.
+    assert sections["explain"]["available"] is True
+    assert sections["explain"]["note"] is None
     assert all(s["available"] and s["note"] is None for s in sections.values())
 
 

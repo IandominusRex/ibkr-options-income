@@ -289,6 +289,31 @@ describe("AssessedRow — live-mode second confirmation (M4 4.3, mirrors M3 3.5)
     await waitFor(() => expect(confirmCommand).toHaveBeenCalledWith(41, "tok-abc"));
   });
 
+  it("disables Promote while the live confirmation dialog is open, before it is released", async () => {
+    // Regression: `inFlight` used to ignore `liveStep`, leaving the control
+    // clickable during the window between the first confirm and the live
+    // release — there is no command id to poll yet in that window.
+    submitCommand.mockResolvedValueOnce({
+      id: 41,
+      kind: "promote",
+      status: "pending",
+      result: null,
+      needs_confirmation: true,
+      confirm_token: "tok-abc",
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+      created: true,
+    });
+    withClient(<AssessedRow contract={contract()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }));
+    fireEvent.click(dialogConfirm());
+    await screen.findAllByText(/LIVE/);
+    expect(
+      (screen.getByRole("button", { name: "Promote" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
   it("keeps the command pending (needs_confirmation) if the live step is cancelled", async () => {
     submitCommand.mockResolvedValueOnce({
       id: 41,
@@ -310,6 +335,46 @@ describe("AssessedRow — live-mode second confirmation (M4 4.3, mirrors M3 3.5)
     expect(confirmCommand).not.toHaveBeenCalled();
     const receipt = await screen.findByTestId("command-receipt");
     expect(receipt.getAttribute("data-state")).toBe("queued");
+  });
+});
+
+describe("AssessedRow — reload persistence (localStorage)", () => {
+  it("restores an in-flight receipt from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("promote:c1", {
+      id: 41,
+      kind: "promote",
+      status: "pending",
+      result: null,
+      needs_confirmation: false,
+      confirm_token: null,
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    withClient(<AssessedRow contract={contract()} />);
+    expect(await screen.findByTestId("command-receipt")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "Promote" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("restores the live second-confirmation dialog from localStorage on a fresh mount", async () => {
+    const { savePersistedCommand } = await import("@/lib/commands");
+    savePersistedCommand("promote:c1", {
+      id: 41,
+      kind: "promote",
+      status: "pending",
+      result: null,
+      needs_confirmation: true,
+      confirm_token: "tok-abc",
+      created_at: "x",
+      applied_at: null,
+      as_of: "x",
+    });
+    withClient(<AssessedRow contract={contract()} />);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("LIVE");
   });
 });
 

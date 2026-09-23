@@ -5,12 +5,20 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
   confirmCommand,
+  loadPersistedCommand,
+  savePersistedCommand,
   submitCommand,
   useCommandStatus,
   type CommandStatus,
 } from "@/lib/commands";
 import { ConfirmAction } from "./ConfirmAction";
 import { CommandReceipt } from "./CommandReceipt";
+
+// A singleton control (ControlsStrip mounts one AutonomyControl), so a fixed
+// key is safe — unlike the per-item decide flows (DecideControls/ShortsRow/
+// AssessedRow), which namespace by approval id / position symbol / candidate
+// id. Shares the same `ibkr-options:command:` prefix (lib/commands.ts).
+const STORAGE_KEY = "autonomy";
 
 /**
  * The autonomy rung control (P2 M6 Task 6.3).
@@ -41,11 +49,34 @@ export function AutonomyControl({
   const [liveStep, setLiveStep] = useState<CommandStatus | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Restore an in-flight rung change (including one awaiting the live second
+  // confirmation) after a page reload — mount-only, so it doesn't clobber a
+  // command this control is actively progressing through.
+  useEffect(() => {
+    const persisted = loadPersistedCommand(STORAGE_KEY);
+    if (!persisted) return;
+    if (persisted.needs_confirmation) setLiveStep(persisted);
+    else setCommand(persisted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const qc = useQueryClient();
 
   // Poll every 2s while pending; stop once terminal (lib/commands.ts).
   const commandQuery = useCommandStatus(command?.id ?? null);
   const current = (commandQuery.data ?? command) as CommandStatus | null;
+
+  // Mirror the in-flight command to localStorage — see the mount-only restore
+  // effect above and lib/commands.ts's persistence layer.
+  useEffect(() => {
+    if (liveStep) {
+      savePersistedCommand(STORAGE_KEY, liveStep);
+    } else if (current && current.status === "pending") {
+      savePersistedCommand(STORAGE_KEY, current);
+    } else {
+      savePersistedCommand(STORAGE_KEY, null);
+    }
+  }, [liveStep, current]);
 
   useEffect(() => {
     if (current && current.status !== "pending") {
@@ -53,7 +84,12 @@ export function AutonomyControl({
     }
   }, [current, qc]);
 
-  const inFlight = submitting || (current != null && current.status === "pending");
+  // liveStep counts as in flight too — see DecideControls's identical fix:
+  // there is no command id to poll until the live confirmation is released,
+  // so `current` alone would leave the autonomy select clickable while that
+  // dialog is already open.
+  const inFlight =
+    submitting || liveStep != null || (current != null && current.status === "pending");
 
   async function onConfirm() {
     const level = target;

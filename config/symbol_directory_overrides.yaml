@@ -1,0 +1,35 @@
+# Manual supplement to the EDGAR-sourced symbol directory that GET /research/search (and,
+# through it, the web command palette and every typeahead built on it) reads.
+#
+# Verified directly against both files SEC publishes (2026-09-13): neither
+# company_tickers.json nor company_tickers_exchange.json lists TQQQ, SOXL, or UPRO at all.
+# These are share classes registered under a shared trust CIK (ProShares Trust II for TQQQ,
+# Direxion Shares ETF Trust for SOXL/UPRO) rather than individually-registered SEC filers, so
+# there is no per-ticker CIK to give them — unlike SPY/QQQ, which are each their own
+# standalone unit investment trust with a dedicated CIK and do appear in both EDGAR files.
+#
+# `cik` is deliberately omitted below. src/research/ingest/materialize.py treats a known
+# symbol (has a directory row) with no CIK as "fundamentals unavailable, no filer" while
+# still running technicals/sentiment/news/quote/checks — the right outcome for a leveraged
+# ETF that doesn't publish its own XBRL company facts anyway.
+#
+# refresh_symbol_directory() (src/research/ingest/symbols.py) seeds a row here only when the
+# symbol isn't already present from the provider or a prior run — it never overwrites an
+# EDGAR-sourced row, so if EDGAR ever adds real per-ticker coverage for one of these, that row
+# simply stops being touched here.
+#
+# All three are already part of the live scan universe (config/universe.yaml `leveraged_etfs`);
+# this file only affects whether the web research console can find and display them.
+overrides:
+  - symbol: TQQQ
+    name: ProShares UltraPro QQQ
+    exchange: Nasdaq
+    is_etf: true
+  - symbol: SOXL
+    name: Direxion Daily Semiconductor Bull 3X Shares
+    exchange: NYSE Arca
+    is_etf: true
+  - symbol: UPRO
+    name: ProShares UltraPro S&P500
+    exchange: NYSE Arca
+    is_etf: true

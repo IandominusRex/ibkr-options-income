@@ -11,10 +11,10 @@ import { HaltControl } from "./HaltControl";
  * The controls strip (M2 Task 2.6, read-only then; M6 Task 6.3 makes it live).
  *
  * The halted state must be unmissable: when `halted` is true a banner renders
- * at the top of the console, not only a pill in this strip, with the reason
- * and the time it was engaged as text. The banner uses fill and text, never
- * colour alone (the strip's ENGAGED pill is colour plus the word; the banner
- * is a filled block plus full sentences).
+ * at the top of the console, with the reason and the time it was engaged as
+ * text. The banner uses fill and text, never colour alone; the same applies
+ * to `HaltControl`'s own button, whose label changes between "Halt" and
+ * "Resume" rather than relying on a colour swap.
  *
  * `drain_healthy: false` renders "the trading service is not draining
  * commands" beside every control: a halt queued but never picked up is this

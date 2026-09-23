@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -15,7 +15,7 @@ from src.research.ingest.materialize import (
     materialize,
 )
 from src.research.schemas import LineItemValue, NormalizedFinancials, PeriodStatement
-from src.research.store.models import IngestJobRow, SymbolRow
+from src.research.store.models import IngestJobRow, QuoteRow, SymbolRow
 from src.research.store.session import init_research_db, research_session
 
 
@@ -158,6 +158,83 @@ def test_no_filer_reason_is_user_facing(db) -> None:
     """The no-filer reason is a fixed string, not an exception or a code."""
     result = materialize("NOPE")
     assert result.reason == "No SEC filer record for this symbol"
+
+
+def test_a_known_symbol_with_no_cik_still_enriches(db, monkeypatch) -> None:
+    """A directory row with no CIK (e.g. TQQQ) only blocks fundamentals, not the rest.
+
+    Unlike an unknown symbol (no row at all, see test_unknown_symbol_is_unavailable_not_pending),
+    this symbol is one search/watchlist can already find, so a blank page would be a real
+    regression, not an honest "will never resolve" answer.
+    """
+    with research_session() as s:
+        s.add(SymbolRow(symbol="TQQQ", cik=None, name="ProShares UltraPro QQQ", is_etf=True))
+
+    monkeypatch.setattr("src.research.ingest.materialize._technicals", lambda symbol: {"rsi": 50})
+    monkeypatch.setattr("src.research.ingest.materialize._sentiment", lambda symbol: None)
+    monkeypatch.setattr("src.research.ingest.materialize._news", lambda symbol: [])
+
+    result = materialize("TQQQ")
+    assert result.fundamentals_state is SectionState.UNAVAILABLE
+    assert result.fundamentals_reason == "No SEC filer record for this symbol"
+    assert result.technicals_state is SectionState.READY
+    assert result.technicals == {"rsi": 50}
+    assert result.checks_state is SectionState.READY
+
+
+def test_a_missing_quote_is_seeded_on_demand(db, monkeypatch) -> None:
+    """The first view of a symbol with no quote row yet must not sit blank for up to 15
+    minutes waiting on the next refresh_quotes sweep — materialize() seeds one on
+    demand, the same cold-path pattern the /bars route already uses for daily bars.
+
+    Uses a no-CIK symbol (like test_a_known_symbol_with_no_cik_still_enriches) so the
+    fundamentals path never touches the real SEC network client — this test is only
+    about the quote section.
+    """
+    with research_session() as s:
+        s.add(SymbolRow(symbol="TQQQ", cik=None, name="ProShares UltraPro QQQ", is_etf=True))
+    monkeypatch.setattr("src.research.ingest.materialize._technicals", lambda symbol: {"rsi": 50})
+    monkeypatch.setattr("src.research.ingest.materialize._sentiment", lambda symbol: None)
+    monkeypatch.setattr("src.research.ingest.materialize._news", lambda symbol: [])
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 0)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 68.8)})(),
+    )
+
+    result = materialize("TQQQ")
+    assert result.quote == 68.8
+    assert result.quote_state is SectionState.READY
+    with research_session() as s:
+        assert s.get(QuoteRow, "TQQQ") is not None
+
+
+def test_a_warm_quote_is_served_without_a_new_fetch(db, monkeypatch) -> None:
+    """A quote row that already exists is read straight from the table — cache-first,
+    same as fundamentals; the on-demand path must not fire again."""
+    with research_session() as s:
+        s.add(SymbolRow(symbol="TQQQ", cik=None, name="ProShares UltraPro QQQ", is_etf=True))
+        s.add(
+            QuoteRow(
+                symbol="TQQQ",
+                price=68.8,
+                change_pct=1.2,
+                as_of=datetime.now(UTC),
+                source="yfinance",
+            )
+        )
+    monkeypatch.setattr("src.research.ingest.materialize._technicals", lambda symbol: {"rsi": 50})
+    monkeypatch.setattr("src.research.ingest.materialize._sentiment", lambda symbol: None)
+    monkeypatch.setattr("src.research.ingest.materialize._news", lambda symbol: [])
+
+    def boom(symbol: str) -> bool:
+        raise AssertionError("materialize refetched an already-warm quote")
+
+    monkeypatch.setattr("src.research.ingest.quotes.refresh_quote_for", boom)
+
+    result = materialize("TQQQ")
+    assert result.quote == 68.8
+    assert result.quote_state is SectionState.READY
 
 
 def test_enqueue_deduplicates_pending_jobs(db) -> None:

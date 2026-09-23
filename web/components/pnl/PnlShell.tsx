@@ -40,7 +40,24 @@ const TABS: { key: Tab; label: string }[] = [
 export function PnlShell() {
   const [tab, setTab] = useState<Tab>("ledger");
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [book, setBook] = useState("all");
+  // `book` lives inside `filters`, not a second `useState` — it used to be a
+  // separate state that `qs.set("book", book)` forced into every query
+  // string, silently overwriting whatever `LedgerFilters`'s own Book dropdown
+  // had just emitted into `filters.book`. That regression made the Ledger
+  // tab's Book filter a no-op: the dropdown showed "paper", the request (and
+  // the filter echo LedgerTable renders back) always said "all". One field,
+  // read here with a default, keeps SummaryPanel's book-choice buttons (the
+  // 422 mixed_book case) and the ledger's own dropdown agreeing by
+  // construction — there is nothing left for them to disagree about.
+  const book = filters.book || "all";
+  function setBook(next: string) {
+    setFilters((prev) => ({ ...prev, book: next }));
+  }
+
+  // Bumped only by viewLegInLedger, to force <LedgerFilters/> to remount with
+  // the new symbol as its seed value — see that component's docstring for why
+  // a remount, not a live-sync effect.
+  const [filterFormKey, setFilterFormKey] = useState(0);
 
   // The summary's best/worst legs "link to their legs in the ledger" (Task
   // 5.6) by switching to the ledger tab and filtering to that leg's symbol —
@@ -49,12 +66,13 @@ export function PnlShell() {
   function viewLegInLedger(leg: PnlLegData) {
     setTab("ledger");
     setFilters((prev) => ({ ...prev, symbol: leg.underlying }));
+    setFilterFormKey((k) => k + 1);
   }
 
   const qs = new URLSearchParams(
     Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== "" && v != null)),
   );
-  qs.set("book", book);
+  if (!qs.has("book")) qs.set("book", "all");
   const qsString = qs.toString();
 
   const ledger = useQuery({
@@ -106,7 +124,12 @@ export function PnlShell() {
       </header>
 
       <section className="mb-6" data-testid="pnl-summary-section">
-        <SummaryPanel book={book} onBookChange={setBook} onSelectLeg={viewLegInLedger} />
+        <SummaryPanel
+          book={book}
+          qsString={qsString}
+          onBookChange={setBook}
+          onSelectLeg={viewLegInLedger}
+        />
       </section>
 
       <nav className="mb-4 flex gap-1 border-b border-border" aria-label="P&L sections">
@@ -130,7 +153,7 @@ export function PnlShell() {
 
       {tab === "ledger" && (
         <section className="space-y-4">
-          <LedgerFilters filters={ledger.data?.filters} onChange={setFilters} />
+          <LedgerFilters key={filterFormKey} filters={filters} onChange={setFilters} />
           {ledger.isLoading ? (
             <p className="text-sm text-muted">Loading the ledger</p>
           ) : ledger.isError ? (

@@ -473,7 +473,7 @@
           "options"
         ],
         "summary": "List Approvals",
-        "description": "List approvals, pending by default. ``status=all`` returns decided ones too.\n\nAn unknown status value is rejected with 422 (not a silent empty list) \u2014 an\noperator typo should surface, not look like \"no approvals.\"",
+        "description": "List approvals, pending by default. ``status=all`` returns decided ones too.\n\nAn unknown status value is rejected with 422 (not a silent empty list) \u2014 an\noperator typo should surface, not look like \"no approvals.\" ``since``/``until``\nfilter by UTC calendar date, inclusive on both ends.",
         "operationId": "list_approvals_options_approvals_get",
         "security": [
           {
@@ -499,6 +499,58 @@
               "title": "Status"
             },
             "description": "Filter by approval status, or `all` for every status (newest first)."
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one underlying (case-insensitive), matched via the joined CandidateRow. An approval whose candidate has since been pruned (14-day purge) will not match even if its own snapshot still carries the symbol.",
+              "title": "Symbol"
+            },
+            "description": "Filter to one underlying (case-insensitive), matched via the joined CandidateRow. An approval whose candidate has since been pruned (14-day purge) will not match even if its own snapshot still carries the symbol."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
           },
           {
             "name": "limit",
@@ -568,6 +620,57 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApprovalDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/options/assessed/runs": {
+      "get": {
+        "tags": [
+          "options"
+        ],
+        "summary": "List Assessed Runs",
+        "description": "Past full-scan run ids, newest first \u2014 lets the Assessed tab browse history.\n\nRegistered ahead of ``/assessed`` in this file only for reading order; the two\npaths never collide (this one carries no path parameter). Excludes single-ticker\nruns (``scan-``/``ticker-`` prefixes) the same way ``_latest_run_id`` does \u2014 a\n``/scan NVDA`` or a promote attempt is not \"a run\" in the sense this list means.",
+        "operationId": "list_assessed_runs_options_assessed_runs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessedRunsResponse"
                 }
               }
             }
@@ -2344,6 +2447,11 @@
             ],
             "title": "Blended Score"
           },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -2387,6 +2495,16 @@
             ],
             "title": "Source"
           },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClaudeReviewPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "snapshot": {
             "additionalProperties": true,
             "type": "object",
@@ -2409,22 +2527,30 @@
             "type": "array",
             "title": "Gate Reasons"
           },
-          "review": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ClaudeReviewPayload"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "alternatives": {
             "items": {
               "$ref": "#/components/schemas/AlternativeStrike"
             },
             "type": "array",
             "title": "Alternatives"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillSummary"
+            },
+            "type": "array",
+            "title": "Fills"
           }
         },
         "type": "object",
@@ -2438,6 +2564,7 @@
           "right",
           "strike",
           "contracts",
+          "created_at",
           "source",
           "snapshot"
         ],
@@ -2544,6 +2671,11 @@
             ],
             "title": "Blended Score"
           },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
           "expires_at": {
             "anyOf": [
               {
@@ -2586,6 +2718,16 @@
               "roll"
             ],
             "title": "Source"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClaudeReviewPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2599,6 +2741,7 @@
           "right",
           "strike",
           "contracts",
+          "created_at",
           "source"
         ],
         "title": "ApprovalSummary",
@@ -2807,6 +2950,64 @@
           "as_of"
         ],
         "title": "AssessedResponse"
+      },
+      "AssessedRunSummary": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          },
+          "candidate_count": {
+            "type": "integer",
+            "title": "Candidate Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "run_id",
+          "candidate_count"
+        ],
+        "title": "AssessedRunSummary",
+        "description": "One past full-scan run, for browsing history in the Assessed tab."
+      },
+      "AssessedRunsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/AssessedRunSummary"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of"
+        ],
+        "title": "AssessedRunsResponse"
       },
       "AutonomyRung": {
         "properties": {
@@ -4365,7 +4566,8 @@
           "is_live",
           "filled_at"
         ],
-        "title": "FillSummary"
+        "title": "FillSummary",
+        "description": "One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)\nbecause ``ApprovalDetail`` below references it for the approval-to-fill lineage."
       },
       "HTTPValidationError": {
         "properties": {

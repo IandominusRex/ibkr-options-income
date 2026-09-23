@@ -75,6 +75,28 @@ def test_cash_secured_counts_short_puts_only(client, seed_portfolio_snapshot) ->
     assert exposure["cash_secured_against_puts"] == 20_000.0
 
 
+def test_cash_secured_excludes_a_short_option_with_unknown_right(
+    client, seed_portfolio_snapshot
+) -> None:
+    """A malformed/corrupt snapshot row can carry `right: None` on an option.
+
+    Regression: `(p.right or "P") == "P"` silently treated an unknown right as a
+    put, overstating cash_secured_against_puts for a position that might just as
+    easily be a covered short call. Excluded is the honest answer — this file's
+    `_moneyness` and the OptionLeg fields already never guess from missing data.
+    """
+    unknown_right = short_call(strike=150.0, contracts=3)
+    unknown_right["right"] = None
+    seed_portfolio_snapshot(
+        positions=[
+            short_put(strike=100.0, contracts=2),  # 100 * 2 * 100 = 20_000
+            unknown_right,  # excluded — not assumed to be a put
+        ]
+    )
+    exposure = client.get("/portfolio/summary", headers=OWNER).json()["exposure"]
+    assert exposure["cash_secured_against_puts"] == 20_000.0
+
+
 def test_utilisation_is_none_not_zero_when_buying_power_is_zero(
     client, seed_portfolio_snapshot
 ) -> None:

@@ -1,7 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalsList } from "./ApprovalsList";
+
+afterEach(cleanup);
+afterEach(() => submitCommand.mockReset());
 
 function withClient(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -11,6 +14,15 @@ function withClient(ui: React.ReactElement) {
 vi.mock("@/lib/api", () => ({
   apiFetch: vi.fn(),
 }));
+
+const submitCommand = vi.fn();
+vi.mock("@/lib/commands", async () => {
+  const actual = await vi.importActual("@/lib/commands");
+  return {
+    ...(actual as object),
+    submitCommand: (...args: unknown[]) => submitCommand(...args),
+  };
+});
 
 describe("ApprovalsList", () => {
   it("renders the empty state when there are no approvals", async () => {
@@ -159,5 +171,82 @@ describe("ApprovalsList", () => {
       halted: false, halt_reason: null, mode: "paper",
       drain_healthy: false, drain_last_seen: null, pending_commands: 0,
     });
+  });
+});
+
+describe("ApprovalsList — filter and submitted-tab plumbing (moving a card off Approve)", () => {
+  function twoApprovals() {
+    return {
+      as_of: "x",
+      approvals: [
+        {
+          as_of: "x", id: 1, candidate_id: "c1", status: "pending",
+          underlying: "NVDA", strategy: "cash_secured_put", right: "P",
+          strike: 190.0, expiry: "2026-10-16", contracts: 1, premium: 3.25,
+          blended_score: 72.0, created_at: "2026-09-01T00:00:00Z",
+          expires_at: null, decided_at: null, order_state: null, source: "scan",
+        },
+        {
+          as_of: "x", id: 2, candidate_id: "c2", status: "pending",
+          underlying: "AAPL", strategy: "covered_call", right: "C",
+          strike: 230.0, expiry: "2026-10-16", contracts: 1, premium: 2.10,
+          blended_score: 60.0, created_at: "2026-09-01T00:00:00Z",
+          expires_at: null, decided_at: null, order_state: null, source: "scan",
+        },
+      ],
+    };
+  }
+
+  it("applies an optional filter so a caller can show only a subset", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue(twoApprovals());
+    withClient(<ApprovalsList filter={(a) => a.id === 2} />);
+    await screen.findByText(/AAPL/);
+    expect(screen.queryByText(/NVDA/)).toBeNull();
+  });
+
+  it("renders a custom empty-state message when given one", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue({ as_of: "x", approvals: [] });
+    withClient(<ApprovalsList emptyText="No approvals submitted yet." />);
+    expect(await screen.findByText("No approvals submitted yet.")).toBeDefined();
+  });
+
+  it("fires onApprovalSubmitted the moment Approve is confirmed", async () => {
+    submitCommand.mockResolvedValueOnce({
+      id: 41, kind: "approve", status: "pending", result: null,
+      needs_confirmation: false, confirm_token: null,
+      created_at: "x", applied_at: null, as_of: "x", created: true,
+    });
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue(twoApprovals());
+    const onApprovalSubmitted = vi.fn();
+    withClient(<ApprovalsList onApprovalSubmitted={onApprovalSubmitted} />);
+    await screen.findByText(/NVDA/);
+    const approveButtons = screen.getAllByRole("button", { name: "Approve" });
+    fireEvent.click(approveButtons[0]);
+    const dialog = screen.getByRole("dialog");
+    const buttons = dialog.querySelectorAll<HTMLButtonElement>("button");
+    fireEvent.click(buttons[buttons.length - 1]);
+    await screen.findByTestId("command-receipt");
+    expect(onApprovalSubmitted).toHaveBeenCalledWith(1, expect.objectContaining({ id: 41 }));
+  });
+});
+
+describe("ApprovalsList — status prop (Rejected/Expired tab)", () => {
+  it("defaults to fetching only pending approvals", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue({ as_of: "x", approvals: [] });
+    withClient(<ApprovalsList />);
+    await screen.findByText(/No pending approvals/i);
+    expect(apiFetch).toHaveBeenCalledWith("/options/approvals?status=pending");
+  });
+
+  it("fetches every status when status='all' is passed", async () => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockResolvedValue({ as_of: "x", approvals: [] });
+    withClient(<ApprovalsList status="all" emptyText="Nothing decided yet." />);
+    await screen.findByText(/Nothing decided yet/i);
+    expect(apiFetch).toHaveBeenCalledWith("/options/approvals?status=all");
   });
 });

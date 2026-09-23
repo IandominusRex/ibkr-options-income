@@ -22,7 +22,7 @@ export function CheckRibbon({
   const segments = buildSegments(passed, failed, unknown, total, notApplicable);
   const evaluable = passed + failed;
   const label = notApplicable
-    ? `${category} — not applicable`
+    ? `${category} - not applicable`
     : `${category}: ${passed} passed, ${failed} failed, ${unknown} unknown of ${total} checks`;
 
   return (

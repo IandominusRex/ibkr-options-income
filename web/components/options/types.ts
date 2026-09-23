@@ -16,10 +16,12 @@ export type ApprovalSummary = {
   contracts: number;
   premium: number | null;
   blended_score: number | null;
+  created_at: string;
   expires_at: string | null;
   decided_at: string | null;
   order_state: string | null;
   source: "scan" | "roll";
+  review: ClaudeReviewPayload | null;
 };
 
 export type IdealZonePayload = {
@@ -55,8 +57,9 @@ export type ApprovalDetail = ApprovalSummary & {
   snapshot: Record<string, unknown>;
   ideal: IdealZonePayload | null;
   gate_reasons: string[];
-  review: ClaudeReviewPayload | null;
   alternatives: AlternativeStrike[];
+  order_id: number | null;
+  fills: FillSummary[];
 };
 
 export type ApprovalListResponse = { as_of: string; approvals: ApprovalSummary[] };

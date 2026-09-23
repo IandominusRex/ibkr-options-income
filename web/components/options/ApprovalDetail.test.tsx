@@ -27,13 +27,11 @@ const base: ApprovalDetail = {
   contracts: 1,
   premium: 3.25,
   blended_score: 72.0,
+  created_at: "2026-09-01T08:30:00Z",
   expires_at: null,
   decided_at: null,
   order_state: null,
   source: "scan",
-  snapshot: {},
-  ideal: { lo: 185.0, hi: 192.0, min_credit: 3.1 },
-  gate_reasons: ["IV rank too low (poor premium)"],
   review: {
     why_attractive: "Rich IV rank.",
     risks: "Earnings risk.",
@@ -41,7 +39,12 @@ const base: ApprovalDetail = {
     assignment_considerations: "Assignment at $190 is acceptable.",
     rolling_considerations: "Roll if delta approaches -0.40.",
   },
+  snapshot: {},
+  ideal: { lo: 185.0, hi: 192.0, min_credit: 3.1 },
+  gate_reasons: ["IV rank too low (poor premium)"],
   alternatives: [],
+  order_id: null,
+  fills: [],
 };
 
 describe("ApprovalDetailCard", () => {
@@ -77,6 +80,39 @@ describe("ApprovalDetailCard", () => {
     expect(screen.queryByText("No review available")).toBeNull();
     // No bordered box is rendered for the review section.
     expect(container.textContent).not.toContain("No review");
+  });
+
+  it("renders no Fills section when there are none", () => {
+    withClient(<ApprovalDetailCard detail={base} />);
+    expect(screen.queryByText("Fills")).toBeNull();
+  });
+
+  it("renders the approval-to-fill lineage when fills exist", () => {
+    withClient(
+      <ApprovalDetailCard
+        detail={{
+          ...base,
+          order_id: 7,
+          fills: [
+            {
+              as_of: "x",
+              id: 1,
+              order_id: 7,
+              candidate_id: "c1",
+              action: "SELL",
+              filled_qty: 1,
+              avg_price: 3.2,
+              commission: 0.65,
+              is_live: false,
+              filled_at: "2026-09-01T09:00:00Z",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Fills")).toBeDefined();
+    expect(screen.getByText("SELL")).toBeDefined();
+    expect(screen.getByText("$3.20")).toBeDefined();
   });
 
   it("renders a not-found state with a link back to the list", () => {

@@ -24,11 +24,18 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body className="bg-background text-content font-sans antialiased">
+      <body
+        className="bg-background text-content font-sans antialiased"
+        suppressHydrationWarning
+      >
         <Providers>
-          <div className="flex min-h-screen">
+          {/* h-screen + overflow-hidden on the row, rather than min-h-screen on a page that
+              scrolls as one document, is what lets Rail and main scroll independently below -
+              Rail pins in place (its own overflow-y-auto, only relevant once its nav list
+              outgrows the viewport) while main scrolls through a page's content. */}
+          <div className="flex h-screen overflow-hidden">
             <Rail />
-            <main className="flex-1 overflow-x-hidden">{children}</main>
+            <main className="flex-1 overflow-y-auto overflow-x-hidden">{children}</main>
           </div>
         </Providers>
       </body>

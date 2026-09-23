@@ -1,4 +1,15 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
+
+// DecideControls (lib/commands.ts) persists in-flight commands to localStorage
+// keyed by approval id. Test files reuse the same small set of approval ids
+// (1, 41, 42, ...) across cases, and jsdom's localStorage is NOT reset between
+// tests on its own — without this, a command persisted by one test would leak
+// into the next test's fresh mount of the same approval id and corrupt its
+// initial state.
+afterEach(() => {
+  localStorage.clear();
+});
 
 // jsdom has no matchMedia. Components query it for prefers-reduced-motion;
 // a permissive stub lets tests override via vi.stubGlobal or run with the

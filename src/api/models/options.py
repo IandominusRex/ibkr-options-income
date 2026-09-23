@@ -59,6 +59,21 @@ class AlternativeStrike(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class FillSummary(Envelope):
+    """One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)
+    because ``ApprovalDetail`` below references it for the approval-to-fill lineage."""
+
+    id: int
+    order_id: int
+    candidate_id: str
+    action: str
+    filled_qty: float
+    avg_price: float
+    commission: float | None = None
+    is_live: bool
+    filled_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Approvals (Task 2.1)
 # ---------------------------------------------------------------------------
@@ -84,10 +99,12 @@ class ApprovalSummary(Envelope):
         None  # per share, always; null only for a pruned snapshot with no premium
     )
     blended_score: float | None = None
+    created_at: datetime  # when this approval was raised — never `as_of`, a per-request stamp
     expires_at: datetime | None = None
     decided_at: datetime | None = None
     order_state: str | None = None  # joined from OrderRow when one exists
     source: ApprovalSourceLit  # derived from the candidate's run_id prefix
+    review: ClaudeReviewPayload | None = None  # why_attractive/risks preview for list triage
 
 
 class ApprovalDetail(ApprovalSummary):
@@ -96,8 +113,9 @@ class ApprovalDetail(ApprovalSummary):
     snapshot: dict  # the frozen payload the human was shown
     ideal: IdealZonePayload | None = None  # lo, hi, min_credit, from RiskVerdictRow
     gate_reasons: list[str] = Field(default_factory=list)  # humanised
-    review: ClaudeReviewPayload | None = None  # the five fields, separately, never one blob
     alternatives: list[AlternativeStrike] = Field(default_factory=list)
+    order_id: int | None = None  # the order this approval produced, when one exists
+    fills: list[FillSummary] = Field(default_factory=list)  # fills against that order, oldest first
 
 
 class ApprovalListResponse(Envelope):
@@ -140,6 +158,18 @@ class AssessedResponse(Envelope):
     groups: list[AssessedGroup] = Field(default_factory=list)
 
 
+class AssessedRunSummary(Envelope):
+    """One past full-scan run, for browsing history in the Assessed tab."""
+
+    run_id: str
+    computed_at: datetime | None = None
+    candidate_count: int
+
+
+class AssessedRunsResponse(Envelope):
+    runs: list[AssessedRunSummary] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Orders and fills (Task 2.3)
 # ---------------------------------------------------------------------------
@@ -168,18 +198,6 @@ class OrderSummary(Envelope):
 
 class OrderListResponse(Envelope):
     orders: list[OrderSummary] = Field(default_factory=list)
-
-
-class FillSummary(Envelope):
-    id: int
-    order_id: int
-    candidate_id: str
-    action: str
-    filled_qty: float
-    avg_price: float
-    commission: float | None = None
-    is_live: bool
-    filled_at: datetime
 
 
 class FillListResponse(Envelope):

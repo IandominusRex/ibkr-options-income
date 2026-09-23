@@ -227,10 +227,15 @@ def portfolio_summary(user: OwnerUser, db: TradingDb) -> PortfolioSummaryRespons
             dte_threshold=dte_threshold,
         )
     )
+    # `p.right == "P"` (not `(p.right or "P") == "P"`) — a short option with an
+    # unknown right (malformed snapshot data) must not be silently assumed to be
+    # a put and folded into this exposure figure; excluded is the honest answer,
+    # matching this file's "never guess from missing data" discipline elsewhere
+    # (_moneyness, the OptionLeg/right/strike fields).
     cash_secured = sum(
         float(p.strike or 0.0) * abs(p.position) * 100
         for p in positions
-        if p.sec_type == "OPT" and p.position < 0 and (p.right or "P") == "P"
+        if p.sec_type == "OPT" and p.position < 0 and p.right == "P"
     )
     # Net delta: options contribute delta * position * 100, stock its share count —
     # the same Σ the EOD summary already computes (eod_report.py).
@@ -620,7 +625,10 @@ def _option_legs(
         # a fabricated pair would guess "otm" against a strike that is not real.
         right = p.right.value if p.right is not None else None
         strike = float(p.strike) if p.strike is not None else None
-        moneyness = _moneyness(spot, right, strike) if (right is not None and strike) else None
+        # `strike is not None`, not a truthy check — a genuine (if unrealistic)
+        # $0.00 strike must not be treated the same as "strike unknown", matching
+        # portfolio_calendar's equivalent guard.
+        moneyness = _moneyness(spot, right, strike) if (right is not None and strike is not None) else None
         legs.append(
             OptionLeg(
                 as_of=as_of,

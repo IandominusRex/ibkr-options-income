@@ -261,16 +261,22 @@ async def execute_candidate(
                 candidate.candidate_id,
                 live_verdict.reasons,
             )
+            from src.notify.formatters import _humanize_reject_reason
+
+            # Humanised, not the raw codes — a bare Python list repr like
+            # "['live_premium_collapse']" is what row.detail used to read, and the
+            # web Orders table renders this field verbatim.
+            reasons_text = ", ".join(_humanize_reject_reason(r) for r in live_verdict.reasons)
             with session_scope() as session:
                 row = session.get(OrderRow, order_id)
                 if row:
                     row.state = OrderState.REJECTED
-                    row.detail = f"Live re-validation failed: {live_verdict.reasons}"
+                    row.detail = f"Live re-validation failed: {reasons_text}"
             await bot.send_message(
                 chat_id=chat_id,
                 text=(
                     f"Order NOT placed — {candidate.underlying} failed live re-validation "
-                    f"({', '.join(live_verdict.reasons)})."
+                    f"({reasons_text})."
                 ),
             )
             from src.notify.sender import send_order_notification
@@ -280,7 +286,7 @@ async def execute_candidate(
                     "failed",
                     candidate=candidate,
                     order_id=order_id,
-                    failure_reason=f"Live re-validation failed: {', '.join(live_verdict.reasons)}",
+                    failure_reason=f"Live re-validation failed: {reasons_text}",
                 )
             except Exception:
                 log.exception(

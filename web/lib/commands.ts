@@ -59,6 +59,81 @@ export async function submitUniverseCommand(
 
 const TERMINAL: CommandStatus["status"][] = ["applied", "failed", "expired"];
 
+// Per-subject in-flight command, persisted to localStorage so it survives a full
+// page reload and is visible from any surface that mounts the same decide-flow
+// control for that subject — not just a tab-switch remount. Only ever holds a
+// command whose `status` is still "pending" (including one awaiting the live
+// second confirmation); a terminal command is removed, not stored.
+//
+// The "subject" key is a plain approval id (number) for <DecideControls/> (the
+// approval card and the detail page share one key per approval, unchanged
+// format for backward compatibility with what's already on disk) or a
+// namespaced string for the other two decide-flow controls, which aren't keyed
+// by approval id at all: <ShortsRow/> proposes a roll keyed by
+// `short:{position_symbol}`, <AssessedRow/> promotes keyed by
+// `promote:{candidate_id}`. The namespace prefix keeps these from ever
+// colliding with an approval id or each other; `loadAllPersistedCommands`
+// (approval ids only, for the options page's `submitted` map) already skips
+// them for free since a namespaced key doesn't parse as a number.
+const COMMAND_STORAGE_PREFIX = "ibkr-options:command:";
+
+function commandStorageKey(subject: string | number): string {
+  return `${COMMAND_STORAGE_PREFIX}${subject}`;
+}
+
+export function loadPersistedCommand(subject: string | number): CommandStatus | null {
+  try {
+    const raw = localStorage.getItem(commandStorageKey(subject));
+    if (!raw) return null;
+    return JSON.parse(raw) as CommandStatus;
+  } catch {
+    // Convenience persistence only — a private window, cleared site data, or a
+    // browser that blocks storage access must not break the decide flow.
+    return null;
+  }
+}
+
+export function savePersistedCommand(
+  subject: string | number,
+  command: CommandStatus | null,
+): void {
+  try {
+    if (command === null) {
+      localStorage.removeItem(commandStorageKey(subject));
+    } else {
+      localStorage.setItem(commandStorageKey(subject), JSON.stringify(command));
+    }
+  } catch {
+    // Best-effort only, see loadPersistedCommand.
+  }
+}
+
+/** Every approval id with a still-in-flight persisted command, keyed by id. Used
+ * to seed the options page's `submitted` map on mount so a card's tab placement
+ * (Approvals vs Submitted) survives a reload, not just its receipt. */
+export function loadAllPersistedCommands(): Map<number, CommandStatus> {
+  const out = new Map<number, CommandStatus>();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(COMMAND_STORAGE_PREFIX)) continue;
+      const id = Number(key.slice(COMMAND_STORAGE_PREFIX.length));
+      if (!Number.isFinite(id)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const command = JSON.parse(raw) as CommandStatus;
+        if (command.status === "pending") out.set(id, command);
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // Best-effort only, see loadPersistedCommand.
+  }
+  return out;
+}
+
 export function useCommandStatus(id: number | null): UseQueryResult<CommandStatus> {
   return useQuery<CommandStatus>({
     queryKey: ["command", id],

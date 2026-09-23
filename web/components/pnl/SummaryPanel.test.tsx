@@ -64,8 +64,20 @@ function aSummaryResponse(summary: PnlSummaryData) {
 }
 
 describe("SummaryPanel", () => {
+  it("fetches with the exact qsString the shell composed, not book alone", async () => {
+    // Regression: the panel used to build its own `?book=${book}` query,
+    // ignoring symbol/strategy/outcome/since/until — so filtering the ledger
+    // left the headline totals above it unfiltered, silently disagreeing with
+    // the rows the operator was looking at.
+    renderWithQuery(<SummaryPanel book="paper" qsString="symbol=NVDA&book=paper" />, {
+      "/pnl/summary": aSummaryResponse(aSummary()),
+    });
+    await screen.findByText("Realized total");
+    expect(apiFetchMock.mock.calls.at(-1)?.[0]).toBe("/pnl/summary?symbol=NVDA&book=paper");
+  });
+
   it("renders the headline figures", async () => {
-    renderWithQuery(<SummaryPanel book="paper" />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(aSummary()),
     });
     expect(await screen.findByText("Realized total")).toBeInTheDocument();
@@ -77,7 +89,7 @@ describe("SummaryPanel", () => {
   });
 
   it("renders an unknown win rate as unknown, not as zero percent", async () => {
-    renderWithQuery(<SummaryPanel book="paper" />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(aSummary({ win_rate: null, n_closed: 0, n_open: 1 })),
     });
     await screen.findByText("Unrealized total");
@@ -97,7 +109,7 @@ describe("SummaryPanel", () => {
       }
       throw new Error(`no mock for ${path}`);
     });
-    withClient(<SummaryPanel book="all" onBookChange={() => {}} />);
+    withClient(<SummaryPanel book="all" qsString="book=all" onBookChange={() => {}} />);
     // The operator has paper and live trades and needs to pick one: a
     // labelled group of book choices, in plain words, no alert chrome.
     expect(
@@ -108,14 +120,14 @@ describe("SummaryPanel", () => {
   });
 
   it("renders the gross qualifier on the headline realised figure when commissions are incomplete", async () => {
-    renderWithQuery(<SummaryPanel book="paper" />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(aSummary({ commissions_complete: false })),
     });
     expect(await screen.findByText(/gross/i)).toBeInTheDocument();
   });
 
   it("renders one line of text for an empty book", async () => {
-    renderWithQuery(<SummaryPanel book="paper" />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(
         aSummary({
           realized_total: 0,
@@ -133,7 +145,7 @@ describe("SummaryPanel", () => {
 
   it("links best and worst to their legs in the ledger", async () => {
     const onSelectLeg = vi.fn();
-    renderWithQuery(<SummaryPanel book="paper" onSelectLeg={onSelectLeg} />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" onSelectLeg={onSelectLeg} />, {
       "/pnl/summary": aSummaryResponse(
         aSummary({
           best: {
@@ -201,7 +213,7 @@ describe("SummaryPanel", () => {
   });
 
   it("renders best/worst as plain text, not a control, when nothing can select a leg", async () => {
-    renderWithQuery(<SummaryPanel book="paper" />, {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
       "/pnl/summary": aSummaryResponse(
         aSummary({
           best: {

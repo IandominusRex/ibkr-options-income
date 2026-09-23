@@ -21,7 +21,7 @@ export function Rail() {
   });
 
   return (
-    <nav className="w-[260px] shrink-0 border-r border-border bg-surface px-3 py-4">
+    <nav className="w-[260px] shrink-0 overflow-y-auto border-r border-border bg-surface px-3 py-4">
       <div className="px-3 pb-6 font-mono text-sm text-muted">Research</div>
       <ul className="space-y-1">
         {(data?.sections ?? []).map((s) => (

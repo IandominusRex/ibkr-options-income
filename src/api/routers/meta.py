@@ -45,12 +45,15 @@ class NavResponse(Envelope):
 # "options" flipped to available=True in P2 M2 (the console ships read surfaces).
 # "portfolio" flipped to available=True in P3 M3 (the console ships read surfaces).
 # "pnl" flipped to available=True in P4 M5 (the P&L surfaces ship).
+# "explain" added alongside the P3-P4 M6 System tab: a static, read-nothing walkthrough of
+# how the pipeline works, not a data surface, so it carries no fallback/degraded story.
 _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("research", "Research", True, None),
     ("options", "Options", True, None),
     ("portfolio", "Portfolio", True, None),
     ("pnl", "P&L", True, None),
     ("universe", "Universe", True, None),
+    ("explain", "System Explanation", True, None),
 ]
 
 

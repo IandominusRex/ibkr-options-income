@@ -108,11 +108,25 @@ function failedReason(
   command: CommandStatus,
 ): { primary: string; extra: string[] } | null {
   const result = command.result as
-    | { reason?: string; detail?: { reasons?: string[]; reason?: string } }
+    | {
+        reason?: string;
+        detail?: { reasons?: string[]; reason?: string; blockers?: string[] };
+      }
     | null;
   if (!result || !("reason" in result) || result.reason === undefined) return null;
+  // `detail.reasons` (promote's gate_rejected) and `detail.blockers`
+  // (set_autonomy's promotion_refused, command_drain.py::_set_autonomy) are
+  // two different key names for the same shape from two different command
+  // handlers — without checking both, a refused promotion rendered
+  // "Promotion refused" with every actual blocker silently dropped, telling
+  // the operator nothing about what to fix.
   const detailReasons =
-    result.detail?.reasons ?? (result.detail?.reason ? [result.detail.reason] : []);
+    result.detail?.reasons ??
+    result.detail?.blockers ??
+    (result.detail?.reason ? [result.detail.reason] : []);
+  // Blockers are already full sentences, not snake_case codes — humaniseReason
+  // is a no-op passthrough for text with no underscores, so it's safe to reuse
+  // for both without a second mapping.
   return { primary: humaniseReason(result.reason), extra: detailReasons };
 }
 

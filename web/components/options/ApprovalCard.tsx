@@ -1,23 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { UNKNOWN, relativeAge } from "@/lib/format";
-import type { ApprovalSummary, ClaudeReviewPayload } from "./types";
+import { UNKNOWN, formatDateTime } from "@/lib/format";
+import type { CommandStatus } from "@/lib/commands";
+import type { ApprovalSummary } from "./types";
 import { DecideControls } from "./DecideControls";
 
 export function ApprovalCard({
   approval,
   drainHealthy = true,
+  initialCommand = null,
+  onApprovalSubmitted,
+  onApprovalSettled,
 }: {
   approval: ApprovalSummary;
   drainHealthy?: boolean;
+  initialCommand?: CommandStatus | null;
+  onApprovalSubmitted?: (id: number, command: CommandStatus) => void;
+  onApprovalSettled?: (id: number) => void;
 }) {
   const expiry = approval.expiry;
   const dte = expiry ? daysToExpiry(expiry) : null;
   const totalPremium =
     approval.premium != null ? approval.premium * approval.contracts * 100 : null;
-  const review = (approval as ApprovalSummary & { review?: ClaudeReviewPayload | null })
-    .review ?? null;
+  const review = approval.review;
 
   return (
     <div className="rounded-md border border-border bg-surface px-4 py-3">
@@ -31,7 +37,7 @@ export function ApprovalCard({
           </span>
           <span className="text-xs text-muted">{approval.source}</span>
         </Link>
-        <span className="text-xs text-muted">{relativeAge(approval.as_of)}</span>
+        <span className="text-xs text-muted">{formatDateTime(approval.created_at)}</span>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
@@ -67,7 +73,13 @@ export function ApprovalCard({
         </div>
       )}
 
-      <DecideControls approval={approval} drainHealthy={drainHealthy} />
+      <DecideControls
+        approval={approval}
+        drainHealthy={drainHealthy}
+        initialCommand={initialCommand}
+        onApprovalSubmitted={onApprovalSubmitted}
+        onApprovalSettled={onApprovalSettled}
+      />
     </div>
   );
 }

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from src.research.ingest.quotes import (
+    refresh_quote_for,
     refresh_quotes,
     refresh_warm_bars,
     refresh_warm_news,
@@ -68,6 +69,7 @@ def test_refresh_writes_a_quote(db, monkeypatch) -> None:
     with research_session() as s:
         s.add(RecentlyViewedRow(user_id="owner", symbol="AAPL", viewed_at=datetime.now(UTC)))
     monkeypatch.setattr("src.research.ingest.quotes.is_rth", lambda: True)
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 0)
     monkeypatch.setattr(
         "src.research.ingest.quotes.get_price_provider",
         lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 221.4)})(),
@@ -89,6 +91,115 @@ def test_a_missing_quote_does_not_write_a_row(db, monkeypatch) -> None:
     assert refresh_quotes() == 0
     with research_session() as s:
         assert s.get(QuoteRow, "AAPL") is None
+
+
+def test_change_pct_is_versus_the_prior_close_not_the_last_poll(db, monkeypatch) -> None:
+    """Regression: change_pct used to be the delta between two consecutive 15-min polls
+    (a meaningless "recent drift" number that also stayed None for a symbol's entire
+    first cycle, since there was no earlier poll to diff against). It must be the change
+    versus the most recently completed session's close, available from the first poll."""
+    with research_session() as s:
+        s.add(RecentlyViewedRow(user_id="owner", symbol="AAPL", viewed_at=datetime.now(UTC)))
+        s.add(DailyBarRow(symbol="AAPL", date=date(2026, 9, 11), close=200.0))
+    monkeypatch.setattr("src.research.ingest.quotes.today_et", lambda: date(2026, 9, 14))
+    monkeypatch.setattr("src.research.ingest.quotes.is_rth", lambda: True)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 221.4)})(),
+    )
+    assert refresh_quotes() == 1
+    with research_session() as s:
+        row = s.get(QuoteRow, "AAPL")
+        assert round(row.change_pct, 4) == round((221.4 - 200.0) / 200.0 * 100, 4)
+
+
+def test_change_pct_backfills_daily_bars_on_demand_when_missing(db, monkeypatch) -> None:
+    """A symbol with no daily_bars history yet still gets a real change_pct on its very
+    first poll — the same cold-path backfill the /bars route uses, not a bare price with
+    change_pct stuck None until the nightly warm refresh eventually runs."""
+    with research_session() as s:
+        s.add(RecentlyViewedRow(user_id="owner", symbol="TQQQ", viewed_at=datetime.now(UTC)))
+    monkeypatch.setattr("src.research.ingest.quotes.today_et", lambda: date(2026, 9, 14))
+    monkeypatch.setattr("src.research.ingest.quotes.is_rth", lambda: True)
+
+    def fake_ingest(symbol: str) -> int:
+        with research_session() as s:
+            s.add(DailyBarRow(symbol=symbol, date=date(2026, 9, 11), close=60.0))
+        return 1
+
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", fake_ingest)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 68.8)})(),
+    )
+    assert refresh_quotes() == 1
+    with research_session() as s:
+        row = s.get(QuoteRow, "TQQQ")
+        assert round(row.change_pct, 4) == round((68.8 - 60.0) / 60.0 * 100, 4)
+
+
+def test_change_pct_is_none_not_zero_when_no_prior_close_exists(db, monkeypatch) -> None:
+    """A backfill that still returns nothing (e.g. a symbol with no trading history)
+    degrades change_pct to None, never a fabricated 0%."""
+    with research_session() as s:
+        s.add(RecentlyViewedRow(user_id="owner", symbol="TQQQ", viewed_at=datetime.now(UTC)))
+    monkeypatch.setattr("src.research.ingest.quotes.today_et", lambda: date(2026, 9, 14))
+    monkeypatch.setattr("src.research.ingest.quotes.is_rth", lambda: True)
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 0)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 68.8)})(),
+    )
+    assert refresh_quotes() == 1
+    with research_session() as s:
+        row = s.get(QuoteRow, "TQQQ")
+        assert row.price == 68.8
+        assert row.change_pct is None
+
+
+def test_refresh_quote_for_seeds_a_symbol_regardless_of_rth(db, monkeypatch) -> None:
+    """The on-demand single-symbol seed is not RTH-gated — a first view must not wait
+    for market hours to get its first quote."""
+    monkeypatch.setattr("src.research.ingest.quotes.is_rth", lambda: False)
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 0)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 68.8)})(),
+    )
+    assert refresh_quote_for("TQQQ") is True
+    with research_session() as s:
+        assert s.get(QuoteRow, "TQQQ").price == 68.8
+
+
+def test_refresh_quote_for_returns_false_on_a_missing_price(db, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: None)})(),
+    )
+    assert refresh_quote_for("TQQQ") is False
+    with research_session() as s:
+        assert s.get(QuoteRow, "TQQQ") is None
+
+
+def test_refresh_quote_for_updates_an_existing_row(db, monkeypatch) -> None:
+    with research_session() as s:
+        s.add(
+            QuoteRow(
+                symbol="TQQQ",
+                price=60.0,
+                change_pct=None,
+                as_of=datetime.now(UTC),
+                source="yfinance",
+            )
+        )
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 0)
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.get_price_provider",
+        lambda: type("P", (), {"get_last_price": staticmethod(lambda sym: 68.8)})(),
+    )
+    assert refresh_quote_for("TQQQ") is True
+    with research_session() as s:
+        assert s.get(QuoteRow, "TQQQ").price == 68.8
 
 
 def test_refresh_is_a_noop_outside_rth(db, monkeypatch) -> None:

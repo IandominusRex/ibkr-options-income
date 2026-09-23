@@ -83,8 +83,9 @@ class MaterializeResult(BaseModel):
     quote_state: SectionState = SectionState.PENDING
     quote_reason: str | None = None
     # Flat inputs for the checks engine (Task 5.5): fundamentals line items plus the
-    # options/IV tier, assembled by build_metrics. None only when the symbol itself is
-    # unresolvable (no CIK); a resolvable symbol always gets a dict, even if mostly empty.
+    # options/IV tier, assembled by build_metrics. None only when the symbol has no
+    # directory row at all; a known symbol always gets a dict, even if mostly empty (a
+    # filer-less ETF included — see the cik-less branch in materialize() below).
     metrics: dict[str, float | None] | None = None
     # The check ribbon + warnings (Task 5.7), built from `metrics`. Same (data, state,
     # reason) triple as the other sections, via _section() below.
@@ -166,13 +167,29 @@ def _checks(symbol: str, metrics: dict[str, float | None], is_etf: bool) -> Chec
 
 
 def _quote(symbol: str) -> tuple[float | None, datetime | None, str | None]:
-    """Read the most recent warm-tier quote row for *symbol*.
+    """Read the most recent warm-tier quote row for *symbol*, seeding it on demand when
+    none exists yet.
 
-    Returns ``(price, as_of, reason)``. ``(None, None, reason)`` when no quote has been
-    ingested. ``as_of`` is the row's actual capture time — the API layer stamps a
-    ``Sourced`` value with it so a stale quote reads as stale, not silently as fresh.
-    Never raises — a missing quote is a section-level unavailable, not a page failure.
+    Cache-first, same contract as fundamentals: a warm row is returned straight from the
+    table, no network touched. Only a true cache miss (no row at all) falls through to
+    ``refresh_quote_for`` — the same on-demand pattern the ``/bars`` route already uses
+    for daily bars — so a symbol's first-ever view doesn't sit blank for up to 15 minutes
+    waiting on the next ``refresh_quotes`` sweep. ``refresh_quote_for`` never raises.
+
+    Returns ``(price, as_of, reason)``. ``(None, None, reason)`` when no quote could be
+    produced even after the on-demand fetch. ``as_of`` is the row's actual capture time —
+    the API layer stamps a ``Sourced`` value with it so a stale quote reads as stale, not
+    silently as fresh.
     """
+    with research_session() as session:
+        row = session.get(QuoteRow, symbol)
+        if row is not None and row.price is not None:
+            return float(row.price), row.as_of, None
+
+    from src.research.ingest.quotes import refresh_quote_for
+
+    refresh_quote_for(symbol)
+
     with research_session() as session:
         row = session.get(QuoteRow, symbol)
         if row is None or row.price is None:
@@ -264,17 +281,36 @@ def materialize(symbol: str, *, budget_seconds: float | None = None) -> Material
     # along for free from the same row — build_metrics needs it to skip XBRL extraction.
     with research_session() as session:
         row = session.get(SymbolRow, upper)
+        row_exists = row is not None
         cik = row.cik if row else None
         is_etf = bool(row.is_etf) if row else False
 
-    if not cik:
-        # No directory row means no CIK, and a queued job would never resolve. Saying
-        # "pending" here would be a lie the client renders as a spinner forever.
+    if not row_exists:
+        # No directory row at all: not even search or the watchlist could have found this
+        # symbol, and a queued job would never resolve. Saying "pending" here would be a
+        # lie the client renders as a spinner forever.
         return MaterializeResult(
             symbol=upper,
             fundamentals_state=SectionState.UNAVAILABLE,
             fundamentals_reason=_REASON_NO_FILER,
             reason=_REASON_NO_FILER,
+        )
+
+    if not cik:
+        # A known symbol (it has a directory row — search/watchlist can find it) with no
+        # CIK: a product registered under a shared trust CIK rather than its own SEC filer
+        # (config/symbol_directory_overrides.yaml documents which and why). Fundamentals
+        # can never resolve, but technicals/sentiment/news/quote/checks don't need a CIK
+        # at all, so they still run instead of the whole page going dark.
+        return _enrich(
+            upper,
+            MaterializeResult(
+                symbol=upper,
+                fundamentals_state=SectionState.UNAVAILABLE,
+                fundamentals_reason=_REASON_NO_FILER,
+                reason=_REASON_NO_FILER,
+            ),
+            is_etf=is_etf,
         )
 
     # Warm path: serve from the cache, no network.
