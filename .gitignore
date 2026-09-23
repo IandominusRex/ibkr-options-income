@@ -24,6 +24,7 @@ data/sentiment_history.json
 data/backups/
 logs/*.log
 logs/*.log.*
+logs/*.out
 *.log
 
 # OS / editor
@@ -43,8 +44,11 @@ logs/*.log.*
 !data/.gitkeep
 !logs/.gitkeep
 
+# Node (any level - web/, root, or a stray install from running npm/vite
+# outside web/ by mistake)
+node_modules/
+
 # Web (Next.js)
-web/node_modules
 web/.next
 web/.env.local
 web/out
