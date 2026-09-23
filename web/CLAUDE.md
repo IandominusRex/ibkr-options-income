@@ -246,13 +246,25 @@ components/
   shell/            Rail, RailSection, SystemStatusCard (react-query on GET /system/status,
                     `refetchInterval` 20s; renders one row per system with a state dot -
                     `bg-gain` for ok, a `border-loss` outline for down, `.hatch` texture
-                    for both degraded and unknown, per this app's tri-tone rule; a row
-                    with `log_key: null` is not clickable; a failed fetch renders one
-                    `text-unknown` line, "Status unavailable", instead of the row list),
+                    for both degraded and unknown, per this app's tri-tone rule - and,
+                    below the label on every row (not just the clickable ones), a second
+                    muted line rendering that row's `detail` text, since `degraded` and
+                    `unknown` are distinguished only by it; a row with `log_key: null` is
+                    not clickable; a failed fetch renders one `text-unknown` line, "Status
+                    unavailable", instead of the row list),
                     SystemLogPanel (the per-row slide-over: focus-trapped `role="dialog"`
-                    matching `ConfirmAction`'s pattern, fetches `GET /system/{log_key}/log`
-                    on open only - no auto-poll inside it - with a Warnings+/Info+ toggle
-                    and a manual Refresh button; an empty tail renders "No log file yet")
+                    matching `ConfirmAction`'s pattern, rendered behind a `ConfirmAction`-
+                    style `bg-scrim` backdrop so the inert-background implied by
+                    `aria-modal` is also true visually, and mounted with `key={openRow.key}`
+                    so switching rows never reuses stale level/focus state across an
+                    instance; fetches `GET /system/{log_key}/log` on open only - no
+                    auto-poll inside it - with a Warnings+/Info+ toggle and a manual
+                    Refresh button; a fetch error renders "Could not load the log";
+                    otherwise the response's `file_exists` flag picks the empty-state
+                    message - "No log file yet" when the file itself is missing, "No
+                    matching lines at this level" when it exists but nothing matched -
+                    so a healthy daemon's clean log is never reported as if it had never
+                    run)
   search/           CommandPalette (⌘K/Escape as before; controlled if `open`/
                     `onOpenChange` props are passed — the home page's visible search-bar
                     button drives it that way — otherwise falls back to its own internal
