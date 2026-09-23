@@ -182,3 +182,38 @@ async def test_a_hung_handler_does_not_advance_the_heartbeat_before_failing(
     # The heartbeat advances despite the failure — the cycle completed, the handler
     # only failed its own command.
     assert after != before
+
+
+@pytest.mark.asyncio
+async def test_ibkr_connected_is_false_when_ib_is_none(drain_env) -> None:
+    from src.notify.command_drain import drain_once
+    from src.storage.system_settings import COMMAND_DRAIN_IBKR_CONNECTED_KEY, get_setting
+
+    await drain_once(None, drain_env.bot, "chat")
+    assert get_setting(COMMAND_DRAIN_IBKR_CONNECTED_KEY, "") == "false"
+
+
+@pytest.mark.asyncio
+async def test_ibkr_connected_is_true_when_ib_reports_connected(drain_env) -> None:
+    from unittest.mock import MagicMock
+
+    from src.notify.command_drain import drain_once
+    from src.storage.system_settings import COMMAND_DRAIN_IBKR_CONNECTED_KEY, get_setting
+
+    fake_ib = MagicMock()
+    fake_ib.isConnected.return_value = True
+    await drain_once(fake_ib, drain_env.bot, "chat")
+    assert get_setting(COMMAND_DRAIN_IBKR_CONNECTED_KEY, "") == "true"
+
+
+@pytest.mark.asyncio
+async def test_ibkr_connected_is_false_when_ib_reports_disconnected(drain_env) -> None:
+    from unittest.mock import MagicMock
+
+    from src.notify.command_drain import drain_once
+    from src.storage.system_settings import COMMAND_DRAIN_IBKR_CONNECTED_KEY, get_setting
+
+    fake_ib = MagicMock()
+    fake_ib.isConnected.return_value = False
+    await drain_once(fake_ib, drain_env.bot, "chat")
+    assert get_setting(COMMAND_DRAIN_IBKR_CONNECTED_KEY, "") == "false"

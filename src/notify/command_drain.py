@@ -46,7 +46,7 @@ from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, RiskVerdictRow
 from src.storage.orders import active_order_for
 from src.storage.portfolio_snapshots import save_portfolio_snapshot
-from src.storage.system_settings import set_setting
+from src.storage.system_settings import COMMAND_DRAIN_IBKR_CONNECTED_KEY, set_setting
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +144,13 @@ async def drain_once(ib: IB | None, bot: Any, chat_id: str) -> int:
     set_setting(
         COMMAND_DRAIN_HEARTBEAT_KEY,
         datetime.now(UTC).isoformat(),
+    )
+    # IBKR-connected flag for the web status card's "IBKR connection" row (GET
+    # /system/status) — written alongside the heartbeat, from the same `ib` this
+    # drain cycle ran with, so a stale flag can never outlive a fresh heartbeat.
+    set_setting(
+        COMMAND_DRAIN_IBKR_CONNECTED_KEY,
+        "true" if ib is not None and ib.isConnected() else "false",
     )
     return processed
 
