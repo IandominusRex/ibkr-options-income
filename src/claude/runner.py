@@ -190,6 +190,7 @@ def _review_candidates_cli(
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
     # when the candidate list + history grows large.
     cmd = _build_cmd(cfg)
+    candidate_ids = [c.candidate_id for c in candidates]
 
     for attempt in range(cfg.max_retries + 1):
         try:
@@ -219,12 +220,12 @@ def _review_candidates_cli(
             if not result.stdout:
                 continue  # transient — retry
             # stdout present despite non-zero rc: try to parse it
-            reviews = parse_claude_output(result.stdout)
+            reviews = parse_claude_output(result.stdout, candidate_ids)
             if reviews:
                 return reviews
             continue
 
-        reviews = parse_claude_output(result.stdout)
+        reviews = parse_claude_output(result.stdout, candidate_ids)
         if reviews:
             _log_cost(result.stdout)
             return reviews

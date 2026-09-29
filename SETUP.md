@@ -1137,6 +1137,22 @@ python -m scripts.evaluate_scores
 python -m scripts.evaluate_scores --since 2026-05-01 --json
 ```
 
+**Ollama review quality** (Task 10; read-only, no DB writes — replays stored `candidates` rows
+through the local reviewer to validate a `claude.ollama_model` swap or a prompt change before
+committing to it in `config/settings.yaml`):
+
+```bash
+python -m scripts.review_eval --model qwen3.5:4b --runs 2
+python -m scripts.review_eval --model qwen3.5:9b --ids <candidate_id> --runs 1
+python -m scripts.review_eval --model qwen3:8b --since 2026-09-01 --limit 5
+```
+
+Prints, per run, how many of the requested candidates came back reviewed, each one's
+verdict/evidence/confidence, then the aggregate verdict distribution and the empty-`evidence`
+rate. Bypasses `ollama_runner`'s circuit breaker and `claude.enabled` (calls the prompt builder +
+`_generate` + parser directly), so it works even while the production circuit is open. See "Model
+choice" in §14 below for the Task 10 evaluation results this produced.
+
 **Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
 unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
 `disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), and `model` (pins the
@@ -1199,15 +1215,16 @@ strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.co
 
 **This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
 access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
-against a local `qwen3:8b` model. The verdict learning loop (§13 — ledger, reconciliation,
-score-vs-outcome analysis) is unaffected since it doesn't call Claude at all.
+against a local `qwen3.5:4b` model (Task 10, 2026-09-29 — see "Model choice" below). The verdict
+learning loop (§13 — ledger, reconciliation, score-vs-outcome analysis) is unaffected since it
+doesn't call Claude at all.
 
 **1. Install Ollama and pull a model:**
 
 ```bash
 brew install ollama
 ollama serve &                       # or: brew services start ollama
-ollama pull qwen3:8b                 # ~5GB; comfortable headroom on an 18GB Mac alongside TWS. qwen3:14b (~9GB) if you have the RAM.
+ollama pull qwen3.5:4b               # ~3.4GB; the active model — see "Model choice" below.
 ```
 
 **2. Choose a backend in `config/settings.yaml → claude`:**
@@ -1216,7 +1233,7 @@ ollama pull qwen3:8b                 # ~5GB; comfortable headroom on an 18GB Mac
 claude:
   backend: "ollama"           # "cli" | "ollama" (active here) | "cli_then_ollama"
   ollama_host: "http://localhost:11434"
-  ollama_model: "qwen3:8b"
+  ollama_model: "qwen3.5:4b"
   ollama_timeout_seconds: 120
   ollama_num_ctx: 16384       # context window (tokens) — must cover prompt + JSON output
   ollama_keep_alive: "10m"    # keep model resident between a scan's successive calls
@@ -1232,29 +1249,64 @@ claude:
   automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
   Claude to be the primary reviewer again.
 
-**Model choice.** `qwen3:8b` (~5GB) is the active model here — it leaves comfortable memory
-headroom on an 18GB Mac alongside TWS/Gateway, and `ollama_runner.py` sends `think: false` so its
-hybrid-reasoning `<think>` traces don't fight the `format: "json"` output. Alternatives:
-- **`qwen3:14b`** (~9GB, Q4_K_M) — more reasoning depth; use it if you have the RAM (needs
-  ~16–18GB free) and want stronger multi-signal judgment.
-- **`phi4:14b`** — similar ~9GB footprint, strong structured-output/instruction-following, and
-  (not being a hybrid-reasoning model) has no thinking-mode/JSON interaction to worry about — a
-  simpler, more predictable choice if `qwen3`'s output proves flaky.
+**Model choice (Task 10, re-decided 2026-09-29).** The review path is now **schema-constrained**
+(`ollama_runner._generate` sends Ollama's `format` as a JSON Schema — `REVIEW_SCHEMA` — not the
+bare `format: "json"` string) and the prompt carries a deterministic **FACTS** block (`F1`-`F7`:
+moneyness, breakeven cushion, earnings-vs-expiry timing, fair-value edge, IV rank/RV) plus a
+**DECISION RUBRIC** that defaults to `"sell"` on a gate-passing candidate unless a specific fact
+argues otherwise — see the `src/claude/` table in `ARCHITECTURE.md`. This fixed the pre-Task-10
+failure mode: 6/6 single-candidate reviews came back `"wait"` and a 3-candidate prompt reviewed
+only 1/3 candidates. Re-evaluated with `scripts/review_eval.py` (§13 below) against real stored
+candidates (7 rows, all META/AMZN CSPs) at 2 runs each:
+
+| Model | Download | Reviewed | Verdicts | Empty evidence | Cold-start (first call) |
+|---|---|---|---|---|---|
+| `qwen3:8b` (was active) | 5.2 GB | 7/7 (warm run) | all `sell` | 0/7 | **timed out** (>120s) |
+| **`qwen3.5:4b` (active now)** | **3.4 GB** | **14/14 (both runs)** | all `sell` | **0/14** | **80.7s — no timeout** |
+| `qwen3.5:9b` | 6.6 GB | 7/7 (warm run) | 5 sell / 1 wait / 1 skip | 0/7 | timed out (>120s) |
+| `gemma4:e4b-it-qat` | 6.1 GB | 14/14 (both runs) | all `sell` | 0/14 | 76.8s — no timeout |
+
+`qwen3.5:4b` is the smallest model, met every acceptance criterion in **every** run including a
+cold start (the other 6-9 GB models needed a warm model already resident to finish inside
+`ollama_timeout_seconds: 120`), and a spot-checked full review (see `STATUS.md`) correctly read an
+OTM put as OTM and a post-expiry earnings date as no-risk — the two specific misreadings Task 10
+set out to fix. It also frees ~1.8GB vs the prior `qwen3:8b`. Alternatives:
+- **`qwen3.5:9b`** — showed more verdict diversity (sell/wait/skip) on the same candidates,
+  arguably more nuanced judgment, but at 2x the download and a cold load that blew the 120s
+  timeout in this environment (14 GB RSS already in use, 7/8 GB swap in use before any model
+  loads) — a worse fit for the RAM-constrained M3 Pro this runs on.
+- **`gemma4:e4b-it-qat`** — comparable results to `qwen3.5:4b` (14/14 reviewed, 0 empty evidence,
+  no cold-start timeout) but 1.8x the download for no measured quality gain over the smaller model.
+- **`qwen3:14b`** — ruled out without testing: ~9.3GB weights + ~2.7GB KV cache at 16k context
+  (~12GB) exceeds what's free on this Mac.
+
+**`think: true` was tried and rejected:** it is hardcoded `false` in `ollama_runner._generate`
+(hybrid-reasoning `<think>` traces otherwise fight the schema constraint and bloat latency). A
+manual test with `think: true` on `qwen3.5:4b` against the same 7-candidate prompt **did not
+complete within 180s** (`httpx.ReadTimeout`) — well past `ollama_timeout_seconds: 120` — so it
+stays off.
 
 **Expectations:** a small local model is noticeably less reliable at nuanced multi-signal judgment
-than Claude — expect more conservative (`wait`) verdicts and occasional validation failures (which
-fail soft to `[]`/`None`, same as a CLI failure). `format: "json"` constrains Ollama's output to
-valid JSON, but schema-validity (matching `ClaudeReview`/`RollReview`) still depends on the model
-following the prompt's instructions. `ollama_runner.py` also raises `num_ctx` to `16384` (config
-`ollama_num_ctx`, vs Ollama's 4096 default): the requested window must cover the *whole prompt plus
-the generated JSON*, or Ollama silently left-truncates the prompt (dropping the universe context +
-candidates at the start) and/or cuts the output mid-JSON — both yield unparseable output and
-dropped reviews. A worst-case full scan (10 candidates + 30 memory rows + VIX + spots) measures
-~6.3k input tokens; 10 JSON verdicts add ~1.5–2.5k, so 8192 was too tight. Lower `ollama_num_ctx`
-to `8192` if `qwen3:8b` OOMs on an 18 GB Mac (a single-ticker `/scan` prompt is much smaller and
-fits comfortably). `ollama_keep_alive` (default `10m`) keeps the model resident so a scan's
-successive calls don't each pay a reload. Latency is typically 5–40s per call on Apple Silicon for
-an 8B model, depending on prompt length and memory pressure.
+than Claude — expect occasional validation failures (which fail soft to `[]`/`None`, same as a CLI
+failure). Schema-constrained `format` grammar-forces valid JSON matching the schema shape, but the
+*content* (which facts the model actually reasons from) still depends on the model following the
+prompt's DECISION RUBRIC — `evidence` being non-empty is a rough proxy, not a guarantee.
+`ollama_runner.py` sets `num_ctx` to `16384` (config `ollama_num_ctx`) — the requested window must
+cover the *whole prompt plus the generated JSON*, or Ollama silently left-truncates the prompt
+(dropping the universe context + candidates at the start) and/or cuts the output mid-JSON — both
+yield unparseable output and dropped reviews. **Measured 2026-09-29** (post-Task-10 prompt, which
+added the FACTS/rubric text): the real 7-candidate full-scan prompt above already used
+**8,413 prompt tokens** — `8192` (an earlier lower value this doc used to suggest as a RAM-saving
+option) would already silently truncate it, so **do not lower `ollama_num_ctx` below 16384** with
+the current prompt; 16384 leaves ~8k tokens of headroom for the generated JSON. Lower it only if
+you also verify (`prompt_eval_count` in the raw `/api/generate` response) that your own longest
+prompt still fits. `ollama_keep_alive` (default `10m`) keeps the model resident so a scan's
+successive calls don't each pay a reload — kept at `10m` rather than shortened to `2m`: a cold
+load of the 6-9 GB alternatives measured above blew the 120s timeout outright under this Mac's
+memory pressure, and even the active 4B model's cold load (80.7s) leaves too little margin to
+risk on every 15-minute cycle. Latency is typically 50-100s per call on Apple Silicon for a
+4-9B model with a 7-candidate prompt, depending on prompt length, cold-vs-warm load, and memory
+pressure.
 
 ---
 

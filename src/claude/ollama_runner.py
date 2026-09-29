@@ -44,6 +44,49 @@ AnalyticsMap = dict[str, tuple[IVStats, TechnicalStats, FundamentalStats]]
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Structured output (Task 10) — a JSON Schema for `{"reviews": [ClaudeReview-shaped, ...]}`.
+# Ollama's `format` accepts a JSON Schema (not just the string "json") and grammar-constrains
+# every generated token to match it, which is far more reliable than `format: "json"` alone at
+# getting one object per requested candidate with the exact field names/types the parser
+# expects — the old "always says wait" / dropped-candidate behaviour traced back to the model
+# improvising shape under the unconstrained mode. `_generate` defaults to this for the review
+# path; roll/EOD calls pass their own schema (or the bare `"json"` string) since their payload
+# is a single object the shared parser already tolerates either way.
+# ---------------------------------------------------------------------------
+_REVIEW_ITEM = {
+    "type": "object",
+    "properties": {
+        "candidate_id": {"type": "string"},
+        "priority": {"type": "integer"},
+        "recommendation": {"type": "string", "enum": ["sell", "wait", "skip"]},
+        "why_attractive": {"type": "string"},
+        "risks": {"type": "string"},
+        "tradeoffs": {"type": "string"},
+        "assignment_considerations": {"type": "string"},
+        "rolling_considerations": {"type": "string"},
+        "summary": {"type": "string"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number"},
+    },
+    "required": [
+        "candidate_id",
+        "priority",
+        "recommendation",
+        "why_attractive",
+        "risks",
+        "tradeoffs",
+        "assignment_considerations",
+        "summary",
+        "evidence",
+    ],
+}
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {"reviews": {"type": "array", "items": _REVIEW_ITEM}},
+    "required": ["reviews"],
+}
+
+# ---------------------------------------------------------------------------
 # Circuit breaker — suppresses per-cycle noise when Ollama is persistently broken
 # ---------------------------------------------------------------------------
 # After _CIRCUIT_THRESHOLD consecutive failures (connection error OR unparseable
@@ -108,11 +151,19 @@ def probe_ollama() -> tuple[bool, str]:
     )
 
 
-def _generate(prompt: str, cfg: object) -> str | None:
+def _generate(prompt: str, cfg: object, schema: dict | str | None = REVIEW_SCHEMA) -> str | None:
     """POST to Ollama's `/api/generate`. Returns the model's response text, or None on failure.
 
+    `format` grammar-constrains the model's output to `schema`. Defaults to `REVIEW_SCHEMA` — a
+    JSON Schema for `{"reviews": [...]}` — since the review path is the dominant caller and
+    schema-constrained output (Ollama >=0.5) is materially more reliable than the bare
+    `format: "json"` mode at producing one object per requested candidate with the exact field
+    names/types the parser expects. Roll and EOD callers pass their own schema, or `"json"` (the
+    prior unconstrained-shape mode) since their payload is a single object the shared parser
+    already tolerates.
+
     `think: False` disables hybrid-reasoning models' (e.g. qwen3) <think> traces — they're slow
-    and tend to fight the `format: "json"` grammar constraint. Ollama ignores the field for
+    and tend to fight the JSON/schema grammar constraint. Ollama ignores the field for
     models that don't support it. `num_ctx` is raised from Ollama's 4096 default because the
     strategist prompt (universe context + history + active skills) plus the generated JSON
     routinely exceeds it; an undersized window silently truncates the prompt and/or the output.
@@ -122,7 +173,7 @@ def _generate(prompt: str, cfg: object) -> str | None:
     body = {
         "model": cfg.ollama_model,  # type: ignore[attr-defined]
         "prompt": prompt,
-        "format": "json",
+        "format": schema,
         "stream": False,
         "think": False,
         "keep_alive": cfg.ollama_keep_alive,  # type: ignore[attr-defined]
@@ -186,7 +237,7 @@ def review_candidates(
         _record_failure()
         return []
 
-    reviews = parse_ollama_review_output(raw)
+    reviews = parse_ollama_review_output(raw, [c.candidate_id for c in candidates])
     if not reviews:
         log.warning("ollama: output parsed to empty list")
         _record_failure()
@@ -209,7 +260,7 @@ def review_roll(alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote) -> 
 
     prompt = build_roll_prompt(alert, pos, quote)
 
-    raw = _generate(prompt, cfg)
+    raw = _generate(prompt, cfg, schema="json")
     if raw is None:
         _record_failure()
         return None
@@ -237,7 +288,7 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
 
     prompt = build_eod_prompt(summary)
 
-    raw = _generate(prompt, cfg)
+    raw = _generate(prompt, cfg, schema="json")
     if raw is None:
         _record_failure()
         return None

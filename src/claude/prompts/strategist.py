@@ -10,6 +10,7 @@ from src.common.schemas import (
     FundamentalStats,
     IVStats,
     MarketConditions,
+    OptionRight,
     TechnicalStats,
     TradeCandidate,
 )
@@ -304,6 +305,97 @@ def _ideal_zone_lines(c: TradeCandidate) -> list[str]:
     return lines
 
 
+def _iv_bucket(rank: float) -> str:
+    """TastyTrade-style IV rank bucket used by F5 below: <30 thin, 30-60 normal, >60 rich."""
+    if rank > 60:
+        return "RICH"
+    if rank < 30:
+        return "THIN"
+    return "NORMAL"
+
+
+def _candidate_facts(c: TradeCandidate, spot: float | None) -> list[str]:
+    """Numbered, deterministic FACTS about one candidate — computed in Python so the model
+    never has to derive moneyness, cushion, or earnings timing itself (Task 10: the local
+    Ollama reviewer was misreading an out-of-the-money put as "in the money" and treating a
+    post-expiry earnings date as event risk when left to work that out from raw numbers).
+
+    Consumed as an ``F1``-``F7`` block in the prompt; the DECISION RUBRIC asks the model to cite
+    these ids (plus any future ``N#`` news ids) in ``evidence`` rather than re-deriving or
+    inventing numbers. Every line degrades independently — a candidate missing spot, earnings,
+    an ideal zone, IV rank, or IV/RV just omits that fact instead of guessing at it.
+    """
+    facts: list[str] = []
+    is_put = c.right == OptionRight.PUT
+    right_word = "put" if is_put else "call"
+
+    if spot:
+        strike_pct = abs(spot - c.strike) / spot * 100
+        direction = "BELOW" if c.strike < spot else "ABOVE"
+        # OTM: a put's strike sits below spot; a call's strike sits above spot.
+        otm = (is_put and c.strike < spot) or (not is_put and c.strike > spot)
+        moneyness = "out-of-the-money" if otm else "in-the-money"
+        facts.append(
+            f"F1 Strike ${c.strike:.2f} is {strike_pct:.1f}% {direction} spot ${spot:.2f} "
+            f"→ {moneyness} {right_word}"
+        )
+
+        be_direction = "below spot" if c.breakeven <= spot else "above spot"
+        be_pct = abs(spot - c.breakeven) / spot * 100
+        facts.append(f"F2 Breakeven ${c.breakeven:.2f} = {be_pct:.1f}% cushion {be_direction}")
+
+    if c.next_earnings is not None:
+        if c.next_earnings > c.expiry:
+            facts.append(
+                f"F3 Earnings {c.next_earnings} is AFTER expiry {c.expiry} → no earnings "
+                "inside this trade"
+            )
+        else:
+            days_before = (c.expiry - c.next_earnings).days
+            facts.append(
+                f"F3 Earnings {c.next_earnings} is INSIDE this trade ({days_before} days "
+                "before expiry) → event risk"
+            )
+
+    if c.ideal is not None and c.ideal.min_credit:
+        floor = c.ideal.min_credit
+        edge_pct = (c.premium - floor) / floor * 100
+        if edge_pct >= 0:
+            facts.append(
+                f"F4 Credit ${c.premium:.2f} vs fair-value floor ${floor:.2f} → "
+                f"+{edge_pct:.0f}% edge over the variance-risk-premium floor"
+            )
+        else:
+            facts.append(
+                f"F4 Credit ${c.premium:.2f} vs fair-value floor ${floor:.2f} → "
+                f"{edge_pct:.0f}% UNDER the variance-risk-premium floor"
+            )
+
+    # Task 9 gave a missing IV rank a neutral score + an `iv_rank_unavailable` tag rather than
+    # inventing a bucket — F5 must say the same thing plainly instead of guessing a bucket.
+    if c.iv_rank is not None:
+        facts.append(
+            f"F5 IV rank {c.iv_rank:.0f} → premium is {_iv_bucket(c.iv_rank)} vs its own year"
+        )
+    else:
+        facts.append("F5 IV rank unavailable (no IV history) → premium richness unknown")
+
+    if c.iv_rv_ratio is not None:
+        note = (
+            "options priced above realised movement"
+            if c.iv_rv_ratio >= 1.0
+            else "options priced at/below realised movement"
+        )
+        facts.append(f"F6 IV/RV {c.iv_rv_ratio:.2f} → {note}")
+
+    facts.append(
+        "F7 Passed every deterministic gate (delta, liquidity, fair value, IV, earnings "
+        "blackout, concentration)"
+    )
+
+    return facts
+
+
 def _vix_context(vix: float | None) -> str:
     """One-line macro-vol regime hint derived from the VIX level.
 
@@ -446,6 +538,12 @@ def build_prompt(
         # Where this contract *should* sit, per deterministic technicals + IV. Gives the model a
         # reference to reconcile the offered strike/credit against instead of judging in a vacuum.
         lines += _ideal_zone_lines(c)
+        # Deterministic FACTS (Task 10) — moneyness, cushion, earnings timing, fair-value edge,
+        # IV rank/RV bucket, and the gate-pass line, all computed in Python so the model reads
+        # them instead of deriving (and sometimes misreading) them itself.
+        candidate_spot = spot_prices.get(c.underlying) if spot_prices else None
+        lines.append("FACTS:")
+        lines += [f"  {fact}" for fact in _candidate_facts(c, candidate_spot)]
         if c.next_earnings is not None:
             lines.append(f"Next Earnings:    {c.next_earnings}  (event risk — see sentiment below)")
         _sd = c.scores.sentiment_detail
@@ -464,10 +562,15 @@ def build_prompt(
                 lines.append(f"Top Headline:     {_sd.top_headline[:120]}")
 
     candidate_ids = [c.candidate_id for c in candidates]
-    # The single-ticker deep-dive adds an extra `summary` field whose job is to *teach*: explain
-    # what the metrics mean and synthesize the sentiment. The full-universe buy-list omits it so
-    # its cards stay scannable.
-    summary_field = ['  "summary": "<see SUMMARY GUIDE below>",'] if single_ticker else []
+    # `summary` is requested on every path (Task 10). The single-ticker deep-dive's job is to
+    # *teach* — explain what the metrics mean and synthesize the sentiment — so it points at the
+    # longer SUMMARY GUIDE below; the full-universe buy-list asks for a short 2-3 sentence
+    # synthesis directly in the schema so its cards stay scannable.
+    summary_schema_line = (
+        '  "summary": "<see SUMMARY GUIDE below>",'
+        if single_ticker
+        else '  "summary": "<2-3 sentence plain-English synthesis>",'
+    )
     summary_guide: list[str] = []
     if single_ticker:
         summary_guide = [
@@ -511,6 +614,22 @@ def build_prompt(
     lines += [
         *summary_guide,
         "",
+        "=== DECISION RUBRIC ===",
+        "Every candidate below already PASSED the deterministic Rules Engine (F7). Default to "
+        '"sell"',
+        "unless you can cite a specific FACT (F#) or NEWS item (N#) that argues otherwise:",
+        "  sell — no concrete red flag inside this trade's window. Most gate-passing trades are "
+        '"sell".',
+        "  wait — a dated catalyst falls INSIDE this trade (earnings per F3, a scheduled event "
+        "in NEWS)",
+        "         that should pass first. Name it.",
+        "  skip — NEWS shows a thesis-breaking development (guidance cut, fraud, delisting, M&A) "
+        "that",
+        "         makes being assigned undesirable. Name it.",
+        'Put the F#/N# ids you relied on in "evidence". Do not restate numbers that are not in '
+        "FACTS.",
+        "Earnings dated AFTER expiry are NOT a risk to this trade.",
+        "",
         "=== YOUR TASK ===",
         f"Review all {len(candidates)} candidates above and return a JSON array — one object per "
         "candidate — ordered by your recommended priority (1 = best to trade first).",
@@ -525,13 +644,15 @@ def build_prompt(
         '  "tradeoffs": "<2-3 sentences>",',
         '  "assignment_considerations": "<2-3 sentences>",',
         '  "rolling_considerations": "<2-3 sentences or empty string>",',
-        *summary_field,
+        summary_schema_line,
+        '  "evidence": ["<F# or N# id you relied on>", ...],',
         '  "confidence": <float 0.0-1.0>',
         "}",
         "",
         f"Candidate IDs to include (all {len(candidates)}): {candidate_ids}",
         "",
-        "Return ONLY the JSON array — no prose, no markdown fences, no commentary.",
+        'Return ONLY {"reviews": [ … one object per candidate … ]} — no prose, no markdown '
+        "fences, no commentary.",
         "Be concise: this output is sent directly to Telegram.",
     ]
 

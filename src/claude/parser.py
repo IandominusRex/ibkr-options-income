@@ -109,8 +109,20 @@ def _parse_dict_payload(text: str, prefix: str) -> dict | None:
     return payload
 
 
-def _parse_reviews(text: str, prefix: str) -> list[ClaudeReview]:
-    """Parse fence-stripped text → list[ClaudeReview]."""
+def _parse_reviews(
+    text: str, prefix: str, requested_ids: list[str] | None = None
+) -> list[ClaudeReview]:
+    """Parse fence-stripped text → list[ClaudeReview].
+
+    Accepts a bare JSON array of review objects, a single review object (wrapped as a
+    one-item list), or the ``{"reviews": [...]}`` wrapper the strategist prompt now requests
+    (Task 10) — Ollama's schema-constrained ``format`` always emits the wrapper shape; the CLI
+    path is asked for the same shape but isn't grammar-forced, so this stays lenient about it.
+
+    ``requested_ids``, when given, drops any parsed review whose ``candidate_id`` wasn't
+    actually in the requested set (a model hallucinating an id, or echoing stale context) and
+    logs how many of the requested ids came back reviewed.
+    """
     text = _strip_fences(text)
     try:
         payload = _loads_lenient(text)
@@ -118,7 +130,8 @@ def _parse_reviews(text: str, prefix: str) -> list[ClaudeReview]:
         log.warning("%s: inner JSON parse failed: %s", prefix, exc)
         return []
     if isinstance(payload, dict):
-        payload = [payload]
+        wrapped = payload.get("reviews")
+        payload = wrapped if isinstance(wrapped, list) else [payload]
     if not isinstance(payload, list):
         log.warning("%s: inner payload is not a list or dict", prefix)
         return []
@@ -130,6 +143,11 @@ def _parse_reviews(text: str, prefix: str) -> list[ClaudeReview]:
             log.warning("%s: item failed validation (skipping): %s — item=%s", prefix, exc, item)
     if not reviews and payload:
         log.warning("%s: all %d item(s) failed validation", prefix, len(payload))
+    if requested_ids is not None:
+        requested_set = set(requested_ids)
+        kept = [r for r in reviews if r.candidate_id in requested_set]
+        log.info("%s: reviewed %d/%d candidates", prefix, len(kept), len(requested_ids))
+        reviews = kept
     return reviews
 
 
@@ -141,12 +159,12 @@ def _extract_narrative(payload: dict, prefix: str) -> str | None:
     return narrative.strip()
 
 
-def parse_claude_output(raw: str) -> list[ClaudeReview]:
+def parse_claude_output(raw: str, requested_ids: list[str] | None = None) -> list[ClaudeReview]:
     """Parse raw claude -p JSON output → list[ClaudeReview]. Returns [] on any failure."""
     inner = _unwrap_cli(raw, "claude")
     if inner is None:
         return []
-    return _parse_reviews(inner, "claude")
+    return _parse_reviews(inner, "claude", requested_ids)
 
 
 def parse_roll_output(raw: str) -> RollReview | None:
@@ -173,8 +191,11 @@ def parse_journal_output(raw: str) -> str | None:
     return None if payload is None else _extract_narrative(payload, "claude eod")
 
 
-def parse_ollama_review_output(raw: str) -> list[ClaudeReview]:
-    """Parse Ollama's `response` text (already JSON, per `format: "json"`) → list[ClaudeReview].
+def parse_ollama_review_output(
+    raw: str, requested_ids: list[str] | None = None
+) -> list[ClaudeReview]:
+    """Parse Ollama's `response` text (JSON, grammar-constrained by `REVIEW_SCHEMA`) →
+    list[ClaudeReview].
 
     Unlike `parse_claude_output`, there is no outer CLI envelope to unwrap — `raw` is the
     model's response text directly. Returns [] on any failure.
@@ -182,7 +203,7 @@ def parse_ollama_review_output(raw: str) -> list[ClaudeReview]:
     if not raw or not raw.strip():
         log.warning("ollama: empty output")
         return []
-    return _parse_reviews(raw, "ollama")
+    return _parse_reviews(raw, "ollama", requested_ids)
 
 
 def parse_ollama_roll_output(raw: str) -> RollReview | None:

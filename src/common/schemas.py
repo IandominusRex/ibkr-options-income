@@ -496,10 +496,16 @@ class ClaudeReview(BaseModel):
     assignment_considerations: str
     rolling_considerations: str = ""
     confidence: float | None = None  # 0-1
-    # Plain-English synthesis for the single-ticker /scan card: what the metrics (IV rank, VRP,
-    # delta, RSI, earnings) mean together, read against the VIX regime and the name's sector, and
-    # the overall sentiment. Empty on the full-universe path (that prompt doesn't request it).
+    # Plain-English synthesis: a short 2-3 sentence version on the full-universe path, the longer
+    # SUMMARY GUIDE variant on the single-ticker /scan deep-dive. Requested for every candidate
+    # since Task 10 (previously empty on the full-universe path).
     summary: str = ""
+    # F#/N# fact/news ids (from the prompt's FACTS block and, once a news layer exists, NEWS
+    # items) the model cited to support its recommendation — the DECISION RUBRIC asks for these
+    # explicitly so a verdict is traceable to a concrete, deterministic fact rather than an
+    # unstated impression. Empty is valid (older prompts / a model that ignores the rubric) but
+    # `scripts/review_eval.py` flags a high empty rate as a quality signal.
+    evidence: list[str] = Field(default_factory=list)
 
 
 class RollAlert(BaseModel):

@@ -184,21 +184,34 @@ claude:
   # `ollama serve` running locally with `ollama_model` pulled — see SETUP.md.
   backend: "ollama"
   ollama_host: "http://localhost:11434"
-  # qwen3:8b (~5GB) — the active model: comfortable memory headroom on an 18GB Mac alongside
-  # TWS/Gateway; ollama_runner disables its "thinking" mode (think=false) so format=json output
-  # stays clean and fast.
-  # Upgrade: "qwen3:14b" (~9GB, Q4_K_M) — more reasoning depth if you have the RAM (needs ~16-18GB
-  # free), at the cost of headroom alongside TWS.
-  # Alternative: "phi4:14b" — similar ~9GB footprint, strong structured-output/instruction
-  # following, and (being a non-hybrid-reasoning model) has no thinking-mode/JSON interaction
-  # to worry about — a simpler/more predictable choice if qwen3's output proves flaky.
-  ollama_model: "qwen3:8b"
+  # qwen3.5:4b (~3.4GB) — the active model (Task 10, 2026-09-29, replacing qwen3:8b ~5.2GB).
+  # Picked as the SMALLEST of four models evaluated with scripts/review_eval.py against real
+  # stored candidates (7 rows, 2 runs each) after the review path became schema-constrained
+  # (REVIEW_SCHEMA) with a deterministic FACTS block + DECISION RUBRIC:
+  #   qwen3.5:4b (3.4GB)        14/14 reviewed both runs, 0 empty-evidence, NO cold-start timeout
+  #                              (80.7s cold, well inside ollama_timeout_seconds: 120) — the pick.
+  #   gemma4:e4b-it-qat (6.1GB) matched qwen3.5:4b's results, ~1.8x the download, no gain measured.
+  #   qwen3:8b (was active)     matched on a WARM run only; cold load timed out (>120s).
+  #   qwen3.5:9b (6.6GB)        more verdict diversity (sell/wait/skip) but also timed out cold.
+  # qwen3:14b was ruled out without testing — ~9.3GB weights + ~2.7GB KV cache (~12GB) exceeds
+  # what's free on the target 18GB Mac alongside TWS/Gateway. Full table: SETUP.md §14.
+  # ollama_runner disables "thinking" mode (think=false) so structured-output stays clean and
+  # fast — think=true was tried on qwen3.5:4b and did NOT finish within 180s (vs a 120s budget).
+  ollama_model: "qwen3.5:4b"
   ollama_timeout_seconds: 120
   # Context window (tokens). Must cover the whole prompt PLUS the generated JSON or Ollama
-  # silently truncates one or both → dropped reviews. A worst-case full scan measures ~6.3k
-  # input tokens + ~2k output; 16384 leaves headroom. Lower to 8192 if qwen3:8b OOMs on 18GB.
+  # silently truncates one or both → dropped reviews. MEASURED 2026-09-29 (post-Task-10 prompt,
+  # FACTS block + rubric added): the real 7-candidate full-scan prompt above already uses 8,413
+  # prompt_eval_count tokens — DO NOT lower this below 16384 (8192, suggested by an earlier plan
+  # draft as a RAM-saving option, would already silently truncate that prompt). 16384 leaves
+  # ~8k tokens of headroom for the generated JSON; verify your own longest prompt's
+  # prompt_eval_count (raw /api/generate response) before lowering it further.
   ollama_num_ctx: 16384
   # Keep the model resident between a scan's successive calls so each one doesn't pay a reload.
+  # Kept at 10m rather than shortened to 2m (a plan draft's RAM-saving suggestion): a cold load
+  # of the 6-9GB alternatives evaluated above blew the 120s timeout outright under this Mac's
+  # measured memory pressure (14GB RSS + 7/8GB swap in use before any model loads), and even the
+  # active 4B model's own cold load (80.7s) leaves too little margin to risk every 15-min cycle.
   ollama_keep_alive: "10m"
   # Sampling temperature — low keeps the JSON disciplined; raise only to experiment.
   ollama_temperature: 0.2

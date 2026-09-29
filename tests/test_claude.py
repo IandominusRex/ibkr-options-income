@@ -48,6 +48,10 @@ def _make_candidate(
     underlying: str = "AAPL",
     strike: float = 185.0,
     premium: float = 1.50,
+    right: OptionRight = OptionRight.CALL,
+    expiry: date = date(2026, 7, 17),
+    next_earnings: date | None = None,
+    breakeven: float | None = None,
 ) -> TradeCandidate:
     scores = ScoreCard(
         symbol=underlying,
@@ -61,19 +65,20 @@ def _make_candidate(
         candidate_id=candidate_id,
         strategy=strategy,
         underlying=underlying,
-        right=OptionRight.CALL,
+        right=right,
         strike=strike,
-        expiry=date(2026, 7, 17),
+        expiry=expiry,
         contracts=1,
         premium=premium,
         collateral=18_000.0,
         roc_pct=0.83,
         annualized_yield_pct=18.5,
-        breakeven=183.50,
+        breakeven=breakeven if breakeven is not None else round(strike - premium, 2),
         prob_otm=0.72,
         delta=0.28,
         iv_rank=65.0,
         dte=48,
+        next_earnings=next_earnings,
         scores=scores,
         blended_score=74.5,
         rationale_tags=["high_iv_rank", "liquid"],
@@ -154,6 +159,21 @@ def test_parse_optional_fields_default():
     assert len(reviews) == 1
     assert reviews[0].rolling_considerations == ""
     assert reviews[0].confidence is None
+
+
+def test_parse_reviews_accepts_reviews_wrapper():
+    """Task 10: both backends' prompts now request `{"reviews": [...]}` — the schema-constrained
+    Ollama path always emits it; the parser must unwrap it regardless of backend."""
+    from src.claude.parser import parse_ollama_review_output
+
+    raw = (
+        '{"reviews": [{"candidate_id": "a", "priority": 1, "recommendation": "sell", '
+        '"why_attractive": "x", "risks": "y", "tradeoffs": "z", '
+        '"assignment_considerations": "w"}, {"candidate_id": "b", "priority": 2, '
+        '"recommendation": "wait", "why_attractive": "x", "risks": "y", "tradeoffs": "z", '
+        '"assignment_considerations": "w"}]}'
+    )
+    assert [r.candidate_id for r in parse_ollama_review_output(raw)] == ["a", "b"]
 
 
 # --------------------------------------------------------------------------- #
@@ -366,10 +386,11 @@ def test_build_prompt_includes_vrp_line():
     assert "VRP" in prompt and "+4.2%" in prompt
 
 
-def test_build_prompt_full_scan_omits_summary_field():
-    """The full-universe path must NOT request the educational `summary` (keeps cards concise)."""
+def test_build_prompt_full_scan_requests_summary_without_the_long_guide():
+    """Task 10: `summary` is requested on every path now, but the full-universe prompt stays
+    concise — it must not pull in the longer single-ticker SUMMARY GUIDE."""
     prompt = build_prompt([_make_candidate()], _make_account())
-    assert '"summary"' not in prompt
+    assert '"summary"' in prompt
     assert "SUMMARY GUIDE" not in prompt
 
 
@@ -490,6 +511,81 @@ def test_build_prompt_single_ticker_framing_is_gate_neutral():
     prompt = build_prompt([_make_candidate()], _make_account(), single_ticker=True)
     assert "already been approved by the deterministic Rules Engine" not in prompt
     assert "surfaced by the deterministic screen" in prompt
+
+
+# --------------------------------------------------------------------------- #
+# FACTS block (_candidate_facts) — Task 10
+# --------------------------------------------------------------------------- #
+
+
+def test_facts_state_moneyness_and_earnings_relative_to_expiry():
+    from src.claude.prompts.strategist import _candidate_facts
+
+    c = _make_candidate(
+        strategy=Strategy.CASH_SECURED_PUT,
+        right=OptionRight.PUT,
+        strike=720.0,
+        expiry=date(2026, 9, 30),
+        premium=8.75,
+        next_earnings=date(2026, 10, 29),
+    )
+    facts = "\n".join(_candidate_facts(c, spot=744.10))
+    assert "F1" in facts and "3.2% BELOW spot" in facts and "out-of-the-money" in facts
+    assert "AFTER expiry" in facts and "no earnings inside this trade" in facts
+
+
+def test_facts_flag_earnings_inside_the_trade():
+    from src.claude.prompts.strategist import _candidate_facts
+
+    c = _make_candidate(
+        strategy=Strategy.CASH_SECURED_PUT,
+        right=OptionRight.PUT,
+        strike=720.0,
+        expiry=date(2026, 9, 30),
+        premium=8.75,
+        next_earnings=date(2026, 9, 25),
+    )
+    facts = "\n".join(_candidate_facts(c, spot=744.10))
+    assert "F3" in facts and "INSIDE this trade" in facts and "event risk" in facts
+    assert "5 days before expiry" in facts
+
+
+def test_facts_call_moneyness_is_mirrored():
+    from src.claude.prompts.strategist import _candidate_facts
+
+    c = _make_candidate(strategy=Strategy.COVERED_CALL, right=OptionRight.CALL, strike=250.0)
+    facts = "\n".join(_candidate_facts(c, spot=232.40))
+    assert "ABOVE spot" in facts and "out-of-the-money call" in facts
+
+
+def test_facts_iv_rank_missing_says_so_plainly():
+    """Task 9 gave missing IV rank a neutral score + a tag; F5 must say so, not invent a bucket."""
+    from src.claude.prompts.strategist import _candidate_facts
+
+    c = _make_candidate().model_copy(update={"iv_rank": None})
+    facts = "\n".join(_candidate_facts(c, spot=None))
+    assert "F5 IV rank unavailable" in facts
+    assert "RICH" not in facts and "THIN" not in facts and "NORMAL" not in facts
+
+
+def test_facts_always_states_the_gate_pass():
+    from src.claude.prompts.strategist import _candidate_facts
+
+    facts = "\n".join(_candidate_facts(_make_candidate(), spot=None))
+    assert "F7" in facts and "Passed every deterministic gate" in facts
+
+
+def test_build_prompt_injects_facts_block():
+    prompt = build_prompt([_make_candidate()], _make_account(), spot_prices={"AAPL": 211.42})
+    assert "FACTS:" in prompt
+    assert "F1 Strike" in prompt
+    assert "F7 Passed every deterministic gate" in prompt
+
+
+def test_build_prompt_includes_decision_rubric():
+    prompt = build_prompt([_make_candidate()], _make_account())
+    assert "=== DECISION RUBRIC ===" in prompt
+    assert '"evidence"' in prompt
 
 
 # --------------------------------------------------------------------------- #

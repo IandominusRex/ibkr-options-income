@@ -85,7 +85,12 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   only), `"ollama"` (local model only), or `"cli_then_ollama"` (try `claude -p`, fall back to
   local on failure). **This deployment currently runs `backend: "ollama"`** — no `claude -p`
   access, so `review_candidates`/`review_roll`/`write_journal_narrative` all go to a local
-  `qwen3:8b` via Ollama (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). Same `ClaudeReview`/`RollReview`
+  `qwen3.5:4b` via Ollama (Task 10, `think: false`, `num_ctx: 16384`, `keep_alive: 10m`). The
+  review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema for
+  `{"reviews": [...]}` — Ollama's structured-output mode); the strategist prompt injects a
+  deterministic `F1`-`F7` FACTS block per candidate and a DECISION RUBRIC so the model cites a
+  fact (in the new `ClaudeReview.evidence` field) rather than deriving — and sometimes
+  misreading — moneyness or earnings timing itself. Same `ClaudeReview`/`RollReview`
   validation and fail-soft contract regardless of backend. See
   SETUP.md §14. The launcher (`scripts.start`) and `scripts.healthcheck` call
   `ollama_runner.probe_ollama()` (a `GET /api/tags` reachability + configured-model check) on
@@ -280,7 +285,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Approval / notify | `python-telegram-bot` v21+ | Inline keyboards + callback handlers. |
 | Claude | **Claude Code CLI (`claude -p`)** | Headless. Since 2026-06-15, draws from a separate monthly Agent SDK credit pool (billed at API rates), not the interactive subscription. **Not used in this deployment** — `claude.backend: "ollama"` (no CLI access); review dispatches to Ollama instead. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. Requires `claude -p`; inactive in this deployment. |
-| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3:8b` | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). See SETUP.md §14. |
+| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3.5:4b` (Task 10, was `qwen3:8b`) | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). Review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema — not the bare `"json"` string roll/EOD still use). See SETUP.md §14 "Model choice" for the four-model evaluation. |
 | Config | `PyYAML` + `python-dotenv` | YAML for rules/weights, `.env` for secrets. |
 | Dashboard | `Streamlit` | Read-only views off SQLite. Archived to `Archive/dashboard/`. |
 | Quality | `pytest`, `ruff`, `mypy` | IBKR mocked in tests. |
@@ -348,6 +353,52 @@ outside `src/api/commands.py` imports `get_command_engine`); the trading system 
 databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
 
 ---
+
+## Bugs fixed (2026-09-29 — scan-loop remediation Task 10: Ollama review — schema, FACTS, rubric)
+
+Known limitation closed: the production strategist reviewer (a local Ollama model, since this
+deployment has no `claude -p` access) always said `"wait"` and misread option moneyness/earnings
+timing. Root cause: `format: "json"` only grammar-constrains *some* valid JSON, not a specific
+shape, so the model improvised field names/nesting under load and dropped candidates from
+multi-candidate prompts; and the prompt gave the model raw numbers (strike, spot, earnings date)
+with no explicit "is this OTM/ITM" or "is this earnings date inside the trade" computation, so a
+small local model routinely got both wrong. Baseline measured 2026-09-29 (old prompt): 6/6 `"wait"`
+on single-candidate prompts, 1/3 candidates reviewed on a multi-candidate prompt.
+
+Fix, all in `src/claude/`:
+- **Schema-constrained structured output.** `ollama_runner._generate(prompt, cfg, schema=REVIEW_SCHEMA)`
+  sends Ollama's `format` as a JSON Schema (`REVIEW_SCHEMA`, `{"reviews": [ClaudeReview-shaped, ...]}`)
+  instead of the bare `"json"` string — Ollama's structured-output mode grammar-constrains every
+  generated token to the schema. `review_roll`/`write_journal_narrative` keep `schema="json"`
+  since their single-object payload was already reliable under the old mode.
+- **Deterministic FACTS block.** `strategist._candidate_facts(c, spot)` computes seven numbered
+  facts (`F1` moneyness/OTM-ITM with correct wording per right, `F2` breakeven cushion, `F3`
+  earnings-vs-expiry timing, `F4` credit vs the fair-value floor, `F5` IV-rank bucket — or
+  "unavailable" when `iv_rank is None`, consistent with Task 9's neutral-score treatment — `F6`
+  IV/RV read, `F7` the gate-pass statement) in Python, so the model reads facts instead of
+  deriving — and sometimes misreading — them. A `=== DECISION RUBRIC ===` block tells the model a
+  gate-passing candidate defaults to `"sell"` unless it can cite a specific `F#`/`N#` id, and to
+  record the ids it used in the new `ClaudeReview.evidence: list[str]` field.
+- **Parser.** `_parse_reviews` now unwraps `{"reviews": [...]}` (in addition to a bare array or a
+  single object); an optional `requested_ids` argument (threaded through both
+  `parse_claude_output` and `parse_ollama_review_output`, from both `runner.py` and
+  `ollama_runner.py`) drops any review whose `candidate_id` wasn't actually requested and logs how
+  many of the requested ids came back reviewed.
+- **`summary` requested on every path**, not just the single-ticker deep-dive (a short 2-3
+  sentence version on the full-universe path; the single-ticker path keeps the longer SUMMARY
+  GUIDE variant).
+- **`scripts/review_eval.py`** (new, read-only) replays stored `candidates` rows through the local
+  reviewer to validate a model/prompt change before committing to it — see SETUP.md §13.
+
+**Re-evaluated against real stored candidates** (7 rows since 2026-09-14, all META/AMZN CSPs; 2
+runs each): `qwen3.5:4b` (the new active model, 3.4 GB, down from `qwen3:8b`'s 5.2 GB) reviewed
+14/14 across both runs with 0 empty-`evidence` reviews and no cold-start timeout; `qwen3:8b` and
+`qwen3.5:9b` (6.6 GB) matched on a warm run but timed out (>120s) on a cold load; `gemma4:e4b-it-qat`
+(6.1 GB) matched `qwen3.5:4b`'s results but at nearly double the download for no measured gain.
+Full table and the rejected `think: true` / `ollama_num_ctx: 8192` experiments (both blew their
+budgets — a `think: true` call on the same prompt didn't finish in 180s, and the real 7-candidate
+prompt already measures 8,413 `prompt_eval_count` tokens, above 8192) are in SETUP.md §14 "Model
+choice".
 
 ## Bugs fixed (2026-09-29 — scan-loop remediation Task 9: missing IV rank scored neutral, not zero)
 

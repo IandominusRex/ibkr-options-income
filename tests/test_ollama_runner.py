@@ -115,6 +115,47 @@ def _make_valid_cli_envelope(reviews: list[dict]) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# _generate — schema-constrained structured output (Task 10)
+# --------------------------------------------------------------------------- #
+
+
+def test_generate_sends_json_schema_format(monkeypatch):
+    from src.claude import ollama_runner
+
+    sent = {}
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self):
+            return {"response": '{"reviews": []}'}
+
+    monkeypatch.setattr(
+        ollama_runner.httpx, "post", lambda url, json, timeout: sent.update(json) or _R()
+    )
+    ollama_runner._generate("p", ollama_runner.get_config().claude)
+    assert sent["format"]["type"] == "object" and "reviews" in sent["format"]["properties"]
+
+
+def test_generate_accepts_an_explicit_schema_override(monkeypatch):
+    """Roll/EOD callers pass their own format (a plain `"json"` string) instead of the review
+    schema default."""
+    from src.claude import ollama_runner
+
+    sent = {}
+
+    class _R:
+        def raise_for_status(self): ...
+        def json(self):
+            return {"response": "{}"}
+
+    monkeypatch.setattr(
+        ollama_runner.httpx, "post", lambda url, json, timeout: sent.update(json) or _R()
+    )
+    ollama_runner._generate("p", ollama_runner.get_config().claude, schema="json")
+    assert sent["format"] == "json"
+
+
+# --------------------------------------------------------------------------- #
 # parse_ollama_review_output
 # --------------------------------------------------------------------------- #
 
@@ -239,7 +280,9 @@ def test_ollama_backend_review_candidates_success():
     url = mock_post.call_args.args[0]
     assert url == "http://localhost:11434/api/generate"
     body = mock_post.call_args.kwargs["json"]
-    assert body["format"] == "json"
+    # Task 10: the review path is schema-constrained (REVIEW_SCHEMA), not the bare "json" mode.
+    assert body["format"]["type"] == "object"
+    assert "reviews" in body["format"]["properties"]
     assert body["model"] == "qwen2.5:14b-instruct"
     # Tunable generation params must flow from config into the request (num_ctx large enough to
     # avoid silent prompt/output truncation; keep_alive to skip per-call model reloads).
