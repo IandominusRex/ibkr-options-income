@@ -26,6 +26,12 @@ from src.storage.system_settings import (
 )
 
 
+def test_scan_completed_key_is_exported():
+    from src.storage.system_settings import SCAN_COMPLETED_KEY
+
+    assert SCAN_COMPLETED_KEY == "intraday_scan_completed"
+
+
 def _make_monitor_env() -> Any:
     mock_ib = MagicMock()
     mock_ib.tickers.return_value = []

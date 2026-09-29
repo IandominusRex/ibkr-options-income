@@ -114,6 +114,46 @@ def _universe_symbols() -> list[str]:
     )
 
 
+async def _append_one_iv(ib, sym: str, timeout: float) -> bool:
+    """Fetch and store one symbol's most recent daily IV bar. Returns True iff a new row was
+    inserted. Exceptions propagate — the caller decides what a failure means (first-pass
+    circuit-breaker bookkeeping, or a retry-pass outcome)."""
+    from src.ibkr.contracts import qualify_stock_async
+    from src.storage.iv_history import append_observation
+
+    stock = await qualify_stock_async(ib, sym)
+    bars = await asyncio.wait_for(
+        ib.reqHistoricalDataAsync(
+            stock,
+            endDateTime="",
+            durationStr="2 D",
+            barSizeSetting="1 day",
+            whatToShow="OPTION_IMPLIED_VOLATILITY",
+            useRTH=True,
+            keepUpToDate=False,
+        ),
+        timeout=timeout,
+    )
+    if not bars:
+        return False
+    last = bars[-1]
+    bar_date = last.date if isinstance(last.date, date) else last.date.date()
+    return append_observation(sym, bar_date, float(last.close))
+
+
+def _iv_symbols(held: list[str]) -> list[str]:
+    """Universe ∪ held symbols, never-observed first, then oldest observation first.
+
+    Ordering by staleness (not alphabet) means a mid-run abort starves whichever names were
+    freshest, not the same alphabetical tail every night (2026-09 TQQQ/UPRO/MAGS incident).
+    """
+    from src.storage.iv_history import latest_obs_dates
+
+    symbols = sorted(set(_universe_symbols()) | {s.upper() for s in held})
+    last = latest_obs_dates(symbols)
+    return sorted(symbols, key=lambda s: (s in last, last.get(s, date.min), s))
+
+
 async def _append_daily_iv(ib, symbols: list[str]) -> None:
     """Append today's ATM IV observation per symbol so the IV-rank window stays current (N4).
 
@@ -129,36 +169,24 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
     The failure run now triggers ``probe_market_data_health`` — a cheap, already-used check —
     to tell a genuinely dead farm (bail, as before) from a handful of bad symbols on an
     otherwise-healthy connection (log it, reset the counter, keep going).
+
+    After the main pass, every symbol that failed (but did not trip the dead-farm abort) gets
+    exactly one more attempt at double the per-request timeout — a single slow response
+    (network blip, a momentarily busy farm) shouldn't leave a symbol stale for a whole day.
+    A confirmed dead-farm abort skips the retry pass entirely: retrying symbols the health
+    probe already told us can't succeed is exactly the grinding the breaker exists to avoid.
     """
-    from src.ibkr.contracts import qualify_stock_async
     from src.ibkr.market_data import probe_market_data_health
-    from src.storage.iv_history import append_observation
 
     inserted = 0
     consecutive_failures = 0
     failed_symbols: list[str] = []
+    aborted = False
     for sym in symbols:
         try:
-            stock = await qualify_stock_async(ib, sym)
-            bars = await asyncio.wait_for(
-                ib.reqHistoricalDataAsync(
-                    stock,
-                    endDateTime="",
-                    durationStr="2 D",
-                    barSizeSetting="1 day",
-                    whatToShow="OPTION_IMPLIED_VOLATILITY",
-                    useRTH=True,
-                    keepUpToDate=False,
-                ),
-                timeout=_IV_REQUEST_TIMEOUT_S,
-            )
-            consecutive_failures = 0
-            if not bars:
-                continue
-            last = bars[-1]
-            bar_date = last.date if isinstance(last.date, date) else last.date.date()
-            if append_observation(sym, bar_date, float(last.close)):
+            if await _append_one_iv(ib, sym, _IV_REQUEST_TIMEOUT_S):
                 inserted += 1
+            consecutive_failures = 0
         except Exception:
             logger.warning("EOD IV append failed for %s", sym, exc_info=True)
             consecutive_failures += 1
@@ -176,6 +204,7 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
                         consecutive_failures,
                         probe.diagnosis or "unhealthy",
                     )
+                    aborted = True
                     break
                 # Connection is fine — this is a cluster of bad symbols, not a dead farm.
                 # Skip them (already counted as failed) and keep going with the rest.
@@ -187,6 +216,23 @@ async def _append_daily_iv(ib, symbols: list[str]) -> None:
                 )
                 consecutive_failures = 0
         await asyncio.sleep(0.2)  # pace reqHistoricalData calls
+
+    if not aborted and failed_symbols:
+        retry_targets = list(dict.fromkeys(failed_symbols))  # de-dup, preserve order
+        recovered = 0
+        still_failed: list[str] = []
+        for sym in retry_targets:
+            try:
+                if await _append_one_iv(ib, sym, _IV_REQUEST_TIMEOUT_S * 2):
+                    inserted += 1
+                recovered += 1
+            except Exception:
+                logger.warning("EOD IV retry failed for %s", sym, exc_info=True)
+                still_failed.append(sym)
+            await asyncio.sleep(0.2)
+        logger.info("EOD: IV retry pass recovered %d/%d", recovered, len(retry_targets))
+        failed_symbols = still_failed
+
     logger.info(
         "EOD: appended %d new IV observation(s) across %d symbols (%d failed: %s)",
         inserted,
@@ -379,9 +425,14 @@ async def run() -> None:
             await enrich_positions_with_greeks_async(ib, positions)
         except Exception:
             logger.exception("EOD: greeks enrichment failed — net delta may read 0")
-        # Keep the IV-rank window current (N4) while the connection is open.
+        # Keep the IV-rank window current (N4) while the connection is open. Union in
+        # currently-held stock symbols (not just the universe) so a position acquired
+        # outside the watchlist/would-own lists still gets its IV tracked, and order by
+        # staleness so a mid-run abort starves the freshest names, not the same
+        # alphabetical tail every night.
         try:
-            await _append_daily_iv(ib, _universe_symbols())
+            held = [p.symbol for p in positions if p.sec_type == "STK"]
+            await _append_daily_iv(ib, _iv_symbols(held=held))
         except Exception:
             logger.exception("EOD: daily IV append failed — iv_history may age")
     logger.info("Disconnected from IBKR")

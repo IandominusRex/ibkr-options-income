@@ -81,6 +81,7 @@ from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
 from src.storage.system_settings import (
+    SCAN_COMPLETED_KEY,
     autonomy_progress,
     get_autonomy_level,
     get_halt_reason,
@@ -1286,6 +1287,10 @@ async def _run_intraday_scan(
                     len(result.buy_candidates),
                     get_autonomy_level().value,
                 )
+                # Watchdog heartbeat (Task 5 consumes this): a completed intraday scan cycle,
+                # distinct from MONITOR_HEARTBEAT_KEY (the always-on position monitor's
+                # heartbeat) — this one only advances when a scan actually finishes.
+                set_setting(SCAN_COMPLETED_KEY, datetime.now(UTC).isoformat())
     except Exception:
         logger.exception("Intraday loop: scan failed")
     finally:

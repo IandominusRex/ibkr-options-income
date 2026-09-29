@@ -38,6 +38,20 @@ def test_latest_iv_returns_most_recent(tmp_path, monkeypatch):
     assert latest_iv("NOPE") is None
 
 
+def test_latest_obs_dates_omits_symbols_with_no_rows(tmp_path, monkeypatch):
+    _db_setup(tmp_path, monkeypatch)
+    from src.storage.iv_history import append_observation, latest_obs_dates
+
+    today = date.today()
+    append_observation("AMD", today - timedelta(days=1), 0.55)
+    append_observation("AMD", today, 0.60)
+    append_observation("BAC", today - timedelta(days=3), 0.22)
+
+    out = latest_obs_dates(["AMD", "BAC", "NOPE"])
+    assert out == {"AMD": today, "BAC": today - timedelta(days=3)}
+    assert "NOPE" not in out
+
+
 def test_stale_symbols_flags_old_and_missing(tmp_path, monkeypatch):
     _db_setup(tmp_path, monkeypatch)
     from src.common.market_hours import today_et

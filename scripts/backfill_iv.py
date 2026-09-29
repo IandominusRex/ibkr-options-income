@@ -1,14 +1,16 @@
-"""Seed iv_history with ~1y of daily implied volatility for all universe symbols.
+"""Seed/refresh iv_history with daily implied volatility for a symbol list.
 
-Run once to bootstrap; safe to re-run — existing (symbol, date) pairs are skipped.
+Safe to re-run — existing (symbol, date) pairs are skipped.
 
 Usage:
     source .venv/bin/activate
-    python -m scripts.backfill_iv
+    python -m scripts.backfill_iv                     # universe ∪ currently-held
+    python -m scripts.backfill_iv --symbols AMD,BAC    # explicit symbol list
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import date
 from pathlib import Path
@@ -21,6 +23,7 @@ from src.ibkr.connection import IBKRConnection
 from src.ibkr.contracts import qualify_stock
 from src.storage.db import init_db, session_scope
 from src.storage.models import IVHistoryRow
+from src.storage.positions import load_latest_position_snapshot
 
 log = get_logger(__name__)
 
@@ -31,15 +34,49 @@ def _universe_symbols(cfg) -> list[str]:
     return sorted(symbols)
 
 
+def _default_symbols(cfg) -> list[str]:
+    """Universe ∪ currently-held, from the latest `position_snapshots` row.
+
+    Mirrors `eod_report._iv_symbols`'s holdings union so an ad-hoc backfill covers exactly
+    what the nightly EOD append would (minus its staleness ordering, which only matters for
+    a partial/aborted run — a one-shot backfill runs every symbol to completion).
+    """
+    held = {p.symbol.upper() for p in load_latest_position_snapshot() if p.sec_type == "STK"}
+    return sorted(set(_universe_symbols(cfg)) | held)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m scripts.backfill_iv",
+        description=(
+            "Seed or refresh iv_history with one year of daily implied volatility (via IBKR). "
+            "Defaults to the trading universe (indexes + watchlist + would_own) unioned with "
+            "whatever stock is currently held, per the latest position_snapshots row."
+        ),
+    )
+    parser.add_argument(
+        "--symbols",
+        type=str,
+        default=None,
+        metavar="SYM,SYM,...",
+        help=(
+            "Comma-separated symbol list to backfill (e.g. AMD,BAC). Overrides the default "
+            "universe ∪ currently-held selection."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
 def _existing_dates(session, symbol: str) -> set[date]:
     rows = session.query(IVHistoryRow.obs_date).filter(IVHistoryRow.symbol == symbol).all()
     return {r.obs_date for r in rows}
 
 
-def run_backfill() -> None:
+def run_backfill(symbols: list[str] | None = None) -> None:
     cfg = get_config()
     init_db()
-    symbols = _universe_symbols(cfg)
+    if symbols is None:
+        symbols = _default_symbols(cfg)
     log.info("IV backfill: %d symbols — %s", len(symbols), symbols)
 
     with IBKRConnection("backfill") as ib:
@@ -90,5 +127,13 @@ def run_backfill() -> None:
     log.info("IV backfill complete.")
 
 
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    symbols = (
+        [s.strip().upper() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
+    )
+    run_backfill(symbols)
+
+
 if __name__ == "__main__":
-    run_backfill()
+    main()

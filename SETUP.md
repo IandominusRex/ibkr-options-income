@@ -301,7 +301,9 @@ suppressed) and the first scans will pull full price histories from yfinance on 
 python -m scripts.backfill_iv
 python -m scripts.backfill_prices
 ```
-Also add the symbol to the `sectors:` map so concentration limits work correctly. For an
+(`backfill_iv --symbols NEWTICKER` backfills just the new symbol instead of the whole universe,
+if you'd rather not re-run the full set.) Also add the symbol to the `sectors:` map so
+concentration limits work correctly. For an
 extreme-IV leveraged ETF, optionally add a `strike_bands:` override so its ~0.25-delta strike is in
 scope immediately (otherwise the IV-scaled band fills in once the backfill/EOD has stored its IV).
 
@@ -945,8 +947,12 @@ python -m scripts.backfill_iv
 python -m scripts.backfill_prices
 ```
 
-`backfill_iv` fetches one year of historical IV (via IBKR) for every universe symbol;
-`backfill_prices` fetches ~1y of daily OHLCV (via yfinance) into `price_history`. Both take a few
+`backfill_iv` fetches one year of historical IV (via IBKR) for the trading universe unioned with
+whatever is currently held (read from the latest `position_snapshots` row — the same holdings
+union the EOD IV append uses). Pass `--symbols AMD,BAC` to backfill an explicit list instead
+(e.g. right after adding a new ticker, or a symbol acquired outside the watchlist/would-own
+lists); `--help` shows the full usage. `backfill_prices` fetches ~1y of daily OHLCV (via
+yfinance) into `price_history`. Both take a few
 minutes and are safe to re-run (existing rows are skipped). After the bootstrap, the **EOD run
 appends one fresh IV observation and one settled daily price bar per symbol each day** (N4), so
 both windows stay current without re-running the backfill — and `/scan` then reads history from

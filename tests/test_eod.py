@@ -694,6 +694,29 @@ async def test_send_eod_telegram_skips_when_no_credentials() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _iv_symbols — universe ∪ held, ordered never-observed-first then oldest-observation-first
+# (2026-09 TQQQ/UPRO/MAGS incident: alphabetical order meant a mid-run abort always starved
+# the same tail-of-alphabet names instead of spreading the risk across whichever symbols were
+# actually stale).
+# ---------------------------------------------------------------------------
+
+
+def test_iv_symbols_include_holdings_and_order_oldest_first(monkeypatch):
+    from datetime import date
+
+    from src.orchestrator import eod_report
+
+    monkeypatch.setattr(eod_report, "_universe_symbols", lambda: ["AAA", "BBB", "CCC"])
+    monkeypatch.setattr(
+        "src.storage.iv_history.latest_obs_dates",
+        lambda syms: {"AAA": date(2026, 9, 28), "BBB": date(2026, 9, 11)},
+    )
+    out = eod_report._iv_symbols(held=["ZZZ", "AAA"])
+    # never-observed first (ZZZ, CCC — alphabetical tie-break), then oldest (BBB), then AAA
+    assert out == ["CCC", "ZZZ", "BBB", "AAA"]
+
+
+# ---------------------------------------------------------------------------
 # _append_daily_iv — fail-fast on a genuine dead farm, but never let a few chronically
 # -bad symbols starve the rest of the alphabet (2026-09-11 root cause: iv_history froze for
 # ~95% of the universe for a month because one early-alphabet symbol failed daily and the old
@@ -804,7 +827,61 @@ async def test_append_daily_iv_skips_isolated_bad_symbols_and_keeps_going() -> N
     ):
         await eod_report._append_daily_iv(ib, symbols)
 
-    # Every symbol was attempted — the bad run did not truncate the remaining alphabet.
-    assert ib.reqHistoricalDataAsync.call_count == len(symbols)
+    # Every symbol was attempted in the main pass — the bad run did not truncate the
+    # remaining alphabet — and each of the n_bad failures gets exactly one retry pass
+    # attempt (still failing, since _req always raises for BAD*).
+    assert ib.reqHistoricalDataAsync.call_count == len(symbols) + n_bad
     # Every GOOD symbol still got its observation appended.
     assert append_mock.call_count == 10
+
+
+# ---------------------------------------------------------------------------
+# _append_daily_iv — retry pass: a symbol that fails once (but isn't part of a dead-farm
+# abort) gets exactly one more attempt after the main loop finishes.
+# ---------------------------------------------------------------------------
+
+
+def test_append_daily_iv_retries_failed_symbols_once(monkeypatch):
+    """A symbol that times out on the first pass gets one more attempt after the pass."""
+    import asyncio
+
+    from src.orchestrator import eod_report
+
+    attempts: dict[str, int] = {}
+
+    async def fake_one(ib, sym, timeout):
+        attempts[sym] = attempts.get(sym, 0) + 1
+        if sym == "TQQQ" and attempts[sym] == 1:
+            raise TimeoutError
+        return True
+
+    monkeypatch.setattr(eod_report, "_append_one_iv", fake_one)
+    asyncio.run(eod_report._append_daily_iv(object(), ["AMZN", "TQQQ"]))
+    assert attempts == {"AMZN": 1, "TQQQ": 2}
+
+
+@pytest.mark.asyncio
+async def test_append_daily_iv_skips_retry_after_dead_farm_abort(monkeypatch) -> None:
+    """When the main pass bails because the health probe confirms a dead farm, the retry
+    pass must not fire — grinding through the already-failed symbols a second time is
+    exactly the hang the dead-farm circuit breaker exists to avoid."""
+    from src.orchestrator import eod_report
+
+    symbols = [f"SYM{i}" for i in range(30)]
+    ib = MagicMock()
+    ib.reqHistoricalDataAsync = AsyncMock(side_effect=RuntimeError("hmds down"))
+    dead_probe = MagicMock(healthy=False, diagnosis="half-dead socket")
+
+    with (
+        patch("src.ibkr.contracts.qualify_stock_async", new=AsyncMock(return_value=MagicMock())),
+        patch("src.storage.iv_history.append_observation", return_value=False),
+        patch("src.orchestrator.eod_report.asyncio.sleep", new=AsyncMock()),
+        patch(
+            "src.ibkr.market_data.probe_market_data_health",
+            new=AsyncMock(return_value=dead_probe),
+        ),
+    ):
+        await eod_report._append_daily_iv(ib, symbols)
+
+    # Exactly the breaker threshold — no extra retry-pass calls on top.
+    assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES
