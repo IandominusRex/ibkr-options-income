@@ -98,16 +98,17 @@ around with the links below, or read straight through.
 (names it scans and will sell covered calls against *if you already own them*), a **`would_own`**
 list (names it's allowed to sell cash-secured puts on, because if assigned it's genuinely fine to
 end up holding the stock), and an **`actively_wheeling`** subset of `would_own` — the core rotation
-it scans every 15-minute cycle (GOOGL, NVDA, AMZN, MAGS, META, PLTR, HOOD, SOFI, HIMS,
-NBIS, ASTS, RKLB, RGTI, MARA, TQQQ, UPRO, SOXL). Everything else in `would_own` ("dip-watch" —
+it scans every 15-minute cycle (GOOGL, NVDA, AMZN, MAGS, BAC, META, PLTR, HOOD, SOFI, HIMS,
+NBIS, ASTS, RKLB, RGTI, MARA, TQQQ, UPRO, SOXL, DPST). Everything else in `would_own` ("dip-watch" —
 sector ETFs like XLV/XLP, SPY, QQQ, AAPL/MSFT/JPM, and more) isn't scanned every cycle at all — it's only
 pulled into a scan when its price *drops* 3%+, since a rally is never a reason to sell a new put on
 a name outside the core rotation. Tickers are also grouped into three risk tiers for reference —
 **safe bets**, **moderate**, and **risky** — independent of the `actively_wheeling`/dip-watch split.
-Leveraged ETFs are call-only and never `would_own` **except TQQQ/UPRO/SOXL**, a deliberate,
-confirmed exception — the account accepts daily-decay risk on assignment for those three
-specifically. Tickers ruled out entirely (never traded) live in `config/universe_archive.yaml`,
-outside the app's read path.
+Leveraged ETFs are call-only and never `would_own` **except TQQQ/UPRO/SOXL/DPST**, a deliberate,
+confirmed exception — the account accepts daily-decay risk on assignment for those four
+specifically (DPST joined this exception 2026-09-29). AMD is watchlist-only (CC income against an
+existing 300-share position) and deliberately not in `would_own` — no CSPs. Tickers ruled out
+entirely (never traded) live in `config/universe_archive.yaml`, outside the app's read path.
 
 **In plain English.** This is the shopping list, in three tiers of eagerness. One column says
 "stocks we'll write calls against if we already own them." The next says "stocks we're actually OK
@@ -115,7 +116,7 @@ ending up owning if a put gets exercised" — but within that list, a smaller "a
 core gets checked constantly, while the rest only gets a second look after a real dip, so the
 system isn't burning IBKR requests re-checking option chains on names that haven't moved. A
 leveraged ETF is normally kept off the would-own list entirely — nobody wants to wake up owning a
-3x-leveraged fund — except the three named above, where that tradeoff was made on purpose.
+3x-leveraged fund — except the four named above, where that tradeoff was made on purpose.
 
 ### Scanning — gathering fresh data every 15 minutes
 

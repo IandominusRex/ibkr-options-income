@@ -4,10 +4,14 @@ Deep-research findings (June 2026) on every ticker in `config/universe.yaml`.
 Used by Claude Code when analysing the codebase and injected (in compact form) into the
 trade-review prompt in `src/claude/prompts/strategist.py`.
 
-**Last updated:** 2026-08-28 — second archive pass: GLD/XLF/XLK/XLE/XLU/XLI/SLV/MA/HD/AMD/NET/
-SNOW/TTD/DDOG archived to `config/universe_archive.yaml` (realistically won't-trade ETFs, one
-payments-network name kept, AMD too expensive vs. SMH/SOXL, unfamiliar software names). Prior
-update, 2026-08-27 — tiers renamed Tier 1/2/3 → safe bets/moderate/risky (organizational
+**Last updated:** 2026-09-29 (operator-confirmed) — AMD un-archived back into `watchlist:` as
+**CC-only** against the held 300-share position (not added to `would_own`); BAC added to
+`watchlist:` + `would_own` + `actively_wheeling` (held 1000 sh, CC + CSP); DPST moved from the
+CC-only leveraged set into the deliberate `would_own` exception, joining TQQQ/UPRO/SOXL — see the
+"Additions — 2026-09-29" section below. Prior update, 2026-08-28 — second archive pass:
+GLD/XLF/XLK/XLE/XLU/XLI/SLV/MA/HD/AMD/NET/SNOW/TTD/DDOG archived to `config/universe_archive.yaml`
+(realistically won't-trade ETFs, one payments-network name kept, AMD too expensive vs. SMH/SOXL,
+unfamiliar software names). Prior update, 2026-08-27 — tiers renamed Tier 1/2/3 → safe bets/moderate/risky (organizational
 only, no change to the underlying research); `would_own` split into `actively_wheeling` (the core
 rotation, scanned every intraday cycle) and dip-watch (would_own-eligible, but only scanned on a
 ≥3% drop — see `config/universe.yaml`); ARKK/LLY/COST/CRM/COIN/MSTR/BITO/CRCL archived to
@@ -123,6 +127,19 @@ below. Research retained here for reference only:
 - **Assignment:** Comfortable — best-in-class bank, dividend payer, fortress balance sheet  
 - **Notes:** Provides financials sector diversification. Good for CCs when IV spikes on rate/macro news.
 
+### BAC — Bank of America
+
+Added 2026-09-29 (operator-confirmed) — **held (1000 sh) — CC + CSP, actively wheeling.**
+`watchlist:` + `would_own` + `actively_wheeling`.
+
+- **IV rank typical range:** 20–40  
+- **Monthly premium at 0.30Δ:** ~0.8–1.5%  
+- **CC:** ✅ | **CSP:** ✅  
+- **Assignment:** Comfortable — money-centre bank, held — CC + CSP, actively wheeling  
+- **Notes:** Second financials name alongside JPM. Put in `actively_wheeling` (not dip-watch)
+  deliberately — a low-vol bank would rarely trip the 3% dip-watch trigger on its own, so it's
+  scanned every cycle instead of waiting for a drop.
+
 ---
 
 ## Moderate — active income (elevated IV, real fundamentals)
@@ -145,18 +162,20 @@ _Renamed from "Tier 2" 2026-08-27 — same names, same research, organizational 
 - **Assignment:** Comfortable — AWS + retail + ads = diversified cash flows  
 - **Notes:** Better premium than MSFT/AAPL with similar assignment safety.
 
-### AMD — Advanced Micro Devices — ARCHIVED 2026-08-28
+### AMD — Advanced Micro Devices
 
-Removed from `config/universe.yaml` (too expensive for this account's sizing; user prefers SMH
-or SOXL for semiconductor exposure instead). See `config/universe_archive.yaml` for the archive
-entry and the "Archived — 2026-08-28" section below. Research retained here for reference only:
+Un-archived 2026-09-29 (operator-confirmed) — **held (300 sh) — CC only.** Archived 2026-08-28
+(too expensive for this account's sizing vs. SMH/SOXL); back in `watchlist:` for CC income
+against the held shares — deliberately **not** added to `would_own` (no CSPs). See
+`config/universe_archive.yaml`'s header for the restore process and the "Additions — 2026-09-29"
+section below.
 
-- **Price (June 2026):** ~$130  
-- **IV rank typical range:** 35–65  
-- **Monthly premium at 0.30Δ:** ~2–4%  
-- **CC:** was ✅ | **CSP:** was ✅ (~$13,000 collateral)  
-- **Assignment:** real AI/data-centre revenue, though volatile  
-- **Notes:** Popular wheel stock. More accessible price than NVDA. IV stays elevated due to NVDA competition narrative.
+- **Price (June 2026):** ~$130 (stale anchor — use the scan-time spot price)  
+- **IV rank typical range:** 30–55  
+- **Monthly premium at 0.30Δ:** ~1.5–3%  
+- **CC:** ✅ (held — CC only) | **CSP:** ❌ — not in `would_own`  
+- **Assignment:** N/A — CSPs are not offered on this name  
+- **Notes:** Popular wheel stock. More accessible price than NVDA. IV stays elevated due to NVDA competition narrative. Stays out of `would_own` on purpose — CC income on the existing position only.
 
 ### META — Meta Platforms
 - **Price (June 2026):** ~$640  
@@ -221,7 +240,8 @@ _Renamed from "Tier 3" 2026-08-27 — same names, same research, organizational 
 - **CSP:** ✅ — **as of 2026-08-27, a deliberate `would_own` exception** (confirmed: this account
   accepts daily-reset decay risk on assignment for SOXL specifically, alongside TQQQ/UPRO). The
   NAV-decay reasoning below still applies in full — this is an accepted risk, not a retraction of
-  it — but SOXL is no longer blanket CSP-excluded the way LABU/TSLL/DPST are.  
+  it — but SOXL is no longer blanket CSP-excluded the way LABU/TSLL are (DPST joined this
+  exception set too, 2026-09-29).  
 - **Historical range:** -85% (2022) to +227% (2023)  
 - **Notes:** Sell short-dated (weekly/biweekly) OTM calls for CC income as before. If selling a
   CSP, size small — assignment through a sharp drawdown compounds leverage decay with the
@@ -245,7 +265,9 @@ _Renamed from "Tier 3" 2026-08-27 — same names, same research, organizational 
 - **Price (June 2026):** ~$120  
 - **IV typical range:** 70–110%  
 - **CC:** ✅ — interest-rate sensitive; good premiums on rate announcement weeks  
-- **CSP:** ❌ — 3× leverage on regional banks (SVB-style risk amplified 3×)  
+- **CSP:** ✅ — **deliberate `would_own` exception (2026-09-29):** 3× regional banks, so
+  assignment means holding a daily-reset product (SVB-style risk amplified 3×); size small and
+  prefer short DTE, alongside TQQQ/UPRO/SOXL. No longer blanket CSP-excluded.  
 - **Notes:** Options liquidity thinner than SOXL/TSLL. Verify OI > 100 before trading.
 
 ### MARA — MARA Holdings (Bitcoin miner)
@@ -356,7 +378,7 @@ doc-update table.
 A second trim, same reference-only treatment as above — moved to `config/universe_archive.yaml`:
 
 - **GLD** — see the dedicated (now-archived) section above; user says realistically won't trade it much.
-- **AMD** — see the dedicated (now-archived) section above; too expensive for this account's sizing, user prefers SMH or SOXL for semiconductor exposure instead.
+- **AMD** — too expensive for this account's sizing, user prefers SMH or SOXL for semiconductor exposure instead. **Un-archived 2026-09-29** as CC-only against the held 300-share position — see the AMD section above and "Additions — 2026-09-29" below; no longer in `config/universe_archive.yaml`.
 - **XLF, XLK, XLE, XLU, XLI, SLV** — were in the diversifier-ETF table above; user says realistically won't trade them much.
 - **MA (~$488)** — was a `would_own` quality stock above; user only wants one payments-network name, kept V instead.
 - **HD (~$327)** — was a `would_own` quality stock above; user will not trade it.
@@ -368,14 +390,30 @@ doc-update table.
 
 ---
 
+## Additions — 2026-09-29 (operator-confirmed)
+
+- **AMD** — un-archived from `config/universe_archive.yaml` back into `watchlist:` (sector
+  `semis`). **Held — CC only** against the existing 300-share position; deliberately not added
+  to `would_own` — no CSPs. See the dedicated AMD section above.
+- **BAC** — new to `watchlist:` (sector `financials`), and also to `would_own` +
+  `actively_wheeling`. **Held — CC + CSP, actively wheeling**: a low-vol money-centre bank would
+  rarely trip the 3% dip-watch trigger on its own, so it's placed in the core rotation instead of
+  dip-watch. See the dedicated BAC section above.
+- **DPST** — reclassified from the CC-only leveraged set into the deliberate `would_own`
+  exception, joining TQQQ/UPRO/SOXL (also added to `actively_wheeling`). See the updated DPST
+  section above and Key trading rule 3 below.
+
+---
+
 ## Key trading rules derived from research
 
 1. **Do not sell premium when IVR < 30.** The risk engine enforces this, but Claude should flag candidates near the floor as marginal.
 2. **TastyTrade standard: wait for IVR ≥ 50** before entering new premium positions in ideal conditions. IVR 30–49 = acceptable but not ideal.
-3. **Leveraged ETFs (LABU, TSLL, DPST):** CC-only. Assignment = NAV decay trap. Never sell CSPs.
-   **TQQQ, UPRO, SOXL are a deliberate exception (2026-08-27):** this account accepts daily-reset
-   decay risk on assignment for these three specifically — they're in `would_own` and
-   `actively_wheeling`. The NAV-decay reasoning is unchanged; the risk is accepted, not absent.
+3. **Leveraged ETFs (LABU, TSLL):** CC-only. Assignment = NAV decay trap. Never sell CSPs.
+   **TQQQ, UPRO, SOXL, and (since 2026-09-29) DPST are a deliberate exception** (TQQQ/UPRO/SOXL
+   confirmed 2026-08-27; DPST confirmed 2026-09-29): this account accepts daily-reset decay risk
+   on assignment for these four specifically — they're in `would_own` and `actively_wheeling`.
+   The NAV-decay reasoning is unchanged; the risk is accepted, not absent.
 4. **BABA:** Size conservatively (< `max_pct_per_ticker`). Flag ADR risk in every review.
 5. **MARA, RGTI:** The `max_pct_per_ticker: 5%` cap limits damage. Flag as speculative in every review.
 6. **Earnings blackout:** The system enforces a 14-day blackout. Claude should call out if the DTE window is close to an expected earnings date that yfinance missed.
@@ -409,9 +447,9 @@ The risk engine caps sector exposure at 25% of net liquidation. Sector assignmen
 | Sector | Tickers |
 |---|---|
 | `index` | SPY, QQQ, IWM, TQQQ, UPRO |
-| `semis` | NVDA, SMH, SOXL |
+| `semis` | NVDA, AMD, SMH, SOXL |
 | `tech` | AAPL, MSFT, GOOGL, AMZN, MAGS, META, PLTR, RGTI, BABA, NBIS, CRWD, IONQ, HACK, IGV |
-| `financials` | JPM, SOFI, HOOD, DPST, V |
+| `financials` | JPM, BAC, SOFI, HOOD, DPST, V |
 | `consumer` | TSLA, TSLL, WMT, UBER, XLP |
 | `healthcare` | HIMS, TEM, XLV |
 | `crypto` | MARA |

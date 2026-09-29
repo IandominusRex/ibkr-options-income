@@ -31,9 +31,10 @@
 #   safe_bets — core income: liquid, stable, fund-manager grade (SPY/QQQ/GOOGL/NVDA/JPM)
 #   moderate  — active income: elevated IV, real fundamentals (META/PLTR/HOOD/SOFI/HIMS)
 #   risky     — speculative / high-IV: premium income only, assignment is a risk event
-#             Leveraged ETFs (LABU/TSLL/DPST) — CC-only, NEVER in would_own (daily-reset decay)
-#             TQQQ/UPRO/SOXL — leveraged, but a DELIBERATE would_own exception (confirmed
-#             2026-08-27: decay risk on assignment is accepted for these three specifically)
+#             Leveraged ETFs (LABU/TSLL) — CC-only, NEVER in would_own (daily-reset decay)
+#             TQQQ/UPRO/SOXL/DPST — leveraged, but a DELIBERATE would_own exception (TQQQ/UPRO/SOXL
+#             confirmed 2026-08-27; DPST confirmed 2026-09-29: decay risk on assignment is
+#             accepted for these four specifically)
 #             Individual speculative names (MARA/RGTI/ASTS/RKLB) — CSP only, hard position limits
 #
 # Archived tickers (things you've decided you'll never trade) live in
@@ -64,15 +65,17 @@ indexes:
   - HACK         # Cybersecurity ETF
   - IGV          # Software ETF
 
-  # risky — leveraged, DELIBERATE would_own exception (confirmed 2026-08-27)
+  # risky — leveraged, DELIBERATE would_own exception (TQQQ/UPRO/SOXL confirmed 2026-08-27;
+  # DPST confirmed 2026-09-29)
   - TQQQ         # 3× Nasdaq-100; daily-reset decay accepted for CSP/CC
   - UPRO         # 3× S&P 500; daily-reset decay accepted for CSP/CC
   - SOXL         # 3× Semiconductor; annualized CC yields 180–530%; daily-reset decay accepted
+  - DPST         # 3× Regional Banks; interest-rate sensitive; good CC premiums; would_own
+                 # exception (2026-09-29) — assignment means holding a daily-reset product
 
   # risky — CC-only leveraged ETFs; NEVER add to would_own
   - LABU         # 3× Biotech; binary FDA gap risk on top of leverage decay
   - TSLL         # 2× TSLA; affordable entry; high IV
-  - DPST         # 3× Regional Banks; interest-rate sensitive; good CC premiums
 
 # ── Individual stocks ─────────────────────────────────────────────────────────
 
@@ -86,6 +89,8 @@ watchlist:
   - JPM          # Best-in-class bank; financials diversifier; IV 22–35; dip-watch only
   - V            # Visa; payments network moat; liquid options; lower IV (~20–28); dip-watch only
   - WMT          # Walmart; defensive consumer staple; ~$120/sh; liquid options; dip-watch only
+  - AMD          # Held (300 sh); semis; liquid chains; CC-eligible while held; dip-watch only if added to would_own
+  - BAC          # Held (1000 sh); money-centre bank; liquid chains; CC-eligible while held
 
   # moderate — elevated IV, real fundamentals, assignment acceptable
   - TSLA         # Top single-stock income name; deepest liquidity after AAPL; IV 40–70; dip-watch only
@@ -118,6 +123,7 @@ actively_wheeling:
   - NVDA
   - AMZN
   - MAGS
+  - BAC
   # moderate
   - META
   - PLTR
@@ -134,6 +140,7 @@ actively_wheeling:
   - TQQQ
   - UPRO
   - SOXL
+  - DPST
 
 # ── CSP allowlist ─────────────────────────────────────────────────────────────
 
@@ -141,8 +148,9 @@ actively_wheeling:
 # CSP candidates are filtered to this set. Keep it honest.
 # = `actively_wheeling` (above) ∪ the "dip-watch" names below (pulled into a scan cycle only on
 # a ≥3% drop — see market_data.dip_pull_in_pct — not scanned every cycle like actively_wheeling).
-# Leveraged CC-only ETFs (LABU/TSLL/DPST) are intentionally excluded — assignment = owning a
-# decaying 3× product with no offsetting exception.
+# Leveraged CC-only ETFs (LABU/TSLL) are intentionally excluded — assignment = owning a
+# decaying 3× product with no offsetting exception. DPST is a deliberate would_own exception
+# (2026-09-29) — see the actively_wheeling block above and the leveraged_etfs comment below.
 would_own:
   # actively_wheeling (see block above) — always CSP-eligible, always the core rotation
 
@@ -150,6 +158,7 @@ would_own:
   - NVDA
   - AMZN
   - MAGS
+  - BAC
   - META
   - PLTR
   - HOOD
@@ -163,6 +172,7 @@ would_own:
   - TQQQ
   - UPRO
   - SOXL
+  - DPST
 
   # dip-watch — would_own-eligible, but only scanned on a ≥3% drop (market_data.dip_pull_in_pct)
   - SPY
@@ -211,11 +221,13 @@ sectors:
 
   # safe_bets stocks
   NVDA: semis
+  AMD: semis
   AAPL: tech
   MSFT: tech
   GOOGL: tech
   AMZN: tech
   JPM: financials
+  BAC: financials
   V: financials
   WMT: consumer
 
@@ -259,13 +271,15 @@ strike_bands:
   ASTS: 0.45
 
 # ---------------------------------------------------------------------------
-# Leveraged ETFs (2026-08-27). Listed here once so the research checks layer
-# (src/research/checks/warnings.py) can surface the daily-reset decay warning
-# without keeping a second hard-coded copy. Membership rules, derived:
+# Leveraged ETFs (2026-08-27; DPST moved into the exception set 2026-09-29).
+# Listed here once so the research checks layer (src/research/checks/warnings.py)
+# can surface the daily-reset decay warning without keeping a second hard-coded
+# copy. Membership rules, derived:
 #   • CC-only (never assignment-eligible) = leveraged_etfs − would_own
-#       → LABU / TSLL / DPST
+#       → LABU / TSLL
 #   • Deliberate would_own exception       = leveraged_etfs ∩ would_own
-#       → TQQQ / UPRO / SOXL (confirmed 2026-08-27)
+#       → TQQQ / UPRO / SOXL / DPST (TQQQ/UPRO/SOXL confirmed 2026-08-27; DPST
+#         confirmed 2026-09-29)
 # Do not move a name between the two sets by editing here alone — the would_own
 # list is the source of truth for which side of the line a name sits on.
 # ---------------------------------------------------------------------------
@@ -273,6 +287,6 @@ leveraged_etfs:
   - TQQQ
   - UPRO
   - SOXL
+  - DPST
   - LABU
   - TSLL
-  - DPST

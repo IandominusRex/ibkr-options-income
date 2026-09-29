@@ -54,6 +54,8 @@ SAFE_BETS — Core income (fund-manager grade, stable assignment):
   JPM  ~$280  IVR 20-40  CC+CSP  1.0-2.0%/mo   financials; dividend payer; DIP-WATCH
   V    ~$324  IVR 12-28  CC+CSP  0.6-1.0%/mo   payments moat; LOW IV, ~$32k collateral; DIP-WATCH
   WMT  ~$120  IVR 14-30  CC+CSP  0.7-1.2%/mo   defensive staple; liquid chain; DIP-WATCH
+  AMD  held   IVR 30-55  CC      1.5-3.0%/mo   semis; held 300sh — CC income on existing shares
+  BAC  held   IVR 20-40  CC+CSP  0.8-1.5%/mo   money-centre bank; held 1000sh — CC income; ACTIVELY_WHEELING
 
 DIVERSIFIER ETFs (broaden away from the tech/crypto tilt; defensives are LOW-IV → few signals;
 all DIP-WATCH — pulled in only on a ≥3% drop, never scanned every cycle):
@@ -73,16 +75,18 @@ MODERATE — Active income (elevated IV, real fundamentals):
   UBER/CRWD — high-IV mobility/cybersecurity names; both DIP-WATCH (would_own-eligible,
       pulled in only on a ≥3% drop). TEM is watchlist/CC-only, not in would_own.
 
-RISKY — leveraged, DELIBERATE would_own exception (confirmed 2026-08-27 — decay risk on
-assignment is accepted for these three specifically; ACTIVELY_WHEELING):
+RISKY — leveraged, DELIBERATE would_own exception (TQQQ/UPRO/SOXL confirmed 2026-08-27, DPST
+confirmed 2026-09-29 — decay risk on assignment is accepted for these four specifically;
+ACTIVELY_WHEELING):
   TQQQ ~unk   IV high    CC+CSP  high          3× Nasdaq-100
   UPRO ~unk   IV high    CC+CSP  high          3× S&P 500
   SOXL ~$25   IV 80-140% CC+CSP 182-534% ann   3× semi; -85% in 2022; decay accepted for this account
+  DPST ~$120  IV 70-110% CC+CSP high           3× regional banks; deliberate would_own exception
+                                                (2026-09-29); size small, prefer short DTE; verify OI
 
 RISKY — CC-only leveraged ETFs (NEVER would_own — no exception for these):
   LABU ~$20   IV 90-160% CC ONLY extreme       3× biotech + FDA binary risk; never assign
   TSLL ~$15   IV 90-130% CC ONLY very high     2× TSLA; affordable entry; leverage decay
-  DPST ~$120  IV 70-110% CC ONLY high          3× regional banks; thin liquidity; verify OI
 
 RISKY — Speculative stocks (in would_own, ACTIVELY_WHEELING, hard position limits):
   MARA ~$15   IV 90-130% CC+CSP* 6-12%/mo     *BTC proxy; can lose 70%+ in bear cycle
@@ -97,7 +101,7 @@ KEY RULES FOR REVIEW:
 - AAPL/MSFT premiums rarely exceed 1.2%/month — sanity-check yield claims
 - Defensive names (V and XLP/XLV/TLT) are LOW-IV — expect few signals; never inflate yield claims for them
 - Crypto cluster (MARA) is BTC-correlated
-- Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/UPRO/SOXL,
+- Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/UPRO/SOXL/DPST,
   which are would_own despite this (a deliberate, accepted exception, not an oversight)
 - BABA: every review must note ADR/geopolitical risk
 - MARA/RGTI/RKLB/ASTS and other RISKY names: every review must note speculative nature and cap sizing reminder

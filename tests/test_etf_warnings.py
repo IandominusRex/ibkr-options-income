@@ -23,15 +23,17 @@ def test_a_plain_etf_carries_no_decay_warning() -> None:
 
 
 def test_cc_only_names_are_marked_never_assignment_eligible() -> None:
-    """LABU, TSLL and DPST are deliberately excluded from would_own."""
-    for symbol in ("LABU", "TSLL", "DPST"):
+    """LABU and TSLL are deliberately excluded from would_own (DPST moved to the deliberate
+    would_own exception set 2026-09-29 — see test_the_deliberate_would_own_exceptions_say_so)."""
+    for symbol in ("LABU", "TSLL"):
         details = " ".join(w.detail for w in warnings_for(symbol, is_etf=True, info={}))
         assert "covered call" in details.lower()
 
 
 def test_the_deliberate_would_own_exceptions_say_so() -> None:
-    """TQQQ, UPRO and SOXL are in would_own on purpose; the UI must not read as an oversight."""
-    for symbol in ("TQQQ", "UPRO", "SOXL"):
+    """TQQQ, UPRO, SOXL and (since 2026-09-29) DPST are in would_own on purpose; the UI must
+    not read as an oversight."""
+    for symbol in ("TQQQ", "UPRO", "SOXL", "DPST"):
         details = " ".join(w.detail for w in warnings_for(symbol, is_etf=True, info={}))
         assert "deliberate" in details.lower()
 

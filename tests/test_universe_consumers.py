@@ -206,3 +206,39 @@ def test_eod_report_watchlist_reflects_an_override(db_session) -> None:
     invalidate_universe_cache()
 
     assert "ZZZZ" in _universe_symbols()
+
+
+# --------------------------------------------------------------------------- #
+# 2026-09-29: AMD (CC-only) and BAC (CC+CSP, actively wheeling) added to the
+# universe; DPST moved from the CC-only leveraged set to the deliberate
+# would_own exception alongside TQQQ/UPRO/SOXL.
+# --------------------------------------------------------------------------- #
+
+
+def test_every_universe_symbol_has_a_sector():
+    """A symbol missing from `sectors:` silently bypasses the per-sector concentration cap
+    (2026-09: AMD/BAC). Every scanned list must be covered."""
+    from src.common.config import get_config
+
+    u = get_config().universe
+    scanned = set(u.get("indexes", [])) | set(u.get("watchlist", [])) | set(u.get("would_own", []))
+    missing = sorted(scanned - set(u.get("sectors", {})))
+    assert missing == [], f"add to universe.yaml → sectors: {missing}"
+
+
+def test_amd_and_bac_are_in_the_universe():
+    from src.common.config import get_config
+
+    u = get_config().universe
+    assert {"AMD", "BAC"} <= set(u["watchlist"])
+    assert u["sectors"]["AMD"] == "semis" and u["sectors"]["BAC"] == "financials"
+
+
+def test_csp_eligibility_matches_operator_decision():
+    from src.common.config import get_config
+
+    u = get_config().universe
+    assert {"BAC", "DPST"} <= set(u["would_own"]) and {"BAC", "DPST"} <= set(u["actively_wheeling"])
+    assert "AMD" not in u["would_own"]  # AMD: covered calls only
+    # DPST is now a deliberate leveraged exception, not CC-only
+    assert "DPST" in set(u["leveraged_etfs"]) & set(u["would_own"])

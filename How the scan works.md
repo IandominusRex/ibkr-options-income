@@ -6,7 +6,11 @@ measured timing figures (percentiles, the `56s + 29.9s × n` fit, "5 times in 66
 captured before it and describe the pre-trim 46-name universe; the per-symbol cost model itself
 doesn't change, only how many symbols there are to multiply it by), updated 2026-09-11
 (`scheduler.entry_cutoff` moved from 15:00 to 16:00 ET — it now equals the RTH close, so it no
-longer trims the trading day; the last 15-min cycle, 15:45, is the last one either way). Reflects
+longer trims the trading day; the last 15-min cycle, 15:45, is the last one either way), updated
+2026-09-29 (AMD added to `watchlist:` as CC-only — not in `would_own`; BAC added to `watchlist:`
++ `would_own` + `actively_wheeling`; DPST moved from the CC-only leveraged set into the
+`actively_wheeling`/`would_own` deliberate exception alongside TQQQ/UPRO/SOXL — membership
+counts below reflect this). Reflects
 `src/orchestrator/scan.py`, `src/notify/approval_service.py` (`_intraday_scan_loop`),
 `config/universe.yaml`, and `config/settings.yaml → market_data` / `scheduler` as they stand
 today.*
@@ -265,24 +269,26 @@ That is the entire scan set. `indexes:` and `watchlist:` are **not read by the s
 
 | List in `universe.yaml` | Count | Read by the scan loop? | What it's actually for |
 |---|---|---|---|
-| `indexes:` + `watchlist:` | 16 + 24 | **No** | The documented universe. Feeds nightly IV-history and price-history appends (EOD, 16:15 ET) and the `/health` IV-staleness check. Nothing else. |
-| `would_own:` | **32** | **Yes — this is the scan set** | The CSP allowlist. A cash-secured put can only ever be recommended on a name in here. |
-| `actively_wheeling:` | **17** | Yes — a subset of `would_own` | The core rotation. The only names on the sensitive 0.5% gate and the only ones the 120-min net covers. |
+| `indexes:` + `watchlist:` | 16 + 26 | **No** | The documented universe. Feeds nightly IV-history and price-history appends (EOD, 16:15 ET) and the `/health` IV-staleness check. Nothing else. |
+| `would_own:` | **34** | **Yes — this is the scan set** | The CSP allowlist. A cash-secured put can only ever be recommended on a name in here. |
+| `actively_wheeling:` | **19** | Yes — a subset of `would_own` | The core rotation. The only names on the sensitive 0.5% gate and the only ones the 120-min net covers. |
 | *(derived)* dip-watch = `would_own` − `actively_wheeling` | **15** | Yes, but cheaply | Names you'd accept assignment on, but don't need checked constantly. Chain-fetched only on a real drop. |
 | `sectors:` / `strike_bands:` | — | Yes, but not for selection | Concentration bucketing and strike-band overrides. |
-| `universe_archive.yaml` | 22 | **No — not loaded by the app at all** | Reasoning kept for tickers you've decided against. |
+| `universe_archive.yaml` | 21 | **No — not loaded by the app at all** | Reasoning kept for tickers you've decided against. |
 
 **Eight tickers are documented but never scanned** — they're in `indexes:`/`watchlist:` but not in
 `would_own`, so unless you hold the stock they never see a chain fetch:
-`XLV, MSFT, TLT` (thin premium), `LABU, TSLL, DPST` (CC-only leveraged, deliberately never
-`would_own`), `TEM, IONQ` (CC-only). If you *do* hold one, it enters the scan set as a held
-position and gets covered-call candidates — just never CSP ones.
+`XLV, MSFT, TLT` (thin premium), `LABU, TSLL` (CC-only leveraged, deliberately never
+`would_own`), `TEM, IONQ` (CC-only), `AMD` (CC-only, held — see below). If you *do* hold one, it
+enters the scan set as a held position and gets covered-call candidates — just never CSP ones.
+(DPST moved out of this "never scanned" group 2026-09-29 — it's now `would_own` +
+`actively_wheeling`.)
 
 ### The three treatments, side by side
 
 | | **Actively wheeling** | **Dip-watch** | **Held stock** |
 |---|---|---|---|
-| Who | 17 core names in `actively_wheeling` | the other 15 in `would_own` | any stock position > 0 shares, whatever list it's in |
+| Who | 19 core names in `actively_wheeling` | the other 15 in `would_own` | any stock position > 0 shares, whatever list it's in |
 | Cheap probe | every cycle | every cycle | every cycle |
 | Chain fetch trigger | **±0.5%** move (`intraday_rescan_move_pct`) | **−3%** drop only (`dip_pull_in_pct`) | **+2%** rise only (`held_position_move_pct`) |
 | Direction | either way | **down only** | **up only** |
@@ -639,7 +645,7 @@ for the next one rather than losing the day. Manual `/scan` always sends the ful
 | **2%** | `market_data.held_position_move_pct` | Held stock — **up only**, and *added to* the name's other bucket rule rather than replacing it |
 | **3%** | `market_data.dip_pull_in_pct` | Dip-watch — **down only**, never swept on a timer |
 | **600s** | `market_data.chain_fetch_budget_seconds` | Per-cycle chain-fetch ceiling; overflow defers to next cycle. 0 disables |
-| 17 / 15 / 32 | `universe.yaml` | `actively_wheeling` / dip-watch / `would_own` |
+| 19 / 15 / 34 | `universe.yaml` | `actively_wheeling` / dip-watch / `would_own` |
 
 **Where to change behaviour:** thresholds in `config/settings.yaml → market_data`, membership in
 `config/universe.yaml`. Moving a ticker between `actively_wheeling` and dip-watch is the single
@@ -677,7 +683,7 @@ movement is still what really scatters the clocks.
 **"Why don't my dip-watch names ever get scanned?"**
 They're probed every cycle; they just rarely earn a chain fetch, which is the design. A −3% drop
 from their last-fetch price pulls them in. They are excluded from the 120-min net on purpose —
-including them would put all 32 names back on a timer and defeat the split. At startup /
+including them would put all 34 names back on a timer and defeat the split. At startup /
 manual `/scan`, dip_watch names are seed-only (no chain fetch) unless they gapped ≥3% overnight —
 the same exclusion at a different point in the cycle.
 

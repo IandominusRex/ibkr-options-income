@@ -100,11 +100,10 @@ archived:
     reason: >
       Home Depot; user will not trade it.
 
-  - ticker: AMD
-    date: "2026-08-28"
-    reason: >
-      Too expensive for this account's sizing; user prefers SMH or SOXL for
-      semiconductor exposure instead.
+  # AMD (archived 2026-08-28: too expensive for this account's sizing vs. SMH/SOXL) was
+  # un-archived 2026-09-29 — back in universe.yaml's watchlist as CC-only against the held
+  # 300-share position, deliberately not added to would_own. See UNIVERSE_RESEARCH.md's AMD
+  # section and "Additions — 2026-09-29".
 
   - ticker: NET
     date: "2026-08-28"
