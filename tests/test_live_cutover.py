@@ -154,6 +154,19 @@ def test_is_live_reflects_secrets_flag():
 
 
 # --------------------------------------------------------------------------- #
+# Cutover preconditions
+# --------------------------------------------------------------------------- #
+
+
+def test_paper_skip_promotion_gate_defaults_false():
+    """Task 12's paper-only promotion-gate bypass must default off — a config that omits the
+    key entirely (or a fresh checkout of config/settings.yaml) must never silently skip the
+    autonomy evidence gate. STATUS.md's live-cutover gate requires this be false before any
+    live cutover; config/settings.yaml deliberately sets it true for this paper run only."""
+    assert AutomationCfg().paper_skip_promotion_gate is False
+
+
+# --------------------------------------------------------------------------- #
 # Live confirmation in executor
 # --------------------------------------------------------------------------- #
 

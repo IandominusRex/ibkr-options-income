@@ -363,6 +363,60 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Built (2026-09-30 — scan-loop remediation Task 12: paper-only promotion bypass → run on FULL autonomy)
+
+The Task 14 autonomy ladder's `promotion_blockers` requires >=20 fills, >=60% fill rate, and
+>=1 risk-reducing close before promoting past `manual` — evidence a fresh paper account has no
+way to accumulate without first running at a rung that can generate it. Task 12 adds a single,
+config-gated escape hatch so the paper account can observe genuine end-to-end auto-trade
+behaviour (auto-queue → thread-58 order notification, no human tap) without waiting weeks for
+that evidence, while making the bypass structurally impossible on a live account:
+
+- **`AutomationCfg.paper_skip_promotion_gate: bool = False`** (`src/common/config.py`) — code
+  default is off; `config/settings.yaml`'s `automation:` block sets it `true` for this paper
+  deployment only, with a comment spelling out the evidence it skips and that it must be set
+  back to `false` before any live cutover.
+- **`system_settings.promotion_blockers(target)`** (`src/storage/system_settings.py`), right
+  after the existing demotion early-return: when the flag is set, `cfg.is_live` decides
+  everything — `False` logs a warning ("Promotion evidence gate SKIPPED (paper-only override)
+  for %s") and returns `[]` (promotion allowed unconditionally); `True` logs a *different*
+  warning ("… is set but LIVE_TRADING=true — ignored") and falls through to the normal
+  fill/fill-rate/close evidence check untouched. There is no third state: a live account always
+  gets the full evidence gate regardless of this flag.
+- **No new back door.** `promotion_blockers` is the one function Telegram's `/autonomy <level>`,
+  the web `set_autonomy` drain handler, and the new `scripts/autonomy.py` CLI all call — none of
+  the three special-cases the bypass or duplicates its logic, so there is exactly one promotion
+  gate with exactly one override, reachable from every surface identically.
+- **`scripts/autonomy.py`** (new) backs `./ibkr autonomy [level]` (the `ibkr` dispatcher for this
+  already existed from Task 6, pointed at a script that didn't exist yet until now). No args
+  prints the current rung, its fill/fill-rate/close evidence (`autonomy_progress()`), and either
+  the blockers to the next rung or that it's eligible. An argument (any `AutonomyLevel` value,
+  case-insensitive) attempts that move through `promotion_blockers`/`set_autonomy_level`; a
+  refusal or an unknown level name prints to stderr and exits non-zero.
+- **Tests:** `tests/test_autonomy.py` gains `test_paper_bypass_clears_blockers` (bypass +
+  paper → `[]`), `test_bypass_ignored_when_live` (bypass + live → still blocked, fresh DB has 0
+  fills), and `test_bypass_off_by_default` (a bare `AutomationCfg()` — not `get_config()`, which
+  would read this deployment's `true` — pins the code default `False`). `tests/test_live_cutover.py`
+  gains a matching cutover-precondition assertion. Because `config/settings.yaml` now ships the
+  bypass **on**, two pre-existing tests that assumed a bare evidence-gate refusal
+  (`test_autonomy.py::test_promotion_is_refused_without_evidence`,
+  `test_drain_controls.py::test_set_autonomy_promotion_refused_carries_the_blockers`) had to
+  explicitly monkeypatch the flag back to `False` to keep testing what they were written to
+  test — the bypass, not the gate it wraps.
+
+**Preconditions before the actual flip (not yet met on this machine, so it has not been run):**
+Tasks 1, 3, 5 and 6 deployed; `./ibkr status` healthy; the watchdog silent through one full RTH
+session; and `automation.max_auto_trades_per_day`/`daily_loss_halt_pct`/`drawdown_halt_pct`/
+`auto_close_enabled` unchanged from their current values. As of this writing IB Gateway is down
+on this machine and the watchdog has not yet run silently through a full RTH session, so **the
+override is enabled in `config/settings.yaml` but the autonomy level itself is still `observe`
+in the stored DB** — the operator runs `./ibkr autonomy full` by hand once the preconditions
+above actually hold; nothing in this task changes the stored rung itself. The Rules Engine,
+concentration caps, and the send-time re-validation gate every order exactly as before —
+autonomy only decides who taps Approve, never what passes the risk gate.
+
+---
+
 ## Built (2026-09-30 — scan-loop remediation Task 11: news-grounded review — keyless news search + bounded tool-calling research turn)
 
 Task 10 gave the local Ollama reviewer deterministic FACTS and a rubric that references `N#`
@@ -707,7 +761,8 @@ is never a hand-rolled XML-escaping concern) and fully unit-tested; `install`/`u
 `start`/`stop`/`status` drive `launchctl bootstrap`/`bootout`/`kickstart -k`/`print` against
 whichever labels are currently installed on disk. `./ibkr` (bash) wraps that CLI plus `logs
 <name>` (tails `logs/<name>.log`), `watchdog` (`python -m scripts.watchdog`, a manual one-shot
-outside launchd), and a dispatcher stub for `autonomy` (Task 12, not yet built). `install`
+outside launchd), and a dispatcher for `autonomy` (Task 12 built the target script,
+`scripts/autonomy.py` — see its own "Built" entry above). `install`
 refuses to run over a `scripts.start` process launchd doesn't already own — two supervisors
 would fight over clientIds (`config/settings.yaml → ibkr.client_ids`); see `cmd_preflight`/
 `conflicting_scripts_start_pids` in the "Bugs fixed" entry right below for exactly how that's
@@ -2888,4 +2943,16 @@ if `greeks_source == "ibkr"` never populates on this data subscription, `require
 true` will silently block 100% of live income trades. Resolve it, or set that flag `false`
 deliberately with the justification written into that file — do not discover it in production.
 Autonomy should be at `manual` (not `whitelist`/`full`) through the whole paper-validation period;
-the ladder's own promotion gate will refuse to move until the fill evidence exists.
+the ladder's own promotion gate will refuse to move until the fill evidence exists — **unless**
+`automation.paper_skip_promotion_gate` (Task 12) is bypassing it, which is only ever safe on a
+paper account (see below).
+
+**`automation.paper_skip_promotion_gate` must be `false`.** Task 12 added a paper-only override
+that lets `promotion_blockers` skip the fill-count evidence above; `config/settings.yaml` ships
+it `true` for this paper deployment precisely so the paper account can run on `full` and be
+observed end-to-end before live cutover, not as a value that should ever reach a live run.
+`promotion_blockers` itself refuses to honor the flag whenever `Config.is_live` is `True` (it
+logs a warning and falls through to the real evidence check instead) — but that is a
+second-order guard, not a reason to skip resetting it: set this back to `false` in
+`config/settings.yaml` before flipping `LIVE_TRADING=true`, the same way every other paper-only
+override in this checklist gets reset.

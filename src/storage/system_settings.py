@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from src.common.config import get_config
 from src.common.schemas import AutonomyLevel
 from src.storage.db import session_scope
 from src.storage.models import SystemSettingRow
@@ -128,6 +129,18 @@ def promotion_blockers(target: AutonomyLevel) -> list[str]:
     ]
     if order.index(target) <= order.index(get_autonomy_level()):
         return []
+
+    cfg = get_config()
+    if cfg.automation.paper_skip_promotion_gate:
+        if cfg.is_live:
+            log.warning(
+                "automation.paper_skip_promotion_gate is set but LIVE_TRADING=true — ignored"
+            )
+        else:
+            log.warning(
+                "Promotion evidence gate SKIPPED (paper-only override) for %s", target.value
+            )
+            return []
 
     blockers: list[str] = []
     try:

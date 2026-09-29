@@ -324,6 +324,10 @@ automation:
   max_loss_multiple: 2.0
   # Risk-reducing closes (profit takes AND loss exits) run independently of autonomy level.
   auto_close_enabled: true
+  # PAPER-ONLY: skip the autonomy promotion evidence gate (>=20 fills, >=60% fill rate, >=1 close)
+  # so the paper account can run on FULL to observe end-to-end behaviour. Ignored — with a
+  # warning — whenever LIVE_TRADING=true. Set back to false before any live cutover.
+  paper_skip_promotion_gate: true
 
 # Out-of-process watchdog (src/ops/watchdog.py), run by launchd every interval_seconds.
 # Never runs inside the processes it watches — see watchdog.py's module docstring for why

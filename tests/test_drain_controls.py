@@ -190,12 +190,17 @@ async def test_set_autonomy_moves_the_rung(drain_env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_autonomy_promotion_refused_carries_the_blockers(drain_env) -> None:
+async def test_set_autonomy_promotion_refused_carries_the_blockers(drain_env, monkeypatch) -> None:
     """The web must not become the rung ladder's back door: a promotion with unmet
     evidence criteria fails with the blockers, exactly like Telegram's /autonomy."""
+    from src.common.config import get_config
     from src.common.schemas import AutonomyLevel
     from src.notify.command_drain import drain_once
     from src.storage.system_settings import set_autonomy_level
+
+    # Task 12's paper-only bypass ships on in config/settings.yaml for this deployment — turn
+    # it off here so this test exercises the evidence gate itself, not the bypass around it.
+    monkeypatch.setattr(get_config().automation, "paper_skip_promotion_gate", False)
 
     set_autonomy_level(AutonomyLevel.OBSERVE)
     cid = drain_env.enqueue("set_autonomy", {"level": "full"})

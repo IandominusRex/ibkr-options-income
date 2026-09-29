@@ -482,6 +482,14 @@ class AutomationCfg(BaseModel):
     # Risk-REDUCING actions run on this switch, independent of the autonomy level — that
     # governs opening exposure. Closing risk should never wait for a tap.
     auto_close_enabled: bool = True
+    # Task 12 (scan-loop remediation) — PAPER-ONLY override of the autonomy promotion evidence
+    # gate (system_settings.promotion_blockers' >=20 fills / >=60% fill rate / >=1 close
+    # requirement) so the paper account can run on FULL to observe end-to-end behaviour without
+    # first accumulating that history. `promotion_blockers` ignores this flag entirely — with a
+    # warning — whenever `Config.is_live` is True, so it can never bypass the evidence gate on a
+    # live account. Code default is False; `config/settings.yaml` sets it True for this paper
+    # run. Set back to False before any live cutover (see STATUS.md "Live cutover gate").
+    paper_skip_promotion_gate: bool = False
 
 
 class WatchdogCfg(BaseModel):

@@ -767,6 +767,18 @@ prevent a *closed-lid* sleep on battery — keep the Mac plugged in, or on a wir
 ./ibkr autonomy [level]         # show/set the autonomy rung (scripts/autonomy.py)
 ```
 
+**Running paper on `full` (Task 12):** `config/settings.yaml → automation.paper_skip_promotion_gate`
+(default `false` in code, shipped `true` in this repo's checked-in config) lets a **paper-mode**
+process skip the autonomy ladder's fill-count evidence gate (>=20 fills, >=60% fill rate, >=1
+risk-reducing close) so `./ibkr autonomy full` can succeed immediately, before that evidence
+exists — it does nothing on a live account (`LIVE_TRADING=true` always runs the real evidence
+check; see `STATUS.md`'s live-cutover gate, which requires this flag be `false` again before you
+ever get there). At `full`, a candidate that passes the deterministic risk gate auto-queues and
+executes with no approval tap — **remember `/halt` in Telegram**: it stops all new order
+queuing/transmission immediately (closing risk still runs), and is the fastest way to intervene
+if a scan cycle at `full` does something you don't like. `./ibkr logs approval` tails what the
+approval/execution daemon is doing in real time.
+
 `install` refuses to run over a terminal-launched `scripts.start` that's still alive (checked via
 `pgrep -f scripts.start` while the supervisor label isn't already loaded) — two supervisors would
 fight over clientIds (`config/settings.yaml → ibkr.client_ids`). Stop the terminal session
@@ -1105,6 +1117,11 @@ These are wired into the code but **review the defaults before you flip the flag
       high-water mark). Either loss breaker auto-engages `/halt`.
 - [ ] **Kill switch:** know that `/halt` stops everything instantly and `/resume` re-enables it; the
       halt persists across restarts.
+- [ ] **Paper-only promotion bypass off (Task 12):** `settings.yaml → automation.paper_skip_promotion_gate`
+      must be `false`. It ships `true` in this repo's checked-in config so the paper account can run
+      `full` without first accumulating fill evidence — `promotion_blockers` ignores it (with a
+      warning) whenever `LIVE_TRADING=true`, but reset it deliberately before cutover rather than
+      relying on that second-order guard.
 - [ ] **DB backups:** the EOD run writes a rotated snapshot to `data/backups/` — confirm it is being
       created after your first EOD cycle.
 
