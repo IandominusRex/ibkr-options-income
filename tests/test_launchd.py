@@ -17,8 +17,9 @@ from scripts.launchd import render_plists
 
 
 def test_render_supervisor_and_watchdog(tmp_path):
-    out = render_plists(tmp_path, tmp_path / ".venv/bin/python", with_gateway=False,
-                        watchdog_interval=300)
+    out = render_plists(
+        tmp_path, tmp_path / ".venv/bin/python", with_gateway=False, watchdog_interval=300
+    )
     assert set(out) == {"com.ibkr.supervisor", "com.ibkr.watchdog"}
     sup = plistlib.loads(out["com.ibkr.supervisor"])
     assert sup["KeepAlive"] is True and sup["RunAtLoad"] is True
@@ -45,8 +46,9 @@ def test_control_script_exists_and_is_executable():
 
 
 def test_render_supervisor_throttle_and_workingdir_for_watchdog(tmp_path):
-    out = render_plists(tmp_path, tmp_path / ".venv/bin/python", with_gateway=False,
-                        watchdog_interval=300)
+    out = render_plists(
+        tmp_path, tmp_path / ".venv/bin/python", with_gateway=False, watchdog_interval=300
+    )
     sup = plistlib.loads(out["com.ibkr.supervisor"])
     assert sup["ThrottleInterval"] == 30
     wd = plistlib.loads(out["com.ibkr.watchdog"])
@@ -55,8 +57,9 @@ def test_render_supervisor_throttle_and_workingdir_for_watchdog(tmp_path):
 
 
 def test_render_supervisor_path_includes_homebrew_bins(tmp_path):
-    out = render_plists(tmp_path, tmp_path / ".venv/bin/python", with_gateway=False,
-                        watchdog_interval=300)
+    out = render_plists(
+        tmp_path, tmp_path / ".venv/bin/python", with_gateway=False, watchdog_interval=300
+    )
     sup = plistlib.loads(out["com.ibkr.supervisor"])
     path = sup["EnvironmentVariables"]["PATH"]
     assert "/opt/homebrew/bin" in path

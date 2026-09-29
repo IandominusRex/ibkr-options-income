@@ -54,7 +54,7 @@ success.
 `ollama signin` once to authorize) purely as a fallback CLI harness for **development sessions**,
 the same role Claude Code plays. This is unrelated to `src/claude/ollama_runner.py`
 (`config/settings.yaml → claude.backend: "ollama"`, `SETUP.md` §14), which runs a small **local**
-model (`qwen3:8b`/`14b`, no `:cloud` tag) as the trading pipeline's own strategist reviewer at
+model (`qwen3.5:4b`, no `:cloud` tag) as the trading pipeline's own strategist reviewer at
 runtime. Both talk to the same `ollama serve` daemon on `localhost:11434`, but do not confuse a
 coding-assistant session with the production review path — never let anything in an opencode
 session touch `config/settings.yaml → claude.*` on the assumption it affects "the same Ollama

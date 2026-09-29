@@ -299,9 +299,11 @@ class TestSelectTopCandidates:
         # than a genuinely neutral 50 score. `_build_tags` must merge into that, not replace
         # it — an outright overwrite would silently drop the tag before the card is sent.
         scored = score_candidates(
-            [_candidate(scores=_scores(iv=80)).model_copy(
-                update={"rationale_tags": ["iv_rank_unavailable"]}
-            )]
+            [
+                _candidate(scores=_scores(iv=80)).model_copy(
+                    update={"rationale_tags": ["iv_rank_unavailable"]}
+                )
+            ]
         )
         tags = select_top_candidates(scored, n=10)[0].rationale_tags
         assert "iv_rank_unavailable" in tags

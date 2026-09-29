@@ -173,7 +173,8 @@ def _ensure_app_commands_pending_only_dedupe(engine: Engine) -> None:
     if "app_commands" not in inspector.get_table_names():
         return  # create_all will have built it without the old constraint
     has_old_constraint = any(
-        uc["column_names"] == ["dedupe_key"] for uc in inspector.get_unique_constraints("app_commands")
+        uc["column_names"] == ["dedupe_key"]
+        for uc in inspector.get_unique_constraints("app_commands")
     )
     if not has_old_constraint:
         return
@@ -198,10 +199,7 @@ def _ensure_app_commands_pending_only_dedupe(engine: Engine) -> None:
             )
         )
         conn.execute(
-            text(
-                f"INSERT INTO app_commands__migrating ({cols}) "
-                f"SELECT {cols} FROM app_commands"
-            )
+            text(f"INSERT INTO app_commands__migrating ({cols}) SELECT {cols} FROM app_commands")
         )
         conn.execute(text("DROP TABLE app_commands"))
         conn.execute(text("ALTER TABLE app_commands__migrating RENAME TO app_commands"))

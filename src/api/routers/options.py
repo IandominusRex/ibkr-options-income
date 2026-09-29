@@ -247,7 +247,9 @@ def _review_payload(payload: dict[str, Any] | None) -> ClaudeReviewPayload | Non
     )
 
 
-def _latest_reviews_by_candidate(db: Any, candidate_ids: set[str]) -> dict[str, ClaudeReviewPayload]:
+def _latest_reviews_by_candidate(
+    db: Any, candidate_ids: set[str]
+) -> dict[str, ClaudeReviewPayload]:
     """Batch-fetch the newest ``ClaudeReviewRow`` per candidate id — one query, not N.
 
     Ordered by candidate_id then recency descending, so the first row seen per
@@ -320,12 +322,13 @@ def list_approvals(
         stmt = stmt.where(ApprovalRow.created_at >= datetime.combine(since, datetime.min.time()))
     if until is not None:
         stmt = stmt.where(
-            ApprovalRow.created_at < datetime.combine(until, datetime.min.time()) + timedelta(days=1)
+            ApprovalRow.created_at
+            < datetime.combine(until, datetime.min.time()) + timedelta(days=1)
         )
     if symbol is not None:
-        stmt = stmt.join(
-            CandidateRow, CandidateRow.candidate_id == ApprovalRow.candidate_id
-        ).where(func.upper(CandidateRow.underlying) == symbol.upper())
+        stmt = stmt.join(CandidateRow, CandidateRow.candidate_id == ApprovalRow.candidate_id).where(
+            func.upper(CandidateRow.underlying) == symbol.upper()
+        )
     # Newest first overall. For status=all this is "newest first" as the spec
     # requires; for a single-status filter the secondary sort is redundant but
     # harmless. A pending approval is NOT promoted above a newer decided one in

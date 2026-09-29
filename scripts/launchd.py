@@ -141,9 +141,7 @@ def _gui_target(label: str) -> str:
 
 
 def _is_loaded(label: str) -> bool:
-    r = subprocess.run(
-        ["launchctl", "print", _gui_target(label)], capture_output=True, text=True
-    )
+    r = subprocess.run(["launchctl", "print", _gui_target(label)], capture_output=True, text=True)
     return r.returncode == 0
 
 

@@ -75,7 +75,8 @@ writes an `AGENTS.md`, which at the root would do exactly that.
 
 **Don't confuse this with the production Ollama backend.** `src/claude/ollama_runner.py`
 (`config/settings.yaml → claude.backend: "ollama"`, see `SETUP.md` §14) runs a small **local** model
-(`qwen3:8b`/`14b`, no `:cloud` tag) as the trading pipeline's own strategist reviewer at runtime —
+(`qwen3.5:4b` — Task 10, see `SETUP.md` §14 "Model choice" for the evaluated alternatives; no
+`:cloud` tag) as the trading pipeline's own strategist reviewer at runtime —
 an entirely different concern from opencode's Ollama Cloud models. Both talk to the same
 `ollama serve` daemon on `localhost:11434`, but the local pulled models serve production review
 calls; the `:cloud` models in `opencode.json` exist only for interactive coding sessions and require
