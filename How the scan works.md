@@ -739,3 +739,39 @@ produced them: `(limits: spread≤10%, OI≥100, vol≥10, volume gate on)` — 
 no generator emits it anymore. Each rejected candidate's `risk_verdicts.liquidity` JSON column
 also carries the raw quote microstructure (`bid`, `ask`, `spread_pct`, `open_interest`, `volume`)
 as it stood at assessment time, so a granular code is auditable without re-fetching the chain.
+
+---
+
+## 10. Why a name misses the score floor (Task 9, 2026-09-29)
+
+A contract can clear every gate (delta band, DTE, liquidity, ROC, the VRP edge) and still never
+reach Claude/Telegram, because `min_candidate_score: 55` (`scoring_weights.yaml`) is applied
+*after* the gate. This looked, in the 2026-09-29 scan-loop post-mortem, like the floor itself was
+miscalibrated — TQQQ CSPs with 0.67%–1.82% weekly premium repeatedly missed it by a few points.
+The real cause (root cause **R7**) was missing data, not a bad floor:
+
+> TQQQ/UPRO/MAGS had **1** `iv_history` row and BAC had **0**, so `iv_rank=None`.
+> `cash_secured_put.py` then scored `iv_score=0.0` under a **30%** weight. Separately, the EOD IV
+> append had stalled for most names since 11 Sep: it timed out and aborted after 5 consecutive
+> failures, always on the same alphabetical head.
+>
+> TQQQ blended = 0·0.30 + 50·0.20 + 70·0.25 + L·0.15 + ~70·0.10 + 50·0.05 = **37 + 0.15·L**, i.e.
+> 44–48 at liquidity 47–73. After the backfill TQQQ IVR = 30.15, which adds **+9.0**, so ≈53–57.
+
+**Decision on the score floor (finding 8):** keep `min_candidate_score: 55`. TQQQ's shortfall was
+missing data, not a mis-set floor. With real IV history it sits at ~53–57, right where an IV rank
+of 30 (the gate minimum, "barely acceptable premium") should put it. UPRO (IVR 18.8), MAGS
+(19.7), RKLB (18.6) and NBIS (13.4) fall short on genuinely cheap premium, and the IV-rank gate
+already rejects them for that. Lowering the floor would only admit trades with thin premium. Task
+9 makes missing IV rank **neutral** rather than zero, so a data gap can't cause this again.
+
+**What Task 9 changed in the arithmetic above:** `iv_score` for a symbol with no IV rank is now
+`missing_iv_rank_score` (`scoring_weights.yaml`, default `50`), not `0` — substituting into the
+same formula: TQQQ blended = 50·0.30 + 50·0.20 + 70·0.25 + L·0.15 + ~70·0.10 + 50·0.05 =
+**52 + 0.15·L**, i.e. 59–63 at the same liquidity range (47–73) — clearing the 55 floor even
+*before* an EOD IV backfill lands, instead of needing one to close a 7–11 point gap. The card
+also carries an `iv_rank_unavailable` rationale tag in this case, so a name scoring on neutral
+data (rather than a real, weak IV rank) is distinguishable at a glance. This never affects a
+symbol with a genuine `iv_rank` of `0.0` (bottom of its 52-week range) — that's real data and
+still scores `0`, not neutral. See `ARCHITECTURE.md`'s `scoring_weights.yaml` row and `STATUS.md`
+for the full fix.

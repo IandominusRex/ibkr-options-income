@@ -381,12 +381,27 @@ class TestCoveredCall:
         assert len(result) == 2
         assert result[0].roc_pct >= result[1].roc_pct
 
-    def test_iv_rank_none_defaults_to_zero(self):
+    def test_iv_rank_none_scores_neutral_and_tags_card(self):
+        # Task 9 (R7): a missing IV rank already passes the IV gate as "data unavailable" —
+        # scoring it 0 under IV's 30% weight silently sank the candidate instead. It must
+        # score the configured neutral value (default 50, scoring_weights.yaml
+        # missing_iv_rank_score) and the gap must be visible on the card via a rationale tag.
         result = generate_cc_candidates(
             "AAPL", [_call_quote()], _long_stock(), _iv(rank=None), _tech(), _fund()
         )
         assert len(result) == 1
+        assert result[0].scores.iv_score == 50.0
+        assert "iv_rank_unavailable" in result[0].rationale_tags
+
+    def test_zero_iv_rank_is_real_data_and_scores_zero(self):
+        # An iv_rank of 0.0 is real data (bottom of the 52-week range), not a missing value —
+        # it must still score 0 and must NOT carry the "data unavailable" tag.
+        result = generate_cc_candidates(
+            "AAPL", [_call_quote()], _long_stock(), _iv(rank=0.0), _tech(), _fund()
+        )
+        assert len(result) == 1
         assert result[0].scores.iv_score == 0.0
+        assert "iv_rank_unavailable" not in result[0].rationale_tags
 
     def test_illiquid_oi_low_is_a_granular_reason_not_the_legacy_code(self):
         # Task 7: a thin-OI reject must carry the precise sub-reason, not the collapsed
@@ -499,6 +514,27 @@ class TestCashSecuredPut:
         assert "illiquid_oi_low" in reasons
         assert "illiquid" not in reasons
         assert cand.open_interest == 5
+
+    def test_iv_rank_none_scores_neutral_and_tags_card(self):
+        # Task 9 (R7): same neutral-scoring rule as the CC generator — a missing IV rank
+        # scores the configured neutral value (default 50) and tags the card, instead of
+        # scoring 0 under IV's 30% weight and silently sinking the candidate.
+        result = generate_csp_candidates(
+            "AAPL", [_put_quote()], _account(), _iv(rank=None), _tech(), _fund()
+        )
+        assert len(result) == 1
+        assert result[0].scores.iv_score == 50.0
+        assert "iv_rank_unavailable" in result[0].rationale_tags
+
+    def test_zero_iv_rank_is_real_data_and_scores_zero(self):
+        # An iv_rank of 0.0 is real data, not a missing value — it must still score 0 and
+        # must NOT carry the "data unavailable" tag.
+        result = generate_csp_candidates(
+            "AAPL", [_put_quote()], _account(), _iv(rank=0.0), _tech(), _fund()
+        )
+        assert len(result) == 1
+        assert result[0].scores.iv_score == 0.0
+        assert "iv_rank_unavailable" not in result[0].rationale_tags
 
     def test_symbolwide_outage_logs_distinct_warning(self, caplog):
         """When IBKR delivers no live market for the ENTIRE chain, that's a data-feed

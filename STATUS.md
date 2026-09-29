@@ -349,6 +349,37 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Bugs fixed (2026-09-29 — scan-loop remediation Task 9: missing IV rank scored neutral, not zero)
+
+Known limitation closed: `cash_secured_put.py`/`covered_call.py` scored a symbol with no IV rank
+(`iv_stats.iv_rank is None` — no or flat `iv_history`) as `iv_score=0.0`, under IV's 30% block
+weight in both strategies. That contradicted the risk gate, which already treats a missing IV
+rank as "data unavailable" and never rejects on it (`min_iv_rank` only fires on a real,
+below-threshold number) — so a data gap silently scored *worse* than the gate's own worst
+tolerated case, sinking the candidate below `min_candidate_score: 55` with no visible reason on
+the card. Root-caused in the 2026-09-29 scan-loop post-mortem (R7): TQQQ/UPRO/MAGS had 1
+`iv_history` row and BAC had 0, all from an EOD IV-append stall (fixed separately, Task 4);
+`iv_score=0.0` alone cost TQQQ **9 points** of `blended_score` (0.30 × 30, the gap between a
+zero score and its actual post-backfill IV rank of 30.15) — enough on its own to keep it under
+the floor even before the append stall was diagnosed.
+
+Fix: both generators now read `missing_iv_rank_score` from `scoring_weights.yaml` (new key,
+default `50` = neutral) and use it for the `iv_score` component only when `iv_rank is None` — a
+real `iv_rank` of `0.0` (bottom of the 52-week range) is unaffected and still scores `0`. Each
+constructs its `TradeCandidate` with `rationale_tags=["iv_rank_unavailable"]` in the missing case,
+which `engine/decision_engine.py::select_top_candidates_detailed` now **merges** into its own
+computed tags instead of overwriting `rationale_tags` wholesale (the pre-existing
+`model_copy(update={"rationale_tags": _build_tags(c)})` would otherwise have silently dropped a
+generator-set tag before the candidate ever reached Claude/Telegram — caught in self-review, not
+in the original brief's file list, and covered by a new regression test,
+`test_engine.py::TestSelectTopCandidates::test_preserves_tags_a_generator_already_set`). The value
+lives in config, not code, so an operator can set `missing_iv_rank_score: 0` to restore the old
+behaviour. See "How the scan works.md" §10 for the full component arithmetic (before and after).
+The score floor itself (`min_candidate_score: 55`) was deliberately left unchanged — see the same
+section for why.
+
+---
+
 ## Built (2026-09-29 — scan-loop remediation Task 5: out-of-process watchdog)
 
 `src/ops/watchdog.py` + `scripts/watchdog.py` (`python -m scripts.watchdog`). A one-shot health

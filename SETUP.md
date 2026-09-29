@@ -386,6 +386,10 @@ Two extra knobs control what gets surfaced:
   and count cap for the "Buy-to-Own Candidates" list. Without the floor the screen surfaced *every*
   non-held, non-bearish watchlist name (e.g. 46/46 over a weekend); raise `min_score` to be pickier
   or `max_candidates` to see more names.
+- `missing_iv_rank_score` (default 50, Task 9) — the `iv_score` a candidate gets when it has no
+  IV rank yet (a new/thin symbol with little `iv_history`), instead of scoring 0 under IV's 30%
+  weight and silently missing `min_candidate_score`. Leave at 50 (neutral); set to 0 to go back to
+  treating a data gap as the worst possible IV rank.
 
 ### `config/settings.yaml` — the `data:` block
 

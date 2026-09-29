@@ -67,4 +67,14 @@ def select_top_candidates_detailed(
 
     top = deduped[:n]
     dropped.extend((c, "top_n") for c in deduped[n:])
-    return [c.model_copy(update={"rationale_tags": _build_tags(c)}) for c in top], dropped
+    # Merge with (never replace) any tags a generator already attached — e.g. Task 9's
+    # `iv_rank_unavailable`, set at candidate construction because only the generator knows
+    # the raw IV rank was None rather than a genuinely neutral score. Overwriting here would
+    # silently drop it before the candidate ever reaches Claude/Telegram. Dedupe while
+    # preserving order in case a future tag source ever overlaps.
+    return [
+        c.model_copy(
+            update={"rationale_tags": list(dict.fromkeys([*c.rationale_tags, *_build_tags(c)]))}
+        )
+        for c in top
+    ], dropped

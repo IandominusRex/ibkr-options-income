@@ -98,6 +98,10 @@ def screen_csp_candidates(
     risk = get_config().risk
     csp_cfg = risk["cash_secured_put"]
     income_cfg = risk["income"]
+    # Task 9 (R7): a missing IV rank already passes the IV gate as "data unavailable" —
+    # scoring it 0 under IV's 30% weight silently sank the candidate instead. Score the
+    # neutral value from config (default 50) and tag the card so the gap stays visible.
+    missing_iv_rank_score: float = cfg.weights.get("missing_iv_rank_score", 50.0)
 
     delta_min: float = csp_cfg["delta_min"]
     delta_max: float = csp_cfg["delta_max"]
@@ -201,7 +205,7 @@ def screen_csp_candidates(
 
         scores = ScoreCard(
             symbol=symbol,
-            iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else 0.0,
+            iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else missing_iv_rank_score,
             technical_score=technical_score(quote, tech_stats, zone),
             fundamental_score=fundamental_score(fund_stats),
             liquidity_score=score_liquidity(quote),
@@ -240,6 +244,7 @@ def screen_csp_candidates(
             quote_ask=quote.ask,
             open_interest=quote.open_interest,
             option_volume=quote.volume,
+            rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],
         )
 
         if reasons:

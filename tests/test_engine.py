@@ -293,6 +293,20 @@ class TestSelectTopCandidates:
     def test_empty_input(self) -> None:
         assert select_top_candidates([], n=5) == []
 
+    def test_preserves_tags_a_generator_already_set(self) -> None:
+        # Task 9: a generator (e.g. cash_secured_put.py) sets `iv_rank_unavailable` on the
+        # candidate itself, because only the generator knows the raw IV rank was None rather
+        # than a genuinely neutral 50 score. `_build_tags` must merge into that, not replace
+        # it — an outright overwrite would silently drop the tag before the card is sent.
+        scored = score_candidates(
+            [_candidate(scores=_scores(iv=80)).model_copy(
+                update={"rationale_tags": ["iv_rank_unavailable"]}
+            )]
+        )
+        tags = select_top_candidates(scored, n=10)[0].rationale_tags
+        assert "iv_rank_unavailable" in tags
+        assert "high_iv_rank" in tags
+
     def test_default_n_from_config(self) -> None:
         candidates = [_candidate(candidate_id=str(i)) for i in range(15)]
         scored = score_candidates(candidates)
