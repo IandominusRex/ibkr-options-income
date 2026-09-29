@@ -73,6 +73,13 @@ class SchedulerCfg(BaseModel):
     intraday_loop_minutes: int = 15  # how often the intraday scan+profit-take loop fires
     profit_take_pct: float = 50.0  # close a short position once this % of premium is captured
     entry_cutoff: str = "15:00"  # no new entries surfaced/queued after this ET time
+    # Hard ceiling on a single EOD run (scripts.run_eod), enforced by the scripts.start
+    # supervisor loop, not by run_eod itself. A hung run (IBKR account-summary/IV requests
+    # never returning) used to block every later EOD indefinitely — the launcher only spawned
+    # a new one once eod_proc.poll() was not None (2026-09-29 incident: one run was still
+    # alive >11h after it started). Past this many minutes the launcher SIGTERMs, then
+    # SIGKILLs after STOP_GRACE_SECONDS, and a new run may be scheduled the next trading day.
+    eod_timeout_minutes: int = 60
 
     @field_validator("eod_report", "entry_cutoff")
     @classmethod

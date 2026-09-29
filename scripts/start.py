@@ -26,6 +26,13 @@ already run does not fire it a second time (which would duplicate the journal
 row + Telegram summary). If the launcher starts *after* the EOD time on a
 trading day and the report has not yet run, it fires immediately (catch-up).
 
+A running EOD report is itself bounded by ``scheduler.eod_timeout_minutes`` (default 60,
+config/settings.yaml). Past that, the launcher kills it (SIGTERM, then SIGKILL after
+`STOP_GRACE_SECONDS`) and logs an ERROR — a hung EOD (e.g. an account-summary fetch stuck
+looping through an IBKR connectivity flap) used to block every later EOD indefinitely, since
+a new one only ever spawned once ``eod_proc.poll()`` was not None (2026-09-29 incident: one
+run was still alive >11h after it started). See `_supervise_eod` / `_eod_tick`.
+
 Stop with Ctrl-C or SIGTERM — every child is sent SIGTERM, given `STOP_GRACE_SECONDS` to exit,
 then SIGKILLed if it hasn't (2026-08-27: a hung `run_approval_service` shutdown ignored SIGTERM
 and was orphaned when the launcher's old `sys.exit(0)`-right-after-`terminate()` didn't wait to
@@ -269,6 +276,90 @@ def _eod_should_fire(now: datetime, last_run: date | None, hh: int, mm: int) -> 
     return now >= target
 
 
+def _eod_timeout_minutes() -> int:
+    """``scheduler.eod_timeout_minutes`` — the hard ceiling on a single EOD run."""
+    from src.common.config import get_config
+
+    return get_config().scheduler.eod_timeout_minutes
+
+
+def _kill_hung_eod(proc: subprocess.Popen, grace_seconds: float) -> None:
+    """Escalate a hung EOD subprocess: SIGTERM, then SIGKILL if it hasn't exited after
+    *grace_seconds*. Mirrors ``_stop_all``'s termination sequence for the supervised daemons."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        log.warning(
+            "EOD PID %d did not exit within %.0fs of SIGTERM — sending SIGKILL",
+            proc.pid,
+            grace_seconds,
+        )
+        proc.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+
+
+def _supervise_eod(
+    eod_proc: subprocess.Popen | None,
+    eod_start_time: float | None,
+    eod_timeout_minutes: float,
+    now_monotonic: float,
+) -> tuple[subprocess.Popen | None, float | None]:
+    """One scheduler-loop tick's worth of EOD-subprocess supervision.
+
+    Returns ``(None, None)`` once the run is no longer occupying the slot — either it exited
+    on its own (logged at INFO), or it exceeded *eod_timeout_minutes* and was killed (logged
+    at ERROR). A hung EOD used to block every later EOD forever, since the launcher only ever
+    spawned a new one once ``eod_proc.poll()`` was not None (2026-09-29: one run was still
+    alive >11h after it started). Otherwise returns the pair unchanged so the caller keeps
+    waiting.
+    """
+    if eod_proc is None:
+        return None, None
+    rc = eod_proc.poll()
+    if rc is not None:
+        log.info("%s finished (rc=%d)", EOD_LABEL, rc)
+        return None, None
+    started_at = eod_start_time if eod_start_time is not None else now_monotonic
+    elapsed_min = (now_monotonic - started_at) / 60.0
+    if elapsed_min > eod_timeout_minutes:
+        log.error("EOD exceeded %d min — killed", eod_timeout_minutes)
+        _kill_hung_eod(eod_proc, STOP_GRACE_SECONDS)
+        return None, None
+    return eod_proc, eod_start_time
+
+
+def _eod_tick(
+    eod_proc: subprocess.Popen | None,
+    eod_start_time: float | None,
+    eod_last_run: date | None,
+    *,
+    now_et: datetime,
+    now_monotonic: float,
+    eod_hh: int,
+    eod_mm: int,
+    eod_timeout_minutes: float,
+    start_fn=None,
+) -> tuple[subprocess.Popen | None, float | None, date | None]:
+    """The scheduler loop's full per-iteration EOD decision: supervise any running EOD (killing
+    one that hung past *eod_timeout_minutes*), then start a new one if none is running and one
+    is due. Once a hung run is killed, ``eod_proc`` is free again in the very same tick, so a
+    due EOD can fire immediately rather than waiting for the next trading day.
+    """
+    if start_fn is None:
+        start_fn = _start_eod
+    eod_proc, eod_start_time = _supervise_eod(
+        eod_proc, eod_start_time, eod_timeout_minutes, now_monotonic
+    )
+    if eod_proc is None and _eod_should_fire(now_et, eod_last_run, eod_hh, eod_mm):
+        eod_proc = start_fn()
+        eod_start_time = now_monotonic
+        eod_last_run = now_et.date()
+        _write_eod_last_run(eod_last_run)
+    return eod_proc, eod_start_time, eod_last_run
+
+
 def _start_eod() -> subprocess.Popen:
     log_fh = _open_log(EOD_LOG)
     proc = subprocess.Popen(
@@ -306,12 +397,16 @@ def main() -> None:
     procs: dict[str, subprocess.Popen | None] = {k: None for k in active}
     restart_delays: dict[str, float] = {k: 5.0 for k in active}
 
-    # One-shot EOD report subprocess (not supervised/restarted — it exits when done).
+    # One-shot EOD report subprocess (not supervised/restarted — it exits when done, or is
+    # killed by _supervise_eod after eod_timeout_minutes).
     eod_proc: subprocess.Popen | None = None
+    eod_start_time: float | None = None
     eod_last_run = _read_eod_last_run()
     eod_hh, eod_mm, eod_tz = (None, None, None)
+    eod_timeout_minutes: float | None = None
     if not args.no_eod:
         eod_hh, eod_mm, eod_tz = _eod_time()
+        eod_timeout_minutes = _eod_timeout_minutes()
 
     def _stop_all(signum, frame):
         log.info("Received signal %s — stopping all daemons…", signum)
@@ -394,17 +489,20 @@ def main() -> None:
             else:
                 restart_delays[name] = 5.0
 
-        # EOD scheduler: fire once per trading day at the configured ET time.
+        # EOD scheduler: fire once per trading day at the configured ET time. Also kills a
+        # run that has exceeded eod_timeout_minutes so one hung EOD can't block every later
+        # one (2026-09-29).
         if not args.no_eod:
-            if eod_proc is not None and eod_proc.poll() is not None:
-                log.info("%s finished (rc=%d)", EOD_LABEL, eod_proc.returncode)
-                eod_proc = None
-            if eod_proc is None and _eod_should_fire(
-                datetime.now(eod_tz), eod_last_run, eod_hh, eod_mm
-            ):
-                eod_proc = _start_eod()
-                eod_last_run = datetime.now(eod_tz).date()
-                _write_eod_last_run(eod_last_run)
+            eod_proc, eod_start_time, eod_last_run = _eod_tick(
+                eod_proc,
+                eod_start_time,
+                eod_last_run,
+                now_et=datetime.now(eod_tz),
+                now_monotonic=time.monotonic(),
+                eod_hh=eod_hh,
+                eod_mm=eod_mm,
+                eod_timeout_minutes=eod_timeout_minutes,
+            )
 
 
 if __name__ == "__main__":

@@ -149,3 +149,155 @@ def test_kill_stale_processes_skips_sigkill_if_process_exits_in_time(monkeypatch
     start._kill_stale_processes()
 
     assert sent == [(111, start.signal.SIGTERM)]
+
+
+# --------------------------------------------------------------------------- #
+# Task 4b: the EOD run must never hang. Evidence (2026-09-29): `scripts.start` only spawns a
+# new EOD once `eod_proc.poll()` is not None, so a single hung EOD (an account-summary fetch
+# stuck looping through IBKR's 1100/1102 Error-322 flaps for ~4h; one run was still alive
+# >11h after starting) blocks every later EOD run indefinitely. `_supervise_eod` bounds a
+# running EOD to `scheduler.eod_timeout_minutes` and kills it (SIGTERM, then SIGKILL after
+# STOP_GRACE_SECONDS); `_eod_tick` wires that into the same per-iteration decision that also
+# schedules the next run once `eod_proc` is free again.
+# --------------------------------------------------------------------------- #
+
+
+class _FakePopen:
+    """Minimal stand-in for subprocess.Popen: controllable poll()/terminate()/wait()/kill()."""
+
+    def __init__(self, pid: int = 999, alive_after_sigterm: bool = False) -> None:
+        self.pid = pid
+        self.terminated = False
+        self.killed = False
+        self.wait_calls: list[float | None] = []
+        self._alive_after_sigterm = alive_after_sigterm
+        self._running = True
+
+    def poll(self):
+        return None if self._running else 0
+
+    def terminate(self):
+        self.terminated = True
+        if not self._alive_after_sigterm:
+            self._running = False
+
+    def wait(self, timeout=None):
+        self.wait_calls.append(timeout)
+        if self._running:
+            raise start.subprocess.TimeoutExpired(cmd="eod", timeout=timeout)
+        return 0
+
+    def kill(self):
+        self.killed = True
+        self._running = False
+
+
+def test_kill_hung_eod_skips_sigkill_if_process_exits_in_time():
+    proc = _FakePopen()  # exits cleanly once terminate() is called
+    start._kill_hung_eod(proc, grace_seconds=5.0)
+    assert proc.terminated is True
+    assert proc.killed is False
+
+
+def test_kill_hung_eod_sigkills_after_the_grace_window():
+    proc = _FakePopen(alive_after_sigterm=True)  # ignores SIGTERM
+    start._kill_hung_eod(proc, grace_seconds=0.01)
+    assert proc.terminated is True
+    assert proc.killed is True
+
+
+def test_supervise_eod_leaves_a_healthy_run_alone():
+    proc = _FakePopen()  # still running, well within the timeout
+    result_proc, result_start = start._supervise_eod(
+        proc, eod_start_time=0.0, eod_timeout_minutes=60, now_monotonic=30 * 60
+    )
+    assert result_proc is proc
+    assert result_start == 0.0
+    assert proc.terminated is False
+
+
+def test_supervise_eod_clears_state_once_the_process_exits_on_its_own():
+    proc = _FakePopen()
+    proc._running = False  # already finished
+    result_proc, result_start = start._supervise_eod(
+        proc, eod_start_time=0.0, eod_timeout_minutes=60, now_monotonic=100.0
+    )
+    assert result_proc is None
+    assert result_start is None
+
+
+def test_supervise_eod_kills_a_run_past_the_timeout(monkeypatch, caplog):
+    proc = _FakePopen(alive_after_sigterm=True)
+    monkeypatch.setattr(start, "STOP_GRACE_SECONDS", 0.01)
+
+    with caplog.at_level("ERROR", logger="launcher"):
+        result_proc, result_start = start._supervise_eod(
+            proc, eod_start_time=0.0, eod_timeout_minutes=60, now_monotonic=61 * 60
+        )
+
+    assert result_proc is None
+    assert result_start is None
+    assert proc.terminated is True
+    assert proc.killed is True
+    assert any("EOD exceeded" in r.message for r in caplog.records)
+
+
+def test_eod_tick_kills_a_hung_run_and_schedules_a_new_one(monkeypatch, tmp_path):
+    """The hung-run kill and the next-run scheduling are the same per-iteration decision:
+    once a hung EOD is killed, `eod_proc` is free again and a due EOD may fire immediately."""
+    state = tmp_path / "eod_scheduler_state.json"
+    monkeypatch.setattr(start, "EOD_STATE_FILE", state)
+    monkeypatch.setattr(start, "STOP_GRACE_SECONDS", 0.01)
+
+    hung = _FakePopen(alive_after_sigterm=True)
+    started: list[_FakePopen] = []
+
+    def fake_start_eod():
+        new_proc = _FakePopen(pid=1234)
+        started.append(new_proc)
+        return new_proc
+
+    result_proc, result_start, result_last_run = start._eod_tick(
+        hung,
+        eod_start_time=0.0,
+        eod_last_run=None,
+        now_et=_at(_MON, 17, 30),  # past today's 16:15 fire time
+        now_monotonic=61 * 60,  # 61 min after the hung run started — past the 60-min timeout
+        eod_hh=16,
+        eod_mm=15,
+        eod_timeout_minutes=60,
+        start_fn=fake_start_eod,
+    )
+
+    assert hung.terminated is True
+    assert hung.killed is True
+    assert len(started) == 1
+    assert result_proc is started[0]
+    assert result_start == 61 * 60
+    assert result_last_run == _MON
+    assert start._read_eod_last_run() == _MON  # persisted, matching _eod_should_fire's contract
+
+
+def test_eod_tick_does_nothing_when_run_is_healthy_and_not_yet_due(tmp_path, monkeypatch):
+    state = tmp_path / "eod_scheduler_state.json"
+    monkeypatch.setattr(start, "EOD_STATE_FILE", state)
+
+    proc = _FakePopen()
+    started: list[_FakePopen] = []
+
+    result_proc, result_start, result_last_run = start._eod_tick(
+        proc,
+        eod_start_time=0.0,
+        eod_last_run=None,
+        now_et=_at(_MON, 10, 0),  # before the fire time
+        now_monotonic=5 * 60,
+        eod_hh=16,
+        eod_mm=15,
+        eod_timeout_minutes=60,
+        start_fn=lambda: started.append(_FakePopen()) or started[-1],
+    )
+
+    assert result_proc is proc
+    assert result_start == 0.0
+    assert result_last_run is None
+    assert started == []

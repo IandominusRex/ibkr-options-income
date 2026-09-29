@@ -20,6 +20,7 @@ from src.common.schemas import (
     AccountSnapshot,
     EODSummary,
     OptionRight,
+    PortfolioSnapshot,
     PositionSnapshot,
 )
 
@@ -885,3 +886,141 @@ async def test_append_daily_iv_skips_retry_after_dead_farm_abort(monkeypatch) ->
 
     # Exactly the breaker threshold — no extra retry-pass calls on top.
     assert ib.reqHistoricalDataAsync.call_count == eod_report._IV_MAX_CONSECUTIVE_FAILURES
+
+
+# ---------------------------------------------------------------------------
+# Task 4b: the EOD run must never hang.
+#
+# Evidence (2026-09-29): the account-summary fetch looped on Error 322 ("Maximum number of
+# account summary requests exceeded") through Gateway's 1100/1102 connectivity flaps for ~4
+# hours, and a run was still alive >11h after it started. `_fetch_account_snapshot` bounds
+# that fetch and falls back to the last portfolio_snapshots row; `run()` applies the same
+# 1102 account-summary guard the approval service's exec connection already gets, and writes
+# EOD_COMPLETED_KEY only once the whole run has actually finished.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_account_snapshot_returns_promptly_within_timeout() -> None:
+    from src.orchestrator.eod_report import _fetch_account_snapshot
+
+    account = _make_account()
+
+    async def _fast(ib, acct):
+        return account
+
+    with patch("src.orchestrator.eod_report.get_account_snapshot_async", new=_fast):
+        result = await _fetch_account_snapshot(MagicMock(), "DU123456")
+
+    assert result is account
+
+
+@pytest.mark.asyncio
+async def test_fetch_account_snapshot_falls_back_to_last_snapshot_on_timeout() -> None:
+    """A wedged account-summary fetch must not hang the EOD run — after the timeout it falls
+    back to the last portfolio_snapshots row (with a WARNING logged)."""
+    from src.orchestrator.eod_report import _fetch_account_snapshot
+
+    account = _make_account(nlv=55_000.0)
+    snapshot = PortfolioSnapshot(
+        captured_at=datetime.now(UTC), source="monitor", account=account, positions=[]
+    )
+
+    async def _never_returns(ib, acct):
+        await asyncio.sleep(10)
+
+    with (
+        patch("src.orchestrator.eod_report.get_account_snapshot_async", new=_never_returns),
+        patch("src.orchestrator.eod_report._ACCOUNT_SUMMARY_TIMEOUT_S", 0.02),
+        patch(
+            "src.orchestrator.eod_report.load_latest_portfolio_snapshot",
+            return_value=snapshot,
+        ),
+    ):
+        result = await _fetch_account_snapshot(MagicMock(), "DU123456")
+
+    assert result is account
+
+
+@pytest.mark.asyncio
+async def test_fetch_account_snapshot_reraises_when_no_fallback_available() -> None:
+    """No portfolio_snapshots row to fall back to → the timeout propagates (fail loud, don't
+    fabricate an account snapshot)."""
+    from src.orchestrator.eod_report import _fetch_account_snapshot
+
+    async def _never_returns(ib, acct):
+        await asyncio.sleep(10)
+
+    with (
+        patch("src.orchestrator.eod_report.get_account_snapshot_async", new=_never_returns),
+        patch("src.orchestrator.eod_report._ACCOUNT_SUMMARY_TIMEOUT_S", 0.02),
+        patch("src.orchestrator.eod_report.load_latest_portfolio_snapshot", return_value=None),
+    ):
+        with pytest.raises(TimeoutError):
+            await _fetch_account_snapshot(MagicMock(), "DU123456")
+
+
+@pytest.mark.asyncio
+async def test_run_applies_account_summary_guard_and_writes_completion_key(
+    isolated_db, monkeypatch
+) -> None:
+    """`run()` must apply the same 1102 account-summary guard the approval service's exec
+    connection already gets (src/ibkr/connection.py:402), and a successful run must leave a
+    completion heartbeat (EOD_COMPLETED_KEY, ISO-8601 UTC) for a later watchdog check."""
+    from src.orchestrator import eod_report
+    from src.storage.system_settings import EOD_COMPLETED_KEY, get_setting
+
+    cfg = MagicMock()
+    cfg.is_live = False
+    cfg.secrets.ibkr_account = "DU123456"
+    cfg.secrets.telegram_bot_token = ""
+    cfg.secrets.telegram_chat_id = ""
+    cfg.storage.portfolio_snapshot_retention_days = 30
+
+    fake_ib = MagicMock()
+    guard_calls: list[object] = []
+    account = _make_account()
+
+    class _FakeConnection:
+        def __init__(self, role: str) -> None:
+            self.role = role
+
+        async def __aenter__(self):
+            return fake_ib
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(eod_report, "get_config", lambda: cfg)
+    monkeypatch.setattr(eod_report, "IBKRConnection", _FakeConnection)
+    monkeypatch.setattr(
+        eod_report,
+        "suppress_account_summary_on_reconnect",
+        lambda ib: guard_calls.append(ib),
+    )
+    monkeypatch.setattr(eod_report, "get_positions", lambda ib: [])
+    monkeypatch.setattr(
+        eod_report, "enrich_positions_with_greeks_async", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(eod_report, "get_account_snapshot_async", AsyncMock(return_value=account))
+    monkeypatch.setattr(eod_report, "_append_daily_iv", AsyncMock(return_value=None))
+    monkeypatch.setattr(eod_report, "_append_daily_prices", AsyncMock(return_value=None))
+    monkeypatch.setattr(eod_report, "effective_universe", lambda: {"watchlist": []})
+    monkeypatch.setattr(eod_report, "write_journal_narrative", lambda summary: None)
+    monkeypatch.setattr(eod_report, "_send_eod_telegram", AsyncMock(return_value=None))
+    monkeypatch.setattr(eod_report, "assigned_shorts", lambda positions, today: [])
+    monkeypatch.setattr(eod_report, "reconcile", lambda **kw: None)
+    monkeypatch.setattr(eod_report, "save_position_snapshot", lambda today, positions: None)
+
+    with (
+        patch("src.storage.risk_verdicts.purge_old_risk_verdicts", return_value=0),
+        patch("src.storage.portfolio_snapshots.prune_portfolio_snapshots", return_value=0),
+        patch("src.storage.maintenance.backup_database", return_value=None),
+    ):
+        await eod_report.run()
+
+    assert guard_calls == [fake_ib]
+
+    completed = get_setting(EOD_COMPLETED_KEY)
+    assert completed
+    datetime.fromisoformat(completed)  # ISO-8601, parses without error

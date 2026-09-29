@@ -31,7 +31,7 @@ from src.common.config import get_config
 from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, EODSummary, PositionSnapshot
 from src.common.universe import effective_universe
-from src.ibkr.connection import IBKRConnection
+from src.ibkr.connection import IBKRConnection, suppress_account_summary_on_reconnect
 from src.ibkr.portfolio import (
     enrich_positions_with_greeks_async,
     get_account_snapshot_async,
@@ -41,7 +41,9 @@ from src.notify.formatters import format_eod_summary
 from src.storage.campaigns import mark_campaign_assigned
 from src.storage.db import init_db, session_scope
 from src.storage.models import FillRow, JournalRow
+from src.storage.portfolio_snapshots import load_latest_portfolio_snapshot
 from src.storage.positions import save_position_snapshot
+from src.storage.system_settings import EOD_COMPLETED_KEY, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,14 @@ def _today_et() -> date:
 # a dead farm fails the same way for all symbols, so there is nothing to gain by grinding on.
 _IV_REQUEST_TIMEOUT_S = 8.0
 _IV_MAX_CONSECUTIVE_FAILURES = 5
+
+# Hard cap on the account-summary fetch. Evidence (2026-09-29): during IBKR's nightly reset
+# window the fetch looped on Error 322 ("Maximum number of account summary requests exceeded")
+# through Gateway's 1100/1102 connectivity flaps for ~4 hours, blocking the whole EOD run
+# (positions, P&L, and the Telegram send never ran). On timeout we fall back to the last
+# `portfolio_snapshots` row instead of hanging — a stale account snapshot is still useful for
+# the P&L narrative.
+_ACCOUNT_SUMMARY_TIMEOUT_S = 120.0
 
 
 def _compute_realized_pnl(today: date) -> tuple[float, int, list[int]]:
@@ -400,6 +410,31 @@ async def _send_eod_telegram(summary: EODSummary, narrative: str | None) -> None
         logger.exception("Failed to send EOD Telegram message")
 
 
+async def _fetch_account_snapshot(ib, account: str) -> AccountSnapshot:
+    """Fetch the account summary with a hard timeout; fall back to the last
+    ``portfolio_snapshots`` row (logged as a WARNING) if IBKR never responds.
+
+    See ``_ACCOUNT_SUMMARY_TIMEOUT_S`` for the incident this guards against. Re-raises the
+    timeout when no fallback snapshot is available — the EOD run has no account data to
+    report in that case, so failing loud beats fabricating one.
+    """
+    try:
+        return await asyncio.wait_for(
+            get_account_snapshot_async(ib, account), timeout=_ACCOUNT_SUMMARY_TIMEOUT_S
+        )
+    except TimeoutError:
+        logger.warning(
+            "EOD: account summary fetch exceeded %.0fs — falling back to the last "
+            "portfolio_snapshots row",
+            _ACCOUNT_SUMMARY_TIMEOUT_S,
+        )
+        snap = load_latest_portfolio_snapshot()
+        if snap is None or snap.account is None:
+            logger.error("EOD: no portfolio_snapshots row to fall back to")
+            raise
+        return snap.account
+
+
 async def run() -> None:
     init_db()
     cfg = get_config()
@@ -419,8 +454,12 @@ async def run() -> None:
     # 1. Connect to IBKR (async — we're already inside asyncio.run) and fetch portfolio data.
     #    Enrich option positions with live greeks so net-delta exposure is real, not 0.
     async with IBKRConnection("engine") as ib:
+        # Prevent ib_async's own auto-resubscribe-on-1102 from racing the explicit fetch
+        # below during a connectivity flap (mirrors the guard already applied to the
+        # approval service's exec connection — src/ibkr/connection.py:402).
+        suppress_account_summary_on_reconnect(ib)
         positions = get_positions(ib)
-        account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
+        account = await _fetch_account_snapshot(ib, cfg.secrets.ibkr_account)
         try:
             await enrich_positions_with_greeks_async(ib, positions)
         except Exception:
@@ -511,6 +550,10 @@ async def run() -> None:
 
     # 9. Nightly backup of the system of record (orders, fills, learning history).
     backup_database()
+
+    # 10. Completion heartbeat — an ISO-8601 UTC timestamp a later watchdog check can compare
+    # against "today" (ET) to detect a run that silently never finished (Task 5).
+    set_setting(EOD_COMPLETED_KEY, datetime.now(UTC).isoformat())
 
     logger.info("EOD report complete")
 

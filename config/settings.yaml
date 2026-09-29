@@ -46,6 +46,10 @@ scheduler:
   # risk + wide spreads) that a tighter cutoff used to keep out — a deliberate choice
   # (2026-09-11), not an oversight.
   entry_cutoff: "16:00"
+  # Hard ceiling (minutes) on a single EOD run (scripts.run_eod), enforced by the
+  # scripts.start supervisor loop. A run still alive past this is SIGTERMed, then SIGKILLed
+  # after STOP_GRACE_SECONDS — see scripts/start.py's EOD scheduler docstring.
+  eod_timeout_minutes: 60
 
 market_data:
   # Stay under the retail concurrent-line limit (~100). Chains are requested in
