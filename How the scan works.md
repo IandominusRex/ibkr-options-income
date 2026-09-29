@@ -775,3 +775,12 @@ data (rather than a real, weak IV rank) is distinguishable at a glance. This nev
 symbol with a genuine `iv_rank` of `0.0` (bottom of its 52-week range) — that's real data and
 still scores `0`, not neutral. See `ARCHITECTURE.md`'s `scoring_weights.yaml` row and `STATUS.md`
 for the full fix.
+
+**A normalization caveat on the arithmetic above (fix round 1, 2026-09-29):** the formulas above
+add the raw `scoring_weights.yaml` coefficients directly (0.30 + 0.20 + 0.25 + 0.15 + 0.10 + 0.05
+= 1.05 for CSP; CC's block sums to the same 1.05), but `engine/scoring.py::_get_weights` divides
+every weight by that block's own total before blending, so the score the engine actually produces
+is the raw figure divided by 1.05 — about 2–4 points lower than the "52 + 0.15·L" / "59–63" shown
+above (e.g. 59–63 raw → ≈56.2–60.0 normalized). The conclusion is unchanged: TQQQ still clears the
+55 floor post-Task-9 without needing the IV backfill; it just does so with a few points less
+headroom than the raw arithmetic suggests.

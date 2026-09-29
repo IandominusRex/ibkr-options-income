@@ -60,6 +60,12 @@ def generate_roll_candidates(
     )
     income_cfg = risk["income"]
     roll_cfg = get_config().monitor.roll_defensive if defensive else {}
+    # Task 9 fix round 1 (R7): same treatment as the CSP/CC generators — a missing IV rank
+    # already passes the IV gate as "data unavailable"; scoring it 0 under IV's weight
+    # silently misrepresents the card. Neutral value from config (default 50), tagged so the
+    # gap stays visible. Display-only here (rolls sort by roc_pct, never pass through
+    # score_candidates or the score floor) but the ScoreCard line still misled the operator.
+    missing_iv_rank_score: float = get_config().weights.get("missing_iv_rank_score", 50.0)
 
     delta_min: float = leg_cfg["delta_min"]
     delta_max: float = leg_cfg["delta_max"]
@@ -172,7 +178,7 @@ def generate_roll_candidates(
 
         scores = ScoreCard(
             symbol=underlying,
-            iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else 0.0,
+            iv_score=iv_stats.iv_rank if iv_stats.iv_rank is not None else missing_iv_rank_score,
             technical_score=technical_score(quote, tech_stats),
             fundamental_score=0.0,
             liquidity_score=score_liquidity(quote),
@@ -203,6 +209,10 @@ def generate_roll_candidates(
                 scores=scores,
                 price_source=tech_stats.price_source,
                 greeks_source=quote.greeks_source,
+                # Merged into whatever tags this candidate already carries (currently none of
+                # its own), matching the merge-not-replace contract `decision_engine.py`
+                # applies downstream — never a bare replace.
+                rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],
             )
         )
 

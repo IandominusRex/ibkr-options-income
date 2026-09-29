@@ -767,6 +767,18 @@ class TestRolling:
         expected_collateral = result[0].strike * 2 * 100
         assert result[0].collateral == pytest.approx(expected_collateral)
 
+    def test_iv_rank_none_scores_neutral_and_tags_card(self):
+        # Task 9 fix round 1 (R7): same neutral-scoring rule as the CSP/CC generators — a
+        # roll on thin IV history must score the configured neutral value (default 50) on the
+        # ScoreCard's iv_score, not 0, and must carry the iv_rank_unavailable tag. Display-only
+        # (rolls sort by roc_pct and never pass through score_candidates or the score floor),
+        # but the misleading IV=0 line was visible on the Claude prompt and Telegram card.
+        pos = _short_call_position(expiry=_EXPIRY_NEAR, delta=0.30)
+        result = generate_roll_candidates(pos, _roll_quotes(), _iv(rank=None), _tech())
+        assert len(result) >= 1
+        assert result[0].scores.iv_score == 50.0
+        assert "iv_rank_unavailable" in result[0].rationale_tags
+
 
 def test_candidates_carry_current_iv_for_risk_unit_sizing(monkeypatch):
     """The gate computes risk units from IV, so the generator must record it."""

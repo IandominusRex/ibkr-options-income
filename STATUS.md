@@ -378,6 +378,14 @@ behaviour. See "How the scan works.md" §10 for the full component arithmetic (b
 The score floor itself (`min_candidate_score: 55`) was deliberately left unchanged — see the same
 section for why.
 
+**Fix round 1 (2026-09-29):** `strategies/rolling.py` had the same `iv_score=... else 0.0` bug —
+a roll on a name with thin IV history showed a misleading `iv_score=0.0` on the ScoreCard line of
+the Claude prompt and Telegram card, with no `iv_rank_unavailable` tag. Fixed identically (read
+`missing_iv_rank_score` from config, tag merged into the candidate's existing tags). Display-only:
+roll candidates sort by `roc_pct` and never pass through `score_candidates` or the score floor, so
+this changes no roll ranking, `max_debit`, or `min_delta_reduction` economics — only what the
+operator sees on the card.
+
 ---
 
 ## Built (2026-09-29 — scan-loop remediation Task 5: out-of-process watchdog)
