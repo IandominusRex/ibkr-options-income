@@ -364,13 +364,20 @@ post-open-grace staleness of `intraday_scan_completed`), `eod` (on a trading day
 past `scheduler.eod_report`, `eod_completed` must be dated today in ET — means the run *finished*,
 not that every step inside it succeeded), and `iv_history` (any universe∪held symbol's newest
 `iv_history` row more than `iv_max_stale_trading_days` trading sessions old, reported as one
-message listing every offending symbol). `decide_alerts` is the state machine persisted to
-`data/watchdog_state.json` (gitignored): sends on ok→fail, re-sends every `realert_minutes` while
-still failing, sends a recovery notice on fail→ok. `send_telegram` posts plain text with no
-`parse_mode` through the raw Bot API — deliberately not `src/notify/formatters.py`'s MarkdownV2
-path, so an escaping bug elsewhere can never silence the one channel reporting the stack is down.
-`main()` never raises — any unexpected exception is caught and alerted as its own "watchdog
-crashed: …" message before returning a non-zero exit code.
+message listing every offending symbol). `decide_alerts` is the **pure** state machine — it makes
+no Telegram call itself, only decides what's due and returns `(alerts, candidate_state)`; sends on
+ok→fail, re-sends every `realert_minutes` while still failing (**`iv_history` is the one
+exception: it re-sends at most once per ET calendar day**, matching the brief's "evaluated once
+per day" — the shared 60-minute `realert_minutes` would otherwise re-fire it roughly hourly all
+day), sends a recovery notice on fail→ok. `main()` only commits a check's `candidate_state` entry
+— i.e. only records an alert as delivered — once `send_telegram` for that message actually
+returns `True`; a failed send leaves the check's state exactly as it was before that cycle, so the
+very next 5-minute run retries immediately rather than the outage silently reading as "already
+alerted" for a full `realert_minutes`/day when nothing was ever delivered. `send_telegram` posts
+plain text with no `parse_mode` through the raw Bot API — deliberately not
+`src/notify/formatters.py`'s MarkdownV2 path, so an escaping bug elsewhere can never silence the
+one channel reporting the stack is down. `main()` never raises — any unexpected exception is
+caught and alerted as its own "watchdog crashed: …" message before returning a non-zero exit code.
 
 New `WatchdogCfg` (`src/common/config.py`) + `config/settings.yaml → watchdog:` block:
 `interval_seconds` (300), `heartbeat_max_age_minutes` (10), `scan_max_age_minutes` (35),
@@ -384,8 +391,18 @@ GETs it on every run where every check passes, and that external service is what
 stopping. Scheduling the script itself (a launchd plist or cron entry) is left to the operator —
 this task ships the check and the alerting, not the OS-level scheduler wiring.
 
-21 new tests in `tests/test_watchdog.py` (pure-function checks, the alert state machine, plain-text
+24 tests in `tests/test_watchdog.py` (pure-function checks, the alert state machine, plain-text
 Telegram send, `run_checks`/`main` composition with everything IBKR/DB/subprocess monkeypatched).
+
+**Review round 1 fixes (same day):** (1) an unsent alert used to be recorded as sent — `main()`
+saved `candidate_state` unconditionally regardless of whether `send_telegram` succeeded, so a
+Telegram outage at the start of an incident silently ate the alert for a full `realert_minutes`
+window; `decide_alerts` now returns `(alerts, candidate_state)` instead of committing state
+itself, and `main()` only promotes a check's entry once its send is confirmed, otherwise leaving
+that check's state untouched so the next cycle retries immediately. (2) `iv_history` was re-firing
+on the same hourly `realert_minutes` cadence as every other check, contradicting the brief's
+"evaluated once per day" — it now re-alerts at most once per ET calendar date while it stays
+failing (`_alert_due`).
 
 ---
 

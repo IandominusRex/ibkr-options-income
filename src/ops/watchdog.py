@@ -186,9 +186,11 @@ def iv_history_check(now: datetime, max_stale_trading_days: int) -> Check:
     *max_stale_trading_days* trading sessions old (or missing entirely).
 
     ``iv_history`` only gets a new row once a day (the EOD IV append), so this check's
-    result is effectively evaluated once per day in practice even though it re-runs every
-    watchdog cycle — cheap (one grouped query) and reported as a single message listing
-    every offending symbol, rather than one alert per symbol.
+    *result* barely changes between watchdog cycles even though the query itself (cheap —
+    one grouped `SELECT`) re-runs every cycle. Reported as a single message listing every
+    offending symbol, rather than one alert per symbol. The *alert* cadence — at most once
+    per ET calendar day while this keeps failing, rather than every ``realert_minutes`` like
+    every other check — is enforced by :func:`_alert_due`/:func:`decide_alerts`, not here.
     """
     symbols = sorted(_universe_symbols() | _held_symbols())
     if not symbols:
@@ -225,34 +227,71 @@ def supervisor_check() -> Check:
     return Check("supervisor", ok, "" if ok else "supervisor: scripts.start is not running")
 
 
+def _et_date(dt: datetime) -> date:
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return dt.astimezone(_ET).date()
+
+
+def _alert_due(name: str, prev: dict, now: datetime, *, realert_minutes: int) -> bool:
+    """Whether a still-failing check is due to alert again this cycle.
+
+    Every check re-sends on a fixed ``realert_minutes`` cadence, *except* ``iv_history``: the
+    brief's checks table says it is "evaluated once per day and reported in one message" —
+    the shared ``realert_minutes`` (default 60) would otherwise re-fire it roughly hourly all
+    day, which is not "once per day". ``iv_history`` instead re-alerts only once the ET
+    calendar date has advanced past its last alert's date.
+    """
+    if not prev.get("failing"):
+        return True  # fresh ok→fail transition always alerts
+    last_alert = prev.get("last_alert")
+    if last_alert is None:
+        return True
+    last_alert_dt = datetime.fromisoformat(last_alert)
+    if name == "iv_history":
+        return _et_date(now) != _et_date(last_alert_dt)
+    return now - last_alert_dt >= timedelta(minutes=realert_minutes)
+
+
 def decide_alerts(
     checks: list[Check], state: dict, now: datetime, *, realert_minutes: int
-) -> tuple[list[str], dict]:
-    """Send on an ok→fail transition; while a check keeps failing, re-send only every
-    *realert_minutes*; send a recovery notice on fail→ok. *state* is the JSON-serialisable
-    ``data/watchdog_state.json`` payload — round-trips through ``json.dumps``/``json.loads``
-    unchanged (plain str/bool values only)."""
-    msgs: list[str] = []
-    new_state = dict(state)
+) -> tuple[list[tuple[str, str]], dict]:
+    """Decide which checks are due to alert this cycle, and what each check's state *would*
+    become if every alert below is actually delivered.
+
+    Pure — makes no Telegram call. Returns ``(alerts, candidate_state)``: ``alerts`` is a list
+    of ``(check_name, message)`` pairs due to send this cycle (an ok→fail transition always
+    alerts; a still-failing check re-alerts per :func:`_alert_due`; a fail→ok transition sends
+    a "recovered" notice). ``candidate_state`` is the full next-state dict *as if* every one of
+    those alerts sends successfully.
+
+    Only entries in ``candidate_state`` for names that do **not** appear in ``alerts`` are safe
+    to commit unconditionally — those are pure bookkeeping (an already-ok check staying ok, or
+    a still-failing check that simply isn't due yet). For a name that *is* in ``alerts``, the
+    caller (``main``) must actually attempt the send and only commit that name's
+    ``candidate_state`` entry when ``send_telegram`` returns ``True``; on a failed send the
+    caller must leave that check's entry exactly as it was before this cycle (i.e. as it was in
+    ``state``), so the next cycle sees the alert as still not delivered and retries immediately
+    rather than waiting out ``realert_minutes`` (or the once-a-day window) for something that
+    was never actually sent. ``state``/``candidate_state`` are the JSON-serialisable
+    ``data/watchdog_state.json`` payload — round-trip through ``json.dumps``/``json.loads``
+    unchanged (plain str/bool values only).
+    """
+    alerts: list[tuple[str, str]] = []
+    candidate_state = dict(state)
     for c in checks:
         prev = state.get(c.name, {})
         if not c.ok:
-            last_alert = prev.get("last_alert")
-            due = (not prev.get("failing")) or (
-                last_alert is not None
-                and now - datetime.fromisoformat(last_alert) >= timedelta(minutes=realert_minutes)
-            )
-            if due:
+            if _alert_due(c.name, prev, now, realert_minutes=realert_minutes):
                 detail = c.detail if c.detail.startswith(c.name) else f"{c.name}: {c.detail}"
-                msgs.append(f"⚠️ {detail}")
-                new_state[c.name] = {"failing": True, "last_alert": now.isoformat()}
+                alerts.append((c.name, f"⚠️ {detail}"))
+                candidate_state[c.name] = {"failing": True, "last_alert": now.isoformat()}
             else:
-                new_state[c.name] = {**prev, "failing": True}
+                candidate_state[c.name] = {**prev, "failing": True}
         else:
             if prev.get("failing"):
-                msgs.append(f"✅ recovered: {c.name}")
-            new_state[c.name] = {"failing": False}
-    return msgs, new_state
+                alerts.append((c.name, f"✅ recovered: {c.name}"))
+            candidate_state[c.name] = {"failing": False}
+    return alerts, candidate_state
 
 
 def _telegram_target() -> tuple[str, str, str]:
@@ -362,9 +401,30 @@ def main() -> int:
         now = datetime.now(UTC)
         state = _load_state()
         checks = run_checks(now, cfg)
-        msgs, new_state = decide_alerts(checks, state, now, realert_minutes=cfg.realert_minutes)
-        for msg in msgs:
-            send_telegram(msg)
+        alerts, candidate_state = decide_alerts(
+            checks, state, now, realert_minutes=cfg.realert_minutes
+        )
+
+        # Start from the prior state, not the candidate: an alert only gets its candidate
+        # entry promoted once `send_telegram` actually confirms delivery below. A check that
+        # isn't alerting this cycle (nothing in `alerts` names it) is pure bookkeeping and
+        # always safe to commit — it never depended on a Telegram call succeeding.
+        new_state = dict(state)
+        alerting_names = {name for name, _ in alerts}
+        for c in checks:
+            if c.name not in alerting_names:
+                new_state[c.name] = candidate_state[c.name]
+
+        for name, msg in alerts:
+            if send_telegram(msg):
+                new_state[name] = candidate_state[name]
+            else:
+                log.warning(
+                    "watchdog: Telegram send failed for %s — leaving state unchanged so "
+                    "the next cycle retries immediately",
+                    name,
+                )
+
         _save_state(new_state)
 
         if cfg.deadman_url and all(c.ok for c in checks):

@@ -71,32 +71,62 @@ def test_scan_loop_check_ok_when_fresh_in_rth():
 
 
 def test_decide_alerts_transition_realert_and_recovery():
+    # decide_alerts is pure: it returns (alerts, candidate_state) where candidate_state is what
+    # each check's state *would* become if every alert this cycle is actually delivered. These
+    # tests simulate every send succeeding (main()'s job to only commit on real success is
+    # covered separately below), so chaining `state = candidate_state` between cycles here
+    # mirrors what main() would persist after a successful send.
     fail = [Check("scan_loop", False, "no completed scan for 40 min")]
-    msgs, state = decide_alerts(fail, {}, NOW, realert_minutes=60)
-    assert len(msgs) == 1 and "scan_loop" in msgs[0]
-    msgs, state = decide_alerts(fail, state, NOW + timedelta(minutes=10), realert_minutes=60)
-    assert msgs == []  # still failing, inside the re-alert window
-    msgs, state = decide_alerts(fail, state, NOW + timedelta(minutes=61), realert_minutes=60)
-    assert len(msgs) == 1
+    alerts, state = decide_alerts(fail, {}, NOW, realert_minutes=60)
+    assert len(alerts) == 1
+    name, msg = alerts[0]
+    assert name == "scan_loop" and "scan_loop" in msg
+    alerts, state = decide_alerts(fail, state, NOW + timedelta(minutes=10), realert_minutes=60)
+    assert alerts == []  # still failing, inside the re-alert window
+    alerts, state = decide_alerts(fail, state, NOW + timedelta(minutes=61), realert_minutes=60)
+    assert len(alerts) == 1
     ok = [Check("scan_loop", True, "")]
-    msgs, state = decide_alerts(ok, state, NOW + timedelta(minutes=70), realert_minutes=60)
-    assert len(msgs) == 1 and "recovered" in msgs[0]
+    alerts, state = decide_alerts(ok, state, NOW + timedelta(minutes=70), realert_minutes=60)
+    assert len(alerts) == 1 and "recovered" in alerts[0][1]
 
 
 def test_decide_alerts_no_message_while_check_stays_ok():
     ok = [Check("scan_loop", True, "")]
-    msgs, state = decide_alerts(ok, {}, NOW, realert_minutes=60)
-    assert msgs == []
-    msgs, state = decide_alerts(ok, state, NOW + timedelta(minutes=5), realert_minutes=60)
-    assert msgs == []
+    alerts, state = decide_alerts(ok, {}, NOW, realert_minutes=60)
+    assert alerts == []
+    alerts, state = decide_alerts(ok, state, NOW + timedelta(minutes=5), realert_minutes=60)
+    assert alerts == []
 
 
 def test_decide_alerts_state_round_trips_through_json():
     fail = [Check("gateway_port", False, "gateway_port: unreachable")]
     _, state = decide_alerts(fail, {}, NOW, realert_minutes=60)
     reloaded = json.loads(json.dumps(state))
-    msgs, _ = decide_alerts(fail, reloaded, NOW + timedelta(minutes=5), realert_minutes=60)
-    assert msgs == []  # still inside the re-alert window after a JSON round trip
+    alerts, _ = decide_alerts(fail, reloaded, NOW + timedelta(minutes=5), realert_minutes=60)
+    assert alerts == []  # still inside the re-alert window after a JSON round trip
+
+
+def test_decide_alerts_iv_history_realerts_once_per_et_day_not_hourly():
+    """Controller ruling, review round 1, finding 2: iv_history's brief entry says "evaluated
+    once per day" — the shared realert_minutes (default 60) would otherwise re-fire it roughly
+    hourly. Two failing cycles an hour+ apart on the same ET day must produce only the first
+    alert; the next ET day must produce a new one. Every other check keeps the realert_minutes
+    cadence (covered by test_decide_alerts_transition_realert_and_recovery above)."""
+    fail = [Check("iv_history", False, "iv_history: stale/missing IV — AAPL(missing)")]
+    alerts, state = decide_alerts(fail, {}, NOW, realert_minutes=60)
+    assert len(alerts) == 1  # ok -> fail always alerts
+
+    # More than realert_minutes later (2h), but the same ET calendar day: no second alert.
+    alerts, state = decide_alerts(fail, state, NOW + timedelta(hours=2), realert_minutes=60)
+    assert alerts == []
+    # Still later, still the same ET day: still nothing.
+    alerts, state = decide_alerts(fail, state, NOW + timedelta(hours=8), realert_minutes=60)
+    assert alerts == []
+
+    # The next ET calendar day: alerts again.
+    alerts, state = decide_alerts(fail, state, NOW + timedelta(days=1), realert_minutes=60)
+    assert len(alerts) == 1
+    assert alerts[0][0] == "iv_history"
 
 
 def test_send_telegram_uses_plain_text(monkeypatch):
@@ -272,6 +302,61 @@ def test_main_pings_deadman_url_only_when_every_check_passes(monkeypatch, tmp_pa
 
     assert rc == 0
     assert pinged == ["https://example.invalid/ping/abc"]
+
+
+def test_main_does_not_persist_last_alert_when_telegram_send_fails(monkeypatch, tmp_path):
+    """Controller ruling, review round 1, finding 1: an unsent alert must not be recorded as
+    sent. If send_telegram returns False, that check's state must stay exactly as it was
+    before this cycle, so the very next cycle (not realert_minutes later) tries again."""
+    from src.ops import watchdog
+
+    state_path = tmp_path / "watchdog_state.json"
+    monkeypatch.setattr(watchdog, "STATE_PATH", state_path)
+    monkeypatch.setattr(
+        watchdog,
+        "run_checks",
+        lambda now, cfg: [Check("supervisor", False, "supervisor: scripts.start is not running")],
+    )
+    monkeypatch.setattr(watchdog, "send_telegram", lambda text: False)
+
+    rc1 = watchdog.main()
+    assert rc1 == 0
+    saved1 = json.loads(state_path.read_text())
+    # Nothing was ever actually delivered, so nothing was committed for this check.
+    assert saved1.get("supervisor", {}) == {}
+
+    # Next cycle: still failing, and still nothing was ever successfully delivered — this must
+    # alert immediately (not wait out realert_minutes), since there is nothing to "re"-alert.
+    sent = []
+    monkeypatch.setattr(watchdog, "send_telegram", lambda text: sent.append(text) or True)
+    rc2 = watchdog.main()
+    assert rc2 == 0
+    assert len(sent) == 1 and "supervisor" in sent[0]
+    saved2 = json.loads(state_path.read_text())
+    assert saved2["supervisor"]["failing"] is True
+    assert "last_alert" in saved2["supervisor"]  # now actually recorded as delivered
+
+
+def test_main_keeps_failing_state_when_recovery_send_fails(monkeypatch, tmp_path):
+    """The recovery ("recovered") message is subject to the same delivered-or-it-didn't-happen
+    rule: if the recovery notice fails to send, the check must stay marked failing so the
+    recovery is retried, rather than silently going quiet."""
+    from src.ops import watchdog
+
+    state_path = tmp_path / "watchdog_state.json"
+    state_path.write_text(
+        json.dumps({"supervisor": {"failing": True, "last_alert": NOW.isoformat()}})
+    )
+    monkeypatch.setattr(watchdog, "STATE_PATH", state_path)
+    monkeypatch.setattr(watchdog, "run_checks", lambda now, cfg: [Check("supervisor", True, "")])
+    monkeypatch.setattr(watchdog, "send_telegram", lambda text: False)
+
+    rc = watchdog.main()
+
+    assert rc == 0
+    saved = json.loads(state_path.read_text())
+    # The recovery notice never actually sent, so the check must still read as failing.
+    assert saved["supervisor"]["failing"] is True
 
 
 def test_main_never_raises_and_alerts_on_crash(monkeypatch, tmp_path):
