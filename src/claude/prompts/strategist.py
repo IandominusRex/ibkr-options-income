@@ -314,7 +314,9 @@ def _iv_bucket(rank: float) -> str:
     return "NORMAL"
 
 
-def _candidate_facts(c: TradeCandidate, spot: float | None) -> list[str]:
+def _candidate_facts(
+    c: TradeCandidate, spot: float | None, *, gate_passed: bool = True
+) -> list[str]:
     """Numbered, deterministic FACTS about one candidate — computed in Python so the model
     never has to derive moneyness, cushion, or earnings timing itself (Task 10: the local
     Ollama reviewer was misreading an out-of-the-money put as "in the money" and treating a
@@ -324,6 +326,15 @@ def _candidate_facts(c: TradeCandidate, spot: float | None) -> list[str]:
     these ids (plus any future ``N#`` news ids) in ``evidence`` rather than re-deriving or
     inventing numbers. Every line degrades independently — a candidate missing spot, earnings,
     an ideal zone, IV rank, or IV/RV just omits that fact instead of guessing at it.
+
+    ``gate_passed`` (Task 10 fix round 1): ``F7`` claims the deterministic Rules Engine passed
+    this specific candidate, which is only true on the full-universe path — the single-ticker
+    deep-dive (``build_prompt(..., single_ticker=True)``) can review a near-miss that failed
+    every gate (``scan.py``'s ``cc_near_miss``/``csp_near_miss`` fallback when nothing cleared).
+    Callers pass ``gate_passed=False`` for that path so ``F7`` is omitted rather than asserting a
+    pass that didn't happen — a plan-mandated defect the review caught: printing "F7 Passed every
+    deterministic gate" for a candidate the gate actually rejected would hand the model a false
+    premise to reason from.
     """
     facts: list[str] = []
     is_put = c.right == OptionRight.PUT
@@ -388,10 +399,11 @@ def _candidate_facts(c: TradeCandidate, spot: float | None) -> list[str]:
         )
         facts.append(f"F6 IV/RV {c.iv_rv_ratio:.2f} → {note}")
 
-    facts.append(
-        "F7 Passed every deterministic gate (delta, liquidity, fair value, IV, earnings "
-        "blackout, concentration)"
-    )
+    if gate_passed:
+        facts.append(
+            "F7 Passed every deterministic gate (delta, liquidity, fair value, IV, earnings "
+            "blackout, concentration)"
+        )
 
     return facts
 
@@ -539,11 +551,15 @@ def build_prompt(
         # reference to reconcile the offered strike/credit against instead of judging in a vacuum.
         lines += _ideal_zone_lines(c)
         # Deterministic FACTS (Task 10) — moneyness, cushion, earnings timing, fair-value edge,
-        # IV rank/RV bucket, and the gate-pass line, all computed in Python so the model reads
-        # them instead of deriving (and sometimes misreading) them itself.
+        # IV rank/RV bucket, and (full-universe only — see gate_passed docstring) the gate-pass
+        # line, all computed in Python so the model reads them instead of deriving (and
+        # sometimes misreading) them itself.
         candidate_spot = spot_prices.get(c.underlying) if spot_prices else None
         lines.append("FACTS:")
-        lines += [f"  {fact}" for fact in _candidate_facts(c, candidate_spot)]
+        lines += [
+            f"  {fact}"
+            for fact in _candidate_facts(c, candidate_spot, gate_passed=not single_ticker)
+        ]
         if c.next_earnings is not None:
             lines.append(f"Next Earnings:    {c.next_earnings}  (event risk — see sentiment below)")
         _sd = c.scores.sentiment_detail
@@ -611,13 +627,30 @@ def build_prompt(
             "Be specific to THIS ticker's actual numbers; never invent data not shown above. If the "
             "Sentiment line is absent, say sentiment data was unavailable rather than guessing.",
         ]
+    # Task 10 fix round 1: the rubric's opening line must not claim a gate pass on the
+    # single-ticker path, which can review a near-miss that failed every gate (scan.py's
+    # cc_near_miss/csp_near_miss fallback) alongside — or instead of — a genuinely passed
+    # candidate in the same call. Since the model can't tell which is which from the framing
+    # alone, the single-ticker intro stays neutral for every candidate in that call, not just
+    # the near-misses. The sell/wait/skip definitions and the evidence instruction are unchanged
+    # either way.
+    if single_ticker:
+        rubric_intro = [
+            "These candidates may not have passed every deterministic gate; judge them on the "
+            'FACTS and NEWS below rather than assuming a pass. Default to "sell" only when '
+            "nothing here argues against it — cite a specific FACT (F#) or NEWS item (N#):",
+        ]
+    else:
+        rubric_intro = [
+            "Every candidate below already PASSED the deterministic Rules Engine (F7). Default "
+            'to "sell"',
+            "unless you can cite a specific FACT (F#) or NEWS item (N#) that argues otherwise:",
+        ]
     lines += [
         *summary_guide,
         "",
         "=== DECISION RUBRIC ===",
-        "Every candidate below already PASSED the deterministic Rules Engine (F7). Default to "
-        '"sell"',
-        "unless you can cite a specific FACT (F#) or NEWS item (N#) that argues otherwise:",
+        *rubric_intro,
         "  sell — no concrete red flag inside this trade's window. Most gate-passing trades are "
         '"sell".',
         "  wait — a dated catalyst falls INSIDE this trade (earnings per F3, a scheduled event "
@@ -631,8 +664,8 @@ def build_prompt(
         "Earnings dated AFTER expiry are NOT a risk to this trade.",
         "",
         "=== YOUR TASK ===",
-        f"Review all {len(candidates)} candidates above and return a JSON array — one object per "
-        "candidate — ordered by your recommended priority (1 = best to trade first).",
+        f'Review all {len(candidates)} candidates above and return {{"reviews": [ … ]}} — one '
+        "object per candidate, ordered by your recommended priority (1 = best to trade first).",
         "",
         "Each object must match this exact schema:",
         "{",

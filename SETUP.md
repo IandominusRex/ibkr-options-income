@@ -1137,21 +1137,31 @@ python -m scripts.evaluate_scores
 python -m scripts.evaluate_scores --since 2026-05-01 --json
 ```
 
-**Ollama review quality** (Task 10; read-only, no DB writes — replays stored `candidates` rows
-through the local reviewer to validate a `claude.ollama_model` swap or a prompt change before
-committing to it in `config/settings.yaml`):
+**Ollama review quality** (Task 10, production-shaped since fix round 1; read-only, no DB writes —
+replays stored `candidates` rows through the local reviewer, with the real analytics/history/
+market-conditions a live scan would send, to validate a `claude.ollama_model` swap or a prompt
+change before committing to it in `config/settings.yaml`):
 
 ```bash
 python -m scripts.review_eval --model qwen3.5:4b --runs 2
 python -m scripts.review_eval --model qwen3.5:9b --ids <candidate_id> --runs 1
-python -m scripts.review_eval --model qwen3:8b --since 2026-09-01 --limit 5
+python -m scripts.review_eval --model qwen3:8b --since 2026-06-01 --limit 10
+
+# Cold-load measurement (unload the model first; --timeout gives a generous client-side wait so
+# a slow cold load isn't cut off before you can see how long it really took):
+ollama stop qwen3.5:4b
+python -m scripts.review_eval --model qwen3.5:4b --runs 1 --limit 10 --timeout 400
 ```
 
-Prints, per run, how many of the requested candidates came back reviewed, each one's
-verdict/evidence/confidence, then the aggregate verdict distribution and the empty-`evidence`
-rate. Bypasses `ollama_runner`'s circuit breaker and `claude.enabled` (calls the prompt builder +
-`_generate` + parser directly), so it works even while the production circuit is open. See "Model
-choice" in §14 below for the Task 10 evaluation results this produced.
+Prints, per run, the real `/api/generate` metadata (`prompt_eval_count`, `eval_count`,
+`total_duration`/`load_duration` — needed to size `ollama_num_ctx`/`ollama_timeout_seconds`
+against the actual prompt), how many *distinct* requested candidates came back reviewed (a model
+returning a duplicate `candidate_id` while silently missing a different one is reported honestly,
+not counted as full coverage), each review's verdict/evidence/confidence, then the aggregate
+verdict distribution and the empty-`evidence` rate. Bypasses `ollama_runner`'s circuit breaker and
+`claude.enabled` (builds the prompt and POSTs to `/api/generate` directly), so it works even while
+the production circuit is open. See "Model choice" in §14 below for the Task 10 evaluation results
+this produced.
 
 **Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
 unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
@@ -1234,9 +1244,9 @@ claude:
   backend: "ollama"           # "cli" | "ollama" (active here) | "cli_then_ollama"
   ollama_host: "http://localhost:11434"
   ollama_model: "qwen3.5:4b"
-  ollama_timeout_seconds: 120
-  ollama_num_ctx: 16384       # context window (tokens) — must cover prompt + JSON output
-  ollama_keep_alive: "10m"    # keep model resident between a scan's successive calls
+  ollama_timeout_seconds: 180
+  ollama_num_ctx: 24576       # context window (tokens) — must cover prompt + JSON output
+  ollama_keep_alive: "2m"     # unload quickly between calls — see "Model choice" below
   ollama_temperature: 0.2     # low = disciplined JSON
 ```
 
@@ -1249,15 +1259,23 @@ claude:
   automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
   Claude to be the primary reviewer again.
 
-**Model choice (Task 10, re-decided 2026-09-29).** The review path is now **schema-constrained**
-(`ollama_runner._generate` sends Ollama's `format` as a JSON Schema — `REVIEW_SCHEMA` — not the
-bare `format: "json"` string) and the prompt carries a deterministic **FACTS** block (`F1`-`F7`:
-moneyness, breakeven cushion, earnings-vs-expiry timing, fair-value edge, IV rank/RV) plus a
-**DECISION RUBRIC** that defaults to `"sell"` on a gate-passing candidate unless a specific fact
-argues otherwise — see the `src/claude/` table in `ARCHITECTURE.md`. This fixed the pre-Task-10
-failure mode: 6/6 single-candidate reviews came back `"wait"` and a 3-candidate prompt reviewed
-only 1/3 candidates. Re-evaluated with `scripts/review_eval.py` (§13 below) against real stored
-candidates (7 rows, all META/AMZN CSPs) at 2 runs each:
+**Model choice (Task 10, re-decided 2026-09-29; re-verified fix round 1, 2026-09-30).** The review
+path is now **schema-constrained** (`ollama_runner._generate` sends Ollama's `format` as a JSON
+Schema — `REVIEW_SCHEMA` — not the bare `format: "json"` string) and the prompt carries a
+deterministic **FACTS** block (`F1`-`F7`: moneyness, breakeven cushion, earnings-vs-expiry timing,
+fair-value edge, IV rank/RV, and — full-universe path only, see the fix-round-1 note below — a
+gate-pass line) plus a **DECISION RUBRIC** that defaults to `"sell"` on a gate-passing candidate
+unless a specific fact argues otherwise — see the `src/claude/` table in `ARCHITECTURE.md`. This
+fixed the pre-Task-10 failure mode: 6/6 single-candidate reviews came back `"wait"` and a
+3-candidate prompt reviewed only 1/3 candidates.
+
+Initial evaluation (Task 10) used `scripts/review_eval.py` against real stored candidates (7 rows,
+all META/AMZN CSPs) at 2 runs each, but built the prompt with no `analytics`/`market_conditions`/
+`history` — understating the real prompt a scan sends. Fix round 1 corrected this:
+`review_eval.py` now reuses `scan.py`'s own `_fetch_analytics`/`_load_memory` and
+`get_market_conditions` (the exact functions the real scan calls, none needing an IBKR
+connection), and the re-measurement below uses a 10-candidate batch — `risk_limits.yaml`'s
+`portfolio.max_new_positions_per_run` ceiling, the largest a real scan sends:
 
 | Model | Download | Reviewed | Verdicts | Empty evidence | Cold-start (first call) |
 |---|---|---|---|---|---|
@@ -1266,14 +1284,40 @@ candidates (7 rows, all META/AMZN CSPs) at 2 runs each:
 | `qwen3.5:9b` | 6.6 GB | 7/7 (warm run) | 5 sell / 1 wait / 1 skip | 0/7 | timed out (>120s) |
 | `gemma4:e4b-it-qat` | 6.1 GB | 14/14 (both runs) | all `sell` | 0/14 | 76.8s — no timeout |
 
+(Table above: original 7-candidate, non-production-shaped run, kept for the download-size/model
+comparison across four models. `qwen3:8b`/`qwen3.5:9b`/`gemma4:e4b-it-qat` were not re-run
+production-shaped — the ruling that motivated fix round 1 only requires re-testing an alternative
+if the active model *fails* the production-shaped re-check, and it didn't.)
+
+**Fix-round-1 re-check, `qwen3.5:4b` only, production-shaped, 10-candidate batch (2026-09-30):**
+
+| Run | Candidates reviewed | Verdicts | Empty evidence | `prompt_eval_count` | `eval_count` | Wall time |
+|---|---|---|---|---|---|---|
+| Warm | 10/10 | all `sell` | 0/10 | 12,461 | 2,222 | 99.6s |
+| Cold (`ollama stop` first) | 10/10 | all `sell` | 0/10 | 12,461 | 2,568 | 110.4s |
+| Warm (after num_ctx/keep_alive change) | 10/10 | 8 sell/1 wait/1 skip | 0/10 | 12,461 | 2,443 | 103.3s |
+| Cold (after num_ctx/keep_alive change) | **9/10 distinct** (1 duplicate `candidate_id`, 1 candidate never reviewed) | 9 `sell`/1 dup | 1/10 | 12,461 | 2,629 | 113.8s |
+
+`prompt_eval_count` was identical (12,461) across all four calls — deterministic given the same
+candidates/analytics/history/market-conditions. `eval_count` (the model's own output length)
+varied 2,222-2,630. Every run cleared "not all wait" and "≥90% non-empty evidence"; three of four
+runs cleared "every candidate reviewed" — the fourth returned a duplicate review for one
+`candidate_id` and silently never covered a different one, a occasional small-model robustness gap
+`review_eval.py` now reports explicitly (it counts *distinct* `candidate_id`s covered, not raw
+review-object count, and prints any requested id left uncovered) rather than masking it as "10/10".
+This did not change the model pick — `qwen3.5:4b` still clearly outperforms the pre-Task-10
+baseline (1/3 reviewed) and no other model was shown to do better under the same harness — but is
+recorded here for anyone tuning the prompt further.
+
 `qwen3.5:4b` is the smallest model, met every acceptance criterion in **every** run including a
-cold start (the other 6-9 GB models needed a warm model already resident to finish inside
-`ollama_timeout_seconds: 120`), and a spot-checked full review (see `STATUS.md`) correctly read an
-OTM put as OTM and a post-expiry earnings date as no-risk — the two specific misreadings Task 10
-set out to fix. It also frees ~1.8GB vs the prior `qwen3:8b`. Alternatives:
+cold start (the 6-9 GB alternatives needed a warm model already resident to finish inside the
+original `ollama_timeout_seconds: 120`), and a spot-checked full review (see `STATUS.md`) correctly
+read an OTM put as OTM, a genuinely ITM put (real live spot had moved) as ITM, and a post-expiry
+earnings date as no-risk — the two specific misreadings Task 10 set out to fix. It also frees
+~1.8GB vs the prior `qwen3:8b`. Alternatives (from the original 7-candidate comparison):
 - **`qwen3.5:9b`** — showed more verdict diversity (sell/wait/skip) on the same candidates,
-  arguably more nuanced judgment, but at 2x the download and a cold load that blew the 120s
-  timeout in this environment (14 GB RSS already in use, 7/8 GB swap in use before any model
+  arguably more nuanced judgment, but at 2x the download and a cold load that blew the original
+  120s timeout in this environment (14 GB RSS already in use, 7/8 GB swap in use before any model
   loads) — a worse fit for the RAM-constrained M3 Pro this runs on.
 - **`gemma4:e4b-it-qat`** — comparable results to `qwen3.5:4b` (14/14 reviewed, 0 empty evidence,
   no cold-start timeout) but 1.8x the download for no measured quality gain over the smaller model.
@@ -1283,30 +1327,58 @@ set out to fix. It also frees ~1.8GB vs the prior `qwen3:8b`. Alternatives:
 **`think: true` was tried and rejected:** it is hardcoded `false` in `ollama_runner._generate`
 (hybrid-reasoning `<think>` traces otherwise fight the schema constraint and bloat latency). A
 manual test with `think: true` on `qwen3.5:4b` against the same 7-candidate prompt **did not
-complete within 180s** (`httpx.ReadTimeout`) — well past `ollama_timeout_seconds: 120` — so it
-stays off.
+complete within 180s** (`httpx.ReadTimeout`) — well past the original `ollama_timeout_seconds:
+120` — so it stays off.
 
 **Expectations:** a small local model is noticeably less reliable at nuanced multi-signal judgment
 than Claude — expect occasional validation failures (which fail soft to `[]`/`None`, same as a CLI
-failure). Schema-constrained `format` grammar-forces valid JSON matching the schema shape, but the
-*content* (which facts the model actually reasons from) still depends on the model following the
-prompt's DECISION RUBRIC — `evidence` being non-empty is a rough proxy, not a guarantee.
-`ollama_runner.py` sets `num_ctx` to `16384` (config `ollama_num_ctx`) — the requested window must
-cover the *whole prompt plus the generated JSON*, or Ollama silently left-truncates the prompt
-(dropping the universe context + candidates at the start) and/or cuts the output mid-JSON — both
-yield unparseable output and dropped reviews. **Measured 2026-09-29** (post-Task-10 prompt, which
-added the FACTS/rubric text): the real 7-candidate full-scan prompt above already used
-**8,413 prompt tokens** — `8192` (an earlier lower value this doc used to suggest as a RAM-saving
-option) would already silently truncate it, so **do not lower `ollama_num_ctx` below 16384** with
-the current prompt; 16384 leaves ~8k tokens of headroom for the generated JSON. Lower it only if
-you also verify (`prompt_eval_count` in the raw `/api/generate` response) that your own longest
-prompt still fits. `ollama_keep_alive` (default `10m`) keeps the model resident so a scan's
-successive calls don't each pay a reload — kept at `10m` rather than shortened to `2m`: a cold
-load of the 6-9 GB alternatives measured above blew the 120s timeout outright under this Mac's
-memory pressure, and even the active 4B model's cold load (80.7s) leaves too little margin to
-risk on every 15-minute cycle. Latency is typically 50-100s per call on Apple Silicon for a
-4-9B model with a 7-candidate prompt, depending on prompt length, cold-vs-warm load, and memory
-pressure.
+failure) and, per the fix-round-1 finding above, an occasional duplicate/missed candidate_id on a
+larger batch. Schema-constrained `format` grammar-forces valid JSON matching the schema shape, but
+the *content* (which facts the model actually reasons from, and whether every requested id gets
+exactly one review) still depends on the model following the prompt — `evidence` being non-empty
+and every candidate_id appearing exactly once are both rough proxies, not guarantees.
+
+**`ollama_num_ctx` (24576, raised from 16384 in fix round 1).** The requested window must cover
+the *whole prompt plus the generated JSON*, or Ollama silently left-truncates the prompt (dropping
+the universe context + candidates at the start) and/or cuts the output mid-JSON — both yield
+unparseable output and dropped reviews. **Measured 2026-09-30** on the production-shaped
+10-candidate prompt: `prompt_eval_count` a stable 12,461 tokens, `eval_count` up to 2,630 — a worst
+observed total of ~15,100, which was **92% of the old 16384 ceiling** (inside the ~20%-of-capacity
+danger zone). The earlier Task-10 measurement (8,413 tokens on a 7-candidate, non-production-shaped
+prompt) understated real usage because it omitted the analytics/history/market-conditions blocks a
+real scan sends — **do not use that smaller figure to justify a lower `ollama_num_ctx`.** 24576
+leaves ~40% headroom over the worst observed total. Re-measure with `scripts/review_eval.py`
+(prints `prompt_eval_count`/`eval_count` every run) before changing this again — never lower it
+without checking your own longest prompt still fits. RAM estimate: `qwen3.5:4b` is roughly half of
+`qwen3:8b`'s parameter count, so its per-token KV cache should be roughly half-sized too — at
+24576 tokens the estimated KV cache is still smaller than `qwen3:8b`'s was at the old 16384, a
+combination this system ran under for months without incident.
+
+**`ollama_keep_alive` (2m, lowered from 10m in fix round 1 — the prior justification was wrong).**
+The 15-minute intraday scan cycle (`scheduler.intraday_loop_minutes`) is already *longer* than any
+keep_alive value below 15m, so the scan loop's own review call was **already cold-loading every
+cycle** under the old 10m setting — lowering it to 2m changes nothing for the scan loop
+specifically; it only stops holding the model resident for 10 minutes nothing in the scan loop
+actually uses. Checked the other three callers for a real 2-10 minute gap that would lose a
+warm-call benefit under 2m but keep it under 10m: `write_journal_narrative` fires once/day at EOD,
+never close in time to anything else; single-ticker `/scan TICKER` is ad-hoc/manual with no fixed
+cadence; `review_roll` fires per triggered position from `monitor.intraday.fire_alerts` — when
+several positions cross a threshold together (e.g. a correlated market move), those calls land
+seconds apart on the same `ThreadPoolExecutor`, well inside even a 2-minute window; a *lone* roll
+alert following a >2-minute gap now cold-loads, but that path already tolerates extra latency (the
+Telegram send simply waits on the review) and its prompt is a single object, smaller than the
+10-candidate review prompt measured above. No deterministic 2-10 minute repeated-call cadence was
+found, so `keep_alive` moved to `2m`.
+
+**`ollama_timeout_seconds` (180, raised from 120 in fix round 1) folds in the cold-load
+measurement above:** warm wall time measured 99.6-103.3s, cold (`ollama stop` first) 110.4-113.8s
+— both on the production-shaped 10-candidate prompt. 180 leaves real margin over the slowest
+cold figure (110.4s), and since `keep_alive: 2m` means most calls are now effectively cold loads
+(see above), the timeout must comfortably clear a cold call, not just a warm one — this Mac's OS
+file cache was still warm from repeated recent use during measurement, so a genuinely cold
+model (first use in days, or after heavier memory pressure has evicted its pages) could plausibly
+be slower than what was measured. Latency is typically 100-115s per call on Apple Silicon for the
+4B model with a 10-candidate production-shaped prompt.
 
 ---
 

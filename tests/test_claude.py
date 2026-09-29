@@ -501,16 +501,23 @@ def test_build_prompt_analytics_missing_symbol_is_skipped():
 
 
 def test_build_prompt_full_scan_states_gate_approved():
-    """Full-universe framing asserts the candidates cleared the Rules Engine."""
+    """Full-universe framing asserts the candidates cleared the Rules Engine — in the role intro,
+    the FACTS block (F7), and the DECISION RUBRIC."""
     prompt = build_prompt([_make_candidate()], _make_account())
     assert "already been approved by the deterministic Rules Engine" in prompt
+    assert "PASSED the deterministic Rules Engine" in prompt
+    assert "Passed every deterministic gate" in prompt
 
 
 def test_build_prompt_single_ticker_framing_is_gate_neutral():
-    """Single-ticker may review near-misses, so its framing must not claim gate approval."""
+    """Single-ticker may review near-misses (scan.py's cc_near_miss/csp_near_miss fallback), so
+    its framing must not claim gate approval anywhere — not the role intro, not F7, not the
+    rubric (fix round 1: a near-miss reviewed under a "PASSED"/"F7" framing is a false premise)."""
     prompt = build_prompt([_make_candidate()], _make_account(), single_ticker=True)
     assert "already been approved by the deterministic Rules Engine" not in prompt
     assert "surfaced by the deterministic screen" in prompt
+    assert "PASSED the deterministic Rules Engine" not in prompt
+    assert "Passed every deterministic gate" not in prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -568,11 +575,21 @@ def test_facts_iv_rank_missing_says_so_plainly():
     assert "RICH" not in facts and "THIN" not in facts and "NORMAL" not in facts
 
 
-def test_facts_always_states_the_gate_pass():
+def test_facts_states_the_gate_pass_by_default():
     from src.claude.prompts.strategist import _candidate_facts
 
     facts = "\n".join(_candidate_facts(_make_candidate(), spot=None))
     assert "F7" in facts and "Passed every deterministic gate" in facts
+
+
+def test_facts_omits_f7_when_gate_did_not_pass():
+    """Fix round 1: a single-ticker near-miss review must not assert a gate pass that didn't
+    happen — gate_passed=False omits F7 entirely rather than lying about it."""
+    from src.claude.prompts.strategist import _candidate_facts
+
+    facts = "\n".join(_candidate_facts(_make_candidate(), spot=None, gate_passed=False))
+    assert "F7" not in facts
+    assert "Passed every deterministic gate" not in facts
 
 
 def test_build_prompt_injects_facts_block():

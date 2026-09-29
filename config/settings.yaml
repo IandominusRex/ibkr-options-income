@@ -186,33 +186,62 @@ claude:
   ollama_host: "http://localhost:11434"
   # qwen3.5:4b (~3.4GB) — the active model (Task 10, 2026-09-29, replacing qwen3:8b ~5.2GB).
   # Picked as the SMALLEST of four models evaluated with scripts/review_eval.py against real
-  # stored candidates (7 rows, 2 runs each) after the review path became schema-constrained
-  # (REVIEW_SCHEMA) with a deterministic FACTS block + DECISION RUBRIC:
-  #   qwen3.5:4b (3.4GB)        14/14 reviewed both runs, 0 empty-evidence, NO cold-start timeout
-  #                              (80.7s cold, well inside ollama_timeout_seconds: 120) — the pick.
-  #   gemma4:e4b-it-qat (6.1GB) matched qwen3.5:4b's results, ~1.8x the download, no gain measured.
-  #   qwen3:8b (was active)     matched on a WARM run only; cold load timed out (>120s).
-  #   qwen3.5:9b (6.6GB)        more verdict diversity (sell/wait/skip) but also timed out cold.
-  # qwen3:14b was ruled out without testing — ~9.3GB weights + ~2.7GB KV cache (~12GB) exceeds
-  # what's free on the target 18GB Mac alongside TWS/Gateway. Full table: SETUP.md §14.
+  # stored candidates after the review path became schema-constrained (REVIEW_SCHEMA) with a
+  # deterministic FACTS block + DECISION RUBRIC. Re-verified fix round 1 (2026-09-30) against
+  # the PRODUCTION-SHAPED prompt (real analytics/history/market-conditions, not an approximation
+  # — see scripts/review_eval.py) at a 10-candidate batch (risk_limits.yaml's
+  # max_new_positions_per_run ceiling): 10/10 reviewed on every run, 0 empty-evidence, warm
+  # 99.6s / cold (`ollama stop` first) 110.4s — both comfortably inside the revised
+  # ollama_timeout_seconds below. Original four-model table (smaller, non-production-shaped
+  # prompt) is preserved in SETUP.md §14 "Model choice" alongside the fix-round-1 re-measurement.
   # ollama_runner disables "thinking" mode (think=false) so structured-output stays clean and
   # fast — think=true was tried on qwen3.5:4b and did NOT finish within 180s (vs a 120s budget).
   ollama_model: "qwen3.5:4b"
-  ollama_timeout_seconds: 120
+  # MEASURED 2026-09-30 (fix round 1) on the production-shaped 10-candidate prompt: warm 99.6s,
+  # cold (after `ollama stop`) 110.4s — raised from 120 to 180 for real margin over both (the
+  # cold figure leaves only ~10s under the old 120 value, and a genuinely cold model — this Mac's
+  # OS file cache was still warm from repeated recent use in the same session — could plausibly
+  # be slower than that). Folds in the keep_alive change below: shortening keep_alive to 2m means
+  # most scan-loop calls now cold-load, so the timeout must comfortably clear a cold call, not
+  # just a warm one.
+  ollama_timeout_seconds: 180
   # Context window (tokens). Must cover the whole prompt PLUS the generated JSON or Ollama
-  # silently truncates one or both → dropped reviews. MEASURED 2026-09-29 (post-Task-10 prompt,
-  # FACTS block + rubric added): the real 7-candidate full-scan prompt above already uses 8,413
-  # prompt_eval_count tokens — DO NOT lower this below 16384 (8192, suggested by an earlier plan
-  # draft as a RAM-saving option, would already silently truncate that prompt). 16384 leaves
-  # ~8k tokens of headroom for the generated JSON; verify your own longest prompt's
-  # prompt_eval_count (raw /api/generate response) before lowering it further.
-  ollama_num_ctx: 16384
+  # silently truncates one or both → dropped reviews. MEASURED 2026-09-30 (fix round 1,
+  # production-shaped prompt — real analytics/history/market-conditions, 10 candidates, the
+  # risk_limits.yaml max_new_positions_per_run ceiling): prompt_eval_count is a stable 12,461
+  # tokens across three separate calls; eval_count (the generated JSON) varied 2,222-2,630 across
+  # runs. Worst observed total ~15,100 — at the OLD 16384 that's 92% of the ceiling, inside the
+  # ~20%-of-capacity danger zone the fix-round-1 review flagged; the smaller pre-fix-round-1
+  # measurement (8,413 tokens on a 7-candidate, non-production-shaped prompt) understated real
+  # usage because it omitted the analytics/history/market-conditions blocks production actually
+  # sends. Raised to 24576 (~40% headroom over the worst observed total) — do not lower below
+  # what your own longest prompt's prompt_eval_count + eval_count needs; re-measure with
+  # scripts/review_eval.py (prints both) before changing either number again. RAM estimate: this
+  # model is roughly half of qwen3:8b's parameter count, so its per-token KV cache should be
+  # roughly half-sized too — at 24576 tokens (1.5x the old 16384) the estimated KV cache is still
+  # smaller than what qwen3:8b's KV cache was at 16384, the setting this system ran under for
+  # months without incident.
+  ollama_num_ctx: 24576
   # Keep the model resident between a scan's successive calls so each one doesn't pay a reload.
-  # Kept at 10m rather than shortened to 2m (a plan draft's RAM-saving suggestion): a cold load
-  # of the 6-9GB alternatives evaluated above blew the 120s timeout outright under this Mac's
-  # measured memory pressure (14GB RSS + 7/8GB swap in use before any model loads), and even the
-  # active 4B model's own cold load (80.7s) leaves too little margin to risk every 15-min cycle.
-  ollama_keep_alive: "10m"
+  # CORRECTED 2026-09-30 (fix round 1 — the prior justification for 10m was wrong): the intraday
+  # scan loop's cycle interval (scheduler.intraday_loop_minutes, 15) is already LONGER than any
+  # keep_alive value below 15m, so the scan loop's own review call is *already* a cold load every
+  # cycle under the old 10m setting — shortening to 2m changes nothing for the scan loop
+  # specifically, it only stops paying the extra idle-RAM cost of a 10-minute residency window
+  # nothing in the scan loop actually uses. Checked the other three callers for a real 2-10 min
+  # gap that 2m would lose and 10m would have kept warm: `write_journal_narrative` fires once/day
+  # at the EOD run (scheduler.eod_report) — never close in time to anything else; single-ticker
+  # `/scan TICKER` is ad-hoc/manual — no fixed cadence to reason about; `review_roll` fires from
+  # `monitor.intraday.fire_alerts`, called per triggered position from the event-driven monitor —
+  # when several positions cross a threshold in the same tick (e.g. a correlated market move),
+  # those calls land seconds apart (well inside even 2m) since they're dispatched to the same
+  # ThreadPoolExecutor in a tight loop; a *lone* alert following a >2min gap from the last call
+  # would now cold-load, but that path already tolerates extra latency (the Telegram send simply
+  # waits on the review) and its prompt is a single object (`build_roll_prompt`), far smaller
+  # than the 10-candidate review prompt measured above, so its own cold-load cost is smaller
+  # too. No deterministic 2-10 min repeated-call cadence was found, so per the review's
+  # instruction: adopt 2m.
+  ollama_keep_alive: "2m"
   # Sampling temperature — low keeps the JSON disciplined; raise only to experiment.
   ollama_temperature: 0.2
 

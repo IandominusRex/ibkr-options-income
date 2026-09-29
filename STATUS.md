@@ -85,10 +85,13 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   only), `"ollama"` (local model only), or `"cli_then_ollama"` (try `claude -p`, fall back to
   local on failure). **This deployment currently runs `backend: "ollama"`** — no `claude -p`
   access, so `review_candidates`/`review_roll`/`write_journal_narrative` all go to a local
-  `qwen3.5:4b` via Ollama (Task 10, `think: false`, `num_ctx: 16384`, `keep_alive: 10m`). The
+  `qwen3.5:4b` via Ollama (Task 10, `think: false`, `num_ctx: 24576`, `keep_alive: 2m` — both
+  raised/lowered from the Task 10 originals in fix round 1 against a production-shaped
+  re-measurement, see SETUP.md §14). The
   review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema for
   `{"reviews": [...]}` — Ollama's structured-output mode); the strategist prompt injects a
-  deterministic `F1`-`F7` FACTS block per candidate and a DECISION RUBRIC so the model cites a
+  deterministic `F1`-`F7` FACTS block per candidate (F7, the gate-pass line, only on the
+  full-universe path — fix round 1) and a DECISION RUBRIC so the model cites a
   fact (in the new `ClaudeReview.evidence` field) rather than deriving — and sometimes
   misreading — moneyness or earnings timing itself. Same `ClaudeReview`/`RollReview`
   validation and fail-soft contract regardless of backend. See
@@ -285,7 +288,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Approval / notify | `python-telegram-bot` v21+ | Inline keyboards + callback handlers. |
 | Claude | **Claude Code CLI (`claude -p`)** | Headless. Since 2026-06-15, draws from a separate monthly Agent SDK credit pool (billed at API rates), not the interactive subscription. **Not used in this deployment** — `claude.backend: "ollama"` (no CLI access); review dispatches to Ollama instead. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. Requires `claude -p`; inactive in this deployment. |
-| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3.5:4b` (Task 10, was `qwen3:8b`) | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 16384`, `keep_alive: 10m`). Review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema — not the bare `"json"` string roll/EOD still use). See SETUP.md §14 "Model choice" for the four-model evaluation. |
+| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3.5:4b` (Task 10, was `qwen3:8b`) | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 24576`, `keep_alive: 2m` — fix round 1, raised/lowered from Task 10's original `16384`/`10m` against a production-shaped re-measurement). Review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema — not the bare `"json"` string roll/EOD still use). See SETUP.md §14 "Model choice" for the four-model evaluation and the fix-round-1 re-check. |
 | Config | `PyYAML` + `python-dotenv` | YAML for rules/weights, `.env` for secrets. |
 | Dashboard | `Streamlit` | Read-only views off SQLite. Archived to `Archive/dashboard/`. |
 | Quality | `pytest`, `ruff`, `mypy` | IBKR mocked in tests. |
@@ -399,6 +402,51 @@ Full table and the rejected `think: true` / `ollama_num_ctx: 8192` experiments (
 budgets — a `think: true` call on the same prompt didn't finish in 180s, and the real 7-candidate
 prompt already measures 8,413 `prompt_eval_count` tokens, above 8192) are in SETUP.md §14 "Model
 choice".
+
+**Fix round 1 (2026-09-30):** review caught three defects in the above.
+
+1. **The single-ticker prompt asserted a gate pass that didn't happen.** `F7` and the DECISION
+   RUBRIC's opening line always claimed "already PASSED the deterministic Rules Engine", but
+   `scan.py`'s single-ticker `/scan TICKER` path (`cc_near_miss`/`csp_near_miss`) can send a
+   candidate that failed every gate — sometimes alongside a genuinely passed one in the same call.
+   Fixed: `_candidate_facts(c, spot, *, gate_passed=True)` omits `F7` when `gate_passed=False`,
+   and `build_prompt` passes `gate_passed=not single_ticker`; the single-ticker rubric now opens
+   with a neutral "judge them on the FACTS and NEWS... rather than assuming a pass" line instead,
+   keeping the same sell/wait/skip definitions and evidence instruction. Also fixed in passing
+   (same file, same prompt text): the `=== YOUR TASK ===` line still said "return a JSON array"
+   after the output contract had already moved to `{"reviews": [...]}` — now consistent.
+2. **The eval didn't represent the production prompt.** `review_eval._run_once` built the prompt
+   with no `analytics`/`market_conditions`/`history` — the real scan (`scan.py`) sends all three,
+   and up to `risk_limits.yaml`'s `portfolio.max_new_positions_per_run` (10) candidates, not the
+   7 the original eval used. Fixed: `review_eval.py` now reuses `scan.py`'s own
+   `_fetch_analytics`/`_load_memory` and `analytics.market_conditions.get_market_conditions` (the
+   exact functions the real scan calls, none needing IBKR) to build a production-shaped prompt,
+   and reports the real `/api/generate` metadata (`prompt_eval_count`, `eval_count`, timings).
+   Re-measured `qwen3.5:4b` at a 10-candidate batch, cold (`ollama stop` first) and warm — see
+   SETUP.md §14 for the full table. Real usage (worst observed ~15,100 tokens) was 92% of the old
+   `ollama_num_ctx: 16384` (inside the review's ~20%-of-capacity danger zone), so `ollama_num_ctx`
+   moved to `24576`; cold wall time (110-114s) left only ~10s of margin under the old
+   `ollama_timeout_seconds: 120`, so it moved to `180`. `qwen3.5:4b` still cleared the brief's bar
+   on the production-shaped prompt (three of four runs got full distinct-candidate coverage; the
+   fourth returned a duplicate `candidate_id` while missing a different one — a robustness gap
+   `review_eval.py` now reports explicitly rather than miscounting as full coverage), so
+   `qwen3:8b` was not re-run production-shaped (the ruling only required that if the active model
+   failed the re-check).
+3. **The `keep_alive` rejection rested on a false premise.** Fix round 0 argued 2-minute
+   `keep_alive` would turn every 15-minute scan cycle into a cold load — but the scan cycle
+   (`scheduler.intraday_loop_minutes: 15`) already exceeds the *old* `keep_alive: 10m`, so the
+   scan loop's review call was **already** cold-loading every cycle regardless. Checked the other
+   three callers (EOD, single-ticker, roll alerts) for a real 2-10 minute repeated-call gap that
+   would benefit from staying warm — found clustered roll alerts land seconds apart (same
+   executor), not 2-10 minutes apart, and the other two paths have no fixed cadence at all. No
+   deterministic case for keeping `10m` was found, so `ollama_keep_alive` moved to `2m` per the
+   review's ruling; the cold-load latency from finding 2 was folded into the `ollama_timeout_seconds`
+   decision above.
+
+All three corrections are in `config/settings.yaml`'s comment block (with the measurements) and
+SETUP.md §14. `python -m pytest -q`: 2425 passed (2424 + 1 new — `_candidate_facts`'s
+`gate_passed=False` case; two existing gate-neutral-framing tests were extended in place, not
+added). `ruff check .` and `mypy src` clean.
 
 ## Bugs fixed (2026-09-29 — scan-loop remediation Task 9: missing IV rank scored neutral, not zero)
 
