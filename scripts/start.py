@@ -159,6 +159,13 @@ def _find_stale_pids() -> list[int]:
     survivor regardless of how it was orphaned (this launcher's own bug, a crash, a laptop
     sleep, or a second `scripts.start` started by hand) — there's no state file that can go
     missing or go stale itself.
+
+    Never returned (C1, 2026-09-30): this process, **any of its ancestors**, and any process
+    whose argv[0] is ``caffeinate``. Under launchd the job is
+    ``caffeinate -i -s <python> -m scripts.start``; the wrapper's own command line contains
+    "scripts.start", so without these exclusions every start killed its own caffeinate parent
+    and sleep prevention was silently off. A stray *child* of some other caffeinate wrapper
+    is still caught — killing it lets that wrapper exit on its own.
     """
     own_pid = os.getpid()
     patterns: set[str] = {
@@ -168,23 +175,36 @@ def _find_stale_pids() -> list[int]:
     }
     try:
         out = subprocess.run(
-            ["ps", "-eo", "pid,command"], capture_output=True, text=True, check=True
+            ["ps", "-eo", "pid,ppid,command"], capture_output=True, text=True, check=True
         ).stdout
     except (OSError, subprocess.CalledProcessError) as exc:
         log.warning("Could not scan for stale processes (%s) — skipping the check", exc)
         return []
 
-    stale = []
+    procs: dict[int, tuple[int, str]] = {}
     for line in out.splitlines()[1:]:
-        parts = line.strip().split(None, 1)
-        if len(parts) != 2:
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
             continue
-        pid_str, cmd = parts
+        pid_str, ppid_str, cmd = parts
         try:
-            pid = int(pid_str)
+            procs[int(pid_str)] = (int(ppid_str), cmd)
         except ValueError:
             continue
-        if pid == own_pid:
+
+    # Walk our own ancestry: os.getppid() first (authoritative for the direct parent), then
+    # the ps table for everything above it. Bounded against a malformed/cyclic table.
+    ancestors: set[int] = set()
+    cur = os.getppid()
+    while cur > 1 and cur not in ancestors and len(ancestors) < 64:
+        ancestors.add(cur)
+        cur = procs.get(cur, (0, ""))[0]
+
+    stale = []
+    for pid, (_ppid, cmd) in procs.items():
+        if pid == own_pid or pid in ancestors:
+            continue
+        if os.path.basename(cmd.split(None, 1)[0]) == "caffeinate":
             continue
         if any(pat in cmd for pat in patterns):
             stale.append(pid)

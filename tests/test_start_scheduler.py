@@ -82,12 +82,13 @@ def test_state_file_tolerates_corruption(tmp_path, monkeypatch):
 
 def test_find_stale_pids_matches_own_daemon_modules(monkeypatch):
     monkeypatch.setattr(start.os, "getpid", lambda: 100)
+    monkeypatch.setattr(start.os, "getppid", lambda: 1)
     fake_ps = (
-        "  PID COMMAND\n"
-        " 100 python -m scripts.start\n"
-        " 200 python -m scripts.run_approval_service\n"
-        " 300 python -m scripts.run_monitor\n"
-        " 400 /usr/bin/some_unrelated_process\n"
+        "  PID  PPID COMMAND\n"
+        " 100     1 python -m scripts.start\n"
+        " 200     1 python -m scripts.run_approval_service\n"
+        " 300     1 python -m scripts.run_monitor\n"
+        " 400     1 /usr/bin/some_unrelated_process\n"
     )
     monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
     assert sorted(start._find_stale_pids()) == [200, 300]
@@ -95,7 +96,78 @@ def test_find_stale_pids_matches_own_daemon_modules(monkeypatch):
 
 def test_find_stale_pids_excludes_own_pid(monkeypatch):
     monkeypatch.setattr(start.os, "getpid", lambda: 200)
-    fake_ps = " 200 python -m scripts.run_approval_service\n"
+    monkeypatch.setattr(start.os, "getppid", lambda: 1)
+    fake_ps = " 200     1 python -m scripts.run_approval_service\n"
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    assert start._find_stale_pids() == []
+
+
+def test_find_stale_pids_spares_the_launchd_caffeinate_parent(monkeypatch):
+    """C1: under launchd the job is `caffeinate -i -s <python> -m scripts.start`.
+
+    The caffeinate wrapper's command line contains "scripts.start", so the old guard killed
+    it on every start and sleep prevention was silently off. Neither our own ancestors nor a
+    caffeinate process may be treated as a stale daemon — but a genuine stray from a prior
+    session (pid 900 here) still is.
+    """
+    monkeypatch.setattr(start.os, "getpid", lambda: 2231)
+    monkeypatch.setattr(start.os, "getppid", lambda: 2230)
+    fake_ps = (
+        "  PID  PPID COMMAND\n"
+        "    1     0 /sbin/launchd\n"
+        " 2230     1 /usr/bin/caffeinate -i -s /repo/.venv/bin/python -m scripts.start\n"
+        " 2231  2230 /repo/.venv/bin/python -m scripts.start\n"
+        " 2240  2231 /repo/.venv/bin/python -m scripts.run_approval_service\n"
+        "  900     1 /repo/.venv/bin/python -m scripts.run_monitor\n"
+    )
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    stale = start._find_stale_pids()
+    assert 2230 not in stale  # our caffeinate parent (ancestor + caffeinate argv[0])
+    assert 2231 not in stale  # ourselves
+    assert sorted(stale) == [900, 2240]
+
+
+def test_find_stale_pids_spares_any_caffeinate_wrapper_even_when_not_an_ancestor(monkeypatch):
+    """A caffeinate wrapper is never a daemon itself; killing its child is enough."""
+    monkeypatch.setattr(start.os, "getpid", lambda: 100)
+    monkeypatch.setattr(start.os, "getppid", lambda: 1)
+    fake_ps = (
+        "  PID  PPID COMMAND\n"
+        " 100     1 python -m scripts.start\n"
+        " 500     1 caffeinate -i -s python -m scripts.start\n"
+        " 501   500 python -m scripts.start\n"
+    )
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    assert start._find_stale_pids() == [501]
+
+
+def test_find_stale_pids_spares_the_caffeinate_child_in_the_observed_macos_topology(monkeypatch):
+    """C1, as observed live (2026-09-30): macOS caffeinate keeps the job's own pid for the
+    *utility* (``launchctl print`` pid 2230 runs ``Python -m scripts.start`` with ppid 1) and
+    holds the assertion from a caffeinate-labelled *child*. That child is not our ancestor, so
+    only the argv[0]==caffeinate rule spares it — and it must be spared.
+    """
+    monkeypatch.setattr(start.os, "getpid", lambda: 2230)
+    monkeypatch.setattr(start.os, "getppid", lambda: 1)
+    fake_ps = (
+        "  PID  PPID COMMAND\n"
+        " 2230     1 /Library/Frameworks/Python.framework/Python -m scripts.start\n"
+        " 2231  2230 /usr/bin/caffeinate -i -s /repo/.venv/bin/python -m scripts.start\n"
+    )
+    monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
+    assert start._find_stale_pids() == []
+
+
+def test_find_stale_pids_spares_every_ancestor(monkeypatch):
+    """A grandparent running scripts.start (e.g. a shell wrapper) is never killed."""
+    monkeypatch.setattr(start.os, "getpid", lambda: 30)
+    monkeypatch.setattr(start.os, "getppid", lambda: 20)
+    fake_ps = (
+        "  PID  PPID COMMAND\n"
+        "   10     1 /bin/zsh -c python -m scripts.start\n"
+        "   20    10 /bin/sh -c python -m scripts.start\n"
+        "   30    20 python -m scripts.start\n"
+    )
     monkeypatch.setattr(start.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=fake_ps))
     assert start._find_stale_pids() == []
 

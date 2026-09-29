@@ -509,6 +509,9 @@ service (`--no-eod` skips the built-in EOD scheduler — see §7).
 > scans for and kills any *other* process still running one of this project's own daemon modules
 > — whatever the cause (a crash, a laptop sleep, a second `scripts.start` started by accident),
 > a restart always starts from a clean slate.
+> The sweep never touches its own parent/ancestors or any `caffeinate` process, so the
+> launchd supervisor's `caffeinate -i -s` wrapper (§6c) survives it and keeps the Mac awake
+> (fixed 2026-09-30 — before that, every launchd start killed its own caffeinate wrapper).
 
 > **Ollama check at startup:** when `claude.backend` uses Ollama, the launcher probes the local
 > model on start and logs a loud `WARNING` if it's unreachable or not pulled. This is a warning,

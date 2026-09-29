@@ -363,6 +363,20 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Bugs fixed (2026-09-30 — scan-loop remediation final whole-branch review)
+
+- **C1 — the launchd supervisor killed its own `caffeinate` wrapper, so sleep prevention was
+  silently off.** `scripts/start.py::_find_stale_pids` matched any command line containing
+  `scripts.start` and excluded only `os.getpid()`. The launchd job is
+  `caffeinate -i -s <python> -m scripts.start`, so the wrapper matched and was SIGTERMed on every
+  start (`logs/system.log`: "Found 1 stale process(es)" seconds after the job started;
+  `pmset -g assertions` showed no caffeinate assertion). On macOS the job's own pid ends up
+  running the Python image and the assertion is held by a caffeinate-labelled *child*, so the
+  wrapper is not always an ancestor. The sweep now reads `ps -eo pid,ppid,command` and never
+  returns this process, any of its ancestors (walked from `os.getppid()`), or any process whose
+  argv[0] basename is `caffeinate`. A genuine stray (another session's daemon) is still killed.
+  Tests: `tests/test_start_scheduler.py::test_find_stale_pids_spares_*`.
+
 ## Built (2026-09-30 — scan-loop remediation Task 12: paper-only promotion bypass → run on FULL autonomy)
 
 The Task 14 autonomy ladder's `promotion_blockers` requires >=20 fills, >=60% fill rate, and
