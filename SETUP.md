@@ -730,6 +730,70 @@ See `docs/web/commands.md` for every command kind's payload, dedupe key, and fai
 
 ---
 
+## 6b. Out-of-process watchdog (optional but recommended)
+
+`python -m scripts.watchdog` is a **one-shot health check**, deliberately meant to run outside
+`scripts.start`'s supervised process tree — see `src/ops/watchdog.py`. The point: every other
+alert path in this system (the monitor's triggers, the approval service's own heartbeat) lives
+*inside* one of the processes `scripts.start` supervises, so if the whole stack (or the Mac it
+runs on) stops, nothing is left running to say so. This script is designed to be scheduled
+separately, by launchd or cron, so it keeps working when everything else has stopped.
+
+It checks: the `scripts.start` supervisor process is alive, the configured IBKR port accepts a
+connection, the command-drain and (during market hours) intraday-monitor heartbeats are fresh,
+the intraday scan loop has completed recently during RTH, the EOD report finished today after its
+scheduled time, and no universe/held symbol's IV history has gone stale. A failing check sends a
+plain-text Telegram alert (re-sent every `watchdog.realert_minutes` while it stays failing, with a
+"recovered" notice once it clears); it has no IBKR connection and no clientId, and writes only
+`data/watchdog_state.json`.
+
+Run it by hand once to confirm Telegram delivery works:
+
+```bash
+python -m scripts.watchdog
+```
+
+Then schedule it — every `watchdog.interval_seconds` (default 300 = 5 min) is a reasonable cadence.
+On macOS, a launchd `LaunchAgent` (`~/Library/LaunchAgents/com.ibkr.watchdog.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ibkr.watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/IBKR Investments/.venv/bin/python</string>
+    <string>-m</string><string>scripts.watchdog</string>
+  </array>
+  <key>WorkingDirectory</key><string>/path/to/IBKR Investments</string>
+  <key>StartInterval</key><integer>300</integer>
+  <key>StandardOutPath</key><string>/path/to/IBKR Investments/logs/watchdog.log</string>
+  <key>StandardErrorPath</key><string>/path/to/IBKR Investments/logs/watchdog.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.ibkr.watchdog.plist
+```
+
+Or, on any platform, a crontab line:
+
+```
+*/5 * * * * cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.watchdog >> logs/watchdog.log 2>&1
+```
+
+**Known limitation:** none of this can detect the Mac itself being powered off or asleep — a
+powered-off machine runs no launchd/cron job at all, so nothing alerts. If that matters to you,
+sign up for a free dead-man-switch ping (e.g. [healthchecks.io](https://healthchecks.io)) and set
+`watchdog.deadman_url` in `config/settings.yaml` to the ping URL — the watchdog GETs it on every
+run where every check passes, and that external service is what notices the pings stopping and
+emails/texts you.
+
+---
+
 ## 7. The daily EOD report — scheduled by the launcher (no cron needed)
 
 The end-of-day report fires **automatically from `scripts.start`** — there is no cron job to set

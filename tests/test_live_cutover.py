@@ -23,6 +23,7 @@ from src.common.config import (
     SchedulerCfg,
     Secrets,
     StorageCfg,
+    WatchdogCfg,
 )
 from src.common.schemas import (
     OptionRight,
@@ -57,6 +58,7 @@ def _make_config(live: bool) -> Config:
         execution=ExecutionCfg(),
         monitor=MonitorCfg(),
         automation=AutomationCfg(),
+        watchdog=WatchdogCfg(),
         risk={},
         universe={},
         weights={},

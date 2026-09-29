@@ -349,6 +349,46 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Built (2026-09-29 — scan-loop remediation Task 5: out-of-process watchdog)
+
+`src/ops/watchdog.py` + `scripts/watchdog.py` (`python -m scripts.watchdog`). A one-shot health
+check meant to be scheduled by launchd/cron, entirely outside `scripts.start`'s supervised process
+tree — the point being that it keeps working when the whole stack (the thing every other alert
+path lives inside of) has already stopped, which is exactly what went unnoticed 2026-09-15..22.
+No IBKR connection, no clientId.
+
+Seven pure-function checks composed by `run_checks(now, cfg)`: `supervisor` (`pgrep -f
+"scripts.start"`), `gateway_port` (TCP connect to the configured IBKR port), `command_drain` and
+`monitor` (heartbeat staleness — `monitor` only checked during RTH), `scan_loop` (RTH +
+post-open-grace staleness of `intraday_scan_completed`), `eod` (on a trading day, `eod_grace_minutes`
+past `scheduler.eod_report`, `eod_completed` must be dated today in ET — means the run *finished*,
+not that every step inside it succeeded), and `iv_history` (any universe∪held symbol's newest
+`iv_history` row more than `iv_max_stale_trading_days` trading sessions old, reported as one
+message listing every offending symbol). `decide_alerts` is the state machine persisted to
+`data/watchdog_state.json` (gitignored): sends on ok→fail, re-sends every `realert_minutes` while
+still failing, sends a recovery notice on fail→ok. `send_telegram` posts plain text with no
+`parse_mode` through the raw Bot API — deliberately not `src/notify/formatters.py`'s MarkdownV2
+path, so an escaping bug elsewhere can never silence the one channel reporting the stack is down.
+`main()` never raises — any unexpected exception is caught and alerted as its own "watchdog
+crashed: …" message before returning a non-zero exit code.
+
+New `WatchdogCfg` (`src/common/config.py`) + `config/settings.yaml → watchdog:` block:
+`interval_seconds` (300), `heartbeat_max_age_minutes` (10), `scan_max_age_minutes` (35),
+`scan_grace_minutes` (20), `iv_max_stale_trading_days` (3), `eod_grace_minutes` (90),
+`realert_minutes` (60), `deadman_url` (`""`).
+
+**Known limitation (by design, not a bug):** none of this can detect the Mac itself being powered
+off or asleep — no watchdog process runs at all in that case, so nothing alerts. Set
+`watchdog.deadman_url` to an external dead-man-switch service (e.g. healthchecks.io); the watchdog
+GETs it on every run where every check passes, and that external service is what notices the pings
+stopping. Scheduling the script itself (a launchd plist or cron entry) is left to the operator —
+this task ships the check and the alerting, not the OS-level scheduler wiring.
+
+21 new tests in `tests/test_watchdog.py` (pure-function checks, the alert state machine, plain-text
+Telegram send, `run_checks`/`main` composition with everything IBKR/DB/subprocess monkeypatched).
+
+---
+
 ## Bugs fixed (2026-09-29 — AMD/GOOGL option chain intermittently selected IBKR's adjusted trading class)
 
 - **Symptom:** AMD and GOOGL (both had a corporate action in their history) intermittently

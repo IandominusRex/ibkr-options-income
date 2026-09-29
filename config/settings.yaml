@@ -253,6 +253,19 @@ automation:
   # Risk-reducing closes (profit takes AND loss exits) run independently of autonomy level.
   auto_close_enabled: true
 
+# Out-of-process watchdog (src/ops/watchdog.py), run by launchd every interval_seconds.
+# Never runs inside the processes it watches — see watchdog.py's module docstring for why
+# (the 2026-09-15..22 outage this exists to catch).
+watchdog:
+  interval_seconds: 300
+  heartbeat_max_age_minutes: 10
+  scan_max_age_minutes: 35       # two 15-min cycles + slack
+  scan_grace_minutes: 20         # ignore the first minutes after the open
+  iv_max_stale_trading_days: 3
+  eod_grace_minutes: 90          # scheduler.eod_report + this many minutes before eod_completed is checked
+  realert_minutes: 60
+  deadman_url: ""                # optional: e.g. a healthchecks.io ping URL — catches the Mac being off
+
 # Backend selection for the src/data/ provider abstraction layer (Phase 2).
 # Each key names the active backend for one of the three Protocols in src/data/protocols.py.
 # Phase 2 ships only the "yfinance" backend; "fmp" is accepted (the stub exists in

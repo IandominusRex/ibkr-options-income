@@ -459,6 +459,28 @@ class AutomationCfg(BaseModel):
     auto_close_enabled: bool = True
 
 
+class WatchdogCfg(BaseModel):
+    """Out-of-process health watchdog (``src/ops/watchdog.py``, ``scripts/watchdog.py``),
+    run every ``interval_seconds`` under launchd/cron — never inside the processes it
+    watches. See ``watchdog.py``'s module docstring for the outage this exists to catch.
+    """
+
+    interval_seconds: int = 300
+    heartbeat_max_age_minutes: int = 10
+    # Two 15-min intraday-loop cycles + slack.
+    scan_max_age_minutes: int = 35
+    # Ignore the first minutes after the open — the loop's first cycle hasn't landed yet.
+    scan_grace_minutes: int = 20
+    iv_max_stale_trading_days: int = 3
+    # scheduler.eod_report + this many minutes before `eod_completed` is checked.
+    eod_grace_minutes: int = 90
+    realert_minutes: int = 60
+    # Optional external dead-man switch (e.g. a healthchecks.io ping URL), GETed on every run
+    # where every check passes — the only thing that can notice the Mac itself being off or
+    # asleep, since no local process runs at all in that case.
+    deadman_url: str = ""
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -472,6 +494,7 @@ class Config(BaseModel):
     execution: ExecutionCfg
     monitor: MonitorCfg
     automation: AutomationCfg
+    watchdog: WatchdogCfg
     data: DataCfg = Field(default_factory=DataCfg)
     research: ResearchCfg = Field(default_factory=ResearchCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
@@ -531,6 +554,7 @@ def get_config() -> Config:
         execution=ExecutionCfg(**settings.get("execution", {})),
         monitor=MonitorCfg(**settings.get("monitor", {})),
         automation=AutomationCfg(**settings.get("automation", {})),
+        watchdog=WatchdogCfg(**settings.get("watchdog", {})),
         data=DataCfg(**settings.get("data", {})),
         research=ResearchCfg(**_load_yaml("research.yaml")),
         risk=_load_yaml("risk_limits.yaml"),
