@@ -264,6 +264,129 @@ def _parse_launchctl_print(output: str) -> tuple[str, str | None]:
     return state, pid
 
 
+# --- preflight: the install conflict guard ------------------------------------------------
+#
+# `./ibkr install` must refuse to run over a terminal-launched `scripts.start` — two
+# supervisors would fight over clientIds (config/settings.yaml -> ibkr.client_ids). The
+# naive check ("is anything matching scripts.start running, unless the supervisor label is
+# already loaded") is wrong on a *re*-install: once `com.ibkr.supervisor` is loaded, that
+# check stops running altogether, so it can never catch a second, terminal-launched
+# `scripts.start` started alongside an already-installed launchd agent. The fix always looks
+# for "scripts.start" processes, then excludes the ones that belong to the launchd-managed
+# supervisor's own process tree — its own pid (from `launchctl print`) plus every descendant
+# of that pid. Any pgrep match left over is a genuine stray.
+#
+# Split into pure parsing/decision functions (unit-tested against fake pgrep/ps/launchctl
+# text — no real subprocess call in a test) plus a thin `cmd_preflight` that gathers the real
+# output and calls them, mirroring `_parse_launchctl_print`/`cmd_status`'s existing split.
+
+_PGREP_PID_RE = re.compile(r"^\s*(\d+)\s*$")
+
+
+def _parse_pgrep_pids(output: str) -> list[int]:
+    """Parse ``pgrep -f ...`` output (one pid per line) into a list of ints, in the order
+    given. Blank lines and anything that isn't a bare integer are ignored rather than
+    raising — matches ``_parse_launchctl_print``'s "never crash on unexpected output" stance.
+    """
+    pids: list[int] = []
+    for line in output.splitlines():
+        m = _PGREP_PID_RE.match(line)
+        if m:
+            pids.append(int(m.group(1)))
+    return pids
+
+
+def _parse_ps_ppid_map(output: str) -> dict[int, int]:
+    """Parse ``ps -eo pid,ppid`` output (a header row, then ``pid ppid`` per line) into
+    ``{pid: ppid}``. The header line is skipped by construction — it never parses as two
+    integers, so it's dropped by the same ``try/except`` every other line goes through.
+    """
+    ppid_map: dict[int, int] = {}
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        ppid_map[pid] = ppid
+    return ppid_map
+
+
+def _parse_launchctl_print_job_pid(output: str) -> int | None:
+    """Extract the supervisor label's own ``pid = N`` from ``launchctl print`` output —
+    ``None`` when the label isn't loaded at all (empty/error output) or the line is missing.
+    A dedicated helper rather than reusing ``_parse_launchctl_print``: that one returns
+    ``pid`` as a display string (or ``"unknown"``/``None`` for ``state``/``pid``) for
+    ``status``'s human-readable output; this one needs a real ``int`` (or ``None``) to feed
+    ``_descendants``.
+    """
+    m = _PID_RE.search(output)
+    return int(m.group(1)) if m else None
+
+
+def _descendants(root_pid: int, ppid_map: dict[int, int]) -> set[int]:
+    """``root_pid`` plus every pid transitively parented by it, per ``ppid_map``."""
+    result = {root_pid}
+    changed = True
+    while changed:
+        changed = False
+        for pid, ppid in ppid_map.items():
+            if ppid in result and pid not in result:
+                result.add(pid)
+                changed = True
+    return result
+
+
+def conflicting_scripts_start_pids(
+    pgrep_pids: list[int], job_pid: int | None, ppid_map: dict[int, int]
+) -> list[int]:
+    """Pure decision: which of ``pgrep_pids`` (processes whose command line matched
+    ``scripts.start``) are **not** part of the launchd-managed supervisor's own process tree.
+
+    ``job_pid`` is ``com.ibkr.supervisor``'s own pid per ``launchctl print`` — ``None`` when
+    the label isn't currently loaded at all, in which case there is no launchd-managed tree
+    to exclude and every match is a stray by definition. Otherwise the excluded set is
+    ``job_pid`` plus every descendant found by walking ``ppid_map`` — this covers both the
+    textbook model (``caffeinate`` is the job's own pid, ``python`` is its child) and the
+    reversed ancestry actually observed live during this task's verification (the job's own
+    reported pid ends up running the python image, with a second, caffeinate-labelled pid
+    parented under it) — either way, "job pid + its descendants" is the right closed set.
+    """
+    excluded: set[int] = set() if job_pid is None else _descendants(job_pid, ppid_map)
+    return sorted(pid for pid in pgrep_pids if pid not in excluded)
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Refuse (exit 1, message on stderr) if a ``scripts.start`` process is running that
+    launchd doesn't already own. Called by ``./ibkr install`` before it ever touches
+    launchd; read-only itself (``pgrep``/``ps``/``launchctl print`` only — no bootstrap, no
+    bootout, no kickstart)."""
+    pgrep_out = subprocess.run(
+        ["pgrep", "-f", "scripts.start"], capture_output=True, text=True
+    ).stdout
+    ps_out = subprocess.run(["ps", "-eo", "pid,ppid"], capture_output=True, text=True).stdout
+    print_r = subprocess.run(
+        ["launchctl", "print", _gui_target(LABEL_SUPERVISOR)], capture_output=True, text=True
+    )
+    print_out = print_r.stdout if print_r.returncode == 0 else ""
+
+    strays = conflicting_scripts_start_pids(
+        _parse_pgrep_pids(pgrep_out),
+        _parse_launchctl_print_job_pid(print_out),
+        _parse_ps_ppid_map(ps_out),
+    )
+    if strays:
+        print(
+            "stop the terminal-launched stack first (Ctrl-C) — found scripts.start "
+            f"process(es) not managed by launchd: {', '.join(map(str, strays))}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     labels = _installed_labels()
     if not labels:
@@ -316,6 +439,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "status", help="Show agent state/pid plus the watchdog's own health checks"
     ).set_defaults(func=cmd_status)
+    sub.add_parser(
+        "preflight",
+        help="Refuse (exit 1) if a scripts.start process is running that launchd doesn't own",
+    ).set_defaults(func=cmd_preflight)
 
     return p
 

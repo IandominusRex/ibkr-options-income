@@ -140,3 +140,109 @@ def test_parse_launchctl_print_unparseable_defaults_to_unknown():
     state, pid = _parse_launchctl_print("garbage output, no such service")
     assert state == "unknown"
     assert pid is None
+
+
+# --- Fix round 1: preflight (the install conflict guard) ------------------------------
+#
+# `./ibkr install` must refuse to run over a terminal-launched `scripts.start`, but the
+# original bash-only guard only ran the check when the supervisor label wasn't already
+# loaded — so a *re*-install (label already loaded from a prior `./ibkr install`) never
+# caught a second, terminal-launched `scripts.start` running alongside it. The fix moves
+# the decision into Python (`conflicting_scripts_start_pids`, a pure function) so it can be
+# unit-tested against fake pgrep/ps/launchctl output — no real subprocess call in any test
+# below.
+
+
+def test_parse_pgrep_pids_basic():
+    from scripts.launchd import _parse_pgrep_pids
+
+    assert _parse_pgrep_pids("123\n456\n") == [123, 456]
+
+
+def test_parse_pgrep_pids_ignores_blank_lines_and_garbage():
+    from scripts.launchd import _parse_pgrep_pids
+
+    assert _parse_pgrep_pids("\n123\n\nnotapid\n") == [123]
+
+
+def test_parse_pgrep_pids_empty_output_is_no_pids():
+    from scripts.launchd import _parse_pgrep_pids
+
+    assert _parse_pgrep_pids("") == []
+
+
+def test_parse_ps_ppid_map_skips_header():
+    from scripts.launchd import _parse_ps_ppid_map
+
+    text = "  PID  PPID\n   100     1\n   101   100\n   999     1\n"
+    assert _parse_ps_ppid_map(text) == {100: 1, 101: 100, 999: 1}
+
+
+def test_parse_ps_ppid_map_empty_output():
+    from scripts.launchd import _parse_ps_ppid_map
+
+    assert _parse_ps_ppid_map("") == {}
+
+
+def test_parse_launchctl_print_job_pid_present():
+    from scripts.launchd import _parse_launchctl_print_job_pid
+
+    text = "com.ibkr.supervisor = {\n\tstate = running\n\tpid = 22138\n}\n"
+    assert _parse_launchctl_print_job_pid(text) == 22138
+
+
+def test_parse_launchctl_print_job_pid_absent_when_not_loaded():
+    from scripts.launchd import _parse_launchctl_print_job_pid
+
+    assert _parse_launchctl_print_job_pid("") is None
+    assert _parse_launchctl_print_job_pid("Could not find service") is None
+
+
+def test_descendants_multi_level_tree():
+    from scripts.launchd import _descendants
+
+    # 100 -> 101 -> 102 ; 100 -> 103 ; 999 unrelated (parented under a different pid, 1).
+    ppid_map = {101: 100, 102: 101, 103: 100, 999: 1}
+    assert _descendants(100, ppid_map) == {100, 101, 102, 103}
+
+
+def test_descendants_leaf_pid_is_just_itself():
+    from scripts.launchd import _descendants
+
+    assert _descendants(50, {}) == {50}
+
+
+def test_conflicting_pids_no_label_with_stray():
+    from scripts.launchd import conflicting_scripts_start_pids
+
+    # Supervisor label not loaded at all (job_pid=None) -- there is no launchd-managed tree
+    # to exclude, so any pgrep match for "scripts.start" is a stray.
+    assert conflicting_scripts_start_pids([555], None, {}) == [555]
+
+
+def test_conflicting_pids_label_loaded_only_its_own_tree():
+    from scripts.launchd import conflicting_scripts_start_pids
+
+    # job pid 100 (the supervisor label's own pid per `launchctl print`) plus 101, its own
+    # child (the caffeinate/python pair, in whichever direction the OS actually parents
+    # them) -- both belong to the launchd-managed tree, so this is not a conflict.
+    ppid_map = {101: 100}
+    assert conflicting_scripts_start_pids([100, 101], 100, ppid_map) == []
+
+
+def test_conflicting_pids_label_loaded_plus_a_stray():
+    from scripts.launchd import conflicting_scripts_start_pids
+
+    # Same launchd-managed tree as above, but pgrep also found a third pid (777) that is
+    # NOT a descendant of the job pid -- a second, terminal-launched scripts.start running
+    # alongside the (already-loaded) launchd-managed one. This is exactly the case the
+    # original bash-only guard could never catch on a re-install.
+    ppid_map = {101: 100}
+    assert conflicting_scripts_start_pids([100, 101, 777], 100, ppid_map) == [777]
+
+
+def test_build_parser_preflight_dispatches():
+    from scripts.launchd import _build_parser, cmd_preflight
+
+    parser = _build_parser()
+    assert parser.parse_args(["preflight"]).func is cmd_preflight

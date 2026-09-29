@@ -11,8 +11,6 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${REPO}/.venv/bin/python"
-SUPERVISOR_LABEL="com.ibkr.supervisor"
-GUI_TARGET="gui/$(id -u)/${SUPERVISOR_LABEL}"
 
 usage() {
   cat <<'EOF'
@@ -43,14 +41,16 @@ fi
 
 case "${cmd}" in
   install)
-    # Two supervisors would fight over clientIds (config/settings.yaml -> ibkr.client_ids)
-    # — refuse to install over a terminal-launched `scripts.start` that's still running,
-    # unless launchd already owns the supervisor label (a `./ibkr install` re-run).
-    if ! launchctl print "${GUI_TARGET}" >/dev/null 2>&1; then
-      if pgrep -f "scripts\.start" >/dev/null 2>&1; then
-        echo "stop the terminal-launched stack first (Ctrl-C)" >&2
-        exit 1
-      fi
+    # Two supervisors would fight over clientIds (config/settings.yaml -> ibkr.client_ids) —
+    # refuse to install over a `scripts.start` process launchd doesn't already own.
+    # `scripts.launchd preflight` (Python, unit-tested) does this properly: it always looks
+    # for scripts.start processes, then excludes the ones belonging to the supervisor job's
+    # own process tree (its pid from `launchctl print`, plus every descendant) — not "skip
+    # the check entirely once the label is loaded", which was the bug fix round 1 found: a
+    # *re*-install with the label already loaded never caught a second, terminal-launched
+    # scripts.start running alongside it.
+    if ! (cd "${REPO}" && "${PYTHON}" -m scripts.launchd preflight); then
+      exit 1
     fi
     cd "${REPO}" && exec "${PYTHON}" -m scripts.launchd install "$@"
     ;;

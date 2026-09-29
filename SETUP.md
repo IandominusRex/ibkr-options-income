@@ -223,44 +223,16 @@ Watch for the push notification and approve it, then confirm Gateway comes up an
 `python -m scripts.healthcheck` connects normally. Only once this works should you wire it into
 launchd for unattended auto-start.
 
-**Auto-start with launchd:** create `~/Library/LaunchAgents/com.ibkr.gateway.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.ibkr.gateway</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/path/to/IBKR Investments/scripts/ibc/start_gateway.sh</string>
-  </array>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <true/>
-
-  <key>StandardOutPath</key>
-  <string>/path/to/ibc/logs/launchd.log</string>
-
-  <key>StandardErrorPath</key>
-  <string>/path/to/ibc/logs/launchd.log</string>
-</dict>
-</plist>
-```
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.ibkr.gateway.plist
-```
-
-To stop it: `launchctl unload ~/Library/LaunchAgents/com.ibkr.gateway.plist`. Load this
-*alongside* `com.ibkr.start.plist` (§6) — the Python daemons' own `connect_with_retry` backoff
-already tolerates Gateway not being up yet at boot, so load order between the two doesn't matter.
+**Auto-start with launchd:** `./ibkr install --with-gateway` (see §6c "Run it as a background
+service (launchd)") writes and loads the `com.ibkr.gateway` `LaunchAgent` for you —
+`RunAtLoad`, `KeepAlive: false` (IBC owns Gateway's own restart cycle, including the daily
+restart the "One-time GUI step" above configures, so launchd shouldn't fight it by relaunching
+the wrapper script itself). There's exactly one way to install this agent; don't hand-write a
+plist for it. `--with-gateway` installs it *alongside* `com.ibkr.supervisor` (the Python
+daemons) in the same command — the daemons' own `connect_with_retry` backoff already tolerates
+Gateway not being up yet at boot, so which one launchd starts first doesn't matter. To add
+`com.ibkr.gateway` to an already-installed stack, re-run `./ibkr install --with-gateway`; to
+remove it, `./ibkr uninstall` and re-`install` without the flag.
 
 ---
 
@@ -816,7 +788,12 @@ not something `./ibkr`/`scripts.launchd` can fix. The launchd control plane itse
 that depends only on process *existence* (`pgrep -f scripts.start`), not on the process finishing
 startup — but the daemons themselves never come up. If `./ibkr status` shows a stable pid that
 never spawns approval/monitor/api/research children (check with `pgrep -fl scripts.run_`) and
-`logs/launchd-supervisor.log` stays empty, this is almost certainly it. The most likely fix:
+`logs/launchd-supervisor.log` stays empty, this is almost certainly it. `./ibkr status`'s own
+health checks say the same thing a different way: `supervisor` only proves the *process*
+exists, so it reads OK even while wedged — but `command_drain`/`monitor`/`scan_loop` only turn
+fresh once `approval_service` is actually running its loop, so those staying persistently
+`[FAIL]` alongside a permanently-`[OK]` `supervisor` is exactly this wedge, not an unrelated
+problem. The most likely fix:
 grant Full Disk Access (System Settings → Privacy & Security → Full Disk Access) to
 `/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app` — the same class of
 fix §7's cron tip below already documents for `~/Desktop`/`~/Documents` project locations.

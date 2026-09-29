@@ -423,13 +423,18 @@ is never a hand-rolled XML-escaping concern) and fully unit-tested; `install`/`u
 whichever labels are currently installed on disk. `./ibkr` (bash) wraps that CLI plus `logs
 <name>` (tails `logs/<name>.log`), `watchdog` (`python -m scripts.watchdog`, a manual one-shot
 outside launchd), and a dispatcher stub for `autonomy` (Task 12, not yet built). `install`
-refuses to run over a still-alive terminal-launched `scripts.start` (`pgrep -f scripts.start`
-while the supervisor label isn't loaded) — two supervisors would fight over clientIds.
+refuses to run over a `scripts.start` process launchd doesn't already own — two supervisors
+would fight over clientIds (`config/settings.yaml → ibkr.client_ids`); see `cmd_preflight`/
+`conflicting_scripts_start_pids` in the "Bugs fixed" entry right below for exactly how that's
+decided (it always checks, on every install including a re-install, not just when the
+supervisor label isn't loaded yet).
 
-15 tests in `tests/test_launchd.py` (plist rendering, parser wiring, `launchctl print` output
-parsing — no subprocess/launchctl mocking, matching `tests/test_start_launcher.py`'s own
-pattern of testing only the pure/parser surface and leaving the subprocess plumbing to live
-verification).
+24 tests in `tests/test_launchd.py` (plist rendering, parser wiring, `launchctl print` output
+parsing, and — added in review round 1, see the "Bugs fixed" entry right below — the
+`preflight` conflict-guard's pure decision function against fake pgrep/ps/launchctl text; no
+real subprocess/launchctl call in any test, matching `tests/test_start_launcher.py`'s own
+pattern of testing only the pure/parser surface and leaving the subprocess plumbing itself to
+live verification).
 
 **Root-caused during live verification, needs a live fix before this is truly "done" on this
 machine:** the repo's `.venv/bin/python` — a symlink chain through python.org's macOS installer
@@ -461,6 +466,66 @@ bootstrap to import `scripts.start` at all — `logs/launchd-supervisor.log` sta
 instruction) with this caveat open; an operator on a machine without this TCC gate (or one who
 grants the Full Disk Access above) should see it come up cleanly, since nothing in `scripts.
 launchd`/`ibkr` is implicated.
+
+**`command_drain`/`monitor`/`scan_loop` are not "unrelated, pre-existing" failures — they're the
+signal this exact wedge produces.** `./ibkr status`'s `supervisor` check only proves the
+*process* exists (`pgrep -f scripts.start`), which a permanently-hung process still satisfies.
+`command_drain`'s heartbeat (written by `approval_service`'s drain loop) and `scan_loop`'s
+completion marker only ever get fresh once that code actually starts running — which, wedged at
+Python's own interpreter bootstrap, it never does. So a `supervisor: OK` alongside a stale (and
+staying stale) `command_drain`/`monitor`/`scan_loop` on this same machine is not a second,
+unrelated problem to investigate — it is corroborating evidence of the one problem above, and
+exactly the kind of thing Task 5's watchdog exists to expose (a process that's alive but not
+doing its job). An earlier draft of this task's own report described the review-time
+`command_drain` failure as "pre-existing, unrelated"; that was imprecise for the reason above,
+caught in review round 1.
+
+---
+
+## Bugs fixed (2026-09-29 — Task 6 review round 1: install conflict guard bypassed on re-install)
+
+**The install conflict guard only ran when the supervisor label wasn't already loaded.**
+`./ibkr install`'s original guard (`pgrep -f scripts.start` while `launchctl print
+gui/$UID/com.ibkr.supervisor` failed, i.e. the label isn't loaded) skipped the check entirely
+once the label *was* loaded — meaning a *re*-install (the label already loaded from a prior
+`./ibkr install`) could never catch a second, terminal-launched `scripts.start` running
+alongside it, exactly the two-supervisors-fighting-over-clientIds scenario the guard exists to
+prevent.
+
+**Fix:** `scripts/launchd.py` gains a `preflight` subcommand that always looks for
+`scripts.start` processes (`pgrep -f scripts.start`), then excludes the ones that belong to the
+launchd-managed supervisor's own process tree — its own pid (`launchctl print`'s `pid = N`)
+plus every descendant of that pid (`ps -eo pid,ppid`, walked transitively by `_descendants`).
+Any pgrep match left over after that exclusion is a genuine stray, and `cmd_preflight` refuses
+(exit 1, message on stderr) if any remain. `conflicting_scripts_start_pids` — the actual
+decision — is a pure function over three already-parsed inputs (`pgrep_pids: list[int]`,
+`job_pid: int | None`, `ppid_map: dict[int, int]`), so it's unit-tested against fake
+pgrep/ps/launchctl text with no real subprocess call anywhere in the test file; three parsing
+helpers (`_parse_pgrep_pids`, `_parse_ps_ppid_map`, `_parse_launchctl_print_job_pid`) sit
+between it and the real commands, the same split `_parse_launchctl_print`/`cmd_status` already
+used. `ibkr`'s `install)` case now calls `python -m scripts.launchd preflight` and checks its
+exit code, instead of the inline bash pgrep/launchctl check (which is now dead code, removed
+along with the `SUPERVISOR_LABEL`/`GUI_TARGET` bash variables that only that check used).
+
+13 new tests (24 total in `tests/test_launchd.py`): the three parsing helpers, `_descendants`
+over a multi-level tree and a leaf pid, and `conflicting_scripts_start_pids` for exactly the
+three scenarios review round 1 named — no label loaded with a stray, label loaded with only its
+own tree (no conflict), and label loaded plus a stray (the case the original bug could never
+catch).
+
+Also fixed in the same round: **SETUP.md §4** ("Automating Gateway login with IBC") carried a
+second, hand-written `com.ibkr.gateway` launchd plist recipe using `KeepAlive: true` and
+`launchctl load` — contradicting the same label `./ibkr install --with-gateway` renders with
+`KeepAlive: false` (IBC owns Gateway's own restart cycle). Rewritten to point at `./ibkr install
+--with-gateway`; the dangling "load this alongside `com.ibkr.start.plist` (§6)" reference (that
+plist never existed post-Task-6) is gone with it.
+
+Live-verification note for this round: **no launchd command was run.** The operator is actively
+working the TCC hang above and asked that the currently-installed agents be left exactly as
+they are; every fix in this round was verified via `tests/test_launchd.py` (24 passed, all with
+mocked/fake subprocess output — no real `pgrep`/`ps`/`launchctl` call), `ruff check
+scripts/launchd.py tests/test_launchd.py`, `bash -n ibkr`, and the full `python -m pytest -q` /
+`ruff check .` / `mypy src` gate.
 
 ---
 
