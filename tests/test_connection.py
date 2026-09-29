@@ -1,12 +1,14 @@
 """Tests for AutoReconnect and account-summary helpers in src/ibkr/connection.py.
 
 P1-09: _reconnecting flag set synchronously before create_task.
-P1-10: max_reconnect_attempts stops the loop and logs CRITICAL.
+P1-10: after max_reconnect_attempts fast retries the loop logs CRITICAL once and drops to a
+quiet watch mode (bare TCP probe of the Gateway port) instead of giving up for good.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import ib_async
@@ -29,7 +31,12 @@ def _make_ib(connected: bool = True) -> MagicMock:
 
 
 def _make_auto(
-    ib, *, max_reconnect_attempts: int = 20, backoff_base: float = 0.01
+    ib,
+    *,
+    max_reconnect_attempts: int = 20,
+    backoff_base: float = 0.01,
+    max_backoff: float = 0.01,
+    on_reconnect=None,
 ) -> AutoReconnect:
     return AutoReconnect(
         ib,
@@ -37,9 +44,24 @@ def _make_auto(
         port=7497,
         client_id=14,
         backoff_base=backoff_base,
+        max_backoff=max_backoff,
         max_reconnect_attempts=max_reconnect_attempts,
+        on_reconnect=on_reconnect,
         label="test",
     )
+
+
+def _flaky_connect(ib: MagicMock, *, fail_times: int) -> AsyncMock:
+    """A connectAsync that refuses ``fail_times`` times, then connects."""
+    calls = {"n": 0}
+
+    async def _connect(*_a: object, **_k: object) -> None:
+        calls["n"] += 1
+        if calls["n"] <= fail_times:
+            raise ConnectionRefusedError("refused")
+        ib.isConnected.return_value = True
+
+    return AsyncMock(side_effect=_connect)
 
 
 # ---------------------------------------------------------------------------
@@ -103,27 +125,106 @@ def test_second_disconnect_event_does_not_spawn_second_loop() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_reconnect_loop_stops_after_max_attempts() -> None:
-    """After max_reconnect_attempts failures, the loop exits and logs CRITICAL."""
+async def test_reconnect_loop_keeps_watching_after_max_attempts_and_reconnects() -> None:
+    """After the fast attempts are spent the loop logs CRITICAL once, then only probes the
+    Gateway port (no connectAsync while it is closed) and reconnects when the port opens."""
     ib = _make_ib(connected=False)
-    auto = _make_auto(ib, max_reconnect_attempts=3, backoff_base=0.001)
+    on_reconnect = AsyncMock()
+    auto = _make_auto(ib, max_reconnect_attempts=3, on_reconnect=on_reconnect)
     auto._reconnecting = True  # mark as running (normally set by _on_disconnect)
 
-    # connectAsync always fails.
+    ib.connectAsync = _flaky_connect(ib, fail_times=3)  # the 3 fast attempts all refuse
+    ib.reqMarketDataType = MagicMock()
+    probe = AsyncMock(side_effect=[False, False, True])  # Gateway returns on the 3rd probe
+
+    with (
+        patch.object(auto, "_port_open", probe),
+        patch.object(logging.getLogger("src.ibkr.connection"), "critical") as mock_crit,
+    ):
+        await asyncio.wait_for(auto._reconnect_loop(), timeout=5)
+
+    assert mock_crit.call_count == 1
+    assert probe.await_count == 3
+    assert ib.connectAsync.call_count == 4  # 3 fast attempts + 1 once the port opened
+    on_reconnect.assert_awaited_once()
+    assert auto._reconnecting is False
+
+
+async def test_watch_mode_retries_when_port_opens_but_handshake_fails() -> None:
+    """Gateway can open its port before the API is ready (or while clientId is still held).
+    A failed connectAsync in watch mode must not end the loop — it retries next tick."""
+    ib = _make_ib(connected=False)
+    auto = _make_auto(ib, max_reconnect_attempts=3)
+    auto._reconnecting = True
+
+    ib.connectAsync = _flaky_connect(ib, fail_times=5)  # 3 fast + 2 failed handshakes
+    ib.reqMarketDataType = MagicMock()
+    probe = AsyncMock(return_value=True)
+
+    with (
+        patch.object(auto, "_port_open", probe),
+        patch.object(logging.getLogger("src.ibkr.connection"), "critical") as mock_crit,
+    ):
+        await asyncio.wait_for(auto._reconnect_loop(), timeout=5)
+
+    assert probe.await_count == 3  # two failed handshakes, then the successful one
+    assert ib.connectAsync.call_count == 6
+    assert mock_crit.call_count == 1
+    assert ib.isConnected() is True
+    assert auto._reconnecting is False
+
+
+async def test_watch_mode_survives_thousands_of_ticks() -> None:
+    """A Gateway that stays down for hours means thousands of watch ticks; the backoff must
+    not keep doubling (2**attempt overflows a float around attempt 1024)."""
+    ib = _make_ib(connected=False)
+    auto = _make_auto(ib, max_reconnect_attempts=3, backoff_base=0.001, max_backoff=0.0)
+    auto._reconnecting = True
+
+    ib.connectAsync = _flaky_connect(ib, fail_times=3)
+    ib.reqMarketDataType = MagicMock()
+    probe = AsyncMock(side_effect=[False] * 1100 + [True])
+
+    with patch.object(auto, "_port_open", probe):
+        await asyncio.wait_for(auto._reconnect_loop(), timeout=10)
+
+    assert probe.await_count == 1101
+    assert ib.isConnected() is True
+
+
+async def test_stop_ends_watch_mode() -> None:
+    """stop() (intentional shutdown) must end the watch loop, not leave it probing forever."""
+    ib = _make_ib(connected=False)
+    auto = _make_auto(ib, max_reconnect_attempts=3)
+    auto._reconnecting = True
+
     ib.connectAsync = AsyncMock(side_effect=ConnectionRefusedError("refused"))
 
-    with patch.object(auto, "_ib", ib):
-        import logging
+    async def _stop_then_closed() -> bool:
+        auto.stop()
+        return False
 
-        with patch.object(logging.getLogger("src.ibkr.connection"), "critical") as mock_crit:
-            await auto._reconnect_loop()
+    probe = AsyncMock(side_effect=_stop_then_closed)
 
-    # After 3 failed attempts, CRITICAL must have been logged.
-    assert mock_crit.called
-    # _reconnecting must be reset to False so future disconnects can trigger a new loop.
+    with patch.object(auto, "_port_open", probe):
+        await asyncio.wait_for(auto._reconnect_loop(), timeout=5)
+
+    assert probe.await_count == 1
+    assert ib.connectAsync.call_count == 3  # only the fast attempts; watch mode never connected
     assert auto._reconnecting is False
-    # connectAsync called exactly max_reconnect_attempts (3) times.
-    assert ib.connectAsync.call_count == 3
+
+
+async def test_port_open_probe_reports_listening_and_closed_ports() -> None:
+    """The real probe: True for a listening socket, False once nothing listens (no mocks)."""
+    server = await asyncio.start_server(lambda _r, w: w.close(), "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    auto = AutoReconnect(_make_ib(False), "127.0.0.1", port, 14, label="test")
+    try:
+        assert await auto._port_open() is True
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert await auto._port_open() is False
 
 
 async def test_reconnect_loop_succeeds_and_calls_callback() -> None:

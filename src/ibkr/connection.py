@@ -263,8 +263,12 @@ class AutoReconnect:
     The long-lived daemons (approval_service, intraday monitor) run for hours; ib_async
     does NOT auto-reconnect on its own. Without this, a single socket drop silently blinds
     the monitor and stops order execution. Attach one of these after connecting; it listens
-    on `disconnectedEvent` and reconnects with capped exponential backoff. Call `stop()`
-    before an intentional `ib.disconnect()` so shutdown doesn't trigger a reconnect storm.
+    on `disconnectedEvent` and reconnects with capped exponential backoff. After
+    `max_reconnect_attempts` fast retries it logs CRITICAL once and drops to watch mode: a bare
+    TCP probe of the Gateway port every `max_backoff` seconds, reconnecting when it answers —
+    so a Gateway stopped for hours (or by hand) is picked up again with no process restart.
+    Call `stop()` before an intentional `ib.disconnect()` so shutdown doesn't trigger a
+    reconnect storm.
     """
 
     def __init__(
@@ -314,30 +318,58 @@ class AutoReconnect:
                 self._label,
             )
 
+    async def _port_open(self) -> bool:
+        """True if something accepts TCP connections on the Gateway port.
+
+        A bare connect-and-close: no API handshake, so it uses no clientId and produces none
+        of ib_async's ``API connection failed`` error lines while Gateway is down.
+        """
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(self._host, self._port), timeout=2.0
+            )
+        except (OSError, TimeoutError):
+            return False
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        return True
+
     async def _reconnect_loop(self) -> None:
         attempt = 0
         try:
             while not self._stopped and not self._ib.isConnected():
                 attempt += 1
-                if attempt > self._max_reconnect_attempts:
-                    log.critical(
-                        "[%s] IBKR reconnect failed after %d attempts — giving up. "
-                        "Restart the process to re-enable reconnection.",
+                watching = attempt > self._max_reconnect_attempts
+                if watching:
+                    # Gateway has been down longer than the fast-retry window (stopped by hand,
+                    # or waiting on a login/2FA). Keep waiting for it, but only probe the port —
+                    # a full connectAsync per tick would spam errors and churn the clientId.
+                    if attempt == self._max_reconnect_attempts + 1:
+                        log.critical(
+                            "[%s] IBKR reconnect failed after %d attempts — now watching "
+                            "%s:%s every %.0fs and reconnecting once Gateway is back.",
+                            self._label,
+                            self._max_reconnect_attempts,
+                            self._host,
+                            self._port,
+                            self._max_backoff,
+                        )
+                    wait = self._max_backoff
+                else:
+                    wait = min(self._backoff_base * (2 ** (attempt - 1)), self._max_backoff)
+                    log.warning(
+                        "[%s] IBKR disconnected — reconnect attempt %d/%d in %.1fs",
                         self._label,
+                        attempt,
                         self._max_reconnect_attempts,
+                        wait,
                     )
-                    return
-                wait = min(self._backoff_base * (2 ** (attempt - 1)), self._max_backoff)
-                log.warning(
-                    "[%s] IBKR disconnected — reconnect attempt %d/%d in %.1fs",
-                    self._label,
-                    attempt,
-                    self._max_reconnect_attempts,
-                    wait,
-                )
                 await asyncio.sleep(wait)
                 if self._stopped:
                     break
+                if watching and not await self._port_open():
+                    continue
                 try:
                     await self._ib.connectAsync(
                         self._host, self._port, clientId=self._client_id, timeout=15.0

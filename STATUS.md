@@ -349,6 +349,32 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Bugs fixed (2026-09-25 — `AutoReconnect` gave up permanently; Gateway restart never picked up)
+
+- **Symptom:** the web status card showed "IBKR connection" disconnected for ~9.5 hours even
+  though IB Gateway was running again. Gateway had been stopped by hand at 14:21 SGT; the monitor,
+  exec and scan `AutoReconnect` loops each burned their 20 attempts (~16 min of 2s→60s backoff,
+  all `Connection refused` on port 4002), logged `CRITICAL … giving up. Restart the process`, and
+  never tried again. When Gateway came back at 23:50 nothing was left to notice.
+- **Root cause:** P1-10 capped the loop at `max_reconnect_attempts` and made the give-up
+  permanent (`_reconnect_loop` returned), and nothing re-armed it — the intraday scan loop only
+  logs `ib_scan disconnected — skipping scan`, and `_force_scan_reconnect`'s `disconnect()` is a
+  no-op on an already-dead socket.
+- **Fixed** (`src/ibkr/connection.py`): the cap now ends the *fast* phase, not the loop. After
+  `max_reconnect_attempts` retries the loop logs CRITICAL once and enters **watch mode** — every
+  `max_backoff` seconds (60s) it makes a bare TCP connect to the Gateway port (`_port_open`, 2s
+  timeout) and only runs `connectAsync` once the port answers. A failed handshake (Gateway still
+  mid-login, clientId still held) stays in watch mode; `stop()` still ends it. The probe uses no
+  clientId and emits none of ib_async's `API connection failed` lines (the down period used to
+  log ~3 error lines a minute). No new config keys. P1-10's intent — no connect storm — is kept.
+- **Still open:** a daemon that *starts* while Gateway is already down never attaches an
+  `AutoReconnect` (see the 2026-08-27 "Known limitation" below); watch mode only covers a
+  connection that was up at least once in that process. **Not yet live-verified** — covered by
+  unit tests only; confirm by stopping and restarting Gateway and watching `logs/system.log` for
+  `IBKR reconnected` on all three of `[monitor]`, `[exec]` and `[scan]`.
+
+---
+
 ## Built (2026-09-23 — System Explanation console)
 
 A ninth `web/` nav section, `System Explanation` (`GET /nav` key `explain`, `web/app/explain/`,
@@ -1817,7 +1843,7 @@ All P0 and P1 bugs from the 2026-06-02 audit have been fixed:
 - **P1-07 Stale DTE in re-validation:** `process_queued_orders` recomputes DTE from `cand.expiry` before Phase 1 re-validation.
 - **P1-08/19 Wrong buying power field:** `get_account_snapshot` populates `buying_power` from `AvailableFunds` (not the 2–4× leveraged `BuyingPower` tag); CSP sizing uses `excess_liquidity`.
 - **P1-09 `_reconnecting` flag race:** `AutoReconnect._on_disconnect` sets `_reconnecting = True` synchronously before `create_task`.
-- **P1-10 Infinite AutoReconnect loop:** `AutoReconnect` accepts `max_reconnect_attempts` (default 20); logs CRITICAL after exhaustion.
+- **P1-10 Infinite AutoReconnect loop:** `AutoReconnect` accepts `max_reconnect_attempts` (default 20); logs CRITICAL after exhaustion. *(2026-09-25: exhaustion no longer ends the loop — it drops to a Gateway-port watch mode; see "Bugs fixed (2026-09-25 …)".)*
 - **P1-11 Per-candidate TTL:** `expires_at` is computed inside the candidate loop so each candidate has a fresh TTL window.
 - **P1-12 Send failure leaves phantom PENDING:** On `bot.send_message` failure, the approval row is immediately marked EXPIRED so it never blocks execution.
 - **P1-13 No Telegram on TTL-null cancel:** `process_queued_orders` now sends a Telegram notification when it cancels an order for missing TTL.
@@ -2318,7 +2344,9 @@ and then clear the corresponding item here. Nothing in this list has been cleare
   ladder** sitting at `manual` with `/autonomy` reporting honest progress toward `whitelist` against
   real fill counts. All three are covered by unit tests with IBKR and Telegram mocked; none has been
   seen against a live paper account.
-- **`AutoReconnect`** actually recovering a dropped socket and the monitor re-subscribing market data.
+- **`AutoReconnect`** actually recovering a dropped socket and the monitor re-subscribing market data —
+  including **watch mode** (2026-09-25): stop Gateway for >16 min, restart it, and confirm all three
+  loops log `IBKR reconnected` within ~60s with no process restart.
 - The executor's **greeks-wait** capturing `entry_iv` / a live delta on real OPRA tick timing (if
   greeks consistently lag past the window, `entry_iv` stays `None` and the IV-spike baseline is absent).
 - The **async on-loop** market-data and monitor paths under a real event loop (no cross-thread errors).
