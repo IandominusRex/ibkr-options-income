@@ -2763,3 +2763,52 @@ async def test_send_account_snapshot_new_day_resends(monkeypatch, tmp_path):
     mock_instance.edit_message_text.assert_not_called()
     assert get_setting("account_snapshot_message_id") == "100"
     assert get_setting("account_snapshot_date") != "2020-01-01"
+
+
+# --------------------------------------------------------------------------- #
+# approval_service — _notify_scan_blocked MarkdownV2 fallback (Task 3)
+# --------------------------------------------------------------------------- #
+
+
+class _FakeScanBlockedBot:
+    def __init__(self, fail_markdown: bool = False):
+        self.calls: list[dict] = []
+        self.fail_markdown = fail_markdown
+
+    async def send_message(self, **kw):
+        self.calls.append(kw)
+        if self.fail_markdown and kw.get("parse_mode") == "MarkdownV2":
+            from telegram.error import BadRequest
+
+            raise BadRequest("Can't parse entities: character '.' is reserved")
+
+
+def _mock_scan_blocked_cfg(monkeypatch):
+    mock = MagicMock()
+    mock.secrets.telegram_thread_scan = ""
+    monkeypatch.setattr("src.notify.approval_service.get_config", lambda: mock)
+    return mock
+
+
+async def test_scan_blocked_falls_back_to_plain_text_on_markdown_error(monkeypatch):
+    _mock_scan_blocked_cfg(monkeypatch)
+
+    from src.notify.approval_service import _notify_scan_blocked
+
+    bot = _FakeScanBlockedBot(fail_markdown=True)
+    await _notify_scan_blocked(bot, "1", "Data farm down", "Restart Gateway (Error 1100).")
+
+    assert len(bot.calls) == 2
+    assert "parse_mode" not in bot.calls[1]
+    assert "\\" not in bot.calls[1]["text"]  # escapes stripped for the plain-text copy
+    assert "Restart Gateway (Error 1100)." in bot.calls[1]["text"]
+
+
+def test_probe_action_hint_is_escaped_at_the_call_site():
+    import inspect
+
+    from src.notify import approval_service
+
+    src = inspect.getsource(approval_service._intraday_scan_loop)
+    assert "{probe.action_hint}" not in src
+    assert "_md_escape(probe.action_hint)" in src

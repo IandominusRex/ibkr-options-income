@@ -1129,21 +1129,29 @@ async def _notify_scan_blocked(
             f"\n\n📋 {len(retry_symbols)} symbol\\(s\\) not reached — queued for the next "
             f"cycle: {_md_escape(', '.join(retry_symbols))}\\."
         )
+    text = (
+        f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
+        f"*{_md_escape(reason)}*\n{detail}\n\n"
+        f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
+        f"{retry_line}"
+    )
+    cfg_s = get_config().secrets
+    thread = thread_id(cfg_s.telegram_thread_scan)
     try:
-        cfg_s = get_config().secrets
         await bot.send_message(  # type: ignore[attr-defined]
-            chat_id=chat_id,
-            message_thread_id=thread_id(cfg_s.telegram_thread_scan),
-            text=(
-                f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
-                f"*{_md_escape(reason)}*\n{detail}\n\n"
-                f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
-                f"{retry_line}"
-            ),
-            parse_mode="MarkdownV2",
+            chat_id=chat_id, message_thread_id=thread, text=text, parse_mode="MarkdownV2"
         )
     except Exception:
-        logger.exception("Intraday loop: failed to send scan-blocked notice")
+        logger.warning(
+            "scan-blocked notice: MarkdownV2 send failed — retrying as plain text",
+            exc_info=True,
+        )
+        try:
+            await bot.send_message(  # type: ignore[attr-defined]
+                chat_id=chat_id, message_thread_id=thread, text=text.replace("\\", "")
+            )
+        except Exception:
+            logger.exception("Intraday loop: failed to send scan-blocked notice")
 
 
 async def _force_scan_reconnect(ib_scan: IB) -> None:
@@ -1394,7 +1402,7 @@ async def _intraday_scan_loop(
                     probe.diagnosis,
                     f"Pre\\-scan health probe on {probe.probe_symbol} returned no quote within "
                     f"{probe.probe_timeout:.0f}s, though the socket still reports connected\\. "
-                    f"{code_line}\n\n{probe.action_hint}",
+                    f"{code_line}\n\n{_md_escape(probe.action_hint)}",
                 )
                 await _force_scan_reconnect(ib_scan)
                 await _note_intraday_skip(
