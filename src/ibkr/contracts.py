@@ -21,8 +21,14 @@ def build_stock(symbol: str) -> Stock:
     return Stock(symbol, "SMART", "USD")
 
 
-def build_option(symbol: str, expiry: date, strike: float, right: str) -> Option:
-    return Option(symbol, expiry.strftime("%Y%m%d"), strike, right, "SMART")
+def build_option(
+    symbol: str, expiry: date, strike: float, right: str, trading_class: str = ""
+) -> Option:
+    """SMART-routed option. *trading_class* disambiguates when IBKR lists an adjusted chain
+    (e.g. ``2AMD`` after a corporate action) beside the standard one; empty = let IBKR pick."""
+    return Option(
+        symbol, expiry.strftime("%Y%m%d"), strike, right, "SMART", tradingClass=trading_class
+    )
 
 
 def qualify_stock(ib: IB, symbol: str) -> Stock:

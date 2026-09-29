@@ -12,7 +12,7 @@ import asyncio
 import math
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -654,8 +654,36 @@ def _cap_strikes(strikes: list[float], spot: float, max_strikes: int) -> list[fl
     return sorted(nearest)
 
 
+def _select_chain(chains: Sequence[Any], symbol: str) -> Any | None:
+    """Pick the standard option chain for *symbol* from ``reqSecDefOptParams`` output.
+
+    IBKR returns one entry per (exchange, tradingClass). After a corporate action it also lists
+    an *adjusted* class (``2AMD``/``2GOOGL``: one expiry, one odd strike) whose position in the
+    list varies call to call. Taking "the first SMART chain with expirations" therefore
+    picked the adjusted chain intermittently and the scan saw ``expirations=[] strikes=0``
+    (2026-09 AMD/GOOGL incident). Rank: tradingClass == symbol, then SMART, then the most
+    expirations, then the most strikes.
+    """
+    candidates = [c for c in chains if c.expirations]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda c: (
+            c.tradingClass == symbol,
+            c.exchange == "SMART",
+            len(c.expirations),
+            len(c.strikes),
+        ),
+    )
+
+
 def _build_chain_contracts(
-    symbol: str, expirations: Iterable[str], strikes: Iterable[float], spot: float
+    symbol: str,
+    expirations: Iterable[str],
+    strikes: Iterable[float],
+    spot: float,
+    trading_class: str = "",
 ) -> list[Option]:
     """Cartesian of *expirations* x in-band *strikes*, OTM side only per right.
 
@@ -666,10 +694,13 @@ def _build_chain_contracts(
     halves the
     qualify/quote batch count per symbol, and therefore the wall-clock fetch time, since
     ``_batch_quotes``/``_batch_quotes_async`` cost is linear in contract count.
+
+    *trading_class* pins the contract to the chain ``_select_chain`` picked (empty lets IBKR
+    pick, which is what let the adjusted-class chain leak through before that fix existed).
     """
     strikes = list(strikes)
     return [
-        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right)
+        build_option(symbol, date(int(e[:4]), int(e[4:6]), int(e[6:])), st, right, trading_class)
         for e in expirations
         for st in strikes
         for right in ("C", "P")
@@ -892,30 +923,28 @@ def get_option_chain_quotes(ib: IB, symbol: str) -> list[OptionQuote]:
     log.info("get_option_chain_quotes: symbol=%s spot=%.2f", symbol, spot)
 
     chains = ib.reqSecDefOptParams(stock.symbol, "", stock.secType, stock.conId)
-    # Prefer SMART routing with non-empty expirations; some symbols return a SMART chain
-    # with empty expirations (the real listings sit under a specific exchange like CBOE or
-    # ARCA). Fall back to any chain that has expirations before giving up entirely.
-    smart = next((c for c in chains if c.exchange == "SMART" and c.expirations), None)
-    if smart is None:
-        smart = next((c for c in chains if c.expirations), None)
-    if smart is None:
+    chain = _select_chain(chains, symbol)
+    if chain is None:
         log.warning("No option chain params returned for %s", symbol)
         return []
 
-    expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
+    expirations = _filter_expirations(chain.expirations, dte_min, dte_max)
     band_pct = _strike_band_pct(symbol, dte_max)
     strikes = _cap_strikes(
-        _filter_strikes(smart.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
+        _filter_strikes(chain.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
     )
     log.info(
-        "symbol=%s expirations=%s strikes=%d band=%.0f%%",
+        "symbol=%s expirations=%s strikes=%d band=%.0f%% tc=%s",
         symbol,
         expirations,
         len(strikes),
         band_pct * 100,
+        chain.tradingClass,
     )
 
-    raw: list[Option] = _build_chain_contracts(symbol, expirations, strikes, spot)
+    raw: list[Option] = _build_chain_contracts(
+        symbol, expirations, strikes, spot, trading_class=chain.tradingClass
+    )
 
     qualified = qualify_options(ib, raw)
     if not qualified:
@@ -949,30 +978,28 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     log.info("get_option_chain_quotes_async: symbol=%s spot=%.2f", symbol, spot)
 
     chains = await ib.reqSecDefOptParamsAsync(stock.symbol, "", stock.secType, stock.conId)
-    # Prefer SMART routing with non-empty expirations; some symbols return a SMART chain
-    # with empty expirations (the real listings sit under a specific exchange like CBOE or
-    # ARCA). Fall back to any chain that has expirations before giving up entirely.
-    smart = next((c for c in chains if c.exchange == "SMART" and c.expirations), None)
-    if smart is None:
-        smart = next((c for c in chains if c.expirations), None)
-    if smart is None:
+    chain = _select_chain(chains, symbol)
+    if chain is None:
         log.warning("No option chain params returned for %s", symbol)
         return []
 
-    expirations = _filter_expirations(smart.expirations, dte_min, dte_max)
+    expirations = _filter_expirations(chain.expirations, dte_min, dte_max)
     band_pct = _strike_band_pct(symbol, dte_max)
     strikes = _cap_strikes(
-        _filter_strikes(smart.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
+        _filter_strikes(chain.strikes, spot, band_pct), spot, md.max_strikes_per_symbol
     )
     log.info(
-        "symbol=%s expirations=%s strikes=%d band=%.0f%%",
+        "symbol=%s expirations=%s strikes=%d band=%.0f%% tc=%s",
         symbol,
         expirations,
         len(strikes),
         band_pct * 100,
+        chain.tradingClass,
     )
 
-    raw: list[Option] = _build_chain_contracts(symbol, expirations, strikes, spot)
+    raw: list[Option] = _build_chain_contracts(
+        symbol, expirations, strikes, spot, trading_class=chain.tradingClass
+    )
 
     qualified = await qualify_options_async(
         ib,

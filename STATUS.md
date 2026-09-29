@@ -349,6 +349,32 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Bugs fixed (2026-09-29 — AMD/GOOGL option chain intermittently selected IBKR's adjusted trading class)
+
+- **Symptom:** AMD and GOOGL (both had a corporate action in their history) intermittently
+  returned zero option-chain quotes from a scan — the exact `expirations=[] strikes=0` failure
+  mode the 2026-06-18 "scan diagnostics" fix above was written for, but the earlier fix's own
+  condition (`exchange == "SMART" and expirations`) was satisfied by the wrong chain: IBKR's
+  `reqSecDefOptParams` also lists an *adjusted* trading class after a split/spinoff (e.g. `2AMD`)
+  which is itself SMART-routed and carries one expiry, one odd strike. Taking "the first SMART
+  chain with expirations" therefore picked the adjusted chain whenever it happened to sort ahead
+  of the standard `AMD`/`GOOGL` chain in `reqSecDefOptParams`'s response — order is not guaranteed
+  call to call, so the bug was intermittent.
+- **Fixed:** `src/ibkr/market_data.py::_select_chain(chains, symbol)` replaces the old two-step
+  `next(...)` fallback in both `get_option_chain_quotes` and `get_option_chain_quotes_async` with
+  an explicit ranking: `tradingClass == symbol` first, then `exchange == "SMART"`, then the most
+  expirations, then the most strikes — so the standard class always outranks an adjusted one
+  regardless of list order, and the old empty-expirations fallback behaviour is preserved as the
+  last two tiebreakers. The winning chain's `tradingClass` is now threaded through
+  `_build_chain_contracts` into `src/ibkr/contracts.py::build_option`'s new `trading_class`
+  parameter, so the qualified contracts themselves are pinned to the standard class (not just
+  the strike/expiration scope) and logged (`tc=%s`) alongside `expirations=`/`strikes=`.
+  Regression tests: `tests/test_market_data.py::test_select_chain_prefers_standard_class_over_adjusted_regardless_of_order`
+  and its siblings (SMART-among-same-class tiebreak, richest-chain fallback, none-when-empty),
+  plus `test_build_chain_contracts_sets_trading_class`.
+
+---
+
 ## Bugs fixed (2026-09-25 — `AutoReconnect` gave up permanently; Gateway restart never picked up)
 
 - **Symptom:** the web status card showed "IBKR connection" disconnected for ~9.5 hours even

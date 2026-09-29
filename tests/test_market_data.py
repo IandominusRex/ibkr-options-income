@@ -41,6 +41,7 @@ from src.ibkr.market_data import (
     _resolve_spot_async,
     _safe,
     _safe_int,
+    _select_chain,
     _spot_ready,
     _ticker_to_quote,
     drain_market_data_lines,
@@ -1285,3 +1286,41 @@ async def test_probe_unhealthy_when_qualify_hangs(monkeypatch):
 
     probe = await asyncio.wait_for(probe_market_data_health(ib, timeout=0.1), timeout=2.0)
     assert probe.healthy is False
+
+
+# ---------------------------------------------------------------------------
+# _select_chain — standard chain vs. IBKR's post-corporate-action adjusted class
+# ---------------------------------------------------------------------------
+
+
+def _chain(tc: str, exps: set[str], strikes: set[float], exchange: str = "SMART"):
+    return SimpleNamespace(exchange=exchange, tradingClass=tc, expirations=exps, strikes=strikes)
+
+
+def test_select_chain_prefers_standard_class_over_adjusted_regardless_of_order():
+    adjusted = _chain("2AMD", {"20261002"}, {443.0})
+    standard = _chain("AMD", {"20261009", "20261016"}, {600.0, 630.0, 660.0})
+    assert _select_chain([adjusted, standard], "AMD") is standard
+    assert _select_chain([standard, adjusted], "AMD") is standard
+
+
+def test_select_chain_prefers_smart_among_same_class():
+    cboe = _chain("AMD", {"20261009"}, {600.0}, exchange="CBOE")
+    smart = _chain("AMD", {"20261009"}, {600.0})
+    assert _select_chain([cboe, smart], "AMD") is smart
+
+
+def test_select_chain_falls_back_to_richest_chain_when_no_class_matches():
+    thin = _chain("XYZ1", {"20261002"}, {10.0})
+    rich = _chain("XYZ2", {"20261009", "20261016"}, {10.0, 11.0})
+    assert _select_chain([thin, rich], "ABC") is rich
+
+
+def test_select_chain_none_when_nothing_has_expirations():
+    assert _select_chain([_chain("AMD", set(), set())], "AMD") is None
+
+
+def test_build_chain_contracts_sets_trading_class():
+    exp = (date.today() + timedelta(days=14)).strftime("%Y%m%d")
+    contracts = _build_chain_contracts("AMD", [exp], [600.0, 660.0], 630.0, trading_class="AMD")
+    assert contracts and all(c.tradingClass == "AMD" for c in contracts)
