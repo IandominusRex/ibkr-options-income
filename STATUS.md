@@ -390,8 +390,11 @@ Fix, all in `src/claude/`:
 - **`summary` requested on every path**, not just the single-ticker deep-dive (a short 2-3
   sentence version on the full-universe path; the single-ticker path keeps the longer SUMMARY
   GUIDE variant).
-- **`scripts/review_eval.py`** (new, read-only) replays stored `candidates` rows through the local
-  reviewer to validate a model/prompt change before committing to it — see SETUP.md §13.
+- **`scripts/review_eval.py`** (new) replays stored `candidates` rows through the local
+  reviewer to validate a model/prompt change before committing to it — see SETUP.md §13. Writes
+  none of `candidates`/approvals/orders/`claude_memory`/the verdict ledger, but (fix round 2)
+  building a production-shaped prompt via `scan.py`'s `_fetch_analytics` means it can populate the
+  same shared, idempotent `price_history`/`fundamentals_cache` caches a live scan populates.
 
 **Re-evaluated against real stored candidates** (7 rows since 2026-09-14, all META/AMZN CSPs; 2
 runs each): `qwen3.5:4b` (the new active model, 3.4 GB, down from `qwen3:8b`'s 5.2 GB) reviewed

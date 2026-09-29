@@ -1137,10 +1137,15 @@ python -m scripts.evaluate_scores
 python -m scripts.evaluate_scores --since 2026-05-01 --json
 ```
 
-**Ollama review quality** (Task 10, production-shaped since fix round 1; read-only, no DB writes —
-replays stored `candidates` rows through the local reviewer, with the real analytics/history/
-market-conditions a live scan would send, to validate a `claude.ollama_model` swap or a prompt
-change before committing to it in `config/settings.yaml`):
+**Ollama review quality** (Task 10, production-shaped since fix round 1 — replays stored
+`candidates` rows through the local reviewer, with the real analytics/history/market-conditions a
+live scan would send, to validate a `claude.ollama_model` swap or a prompt change before
+committing to it in `config/settings.yaml`. **Not a pure read (fix round 2):** it never writes
+`candidates`, approvals, orders, `claude_memory`, or the verdict ledger, but because it reuses
+`scan.py`'s own `_fetch_analytics` to build the production-shaped prompt, it may populate the
+shared `price_history` and `fundamentals_cache` caches — the same idempotent rows a live scan
+writes when it runs analytics for these symbols; stubbing that out was considered and rejected,
+since it would make the eval diverge from the real prompt again):
 
 ```bash
 python -m scripts.review_eval --model qwen3.5:4b --runs 2

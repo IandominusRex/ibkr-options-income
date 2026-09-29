@@ -5,11 +5,26 @@ Built for Task 10 (scan-loop remediation): validates a model swap
 before committing to it in production, against the pre-fix baseline (2026-09-29): 6/6 "wait" on
 single-candidate prompts, 1/3 candidates reviewed on the multi-candidate prompt.
 
-Read-only: no DB writes. Bypasses `ollama_runner`'s module-level circuit breaker and the
-`claude.enabled` switch entirely — it builds the prompt and POSTs to `/api/generate` directly
-(mirroring `ollama_runner._generate`'s request body byte-for-byte) instead of going through
-`ollama_runner.review_candidates`, so a tripped production circuit (or `enabled: false`) never
-blocks an eval run.
+**Not a pure read — one disclosed exception (Task 10 fix round 2).** This script never writes
+`candidates`, approvals, orders, `claude_memory`, the verdict ledger, or any other table itself —
+but because it calls `scan.py`'s own `_fetch_analytics` to build a production-shaped prompt (see
+below), it can populate the same two shared, idempotent caches a live scan populates:
+`price_history` (`analytics.iv.get_iv_stats` and `analytics.technicals.get_technical_stats` both
+call `analytics.price_data.get_ohlcv`, which appends any missing daily bars via
+`storage.price_history.append_bars` — insert-missing-only, never overwrites a settled bar) and
+`fundamentals_cache` (`analytics.fundamentals.get_fundamental_stats` upserts a
+`FundamentalCacheRow` when its entry is missing or past its earnings-aware TTL). Both are the same
+rows/upserts a live scan would write for these symbols regardless of whether this script ever ran
+— stubbing them out was considered and rejected: it would make the eval diverge from the real
+prompt again, the exact gap fix round 1 closed. `_load_candidates`/`_build_history` only `SELECT`
+(`candidates`/`claude_memory`); `_build_market_conditions` (`get_market_conditions`) uses only the
+process-local, in-memory `@daily_cached` decorator (`src/common/cache.py`) and writes nothing to
+any table — verified by reading every function this script's call graph reaches, not assumed.
+
+Bypasses `ollama_runner`'s module-level circuit breaker and the `claude.enabled` switch entirely —
+it builds the prompt and POSTs to `/api/generate` directly (mirroring `ollama_runner._generate`'s
+request body byte-for-byte) instead of going through `ollama_runner.review_candidates`, so a
+tripped production circuit (or `enabled: false`) never blocks an eval run.
 
 **Production-shaped by default (Task 10 fix round 1).** A first cut of this script built the
 prompt with no `analytics`, `market_conditions`, or `history` — understating the real prompt the
@@ -257,7 +272,10 @@ def _run_once(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Replay stored candidates through the local Ollama reviewer, "
-        "production-shaped (real analytics/history/market conditions)."
+        "production-shaped (real analytics/history/market conditions). Never writes candidates, "
+        "approvals, orders, claude_memory, or the verdict ledger — but, via scan.py's own "
+        "_fetch_analytics, may populate the shared price_history/fundamentals_cache caches, the "
+        "same idempotent rows a live scan writes."
     )
     parser.add_argument("--model", required=True, help="Ollama model tag, e.g. qwen3:8b")
     parser.add_argument("--runs", type=int, default=1, help="review calls to make (default 1)")
