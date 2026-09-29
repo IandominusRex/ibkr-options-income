@@ -16,9 +16,11 @@ import scripts.start as start
 
 _ET = ZoneInfo("America/New_York")
 
-# 2026-06-22 is a Monday (a normal NYSE trading day); 2026-06-20 is the Saturday before;
-# 2026-12-25 is Christmas (a full-day NYSE holiday that falls on a Friday).
+# 2026-06-22 is a Monday (a normal NYSE trading day); 2026-06-23 is the Tuesday right after it
+# (also a normal trading day, used as "the next trading day"); 2026-06-20 is the Saturday
+# before; 2026-12-25 is Christmas (a full-day NYSE holiday that falls on a Friday).
 _MON = date(2026, 6, 22)
+_TUE = date(2026, 6, 23)
 _SAT = date(2026, 6, 20)
 _XMAS = date(2026, 12, 25)
 
@@ -242,12 +244,18 @@ def test_supervise_eod_kills_a_run_past_the_timeout(monkeypatch, caplog):
     assert any("EOD exceeded" in r.message for r in caplog.records)
 
 
-def test_eod_tick_kills_a_hung_run_and_schedules_a_new_one(monkeypatch, tmp_path):
-    """The hung-run kill and the next-run scheduling are the same per-iteration decision:
-    once a hung EOD is killed, `eod_proc` is free again and a due EOD may fire immediately."""
+def test_eod_tick_kills_a_hung_run_but_does_not_respawn_same_day(monkeypatch, tmp_path):
+    """The anti-loop invariant: killing a hung run must not immediately respawn one on the
+    same trading day it already fired on. `eod_last_run` is only ever set to today's date at
+    the moment a run is *spawned* — so a proc that's still alive (hung or not) always implies
+    `eod_last_run == today` by construction; `eod_last_run=None` alongside a live proc is a
+    state `main()` can never actually produce. `_eod_should_fire`'s same-day suppression
+    (`last_run == today`) is what the kill path relies on to avoid burning through the
+    timeout in a kill/respawn loop for the rest of the day — this pins that down."""
     state = tmp_path / "eod_scheduler_state.json"
     monkeypatch.setattr(start, "EOD_STATE_FILE", state)
     monkeypatch.setattr(start, "STOP_GRACE_SECONDS", 0.01)
+    start._write_eod_last_run(_MON)  # the hung run's own start already recorded today's fire
 
     hung = _FakePopen(alive_after_sigterm=True)
     started: list[_FakePopen] = []
@@ -260,8 +268,8 @@ def test_eod_tick_kills_a_hung_run_and_schedules_a_new_one(monkeypatch, tmp_path
     result_proc, result_start, result_last_run = start._eod_tick(
         hung,
         eod_start_time=0.0,
-        eod_last_run=None,
-        now_et=_at(_MON, 17, 30),  # past today's 16:15 fire time
+        eod_last_run=_MON,  # realistic: today's fire was already recorded before it hung
+        now_et=_at(_MON, 17, 30),  # still today, well past the 16:15 fire time
         now_monotonic=61 * 60,  # 61 min after the hung run started — past the 60-min timeout
         eod_hh=16,
         eod_mm=15,
@@ -271,11 +279,30 @@ def test_eod_tick_kills_a_hung_run_and_schedules_a_new_one(monkeypatch, tmp_path
 
     assert hung.terminated is True
     assert hung.killed is True
+    assert result_proc is None  # the slot is freed...
+    assert result_start is None
+    assert started == []  # ...but nothing respawns today
+    assert result_last_run == _MON  # unchanged — today already "fired"
+
+    # The next trading day, the freed slot is picked up normally — this is the property Step 1
+    # of the brief actually asks for ("a new EOD may be scheduled the next trading day").
+    next_proc, next_start_time, next_last_run = start._eod_tick(
+        result_proc,
+        eod_start_time=result_start,
+        eod_last_run=result_last_run,
+        now_et=_at(_TUE, 16, 15),
+        now_monotonic=(61 * 60) + 24 * 3600,
+        eod_hh=16,
+        eod_mm=15,
+        eod_timeout_minutes=60,
+        start_fn=fake_start_eod,
+    )
+
     assert len(started) == 1
-    assert result_proc is started[0]
-    assert result_start == 61 * 60
-    assert result_last_run == _MON
-    assert start._read_eod_last_run() == _MON  # persisted, matching _eod_should_fire's contract
+    assert next_proc is started[0]
+    assert next_start_time == (61 * 60) + 24 * 3600
+    assert next_last_run == _TUE
+    assert start._read_eod_last_run() == _TUE  # persisted, matching _eod_should_fire's contract
 
 
 def test_eod_tick_does_nothing_when_run_is_healthy_and_not_yet_due(tmp_path, monkeypatch):

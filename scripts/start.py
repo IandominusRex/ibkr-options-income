@@ -344,8 +344,13 @@ def _eod_tick(
 ) -> tuple[subprocess.Popen | None, float | None, date | None]:
     """The scheduler loop's full per-iteration EOD decision: supervise any running EOD (killing
     one that hung past *eod_timeout_minutes*), then start a new one if none is running and one
-    is due. Once a hung run is killed, ``eod_proc`` is free again in the very same tick, so a
-    due EOD can fire immediately rather than waiting for the next trading day.
+    is due. Killing a hung run frees ``eod_proc`` in the very same tick, but that alone does not
+    respawn one today: a live ``eod_proc`` only ever exists because *some* earlier tick already
+    set ``eod_last_run`` to today when it spawned it, and ``_eod_should_fire`` refuses to fire
+    twice in one day — so the freed slot sits empty for the rest of today and the next run
+    fires normally on the next trading day. This is deliberate: without the same-day
+    suppression, a run that keeps hanging past the timeout would kill and respawn in a tight
+    loop for the rest of the day instead of giving up until tomorrow.
     """
     if start_fn is None:
         start_fn = _start_eod
