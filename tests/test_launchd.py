@@ -270,7 +270,9 @@ def _fake_launchctl(monkeypatch):
 
     def fake_run(argv, *a, **k):
         calls.append(list(argv))
-        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        # `launchctl print` fails (label not loaded) so stop's unload-wait returns at once.
+        rc = 1 if argv[:2] == ["launchctl", "print"] else 0
+        return subprocess.CompletedProcess(argv, rc, stdout="", stderr="")
 
     monkeypatch.setattr(launchd.subprocess, "run", fake_run)
     monkeypatch.setattr(
@@ -288,7 +290,7 @@ def _touched(calls: list[list[str]]) -> set[str]:
 def test_stop_leaves_the_watchdog_loaded(monkeypatch):
     launchd, calls, ns = _fake_launchctl(monkeypatch)
     assert launchd.cmd_stop(ns) == 0
-    assert all(argv[:2] == ["launchctl", "bootout"] for argv in calls)
+    assert all(argv[:2] in (["launchctl", "bootout"], ["launchctl", "print"]) for argv in calls)
     assert _touched(calls) == {launchd.LABEL_SUPERVISOR, launchd.LABEL_GATEWAY}
 
 
@@ -303,3 +305,30 @@ def test_uninstall_still_removes_the_watchdog(monkeypatch, tmp_path):
     monkeypatch.setattr(launchd, "LAUNCH_AGENTS_DIR", tmp_path)
     assert launchd.cmd_uninstall(ns) == 0
     assert launchd.LABEL_WATCHDOG in _touched(calls)
+
+
+def test_stop_waits_until_the_label_is_actually_unloaded(monkeypatch):
+    """`launchctl bootout` returns before launchd has finished tearing the job down (the
+    supervisor spends up to STOP_GRACE_SECONDS stopping its daemons). `./ibkr restart` runs
+    `start` straight after, and a `bootstrap` issued while the old job is still being removed
+    fails with "Bootstrap failed: 5: Input/output error" — observed live during the final
+    review's C1 verification (2026-09-30). `stop` must not return until the label is gone."""
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    polls = {"n": 0}
+
+    def fake_is_loaded(label):
+        polls["n"] += 1
+        return polls["n"] < 3  # still loaded for the first two polls
+
+    monkeypatch.setattr(launchd, "_is_loaded", fake_is_loaded)
+    monkeypatch.setattr(launchd.time, "sleep", lambda s: None)
+    assert launchd.cmd_stop(ns) == 0
+    assert polls["n"] >= 3
+
+
+def test_stop_reports_failure_if_a_label_never_unloads(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: True)
+    monkeypatch.setattr(launchd, "BOOTOUT_WAIT_SECONDS", 0.0)
+    monkeypatch.setattr(launchd.time, "sleep", lambda s: None)
+    assert launchd.cmd_stop(ns) == 1

@@ -47,6 +47,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -57,6 +58,12 @@ LABEL_SUPERVISOR = "com.ibkr.supervisor"
 LABEL_WATCHDOG = "com.ibkr.watchdog"
 LABEL_GATEWAY = "com.ibkr.gateway"
 ALL_LABELS = (LABEL_SUPERVISOR, LABEL_WATCHDOG, LABEL_GATEWAY)
+
+# How long `stop` waits for launchd to finish removing a booted-out job. `launchctl bootout`
+# returns before the job is fully gone (the supervisor spends up to its own STOP_GRACE_SECONDS,
+# 10s, stopping its daemons), and a `bootstrap` issued meanwhile — `./ibkr restart`'s `start`
+# half — fails with "Bootstrap failed: 5: Input/output error" (observed 2026-09-30).
+BOOTOUT_WAIT_SECONDS = 30.0
 
 
 def render_plists(
@@ -249,10 +256,18 @@ def cmd_stop(args: argparse.Namespace) -> int:
     if not labels:
         print("No launchd agents installed.")
         return 0
+    ok = True
     for label in labels:
         _bootout(label)
-        print(f"stop {label}: ok")
-    return 0
+        deadline = time.monotonic() + BOOTOUT_WAIT_SECONDS
+        while _is_loaded(label) and time.monotonic() < deadline:
+            time.sleep(0.5)
+        if _is_loaded(label):
+            ok = False
+            print(f"stop {label}: still loaded after {BOOTOUT_WAIT_SECONDS:.0f}s", file=sys.stderr)
+        else:
+            print(f"stop {label}: ok")
+    return 0 if ok else 1
 
 
 _STATE_RE = re.compile(r"^\s*state\s*=\s*(\S+)", re.MULTILINE)

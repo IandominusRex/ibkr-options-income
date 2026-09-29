@@ -390,6 +390,14 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
   loaded only by `install` and unloaded only by `uninstall`, so `stop`/`start`/`restart` never
   touch it. Tests: `tests/test_launchd.py::test_stop_leaves_the_watchdog_loaded`,
   `::test_start_does_not_kickstart_the_watchdog`, `::test_uninstall_still_removes_the_watchdog`.
+- **Found during the C1 verification: `./ibkr restart` raced launchd.** `launchctl bootout`
+  returns before launchd has finished removing the job (the supervisor spends up to 10s stopping
+  its daemons), so `restart`'s immediate `start` fell through to `bootstrap` and failed with
+  "Bootstrap failed: 5: Input/output error", leaving the stack stopped (observed 2026-09-30
+  05:25; completed by hand with `./ibkr start`). `cmd_stop` now polls `launchctl print` until the
+  label is gone (up to `BOOTOUT_WAIT_SECONDS`, 30s) and exits 1 if it never unloads, so
+  `restart` aborts rather than racing. Tests: `tests/test_launchd.py::test_stop_waits_*`,
+  `::test_stop_reports_failure_if_a_label_never_unloads`.
 - **M1 — the watchdog's `scan_loop` check alerted during intentional pauses.** The intraday loop
   skips its new-entry scan while halted and after `scheduler.entry_cutoff`, so
   `intraday_scan_completed` goes stale by design. `run_checks` now reads `is_halted()` and
