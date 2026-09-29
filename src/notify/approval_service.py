@@ -77,6 +77,7 @@ from src.ibkr.connection import (
 )
 from src.notify.command_drain import drain_once
 from src.notify.sender import thread_id
+from src.storage.approvals import expire_stale_approvals
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
@@ -973,20 +974,22 @@ async def handle_campaigns_command(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Expire all pending approvals (clears the approval queue without acting on them)."""
+    """Expire due pending approvals (clears stale cards from the approval queue).
+
+    Reuses ``expire_stale_approvals`` (R6) — the same helper ``_order_poll_loop`` calls every
+    cycle — instead of re-implementing the pending-to-expired flip here. That helper only
+    flips rows whose own TTL has actually elapsed (it stamps ``decided_at=now`` on every row it
+    touches, and forcing a fake future ``now`` just to sweep in still-live cards would corrupt
+    that column, which the web /pnl approvals view reads); a card created seconds ago that
+    still has runway is left alone. In practice a queue the operator is manually clearing with
+    ``/expire`` is a stuck/backlogged one, so this is effectively still "clear the queue" —
+    /halt remains the tool for killing a card that hasn't gone stale yet.
+    """
     if not _is_authorized(update) or update.message is None:
         return
 
     try:
-        with session_scope() as session:
-            pending = (
-                session.query(ApprovalRow)
-                .filter(ApprovalRow.status == ApprovalStatus.PENDING)
-                .all()
-            )
-            count = len(pending)
-            for row in pending:
-                row.status = ApprovalStatus.EXPIRED
+        count = expire_stale_approvals()
 
         if count == 0:
             await update.message.reply_text(
@@ -1012,9 +1015,16 @@ async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def _order_poll_loop(ib: IB, bot: object, chat_id: str, interval: int) -> None:
-    """Background task: process QUEUED orders on a fixed interval."""
+    """Background task: process QUEUED orders on a fixed interval.
+
+    Sweeps stale `pending` approval cards (R6, `expire_stale_approvals`) at the top of every
+    cycle before processing queued orders — the sweep is a single cheap UPDATE, independent of
+    `ib`, so it still runs a card past its TTL to `expired` even on a cycle where the exec
+    connection is unhealthy.
+    """
     while True:
         try:
+            expire_stale_approvals()
             await process_queued_orders(ib, bot, chat_id)  # type: ignore[arg-type]
         except Exception:
             logger.exception("Error in order poll loop")
