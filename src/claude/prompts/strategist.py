@@ -449,7 +449,7 @@ def build_prompt(
     analytics: optional {symbol: (IVStats, TechnicalStats, FundamentalStats)} so each candidate
         is annotated with the raw technical/fundamental/IV-microstructure signals — not just the
         opaque ScoreCard composites. Enrichment only (CLAUDE.md fence).
-    news_block: optional pre-rendered ``=== NEWS ===`` block (Task 10, ``N#`` ids —
+    news_block: optional pre-rendered ``=== NEWS ===`` block (Task 11, ``N#`` ids —
         :func:`src.claude.news_context.build_news_block`) so the DECISION RUBRIC's "cite a
         FACT (F#) or NEWS item (N#)" instruction has real news to point at, on both the
         full-universe and single-ticker paths. Precomputed by the caller — like every other

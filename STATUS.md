@@ -433,6 +433,72 @@ falls back to the single-shot path and still returns a review), `tests/test_eval
 fence test). `python -m pytest -q` 2442 passed (baseline 2425 + 17 new), `ruff check .` clean,
 `mypy src` clean.
 
+### Fix round 1 (2026-09-30) — no-tool-call handling, an unbounded fallback gap, and event-loop blocking
+
+Code review caught two real gaps in the first cut above, both fixed same-day:
+
+1. **The no-tool-call path was wasteful and had a silent failure mode.** When the model made no
+   `tool_calls`, `research_turn` used to return the accumulated messages anyway — feeding the
+   model's *unconstrained* reply (no `format`) into a second, `format`-constrained `/api/chat`
+   call for no benefit: on a full multi-candidate prompt that reply alone can run to ~1.7-2k
+   tokens (close to or past `tool_research_timeout_seconds`), and appending it as a trailing
+   assistant turn to the final call risked Ollama treating it as a prefill. Separately, if that
+   final call's content parsed to zero reviews (or the call itself failed), there was **no
+   fallback at all** — the review was simply lost and recorded as a hard failure. Fixed:
+   - `ollama_tools.research_turn` now returns `None` (not the messages) whenever the model makes
+     no `tool_calls` — `review_candidates` goes straight to the single-shot `_generate` path
+     (the NEWS block stays in that prompt either way, since it's built once before either path).
+   - `review_candidates` now falls back to the single-shot `_generate` path whenever the
+     research-turn final call returns `None` **or** parses to an empty review list — previously
+     only the `None` case was retried.
+   - New tests: `test_research_turn_returns_none_when_model_makes_no_tool_calls`,
+     `test_review_candidates_falls_back_when_model_makes_no_tool_calls`,
+     `test_review_candidates_falls_back_when_final_chat_output_is_unparseable`
+     (`tests/test_ollama_runner.py`).
+2. **The full-scan review call blocked the event loop, and the research path's worst case had
+   no shared ceiling.** `scan.py`'s full-scan call site (`run_scan`) called `review_candidates`
+   synchronously inside an `async def` — unlike `run_ticker_scan`'s single-ticker `/scan TICKER`
+   path, which already used `loop.run_in_executor`. With the research turn able to chain a news
+   fetch, a tool-offer call, a final call, and (with the fix above) a single-shot fallback, the
+   theoretical worst case reached ~500s of frozen ib_async/Telegram/progress. Fixed:
+   - `run_scan`'s Claude-review call is now wrapped in `loop.run_in_executor`, matching
+     `run_ticker_scan`. New test `tests/test_scan_review_executor.py` proves this with a
+     concurrency check (a slow, synchronous mocked `review_candidates` no longer prevents a
+     concurrently-scheduled heartbeat coroutine from making progress) — verified the test
+     actually catches the regression by reverting the fix locally and confirming the test fails
+     (0.60s observed vs. the 0.5s threshold) before re-applying it.
+   - The research turn and its final chat call now share **one** deadline,
+     `claude.tool_research_timeout_seconds + claude.ollama_timeout_seconds` (240s by default),
+     tracked via real elapsed wall time (`time.monotonic()`) rather than assumed from config —
+     `research_turn`'s own timeout only bounds its `/api/chat` POST, not the tool-*execution*
+     time after it. `ollama_runner._generate_chat` gained a `timeout` parameter; the final call
+     gets `max(overall_deadline - elapsed, _RESEARCH_MIN_FINAL_TIMEOUT_SECONDS)` (10s floor)
+     instead of a fresh, unshared `ollama_timeout_seconds`. The single-shot `_generate` fallback
+     keeps its own full, unshared `ollama_timeout_seconds` budget, unchanged, per the review's
+     explicit ruling. New tests: `test_review_candidates_final_chat_call_gets_remaining_budget`,
+     `test_review_candidates_final_chat_call_timeout_never_below_the_floor`.
+
+**Live-measured, 2026-09-30, `qwen3.5:4b`, research turn ON, a real 10-candidate
+production-shaped batch** (the same `review_eval`-style inputs as the original Step 5 run, widened
+to `--since 2026-08-01` to reach 10 distinct candidates: 7× META, 1× AMZN, 1× SOXL, 1× XLU):
+- **Wall time: 153.5s** — comfortably inside the 240s shared research-path deadline and far under
+  the ~420-500s theoretical worst case (research pair + single-shot retry + news fetch).
+- **The model called `search_news`**: query `"Meta earnings date October 2026"`, `days=7`
+  (call 1: `/api/chat`, `tools` present, `prompt_eval_count=13,863`, `eval_count=45` — a short,
+  compact tool-call response, not the ~1.7-2k-token unconstrained reply fix round 1 guards
+  against in the *declined* case).
+- **Final structured call**: `/api/chat`, no `tools`, `prompt_eval_count=13,693`,
+  `eval_count=2,410`.
+- **10/10 reviewed**, and — unlike the original Step 5 sample, which had no risk-relevant
+  headlines — this batch produced real news-driven differentiation: SOXL came back `wait`
+  (`evidence=['F6', 'N11']`, confidence 0.65) and XLU cited `N17`; the other 8 (all `sell`) cited
+  `F#` facts, mostly `F5`/`F7`.
+- This single run did not exercise the fallback-to-`_generate` path live (the research turn
+  succeeded), which is expected — see the fix-round-1 unit tests above for that coverage.
+
+Tests (fix round 1): `python -m pytest -q` 2448 passed (2442 + 6 new), `ruff check .` clean,
+`mypy src` clean.
+
 ---
 
 ## Bugs fixed (2026-09-29 — scan-loop remediation Task 10: Ollama review — schema, FACTS, rubric)

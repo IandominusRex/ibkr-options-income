@@ -258,15 +258,21 @@ claude:
   # How many search_news tool calls the model may make in the bounded research turn before
   # the final structured (format=REVIEW_SCHEMA, no tools) call.
   max_tool_rounds: 2
-  # Client-side timeout for the research turn's /api/chat POST. Separate from
-  # ollama_timeout_seconds (the final structured call) since the tool round's expected output
-  # (zero or a couple of short tool_calls) is far smaller than a full review. MEASURED
-  # 2026-09-30 live against qwen3.5:4b: a direct research_turn() call (one candidate, warm
-  # model, NEWS block already built) completed in 2.1s and the model DID call search_news
-  # ("META earnings October 2026 guidance") — 60s leaves large margin over that. The
-  # production-shaped review_eval.py run (7 candidates, NEWS block included, no research turn —
-  # that script mirrors the single-shot path by design) measured prompt_eval_count=10,248 and
-  # 76-89s wall time on the final structured call, well inside ollama_timeout_seconds: 180.
+  # Client-side timeout for the research turn's /api/chat POST. FIX ROUND 1 (2026-09-30): this
+  # value and ollama_timeout_seconds below now form ONE shared deadline
+  # (tool_research_timeout_seconds + ollama_timeout_seconds = 240s) for the research turn PLUS
+  # its final structured /api/chat call together (see ollama_runner.review_candidates) — the
+  # final call gets whatever of that 240s the research turn didn't already spend, not a fresh
+  # 180s on top. The single-shot _generate fallback (used when research is off, declines, or
+  # fails) keeps its own separate, unshared ollama_timeout_seconds budget.
+  # MEASURED 2026-09-30 live against qwen3.5:4b, research turn ON, a real 10-candidate
+  # production-shaped batch (scripts/review_eval.py-style inputs, widened to --since 2026-08-01):
+  # 153.5s total wall time — comfortably inside the 240s shared deadline. The model DID call
+  # search_news ("Meta earnings date October 2026", days=7; tool-offer call prompt_eval_count=
+  # 13,863, eval_count=45 — a short tool-call reply, not a large unconstrained one). Final
+  # structured call: prompt_eval_count=13,693, eval_count=2,410. 10/10 reviewed, including two
+  # genuine N#-cited verdicts (SOXL came back "wait" citing N11). See STATUS.md's Task 11 fix
+  # round 1 entry for the full breakdown.
   tool_research_timeout_seconds: 60
 
 storage:

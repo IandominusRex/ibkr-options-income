@@ -1639,13 +1639,21 @@ async def _run_scan_body(
                         len(result.reviews),
                     )
             if not reused_reviews:
-                result.reviews = review_candidates(
-                    top,
-                    account,
-                    history=memory,
-                    market_conditions=result.market_conditions,
-                    spot_prices=spot_prices,
-                    analytics=analytics_map,
+                # Task 11 fix round 1: off the event loop, same as run_ticker_scan's single-
+                # ticker call below. review_candidates is a blocking call (httpx to Ollama,
+                # possibly the news fetch + research turn + fallback) that could previously
+                # freeze ib_async/Telegram/progress for the full duration of a full-universe
+                # review — worse now that the research path can chain multiple HTTP calls.
+                result.reviews = await loop.run_in_executor(
+                    None,
+                    lambda: review_candidates(
+                        top,
+                        account,
+                        history=memory,
+                        market_conditions=result.market_conditions,
+                        spot_prices=spot_prices,
+                        analytics=analytics_map,
+                    ),
                 )
             set_setting(_REVIEW_HASH_KEY, review_hash)
         log.info("scan: %d Claude reviews", len(result.reviews))

@@ -440,6 +440,249 @@ def test_review_candidates_research_turn_http_error_falls_back_to_single_shot(mo
     assert reviews[0].candidate_id == "test-001"
 
 
+def test_research_turn_returns_none_when_model_makes_no_tool_calls(monkeypatch):
+    """Fix round 1: `research_turn` itself must return `None` — not the accumulated messages —
+    when the model's `/api/chat` reply carries no `tool_calls`. Feeding that unconstrained reply
+    into a second, `format`-constrained call was wasteful (the reply alone can run to ~1.7-2k
+    tokens on a full prompt) and risked Ollama treating the trailing assistant turn as a prefill.
+    """
+    from src.claude import ollama_tools
+
+    cfg = MagicMock(
+        max_tool_rounds=2,
+        ollama_host="http://localhost:11434",
+        ollama_model="qwen2.5:14b-instruct",
+        ollama_keep_alive="10m",
+        ollama_temperature=0.2,
+        ollama_num_ctx=16384,
+        tool_research_timeout_seconds=60.0,
+    )
+    no_tool_call_message = {"role": "assistant", "content": "No search needed here."}
+
+    def _fake_post(url, json, timeout):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"message": no_tool_call_message}
+        return resp
+
+    monkeypatch.setattr(ollama_tools.httpx, "post", _fake_post)
+
+    assert ollama_tools.research_turn("prompt text with N1 already in it", cfg) is None
+
+
+def test_review_candidates_falls_back_when_model_makes_no_tool_calls(monkeypatch):
+    """End to end: when the model declines to call `search_news`, `review_candidates` must go
+    straight to the single-shot `_generate` (`/api/generate`) path — exactly one `/api/chat`
+    call (the declined research offer) plus one `/api/generate` call, never a second, wasted
+    `/api/chat` call."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True, max_tool_rounds=2, tool_research_timeout_seconds=60.0
+    )
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+
+    no_tool_call_message = {"role": "assistant", "content": "No search needed here."}
+    chat_calls: list[dict] = []
+    generate_calls: list[dict] = []
+
+    def _dispatch(url, json, timeout):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        if url.endswith("/api/chat"):
+            chat_calls.append(json)
+            resp.json.return_value = {"message": no_tool_call_message}
+        else:
+            generate_calls.append(json)
+            resp = _ollama_response([_review_dict()])
+        return resp
+
+    monkeypatch.setattr("src.claude.ollama_tools.httpx.post", _dispatch)
+    monkeypatch.setattr("src.claude.ollama_runner.httpx.post", _dispatch)
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        reviews = ollama_runner.review_candidates(candidates, account)
+
+    assert len(chat_calls) == 1, "expected exactly one /api/chat call (the declined offer)"
+    assert len(generate_calls) == 1, "expected exactly one /api/generate fallback call"
+    assert len(reviews) == 1
+    assert reviews[0].candidate_id == "test-001"
+
+
+def test_review_candidates_falls_back_when_final_chat_output_is_unparseable(monkeypatch):
+    """Fix round 1: when the model DID call `search_news` but the final `format`-constrained
+    `/api/chat` call returns content that parses to no reviews (malformed/empty),
+    `review_candidates` must retry via the single-shot `_generate` path before recording a
+    failure — previously this case had no fallback and the review was simply lost."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True, max_tool_rounds=2, tool_research_timeout_seconds=60.0
+    )
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+    monkeypatch.setattr(
+        "src.claude.ollama_tools.get_news_search_provider",
+        lambda: MagicMock(search=lambda *a, **k: []),
+    )
+
+    tool_call_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"function": {"name": "search_news", "arguments": {"query": "AAPL guidance"}}}
+        ],
+    }
+    chat_call_count = 0
+    generate_calls: list[dict] = []
+
+    def _dispatch(url, json, timeout):
+        nonlocal chat_call_count
+        if url.endswith("/api/chat"):
+            chat_call_count += 1
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            if chat_call_count == 1:
+                resp.json.return_value = {"message": tool_call_message}
+            else:
+                resp.json.return_value = {"message": {"content": "not valid json"}}
+            return resp
+        generate_calls.append(json)
+        return _ollama_response([_review_dict()])
+
+    monkeypatch.setattr("src.claude.ollama_tools.httpx.post", _dispatch)
+    monkeypatch.setattr("src.claude.ollama_runner.httpx.post", _dispatch)
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        reviews = ollama_runner.review_candidates(candidates, account)
+
+    assert chat_call_count == 2  # the tool-offer call + the final structured call
+    assert len(generate_calls) == 1  # single-shot fallback after the unparseable chat output
+    assert len(reviews) == 1
+    assert reviews[0].candidate_id == "test-001"
+
+
+def test_review_candidates_final_chat_call_gets_remaining_budget(monkeypatch):
+    """Fix round 1: the final `/api/chat` call's timeout is the REMAINING budget within the
+    shared `tool_research_timeout_seconds + ollama_timeout_seconds` deadline — not a fresh
+    `ollama_timeout_seconds` regardless of how long the research turn already took. Simulates
+    the research turn consuming 50s of wall time via a mocked `time.monotonic`, so the final
+    call must receive `(60 + 180) - 50 = 190` as its timeout."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True,
+        max_tool_rounds=2,
+        tool_research_timeout_seconds=60.0,
+        ollama_timeout_seconds=180.0,
+    )
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+    monkeypatch.setattr(
+        "src.claude.ollama_tools.get_news_search_provider",
+        lambda: MagicMock(search=lambda *a, **k: []),
+    )
+
+    tool_call_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"function": {"name": "search_news", "arguments": {"query": "AAPL guidance"}}}
+        ],
+    }
+    final_review_content = json.dumps({"reviews": [_review_dict()]})
+    final_call_timeouts: list[float] = []
+
+    def _dispatch(url, json, timeout):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        if "tools" in json:
+            resp.json.return_value = {"message": tool_call_message}
+        else:
+            final_call_timeouts.append(timeout)
+            resp.json.return_value = {"message": {"content": final_review_content}}
+        return resp
+
+    monkeypatch.setattr("src.claude.ollama_tools.httpx.post", _dispatch)
+    monkeypatch.setattr("src.claude.ollama_runner.httpx.post", _dispatch)
+
+    # review_candidates reads time.monotonic() exactly twice around the research_turn call:
+    # once before (t0=1000.0), once after (1050.0) -> 50s elapsed.
+    times = iter([1000.0, 1050.0])
+    monkeypatch.setattr(ollama_runner.time, "monotonic", lambda: next(times))
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        reviews = ollama_runner.review_candidates(candidates, account)
+
+    assert final_call_timeouts == [190.0]
+    assert len(reviews) == 1
+
+
+def test_review_candidates_final_chat_call_timeout_never_below_the_floor(monkeypatch):
+    """If the research turn somehow ate nearly the whole shared deadline, the final call must
+    still get a workable timeout, not a near-zero or negative one — clamped to
+    `_RESEARCH_MIN_FINAL_TIMEOUT_SECONDS`."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True,
+        max_tool_rounds=2,
+        tool_research_timeout_seconds=60.0,
+        ollama_timeout_seconds=180.0,
+    )
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+    monkeypatch.setattr(
+        "src.claude.ollama_tools.get_news_search_provider",
+        lambda: MagicMock(search=lambda *a, **k: []),
+    )
+
+    tool_call_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"function": {"name": "search_news", "arguments": {"query": "AAPL guidance"}}}
+        ],
+    }
+    final_review_content = json.dumps({"reviews": [_review_dict()]})
+    final_call_timeouts: list[float] = []
+
+    def _dispatch(url, json, timeout):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        if "tools" in json:
+            resp.json.return_value = {"message": tool_call_message}
+        else:
+            final_call_timeouts.append(timeout)
+            resp.json.return_value = {"message": {"content": final_review_content}}
+        return resp
+
+    monkeypatch.setattr("src.claude.ollama_tools.httpx.post", _dispatch)
+    monkeypatch.setattr("src.claude.ollama_runner.httpx.post", _dispatch)
+
+    # Simulate the research turn eating nearly the entire 240s shared deadline.
+    times = iter([1000.0, 1235.0])
+    monkeypatch.setattr(ollama_runner.time, "monotonic", lambda: next(times))
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        ollama_runner.review_candidates(candidates, account)
+
+    assert final_call_timeouts == [ollama_runner._RESEARCH_MIN_FINAL_TIMEOUT_SECONDS]
+
+
 def test_ollama_backend_review_roll_success():
     pos = PositionSnapshot(
         symbol="AAPL250718C00190000",

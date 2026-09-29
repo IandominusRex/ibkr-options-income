@@ -9,14 +9,19 @@ or it may not call it at all. Each call is executed against the configured
 and appended as a `role: "tool"` message numbered to continue the NEWS block's `N#` ids so the
 DECISION RUBRIC's "cite F#/N#" instruction stays valid for anything the research turn surfaces.
 
-`research_turn` does **not** make the final structured call itself — it returns the
-accumulated chat messages (the user turn + the assistant's tool-call turn + the tool-result
-turns) for the caller (`ollama_runner.review_candidates`) to send as one more `/api/chat`
-request with `format=REVIEW_SCHEMA` and *no* `tools`. Any failure here — a connection error, a
-timeout, a model that doesn't support tool calling, or a malformed response — is logged and
-`research_turn` returns `None`; the caller falls back to the Task 10 single-shot `_generate`
-(`/api/generate`) path. The research turn is enrichment, never a dependency: a broken or slow
-tool-calling round must never be the reason a review doesn't happen.
+`research_turn` does **not** make the final structured call itself — when the model actually
+calls `search_news`, it returns the accumulated chat messages (the user turn + the assistant's
+tool-call turn + the tool-result turns) for the caller (`ollama_runner.review_candidates`) to
+send as one more `/api/chat` request with `format=REVIEW_SCHEMA` and *no* `tools`. Any failure
+here — a connection error, a timeout, a model that doesn't support tool calling, or a malformed
+response — is logged and `research_turn` returns `None`; the caller falls back to the Task 10
+single-shot `_generate` (`/api/generate`) path. **Fix round 1:** the model choosing *not* to call
+`search_news` also returns `None`, not the messages — its unconstrained reply otherwise had to be
+fed into a second, `format`-constrained call for no benefit (and at real cost: on a full
+multi-candidate prompt that reply can itself run to ~1.7-2k tokens, and appending it as a
+trailing assistant turn to the final call risked Ollama treating it as a prefill). The research
+turn is enrichment, never a dependency: a broken, slow, or declined tool-calling round must never
+be the reason a review doesn't happen, or costs more than the single-shot path would have.
 
 **Fence (CLAUDE.md).** Enrichment tier only — must never be importable from `src/engine/`,
 `src/execution/`, or `src/strategies/` — see
@@ -141,10 +146,17 @@ def research_turn(prompt: str, cfg: object) -> list[dict] | None:
 
     tool_calls = _tool_calls_from_message(message)[:max_calls]
     if not tool_calls:
-        # The model chose not to research (or the backend doesn't surface tool support) —
-        # a valid outcome, not a failure. The accumulated (empty-of-tools) turn is still
-        # returned so the caller's final call carries the same user prompt.
-        return messages
+        # Fix round 1: the model chose not to research (or the backend doesn't surface tool
+        # support) — a valid outcome, but NOT one worth a second /api/chat call over. The
+        # assistant's reply here was generated with no `format` constraint, so on a full
+        # multi-candidate prompt it can run to ~1.7-2k unconstrained tokens (close to or past
+        # `tool_research_timeout_seconds`), and feeding it back as a trailing assistant turn to
+        # the final `format`-constrained call risked Ollama treating it as a prefill. Returning
+        # `None` sends the caller straight to the well-tested single-shot `_generate` path
+        # (schema-constrained from message 1) instead of paying for a second, likely-wasted
+        # call — the NEWS block is still in that prompt either way.
+        log.debug("ollama research turn: model made no tool_calls — skipping to single-shot")
+        return None
 
     next_id = _next_news_id(prompt)
     for call in tool_calls:

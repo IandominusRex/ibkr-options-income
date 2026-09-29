@@ -224,6 +224,39 @@ calls — but with no option quotes, neither the covered-call screen nor the cas
 runs for it, so it cannot produce a card. Every threshold in this document is a rule for
 **deciding who pays the expensive cost.**
 
+**The Claude/Ollama review step (the "review" line in the 56s intercept above) got a new, much
+wider worst case with Task 11's news-grounded review — and Task 11 fix round 1 moved it off the
+event loop so that worst case no longer freezes ib_async/Telegram/progress for the rest of the
+cycle.** Before Task 11, one `/api/generate` call bounded by `ollama_timeout_seconds` (180s) was
+the whole review step. Task 11 adds, when `claude.tool_research_enabled` (default `true`): a
+keyless news fetch per distinct underlying plus one market-backdrop query (each `httpx` call
+independently timeout-bounded, `google_news_backend.py`), then a bounded tool-calling research
+turn and its own final structured call. Fix round 1 (2026-09-30) bounds that research pair — the
+research turn's `/api/chat` POST plus the final structured `/api/chat` call — to ONE shared
+deadline, `claude.tool_research_timeout_seconds + claude.ollama_timeout_seconds` (default
+60 + 180 = **240s**), with the final call getting whatever of that 240s the research turn didn't
+already spend (never less than a 10s floor) rather than a fresh 180s on top. If that research
+pair produces nothing parseable, `review_candidates` retries once via the original single-shot
+`/api/generate` path, which keeps its own full, unshared `ollama_timeout_seconds` (180s) budget.
+**Theoretical worst case for one review call: ~240s (research pair) + 180s (single-shot retry) +
+the news fetch's own time (small in practice — see the live measurement below) ≈ 420-500s.**
+Two things keep this from being as bad as it sounds:
+- **It's off the event loop.** `run_scan`'s Claude-review call is wrapped in
+  `loop.run_in_executor` (matching `run_ticker_scan`'s `/scan TICKER` path, which already did
+  this) — a slow or misbehaving review no longer blocks IBKR ticks, Telegram sends, or the
+  progress message for the rest of the cycle; it only extends how long *this one step* of *this
+  one cycle* takes before the scan can finish and persist.
+- **The circuit breaker still applies.** Three consecutive failures (`_CIRCUIT_THRESHOLD` in
+  `ollama_runner.py`) open the module-level circuit and every subsequent call in the same process
+  returns immediately with no HTTP request at all, so a genuinely broken Ollama server doesn't
+  pay this worst case every cycle — it pays it up to three times, then goes silent until it
+  recovers.
+
+Live-measured (2026-09-30, `qwen3.5:4b`, fix round 1): see `STATUS.md`'s Task 11 fix-round-1
+entry for the exact wall time, whether the model called `search_news`, and `prompt_eval_count`
+on a real 10-candidate production-shaped batch — in practice the review step finished well under
+the 420-500s theoretical ceiling above.
+
 ---
 
 ## 2. The three clocks
