@@ -19,7 +19,11 @@ from src.common.schemas import (
 )
 from src.strategies._scoring import fundamental_score, make_candidate_id, technical_score
 from src.strategies.cash_secured_put import generate_csp_candidates, screen_csp_candidates
-from src.strategies.covered_call import generate_cc_candidates, uncovered_call_capacity
+from src.strategies.covered_call import (
+    generate_cc_candidates,
+    screen_cc_candidates,
+    uncovered_call_capacity,
+)
 from src.strategies.rolling import generate_roll_candidates
 
 # Expiries within the [7, 28] DTE window; computed relative to today so tests
@@ -384,6 +388,18 @@ class TestCoveredCall:
         assert len(result) == 1
         assert result[0].scores.iv_score == 0.0
 
+    def test_illiquid_oi_low_is_a_granular_reason_not_the_legacy_code(self):
+        # Task 7: a thin-OI reject must carry the precise sub-reason, not the collapsed
+        # "illiquid" code, and the candidate's quote microstructure must be attached.
+        quote = _call_quote(oi=5)
+        result = screen_cc_candidates("AAPL", [quote], _long_stock(), _iv(), _tech(), _fund())
+        assert result.passed == []
+        assert len(result.rejected) == 1
+        cand, reasons = result.rejected[0]
+        assert "illiquid_oi_low" in reasons
+        assert "illiquid" not in reasons
+        assert cand.open_interest == 5
+
 
 # --------------------------------------------------------------------------- #
 # Cash-secured put tests
@@ -471,6 +487,18 @@ class TestCashSecuredPut:
         result = generate_csp_candidates("AAPL", [q1, q2], _account(), _iv(), _tech(), _fund())
         assert len(result) == 2
         assert result[0].roc_pct >= result[1].roc_pct
+
+    def test_illiquid_oi_low_is_a_granular_reason_not_the_legacy_code(self):
+        # Task 7: a thin-OI reject must carry the precise sub-reason, not the collapsed
+        # "illiquid" code, and the candidate's quote microstructure must be attached.
+        quote = _put_quote(oi=5)
+        result = screen_csp_candidates("AAPL", [quote], _account(), _iv(), _tech(), _fund())
+        assert result.passed == []
+        assert len(result.rejected) == 1
+        cand, reasons = result.rejected[0]
+        assert "illiquid_oi_low" in reasons
+        assert "illiquid" not in reasons
+        assert cand.open_interest == 5
 
     def test_symbolwide_outage_logs_distinct_warning(self, caplog):
         """When IBKR delivers no live market for the ENTIRE chain, that's a data-feed

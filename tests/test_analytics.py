@@ -13,7 +13,7 @@ import pytest
 from src.analytics.black_scholes import bs_delta
 from src.analytics.fundamentals import get_fundamental_stats
 from src.analytics.iv import get_iv_stats
-from src.analytics.liquidity import passes_liquidity_gates, score_liquidity
+from src.analytics.liquidity import liquidity_failures, passes_liquidity_gates, score_liquidity
 from src.analytics.technicals import get_technical_stats
 from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, OptionQuote, OptionRight, Regime
@@ -596,6 +596,52 @@ class TestLiquidity:
         good = _quote(spread_pct=5.0, open_interest=500, volume=50)
         bad = _quote(spread_pct=5.0, open_interest=None, volume=50)
         assert score_liquidity(good) > score_liquidity(bad)
+
+
+# --------------------------------------------------------------------------- #
+# liquidity_failures — precise sub-reason codes (Task 7)
+# --------------------------------------------------------------------------- #
+
+
+def _q(**kw) -> OptionQuote:
+    base = dict(
+        underlying="X",
+        right=OptionRight.PUT,
+        strike=10.0,
+        expiry=date.today() + timedelta(days=14),
+        bid=1.00,
+        ask=1.04,
+        open_interest=500,
+        volume=50,
+    )
+    base.update(kw)
+    return OptionQuote(**base)
+
+
+@pytest.mark.parametrize(
+    "kw,expected",
+    [
+        (dict(bid=None), ["illiquid_no_quote"]),
+        (dict(bid=0.0, ask=0.05), ["illiquid_zero_bid", "illiquid_spread_wide"]),
+        (dict(bid=1.00, ask=1.30), ["illiquid_spread_wide"]),
+        (dict(open_interest=None), ["illiquid_oi_missing"]),
+        (dict(open_interest=5), ["illiquid_oi_low"]),
+        (dict(volume=None), ["illiquid_volume_missing"]),
+        (dict(volume=1), ["illiquid_volume_low"]),
+        (dict(), []),
+    ],
+)
+def test_liquidity_failures_codes(kw, expected):
+    assert liquidity_failures(_q(**kw)) == expected
+
+
+def test_volume_codes_suppressed_before_cutoff():
+    assert liquidity_failures(_q(volume=None), enforce_volume=False) == []
+
+
+def test_passes_gate_is_negation():
+    assert passes_liquidity_gates(_q()) is True
+    assert passes_liquidity_gates(_q(open_interest=5)) is False
 
 
 # --------------------------------------------------------------------------- #

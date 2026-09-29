@@ -710,3 +710,32 @@ candidate should be repriced every cycle.
 `watchlist:` and `indexes:` are not read by the scan loop. Add it to `would_own:` for CSPs (and to
 `actively_wheeling:` as well if it should be in the core rotation), and give it a `sectors:` entry
 so the concentration cap can bucket it — the scan logs a warning for any symbol missing one.
+
+---
+
+## 9. Reading rejection codes (Task 7, 2026-09-29)
+
+A cycle that fetches a chain and finds nothing tradeable used to write one WARNING line per
+symbol with an undifferentiated `illiquid=N` count — "SOXL failed liquidity 684 times" told you
+nothing about *why*. `illiquid` is now split into seven precise codes, evaluated in this order,
+and **every** one a quote fails is emitted (not just the first):
+
+| Code | What it means |
+|---|---|
+| `illiquid_no_quote` | No usable bid/ask at all — can't measure a spread |
+| `illiquid_zero_bid` | Bid is 0 with a positive ask (no buyer at any price; spread is 200% by construction) |
+| `illiquid_spread_wide` | Spread wider than `risk_limits.yaml → liquidity.max_bid_ask_spread_pct` |
+| `illiquid_oi_missing` | Open interest not reported by the data source |
+| `illiquid_oi_low` | Open interest below `liquidity.min_open_interest` |
+| `illiquid_volume_missing` | Day volume not reported (only checked when the N19 volume gate is active) |
+| `illiquid_volume_low` | Day volume below `liquidity.min_option_volume` (same gating) |
+
+The per-symbol WARNING line's `rejections: …` tally shows these granular codes directly (e.g.
+`rejections: illiquid_oi_low=12, illiquid_spread_wide=3`), followed by the live thresholds that
+produced them: `(limits: spread≤10%, OI≥100, vol≥10, volume gate on)` — read straight from
+`risk_limits.yaml`, so the line never goes stale relative to config. The old undifferentiated
+`illiquid` code is still recognized by the Telegram/web label tables (`formatters.py` /
+`options.py`) so the ~14 days of `risk_verdicts` rows written before this split still render, but
+no generator emits it anymore. Each rejected candidate's `risk_verdicts.liquidity` JSON column
+also carries the raw quote microstructure (`bid`, `ask`, `spread_pct`, `open_interest`, `volume`)
+as it stood at assessment time, so a granular code is auditable without re-fetching the chain.

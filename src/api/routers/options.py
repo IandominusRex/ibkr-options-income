@@ -90,7 +90,16 @@ _REASON_LABELS: dict[str, str] = {
     "contracts_exceeds_max": "size exceeds max contracts",
     "score_below_minimum": "blended score below quality floor",
     "no_two_sided_market": "no live bid/ask (can't price it)",
+    # Legacy: collapsed all liquidity-gate failures into one code. Superseded by the seven
+    # illiquid_* codes below (Task 7); kept only to humanize pre-existing risk_verdicts rows.
     "illiquid": "fails liquidity gates (spread / OI / volume)",
+    "illiquid_no_quote": "liquidity: no usable bid/ask to measure spread",
+    "illiquid_zero_bid": "liquidity: zero bid (no buyer at any price)",
+    "illiquid_spread_wide": "liquidity: bid/ask spread wider than limit",
+    "illiquid_oi_missing": "liquidity: open interest not reported",
+    "illiquid_oi_low": "liquidity: open interest below minimum",
+    "illiquid_volume_missing": "liquidity: day volume not reported",
+    "illiquid_volume_low": "liquidity: day volume below minimum",
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",

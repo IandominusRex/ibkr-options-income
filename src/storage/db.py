@@ -52,6 +52,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "ideal_lo": "FLOAT",
         "ideal_hi": "FLOAT",
         "min_credit": "FLOAT",
+        # Quote microstructure behind a liquidity verdict (Task 7 — split `illiquid` into
+        # precise sub-reasons). See RiskVerdictRow.liquidity docstring.
+        "liquidity": "JSON",
     },
 }
 

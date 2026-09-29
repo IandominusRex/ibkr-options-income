@@ -83,6 +83,12 @@ class RiskVerdictRow(Base):
     ideal_lo: Mapped[float | None] = mapped_column(Float, nullable=True)
     ideal_hi: Mapped[float | None] = mapped_column(Float, nullable=True)
     min_credit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Quote microstructure behind a liquidity verdict (Task 7) — {bid, ask, spread_pct,
+    # open_interest, volume} as they stood at assessment time, so a granular reject
+    # (illiquid_oi_low, illiquid_spread_wide, ...) stays auditable without re-fetching the
+    # chain. None when the candidate carried no quote microstructure (e.g. old rows predating
+    # this column, or a candidate built outside the generators).
+    liquidity: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

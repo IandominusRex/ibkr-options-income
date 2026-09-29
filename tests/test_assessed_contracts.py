@@ -158,7 +158,10 @@ def test_a_reject_carries_every_gate_it_failed_not_just_the_first() -> None:
     _, reasons = screen.rejected[0]
     assert REASON_DELTA_RANGE in reasons
     assert REASON_DTE_RANGE in reasons
-    assert REASON_ILLIQUID in reasons
+    # oi=1 always fails illiquid_oi_low regardless of wall-clock time; volume=0 only adds
+    # illiquid_volume_low once the N19 morning cutoff has passed, so assert on the
+    # time-independent granular code rather than the legacy collapsed one.
+    assert "illiquid_oi_low" in reasons
 
 
 def test_csp_screen_still_passes_a_good_contract() -> None:

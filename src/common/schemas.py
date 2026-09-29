@@ -436,6 +436,13 @@ class TradeCandidate(BaseModel):
     # greeks_source and the TechnicalStats.price_source at scan time.
     price_source: str = "ibkr"  # "ibkr" | "yfinance"
     greeks_source: str = "ibkr"  # "ibkr" | "black_scholes"
+    # Quote microstructure behind the liquidity verdict (Task 7) — carried onto the candidate
+    # so a granular reject (illiquid_oi_low, illiquid_spread_wide, ...) is auditable after the
+    # fact without re-fetching the chain. None on a candidate never re-runs a liquidity gate.
+    quote_bid: float | None = None
+    quote_ask: float | None = None
+    open_interest: int | None = None
+    option_volume: int | None = None
 
 
 class RiskVerdict(BaseModel):

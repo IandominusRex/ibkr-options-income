@@ -6,7 +6,7 @@ import logging
 
 from src.analytics.fair_value import compute_ideal_zone, zone_for_contract
 from src.analytics.liquidity import (
-    passes_liquidity_gates,
+    liquidity_failures,
     score_liquidity,
     volume_gate_active,
 )
@@ -32,7 +32,6 @@ from src.strategies._evaluation import (
     REASON_DELTA_MISSING,
     REASON_DELTA_RANGE,
     REASON_DTE_RANGE,
-    REASON_ILLIQUID,
     REASON_INSUFFICIENT_CASH,
     REASON_NO_HEADROOM,
     REASON_NO_MARKET,
@@ -41,6 +40,7 @@ from src.strategies._evaluation import (
     REASON_YIELD,
     ScreenResult,
     display_premium,
+    liquidity_limits_summary,
     rank_rejects,
 )
 from src.strategies._scoring import (
@@ -135,8 +135,7 @@ def screen_csp_candidates(
         strict = quote.strict_mid
         if strict is None or strict <= 0:
             reasons.append(REASON_NO_MARKET)
-        if not passes_liquidity_gates(quote, enforce_volume=enforce_volume):
-            reasons.append(REASON_ILLIQUID)
+        reasons.extend(liquidity_failures(quote, enforce_volume=enforce_volume))
 
         # Price the contract for display even when it failed above; the reasons list tells the
         # reader how much to trust it.
@@ -237,6 +236,10 @@ def screen_csp_candidates(
             scores=scores,
             price_source=tech_stats.price_source,
             greeks_source=quote.greeks_source,
+            quote_bid=quote.bid,
+            quote_ask=quote.ask,
+            open_interest=quote.open_interest,
+            option_volume=quote.volume,
         )
 
         if reasons:
@@ -249,17 +252,19 @@ def screen_csp_candidates(
         if interim.market_data_outage():
             log.warning(
                 "data-feed outage suspected for %s: none of %d put quotes had a live bid/ask "
-                "this cycle — treat the illiquid/no_two_sided_market tally below as an IBKR "
-                "market-data gap, not genuine illiquidity",
+                "this cycle — treat the illiquid_no_quote/no_two_sided_market tally below as an "
+                "IBKR market-data gap, not genuine illiquidity",
                 symbol,
                 result.evaluated,
             )
         tally = interim.tally()
         log.warning(
-            "No CSP candidates passed filters for %s (%d put quotes evaluated) — rejections: %s",
+            "No CSP candidates passed filters for %s (%d put quotes evaluated) — rejections: %s "
+            "(limits: %s)",
             symbol,
             result.evaluated,
             ", ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "none",
+            liquidity_limits_summary(enforce_volume=enforce_volume),
         )
 
     result.passed.sort(key=lambda c: c.roc_pct, reverse=True)

@@ -36,32 +36,42 @@ def volume_gate_active(now_et: time | None = None) -> bool:
     return current >= cutoff
 
 
-def passes_liquidity_gates(quote: OptionQuote, *, enforce_volume: bool = True) -> bool:
-    """Return True iff the quote clears the liquidity hard gates.
+def liquidity_failures(quote: OptionQuote, *, enforce_volume: bool = True) -> list[str]:
+    """Every liquidity gate *quote* fails, as precise reason codes (empty = passes).
 
-    Any None field fails its gate (conservative default). When `enforce_volume` is False the
-    day-volume gate is skipped (N19 — early-session, before volume has printed); OI and spread
-    still apply. Morning-scan callers pass `enforce_volume=volume_gate_active()`.
+    Replaces a bare bool that collapsed five distinct failure modes into one ``illiquid``
+    code, which made "SOXL failed liquidity 684 times" impossible to act on (2026-09 post-
+    mortem). Missing data fails its gate (conservative default), but gets its own *_missing
+    code so an IBKR data gap is distinguishable from a genuinely thin contract. When
+    `enforce_volume` is False the day-volume codes are skipped (N19 — early-session, before
+    volume has printed); OI and spread still apply. Morning-scan callers pass
+    `enforce_volume=volume_gate_active()`.
     """
     cfg = get_config().risk["liquidity"]
-    max_spread = cfg["max_bid_ask_spread_pct"]
-    min_oi = cfg["min_open_interest"]
-    min_vol = cfg["min_option_volume"]
-
-    spread = quote.spread_pct
-    if spread is None or spread > max_spread:
-        return False
-
-    oi = quote.open_interest
-    if oi is None or oi < min_oi:
-        return False
-
+    out: list[str] = []
+    if quote.bid is None or quote.ask is None or quote.ask <= 0:
+        out.append("illiquid_no_quote")
+    else:
+        if quote.bid == 0:
+            out.append("illiquid_zero_bid")
+        spread = quote.spread_pct
+        if spread is None or spread > cfg["max_bid_ask_spread_pct"]:
+            out.append("illiquid_spread_wide")
+    if quote.open_interest is None:
+        out.append("illiquid_oi_missing")
+    elif quote.open_interest < cfg["min_open_interest"]:
+        out.append("illiquid_oi_low")
     if enforce_volume:
-        vol = quote.volume
-        if vol is None or vol < min_vol:
-            return False
+        if quote.volume is None:
+            out.append("illiquid_volume_missing")
+        elif quote.volume < cfg["min_option_volume"]:
+            out.append("illiquid_volume_low")
+    return out
 
-    return True
+
+def passes_liquidity_gates(quote: OptionQuote, *, enforce_volume: bool = True) -> bool:
+    """True iff the quote clears every liquidity gate. See :func:`liquidity_failures`."""
+    return not liquidity_failures(quote, enforce_volume=enforce_volume)
 
 
 def score_liquidity(quote: OptionQuote) -> float:

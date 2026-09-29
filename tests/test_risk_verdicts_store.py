@@ -108,6 +108,30 @@ def test_denormalizes_the_ideal_zone_so_history_stays_readable(db) -> None:
     assert row.strike == 190.0 and row.premium == 3.0 and row.blended_score == 62.0
 
 
+def test_records_the_liquidity_snapshot(db) -> None:
+    """Task 7: the quote microstructure behind a liquidity verdict is persisted, not just
+    the pass/fail code, so a granular reject (e.g. illiquid_oi_low) can be audited later."""
+    cand = _cand().model_copy(
+        update={"quote_bid": 1.00, "quote_ask": 1.04, "open_interest": 5, "option_volume": 50}
+    )
+    record_assessments(
+        "run-1",
+        [
+            AssessedContract(
+                candidate=cand, stage=AssessmentStage.GENERATOR, reasons=["illiquid_oi_low"]
+            )
+        ],
+    )
+    row = _rows(db)[0]
+    assert row.liquidity == {
+        "bid": 1.00,
+        "ask": 1.04,
+        "spread_pct": 3.92,
+        "open_interest": 5,
+        "volume": 50,
+    }
+
+
 def test_a_contract_without_a_zone_still_records(db) -> None:
     record_assessments(
         "run-1",
@@ -196,4 +220,12 @@ def test_migration_adds_the_new_columns_to_a_legacy_table(tmp_path, monkeypatch)
     conn = sqlite3.connect(path)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(risk_verdicts)")}
     conn.close()
-    assert {"run_id", "symbol", "stage", "ideal_lo", "ideal_hi", "min_credit"} <= cols
+    assert {
+        "run_id",
+        "symbol",
+        "stage",
+        "ideal_lo",
+        "ideal_hi",
+        "min_credit",
+        "liquidity",
+    } <= cols

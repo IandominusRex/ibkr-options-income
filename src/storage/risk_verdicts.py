@@ -62,6 +62,17 @@ def purge_old_risk_verdicts(days: int = 14) -> int:
         return 0
 
 
+def _quote_spread_pct(bid: float | None, ask: float | None) -> float | None:
+    """Same formula as ``OptionQuote.spread_pct``, recomputed from the candidate's own
+    denormalized bid/ask since a persisted row never holds an ``OptionQuote``."""
+    if bid is None or ask is None:
+        return None
+    mid = (bid + ask) / 2
+    if not mid:
+        return None
+    return round((ask - bid) / mid * 100, 2)
+
+
 def _to_row(run_id: str, item: AssessedContract) -> RiskVerdictRow:
     cand = item.candidate
     zone = cand.ideal
@@ -80,4 +91,11 @@ def _to_row(run_id: str, item: AssessedContract) -> RiskVerdictRow:
         ideal_lo=zone.strike_lo if zone else None,
         ideal_hi=zone.strike_hi if zone else None,
         min_credit=zone.min_credit if zone else None,
+        liquidity={
+            "bid": cand.quote_bid,
+            "ask": cand.quote_ask,
+            "spread_pct": _quote_spread_pct(cand.quote_bid, cand.quote_ask),
+            "open_interest": cand.open_interest,
+            "volume": cand.option_volume,
+        },
     )

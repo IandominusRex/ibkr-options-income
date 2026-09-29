@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src.common.config import get_config
 from src.common.schemas import TradeCandidate
 
 # --- Generator-stage reason codes ---------------------------------------------------- #
@@ -24,6 +25,11 @@ REASON_DELTA_MISSING = "delta_missing"
 REASON_DELTA_RANGE = "delta_out_of_range"
 REASON_DTE_RANGE = "dte_out_of_range"
 REASON_NO_MARKET = "no_two_sided_market"
+# Legacy: collapsed all liquidity-gate failures into one undifferentiated code. Superseded by
+# `analytics.liquidity.liquidity_failures`'s seven precise `illiquid_*` codes (Task 7,
+# 2026-09-29 post-mortem — "SOXL failed liquidity 684 times" was unactionable). Kept only so
+# `formatters._REJECT_REASON_LABELS` / `options._REASON_LABELS` can still humanize the ~14
+# days of pre-existing `risk_verdicts` rows that still carry it; no generator emits it anymore.
 REASON_ILLIQUID = "illiquid"
 REASON_BELOW_BASIS = "strike_below_basis"
 REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
@@ -64,8 +70,8 @@ class ScreenResult:
     def market_data_outage(self) -> bool:
         """True when every evaluated quote came back with no live bid/ask.
 
-        A missing market forces ``illiquid`` to fire too (spread can't be computed without
-        a market), so a symbol-wide IBKR data-feed outage is otherwise indistinguishable in
+        A missing market forces ``illiquid_no_quote`` to fire too (spread can't be computed
+        without a market), so a symbol-wide IBKR data-feed outage is otherwise indistinguishable in
         the reason tally from a chain that is genuinely, individually illiquid contract by
         contract (2026-09-11: TQQQ/UPRO/AMZN/RKLB scan cycles where the entire chain came
         back with no market were silently counted the same as ordinary thin-liquidity
@@ -99,6 +105,26 @@ def rank_rejects(
         return (len(set(reasons)), delta_gap, -cand.roc_pct)
 
     return sorted(rejects, key=key)
+
+
+def liquidity_limits_summary(*, enforce_volume: bool) -> str:
+    """Render the active liquidity thresholds for the aggregate rejection WARNING line.
+
+    Task 7: the tally already shows granular ``illiquid_*`` counts (e.g. ``illiquid_oi_low=12``)
+    but not the threshold that made them fail, which still leaves an operator guessing whether
+    ``risk_limits.yaml`` needs a look. Reads the live config rather than hard-coding the
+    numbers, so a config change is reflected in the log without a code change. ``enforce_volume``
+    reports whether the N19 day-volume gate was active this cycle (time-aware — off before
+    ``liquidity.morning_volume_cutoff_et``).
+    """
+    cfg = get_config().risk["liquidity"]
+    gate_state = "volume gate on" if enforce_volume else "volume gate off (pre-cutoff)"
+    return (
+        f"spread≤{cfg['max_bid_ask_spread_pct']:g}%, "
+        f"OI≥{cfg['min_open_interest']:g}, "
+        f"vol≥{cfg['min_option_volume']:g}, "
+        f"{gate_state}"
+    )
 
 
 def display_premium(strict_mid: float | None, mid: float | None, last: float | None) -> float:
