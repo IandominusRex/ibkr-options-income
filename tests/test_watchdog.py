@@ -375,3 +375,64 @@ def test_main_never_raises_and_alerts_on_crash(monkeypatch, tmp_path):
 
     assert rc == 1
     assert len(sent) == 1 and "watchdog crashed" in sent[0]
+
+
+# --- final review M1: scan_loop stays quiet during intentional pauses ----------------------
+#
+# The intraday loop deliberately skips its new-entry scan while execution is halted (/halt)
+# and after scheduler.entry_cutoff (default 15:00 ET), so `intraday_scan_completed` goes stale
+# by design in both cases. The check must read both (DB flag + config, no IBKR) and stay quiet.
+
+
+def test_scan_loop_check_quiet_while_halted():
+    stale = (NOW - timedelta(hours=3)).isoformat()
+    c = scan_loop_check(
+        stale, NOW, in_rth=True, minutes_since_open=90, max_age_min=35, grace_min=20, halted=True
+    )
+    assert c.ok is True
+
+
+def test_scan_loop_check_quiet_past_entry_cutoff():
+    stale = (NOW - timedelta(hours=3)).isoformat()
+    c = scan_loop_check(
+        stale,
+        NOW,
+        in_rth=True,
+        minutes_since_open=360,
+        max_age_min=35,
+        grace_min=20,
+        past_entry_cutoff=True,
+    )
+    assert c.ok is True
+
+
+def _run_checks_in_rth(monkeypatch, *, et_hour: int, et_minute: int, halted: bool):
+    from src.common.config import get_config
+    from src.ops import watchdog
+
+    stale = (NOW - timedelta(hours=5)).isoformat()
+    monkeypatch.setattr(watchdog, "supervisor_check", lambda: Check("supervisor", True, ""))
+    monkeypatch.setattr(watchdog, "port_check", lambda port: Check("gateway_port", True, ""))
+    monkeypatch.setattr(watchdog, "get_setting", lambda key, default="": stale)
+    monkeypatch.setattr(watchdog, "is_rth", lambda now: True)
+    monkeypatch.setattr(watchdog, "is_halted", lambda: halted)
+    monkeypatch.setattr(watchdog, "iv_history_check", lambda now, n: Check("iv_history", True, ""))
+    monkeypatch.setattr(watchdog, "eod_check", lambda *a, **k: Check("eod", True, ""))
+    full_cfg = get_config()
+    monkeypatch.setattr(full_cfg.scheduler, "entry_cutoff", "15:00")
+
+    now = datetime(2026, 9, 29, et_hour, et_minute, tzinfo=_ET).astimezone(UTC)
+    checks = watchdog.run_checks(now, full_cfg.watchdog)
+    return next(c for c in checks if c.name == "scan_loop")
+
+
+def test_run_checks_scan_loop_alerts_when_stale_mid_session(monkeypatch):
+    assert _run_checks_in_rth(monkeypatch, et_hour=11, et_minute=0, halted=False).ok is False
+
+
+def test_run_checks_scan_loop_quiet_when_halted(monkeypatch):
+    assert _run_checks_in_rth(monkeypatch, et_hour=11, et_minute=0, halted=True).ok is True
+
+
+def test_run_checks_scan_loop_quiet_past_entry_cutoff(monkeypatch):
+    assert _run_checks_in_rth(monkeypatch, et_hour=15, et_minute=30, halted=False).ok is True

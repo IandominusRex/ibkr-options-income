@@ -3,7 +3,8 @@
 
 `render_plists` is pure (no launchctl, no filesystem writes) so it's fully unit-testable;
 the subprocess-driving `cmd_*` handlers (install/uninstall/start/stop/status) are exercised
-live in Task 6's manual verification, the same way scripts/start.py's own supervision loop
+live in Task 6's manual verification (which labels start/stop/uninstall touch is pinned below
+against a fake `launchctl`, final review I3), the same way scripts/start.py's own supervision loop
 is — see tests/test_start_launcher.py for the parallel (parser + pure-function tests only,
 no mocked subprocess plumbing).
 """
@@ -249,3 +250,56 @@ def test_build_parser_preflight_dispatches():
 
     parser = _build_parser()
     assert parser.parse_args(["preflight"]).func is cmd_preflight
+
+
+# --- final review I3: stop/start/restart never touch the watchdog --------------------------
+#
+# `./ibkr stop` used to bootout every installed label, com.ibkr.watchdog included — so a
+# stopped stack was exactly the state the out-of-process watchdog exists to alert on, and it
+# was never running to do so. Ruling: stop/start/restart act on the supervisor (and gateway,
+# if installed) only; the watchdog is loaded/unloaded solely by install/uninstall.
+
+
+def _fake_launchctl(monkeypatch):
+    import argparse
+    import subprocess
+
+    import scripts.launchd as launchd
+
+    calls: list[list[str]] = []
+
+    def fake_run(argv, *a, **k):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(launchd.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        launchd,
+        "_installed_labels",
+        lambda: [launchd.LABEL_SUPERVISOR, launchd.LABEL_WATCHDOG, launchd.LABEL_GATEWAY],
+    )
+    return launchd, calls, argparse.Namespace()
+
+
+def _touched(calls: list[list[str]]) -> set[str]:
+    return {arg.rsplit("/", 1)[-1] for argv in calls for arg in argv if "com.ibkr." in arg}
+
+
+def test_stop_leaves_the_watchdog_loaded(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    assert launchd.cmd_stop(ns) == 0
+    assert all(argv[:2] == ["launchctl", "bootout"] for argv in calls)
+    assert _touched(calls) == {launchd.LABEL_SUPERVISOR, launchd.LABEL_GATEWAY}
+
+
+def test_start_does_not_kickstart_the_watchdog(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    assert launchd.cmd_start(ns) == 0
+    assert _touched(calls) == {launchd.LABEL_SUPERVISOR, launchd.LABEL_GATEWAY}
+
+
+def test_uninstall_still_removes_the_watchdog(monkeypatch, tmp_path):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    monkeypatch.setattr(launchd, "LAUNCH_AGENTS_DIR", tmp_path)
+    assert launchd.cmd_uninstall(ns) == 0
+    assert launchd.LABEL_WATCHDOG in _touched(calls)

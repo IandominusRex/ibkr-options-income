@@ -384,6 +384,21 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
   below. Tests: `tests/test_autonomy.py::test_paper_fills_do_not_count_as_live_evidence` and
   siblings, `tests/test_notify.py::test_auto_queued_order_is_stamped_with_the_process_mode`,
   `tests/test_execution.py::test_process_button_stamps_the_order_with_the_process_mode`.
+- **I3 — `./ibkr stop` also unloaded the watchdog, so a stopped stack never alerted.**
+  `scripts/launchd.py::cmd_stop`/`cmd_start` now act on `_stack_labels()` — every installed label
+  except `com.ibkr.watchdog` (the supervisor, plus the gateway if installed); the watchdog is
+  loaded only by `install` and unloaded only by `uninstall`, so `stop`/`start`/`restart` never
+  touch it. Tests: `tests/test_launchd.py::test_stop_leaves_the_watchdog_loaded`,
+  `::test_start_does_not_kickstart_the_watchdog`, `::test_uninstall_still_removes_the_watchdog`.
+- **M1 — the watchdog's `scan_loop` check alerted during intentional pauses.** The intraday loop
+  skips its new-entry scan while halted and after `scheduler.entry_cutoff`, so
+  `intraday_scan_completed` goes stale by design. `run_checks` now reads `is_halted()` and
+  `is_new_entry_window(now, scheduler.entry_cutoff)` (DB + config, no IBKR) and `scan_loop_check`
+  stays OK in both. A DB error reading the halt flag counts as not halted (alert, don't silence).
+  Tests: `tests/test_watchdog.py::test_scan_loop_check_quiet_*`, `::test_run_checks_scan_loop_*`.
+- **M5 — SETUP §6c described the old install preflight** ("pgrep while the supervisor label isn't
+  already loaded"). Rewritten to describe `scripts.launchd preflight` as it is: always runs,
+  excludes the supervisor job's own process tree.
 
 ## Built (2026-09-30 — scan-loop remediation Task 12: paper-only promotion bypass → run on FULL autonomy)
 
@@ -787,7 +802,8 @@ No IBKR connection, no clientId.
 Seven pure-function checks composed by `run_checks(now, cfg)`: `supervisor` (`pgrep -f
 "scripts.start"`), `gateway_port` (TCP connect to the configured IBKR port), `command_drain` and
 `monitor` (heartbeat staleness — `monitor` only checked during RTH), `scan_loop` (RTH +
-post-open-grace staleness of `intraday_scan_completed`), `eod` (on a trading day, `eod_grace_minutes`
+post-open-grace staleness of `intraday_scan_completed`; quiet while halted or past
+`scheduler.entry_cutoff` since the final review's M1 fix), `eod` (on a trading day, `eod_grace_minutes`
 past `scheduler.eod_report`, `eod_completed` must be dated today in ET — means the run *finished*,
 not that every step inside it succeeded), and `iv_history` (any universe∪held symbol's newest
 `iv_history` row more than `iv_max_stale_trading_days` trading sessions old, reported as one
@@ -847,7 +863,8 @@ operator" into one command on macOS: `./ibkr install` writes and loads two launc
 (`plistlib.dumps`, no string templates — the repo path's space, `~/Desktop/IBKR Investments`,
 is never a hand-rolled XML-escaping concern) and fully unit-tested; `install`/`uninstall`/
 `start`/`stop`/`status` drive `launchctl bootstrap`/`bootout`/`kickstart -k`/`print` against
-whichever labels are currently installed on disk. `./ibkr` (bash) wraps that CLI plus `logs
+whichever labels are currently installed on disk (`start`/`stop` skip `com.ibkr.watchdog` since
+the final review's I3 fix, 2026-09-30 — only `install`/`uninstall` load/unload it). `./ibkr` (bash) wraps that CLI plus `logs
 <name>` (tails `logs/<name>.log`), `watchdog` (`python -m scripts.watchdog`, a manual one-shot
 outside launchd), and a dispatcher for `autonomy` (Task 12 built the target script,
 `scripts/autonomy.py` — see its own "Built" entry above). `install`

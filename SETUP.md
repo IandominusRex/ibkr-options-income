@@ -761,10 +761,10 @@ prevent a *closed-lid* sleep on battery — keep the Mac plugged in, or on a wir
 ./ibkr install                 # writes + loads com.ibkr.supervisor and com.ibkr.watchdog
 ./ibkr install --with-gateway  # also installs com.ibkr.gateway
 ./ibkr status                  # state + pid per agent, then the watchdog's own health checks
-./ibkr stop                    # unloads every installed agent (KeepAlive won't respawn it)
-./ibkr start                   # reloads/restarts them
-./ibkr restart                 # stop, then start
-./ibkr uninstall                # unloads and deletes every installed agent's plist
+./ibkr stop                    # unloads the supervisor (+ gateway if installed) — NOT the watchdog
+./ibkr start                   # reloads/restarts the supervisor (+ gateway)
+./ibkr restart                 # stop, then start (supervisor + gateway only)
+./ibkr uninstall                # unloads and deletes every installed agent's plist, watchdog included
 ./ibkr logs approval             # tail logs/approval.log (also: monitor|api|research|eod|watchdog|supervisor)
 ./ibkr watchdog                  # run one watchdog health check right now (not through launchd)
 ./ibkr autonomy [level]         # show/set the autonomy rung (scripts/autonomy.py)
@@ -791,10 +791,19 @@ running mode — paper fills never count as live evidence; fixed 2026-09-30, bef
 `full` run's own fills let `full` carry into live), and it only runs when `approval_service`
 starts. See the "Live-cutover safety checklist" in §12 below.
 
-`install` refuses to run over a terminal-launched `scripts.start` that's still alive (checked via
-`pgrep -f scripts.start` while the supervisor label isn't already loaded) — two supervisors would
-fight over clientIds (`config/settings.yaml → ibkr.client_ids`). Stop the terminal session
-(Ctrl-C) first.
+**The watchdog stays loaded across `stop`/`start`/`restart`** (fixed 2026-09-30). Only
+`install` loads `com.ibkr.watchdog` and only `uninstall` unloads it — a stopped stack is exactly
+what the watchdog exists to alert on, so expect its `supervisor`/heartbeat alerts while you've
+stopped the stack on purpose (`./ibkr uninstall` removes the watchdog too, if you want it silent). Before this
+fix `./ibkr stop` unloaded the watchdog too, so a stopped stack never alerted.
+
+`install` refuses to run over a terminal-launched `scripts.start` that's still alive —
+two supervisors would fight over clientIds (`config/settings.yaml → ibkr.client_ids`). The
+check (`python -m scripts.launchd preflight`) runs **every time**, whether or not the supervisor
+label is already loaded: it lists every `scripts.start` process (`pgrep -f scripts.start`),
+excludes the launchd-managed supervisor's own process tree (its pid from `launchctl print` plus
+every descendant, walked via `ps -eo pid,ppid`), and refuses if anything is left over. Stop the
+terminal session (Ctrl-C) first.
 
 Every plist is built with Python's `plistlib` (`scripts.launchd.render_plists`) — no
 hand-editing, no string templating of a repo path that contains a space (`~/Desktop/IBKR

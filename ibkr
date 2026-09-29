@@ -18,10 +18,10 @@ Usage: ibkr <command> [args]
 
   install [--with-gateway]   Write + load the launchd agents (supervisor, watchdog,
                               and optionally gateway) and start them
-  uninstall                  Unload and remove the launchd agents
-  start                      (Re)start the installed agents
-  stop                       Stop the installed agents
-  restart                    stop, then start
+  uninstall                  Unload and remove the launchd agents (watchdog included)
+  start                      (Re)start the supervisor (and gateway, if installed)
+  stop                       Stop the supervisor (and gateway) — the watchdog keeps running
+  restart                    stop, then start (the watchdog is never touched)
   status                     Agent state/pid plus the watchdog's own health checks
   logs <name>                Tail a log: approval|monitor|api|research|eod|watchdog|supervisor
   watchdog                   Run one watchdog health check now (not through launchd)

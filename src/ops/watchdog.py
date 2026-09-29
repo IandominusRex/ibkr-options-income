@@ -32,13 +32,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from src.common.market_hours import is_rth, is_trading_day, today_et
+from src.common.market_hours import is_new_entry_window, is_rth, is_trading_day, today_et
 from src.storage.iv_history import latest_obs_dates
 from src.storage.system_settings import (
     EOD_COMPLETED_KEY,
     MONITOR_HEARTBEAT_KEY,
     SCAN_COMPLETED_KEY,
     get_setting,
+    is_halted,
 )
 
 if TYPE_CHECKING:
@@ -90,11 +91,18 @@ def scan_loop_check(
     minutes_since_open: float,
     max_age_min: int,
     grace_min: int,
+    halted: bool = False,
+    past_entry_cutoff: bool = False,
 ) -> Check:
     """Fails only during RTH, and only once *grace_min* minutes past the open have elapsed —
     the intraday loop needs its first cycle to complete before ``intraday_scan_completed``
-    exists at all, so checking immediately at the open would false-positive every morning."""
-    if not in_rth or minutes_since_open < grace_min:
+    exists at all, so checking immediately at the open would false-positive every morning.
+
+    Also quiet during the loop's two *intentional* pauses (final review M1): while execution is
+    *halted* (``/halt`` — the loop skips its new-entry scan) and once *past_entry_cutoff*
+    (``scheduler.entry_cutoff`` — no new-entry scan after it). In both the completion marker
+    goes stale by design, so alerting on it would only train the operator to ignore alerts."""
+    if not in_rth or minutes_since_open < grace_min or halted or past_entry_cutoff:
         return Check("scan_loop", True, "")
     age = _age_minutes(iso, now)
     if age is None or age > max_age_min:
@@ -356,6 +364,15 @@ def run_checks(now: datetime, cfg: WatchdogCfg) -> list[Check]:
     else:
         checks.append(Check("monitor", True, ""))
 
+    # Intentional pauses (final review M1) — a DB flag and a config value, no IBKR. A DB error
+    # reading the halt flag counts as "not halted": better a spurious alert than silence.
+    try:
+        halted = is_halted()
+    except Exception:
+        halted = False
+    past_entry_cutoff = in_rth and not is_new_entry_window(
+        now_et, entry_cutoff=full_cfg.scheduler.entry_cutoff
+    )
     checks.append(
         scan_loop_check(
             get_setting(SCAN_COMPLETED_KEY) or None,
@@ -364,6 +381,8 @@ def run_checks(now: datetime, cfg: WatchdogCfg) -> list[Check]:
             minutes_since_open=minutes_since_open,
             max_age_min=cfg.scan_max_age_minutes,
             grace_min=cfg.scan_grace_minutes,
+            halted=halted,
+            past_entry_cutoff=past_entry_cutoff,
         )
     )
 

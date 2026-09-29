@@ -34,7 +34,9 @@ CLI: ``install [--with-gateway]``, ``uninstall``, ``start``, ``stop``, ``status`
 guard, ``logs``, ``watchdog``, and ``autonomy`` dispatch). Every subcommand here operates on
 whichever of the three labels are currently *installed* (a plist present under
 ``~/Library/LaunchAgents``), discovered from disk rather than requiring the caller to name
-one explicitly.
+one explicitly — except that ``start``/``stop`` (and so ``./ibkr restart``) never touch
+``com.ibkr.watchdog``: it is loaded only by ``install`` and unloaded only by ``uninstall``, so
+a stopped stack still gets alerted on (final review I3).
 """
 
 from __future__ import annotations
@@ -163,6 +165,16 @@ def _installed_labels() -> list[str]:
     return [label for label in ALL_LABELS if _plist_path(label).exists()]
 
 
+def _stack_labels() -> list[str]:
+    """Installed labels ``start``/``stop``/``restart`` act on: everything except the watchdog.
+
+    Final review I3 (2026-09-30): ``stop`` used to bootout every installed label, the watchdog
+    included, so a stopped stack — exactly what the out-of-process watchdog exists to alert on —
+    never alerted. The watchdog is loaded/unloaded only by ``install``/``uninstall``.
+    """
+    return [label for label in _installed_labels() if label != LABEL_WATCHDOG]
+
+
 # --- subcommands -------------------------------------------------------------------------
 
 
@@ -206,7 +218,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    labels = _installed_labels()
+    labels = _stack_labels()
     if not labels:
         print("No launchd agents installed. Run `./ibkr install` first.", file=sys.stderr)
         return 1
@@ -233,7 +245,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
-    labels = _installed_labels()
+    labels = _stack_labels()
     if not labels:
         print("No launchd agents installed.")
         return 0
