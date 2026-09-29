@@ -119,6 +119,36 @@ _AUTONOMY_ORDER = [
 ]
 
 
+def _evidence_counts() -> tuple[int, int, int]:
+    """(fills, order attempts, risk-reducing closes) for the **current mode only**.
+
+    Final review I1 (2026-09-30): ``FillRow`` and ``OrderRow`` both carry ``is_live``, and the
+    counts are filtered to ``is_live == get_config().is_live``. Counting every row let a paper
+    FULL run with >=20 *paper* fills satisfy ``enforce_live_autonomy_evidence()`` in live mode,
+    so FULL carried into live trading on paper evidence alone. Paper history is never live
+    evidence; live promotions need live fills. Raises on a DB error — callers decide.
+    """
+    from sqlalchemy import func, select
+
+    from src.storage.models import FillRow, OrderRow
+
+    live = bool(get_config().is_live)
+    with session_scope() as s:
+        fills = s.execute(
+            select(func.count()).select_from(FillRow).where(FillRow.is_live.is_(live))
+        ).scalar_one()
+        attempts = s.execute(
+            select(func.count()).select_from(OrderRow).where(OrderRow.is_live.is_(live))
+        ).scalar_one()
+        closes = s.execute(
+            select(func.count())
+            .select_from(OrderRow)
+            .where(OrderRow.is_live.is_(live))
+            .where(OrderRow.candidate_id.like("close:%"))
+        ).scalar_one()
+    return int(fills), int(attempts), int(closes)
+
+
 def _evidence_blockers(target: AutonomyLevel) -> list[str]:
     """The >=20 fills / >=60% fill rate / >=1 close evidence check for *target*, independent of
     the current rung and of ``automation.paper_skip_promotion_gate``.
@@ -129,20 +159,9 @@ def _evidence_blockers(target: AutonomyLevel) -> list[str]:
     ``promotion_blockers``'s own demotion/no-op early-return would otherwise short-circuit to
     ``[]`` without ever consulting the fill history.
     """
-    from sqlalchemy import func, select
-
-    from src.storage.models import FillRow, OrderRow
-
     blockers: list[str] = []
     try:
-        with session_scope() as s:
-            fills = s.execute(select(func.count()).select_from(FillRow)).scalar_one()
-            attempts = s.execute(select(func.count()).select_from(OrderRow)).scalar_one()
-            closes = s.execute(
-                select(func.count())
-                .select_from(OrderRow)
-                .where(OrderRow.candidate_id.like("close:%"))
-            ).scalar_one()
+        fills, attempts, closes = _evidence_counts()
     except Exception:
         return ["could not read fill history"]
 
@@ -223,22 +242,12 @@ def enforce_live_autonomy_evidence() -> AutonomyLevel | None:
 
 
 def autonomy_progress() -> tuple[int, float, bool]:
-    """(fills, fill_rate, has_closed_once) — the same evidence ``promotion_blockers`` checks,
-    for display in the ``/autonomy`` status text. Read-only; never used to gate anything itself.
+    """(fills, fill_rate, has_closed_once) — the same current-mode evidence
+    ``promotion_blockers`` checks (``_evidence_counts``), for display in the ``/autonomy``
+    status text. Read-only; never used to gate anything itself.
     """
-    from sqlalchemy import func, select
-
-    from src.storage.models import FillRow, OrderRow
-
     try:
-        with session_scope() as s:
-            fills = s.execute(select(func.count()).select_from(FillRow)).scalar_one()
-            attempts = s.execute(select(func.count()).select_from(OrderRow)).scalar_one()
-            closes = s.execute(
-                select(func.count())
-                .select_from(OrderRow)
-                .where(OrderRow.candidate_id.like("close:%"))
-            ).scalar_one()
+        fills, attempts, closes = _evidence_counts()
     except Exception:
         return (0, 0.0, False)
     rate = (fills / attempts) if attempts else 0.0

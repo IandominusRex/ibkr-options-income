@@ -434,6 +434,8 @@ async def _auto_queue_candidates(
                         approval_id=approval.id,
                         state=OrderState.QUEUED,
                         snapshot=snapshot,
+                        # Autonomy evidence is counted per mode (final review I1).
+                        is_live=bool(cfg.is_live),  # type: ignore[attr-defined]
                     )
                     s.add(order)
             except IntegrityError:

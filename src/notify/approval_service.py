@@ -200,6 +200,8 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
                     approval_id=approval_id,
                     state=OrderState.QUEUED,
                     snapshot=snapshot,
+                    # Autonomy evidence is counted per mode (final review I1).
+                    is_live=bool(get_config().is_live),
                 )
                 session.add(order)
                 decision_text = f"✅ Approved — queued for execution\n{candidate_display}"

@@ -238,3 +238,102 @@ def test_startup_calls_the_live_autonomy_enforcement_before_the_auto_act_loops()
         "enforce_live_autonomy_evidence must run before the intraday loop"
     )
     assert call_idx < poll_idx, "enforce_live_autonomy_evidence must run before the order-poll loop"
+
+
+# --------------------------------------------------------------------------- #
+# Final review I1: evidence is counted only from the CURRENT mode's own fills/orders. FillRow
+# and OrderRow both carry `is_live`; counting every row let a paper FULL run with >=20 paper
+# fills satisfy `enforce_live_autonomy_evidence()` in live mode, so FULL carried into live on
+# paper evidence alone. Paper history must never count as live evidence (and vice versa).
+# --------------------------------------------------------------------------- #
+
+
+def _seed_evidence(*, is_live: bool, fills: int = 25, closes: int = 1) -> None:
+    from src.storage.db import session_scope
+    from src.storage.models import FillRow, OrderRow
+
+    with session_scope() as s:
+        for i in range(fills):
+            s.add(OrderRow(candidate_id=f"cand-{is_live}-{i}", is_live=is_live))
+            s.add(
+                FillRow(
+                    order_id=i + 1,
+                    candidate_id=f"cand-{is_live}-{i}",
+                    filled_qty=1,
+                    avg_price=1.0,
+                    is_live=is_live,
+                )
+            )
+        for i in range(closes):
+            s.add(OrderRow(candidate_id=f"close:{is_live}-{i}", is_live=is_live))
+
+
+def test_paper_fills_do_not_count_as_live_evidence(monkeypatch):
+    from src.common.config import get_config
+    from src.storage.system_settings import (
+        enforce_live_autonomy_evidence,
+        get_autonomy_level,
+        set_autonomy_level,
+    )
+
+    _seed_evidence(is_live=False)  # a full paper FULL run's worth of evidence
+    cfg = get_config()
+    monkeypatch.setattr(type(cfg), "is_live", property(lambda self: True))
+    set_autonomy_level(AutonomyLevel.FULL)
+
+    assert enforce_live_autonomy_evidence() is AutonomyLevel.FULL
+    assert get_autonomy_level() is AutonomyLevel.MANUAL
+
+
+def test_live_fills_do_count_as_live_evidence(monkeypatch):
+    from src.common.config import get_config
+    from src.storage.system_settings import (
+        enforce_live_autonomy_evidence,
+        get_autonomy_level,
+        set_autonomy_level,
+    )
+
+    _seed_evidence(is_live=True)
+    cfg = get_config()
+    monkeypatch.setattr(type(cfg), "is_live", property(lambda self: True))
+    set_autonomy_level(AutonomyLevel.FULL)
+
+    assert enforce_live_autonomy_evidence() is None
+    assert get_autonomy_level() is AutonomyLevel.FULL
+
+
+def test_live_promotion_needs_live_evidence(monkeypatch):
+    from src.common.config import get_config
+    from src.storage.system_settings import promotion_blockers, set_autonomy_level
+
+    _seed_evidence(is_live=False)
+    cfg = get_config()
+    monkeypatch.setattr(type(cfg), "is_live", property(lambda self: True))
+    monkeypatch.setattr(cfg.automation, "paper_skip_promotion_gate", False)
+    set_autonomy_level(AutonomyLevel.MANUAL)
+
+    blockers = promotion_blockers(AutonomyLevel.FULL)
+    assert any("needs >=20 fills, has 0" in b for b in blockers)
+    assert any("close" in b for b in blockers)
+
+
+def test_paper_promotion_counts_paper_evidence_only(monkeypatch):
+    from src.common.config import get_config
+    from src.storage.system_settings import (
+        autonomy_progress,
+        promotion_blockers,
+        set_autonomy_level,
+    )
+
+    _seed_evidence(is_live=False)
+    _seed_evidence(is_live=True, fills=3, closes=0)  # live rows must not inflate paper counts
+    cfg = get_config()
+    monkeypatch.setattr(type(cfg), "is_live", property(lambda self: False))
+    monkeypatch.setattr(cfg.automation, "paper_skip_promotion_gate", False)
+    set_autonomy_level(AutonomyLevel.MANUAL)
+
+    assert promotion_blockers(AutonomyLevel.FULL) == []
+    fills, rate, closed = autonomy_progress()
+    assert fills == 25
+    assert closed is True
+    assert rate == pytest.approx(25 / 26)

@@ -1661,3 +1661,39 @@ def test_process_button_freezes_approval_snapshot_onto_order(monkeypatch, tmp_pa
         order = s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalar_one()
         assert order.snapshot is not None
         assert order.snapshot["contracts"] == 3
+
+
+@pytest.mark.parametrize("is_live", [False, True])
+def test_process_button_stamps_the_order_with_the_process_mode(monkeypatch, tmp_path, is_live):
+    """Final review I1: autonomy evidence is counted per mode (``OrderRow.is_live``), so a
+    manually approved entry order must record the mode it was queued in."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.common.config import get_config
+    from src.notify.approval_service import _process_button
+    from src.storage.models import ApprovalRow, OrderRow
+
+    cfg = get_config()
+    monkeypatch.setattr(type(cfg), "is_live", property(lambda self: is_live))
+    cand = _make_candidate(candidate_id="mode-approve")
+    with dbmod.session_scope() as s:
+        approval = ApprovalRow(
+            candidate_id="mode-approve",
+            status=ApprovalStatus.PENDING,
+            chat_id="1",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            snapshot=cand.model_dump(mode="json"),
+        )
+        s.add(approval)
+        s.flush()
+        approval_id = approval.id
+
+    found, _text, _ = _process_button(approval_id, "approve")
+    assert found is True
+
+    with dbmod.session_scope() as s:
+        from sqlalchemy import select
+
+        order = s.execute(select(OrderRow).where(OrderRow.approval_id == approval_id)).scalar_one()
+        assert order.is_live is is_live

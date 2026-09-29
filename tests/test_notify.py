@@ -250,8 +250,16 @@ def mock_bot_cls():
     return mock_cls, mock_instance
 
 
-def _mock_cfg(monkeypatch, *, token: str = "tok", chat_id: str = "99999", ttl: int = 60):
+def _mock_cfg(
+    monkeypatch,
+    *,
+    token: str = "tok",
+    chat_id: str = "99999",
+    ttl: int = 60,
+    is_live: bool = False,
+):
     mock = MagicMock()
+    mock.is_live = is_live
     mock.secrets.telegram_bot_token = token
     mock.secrets.telegram_chat_id = chat_id
     mock.secrets.telegram_thread_scan = ""
@@ -830,6 +838,32 @@ async def test_auto_queue_creates_order_then_skips_duplicate(mock_bot_cls, monke
     assert len(orders) == 1  # exactly one order despite two scans
     assert orders[0].state == "queued"
     assert len(approvals) == 1
+
+
+@pytest.mark.parametrize("is_live", [False, True])
+async def test_auto_queued_order_is_stamped_with_the_process_mode(
+    mock_bot_cls, monkeypatch, tmp_path, is_live
+):
+    """Final review I1: autonomy evidence is counted per mode (``OrderRow.is_live``), so an
+    auto-queued entry order must record the mode it was queued in — otherwise every live entry
+    attempt would count as a paper one and the live fill rate would be meaningless."""
+    _db_setup(tmp_path, monkeypatch)
+    _mock_cfg(monkeypatch, is_live=is_live)
+    from src.storage.system_settings import set_autonomy_level
+
+    set_autonomy_level(AutonomyLevel.FULL)
+    mock_cls, _ = mock_bot_cls
+
+    from sqlalchemy import select
+
+    import src.storage.db as dbmod
+
+    with patch("src.notify.sender.Bot", mock_cls):
+        await send_candidates([_make_candidate("mode-001")], [], **_cc_kwargs())
+
+    with dbmod.session_scope() as s:
+        order = s.execute(select(OrderRow).where(OrderRow.candidate_id == "mode-001")).scalar_one()
+        assert order.is_live is is_live
 
 
 async def test_send_candidates_partitions_mixed_whitelist_batch(

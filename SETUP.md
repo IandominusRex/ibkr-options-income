@@ -786,7 +786,10 @@ flag — but the stored rung itself lives in the same DB for paper and live, so 
 here on paper does not reset itself just because the mode flag changed. There is a backstop
 (`approval_service` re-validates and demotes the stored rung to `manual` on every live startup
 if the evidence doesn't hold — see `STATUS.md`'s Task 12 fix-round-1 entry), but it's exactly
-that: a backstop, not the plan. See the "Live-cutover safety checklist" in §12 below.
+that: a backstop, not the plan. It counts **live** fills/orders only (`is_live` must match the
+running mode — paper fills never count as live evidence; fixed 2026-09-30, before which a paper
+`full` run's own fills let `full` carry into live), and it only runs when `approval_service`
+starts. See the "Live-cutover safety checklist" in §12 below.
 
 `install` refuses to run over a terminal-launched `scripts.start` that's still alive (checked via
 `pgrep -f scripts.start` while the supervisor label isn't already loaded) — two supervisors would

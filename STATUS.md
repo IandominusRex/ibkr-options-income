@@ -376,6 +376,14 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
   returns this process, any of its ancestors (walked from `os.getppid()`), or any process whose
   argv[0] basename is `caffeinate`. A genuine stray (another session's daemon) is still killed.
   Tests: `tests/test_start_scheduler.py::test_find_stale_pids_spares_*`.
+- **I1 — the live-startup autonomy backstop counted paper fills as live evidence.** Autonomy
+  evidence (fills / fill rate / closes) is now counted only from rows whose `is_live` matches the
+  running process (`system_settings._evidence_counts`), on the promotion path, the live-startup
+  `enforce_live_autonomy_evidence()` backstop and `autonomy_progress()` alike; entry `OrderRow`s
+  are now stamped with `is_live` at creation. See the corrected paragraph in the live-cutover gate
+  below. Tests: `tests/test_autonomy.py::test_paper_fills_do_not_count_as_live_evidence` and
+  siblings, `tests/test_notify.py::test_auto_queued_order_is_stamped_with_the_process_mode`,
+  `tests/test_execution.py::test_process_button_stamps_the_order_with_the_process_mode`.
 
 ## Built (2026-09-30 — scan-loop remediation Task 12: paper-only promotion bypass → run on FULL autonomy)
 
@@ -3061,4 +3069,15 @@ real fill/fill-rate/close evidence (never the paper bypass) and demotes to `manu
 if the evidence doesn't hold — logging a WARNING with the unmet criteria and sending a best-effort
 Telegram notice (`format_autonomy_demotion`). This is the backstop, not the plan: step 1 above
 (demote by hand before cutover) is still the operator's job; the startup check exists so a missed
-step 1 fails safe instead of silently running `full` live with no evidence.
+step 1 does not silently run `full` live with no evidence.
+
+**Corrected again (final review I1, 2026-09-30):** as first shipped, this backstop was *not* fail
+safe. `_evidence_blockers` counted every `FillRow`/`OrderRow` regardless of their `is_live` column,
+so after a paper `full` run with >=20 paper fills, >=60% paper fill rate and one paper close, the
+live startup check passed on **paper** evidence and `full` carried into live anyway. The counts are
+now filtered to `is_live == Config.is_live` (`system_settings._evidence_counts`, shared by the
+promotion path, the startup backstop and the `/autonomy` progress display), so a live rung needs
+live fills; and both entry-order writers (`sender._auto_queue_candidates`,
+`approval_service._process_button`) now stamp `OrderRow.is_live` — before this they left it at the
+column default `False`, so live entry attempts would have been counted as paper ones. It remains a
+backstop that only fires at `approval_service` startup — step 1 is still the plan.
