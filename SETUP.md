@@ -563,24 +563,11 @@ no Telegram responses, no order fills.
 while true; do python -m scripts.run_approval_service; sleep 5; done
 ```
 
-**macOS launchd** — create `~/Library/LaunchAgents/com.ibkr.approval.plist`:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.ibkr.approval</string>
-  <key>ProgramArguments</key><array>
-    <string>/path/to/IBKR Investments/.venv/bin/python</string>
-    <string>-m</string><string>scripts.run_approval_service</string>
-  </array>
-  <key>WorkingDirectory</key><string>/path/to/IBKR Investments</string>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/ibkr_approval.log</string>
-  <key>StandardErrorPath</key><string>/tmp/ibkr_approval.log</string>
-</dict></plist>
-```
-Load with `launchctl load ~/Library/LaunchAgents/com.ibkr.approval.plist`.
+**macOS launchd:** don't hand-write a plist for one daemon — `./ibkr install` (see §6c "Run it
+as a background service (launchd)" below) wraps the **whole** Option A stack (`scripts.start`,
+so approval + monitor + API + research worker + the EOD scheduler together) plus the
+out-of-process watchdog under launchd's `KeepAlive`, which is what this section is otherwise
+hand-rolling piecemeal. Use that instead.
 
 **Linux systemd** — create `/etc/systemd/system/ibkr-approval.service`:
 ```ini
@@ -753,37 +740,12 @@ Run it by hand once to confirm Telegram delivery works:
 python -m scripts.watchdog
 ```
 
-Then schedule it — every `watchdog.interval_seconds` (default 300 = 5 min) is a reasonable cadence.
-On macOS, a launchd `LaunchAgent` (`~/Library/LaunchAgents/com.ibkr.watchdog.plist`):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.ibkr.watchdog</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/path/to/IBKR Investments/.venv/bin/python</string>
-    <string>-m</string><string>scripts.watchdog</string>
-  </array>
-  <key>WorkingDirectory</key><string>/path/to/IBKR Investments</string>
-  <key>StartInterval</key><integer>300</integer>
-  <key>StandardOutPath</key><string>/path/to/IBKR Investments/logs/watchdog.log</string>
-  <key>StandardErrorPath</key><string>/path/to/IBKR Investments/logs/watchdog.log</string>
-</dict>
-</plist>
-```
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.ibkr.watchdog.plist
-```
-
-Or, on any platform, a crontab line:
-
-```
-*/5 * * * * cd "/path/to/IBKR Investments" && .venv/bin/python -m scripts.watchdog >> logs/watchdog.log 2>&1
-```
+Then schedule it — every `watchdog.interval_seconds` (default 300 = 5 min) is a reasonable
+cadence. On macOS, `./ibkr install` (§6c, right below) does this for you, alongside the
+supervisor itself; there is exactly one supported way to schedule it on macOS — see §6c rather
+than hand-writing a plist or a crontab line. On Linux/Windows (no launchd), a crontab line or
+Task Scheduler entry running `python -m scripts.watchdog` every `watchdog.interval_seconds`
+is still the way to go — see §7's Windows Task Scheduler recipe for the equivalent pattern.
 
 **Known limitation:** none of this can detect the Mac itself being powered off or asleep — a
 powered-off machine runs no launchd/cron job at all, so nothing alerts. If that matters to you,
@@ -791,6 +753,74 @@ sign up for a free dead-man-switch ping (e.g. [healthchecks.io](https://healthch
 `watchdog.deadman_url` in `config/settings.yaml` to the ping URL — the watchdog GETs it on every
 run where every check passes, and that external service is what notices the pings stopping and
 emails/texts you.
+
+---
+
+## 6c. Run it as a background service (launchd)
+
+`./ibkr` (repo root) is the single control script for everything in §6/§6a/§6b except
+`npm run dev` (the Next.js frontend — a separate Node process). `install`/`uninstall`/`start`/
+`stop`/`status` are a thin wrapper over `python -m scripts.launchd <cmd>` (run that directly if
+you'd rather script against it than `./ibkr`); `logs`/`watchdog`/`autonomy` are handled by
+`./ibkr` itself. Up to three launchd `LaunchAgent`s are involved (see `scripts/launchd.py`):
+
+| Label | Runs | Restart policy |
+|---|---|---|
+| `com.ibkr.supervisor` | `caffeinate -i -s <venv-python> -m scripts.start` — the whole Option A stack (approval service, monitor, API, research worker, EOD scheduler) | `KeepAlive` — launchd restarts it if it ever exits, `ThrottleInterval` 30s |
+| `com.ibkr.watchdog` | `<venv-python> -m scripts.watchdog` | `StartInterval` = `watchdog.interval_seconds` (default 300s) — a one-shot health check, entirely outside the supervisor's process tree (§6b) |
+| `com.ibkr.gateway` (opt-in, `./ibkr install --with-gateway`) | `scripts/ibc/start_gateway.sh` (§4 "Automating Gateway login with IBC") | `RunAtLoad` only — IBC owns Gateway's own restart cycle, so launchd doesn't fight it |
+
+**`caffeinate -i -s`** wraps the supervisor so the Mac won't idle- or system-sleep out from
+under the trading stack while it's running on AC power (the same class of incident as the
+2026-09-11 research-worker sleep freeze — see the troubleshooting table below). It does **not**
+prevent a *closed-lid* sleep on battery — keep the Mac plugged in, or on a wired connection with
+"Prevent automatic sleeping when the display is off" enabled, for unattended operation.
+
+```bash
+./ibkr install                 # writes + loads com.ibkr.supervisor and com.ibkr.watchdog
+./ibkr install --with-gateway  # also installs com.ibkr.gateway
+./ibkr status                  # state + pid per agent, then the watchdog's own health checks
+./ibkr stop                    # unloads every installed agent (KeepAlive won't respawn it)
+./ibkr start                   # reloads/restarts them
+./ibkr restart                 # stop, then start
+./ibkr uninstall                # unloads and deletes every installed agent's plist
+./ibkr logs approval             # tail logs/approval.log (also: monitor|api|research|eod|watchdog|supervisor)
+./ibkr watchdog                  # run one watchdog health check right now (not through launchd)
+./ibkr autonomy [level]         # show/set the autonomy rung (scripts/autonomy.py)
+```
+
+`install` refuses to run over a terminal-launched `scripts.start` that's still alive (checked via
+`pgrep -f scripts.start` while the supervisor label isn't already loaded) — two supervisors would
+fight over clientIds (`config/settings.yaml → ibkr.client_ids`). Stop the terminal session
+(Ctrl-C) first.
+
+Every plist is built with Python's `plistlib` (`scripts.launchd.render_plists`) — no
+hand-editing, no string templating of a repo path that contains a space (`~/Desktop/IBKR
+Investments`). The interpreter used is the repo's own `.venv/bin/python` (left as the unresolved
+symlink chain deliberately — resolving it changes `sys.prefix` away from the venv and drops
+every third-party dependency off `sys.path`; launchd execs through the symlink itself at the OS
+level, same as any `exec()`).
+
+**`watchdog.deadman_url`** (`config/settings.yaml`) is worth setting once `./ibkr install` is
+your normal way to run this: it's the only thing that notices the Mac itself being off or
+asleep, since no watchdog cycle runs at all in that case — sign up for a free ping URL (e.g.
+[healthchecks.io](https://healthchecks.io)) and the watchdog GETs it on every all-clear run.
+
+**Known environment caveat (2026-09-29):** on at least one verification machine, the framework
+build of Python that `python.org`'s macOS installer ships (the one `.venv/bin/python` resolves
+through) hangs inside its own interpreter bootstrap (`getpath_readlines`, before any of this
+project's code runs) specifically when spawned by the *real* system launchd — reproduced with a
+bare `python -c "print(...)"` plist, no caffeinate, no reference to this repo at all, so it is
+not something `./ibkr`/`scripts.launchd` can fix. The launchd control plane itself (install,
+`KeepAlive` respawn, stop/start, the watchdog's alert/recovery cycle) is unaffected, since all of
+that depends only on process *existence* (`pgrep -f scripts.start`), not on the process finishing
+startup — but the daemons themselves never come up. If `./ibkr status` shows a stable pid that
+never spawns approval/monitor/api/research children (check with `pgrep -fl scripts.run_`) and
+`logs/launchd-supervisor.log` stays empty, this is almost certainly it. The most likely fix:
+grant Full Disk Access (System Settings → Privacy & Security → Full Disk Access) to
+`/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app` — the same class of
+fix §7's cron tip below already documents for `~/Desktop`/`~/Documents` project locations.
+Running the exact same command from an interactive Terminal session is unaffected either way.
 
 ---
 
@@ -845,54 +875,11 @@ To disable the built-in scheduler, start with `python -m scripts.start --no-eod`
 ### macOS — auto-start daemons on login with launchd
 
 The launcher (`scripts.start`) runs the daemons *and* the EOD scheduler, so it needs to restart
-automatically if the machine reboots. The macOS-native way is a launchd plist.
-
-Create `~/Library/LaunchAgents/com.ibkr.start.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.ibkr.start</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>/path/to/IBKR Investments/.venv/bin/python</string>
-    <string>-m</string>
-    <string>scripts.start</string>
-  </array>
-
-  <key>WorkingDirectory</key>
-  <string>/path/to/IBKR Investments</string>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <true/>
-
-  <key>StandardOutPath</key>
-  <string>/path/to/IBKR Investments/logs/start.log</string>
-
-  <key>StandardErrorPath</key>
-  <string>/path/to/IBKR Investments/logs/start.log</string>
-</dict>
-</plist>
-```
-
-Load it immediately (no reboot needed):
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.ibkr.start.plist
-```
-
-To stop it: `launchctl unload ~/Library/LaunchAgents/com.ibkr.start.plist`
-
-> **Note:** launchd restarts the process if it crashes — the same behaviour as `scripts.start`'s
-> built-in supervisor, so you get two layers of restart protection.
+automatically if the machine reboots. The macOS-native way is a launchd plist — see **§6c "Run
+it as a background service (launchd)"** above: `./ibkr install` writes and loads
+`com.ibkr.supervisor` (`RunAtLoad` + `KeepAlive`, so it survives both a reboot and a crash — the
+two layers of restart protection this section used to hand-write a plist for) alongside the
+out-of-process watchdog, in one step.
 
 ---
 
@@ -1333,7 +1320,7 @@ an 8B model, depending on prompt length and memory pressure.
 | A watchlist remove or live-mode confirm shows "the command could not be created" while the backend actually succeeded | An old proxy turned upstream 204s into 500s (a 204 must carry a null body) | Same fix — rebuild/restart the frontend; fixed 2026-09-08 |
 | Ticker page price chart is empty | **Fixed 2026-09-11:** `GET /research/{symbol}/bars` now does a one-time on-demand backfill the first time a symbol has zero `daily_bars` rows, instead of only ever being populated by the nightly warm-tier cron — a first-ever view of any symbol should now show a real chart immediately. If it's still empty: the on-demand fetch itself failed (check `logs/api.log` for "On-demand daily-bar backfill failed for \<SYMBOL\>", usually a yfinance outage) | Check `GET /health → worker_heartbeat` for the worker's own health; retry the page (the backfill is best-effort and re-attempts on every view with zero rows), or run one warm refresh manually: `python -c "from src.research.ingest.quotes import refresh_warm_tier; refresh_warm_tier()"` |
 | Web search returns no results for any ticker | The research worker hasn't run yet — `data/research.db` has no `symbols` rows | Run `python -m scripts.run_research_worker` once on first start; it pulls the SEC symbol directory (~10k tickers). Search works after the first successful job |
-| The research worker (`scripts.run_research_worker`) goes quiet for hours/days with nothing in its log — no errors, no warnings, just silence — until the process is manually restarted | The Mac went to sleep (lid closed, no `caffeinate`, no launchd `KeepAlive`) and froze every thread in the process for as long as it was asleep. **Fixed 2026-09-11:** the scheduler no longer drops a job it discovers late (`misfire_grace_time=None` in `build_scheduler()`) — it runs the moment the process next gets CPU time instead of silently skipping forever, so a restart is no longer required after a sleep/wake cycle | This is a *recovery* fix, not sleep prevention — the worker still does nothing while the Mac is actually asleep, it just resumes correctly once it wakes (lid open, scheduled wake) instead of needing a manual kill + restart. To stop the Mac sleeping at all while the worker should be running, launch it under `caffeinate -is python3 -m scripts.run_research_worker` or a launchd job with `KeepAlive` and the display/system sleep disabled |
+| The research worker (`scripts.run_research_worker`) goes quiet for hours/days with nothing in its log — no errors, no warnings, just silence — until the process is manually restarted | The Mac went to sleep (lid closed, no `caffeinate`, no launchd `KeepAlive`) and froze every thread in the process for as long as it was asleep. **Fixed 2026-09-11:** the scheduler no longer drops a job it discovers late (`misfire_grace_time=None` in `build_scheduler()`) — it runs the moment the process next gets CPU time instead of silently skipping forever, so a restart is no longer required after a sleep/wake cycle | This is a *recovery* fix, not sleep prevention — the worker still does nothing while the Mac is actually asleep, it just resumes correctly once it wakes (lid open, scheduled wake) instead of needing a manual kill + restart. To stop the Mac sleeping at all while the worker should be running, run the whole stack under `./ibkr install` (§6c) — its `com.ibkr.supervisor` agent already wraps `scripts.start` in `caffeinate -i -s` with `KeepAlive`, which is exactly this fix |
 | Ticker page's AI summary panel says "unavailable" and the Generate button does nothing | `research.summary.backend` is set to `anthropic`/`openai` but `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is missing in `.env`, or `claude_cli` is set but `claude` isn't on PATH and `claude.enabled` is false | Set the matching `.env` key, or switch `research.summary.backend` to `ollama` (requires `ollama serve` running) — a failed generation fails soft to `pending`, never an error |
 | A ticker page (or `/options`) is missing data/fields you know were just fixed in code — price, day change, checks, IV all blank, or an approval card's timestamp is empty | `scripts.run_api`/`scripts.run_research_worker` run under plain `uvicorn.run()`/APScheduler with **no hot-reload** — a process started before your latest pull or edit keeps serving the old code indefinitely, however new the files on disk are. `next dev` (the frontend) does hot-reload on its own, so this only ever looks like a frontend bug | Check how long the process has been up (`ps -o pid,lstart,command -p $(pgrep -f scripts.run_api)`) against your last commit/edit time; if the process predates it, kill and restart both `python -m scripts.run_api` and `python -m scripts.run_research_worker` |
 | Watchlist/ticker-page "Day" change is blank right after a symbol's first-ever view, or reads like a meaningless small number that drifts every 15 minutes | **Fixed 2026-09-14:** `change_pct` used to be the delta between two consecutive 15-min quote polls (`refresh_quotes`) — `None` until a second poll ever ran, and never a real day-over-day figure even once it was set. It's now `_day_change_pct()` in `ingest/quotes.py`: the change versus the most recent completed session's close in `daily_bars`, available from the very first poll. A first-ever view also no longer waits for that poll at all — `materialize()`'s `_quote()` seeds a quote on demand (`refresh_quote_for`) the moment a symbol with no `QuoteRow` is viewed | If it's still blank: the on-demand fetch itself failed (check the API log for "On-demand quote fetch failed for \<SYMBOL\>") or the symbol has no `daily_bars` history yet and the backfill also failed — retry the page, or run `python -c "from src.research.ingest.quotes import refresh_quotes; refresh_quotes()"` during market hours |

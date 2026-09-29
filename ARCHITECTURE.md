@@ -470,7 +470,11 @@ of the always-on processes `scripts/start.py` supervises. That's a blind spot: i
 (or the Mac it runs on) stops, nothing is left running to notice or alert. The 2026-09-15..22
 outage went unnoticed for exactly this reason. `src/ops/watchdog.py` is the fix: a **one-shot**
 script (`scripts/watchdog.py`, `python -m scripts.watchdog`) meant to be scheduled by launchd or
-cron, entirely outside the supervised process tree, with no IBKR connection and no clientId.
+cron, entirely outside the supervised process tree, with no IBKR connection and no clientId. On
+macOS, **Task 6**'s `./ibkr install` schedules it as its own `com.ibkr.watchdog` launchd agent
+(`StartInterval = watchdog.interval_seconds`), deliberately a *separate* agent from
+`com.ibkr.supervisor` (which runs `scripts.start`) rather than a thread inside it — see
+"Process architecture" below and `scripts/launchd.py`.
 
 Every check is a pure function over its inputs (an ISO timestamp, a fixed `now`, RTH/trading-day
 booleans, thresholds) — testable without a DB or a live stack. `run_checks(now, cfg)` composes
@@ -541,7 +545,10 @@ The dashboard never connects to IBKR directly — it reads entirely from the SQL
 
 ### `scripts/` — Command-line entrypoints
 
-These are the scripts you run directly:
+These are the scripts you run directly. On macOS, most of them don't need to be run directly at
+all — `ibkr` (repo root, **Task 6**) is the single control script that wraps `scripts.start` and
+`scripts.watchdog` under launchd (`install`/`uninstall`/`start`/`stop`/`restart`/`status`,
+plus `logs`/`watchdog`/`autonomy`); see the `launchd.py` row below and `SETUP.md` §6c.
 
 | Script | How to run | What it does |
 |---|
@@ -559,7 +566,8 @@ These are the scripts you run directly:
 | `run_research_worker.py` | `python -m scripts.run_research_worker` | Starts the research ingestion worker: populates `symbols` from a real SEC fetch on startup, then an APScheduler `BackgroundScheduler` re-runs it weekly. No `ib_async` connection, no clientId — writes only to `data/research.db`. A failing job is logged and swallowed (`ingest/jobs.py::run_job`); the `worker_heartbeat` table it writes only on success backs `GET /health`'s `worker_heartbeat` field. Started automatically by `scripts.start` (opt out with `--no-research`); run standalone only when you want it up without the rest of the launcher. |
 | `ibc/start_gateway.sh` | `./scripts/ibc/start_gateway.sh` | Launches IB Gateway via [IBC](https://github.com/IbcAlpha/IBC) instead of by hand — automates the login screen and (once `AutoRestartTime` is set in Gateway's own Lock-and-Exit config) the daily restart, so Gateway doesn't sit disconnected for hours whenever nobody is around to click through it. Reads `IBKR_LOGIN_ID`/`IBKR_LOGIN_PASSWORD` from `.env` and derives paper-vs-live from the same `LIVE_TRADING` switch the trading app itself is gated on, so Gateway's mode can never drift out of sync with it. Cannot itself approve an IBKR Mobile push-notification 2FA prompt — that still needs a human tap, at minimum once a week (the mandatory Sunday cold restart). See `SETUP.md` §4 "Automating Gateway login with IBC". |
 | `capacity_report.py` | `python -m scripts.capacity_report --net-liq 300000 --cash 100000` (hypothetical) or `python -m scripts.capacity_report` (live account via IBKR) | Read-only account-sizing diagnostic: one row per `would_own` symbol answering "how many contracts fit right now, and what stops the next one." Calls `engine.capital.resolve_caps`/`seed_budgets`/`max_contracts` — the same helpers the gate and the CSP generator use — with a **fresh** `seed_budgets` call per symbol, so each row reports what that symbol could do *on its own*, not what's left after other candidates already claimed budget (the real scan consumes one shared, greedily-charged `Budgets`; this report deliberately does not). Strike is approximated at 0.90× spot (a stand-in for the ~0.25Δ put the screens target) — a capacity estimate, not a live quote. `binding` names the first constraint that would stop the *next* lot (`cash`, `ticker_risk`, `sector_risk`, `csp_budget`, `ticker_collateral`, `large_slot`, `large_ceiling`), or is empty when the per-candidate `cash_secured_put.max_contracts` hard cap was hit with room to spare. `--net-liq`/`--cash` runs the hypothetical branch (skips the IBKR account fetch entirely); omitted, it opens the existing `healthcheck` clientId/role (no new connection) and pulls the real account + positions. Per-symbol IV/price come from `analytics.iv.get_iv_stats` / `analytics.technicals.get_technical_stats`. Each row's `nlv_needed_for_one` is the NLV at which *that ticker's own concentration cap alone* would admit one lot — mirroring `capital._fits`'s own choice of cap: the risk-unit cap (`max_risk_units_per_ticker_pct`) when `current_iv` is known, since that is what actually gates a first lot once IV is present, and the raw-collateral cap (`max_collateral_per_ticker_pct`) only in the no-IV fallback path; it ignores cash, the CSP budget, and sector risk, so it answers "is this ticker's own cap the binding NLV floor," not "what NLV clears every constraint." The printed table also states its own coverage explicitly — `Coverage: N/M requested symbols had usable price/IV data (K skipped for missing data)` — so a data outage that silently drops symbols from the table can never be mistaken for a smaller-but-still-valid tradeable fraction. This is the tool behind `tests/test_account_sizing.py` — the regression class the suite lacked: not "does the gate reject what it says it rejects" but "given this account and this universe, is the tradeable set non-empty and sane," the blind spot that let a 1-lot CSP silently require `NLV >= 2000 x strike` (D1) and a flat ROC floor silently exclude every low-vol name (D2) both pass CI for months. Never places, sizes for execution, or gates an order. |
-| `watchdog.py` | `python -m scripts.watchdog` | **Task 5.** One-shot out-of-process health check — see `src/ops/watchdog.py` above. Meant to be scheduled by launchd/cron every `watchdog.interval_seconds` (default 300), entirely outside `scripts.start`'s supervised process tree. No IBKR connection, no clientId. Writes only `data/watchdog_state.json`. |
+| `watchdog.py` | `python -m scripts.watchdog` | **Task 5.** One-shot out-of-process health check — see `src/ops/watchdog.py` above. Scheduled every `watchdog.interval_seconds` (default 300) entirely outside `scripts.start`'s supervised process tree — on macOS via `./ibkr install`'s `com.ibkr.watchdog` launchd agent (Task 6); on other platforms, cron. No IBKR connection, no clientId. Writes only `data/watchdog_state.json`. |
+| `launchd.py` | `python -m scripts.launchd {install,uninstall,start,stop,status}` | **Task 6.** Builds and manages the launchd agents `./ibkr` (repo root) wraps — `render_plists(repo, python, *, with_gateway, watchdog_interval) -> dict[str, bytes]` builds every plist with `plistlib.dumps` (no string templates, so the repo path's space — `~/Desktop/IBKR Investments` — is never a hand-rolled XML-escaping concern), keyed by label: `com.ibkr.supervisor` (`caffeinate -i -s <venv-python> -m scripts.start`, `KeepAlive`, `ThrottleInterval` 30s, an `EnvironmentVariables.PATH` including Homebrew's bin dirs so `ollama` resolves inside `scripts.start`'s startup probe), `com.ibkr.watchdog` (`StartInterval = watchdog.interval_seconds`), and the opt-in `com.ibkr.gateway` (`./ibkr install --with-gateway`, `KeepAlive: false` — IBC owns Gateway's own restart cycle). The interpreter path is the repo's own `.venv/bin/python` **left unresolved** (a deliberate choice, verified empirically during Task 6: resolving the symlink chain through to the Framework binary changes `sys.prefix` away from the venv and drops every third-party dependency off `sys.path` — launchd execs through the symlink itself at the OS level regardless, so passing the plain path is both correct and sufficient). `install`/`uninstall`/`start`/`stop`/`status` operate on whichever of the three labels are currently installed (discovered from `~/Library/LaunchAgents/com.ibkr.*.plist` on disk, not passed explicitly); `start` tries `launchctl kickstart -k` first and falls back to re-`bootstrap`-ing the on-disk plist if the label isn't currently loaded (e.g. after a prior `stop`'s `bootout`); `status` summarises `launchctl print`'s state/pid per label, then runs `src.ops.watchdog.run_checks` for the same heartbeat view `./ibkr status` gives. No IBKR connection, no clientId. |
 
 ---
 
@@ -589,6 +597,26 @@ processes that run at the same time.**
 | dashboard | Optional Streamlit (archived to `Archive/dashboard/`) | 21 | Read-only views (reads SQLite; rarely hits IB Gateway) |
 
 One-shots connect, work, and disconnect; the daemons run continuously and self-heal on a dropped socket via `AutoReconnect`.
+
+**How this gets supervised on macOS (Task 6).** `./ibkr install` puts two independent layers of
+process supervision in front of the table above:
+
+```
+launchd (gui/$UID)
+ ├─ com.ibkr.supervisor  (caffeinate -i -s <venv-python> -m scripts.start)  — KeepAlive
+ │   └─ scripts.start supervises, as plain subprocesses, with its own crash auto-restart:
+ │        approval_service (14+15) · intraday_monitor (12) · web_api · research_worker
+ │        · eod_report (16, one-shot, spawned at scheduler.eod_report)
+ ├─ com.ibkr.watchdog     (<venv-python> -m scripts.watchdog)   — StartInterval, one-shot
+ └─ com.ibkr.gateway      (scripts/ibc/start_gateway.sh, opt-in) — RunAtLoad only
+```
+
+launchd only has to keep the **supervisor** process alive (`KeepAlive`) — everything under the
+first bullet is `scripts.start`'s own responsibility, unchanged by Task 6. The watchdog is
+deliberately a **separate** launchd agent, not a thread or subprocess inside the supervisor: the
+whole point (`src/ops/`, Task 5) is that it must keep working even when the supervisor — and
+everything under it — has stopped, which a watchdog living inside the thing it watches cannot
+do. See `scripts/launchd.py` (§`scripts/` above) and `SETUP.md` §6c.
 
 ---
 

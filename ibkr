@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Single control script for the paper-trading stack — everything except `npm run dev`
+# (the Next.js frontend, a separate Node process — see SETUP.md §6a).
+#
+# `install`/`uninstall`/`start`/`stop`/`status` delegate to `scripts/launchd.py`, which owns
+# the three launchd agents (com.ibkr.supervisor, com.ibkr.watchdog, and the opt-in
+# com.ibkr.gateway) — see that module's docstring and SETUP.md "Run it as a background
+# service (launchd)" for the full design. `logs`/`watchdog`/`autonomy` are handled directly
+# here since they don't touch launchd at all.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${REPO}/.venv/bin/python"
+SUPERVISOR_LABEL="com.ibkr.supervisor"
+GUI_TARGET="gui/$(id -u)/${SUPERVISOR_LABEL}"
+
+usage() {
+  cat <<'EOF'
+Usage: ibkr <command> [args]
+
+  install [--with-gateway]   Write + load the launchd agents (supervisor, watchdog,
+                              and optionally gateway) and start them
+  uninstall                  Unload and remove the launchd agents
+  start                      (Re)start the installed agents
+  stop                       Stop the installed agents
+  restart                    stop, then start
+  status                     Agent state/pid plus the watchdog's own health checks
+  logs <name>                Tail a log: approval|monitor|api|research|eod|watchdog|supervisor
+  watchdog                   Run one watchdog health check now (not through launchd)
+  autonomy [level]           Show/set the autonomy rung (scripts/autonomy.py, Task 12)
+EOF
+}
+
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "error: ${PYTHON} not found — create the venv first (see SETUP.md §2)." >&2
+  exit 1
+fi
+
+cmd="${1:-}"
+if [[ -n "${cmd}" ]]; then
+  shift
+fi
+
+case "${cmd}" in
+  install)
+    # Two supervisors would fight over clientIds (config/settings.yaml -> ibkr.client_ids)
+    # — refuse to install over a terminal-launched `scripts.start` that's still running,
+    # unless launchd already owns the supervisor label (a `./ibkr install` re-run).
+    if ! launchctl print "${GUI_TARGET}" >/dev/null 2>&1; then
+      if pgrep -f "scripts\.start" >/dev/null 2>&1; then
+        echo "stop the terminal-launched stack first (Ctrl-C)" >&2
+        exit 1
+      fi
+    fi
+    cd "${REPO}" && exec "${PYTHON}" -m scripts.launchd install "$@"
+    ;;
+  uninstall|start|stop|status)
+    cd "${REPO}" && exec "${PYTHON}" -m scripts.launchd "${cmd}" "$@"
+    ;;
+  restart)
+    cd "${REPO}"
+    "${PYTHON}" -m scripts.launchd stop "$@"
+    exec "${PYTHON}" -m scripts.launchd start "$@"
+    ;;
+  logs)
+    name="${1:-}"
+    if [[ -z "${name}" ]]; then
+      echo "Usage: ibkr logs <approval|monitor|api|research|eod|watchdog|supervisor>" >&2
+      exit 1
+    fi
+    if [[ "${name}" == "supervisor" ]]; then
+      exec tail -F "${REPO}/logs/launchd-supervisor.log"
+    fi
+    exec tail -F "${REPO}/logs/${name}.log"
+    ;;
+  watchdog)
+    cd "${REPO}" && exec "${PYTHON}" -m scripts.watchdog
+    ;;
+  autonomy)
+    cd "${REPO}" && exec "${PYTHON}" -m scripts.autonomy "$@"
+    ;;
+  ""|help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${cmd}" >&2
+    usage
+    exit 1
+    ;;
+esac

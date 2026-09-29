@@ -388,8 +388,10 @@ New `WatchdogCfg` (`src/common/config.py`) + `config/settings.yaml → watchdog:
 off or asleep — no watchdog process runs at all in that case, so nothing alerts. Set
 `watchdog.deadman_url` to an external dead-man-switch service (e.g. healthchecks.io); the watchdog
 GETs it on every run where every check passes, and that external service is what notices the pings
-stopping. Scheduling the script itself (a launchd plist or cron entry) is left to the operator —
-this task ships the check and the alerting, not the OS-level scheduler wiring.
+stopping. Scheduling the script itself (a launchd plist or cron entry) was left to the operator at
+the time this task shipped — **Task 6 (below) now does that on macOS** via `./ibkr install`'s
+`com.ibkr.watchdog` agent; a non-macOS operator still schedules `python -m scripts.watchdog` by
+hand (cron/Task Scheduler).
 
 24 tests in `tests/test_watchdog.py` (pure-function checks, the alert state machine, plain-text
 Telegram send, `run_checks`/`main` composition with everything IBKR/DB/subprocess monkeypatched).
@@ -403,6 +405,62 @@ that check's state untouched so the next cycle retries immediately. (2) `iv_hist
 on the same hourly `realert_minutes` cadence as every other check, contradicting the brief's
 "evaluated once per day" — it now re-alerts at most once per ET calendar date while it stays
 failing (`_alert_due`).
+
+---
+
+## Built (2026-09-29 — scan-loop remediation Task 6: launchd agents + `./ibkr` control script)
+
+`scripts/launchd.py` + `ibkr` (repo root, executable). Turns Task 5's "scheduling is left to the
+operator" into one command on macOS: `./ibkr install` writes and loads two launchd
+`LaunchAgent`s (`com.ibkr.supervisor` — `caffeinate -i -s <venv-python> -m scripts.start`,
+`KeepAlive`, `ThrottleInterval` 30s; `com.ibkr.watchdog` — `<venv-python> -m scripts.watchdog`,
+`StartInterval = watchdog.interval_seconds`), plus an opt-in third (`com.ibkr.gateway`,
+`./ibkr install --with-gateway`, `KeepAlive: false` since IBC owns Gateway's own restart cycle).
+`render_plists(repo, python, *, with_gateway, watchdog_interval) -> dict[str, bytes]` is pure
+(`plistlib.dumps`, no string templates — the repo path's space, `~/Desktop/IBKR Investments`,
+is never a hand-rolled XML-escaping concern) and fully unit-tested; `install`/`uninstall`/
+`start`/`stop`/`status` drive `launchctl bootstrap`/`bootout`/`kickstart -k`/`print` against
+whichever labels are currently installed on disk. `./ibkr` (bash) wraps that CLI plus `logs
+<name>` (tails `logs/<name>.log`), `watchdog` (`python -m scripts.watchdog`, a manual one-shot
+outside launchd), and a dispatcher stub for `autonomy` (Task 12, not yet built). `install`
+refuses to run over a still-alive terminal-launched `scripts.start` (`pgrep -f scripts.start`
+while the supervisor label isn't loaded) — two supervisors would fight over clientIds.
+
+15 tests in `tests/test_launchd.py` (plist rendering, parser wiring, `launchctl print` output
+parsing — no subprocess/launchctl mocking, matching `tests/test_start_launcher.py`'s own
+pattern of testing only the pure/parser surface and leaving the subprocess plumbing to live
+verification).
+
+**Root-caused during live verification, needs a live fix before this is truly "done" on this
+machine:** the repo's `.venv/bin/python` — a symlink chain through python.org's macOS installer
+"framework" build — hangs inside CPython's own interpreter bootstrap (`getpath_readlines`,
+before any of this project's code runs) when spawned by the **real** system launchd, on the
+machine this task was verified on. Reproduced with a bare `python -c "print(...)"` plist (no
+caffeinate, no reference to this repo, `WorkingDirectory=/tmp`), so it is unrelated to this
+task's own code, to the repo living under `~/Desktop`, and to `caffeinate` — it reproduces with
+launchd alone. The same command run from an interactive shell (this session's own Bash tool)
+works instantly. Most likely cause: the process has never been granted Full Disk Access /
+Files-and-Folders TCC access as a background (non-interactive-session) agent — see `SETUP.md`
+§6c's "Known environment caveat" for the exact fix to try (grant Full Disk Access to
+`/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app`) and what it means for
+verification below.
+
+**What *was* and wasn't verified live, given that hang:** the launchd control plane itself —
+install, `KeepAlive` respawning a killed pid within ~2s (well under the ~30s the brief asked
+for), `stop`/`start` (bootout, then a `kickstart -k`→fallback-`bootstrap` round-trip), and the
+watchdog's real Telegram alert/recovery cycle (`./ibkr stop` → `./ibkr watchdog` delivered a
+real "⚠️ supervisor: scripts.start is not running" alert, confirmed by `data/watchdog_state.json`
+recording `last_alert`; `./ibkr start` → `./ibkr watchdog` delivered a real "✅ recovered:
+supervisor" and cleared it) — all of that depends only on **process existence**
+(`pgrep -f scripts.start`), which the hang doesn't affect (a permanently-hanging process still
+matches `pgrep`). All of it was verified live and works. What was **not** verified: the
+supervised daemons (approval service, monitor, API, research worker, EOD) actually coming up
+under launchd on this machine, since the supervisor process never gets past Python's own
+bootstrap to import `scripts.start` at all — `logs/launchd-supervisor.log` stays empty and no
+`scripts.run_*` child ever spawns. The stack was left installed and running (per the task's
+instruction) with this caveat open; an operator on a machine without this TCC gate (or one who
+grants the Full Disk Access above) should see it come up cleanly, since nothing in `scripts.
+launchd`/`ibkr` is implicated.
 
 ---
 
