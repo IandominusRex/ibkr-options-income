@@ -974,22 +974,20 @@ async def handle_campaigns_command(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_expire_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Expire due pending approvals (clears stale cards from the approval queue).
+    """Expire all pending approvals (clears the approval queue without acting on them).
 
     Reuses ``expire_stale_approvals`` (R6) — the same helper ``_order_poll_loop`` calls every
-    cycle — instead of re-implementing the pending-to-expired flip here. That helper only
-    flips rows whose own TTL has actually elapsed (it stamps ``decided_at=now`` on every row it
-    touches, and forcing a fake future ``now`` just to sweep in still-live cards would corrupt
-    that column, which the web /pnl approvals view reads); a card created seconds ago that
-    still has runway is left alone. In practice a queue the operator is manually clearing with
-    ``/expire`` is a stuck/backlogged one, so this is effectively still "clear the queue" —
-    /halt remains the tool for killing a card that hasn't gone stale yet.
+    cycle — instead of re-implementing the pending-to-expired flip here, passing ``force=True``
+    so it keeps this command's documented contract: every pending card is cleared, not just the
+    ones already past their TTL (that narrower sweep is the poll loop's job, run unattended
+    every cycle). ``force=True`` still stamps ``decided_at`` with the real current time, never a
+    fabricated future one, so the web /pnl approvals view never sees a corrupted timestamp.
     """
     if not _is_authorized(update) or update.message is None:
         return
 
     try:
-        count = expire_stale_approvals()
+        count = expire_stale_approvals(force=True)
 
         if count == 0:
             await update.message.reply_text(

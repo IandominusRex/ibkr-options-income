@@ -614,9 +614,12 @@ async def test_status_command_falls_back_when_account_snapshot_times_out(monkeyp
 # --------------------------------------------------------------------------- #
 
 
-async def test_expire_command_expires_only_due_pending_rows(monkeypatch, tmp_path):
-    """`/expire` reuses `expire_stale_approvals`: it flips a past-TTL pending row, leaves a
-    fresh pending row and an approved row alone, and reports the count."""
+async def test_expire_command_clears_every_pending_row_including_fresh(monkeypatch, tmp_path):
+    """`/expire` reuses `expire_stale_approvals(force=True)`: it flips EVERY pending row —
+    including one still well inside its TTL — leaves an approved row alone, and reports the
+    count. This is `/expire`'s documented contract (BotCommand menu, /help, README, SETUP,
+    ARCHITECTURE all say "expire all pending approvals"); the TTL-scoped sweep is the poll
+    loop's job, not this command's (fix round 1, 2026-09-29)."""
     _db_setup(tmp_path, monkeypatch)
     _mock_svc_cfg(monkeypatch, chat_id="99999")
 
@@ -655,11 +658,11 @@ async def test_expire_command_expires_only_due_pending_rows(monkeypatch, tmp_pat
     update.message.reply_text.assert_called_once()
     text = update.message.reply_text.call_args.args[0]
     assert "Expired" in text
-    assert "1" in text
+    assert "2" in text
 
     with dbmod.session_scope() as s:
         by = {r.candidate_id: r.status for r in s.query(ApprovalRow)}
-    assert by == {"stale": "expired", "fresh": "pending", "already-approved": "approved"}
+    assert by == {"stale": "expired", "fresh": "expired", "already-approved": "approved"}
 
 
 async def test_expire_command_reports_none_when_nothing_due(monkeypatch, tmp_path):
@@ -679,13 +682,14 @@ async def test_expire_command_reports_none_when_nothing_due(monkeypatch, tmp_pat
     assert "No pending approvals to expire" in update.message.reply_text.call_args.args[0]
 
 
-async def test_order_poll_loop_sweeps_stale_approvals_before_processing_orders(
-    monkeypatch, tmp_path
-):
-    """_order_poll_loop calls expire_stale_approvals (R6) at the top of every cycle — seed one
-    stale pending row, let exactly one iteration run, and check it was flipped alongside
-    process_queued_orders being awaited. The loop is infinite by design, so a stubbed
-    asyncio.sleep raises a sentinel to end the test after the first cycle."""
+async def test_order_poll_loop_sweeps_stale_but_leaves_fresh_approvals(monkeypatch, tmp_path):
+    """_order_poll_loop calls expire_stale_approvals (R6, default force=False) at the top of
+    every cycle — seed one stale and one fresh (in-TTL) pending row, let exactly one iteration
+    run, and check only the stale one was flipped, alongside process_queued_orders being
+    awaited. The fresh row staying pending is the poll loop's half of fix round 1: only /expire
+    force-clears everything; the unattended sweep must never touch a still-live card. The loop
+    is infinite by design, so a stubbed asyncio.sleep raises a sentinel to end the test after
+    the first cycle."""
     _db_setup(tmp_path, monkeypatch)
 
     import src.storage.db as dbmod
@@ -693,12 +697,19 @@ async def test_order_poll_loop_sweeps_stale_approvals_before_processing_orders(
     from src.storage.models import ApprovalRow
 
     with dbmod.session_scope() as s:
-        s.add(
-            ApprovalRow(
-                candidate_id="stale-1",
-                status="pending",
-                expires_at=datetime.now(UTC) - timedelta(minutes=1),
-            )
+        s.add_all(
+            [
+                ApprovalRow(
+                    candidate_id="stale-1",
+                    status="pending",
+                    expires_at=datetime.now(UTC) - timedelta(minutes=1),
+                ),
+                ApprovalRow(
+                    candidate_id="fresh-1",
+                    status="pending",
+                    expires_at=datetime.now(UTC) + timedelta(minutes=30),
+                ),
+            ]
         )
 
     process_mock = AsyncMock()
@@ -718,8 +729,8 @@ async def test_order_poll_loop_sweeps_stale_approvals_before_processing_orders(
 
     process_mock.assert_awaited_once()
     with dbmod.session_scope() as s:
-        row = s.query(ApprovalRow).filter_by(candidate_id="stale-1").one()
-    assert row.status == "expired"
+        by = {r.candidate_id: r.status for r in s.query(ApprovalRow)}
+    assert by == {"stale-1": "expired", "fresh-1": "pending"}
 
 
 async def test_callback_unknown_approval_id_does_not_crash(monkeypatch, tmp_path):

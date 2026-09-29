@@ -3,10 +3,12 @@
 `expire_stale_approvals` is the only code path (besides `process_queued_orders`, which is
 scoped to already-approved/queued rows) that ever flips a `pending` ApprovalRow to `expired`.
 These tests cover: the brief's own scenario, the NULL-`expires_at` TTL fallback, that
-`decided_at` is stamped correctly, and — per the task-8 ruling — that an aware `now` in a
-non-UTC zone is normalised before it is compared against the naive-UTC `expires_at` column
-(SQLite's DateTime bind/result processors copy wall-clock components verbatim and ignore
-tzinfo, so an un-normalised comparison would silently use the wrong wall clock).
+`decided_at` is stamped correctly, that an aware `now` in a non-UTC zone is normalised before it
+is compared against the naive-UTC `expires_at` column (SQLite's DateTime bind/result processors
+copy wall-clock components verbatim and ignore tzinfo, so an un-normalised comparison would
+silently use the wrong wall clock), and — per the fix-round-1 ruling — that `force=True` drops
+the TTL filter entirely (used by `/expire` to keep its "clears every pending approval" contract)
+without ever touching a non-pending row or fabricating a future `decided_at`.
 """
 
 from __future__ import annotations
@@ -132,3 +134,38 @@ def test_expire_stale_approvals_default_now_is_current_time(db):
         )
 
     assert expire_stale_approvals() == 0
+
+
+def test_expire_stale_approvals_force_expires_fresh_pending_but_not_approved(db):
+    """`force=True` drops the TTL filter entirely: a fresh (in-TTL) pending row is flipped too —
+    this is what lets `/expire` keep its documented "clears every pending approval" contract —
+    but a non-pending row is still never touched, and `decided_at` is the real current time, not
+    a fabricated future one."""
+    from src.storage.approvals import expire_stale_approvals
+    from src.storage.db import session_scope
+    from src.storage.models import ApprovalRow
+
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
+    with session_scope() as s:
+        s.add_all(
+            [
+                ApprovalRow(
+                    candidate_id="fresh",
+                    status="pending",
+                    expires_at=now + timedelta(minutes=30),
+                ),
+                ApprovalRow(
+                    candidate_id="already-approved",
+                    status="approved",
+                    expires_at=now + timedelta(minutes=30),
+                ),
+            ]
+        )
+
+    assert expire_stale_approvals(now, force=True) == 1
+
+    with session_scope() as s:
+        by = {r.candidate_id: r.status for r in s.query(ApprovalRow)}
+        assert by == {"fresh": "expired", "already-approved": "approved"}
+        row = s.query(ApprovalRow).filter_by(candidate_id="fresh").one()
+        assert row.decided_at == datetime(2026, 9, 29, 12, 0)

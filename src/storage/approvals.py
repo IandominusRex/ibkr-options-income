@@ -15,9 +15,14 @@ scan-loop post-mortem found 33 such rows (root cause R6, see
 to ``expired`` in a single UPDATE. It is called at the top of every
 ``_order_poll_loop`` iteration in ``src.notify.approval_service`` (so the sweep runs on the
 same cadence as order processing, cheaply, regardless of whether the exec IBKR connection is
-healthy) and is reused by the ``/expire`` command so there is exactly one implementation of
-"flip a stale pending row" in the codebase. It never touches ``approved`` rows: those remain
-exclusively ``process_queued_orders``' concern.
+healthy) and is reused (with ``force=True``) by the ``/expire`` command so there is exactly one
+implementation of "flip a pending row to expired" in the codebase. The two callers intentionally
+differ: the poll loop's unattended sweep only touches rows that have genuinely gone stale, while
+``/expire`` is a deliberate operator action documented everywhere it's surfaced (the Telegram
+command menu, `/help`, README, SETUP, ARCHITECTURE) as clearing *every* pending card — so it
+passes ``force=True`` to drop the TTL filter rather than silently narrowing that promise. Either
+way, it never touches ``approved`` rows: those remain exclusively ``process_queued_orders``'
+concern.
 
 Datetime convention: ``ApprovalRow.expires_at``/``decided_at``/``created_at`` are naive
 ``DateTime`` columns. SQLite's DateTime bind/result processors copy an inbound datetime's wall-
@@ -57,40 +62,50 @@ def _to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
-def expire_stale_approvals(now: datetime | None = None) -> int:
-    """Flip ``pending`` approvals past their TTL to ``expired``. Returns the count flipped.
+def expire_stale_approvals(now: datetime | None = None, *, force: bool = False) -> int:
+    """Flip ``pending`` approvals to ``expired``. Returns the count flipped.
 
-    A row is stale when either:
+    By default (``force=False``, the unattended-sweep case) a row is stale when either:
       * ``expires_at`` is set and is before *now*, or
       * ``expires_at`` is ``NULL`` (a legacy row predating the TTL column) and ``created_at``
         is older than ``approval.ttl_minutes``.
 
-    Every flipped row also gets ``decided_at=now`` — the point in time the sweep decided the
-    card was no longer actionable. ``now`` defaults to the real current time; pass an explicit
-    value in tests. Never touches ``approved`` rows — see module docstring.
+    With ``force=True`` (the ``/expire`` case) the TTL filter is dropped entirely: every
+    ``pending`` row is flipped, regardless of ``expires_at`` or age — this is what lets
+    ``/expire`` keep its documented "clears every pending approval" contract.
+
+    Either way, every flipped row also gets ``decided_at=now`` — the point in time the flip was
+    decided, real in both cases (``force=True`` never fabricates a future ``now`` to make a
+    still-live row look expired; it just skips the staleness check). ``now`` defaults to the
+    real current time; pass an explicit value in tests. Never touches non-``pending`` rows — see
+    module docstring.
     """
     naive_now = _to_naive_utc(now if now is not None else datetime.now(UTC))
-    ttl_minutes = get_config().approval.ttl_minutes
-    null_expiry_cutoff = naive_now - timedelta(minutes=ttl_minutes)
+
+    stmt = update(ApprovalRow).where(ApprovalRow.status == ApprovalStatus.PENDING)
+    if not force:
+        ttl_minutes = get_config().approval.ttl_minutes
+        null_expiry_cutoff = naive_now - timedelta(minutes=ttl_minutes)
+        stmt = stmt.where(
+            or_(
+                ApprovalRow.expires_at < naive_now,
+                and_(
+                    ApprovalRow.expires_at.is_(None),
+                    ApprovalRow.created_at < null_expiry_cutoff,
+                ),
+            )
+        )
+    stmt = stmt.values(status=ApprovalStatus.EXPIRED, decided_at=naive_now)
 
     with session_scope() as session:
-        result = session.execute(
-            update(ApprovalRow)
-            .where(ApprovalRow.status == ApprovalStatus.PENDING)
-            .where(
-                or_(
-                    ApprovalRow.expires_at < naive_now,
-                    and_(
-                        ApprovalRow.expires_at.is_(None),
-                        ApprovalRow.created_at < null_expiry_cutoff,
-                    ),
-                )
-            )
-            .values(status=ApprovalStatus.EXPIRED, decided_at=naive_now)
-        )
+        result = session.execute(stmt)
         # rowcount is a CursorResult attribute; mypy only sees the ORM-wrapped result.
         count = getattr(result, "rowcount", 0) or 0
 
     if count:
-        logger.info("expire_stale_approvals: flipped %d pending approval(s) to expired", count)
+        logger.info(
+            "expire_stale_approvals(force=%s): flipped %d pending approval(s) to expired",
+            force,
+            count,
+        )
     return count
