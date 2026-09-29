@@ -1385,6 +1385,58 @@ model (first use in days, or after heavier memory pressure has evicted its pages
 be slower than what was measured. Latency is typically 100-115s per call on Apple Silicon for the
 4B model with a 10-candidate production-shaped prompt.
 
+### News-grounded review (Task 11, 2026-09-30) — no API key needed
+
+Every review the Ollama backend produces now also sees recent news. Two pieces, both **keyless**
+(no signup, no API key — `data.news_search_provider: google_news`, `src/data/google_news_backend.py`,
+keyless Google News RSS search):
+
+1. **A static `=== NEWS ===` block** (`src/claude/news_context.py`) injected into the strategist
+   prompt on both the full-universe and single-ticker (`/scan TICKER`) paths — recent headlines
+   per candidate symbol plus 3 broad-market headlines, numbered `N1`...`Nk` so the prompt's
+   DECISION RUBRIC can cite them in `evidence` alongside the deterministic `F#` facts.
+2. **A bounded tool-calling research turn** (`src/claude/ollama_tools.py`) — before the final
+   review, the model gets one `/api/chat` turn with a `search_news` tool available and an
+   explicit budget; it may call it up to `claude.max_tool_rounds` times for anything the NEWS
+   block left open (e.g. "AAPL guidance", "Fed meeting this week"), or not call it at all. Any
+   failure here (a model without tool support, a timeout, a malformed response) is logged and
+   falls straight back to the Task 10 single-shot `/api/generate` path — this is enrichment, it
+   can only add to a review, never block one.
+
+**One switch turns the whole thing off:**
+
+```yaml
+claude:
+  tool_research_enabled: false   # default: true — set false to fully revert to Task 10 behaviour
+```
+
+With it `false`, no NEWS block is built, no `/api/chat` research call is made, and
+`review_candidates` goes straight to the original single-shot `_generate` (`/api/generate`) path
+— byte-identical to the pre-Task-11 prompt. The other Task 11 keys (`news_per_symbol`,
+`news_days`, `news_max_items`, `max_tool_rounds`, `tool_research_timeout_seconds`) only matter
+while it's `true` — see the `src/claude/` and `settings.yaml` rows in `ARCHITECTURE.md` for what
+each one tunes.
+
+**Live-measured (2026-09-30, `qwen3.5:4b`, this deployment):** `python -m scripts.review_eval
+--model qwen3.5:4b --runs 2` against 7 real stored candidates (META/AMZN CSPs, the only rows in
+the default `--since` window) with the NEWS block wired in measured `prompt_eval_count=10,248`
+(vs. 12,461 for the same-shaped prompt without news at 10 candidates in the Task 10 table above —
+not directly comparable candidate-for-candidate, but confirms the NEWS block's token cost is
+modest relative to the rest of the prompt) and wall time 76-89s, both runs 7/7 reviewed, 0/14
+empty evidence — comfortably inside `ollama_timeout_seconds: 180`. None of the 7 candidates cited
+an `N#` id: every fetched headline was routine business news (product launches, AI partnerships)
+with no thesis-breaking development and no earnings inside any trade's window, so the DECISION
+RUBRIC's "cite `N#` only when it argues against `sell`" instruction correctly produced zero
+citations — a manual `build_news_block(["META", "AMZN"], ...)` call confirmed real, current
+headlines were present (13 items, real sources/dates), so the absence of citations reflects the
+model correctly judging them irrelevant, not an empty or broken NEWS block. Separately, a direct
+live call to `ollama_tools.research_turn` (one META candidate, `tool_research_enabled=True`)
+confirmed `qwen3.5:4b` **does** call the `search_news` tool live — it asked `"META earnings
+October 2026 guidance"`, the tool executed against the real `GoogleNewsSearchProvider`, and the
+new results were numbered continuing from the NEWS block's existing `N#` ids — end-to-end in
+2.1s (warm). A full `review_candidates(..., tool_research_enabled=True)` call for one candidate
+completed in 33.3s and returned a review citing NEWS ids (`N3`, `N5`).
+
 ---
 
 ## Troubleshooting

@@ -303,6 +303,27 @@ class ClaudeCfg(BaseModel):
     # creativity. Tunable for experimentation without a code change.
     ollama_temperature: float = 0.2
 
+    # --- Task 11: keyless news search + bounded tool-calling research turn ---
+    # Single switch for the whole feature (see SETUP.md "Using the Ollama backend" — set False
+    # to fully revert to Task 10's single-shot behaviour with no NEWS block and no research
+    # turn). When True, `ollama_runner.review_candidates` builds a static `=== NEWS ===` block
+    # (`src.claude.news_context`) and runs a bounded `/api/chat` tool-calling round
+    # (`src.claude.ollama_tools`) before the final structured call.
+    tool_research_enabled: bool = True
+    # Recent headlines per candidate symbol in the static NEWS block.
+    news_per_symbol: int = 5
+    # Lookback window (days) for both the static NEWS block and the research turn's searches.
+    news_days: int = 7
+    # Hard cap on the NEWS block's total item count, applied after cross-symbol dedupe — keeps
+    # the block bounded regardless of how many candidates/symbols a scan reviews at once.
+    news_max_items: int = 25
+    # How many `search_news` tool calls the model may make in the bounded research turn.
+    max_tool_rounds: int = 2
+    # Client-side timeout for the research turn's `/api/chat` POST — separate from
+    # `ollama_timeout_seconds` (the final structured call) since the tool round is a smaller,
+    # faster exchange (a handful of search results, not a full multi-candidate review).
+    tool_research_timeout_seconds: float = 60.0
+
 
 class DataCfg(BaseModel):
     """Backend selection for the ``src/data/`` provider abstraction layer.
@@ -316,6 +337,10 @@ class DataCfg(BaseModel):
     price_provider: str = "yfinance"
     fundamentals_provider: str = "yfinance"
     news_provider: str = "yfinance"
+    # Task 11 — keyless free-text news search (vs. `news_provider`'s per-symbol headlines).
+    # Backs the strategist prompt's NEWS block and the Ollama research turn's `search_news`
+    # tool. Only "google_news" (src/data/google_news_backend.py) is implemented.
+    news_search_provider: str = "google_news"
     symbol_directory_provider: str = "edgar"
     filings_provider: str = "edgar"
     bulk_price_provider: str = "yfinance"

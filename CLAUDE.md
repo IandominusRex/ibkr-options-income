@@ -140,6 +140,13 @@ kept; they are cheap and still useful. There is no promotion mechanism to gate a
   backdrop). These reach the Telegram cards and the reasoning prompt **only**. They must never be
   imported by `engine/`, `execution/`, or `strategies/`.
 
+The same enrichment-tier rule extends outside `src/analytics/`: `src/claude/news_context.py`
+(builds the strategist prompt's `=== NEWS ===` block) and `src/claude/ollama_tools.py` (the
+bounded tool-calling research turn the local Ollama reviewer may run before judging — Task 11),
+plus their keyless data-layer backend `src/data/google_news_backend.py`, reach the prompt and the
+local reviewer only — never `engine/`, `execution/`, or `strategies/`. Enforced by
+`tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer`.
+
 The trap: `analytics/fair_value.py` produces the ideal-price zone, and its output reaches the
 deterministic layer through **two different fields of the same `IdealZone`, doing two different
 jobs** — keep them straight:

@@ -14,6 +14,7 @@ every analytics module.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
@@ -72,6 +73,41 @@ class NewsProvider(Protocol):
         Each item is the raw dict yfinance returns (either the legacy flat shape with a
         ``title`` key, or the newer ``{"content": {...}}`` nesting — callers handle both).
         Empty list when unavailable. Never raises.
+        """
+        ...
+
+
+class NewsItem(BaseModel):
+    """One free-text news headline — from Google News RSS search or yfinance's per-symbol
+    headlines (see :class:`NewsSearchProvider` / :class:`NewsProvider`).
+
+    ``id`` is empty as returned by a provider; :func:`src.claude.news_context.build_news_block`
+    assigns the prompt-facing ``N1``, ``N2``, ... ids when it renders items into the ``=== NEWS
+    ===`` block.
+    """
+
+    id: str = ""
+    title: str
+    source: str | None = None
+    published: datetime | None = None
+    url: str | None = None
+
+
+@runtime_checkable
+class NewsSearchProvider(Protocol):
+    """Keyless free-text news search (vs :class:`NewsProvider`'s per-symbol headlines).
+
+    Backs the Task 11 "news-grounded review": a static ``=== NEWS ===`` block built from
+    recent headlines, plus the bounded tool-calling research turn
+    (:mod:`src.claude.ollama_tools`) that lets the local reviewer search for more. Enrichment
+    tier only — never reaches ``src/engine/``, ``src/execution/``, or ``src/strategies/`` (see
+    ``tests/test_eval_skills.py``).
+    """
+
+    def search(self, query: str, *, days: int = 7, limit: int = 10) -> list[NewsItem]:
+        """Return recent news items matching *query*, newest first.
+
+        Empty list on any failure (network, parse, rate limit). Never raises.
         """
         ...
 

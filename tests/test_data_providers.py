@@ -27,6 +27,7 @@ from src.data.factory import (
     get_bulk_price_provider,
     get_fundamentals_provider,
     get_news_provider,
+    get_news_search_provider,
     get_price_provider,
 )
 from src.data.fmp_backend import (
@@ -34,10 +35,12 @@ from src.data.fmp_backend import (
     FMPNewsProvider,
     FMPPriceProvider,
 )
+from src.data.google_news_backend import GoogleNewsSearchProvider
 from src.data.protocols import (
     BulkPriceProvider,
     FundamentalsProvider,
     NewsProvider,
+    NewsSearchProvider,
     PriceProvider,
 )
 from src.data.yfinance_backend import (
@@ -57,12 +60,30 @@ def _clear_provider_cache():
     data_factory.get_price_provider.cache_clear()
     data_factory.get_fundamentals_provider.cache_clear()
     data_factory.get_news_provider.cache_clear()
+    data_factory.get_news_search_provider.cache_clear()
     data_factory.get_bulk_price_provider.cache_clear()
     yield
     data_factory.get_price_provider.cache_clear()
     data_factory.get_fundamentals_provider.cache_clear()
     data_factory.get_news_provider.cache_clear()
+    data_factory.get_news_search_provider.cache_clear()
     data_factory.get_bulk_price_provider.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_google_news_state():
+    """Task 11: `google_news_backend` keeps an in-process, per-query TTL cache and shares the
+    `google_news` circuit breaker registry with the rest of the process — both module-level
+    state that would otherwise leak between tests (e.g. a cached "META" search from one test
+    silently answering a different test's request for the same query)."""
+    from src.data import breaker as breaker_mod
+    from src.data import google_news_backend as gnb
+
+    gnb._cache.clear()
+    breaker_mod.get_breaker("google_news").record_success()
+    yield
+    gnb._cache.clear()
+    breaker_mod.get_breaker("google_news").record_success()
 
 
 # --------------------------------------------------------------------------- #
@@ -93,6 +114,9 @@ class TestProtocolConformance:
     def test_yfinance_bulk_price_provider_satisfies_protocol(self):
         assert isinstance(YFinanceBulkPriceProvider(), BulkPriceProvider)
 
+    def test_google_news_search_provider_satisfies_protocol(self):
+        assert isinstance(GoogleNewsSearchProvider(), NewsSearchProvider)
+
 
 # --------------------------------------------------------------------------- #
 # Factory — reads config/settings.yaml → data.*
@@ -106,11 +130,19 @@ class TestFactory:
         assert isinstance(get_news_provider(), YFinanceNewsProvider)
         assert isinstance(get_bulk_price_provider(), YFinanceBulkPriceProvider)
 
+    def test_default_factory_returns_google_news_search_backend(self):
+        assert isinstance(get_news_search_provider(), GoogleNewsSearchProvider)
+
     def test_factory_caches_instance_process_wide(self):
         assert get_price_provider() is get_price_provider()
         assert get_fundamentals_provider() is get_fundamentals_provider()
         assert get_news_provider() is get_news_provider()
+        assert get_news_search_provider() is get_news_search_provider()
         assert get_bulk_price_provider() is get_bulk_price_provider()
+
+    def test_factory_rejects_unknown_news_search_backend(self):
+        with pytest.raises(ValueError, match="Unknown data.news_search_provider"):
+            data_factory._make_news_search_provider("unknown_backend")
 
     def test_factory_rejects_unknown_backend(self, monkeypatch):
         from src.common.config import get_config
@@ -345,6 +377,79 @@ class TestYFinanceBulkPriceProviderGoldenMaster:
     def test_default_construction_uses_the_real_price_provider(self):
         provider = YFinanceBulkPriceProvider()
         assert isinstance(provider._provider, YFinancePriceProvider)
+
+
+# --------------------------------------------------------------------------- #
+# Task 11 — GoogleNewsSearchProvider (keyless RSS search)
+# --------------------------------------------------------------------------- #
+
+
+def test_google_news_parses_rss(monkeypatch):
+    from src.data import google_news_backend as g
+
+    rss = """<rss><channel><item><title>META beats on ads - Reuters</title>
+      <link>https://x/1</link><pubDate>Mon, 28 Sep 2026 13:00:00 GMT</pubDate>
+      <source>Reuters</source></item></channel></rss>"""
+
+    class _R:
+        status_code = 200
+        text = rss
+
+        def raise_for_status(self): ...
+
+    monkeypatch.setattr(g.httpx, "get", lambda *a, **k: _R())
+    items = g.GoogleNewsSearchProvider().search("META", days=7)
+    assert items[0].title.startswith("META beats") and items[0].source == "Reuters"
+
+
+def test_google_news_never_raises(monkeypatch):
+    from src.data import google_news_backend as g
+
+    monkeypatch.setattr(
+        g.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(g.httpx.ConnectError("x"))
+    )
+    assert g.GoogleNewsSearchProvider().search("META") == []
+
+
+def test_google_news_caches_per_query_for_15_minutes(monkeypatch):
+    """A second `search` for the same (query, days) within the TTL reuses the cached items —
+    no second HTTP call — while a different query still hits the network."""
+    from src.data import google_news_backend as g
+
+    calls = []
+    rss = """<rss><channel><item><title>AAPL rallies</title></item></channel></rss>"""
+
+    class _R:
+        text = rss
+
+        def raise_for_status(self): ...
+
+    def _get(*a, **k):
+        calls.append(1)
+        return _R()
+
+    monkeypatch.setattr(g.httpx, "get", _get)
+    provider = g.GoogleNewsSearchProvider()
+    first = provider.search("AAPL", days=7)
+    second = provider.search("AAPL", days=7)
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_google_news_breaker_opens_after_consecutive_failures(monkeypatch):
+    """Mirrors the `edgar`/`yfinance` backends: after the threshold, `allow()` short-circuits
+    the HTTP call entirely."""
+    from src.data import google_news_backend as g
+
+    monkeypatch.setattr(
+        g.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(g.httpx.ConnectError("x"))
+    )
+    provider = g.GoogleNewsSearchProvider()
+    for i in range(3):
+        assert provider.search(f"BREAKER-{i}") == []
+    from src.data.breaker import get_breaker
+
+    assert get_breaker("google_news").state == "open"
 
 
 # --------------------------------------------------------------------------- #

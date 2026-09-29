@@ -101,8 +101,13 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
   since the fail-soft path keeps the pipeline running deterministically without enrichment. Nothing
   in the system auto-starts Ollama; the Ollama.app (or `ollama serve`) must already be running.
   The only thing that remains `claude -p`-only is the `trading_skills` MCP (ad-hoc tool lookups
-  during `claude -p`'s agentic loop) — Ollama's integration is single-shot prompt→JSON with no
-  tool-calling loop, so it's inactive in this deployment.
+  during `claude -p`'s agentic loop) — that MCP loop is still inactive under `backend: "ollama"`.
+  **Task 11 (2026-09-30)** gave `review_candidates` its own, much narrower tool-calling turn: a
+  static `=== NEWS ===` block (`src/claude/news_context.py`, keyless Google News RSS search +
+  yfinance headlines, `N1`-`Nk` ids) is injected into the prompt, then a bounded `/api/chat`
+  round (`src/claude/ollama_tools.py`) lets the model call one `search_news` tool up to
+  `claude.max_tool_rounds` times before the final structured (no-`tools`) call — see "News-grounded
+  review" below and SETUP.md §14.
 - **Verdict learning loop** (`src/claude/eval/`) — an **outcome ledger**
   (`verdict_ledger`) records, per Claude-reviewed candidate, the signal vector Claude saw + its
   verdict + the deterministic baseline; a **reconciler** back-fills the realized outcome
@@ -288,7 +293,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 | Approval / notify | `python-telegram-bot` v21+ | Inline keyboards + callback handlers. |
 | Claude | **Claude Code CLI (`claude -p`)** | Headless. Since 2026-06-15, draws from a separate monthly Agent SDK credit pool (billed at API rates), not the interactive subscription. **Not used in this deployment** — `claude.backend: "ollama"` (no CLI access); review dispatches to Ollama instead. |
 | Claude tools | `trading_skills` MCP via `.mcp.json` (opt-in) | Ad-hoc lookups during roll reasoning. clientId 20. Requires `claude -p`; inactive in this deployment. |
-| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3.5:4b` (Task 10, was `qwen3:8b`) | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 24576`, `keep_alive: 2m` — fix round 1, raised/lowered from Task 10's original `16384`/`10m` against a production-shaped re-measurement). Review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema — not the bare `"json"` string roll/EOD still use). See SETUP.md §14 "Model choice" for the four-model evaluation and the fix-round-1 re-check. |
+| Local LLM (**active**) | **Ollama** (`httpx` → `localhost:11434`), model `qwen3.5:4b` (Task 10, was `qwen3:8b`) | `claude.backend: "ollama"` — sole backend for `review_candidates`/`review_roll`/`write_journal_narrative` in this deployment (`think: false`, `num_ctx: 24576`, `keep_alive: 2m` — fix round 1, raised/lowered from Task 10's original `16384`/`10m` against a production-shaped re-measurement). Review path is schema-constrained (`format: REVIEW_SCHEMA`, a JSON Schema — not the bare `"json"` string roll/EOD still use). See SETUP.md §14 "Model choice" for the four-model evaluation and the fix-round-1 re-check. **Task 11:** `review_candidates` also runs one bounded `/api/chat` tool-calling turn (`src/claude/ollama_tools.py`, `search_news`) before the final call — live-verified `qwen3.5:4b` supports and uses it (`ollama list` reports `"tools"` in its capabilities). |
+| News search (**active**, Task 11) | **Google News RSS** (keyless, `httpx` + stdlib `xml.etree.ElementTree`) | `data.news_search_provider: google_news` (`src/data/google_news_backend.py`). Backs the strategist prompt's `=== NEWS ===` block and the Ollama research turn's `search_news` tool. In-process 15-min per-query cache, `google_news` circuit breaker. `claude.tool_research_enabled: false` disables the whole feature. |
 | Config | `PyYAML` + `python-dotenv` | YAML for rules/weights, `.env` for secrets. |
 | Dashboard | `Streamlit` | Read-only views off SQLite. Archived to `Archive/dashboard/`. |
 | Quality | `pytest`, `ruff`, `mypy` | IBKR mocked in tests. |
@@ -354,6 +360,78 @@ write-scoped engine guarded by a runtime `before_flush` listener (`tests/test_we
 outside `src/api/commands.py` imports `get_command_engine`); the trading system never imports `src.api` or
 `src.research` (one-way import fence, `tests/test_web_fence.py`); the research and trading
 databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
+
+---
+
+## Built (2026-09-30 — scan-loop remediation Task 11: news-grounded review — keyless news search + bounded tool-calling research turn)
+
+Task 10 gave the local Ollama reviewer deterministic FACTS and a rubric that references `N#`
+(news) ids, but no news actually reached the prompt. Task 11 closes that gap with two keyless
+pieces, both gated off entirely by `claude.tool_research_enabled: false` (default `true`):
+
+- **`src/data/google_news_backend.py`** — `GoogleNewsSearchProvider`, the new
+  `NewsSearchProvider` Protocol's only backend (`data.news_search_provider: google_news`).
+  Keyless Google News RSS search (`https://news.google.com/rss/search`), parsed with stdlib
+  `xml.etree.ElementTree` (no new dependency), wrapped in a new `google_news` circuit breaker
+  plus an in-process, 15-minute-TTL per-`(query, days)` cache (module-level dict — the plan is
+  explicit this stays in-process, not a DB table). Never raises: a network error, non-2xx, or
+  malformed XML degrade to `[]`.
+- **`src/claude/news_context.py`** — `build_news_block(symbols, *, per_symbol, days, max_items)`
+  renders the strategist prompt's `=== NEWS ===` block: one search per distinct candidate symbol
+  (combining `GoogleNewsSearchProvider` with, for an actual ticker, the existing yfinance
+  `NewsProvider.get_headlines`) plus 3 broad-market headlines for `"stock market today"`,
+  deduped globally by normalised title, titles truncated to 140 chars, capped at `news_max_items`
+  (25), numbered `N1`-`Nk`. `news_block_for_candidates` (the convenience wrapper
+  `ollama_runner.review_candidates` and `scripts/review_eval.py` call) never raises. Threaded
+  into `strategist.build_prompt(..., news_block=...)` as a plain string — `build_prompt` itself
+  still does no I/O, matching every other optional context block (`analytics`, `spot_prices`,
+  `sector_context`) — on both the full-universe and single-ticker (`/scan TICKER`) paths.
+- **`src/claude/ollama_tools.py`** — `research_turn(prompt, cfg)`: one `/api/chat` turn with a
+  `search_news` tool available and an explicit instruction the model may call it up to
+  `claude.max_tool_rounds` (2) times "for anything the NEWS block leaves open" or not at all.
+  Each call executes against `GoogleNewsSearchProvider` (capped 5 results/call) and is appended
+  as a `role: "tool"` message numbered to continue the NEWS block's `N#` ids. Returns the
+  accumulated messages (not a review) for the caller's own final call. **Any failure — a model
+  without tool support, a timeout, a malformed `/api/chat` response — returns `None` and
+  `ollama_runner.review_candidates` falls straight back to the Task 10 single-shot
+  `_generate`/`/api/generate` path**; enrichment can only add a review, never block one.
+  `ollama_runner._generate_chat` (new) makes the caller's separate final call:
+  `/api/chat` with the research turn's message history, `format=REVIEW_SCHEMA`, and **no**
+  `tools`.
+
+**Fence:** all three modules are enrichment tier — `tests/test_eval_skills.py::
+test_news_and_tool_research_never_reach_the_deterministic_layer` asserts none of
+`src.claude.news_context`/`src.claude.ollama_tools`/`src.data.google_news_backend` is importable
+from `src/engine/`, `src/execution/`, or `src/strategies/`.
+
+**Live-verified against the real local model, 2026-09-30 (`qwen3.5:4b`, IB Gateway down, no
+scan competing for RAM):**
+- `python -m scripts.review_eval --model qwen3.5:4b --runs 2` (7 real stored candidates, the
+  NEWS block wired into `_build_production_prompt`): `prompt_eval_count=10,248` both runs
+  (deterministic), wall time 76.2s/88.7s, 7/7 reviewed both runs, 0/14 empty evidence — well
+  inside `ollama_timeout_seconds: 180`. No candidate cited an `N#` id; a direct
+  `build_news_block(["META", "AMZN"], ...)` call confirmed the block held 13 real, current
+  headlines, and none of the 7 candidates had earnings inside its trade window or a
+  thesis-breaking headline, so the DECISION RUBRIC's "cite `N#` only when it argues against
+  `sell`" correctly produced zero citations rather than a broken/empty block.
+- A direct live call to `ollama_tools.research_turn` (one META candidate) confirmed `qwen3.5:4b`
+  **does** call `search_news` live: it asked `"META earnings October 2026 guidance"`, the tool
+  ran against the real `GoogleNewsSearchProvider`, and the 3 new results were numbered continuing
+  from the NEWS block's existing ids (`N9`-`N11`) — round-trip in 2.1s (warm).
+- A full `ollama_runner.review_candidates(..., tool_research_enabled=True)` call for one
+  candidate completed in 33.3s and returned a review citing NEWS ids (`N3`, `N5`).
+- The fallback path (a model without tool support / an `/api/chat` error) is verified by mocked
+  unit tests (`tests/test_ollama_runner.py`), not live — `qwen3.5:4b` supports tools
+  (`ollama list`'s `capabilities` includes `"tools"`), so there was no live failure to observe;
+  forcing one would mean breaking the local Ollama server on purpose.
+
+Tests: `tests/test_data_providers.py` (Google News RSS parsing, never-raises, 15-min cache,
+circuit breaker), `tests/test_news_context.py` (new — block numbering/dedupe/truncation/cap,
+market-query inclusion, never-raises), `tests/test_ollama_runner.py` (new — the research turn
+calls `search_news` once and the final call carries no `tools` + `format`; an `/api/chat` error
+falls back to the single-shot path and still returns a review), `tests/test_eval_skills.py` (new
+fence test). `python -m pytest -q` 2442 passed (baseline 2425 + 17 new), `ruff check .` clean,
+`mypy src` clean.
 
 ---
 

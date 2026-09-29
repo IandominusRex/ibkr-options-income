@@ -20,6 +20,7 @@ from src.data.protocols import (
     FilingsProvider,
     FundamentalsProvider,
     NewsProvider,
+    NewsSearchProvider,
     PriceProvider,
     SymbolDirectoryProvider,
 )
@@ -77,6 +78,26 @@ def get_fundamentals_provider() -> FundamentalsProvider:
 def get_news_provider() -> NewsProvider:
     """Return the active :class:`NewsProvider` (cached process-wide)."""
     return _make_news_provider(get_config().data.news_provider)
+
+
+def _make_news_search_provider(name: str) -> NewsSearchProvider:
+    if name == "google_news":
+        from src.data.google_news_backend import GoogleNewsSearchProvider
+
+        return GoogleNewsSearchProvider()
+    raise ValueError(f"Unknown data.news_search_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_news_search_provider() -> NewsSearchProvider:
+    """Return the active :class:`NewsSearchProvider` (cached process-wide).
+
+    Backs Task 11's news-grounded review: the ``=== NEWS ===`` prompt block
+    (:mod:`src.claude.news_context`) and the bounded tool-calling research turn
+    (:mod:`src.claude.ollama_tools`). Only ``google_news`` (keyless RSS search,
+    :mod:`src.data.google_news_backend`) is implemented today.
+    """
+    return _make_news_search_provider(get_config().data.news_search_provider)
 
 
 def _make_symbol_directory_provider(name: str) -> SymbolDirectoryProvider:

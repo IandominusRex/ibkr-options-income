@@ -69,6 +69,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.claude.news_context import news_block_for_candidates
 from src.claude.ollama_runner import REVIEW_SCHEMA
 from src.claude.parser import parse_ollama_review_output
 from src.claude.prompts.strategist import AnalyticsMap, build_prompt
@@ -191,18 +192,39 @@ def _build_history(underlyings: list[str]) -> list:
         return []
 
 
+def _build_news_block(candidates: list[TradeCandidate]) -> str:
+    """Real NEWS block (Task 11): Google News RSS search + yfinance headlines for these
+    candidates' underlyings, via the same `news_block_for_candidates` production calls
+    (`ollama_runner.review_candidates` when `claude.tool_research_enabled`). Never raises —
+    degrades to an empty block like every other piece of this prompt.
+    """
+    cfg = get_config().claude
+    block, _index = news_block_for_candidates(
+        candidates,
+        per_symbol=cfg.news_per_symbol,
+        days=cfg.news_days,
+        max_items=cfg.news_max_items,
+    )
+    return block
+
+
 def _build_production_prompt(candidates: list[TradeCandidate]) -> str:
     """The prompt a real full-universe scan would send for these candidates: real analytics
     (IV/technicals/fundamentals) per underlying, real prior-recommendation history, real VIX/macro
-    conditions, and spot prices read off the same analytics (mirroring
+    conditions, spot prices read off the same analytics (mirroring
     `scan.py`'s `spot_prices = {sym: tech.price for sym, (_iv, tech, _fund) in
-    analytics_map.items() if tech.price}`) — not an approximation from a stored daily bar.
+    analytics_map.items() if tech.price}`) — not an approximation from a stored daily bar — and
+    (Task 11) a real NEWS block. Does not replicate the bounded tool-calling research turn
+    (`src.claude.ollama_tools.research_turn`) — this script mirrors `_generate`'s single-shot
+    `/api/generate` request shape by design (see module docstring), not
+    `review_candidates`'s `/api/chat` research path.
     """
     underlyings = {c.underlying for c in candidates}
     analytics = _build_analytics(underlyings)
     spot_prices = {sym: tech.price for sym, (_iv, tech, _fund) in analytics.items() if tech.price}
     history = _build_history(sorted(underlyings))
     market_conditions = _build_market_conditions()
+    news_block = _build_news_block(candidates)
     return build_prompt(
         candidates,
         _STUB_ACCOUNT,
@@ -210,6 +232,7 @@ def _build_production_prompt(candidates: list[TradeCandidate]) -> str:
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         analytics=analytics,
+        news_block=news_block or None,
     )
 
 

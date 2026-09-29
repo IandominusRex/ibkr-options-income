@@ -15,6 +15,8 @@ import logging
 
 import httpx
 
+from src.claude import ollama_tools
+from src.claude.news_context import news_block_for_candidates
 from src.claude.parser import (
     parse_ollama_journal_output,
     parse_ollama_review_output,
@@ -196,6 +198,43 @@ def _generate(prompt: str, cfg: object, schema: dict | str | None = REVIEW_SCHEM
         return None
 
 
+def _generate_chat(
+    messages: list[dict], cfg: object, schema: dict | str = REVIEW_SCHEMA
+) -> str | None:
+    """POST accumulated chat *messages* to `/api/chat` for the final structured review call —
+    used only after a successful `ollama_tools.research_turn` (Task 11). Unlike `_generate`
+    (`/api/generate`, a single prompt string), this carries the research turn's message history
+    and, critically, **no** `tools` — the model must answer, not keep researching. Returns the
+    assistant message's `content` string, or None on failure (the caller falls back to the
+    single-shot `_generate` path).
+    """
+    url = f"{cfg.ollama_host.rstrip('/')}/api/chat"  # type: ignore[attr-defined]
+    body = {
+        "model": cfg.ollama_model,  # type: ignore[attr-defined]
+        "messages": messages,
+        "format": schema,
+        "stream": False,
+        "think": False,
+        "keep_alive": cfg.ollama_keep_alive,  # type: ignore[attr-defined]
+        "options": {
+            "temperature": cfg.ollama_temperature,  # type: ignore[attr-defined]
+            "num_ctx": cfg.ollama_num_ctx,  # type: ignore[attr-defined]
+        },
+    }
+    try:
+        resp = httpx.post(url, json=body, timeout=cfg.ollama_timeout_seconds)  # type: ignore[attr-defined]
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        log.warning("ollama: request to %s failed: %s", url, exc)
+        return None
+
+    try:
+        return resp.json()["message"]["content"]
+    except (ValueError, KeyError, TypeError) as exc:
+        log.warning("ollama: malformed /api/chat response envelope: %s", exc)
+        return None
+
+
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -221,6 +260,24 @@ def review_candidates(
         log.info("ollama: no candidates to review")
         return []
 
+    # Task 11 — news-grounded review. `tool_research_enabled` is the single switch for both the
+    # static NEWS block and the bounded tool-calling research turn below (SETUP.md documents
+    # `claude.tool_research_enabled: false` as how to fully disable the feature and revert to
+    # Task 10's single-shot behaviour). Compared with `is True` rather than a bare truthy check
+    # so a test double that leaves this attribute unset (a plain MagicMock auto-creates a
+    # truthy child attribute) defaults OFF like the real `ClaudeCfg` default would only if a
+    # test explicitly opts in — the production config always holds an exact `bool`.
+    research_enabled = cfg.tool_research_enabled is True
+
+    news_block = ""
+    if research_enabled:
+        news_block, _news_index = news_block_for_candidates(
+            candidates,
+            per_symbol=cfg.news_per_symbol,
+            days=cfg.news_days,
+            max_items=cfg.news_max_items,
+        )
+
     prompt = build_prompt(
         candidates,
         account,
@@ -230,9 +287,23 @@ def review_candidates(
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
+        news_block=news_block or None,
     )
 
-    raw = _generate(prompt, cfg)
+    raw: str | None = None
+    if research_enabled:
+        try:
+            messages = ollama_tools.research_turn(prompt, cfg)
+        except Exception as exc:  # noqa: BLE001 — the research turn must never break a review
+            log.warning("ollama: research turn raised %s — falling back to single-shot", exc)
+            messages = None
+        if messages is not None:
+            raw = _generate_chat(messages, cfg)
+            if raw is None:
+                log.warning("ollama: research-turn final call failed — falling back to single-shot")
+
+    if raw is None:
+        raw = _generate(prompt, cfg)
     if raw is None:
         _record_failure()
         return []

@@ -113,3 +113,28 @@ def test_macro_never_reaches_the_engine() -> None:
         rel for rel in targets if "market_conditions" in (root / rel).read_text(encoding="utf-8")
     ]
     assert not offenders, f"fence violated — macro reachable from: {offenders}"
+
+
+_ENRICHMENT_ONLY = (
+    "src.claude.news_context",
+    "src.claude.ollama_tools",
+    "src.data.google_news_backend",
+)
+
+
+def test_news_and_tool_research_never_reach_the_deterministic_layer() -> None:
+    """Task 11's news-grounded review is enrichment only: the `=== NEWS ===` block
+    (`src.claude.news_context`), the bounded tool-calling research turn
+    (`src.claude.ollama_tools`), and their keyless data-layer backend
+    (`src.data.google_news_backend`) may reach the strategist prompt and the local Ollama
+    reviewer, never the risk engine, execution, or sizing (CLAUDE.md's fence)."""
+    root = Path(__file__).resolve().parents[1]
+    for pkg in ("src/engine", "src/execution", "src/strategies"):
+        for rel in [
+            str(p.relative_to(root))
+            for p in sorted((root / pkg).rglob("*.py"))
+            if p.name != "__init__.py"
+        ]:
+            text = (root / rel).read_text(encoding="utf-8")
+            offenders = [mod for mod in _ENRICHMENT_ONLY if mod in text]
+            assert not offenders, f"{rel} imports enrichment-only module(s): {offenders}"

@@ -245,7 +245,7 @@ def _reset_circuit() -> None:
 
 def _patch_ollama_cfg(**overrides):
     """Patch get_config().claude in both runner.py and ollama_runner.py to the same MagicMock."""
-    cfg = MagicMock(
+    defaults = dict(
         enabled=True,
         backend="ollama",
         ollama_host="http://localhost:11434",
@@ -254,8 +254,20 @@ def _patch_ollama_cfg(**overrides):
         ollama_num_ctx=16384,
         ollama_keep_alive="10m",
         ollama_temperature=0.2,
-        **overrides,
+        # Task 11 — off by default so every pre-existing test here (which mocks only one
+        # httpx.post response and doesn't expect a NEWS-block fetch or a research turn) keeps
+        # its exact single-shot `_generate` behaviour; a test that wants the new path opts in
+        # explicitly via **overrides. `review_candidates` gates on `is True`, not truthiness,
+        # so an unset MagicMock attribute (auto-truthy) can never accidentally enable this.
+        tool_research_enabled=False,
+        max_tool_rounds=2,
+        tool_research_timeout_seconds=60.0,
+        news_per_symbol=5,
+        news_days=7,
+        news_max_items=25,
     )
+    defaults.update(overrides)
+    cfg = MagicMock(**defaults)
     runner_patch = patch("src.claude.runner.get_config")
     ollama_patch = patch("src.claude.ollama_runner.get_config")
     return cfg, runner_patch, ollama_patch
@@ -306,6 +318,126 @@ def test_ollama_backend_connection_error_returns_empty():
             reviews = review_candidates(candidates, account)
 
     assert reviews == []
+
+
+# --------------------------------------------------------------------------- #
+# Task 11 — bounded tool-calling research turn (ollama_tools.research_turn)
+# --------------------------------------------------------------------------- #
+
+
+def test_review_candidates_research_turn_calls_search_news_and_final_chat(monkeypatch):
+    """With `tool_research_enabled`, `review_candidates` runs one `/api/chat` turn with
+    `search_news` available, executes the model's single tool call, then makes a *separate*
+    final `/api/chat` call carrying the accumulated messages, `format=REVIEW_SCHEMA`, and no
+    `tools`. search_news must run exactly once and the review must still parse."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True,
+        max_tool_rounds=2,
+        tool_research_timeout_seconds=60.0,
+    )
+
+    # Skip the NEWS-block fetch itself — this test is about the tool-calling round-trip, not
+    # news_context (covered by tests/test_news_context.py).
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+
+    search_calls: list[tuple] = []
+
+    def _fake_search(query, *, days=7, limit=10):
+        search_calls.append((query, days, limit))
+        from src.data.protocols import NewsItem
+
+        return [
+            NewsItem(
+                id="", title="AAPL guidance raised", source="Reuters", published=None, url=None
+            )
+        ]
+
+    monkeypatch.setattr(
+        "src.claude.ollama_tools.get_news_search_provider",
+        lambda: MagicMock(search=_fake_search),
+    )
+
+    tool_call_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "search_news",
+                    "arguments": {"query": "AAPL guidance", "days": 7},
+                }
+            }
+        ],
+    }
+    final_content = json.dumps({"reviews": [_review_dict()]})
+
+    requests: list[dict] = []
+
+    def _fake_post(url, json, timeout):  # noqa: A002 - matches httpx.post's kwarg name
+        requests.append({"url": url, "json": json, "timeout": timeout})
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        if len(requests) == 1:
+            assert url == "http://localhost:11434/api/chat"
+            assert "tools" in json
+            resp.json.return_value = {"message": tool_call_message}
+        else:
+            assert url == "http://localhost:11434/api/chat"
+            assert "tools" not in json
+            assert json.get("format") is not None
+            resp.json.return_value = {"message": {"content": final_content}}
+        return resp
+
+    monkeypatch.setattr("src.claude.ollama_tools.httpx.post", _fake_post)
+    monkeypatch.setattr("src.claude.ollama_runner.httpx.post", _fake_post)
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        reviews = ollama_runner.review_candidates(candidates, account)
+
+    assert len(search_calls) == 1
+    assert search_calls[0][0] == "AAPL guidance"
+    assert len(requests) == 2
+    assert len(reviews) == 1
+    assert reviews[0].candidate_id == "test-001"
+
+
+def test_review_candidates_research_turn_http_error_falls_back_to_single_shot(monkeypatch):
+    """A `/api/chat` failure in the research turn (e.g. a model with no tool support, or a
+    timeout) must fall back to the Task 10 single-shot `_generate` (`/api/generate`) path and
+    still return a review — the research turn is enrichment, never a dependency."""
+    from src.claude import ollama_runner
+
+    account = _make_account()
+    candidates = [_make_candidate()]
+    cfg, runner_patch, ollama_patch = _patch_ollama_cfg(
+        tool_research_enabled=True,
+        max_tool_rounds=2,
+        tool_research_timeout_seconds=60.0,
+    )
+    monkeypatch.setattr(ollama_runner, "news_block_for_candidates", lambda *a, **k: ("", {}))
+
+    monkeypatch.setattr(
+        "src.claude.ollama_tools.httpx.post",
+        MagicMock(side_effect=httpx.ConnectError("no tool support")),
+    )
+    monkeypatch.setattr(
+        "src.claude.ollama_runner.httpx.post",
+        MagicMock(return_value=_ollama_response([_review_dict()])),
+    )
+
+    with runner_patch as mock_runner_cfg, ollama_patch as mock_ollama_cfg:
+        mock_runner_cfg.return_value.claude = cfg
+        mock_ollama_cfg.return_value.claude = cfg
+        reviews = ollama_runner.review_candidates(candidates, account)
+
+    assert len(reviews) == 1
+    assert reviews[0].candidate_id == "test-001"
 
 
 def test_ollama_backend_review_roll_success():
@@ -397,6 +529,9 @@ def test_cli_then_ollama_falls_back_when_cli_empty():
         ollama_host="http://localhost:11434",
         ollama_model="qwen2.5:14b-instruct",
         ollama_timeout_seconds=120.0,
+        # Task 11 — off, so this test's single mocked httpx.post response (and its
+        # assert_called_once()) still exercises exactly the Task 10 single-shot path.
+        tool_research_enabled=False,
     )
 
     with patch("src.claude.runner.get_config") as mock_runner_cfg:
@@ -462,6 +597,7 @@ def test_ollama_only_backend_skips_cli_subprocess():
         ollama_host="http://localhost:11434",
         ollama_model="qwen2.5:14b-instruct",
         ollama_timeout_seconds=120.0,
+        tool_research_enabled=False,
     )
 
     with patch("src.claude.runner.get_config") as mock_runner_cfg:
