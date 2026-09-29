@@ -370,7 +370,10 @@ The Task 14 autonomy ladder's `promotion_blockers` requires >=20 fills, >=60% fi
 way to accumulate without first running at a rung that can generate it. Task 12 adds a single,
 config-gated escape hatch so the paper account can observe genuine end-to-end auto-trade
 behaviour (auto-queue → thread-58 order notification, no human tap) without waiting weeks for
-that evidence, while making the bypass structurally impossible on a live account:
+that evidence, while keeping every **promotion request** always evidence-gated on a live account
+(a second, startup-time guard added in fix round 1 below closes a related gap this original cut
+missed — a rung already *stored*, reached earlier via the bypass, could otherwise carry into a
+live process unchecked; see that subsection for the corrected, complete picture):
 
 - **`AutomationCfg.paper_skip_promotion_gate: bool = False`** (`src/common/config.py`) — code
   default is off; `config/settings.yaml`'s `automation:` block sets it `true` for this paper
@@ -381,8 +384,11 @@ that evidence, while making the bypass structurally impossible on a live account
   everything — `False` logs a warning ("Promotion evidence gate SKIPPED (paper-only override)
   for %s") and returns `[]` (promotion allowed unconditionally); `True` logs a *different*
   warning ("… is set but LIVE_TRADING=true — ignored") and falls through to the normal
-  fill/fill-rate/close evidence check untouched. There is no third state: a live account always
-  gets the full evidence gate regardless of this flag.
+  fill/fill-rate/close evidence check untouched. There is no third state at **promotion time**: a
+  live account always gets the full evidence gate on any `/autonomy <level>`/`set_autonomy`
+  request, regardless of this flag. (This alone does not cover a rung reached *earlier*, on
+  paper, that is simply already sitting in the shared DB when a process starts in live mode —
+  see the fix-round-1 subsection below for the second guard that closes that gap.)
 - **No new back door.** `promotion_blockers` is the one function Telegram's `/autonomy <level>`,
   the web `set_autonomy` drain handler, and the new `scripts/autonomy.py` CLI all call — none of
   the three special-cases the bypass or duplicates its logic, so there is exactly one promotion
@@ -403,6 +409,66 @@ that evidence, while making the bypass structurally impossible on a live account
   `test_drain_controls.py::test_set_autonomy_promotion_refused_carries_the_blockers`) had to
   explicitly monkeypatch the flag back to `False` to keep testing what they were written to
   test — the bypass, not the gate it wraps.
+
+### Fix round 1 (2026-09-30) — a rung reached via the bypass could carry into a live process
+
+**Finding:** `promotion_blockers` only runs when a promotion is *requested* (a `/autonomy
+<level>`, a web `set_autonomy` command, or `scripts/autonomy.py <level>`). The autonomy rung
+itself is persisted in `system_settings`, in the same `data/income_system.db` file, for both
+paper and live processes — there is exactly one stored value, not one per mode. So: run paper
+with `paper_skip_promotion_gate: true`, promote to `full` with zero fills (the intended use of
+this task), later reset the flag to `false` and flip `LIVE_TRADING=true` **without** first
+demoting — the stored `full` rung would carry straight into the live process with no re-check,
+since nothing previously re-validated a rung already reached once a process starts. The original
+wording above ("structurally impossible on a live account") overclaimed: it was accurate for a
+promotion *request*, not for a rung already sitting in the DB when a process starts.
+
+**Closed by a second, independent, startup-time guard:**
+
+- **`system_settings.enforce_live_autonomy_evidence() -> AutonomyLevel | None`** (new). Trigger:
+  `get_config().is_live`, the stored rung is above `manual`. Action: re-validates that *current*
+  rung against the real fill/fill-rate/close evidence via a new `_evidence_blockers(target)`
+  helper — factored out of `promotion_blockers`'s body specifically so this check could call it
+  **directly**, bypassing `promotion_blockers` itself: `promotion_blockers(stored_rung)` would
+  trivially return `[]` here via its own demotion/no-op early-return (`target == current rung` is
+  never "a promotion" needing evidence), so calling it literally, as first proposed, would have
+  made this guard a no-op. If `_evidence_blockers` finds unmet criteria, demotes to `manual`
+  persistently via `set_autonomy_level`, logs a WARNING naming the blockers, and returns the OLD
+  level; otherwise returns `None` (including, always, in paper mode — pure no-op there).
+- **Called once at the top of `approval_service._run_service`** (`src/notify/approval_service.py`)
+  — the process that acts on the autonomy rung to auto-queue orders — before any IBKR connection
+  or background loop, so a demotion always lands before the intraday scan loop (where
+  `sender.py`'s `may_auto_open` decides auto-queue vs. a human tap) or the order-poll loop can run
+  against the old rung. Confirmed this is the only process that needs the call: `may_auto_open`/
+  `get_autonomy_level` call sites across `src/` are `sender.py` (invoked from inside
+  `approval_service`'s own event loop — the intraday loop and the manual `/scan` handler, not a
+  separate process), `command_drain.py` (also inside `approval_service`), and the API's
+  `/options/controls` read (`src/api/routers/options.py`, display-only, read-only by construction
+  per the web fence). The monitor process (`src/monitor/`, `scripts/run_monitor.py`) never reads
+  the rung at all — auto-close runs on `automation.auto_close_enabled`, independent of the ladder,
+  by design.
+- Sends a best-effort Telegram notice when it demotes (`formatters.format_autonomy_demotion`,
+  new formatter) — wrapped in its own try/except, same discipline as the adjacent startup
+  notification send: a failed Telegram send can never block startup.
+- **Tests** (`tests/test_autonomy.py`, temp DBs only): `test_enforce_live_autonomy_evidence_demotes_full_without_evidence`
+  (live + stored `full` + no evidence → demoted, returns `full`),
+  `test_enforce_live_autonomy_evidence_leaves_full_with_evidence` (live + stored `full` +
+  `_evidence_blockers` monkeypatched to `[]` → unchanged, returns `None`),
+  `test_enforce_live_autonomy_evidence_is_a_noop_in_paper_mode` (paper + stored `full` + no
+  evidence → unchanged), `test_enforce_live_autonomy_evidence_is_a_noop_at_or_below_manual`
+  (live + stored `manual` → unchanged, no evidence required at/below `manual`), and
+  `test_startup_calls_the_live_autonomy_enforcement_before_the_auto_act_loops` — a source-order
+  check (`approval_service.py`'s text: the call's index precedes both the intraday-loop and
+  order-poll-loop creation indices), in the same spirit as the `execution_halted` token-grep in
+  `tests/test_write_path_invariants.py`, since `_run_service` needs a live Telegram token and real
+  IBKR connections and so isn't otherwise unit-testable.
+
+**Both guards together, correctly stated:** the promotion-time guard (`promotion_blockers`,
+original cut) keeps a live **promotion request** always evidence-gated regardless of the paper
+flag; the startup guard (`enforce_live_autonomy_evidence`, this fix round) keeps a rung *already
+stored* — however it got there — from running unchecked on a live process. See the corrected
+"Live cutover gate" section below for the operator-facing step this adds: demote to `manual`
+before flipping `LIVE_TRADING=true` — the startup guard is the backstop, not the plan.
 
 **Preconditions before the actual flip (not yet met on this machine, so it has not been run):**
 Tasks 1, 3, 5 and 6 deployed; `./ibkr status` healthy; the watchdog silent through one full RTH
@@ -2942,17 +3008,43 @@ must be filled in from a real paper session before live cutover, and its Questio
 if `greeks_source == "ibkr"` never populates on this data subscription, `require_ibkr_greeks_when_live:
 true` will silently block 100% of live income trades. Resolve it, or set that flag `false`
 deliberately with the justification written into that file — do not discover it in production.
-Autonomy should be at `manual` (not `whitelist`/`full`) through the whole paper-validation period;
-the ladder's own promotion gate will refuse to move until the fill evidence exists — **unless**
-`automation.paper_skip_promotion_gate` (Task 12) is bypassing it, which is only ever safe on a
-paper account (see below).
+**Autonomy at cutover — reconciling "should be at `manual`" with Task 12's paper-on-`full` run:**
+the ladder's promotion gate normally refuses to move past `manual` until the fill evidence
+exists — **unless** `automation.paper_skip_promotion_gate` (Task 12) is bypassing it, which this
+deployment deliberately does in paper mode so the account can be observed running genuinely
+autonomous end-to-end cycles before cutover. That means the account will, by design, be sitting
+at `whitelist`/`full` for some of the paper-validation period, not `manual` throughout — the
+older "should be at manual" framing predates Task 12 and described a paper run with no bypass.
+What must still be true **at the moment of cutover** is narrower and mandatory:
+
+1. **Run `./ibkr autonomy manual` before setting `LIVE_TRADING=true`.** This is the primary step
+   — demote deliberately, don't rely on a backstop to do it for you.
+2. **Set `automation.paper_skip_promotion_gate: false`** in `config/settings.yaml` (see below).
 
 **`automation.paper_skip_promotion_gate` must be `false`.** Task 12 added a paper-only override
 that lets `promotion_blockers` skip the fill-count evidence above; `config/settings.yaml` ships
 it `true` for this paper deployment precisely so the paper account can run on `full` and be
 observed end-to-end before live cutover, not as a value that should ever reach a live run.
 `promotion_blockers` itself refuses to honor the flag whenever `Config.is_live` is `True` (it
-logs a warning and falls through to the real evidence check instead) — but that is a
-second-order guard, not a reason to skip resetting it: set this back to `false` in
-`config/settings.yaml` before flipping `LIVE_TRADING=true`, the same way every other paper-only
-override in this checklist gets reset.
+logs a warning and falls through to the real evidence check instead) — but that guard only ever
+fires at **promotion time**, when a `/autonomy <level>`/`set_autonomy` request is actually made.
+Set this back to `false` in `config/settings.yaml` before flipping `LIVE_TRADING=true`, the same
+way every other paper-only override in this checklist gets reset — do not rely on guard 2 below
+in place of doing this.
+
+**Two independent guards, not one — corrected wording (fix round 1, 2026-09-30):** an earlier
+version of this section claimed the bypass was "structurally impossible on a live account," which
+overclaimed. `promotion_blockers` only runs when a promotion is *requested*; the stored autonomy
+rung itself lives in `system_settings`, in the same `data/income_system.db` file, for both paper
+and live processes — there is exactly one stored value. A rung reached on paper via the bypass
+(or via any earlier valid promotion) would, before this fix, carry straight into a live process
+with zero re-validation the moment `LIVE_TRADING=true` was set, if step 1 above was skipped.
+Closed by a second, startup-time guard: `system_settings.enforce_live_autonomy_evidence()`, called
+once at the top of `approval_service._run_service` — the process that acts on the rung to
+auto-queue orders — before either the intraday scan loop or the order-poll loop can run. On a
+live process, if the *currently stored* rung is above `manual`, it re-checks that rung against the
+real fill/fill-rate/close evidence (never the paper bypass) and demotes to `manual`, persistently,
+if the evidence doesn't hold — logging a WARNING with the unmet criteria and sending a best-effort
+Telegram notice (`format_autonomy_demotion`). This is the backstop, not the plan: step 1 above
+(demote by hand before cutover) is still the operator's job; the startup check exists so a missed
+step 1 fails safe instead of silently running `full` live with no evidence.

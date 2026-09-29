@@ -111,36 +111,27 @@ def may_auto_open(symbol: str) -> bool:
     return symbol.upper() in _autonomy_whitelist()
 
 
-def promotion_blockers(target: AutonomyLevel) -> list[str]:
-    """Unmet criteria for promoting to *target*. Empty list means promotion is allowed.
+_AUTONOMY_ORDER = [
+    AutonomyLevel.OBSERVE,
+    AutonomyLevel.MANUAL,
+    AutonomyLevel.WHITELIST,
+    AutonomyLevel.FULL,
+]
 
-    Demotion is always permitted — reducing autonomy needs no evidence. Promotion up a rung
-    requires demonstrated evidence: autonomy is arrived at, not switched on.
+
+def _evidence_blockers(target: AutonomyLevel) -> list[str]:
+    """The >=20 fills / >=60% fill rate / >=1 close evidence check for *target*, independent of
+    the current rung and of ``automation.paper_skip_promotion_gate``.
+
+    Factored out of ``promotion_blockers`` (Task 12 fix round 1) so
+    ``enforce_live_autonomy_evidence`` can ask "does the rung *currently stored* still hold up"
+    — which needs the check even when ``target`` equals the current rung, a case
+    ``promotion_blockers``'s own demotion/no-op early-return would otherwise short-circuit to
+    ``[]`` without ever consulting the fill history.
     """
     from sqlalchemy import func, select
 
     from src.storage.models import FillRow, OrderRow
-
-    order = [
-        AutonomyLevel.OBSERVE,
-        AutonomyLevel.MANUAL,
-        AutonomyLevel.WHITELIST,
-        AutonomyLevel.FULL,
-    ]
-    if order.index(target) <= order.index(get_autonomy_level()):
-        return []
-
-    cfg = get_config()
-    if cfg.automation.paper_skip_promotion_gate:
-        if cfg.is_live:
-            log.warning(
-                "automation.paper_skip_promotion_gate is set but LIVE_TRADING=true — ignored"
-            )
-        else:
-            log.warning(
-                "Promotion evidence gate SKIPPED (paper-only override) for %s", target.value
-            )
-            return []
 
     blockers: list[str] = []
     try:
@@ -164,6 +155,71 @@ def promotion_blockers(target: AutonomyLevel) -> list[str]:
         if closes < 1:
             blockers.append("no risk-reducing close has fired yet")
     return blockers
+
+
+def promotion_blockers(target: AutonomyLevel) -> list[str]:
+    """Unmet criteria for promoting to *target*. Empty list means promotion is allowed.
+
+    Demotion is always permitted — reducing autonomy needs no evidence. Promotion up a rung
+    requires demonstrated evidence: autonomy is arrived at, not switched on.
+    """
+    if _AUTONOMY_ORDER.index(target) <= _AUTONOMY_ORDER.index(get_autonomy_level()):
+        return []
+
+    cfg = get_config()
+    if cfg.automation.paper_skip_promotion_gate:
+        if cfg.is_live:
+            log.warning(
+                "automation.paper_skip_promotion_gate is set but LIVE_TRADING=true — ignored"
+            )
+        else:
+            log.warning(
+                "Promotion evidence gate SKIPPED (paper-only override) for %s", target.value
+            )
+            return []
+
+    return _evidence_blockers(target)
+
+
+def enforce_live_autonomy_evidence() -> AutonomyLevel | None:
+    """Demote a stored rung that a live process cannot justify. Call once at the startup of any
+    process that acts on the autonomy rung to auto-queue orders (``approval_service`` — before
+    its intraday scan loop or order-poll loop starts), before either can run.
+
+    Task 12's ``automation.paper_skip_promotion_gate`` lets a *paper* process promote straight to
+    WHITELIST/FULL with no fill evidence. That flag is already ignored — with a warning — by
+    ``promotion_blockers`` whenever ``Config.is_live`` is true, but the stored rung itself lives
+    in the same ``system_settings`` table, in the same DB file, for both paper and live: nothing
+    previously re-checked a rung *already reached* once a process starts in live mode, so
+    flipping ``LIVE_TRADING=true`` while ``paper_skip_promotion_gate`` was later turned back off
+    would carry a bypass-earned FULL straight into live trading with zero evidence. This closes
+    that gap: a live process always re-validates its *current* stored rung against the real
+    fill/fill-rate/close evidence (never the bypass — ``_evidence_blockers`` is called directly,
+    not through ``promotion_blockers``), and demotes to MANUAL, persistently, if it doesn't hold.
+
+    No-op (returns ``None``) in paper mode, when the stored rung is OBSERVE/MANUAL already (no
+    evidence is required at or below MANUAL), or when the evidence does hold. Returns the OLD
+    level when it demoted.
+    """
+    cfg = get_config()
+    if not cfg.is_live:
+        return None
+
+    current = get_autonomy_level()
+    if _AUTONOMY_ORDER.index(current) <= _AUTONOMY_ORDER.index(AutonomyLevel.MANUAL):
+        return None
+
+    blockers = _evidence_blockers(current)
+    if not blockers:
+        return None
+
+    log.warning(
+        "LIVE startup: stored autonomy rung %s has no evidence (%s) — demoting to MANUAL",
+        current.value.upper(),
+        "; ".join(blockers),
+    )
+    set_autonomy_level(AutonomyLevel.MANUAL)
+    return current
 
 
 def autonomy_progress() -> tuple[int, float, bool]:

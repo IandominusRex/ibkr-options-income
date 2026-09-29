@@ -84,6 +84,7 @@ from src.storage.orders import has_active_order
 from src.storage.system_settings import (
     SCAN_COMPLETED_KEY,
     autonomy_progress,
+    enforce_live_autonomy_evidence,
     get_autonomy_level,
     get_halt_reason,
     get_setting,
@@ -1633,6 +1634,18 @@ async def _run_service(token: str, chat_id: str) -> None:
     cfg = get_config()
     reconnectors: list[AutoReconnect] = []
 
+    # Task 12 fix round 1 — a rung reached via the paper-only promotion bypass (or an earlier
+    # valid promotion, since `autonomy_level` lives in the same DB for paper and live) must
+    # never carry into a live process. Runs before any IBKR connection or background loop, so a
+    # demotion always lands before the intraday scan loop (the auto-queue path) or the order
+    # poll loop can act on the old rung.
+    demoted_from_autonomy = enforce_live_autonomy_evidence()
+    if demoted_from_autonomy is not None:
+        logger.warning(
+            "Live startup demoted autonomy from %s to MANUAL — insufficient fill evidence",
+            demoted_from_autonomy.value.upper(),
+        )
+
     # Exec connection: holds the order placement TWS session.
     ib: IB | None = None
     exec_id = cfg.ibkr.client_ids["exec"]
@@ -1813,6 +1826,19 @@ async def _run_service(token: str, chat_id: str) -> None:
             )
         except Exception:
             logger.warning("Could not send startup notification to Telegram", exc_info=True)
+
+        if demoted_from_autonomy is not None:
+            try:
+                from src.notify.formatters import format_autonomy_demotion
+
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id(cfg.secrets.telegram_thread_scan),
+                    text=format_autonomy_demotion(demoted_from_autonomy),
+                    parse_mode="MarkdownV2",
+                )
+            except Exception:
+                logger.warning("Could not send autonomy-demotion notice to Telegram", exc_info=True)
 
         # Arm the scan-only background loops FIRST, before any IBKR-touching startup recovery.
         # Startup reconciliation calls the broker (reqExecutions); on a half-dead TWS socket

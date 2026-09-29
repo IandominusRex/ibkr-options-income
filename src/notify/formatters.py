@@ -1436,6 +1436,28 @@ def format_mode_status(
     return "\n".join(lines)
 
 
+def format_autonomy_demotion(old_level: AutonomyLevel) -> str:
+    """Startup notice for ``system_settings.enforce_live_autonomy_evidence`` (Task 12 fix round
+    1): a LIVE process found the stored rung above MANUAL without the evidence to justify it —
+    typically a rung reached via the paper-only ``automation.paper_skip_promotion_gate`` bypass,
+    which is ignored on a live process but does nothing about a rung *already* stored from an
+    earlier paper run sharing the same DB — and demoted it to MANUAL before either loop that
+    could auto-queue an order started. The unmet criteria are in the server log (WARNING) rather
+    than repeated here — this message's job is to make the demotion itself impossible to miss."""
+    return "\n".join(
+        [
+            "⚠️ *Autonomy demoted at startup*",
+            "",
+            f"Stored rung was {_md(old_level.value.upper())}, but this is a LIVE process "
+            "without the evidence to justify it \\(a paper\\-only bypass or an earlier "
+            "promotion doesn't carry over\\)\\. Reset to *MANUAL* \\— a human tap is required "
+            "to open new exposure until the ladder re\\-earns WHITELIST/FULL the normal way\\.",
+            "",
+            "_See the approval\\-service log for the unmet evidence criteria\\._",
+        ]
+    )
+
+
 def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
     """Summary notification sent when trades are auto-queued (WHITELIST/FULL autonomy rungs)."""
     n = len(candidates)

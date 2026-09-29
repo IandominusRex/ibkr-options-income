@@ -771,13 +771,19 @@ prevent a *closed-lid* sleep on battery — keep the Mac plugged in, or on a wir
 (default `false` in code, shipped `true` in this repo's checked-in config) lets a **paper-mode**
 process skip the autonomy ladder's fill-count evidence gate (>=20 fills, >=60% fill rate, >=1
 risk-reducing close) so `./ibkr autonomy full` can succeed immediately, before that evidence
-exists — it does nothing on a live account (`LIVE_TRADING=true` always runs the real evidence
-check; see `STATUS.md`'s live-cutover gate, which requires this flag be `false` again before you
-ever get there). At `full`, a candidate that passes the deterministic risk gate auto-queues and
-executes with no approval tap — **remember `/halt` in Telegram**: it stops all new order
+exists. At `full`, a candidate that passes the deterministic risk gate auto-queues and executes
+with no approval tap — **remember `/halt` in Telegram**: it stops all new order
 queuing/transmission immediately (closing risk still runs), and is the fastest way to intervene
 if a scan cycle at `full` does something you don't like. `./ibkr logs approval` tails what the
 approval/execution daemon is doing in real time.
+
+**Before you ever set `LIVE_TRADING=true`, demote by hand: `./ibkr autonomy manual`.** A
+promotion *request* on a live process always runs the real evidence check regardless of this
+flag — but the stored rung itself lives in the same DB for paper and live, so a `full` reached
+here on paper does not reset itself just because the mode flag changed. There is a backstop
+(`approval_service` re-validates and demotes the stored rung to `manual` on every live startup
+if the evidence doesn't hold — see `STATUS.md`'s Task 12 fix-round-1 entry), but it's exactly
+that: a backstop, not the plan. See the "Live-cutover safety checklist" in §12 below.
 
 `install` refuses to run over a terminal-launched `scripts.start` that's still alive (checked via
 `pgrep -f scripts.start` while the supervisor label isn't already loaded) — two supervisors would
@@ -1094,12 +1100,19 @@ When you are ready:
 1. Confirm you have the US Equity and Options Add-On Streaming Bundle active on your live account
    and that paper scans are producing real CC/CSP candidates with valid delta values.
 2. Verify at least 10–20 successful paper trades have filled and confirmed back to Telegram.
-3. Open `.env` and change `LIVE_TRADING=false` to `LIVE_TRADING=true`.
-4. In `config/settings.yaml`, confirm `ibkr.live_port` is `4001` (IB Gateway live default). If you are using TWS instead, set it to `7496`.
-5. Restart all processes (approval service, monitor, cron).
-6. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
+3. **Run `./ibkr autonomy manual`.** If the paper account has been running at `whitelist`/`full`
+   (Task 12's `paper_skip_promotion_gate`), demote it by hand before touching `.env` — the
+   stored rung lives in the same DB for paper and live, so it does not reset itself just because
+   `LIVE_TRADING` changes. (`approval_service` re-validates the stored rung and demotes it to
+   `manual` automatically on every live startup if the fill evidence doesn't hold — see
+   `STATUS.md`'s Task 12 fix-round-1 entry — but that is a backstop for a missed step, not a
+   substitute for doing this deliberately.)
+4. Open `.env` and change `LIVE_TRADING=false` to `LIVE_TRADING=true`.
+5. In `config/settings.yaml`, confirm `ibkr.live_port` is `4001` (IB Gateway live default). If you are using TWS instead, set it to `7496`.
+6. Restart all processes (approval service, monitor, cron).
+7. The system will print a **prominent banner** on startup confirming it is in LIVE mode and
    which account it is connected to. Verify this before approving any trade.
-7. Start with a single small position to validate the full end-to-end flow.
+8. Start with a single small position to validate the full end-to-end flow.
 
 ### Live-cutover safety checklist (SYSTEM_REVIEW Phase 2)
 
@@ -1117,11 +1130,14 @@ These are wired into the code but **review the defaults before you flip the flag
       high-water mark). Either loss breaker auto-engages `/halt`.
 - [ ] **Kill switch:** know that `/halt` stops everything instantly and `/resume` re-enables it; the
       halt persists across restarts.
-- [ ] **Paper-only promotion bypass off (Task 12):** `settings.yaml → automation.paper_skip_promotion_gate`
-      must be `false`. It ships `true` in this repo's checked-in config so the paper account can run
-      `full` without first accumulating fill evidence — `promotion_blockers` ignores it (with a
-      warning) whenever `LIVE_TRADING=true`, but reset it deliberately before cutover rather than
-      relying on that second-order guard.
+- [ ] **Paper-only promotion bypass off, and the rung demoted by hand (Task 12):**
+      `settings.yaml → automation.paper_skip_promotion_gate` must be `false`. It ships `true` in
+      this repo's checked-in config so the paper account can run `full` without first
+      accumulating fill evidence — `promotion_blockers` ignores it (with a warning) whenever
+      `LIVE_TRADING=true`, but that only ever gates a fresh promotion *request*. The stored rung
+      itself lives in the same DB for paper and live, so also do step 3 above (`./ibkr autonomy
+      manual`) — don't rely on `approval_service`'s live-startup re-check (Task 12 fix round 1)
+      to catch a rung you forgot to demote; it's the backstop, not the plan.
 - [ ] **DB backups:** the EOD run writes a rotated snapshot to `data/backups/` — confirm it is being
       created after your first EOD cycle.
 
