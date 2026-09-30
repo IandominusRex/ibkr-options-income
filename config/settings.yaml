@@ -399,12 +399,14 @@ monitor:
   iv_spike_pct: 40
   # Warn if ex-dividend date is within this many days for a short call.
   ex_div_days_ahead: 5
-  # Suppress re-alerts for the same (position, trigger) within this window.
-  alert_cooldown_minutes: 30
+  # Re-alert policy is fixed in code (monitor/intraday.py::_select_fresh): once per position
+  # for the DTE-window triggers, at most once per ET day per position while a roll is still
+  # needed, and a strike breach always gets through. (Replaced alert_cooldown_minutes, 2026-10-01.)
   # N20: when true, a roll trigger sends an approvable roll candidate (Approve → QUEUED ROLL →
-  # execute_roll) instead of an alert-only message. Default false until the BAG combo sign
-  # convention is verified on a live paper account.
-  roll_execution_enabled: false
+  # execute_roll) instead of an alert-only message. Turned ON 2026-10-01 on the paper account to
+  # verify the BAG combo sign convention — every roll still needs an Approve tap. Re-confirm
+  # before live cutover (STATUS.md live-cutover gate).
+  roll_execution_enabled: true
   # C4: assignment-risk alert — fires when |delta| >= threshold AND DTE <= dte window.
   # Targets deep-ITM shorts near expiry; suggests roll / close / let-assign.
   assignment_alert_delta: 0.70

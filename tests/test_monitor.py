@@ -256,11 +256,11 @@ async def test_intraday_monitor_passes_manage_at_dte_from_config() -> None:
 
     captured: dict = {}
 
-    def _capture(pos_, quote_, entry_iv, fund_stats, limits):
+    def _capture(pos_, quote_, entry_iv, fund_stats, limits, entry_dte=None):
         captured.update(limits)
         from src.monitor.triggers import check_all as real_check_all
 
-        return real_check_all(pos_, quote_, entry_iv, fund_stats, limits)
+        return real_check_all(pos_, quote_, entry_iv, fund_stats, limits, entry_dte=entry_dte)
 
     with (
         patch("src.monitor.intraday.check_all", side_effect=_capture),
@@ -509,23 +509,10 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 def test_persist_and_dedup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """RollAlertRow written; second call within cooldown is suppressed."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    """RollAlertRow written; the same trigger is not re-sent the same ET day."""
+    from src.monitor.intraday import _persist_alert, _select_fresh
 
-    import src.storage.db as _db_mod
-    from src.monitor.intraday import _is_recent_alert, _persist_alert
-    from src.storage.models import Base
-
-    # Build an isolated SQLite engine so this test never touches the real DB.
-    db_url = f"sqlite:///{tmp_path / 'monitor_dedup.db'}"
-    engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, expire_on_commit=False)
-
-    monkeypatch.setattr(_db_mod, "_engine", engine)
-    monkeypatch.setattr(_db_mod, "_SessionLocal", Session)
-
+    _isolated_db(tmp_path, monkeypatch)
     alert = RollAlert(
         position_symbol="AAPL  260117C00185000",
         underlying="AAPL",
@@ -534,9 +521,9 @@ def test_persist_and_dedup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         current_delta=0.48,
         dte=30,
     )
-    assert not _is_recent_alert(alert, cooldown_minutes=30)
+    assert _select_fresh([alert], opened_at=None) == [alert]
     _persist_alert(alert, review=None)
-    assert _is_recent_alert(alert, cooldown_minutes=30)
+    assert _select_fresh([alert], opened_at=None) == []
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +554,7 @@ async def test_fire_alerts_sends_telegram(tmp_path: Path) -> None:
     cfg.claude.enabled = False  # skip actual Claude subprocess
 
     with (
-        patch("src.monitor.intraday._is_recent_alert", return_value=False),
+        patch("src.monitor.intraday._select_fresh", side_effect=lambda a, **_k: a),
         patch("src.monitor.intraday._persist_alert"),
     ):
         with ThreadPoolExecutor(max_workers=1) as ex:
@@ -598,7 +585,7 @@ async def test_fire_alerts_suppressed_when_recent(tmp_path: Path) -> None:
     cfg.monitor.alert_cooldown_minutes = 30
     cfg.claude.enabled = False
 
-    with patch("src.monitor.intraday._is_recent_alert", return_value=True):
+    with patch("src.monitor.intraday._select_fresh", return_value=[]):
         with ThreadPoolExecutor(max_workers=1) as ex:
             await fire_alerts([alert], pos, quote, mock_bot, "test_chat", cfg, ex)
 
@@ -629,8 +616,8 @@ async def test_fire_alerts_concurrent_ticks_send_once() -> None:
 
     persisted: list[RollAlert] = []
 
-    def _recent(a: RollAlert, _cooldown: int) -> bool:
-        return any(p.position_symbol == a.position_symbol for p in persisted)
+    def _select(alerts: list[RollAlert], **_kw: object) -> list[RollAlert]:
+        return [a for a in alerts if not any(p.trigger == a.trigger for p in persisted)]
 
     async def _slow_send(**_kw: object) -> None:
         await asyncio.sleep(0.05)  # stands in for the review + Telegram round-trip
@@ -642,7 +629,7 @@ async def test_fire_alerts_concurrent_ticks_send_once() -> None:
     cfg.claude.enabled = False
 
     with (
-        patch("src.monitor.intraday._is_recent_alert", side_effect=_recent),
+        patch("src.monitor.intraday._select_fresh", side_effect=_select),
         patch(
             "src.monitor.intraday._persist_alert",
             side_effect=lambda a, _r: persisted.append(a),
@@ -1108,3 +1095,211 @@ def test_roll_review_blanks_echoed_prompt_placeholders() -> None:
     assert review.risks == ""
     assert review.roll_target == ""
     assert review.rationale == "Real reasoning."
+
+
+# ---------------------------------------------------------------------------
+# Alert policy (2026-10-01): fire once per position, re-alert at most daily while a roll is
+# still needed, never for a position opened inside the management window, strike breach
+# always gets through.
+# ---------------------------------------------------------------------------
+
+
+def _short_put(strike: float = 74.0, dte: int = 9) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol="TQQQ  261009P00074000",
+        sec_type="OPT",
+        position=-10.0,
+        avg_cost=104.0,
+        right=OptionRight.PUT,
+        strike=strike,
+        expiry=today_et() + timedelta(days=dte),
+        underlying="TQQQ",
+    )
+
+
+def _put_quote(und: float | None, delta: float = -0.22) -> OptionQuote:
+    return OptionQuote(
+        underlying="TQQQ",
+        right=OptionRight.PUT,
+        strike=74.0,
+        expiry=today_et() + timedelta(days=9),
+        bid=0.9,
+        ask=1.0,
+        delta=delta,
+        iv=0.59,
+        underlying_price=und,
+    )
+
+
+def _alert(trigger: str, symbol: str = "TQQQ  261009P00074000") -> RollAlert:
+    return RollAlert(position_symbol=symbol, underlying="TQQQ", trigger=trigger, detail="x")
+
+
+def _backdate_alerts(hours: int) -> None:
+    from datetime import UTC, datetime
+
+    from src.storage.db import session_scope
+    from src.storage.models import RollAlertRow
+
+    with session_scope() as s:
+        for row in s.query(RollAlertRow).all():
+            row.created_at = datetime.now(UTC) - timedelta(hours=hours)
+
+
+def test_strike_breach_fires_for_put_below_strike() -> None:
+    from src.monitor.triggers import check_strike_breach
+
+    alert = check_strike_breach(_short_put(), _put_quote(und=72.10))
+    assert alert is not None
+    assert alert.trigger == "strike_breach"
+    assert "72.10" in alert.detail and "74" in alert.detail
+
+
+def test_strike_breach_silent_when_put_otm_or_no_spot() -> None:
+    from src.monitor.triggers import check_strike_breach
+
+    assert check_strike_breach(_short_put(), _put_quote(und=77.46)) is None
+    assert check_strike_breach(_short_put(), _put_quote(und=None)) is None
+
+
+def test_strike_breach_fires_for_call_above_strike() -> None:
+    from src.monitor.triggers import check_strike_breach
+
+    pos = _make_short_call(strike=185.0)
+    quote = _make_quote().model_copy(update={"underlying_price": 186.0})
+    assert check_strike_breach(pos, quote) is not None
+    quote = quote.model_copy(update={"underlying_price": 184.0})
+    assert check_strike_breach(pos, quote) is None
+
+
+def test_check_all_skips_expiry_window_triggers_for_position_opened_inside_them() -> None:
+    """TQQQ opened at 9 DTE: already past the 21-day management point on the day it filled."""
+    limits = {"manage_at_dte": 21, "dte_threshold": 7}
+    pos = _short_put(dte=6)
+    quote = _put_quote(und=77.0)
+
+    triggers = {a.trigger for a in check_all(pos, quote, None, None, limits, entry_dte=9)}
+    assert "manage_dte" not in triggers
+    assert "dte" in triggers  # 9 > 7: it was opened outside the 7-day gamma window
+
+    triggers = {a.trigger for a in check_all(pos, quote, None, None, limits, entry_dte=7)}
+    assert "dte" not in triggers
+
+    triggers = {a.trigger for a in check_all(pos, quote, None, None, limits, entry_dte=30)}
+    assert {"manage_dte", "dte"} <= triggers
+    # Unknown entry (no fill on record — e.g. opened by hand in TWS): fire as before.
+    triggers = {a.trigger for a in check_all(pos, quote, None, None, limits, entry_dte=None)}
+    assert {"manage_dte", "dte"} <= triggers
+
+
+def test_one_shot_trigger_never_repeats_even_next_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.monitor.intraday import _persist_alert, _select_fresh
+
+    _isolated_db(tmp_path, monkeypatch)
+    _persist_alert(_alert("manage_dte"), review=None)
+    _backdate_alerts(hours=30)
+    assert _select_fresh([_alert("manage_dte")], opened_at=None) == []
+
+
+def test_roll_needed_trigger_repeats_next_day_not_same_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.monitor.intraday import _persist_alert, _select_fresh
+
+    _isolated_db(tmp_path, monkeypatch)
+    _persist_alert(_alert("delta_drift"), review=None)
+    assert _select_fresh([_alert("delta_drift")], opened_at=None) == []
+    _backdate_alerts(hours=30)
+    assert [a.trigger for a in _select_fresh([_alert("delta_drift")], opened_at=None)] == [
+        "delta_drift"
+    ]
+
+
+def test_one_alert_per_position_per_day_but_strike_breach_escalates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.monitor.intraday import _persist_alert, _select_fresh
+
+    _isolated_db(tmp_path, monkeypatch)
+    _persist_alert(_alert("delta_drift"), review=None)
+
+    # A different non-escalation trigger the same day is held back...
+    assert _select_fresh([_alert("iv_spike")], opened_at=None) == []
+    # ...but the underlying crossing the strike gets through, once.
+    got = _select_fresh([_alert("iv_spike"), _alert("strike_breach")], opened_at=None)
+    assert [a.trigger for a in got] == ["strike_breach"]
+    _persist_alert(_alert("strike_breach"), review=None)
+    assert _select_fresh([_alert("strike_breach")], opened_at=None) == []
+
+
+def test_alerts_before_the_position_opened_do_not_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new position in a contract alerted on in an earlier holding starts clean."""
+    from datetime import UTC, datetime
+
+    from src.monitor.intraday import _persist_alert, _select_fresh
+
+    _isolated_db(tmp_path, monkeypatch)
+    _persist_alert(_alert("manage_dte"), review=None)
+    _backdate_alerts(hours=30)
+    opened = datetime.now(UTC) - timedelta(hours=1)
+    assert [a.trigger for a in _select_fresh([_alert("manage_dte")], opened_at=opened)] == [
+        "manage_dte"
+    ]
+
+
+def test_ticker_to_quote_carries_underlying_price() -> None:
+    from src.monitor.intraday import _ticker_to_quote
+
+    ticker = MagicMock()
+    ticker.bid, ticker.ask, ticker.last, ticker.volume = 0.9, 1.0, 0.95, 10
+    ticker.modelGreeks = MagicMock(
+        impliedVol=0.59, delta=-0.22, gamma=0.05, theta=-0.1, vega=0.03, undPrice=77.46
+    )
+    assert _ticker_to_quote(ticker, _short_put()).underlying_price == pytest.approx(77.46)
+
+
+def test_load_opened_at_and_entry_dte(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The entry fill's time is recovered by contract match and gives the entry DTE."""
+    from datetime import UTC, datetime
+
+    from src.monitor.intraday import _entry_dte, _load_opened_at
+    from src.storage.db import session_scope
+    from src.storage.models import CandidateRow, FillRow
+
+    _isolated_db(tmp_path, monkeypatch)
+    pos = _short_put(dte=9)
+    filled = datetime.now(UTC) - timedelta(hours=1)
+    with session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="cand-tqqq",
+                run_id="r1",
+                strategy="cash_secured_put",
+                underlying="TQQQ",
+                right="P",
+                strike=74.0,
+                expiry=pos.expiry,
+                blended_score=58.0,
+                payload={},
+            )
+        )
+        s.add(
+            FillRow(
+                order_id=14,
+                candidate_id="cand-tqqq",
+                filled_qty=10.0,
+                avg_price=1.04,
+                filled_at=filled,
+            )
+        )
+
+    opened = _load_opened_at(pos)
+    assert opened is not None
+    assert abs((opened - filled).total_seconds()) < 1
+    assert _entry_dte(pos, opened) in (9, 10)  # 9 unless the fill was before ET midnight
+    assert _load_opened_at(_short_put(strike=70.0)) is None
+    assert _entry_dte(pos, None) is None

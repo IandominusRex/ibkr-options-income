@@ -2,7 +2,7 @@
 
 Each check_* function is a pure function: given position + market data + thresholds,
 it returns a RollAlert when its condition is met, or None when not triggered.
-call check_all() to run all four triggers in one pass.
+call check_all() to run every trigger in one pass.
 
 This module also owns the human-readable labels for the trigger codes it produces
 (`TRIGGER_LABELS` + `humanize_trigger`). The labels moved here from
@@ -93,6 +93,43 @@ def check_manage_at_dte(
             f"decide to hold while extrinsic value still makes all three viable"
         ),
         dte=dte,
+    )
+
+
+def check_strike_breach(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+) -> RollAlert | None:
+    """Fire when the underlying has crossed a short option's strike (it is in the money).
+
+    The one trigger that means a roll is genuinely needed rather than worth considering: a
+    short put with the stock below its strike, or a short call with the stock above it. Reads
+    the live underlying from the option ticker (``undPrice``); missing spot → no alert.
+    """
+    from src.common.schemas import OptionRight
+
+    if pos.position >= 0 or pos.strike is None or pos.right is None:
+        return None
+    spot = quote.underlying_price
+    if spot is None:
+        return None
+    if pos.right == OptionRight.PUT and spot < pos.strike:
+        side = "below"
+    elif pos.right == OptionRight.CALL and spot > pos.strike:
+        side = "above"
+    else:
+        return None
+    strike = f"{pos.strike:g}"
+    return RollAlert(
+        position_symbol=pos.symbol,
+        underlying=pos.underlying or pos.symbol,
+        trigger="strike_breach",
+        detail=(
+            f"{pos.underlying or pos.symbol} at ${spot:.2f} is {side} the ${strike} strike — "
+            f"the short is in the money"
+        ),
+        current_delta=quote.delta,
+        dte=quote.dte,
     )
 
 
@@ -213,11 +250,17 @@ def check_all(
     entry_iv: float | None,
     fund_stats: FundamentalStats | None,
     limits: dict,
+    entry_dte: int | None = None,
 ) -> list[RollAlert]:
     """Run all triggers and return every alert that fires.
 
     Pass entry_iv=None to skip the IV-spike check (no entry data available).
     Pass fund_stats=None to skip the ex-div check.
+    ``entry_dte`` is the position's DTE on the day it was opened. The two expiry-window
+    triggers (``manage_dte``, ``dte``) mark a point the position *crosses*; a position opened
+    already inside a window never crossed it, so that trigger is skipped (2026-10-01: a
+    TQQQ put opened at 9 DTE drew a "21-day management point" alert a minute after it
+    filled). None (no fill on record) keeps the old always-fire behaviour.
     """
     alerts: list[RollAlert] = []
 
@@ -225,13 +268,21 @@ def check_all(
     if alert:
         alerts.append(alert)
 
-    alert = check_dte_threshold(pos, limits.get("dte_threshold", 7))
+    alert = check_strike_breach(pos, quote)
     if alert:
         alerts.append(alert)
 
-    alert = check_manage_at_dte(pos, limits.get("manage_at_dte", 21))
-    if alert:
-        alerts.append(alert)
+    dte_threshold = limits.get("dte_threshold", 7)
+    if entry_dte is None or entry_dte > dte_threshold:
+        alert = check_dte_threshold(pos, dte_threshold)
+        if alert:
+            alerts.append(alert)
+
+    manage_dte = limits.get("manage_at_dte", 21)
+    if entry_dte is None or entry_dte > manage_dte:
+        alert = check_manage_at_dte(pos, manage_dte)
+        if alert:
+            alerts.append(alert)
 
     if entry_iv is not None:
         alert = check_iv_spike(pos, quote, entry_iv, limits.get("iv_spike_pct", 40.0))
@@ -267,6 +318,7 @@ def check_all(
 
 TRIGGER_LABELS: dict[str, str] = {
     "delta_drift": "delta drift",
+    "strike_breach": "strike breached",
     "dte": "nearing expiry",
     "manage_dte": "management point",
     "iv_spike": "IV spike",

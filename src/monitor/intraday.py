@@ -8,7 +8,8 @@ Key design points:
 - IB ticks arrive via pendingTickersEvent (ib_async event).
 - Claude subprocess runs in a ThreadPoolExecutor to avoid blocking the loop.
 - Alert de-duplication: the roll_alerts DB table gates re-alerts per
-  (position_symbol, trigger) within alert_cooldown_minutes.
+  per the alert policy in _select_fresh (once per position, at most daily while a roll is
+  still needed).
 - Multiple triggers for the same position in one pass are combined into a
   single Telegram message.
 """
@@ -21,15 +22,16 @@ import logging
 import math
 import signal
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ib_async import IB
 
 from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.runner import review_roll
 from src.common.config import Config, get_config
-from src.common.market_hours import is_rth
+from src.common.market_hours import is_rth, today_et
 from src.common.schemas import (
     FundamentalStats,
     OptionQuote,
@@ -93,7 +95,43 @@ def _ticker_to_quote(ticker: Any, pos: PositionSnapshot) -> OptionQuote:
         theta=_safe(g.theta) if g else None,
         vega=_safe(g.vega) if g else None,
         greeks_source="ibkr",
+        underlying_price=_safe(g.undPrice) if g else None,
     )
+
+
+def _load_opened_at(pos: PositionSnapshot) -> datetime | None:
+    """Return when this short option position was opened (its latest entry fill), or None.
+
+    Matched the same way as ``_load_entry_iv``. None for a position with no fill on record
+    (e.g. opened by hand in TWS) — the alert policy then treats it as always-held.
+    """
+    if pos.strike is None or pos.expiry is None or pos.right is None:
+        return None
+    with session_scope() as session:
+        row = (
+            session.query(FillRow.filled_at)
+            .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+            .filter(
+                CandidateRow.underlying == (pos.underlying or pos.symbol),
+                CandidateRow.strike == pos.strike,
+                CandidateRow.expiry == pos.expiry,
+                CandidateRow.right == pos.right.value,
+                FillRow.action == "SELL",
+            )
+            .order_by(FillRow.filled_at.desc())
+            .first()
+        )
+    if row is None or row[0] is None:
+        return None
+    opened: datetime = row[0]
+    return opened if opened.tzinfo else opened.replace(tzinfo=UTC)
+
+
+def _entry_dte(pos: PositionSnapshot, opened_at: datetime | None) -> int | None:
+    """The position's DTE on the ET date it was opened, or None when unknown."""
+    if opened_at is None or pos.expiry is None:
+        return None
+    return (pos.expiry - opened_at.astimezone(_ET).date()).days
 
 
 def _load_entry_iv(pos: PositionSnapshot) -> float | None:
@@ -122,26 +160,59 @@ def _load_entry_iv(pos: PositionSnapshot) -> float | None:
 
 # (position_symbol, trigger) keys whose alert is being reviewed/sent right now. ib_async runs
 # every pendingTickersEvent batch as its own task, so a tick burst calls fire_alerts
-# concurrently — and the cooldown row is only written after the multi-second review, so every
-# call used to pass _is_recent_alert first (2026-09-30: ten identical TQQQ alerts in a minute).
+# concurrently — and the alert row is only written after the multi-second review, so every
+# call used to pass the dedup check first (2026-09-30: ten identical TQQQ alerts in a minute).
 # Claimed synchronously (no await between check and add), so it is race-free on the one loop.
 _IN_FLIGHT: set[tuple[str, str]] = set()
 
+# Alert policy (2026-10-01 — replaced a 30-minute cooldown that re-sent the same condition
+# every half hour until expiry):
+# - One-shot triggers mark a point the position crosses and then stays past (DTE windows);
+#   they alert once per position, ever.
+# - Every other trigger describes a condition that can clear; it re-alerts at most once per
+#   ET day while it still holds, and stops on its own once it no longer fires.
+# - At most one alert per position per ET day, except an escalation (the underlying crossing
+#   the strike) the position hasn't been alerted for yet that day.
+_ONE_SHOT_TRIGGERS = frozenset({"manage_dte", "dte"})
+_ESCALATION_TRIGGERS = frozenset({"strike_breach"})
+_ET = ZoneInfo("America/New_York")
 
-def _is_recent_alert(alert: RollAlert, cooldown_minutes: int) -> bool:
-    """Return True if the same (position_symbol, trigger) was alerted within cooldown."""
-    cutoff = datetime.now(UTC) - timedelta(minutes=cooldown_minutes)
+
+def _et_day_start_utc() -> datetime:
+    """Midnight of the current ET trading date, in UTC."""
+    return datetime.combine(today_et(), time.min, tzinfo=_ET).astimezone(UTC)
+
+
+def _alerted_triggers(position_symbol: str, since: datetime | None) -> set[str]:
+    """Triggers already alerted for *position_symbol* at or after *since* (None = ever)."""
     with session_scope() as session:
-        existing = (
-            session.query(RollAlertRow)
-            .filter(
-                RollAlertRow.position_symbol == alert.position_symbol,
-                RollAlertRow.trigger == alert.trigger,
-                RollAlertRow.created_at >= cutoff,
-            )
-            .first()
+        q = session.query(RollAlertRow.trigger).filter(
+            RollAlertRow.position_symbol == position_symbol
         )
-        return existing is not None
+        if since is not None:
+            q = q.filter(RollAlertRow.created_at >= since)
+        return {row[0] for row in q.distinct()}
+
+
+def _select_fresh(alerts: list[RollAlert], *, opened_at: datetime | None) -> list[RollAlert]:
+    """Apply the alert policy above; return the alerts that should be sent now.
+
+    *opened_at* (the position's entry fill time) scopes history to the current holding, so
+    re-opening a contract that was alerted on in an earlier holding starts clean.
+    """
+    if not alerts:
+        return []
+    symbol = alerts[0].position_symbol
+    day_start = _et_day_start_utc()
+    ever = _alerted_triggers(symbol, opened_at)
+    today = _alerted_triggers(symbol, max(day_start, opened_at) if opened_at else day_start)
+
+    fresh = [
+        a for a in alerts if a.trigger not in (ever if a.trigger in _ONE_SHOT_TRIGGERS else today)
+    ]
+    if today:
+        fresh = [a for a in fresh if a.trigger in _ESCALATION_TRIGGERS]
+    return fresh
 
 
 def _persist_alert(alert: RollAlert, review: RollReview | None) -> None:
@@ -207,8 +278,9 @@ async def fire_alerts(
     cfg: Config,
     executor: ThreadPoolExecutor,
     ib: IB | None = None,
+    opened_at: datetime | None = None,
 ) -> None:
-    """De-dup, call Claude, send Telegram, persist. No-op if all alerts are recent.
+    """De-dup, call Claude, send Telegram, persist. No-op if the alert policy holds all back.
 
     This function is the testable heart of the monitor — the IB event subscription
     code in IntradayMonitor calls into here. When ``cfg.monitor.roll_execution_enabled`` is set
@@ -216,15 +288,13 @@ async def fire_alerts(
     tapping Approve queues a ROLL order that ``execute_roll`` executes. Otherwise it is the
     historical alert-only message.
     """
-    fresh = [
-        a
-        for a in alerts
-        if (a.position_symbol, a.trigger) not in _IN_FLIGHT
-        and not _is_recent_alert(a, cfg.monitor.alert_cooldown_minutes)
-    ]
+    fresh = _select_fresh(
+        [a for a in alerts if (a.position_symbol, a.trigger) not in _IN_FLIGHT],
+        opened_at=opened_at,
+    )
     if not fresh:
         log.debug(
-            "All %d alert(s) for %s are within cooldown or in flight — suppressed",
+            "All %d alert(s) for %s already sent or in flight — suppressed",
             len(alerts),
             pos.symbol,
         )
@@ -338,6 +408,8 @@ class IntradayMonitor:
         self._subscriptions: dict[str, tuple[PositionSnapshot, Any]] = {}
         # OCC symbol → IV at entry (IV-spike baseline); underlying → fundamentals (ex-div).
         self._entry_iv: dict[str, float | None] = {}
+        # OCC symbol → when the position was opened (alert-policy scope + entry DTE).
+        self._opened_at: dict[str, datetime | None] = {}
         self._fund_stats: dict[str, FundamentalStats] = {}
 
     # ------------------------------------------------------------------
@@ -357,6 +429,7 @@ class IntradayMonitor:
         """
         self._subscriptions.clear()
         self._entry_iv.clear()
+        self._opened_at.clear()
         await self._refresh_subscriptions()
 
     async def _maybe_write_snapshot(self, positions: list[PositionSnapshot]) -> None:
@@ -423,6 +496,8 @@ class IntradayMonitor:
                 # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
                 if pos.symbol not in self._entry_iv:
                     self._entry_iv[pos.symbol] = _load_entry_iv(pos)
+                if pos.symbol not in self._opened_at:
+                    self._opened_at[pos.symbol] = _load_opened_at(pos)
                 # Fundamentals (ex-div date) — cache once per underlying for the session.
                 underlying = pos.underlying or pos.symbol
                 if underlying not in self._fund_stats:
@@ -467,6 +542,7 @@ class IntradayMonitor:
                 if sym not in active_symbols:
                     old_pos, contract = self._subscriptions.pop(sym)
                     self._entry_iv.pop(sym, None)
+                    self._opened_at.pop(sym, None)
                     if contract is not None:
                         try:
                             self._ib.cancelMktData(contract)
@@ -515,7 +591,15 @@ class IntradayMonitor:
             }
             entry_iv = self._entry_iv.get(local_sym)
             fund_stats = self._fund_stats.get(pos.underlying or pos.symbol)
-            alerts = check_all(pos, quote, entry_iv=entry_iv, fund_stats=fund_stats, limits=limits)
+            opened_at = self._opened_at.get(local_sym)
+            alerts = check_all(
+                pos,
+                quote,
+                entry_iv=entry_iv,
+                fund_stats=fund_stats,
+                limits=limits,
+                entry_dte=_entry_dte(pos, opened_at),
+            )
             if alerts:
                 await fire_alerts(
                     alerts,
@@ -526,6 +610,7 @@ class IntradayMonitor:
                     self._cfg,
                     self._executor,
                     ib=self._ib,
+                    opened_at=opened_at,
                 )
 
     # ------------------------------------------------------------------
