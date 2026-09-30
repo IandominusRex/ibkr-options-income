@@ -1101,3 +1101,68 @@ def test_probe_ollama_fails_when_server_unreachable():
             ok, msg = ollama_mod.probe_ollama()
     assert ok is False
     assert "not reachable" in msg
+
+
+# --------------------------------------------------------------------------- #
+# Final review M4 — duplicate candidate_ids and the requested_ids filter
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_reviews_drops_ids_that_were_not_requested(caplog):
+    """A review for an id the prompt never asked about (hallucinated, or echoed from stale
+    context) is dropped; the log reports the true requested coverage."""
+    raw = json_mod.dumps({"reviews": [_review_dict("a"), _review_dict("ghost")]})
+    with caplog.at_level("INFO"):
+        reviews = parse_ollama_review_output(raw, ["a", "b"])
+    assert [r.candidate_id for r in reviews] == ["a"]
+    assert "reviewed 1/2" in caplog.text
+
+
+def test_parse_reviews_dedupes_repeated_candidate_ids_keeping_the_first(caplog):
+    first = _review_dict("a") | {"recommendation": "sell"}
+    second = _review_dict("a") | {"recommendation": "skip"}
+    raw = json_mod.dumps({"reviews": [first, second, _review_dict("b")]})
+    with caplog.at_level("INFO"):
+        reviews = parse_ollama_review_output(raw, ["a", "b", "c"])
+    assert [r.candidate_id for r in reviews] == ["a", "b"]
+    assert reviews[0].recommendation == "sell"  # first occurrence wins
+    assert "duplicate" in caplog.text and "'a'" in caplog.text
+    assert "reviewed 2/3" in caplog.text  # distinct ids, not 3/3
+
+
+def test_parse_reviews_dedupes_even_without_requested_ids():
+    raw = json_mod.dumps({"reviews": [_review_dict("a"), _review_dict("a")]})
+    assert [r.candidate_id for r in parse_ollama_review_output(raw)] == ["a"]
+
+
+def test_research_turn_search_days_default_comes_from_config(monkeypatch):
+    """Final review minor: a search_news call without `days` used a hard-coded 7 — it now
+    defaults to `claude.news_days`, the same lookback the NEWS block uses."""
+    from src.claude import ollama_tools
+
+    seen: list[int] = []
+    monkeypatch.setattr(
+        ollama_tools,
+        "get_news_search_provider",
+        lambda: MagicMock(search=lambda q, *, days, limit: seen.append(days) or []),
+    )
+
+    def _post(url, json, timeout):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {"message": _TOOL_CALL_MESSAGE}  # no "days" argument
+        return resp
+
+    monkeypatch.setattr(ollama_tools.httpx, "post", _post)
+    cfg = MagicMock(
+        max_tool_rounds=2,
+        ollama_host="http://localhost:11434",
+        ollama_model="m",
+        ollama_keep_alive="2m",
+        ollama_temperature=0.2,
+        ollama_num_ctx=16384,
+        tool_research_timeout_seconds=60.0,
+        news_days=3,
+    )
+    assert ollama_tools.research_turn("prompt", cfg) is not None
+    assert seen == [3]

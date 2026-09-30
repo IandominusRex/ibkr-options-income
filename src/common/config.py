@@ -289,18 +289,20 @@ class ClaudeCfg(BaseModel):
     # a verdict.
     backend: str = "cli"
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "qwen3:8b"
-    ollama_timeout_seconds: float = 120.0
+    # Defaults match config/settings.yaml (final review minor, 2026-09-30) — see its comments for
+    # the measurements behind each value.
+    ollama_model: str = "qwen3.5:4b"
+    ollama_timeout_seconds: float = 180.0
     # Context window (tokens) requested from Ollama. Must cover the *whole* prompt PLUS the
     # generated JSON, or Ollama silently left-truncates the prompt (dropping the universe context
     # + candidates at the start) and/or cuts the output mid-JSON → unparseable → dropped reviews.
-    # A worst-case full scan (10 candidates + 30 memory rows + VIX + spots) measures ~6.3k input
-    # tokens; 10 JSON verdicts add ~1.5-2.5k. 8192 (Ollama's old default here) is too small —
-    # 16384 leaves headroom. Larger values cost more KV-cache RAM; lower it if the model OOMs.
-    ollama_num_ctx: int = 16384
+    # MEASURED 2026-09-30 on the production-shaped 10-candidate prompt: 12,461 prompt tokens
+    # (13,693-13,863 with the Task 11 NEWS block / research turn) + 2,222-2,630 generated.
+    # 24576 leaves ~40% headroom. Larger values cost more KV-cache RAM; lower it if the model OOMs.
+    ollama_num_ctx: int = 24576
     # How long Ollama keeps the model resident after a call. A scan fires several calls
     # (candidates, then per-roll intraday); without this each reload adds seconds of latency.
-    ollama_keep_alive: str = "10m"
+    ollama_keep_alive: str = "2m"
     # Sampling temperature. Low = more deterministic JSON; the review task wants discipline, not
     # creativity. Tunable for experimentation without a code change.
     ollama_temperature: float = 0.2

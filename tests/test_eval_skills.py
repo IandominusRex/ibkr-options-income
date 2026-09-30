@@ -119,6 +119,10 @@ _ENRICHMENT_ONLY = (
     "src.claude.news_context",
     "src.claude.ollama_tools",
     "src.data.google_news_backend",
+    # Final review M2: the factory accessor and the Protocol are the other two ways in — a
+    # `from src.data.factory import get_news_search_provider` names none of the modules above.
+    "get_news_search_provider",
+    "NewsSearchProvider",
 )
 
 

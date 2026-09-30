@@ -61,7 +61,7 @@ _SEARCH_NEWS_TOOL = {
                 "query": {"type": "string", "description": "Search text."},
                 "days": {
                     "type": "integer",
-                    "description": "How many days back to search (default 7).",
+                    "description": "How many days back to search (defaults to the NEWS block's lookback).",
                 },
             },
             "required": ["query"],
@@ -184,7 +184,8 @@ def research_turn(prompt: str, cfg: object, *, deadline: float | None = None) ->
             )
             messages.append({"role": "tool", "content": "(skipped — review time budget exhausted)"})
             continue
-        days = args.get("days") or 7
+        # Default lookback = the NEWS block's own (claude.news_days), not a hard-coded 7.
+        days = args.get("days") or cfg.news_days  # type: ignore[attr-defined]
         try:
             results = get_news_search_provider().search(str(query), days=int(days), limit=5)
         except Exception as exc:  # noqa: BLE001 — one tool call's failure must not abort research

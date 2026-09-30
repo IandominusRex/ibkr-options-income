@@ -425,6 +425,24 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
   `is_new_entry_window(now, scheduler.entry_cutoff)` (DB + config, no IBKR) and `scan_loop_check`
   stays OK in both. A DB error reading the halt flag counts as not halted (alert, don't silence).
   Tests: `tests/test_watchdog.py::test_scan_loop_check_quiet_*`, `::test_run_checks_scan_loop_*`.
+- **Minors (final review, 2026-09-30).** **M2:** the news fence
+  (`tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer`)
+  now also forbids the tokens `get_news_search_provider` and `NewsSearchProvider` in
+  engine/execution/strategies — verified to fail on a probe file importing the accessor.
+  **M4:** `parser._parse_reviews` dedupes repeated `candidate_id`s (keeps the first, logs the
+  repeats) and its "reviewed N/M" line counts distinct ids; new tests cover the dedupe and the
+  `requested_ids` unknown-id drop. **Config drift:** `ClaudeCfg` code defaults now match
+  `settings.yaml` (`qwen3.5:4b`, 180s, `num_ctx` 24576, `keep_alive` "2m" — guarded by
+  `tests/test_config_keys.py::test_claude_cfg_code_defaults_match_the_shipped_yaml`), and
+  `data.news_search_provider: google_news` is explicit in `settings.yaml`. **Research `days`:** a
+  `search_news` call with no `days` now defaults to `claude.news_days`, not a hard-coded 7.
+  **Flaky test:** `tests/test_scan_review_executor.py` asserts heartbeat ticks inside the review's
+  own time window instead of a `< 0.5s` wall-clock margin. **Token numbers:** the stale
+  "~6.3k input tokens + ~2k output" claim lived in `ClaudeCfg`'s `ollama_num_ctx` comment
+  (`src/common/config.py`), not in ARCHITECTURE.md (already corrected there in `f57473a`); both
+  now carry the measured 12,461 (13,693-13,863 with Task 11) + ~2,630.
+- **M7 — SETUP troubleshooting** now covers an EOD lost to a supervisor restart (run
+  `python -m scripts.run_eod` by hand).
 - **M5 — SETUP §6c described the old install preflight** ("pgrep while the supervisor label isn't
   already loaded"). Rewritten to describe `scripts.launchd preflight` as it is: always runs,
   excludes the supervisor job's own process tree.

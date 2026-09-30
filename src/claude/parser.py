@@ -121,7 +121,8 @@ def _parse_reviews(
 
     ``requested_ids``, when given, drops any parsed review whose ``candidate_id`` wasn't
     actually in the requested set (a model hallucinating an id, or echoing stale context) and
-    logs how many of the requested ids came back reviewed.
+    logs how many of the requested ids came back reviewed. Repeated ``candidate_id``s are
+    always deduped first, keeping the first occurrence (final review M4).
     """
     text = _strip_fences(text)
     try:
@@ -143,10 +144,30 @@ def _parse_reviews(
             log.warning("%s: item failed validation (skipping): %s — item=%s", prefix, exc, item)
     if not reviews and payload:
         log.warning("%s: all %d item(s) failed validation", prefix, len(payload))
+    # Final review M4: a small model sometimes repeats a candidate_id. Keep the FIRST review per
+    # id (the order the model produced them) and log the repeats, so downstream code never sees
+    # two verdicts for one candidate and the coverage count below is of distinct ids.
+    seen: set[str] = set()
+    unique: list[ClaudeReview] = []
+    duplicates: list[str] = []
+    for r in reviews:
+        if r.candidate_id in seen:
+            duplicates.append(r.candidate_id)
+            continue
+        seen.add(r.candidate_id)
+        unique.append(r)
+    if duplicates:
+        log.warning(
+            "%s: dropped %d duplicate review(s) (kept the first per id): %s",
+            prefix,
+            len(duplicates),
+            sorted(set(duplicates)),
+        )
+    reviews = unique
     if requested_ids is not None:
         requested_set = set(requested_ids)
         kept = [r for r in reviews if r.candidate_id in requested_set]
-        log.info("%s: reviewed %d/%d candidates", prefix, len(kept), len(requested_ids))
+        log.info("%s: reviewed %d/%d candidates", prefix, len(kept), len(set(requested_ids)))
         reviews = kept
     return reviews
 

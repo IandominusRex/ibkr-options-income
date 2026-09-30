@@ -163,3 +163,28 @@ def test_intraday_cycle_budget_still_fits_with_the_bounded_review():
     cycle = cfg.scheduler.intraday_loop_minutes * 60
     total = md.chain_fetch_budget_seconds + in_flight + other_fixed + review_worst + margin
     assert total < cycle, f"{total}s >= {cycle}s cycle"
+
+
+def test_claude_cfg_code_defaults_match_the_shipped_yaml():
+    """Final review minor: the pydantic defaults in ClaudeCfg had drifted from settings.yaml
+    (qwen3:8b / 120s / 16384 / 10m) — a config missing a key would silently run the old model
+    with an undersized window. Code defaults must match what ships."""
+    from src.common.config import ClaudeCfg
+
+    shipped = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text())["claude"]
+    defaults = ClaudeCfg()
+    for key in (
+        "ollama_model",
+        "ollama_timeout_seconds",
+        "ollama_num_ctx",
+        "ollama_keep_alive",
+        "tool_research_timeout_seconds",
+        "news_fetch_budget_seconds",
+        "review_min_call_seconds",
+    ):
+        assert getattr(defaults, key) == shipped[key], key
+
+
+def test_news_search_provider_is_explicit_in_settings_yaml():
+    shipped = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text())["data"]
+    assert shipped.get("news_search_provider") == "google_news"

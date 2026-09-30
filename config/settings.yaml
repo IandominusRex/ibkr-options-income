@@ -381,6 +381,9 @@ data:
   price_provider: yfinance
   fundamentals_provider: yfinance
   news_provider: yfinance
+  # Keyless Google News RSS search — the NEWS block and the Ollama research turn's search_news
+  # tool (Task 11). Explicit here rather than relying on the DataCfg default.
+  news_search_provider: google_news
   symbol_directory_provider: edgar
   filings_provider: edgar
   # stooq is not usable: see docs/web/data-sources.md (licence check, 2026-09-04) — the CSV
