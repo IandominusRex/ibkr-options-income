@@ -991,6 +991,8 @@ export interface components {
              */
             source: "scan" | "roll";
             review?: components["schemas"]["ClaudeReviewPayload"] | null;
+            /** Rationale Tags */
+            rationale_tags?: string[];
             /** Snapshot */
             snapshot: {
                 [key: string]: unknown;
@@ -1067,6 +1069,8 @@ export interface components {
              */
             source: "scan" | "roll";
             review?: components["schemas"]["ClaudeReviewPayload"] | null;
+            /** Rationale Tags */
+            rationale_tags?: string[];
         };
         /** AssessedContract */
         AssessedContract: {
@@ -1554,6 +1558,13 @@ export interface components {
             priority?: number | null;
             /** Confidence */
             confidence?: number | null;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Evidence */
+            evidence?: string[];
         };
         /**
          * CommandKind

@@ -2604,6 +2604,13 @@
               }
             ]
           },
+          "rationale_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rationale Tags"
+          },
           "snapshot": {
             "additionalProperties": true,
             "type": "object",
@@ -2827,6 +2834,13 @@
                 "type": "null"
               }
             ]
+          },
+          "rationale_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rationale Tags"
           }
         },
         "type": "object",
@@ -4116,6 +4130,18 @@
               }
             ],
             "title": "Confidence"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": ""
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence"
           }
         },
         "type": "object",

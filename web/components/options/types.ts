@@ -22,6 +22,8 @@ export type ApprovalSummary = {
   order_state: string | null;
   source: "scan" | "roll";
   review: ClaudeReviewPayload | null;
+  /** Frozen candidate tags, e.g. `iv_rank_unavailable` (display only). */
+  rationale_tags?: string[];
 };
 
 export type IdealZonePayload = {
@@ -39,6 +41,10 @@ export type ClaudeReviewPayload = {
   recommendation?: string | null;
   priority?: number | null;
   confidence?: number | null;
+  /** 2-3 sentence plain-English verdict (empty on reviews stored before it existed). */
+  summary?: string;
+  /** Ids the verdict cites: `F#` = a computed fact, `N#` = a news headline. */
+  evidence?: string[];
 };
 
 export type AlternativeStrike = {

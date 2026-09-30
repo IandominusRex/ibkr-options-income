@@ -447,6 +447,28 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
   already loaded"). Rewritten to describe `scripts.launchd preflight` as it is: always runs,
   excludes the supervisor job's own process tree.
 
+## Built (2026-09-30 — web console catches up with the scan-loop remediation)
+
+The options console now shows what Tasks 9-12 added. It is display only; no gate, sizing or
+autonomy path changed.
+
+- **API:** `ClaudeReviewPayload` carries the Task 10 `summary` and `evidence` fields, both
+  defaulting empty for pre-Task-10 reviews. `ApprovalSummary`/`ApprovalDetail` carry the frozen
+  snapshot's `rationale_tags`. `docs/web/openapi.json` and `web/lib/api-types.ts` were regenerated
+  from the file with `openapi-typescript`, not from the live API.
+- **Approvals:** the card previews the review `summary` as the verdict, falling back to "Why"
+  when there is none. The detail page's `ReviewPanel` leads with the summary and lists the cited
+  `F#`/`N#` ids by kind (computed fact / news headline). The FACTS/NEWS text itself lived only in
+  that scan's prompt, so the ids aren't links. A new `RationaleTags` component marks
+  `iv_rank_unavailable` with hatch + unknown styling, so a neutral placeholder IV score is never
+  read as real data.
+- **Explainers:** "Claude's role" now describes the local Ollama reviewer, the FACTS/NEWS/rubric
+  prompt, the read-only news tool and the sell/wait/skip + evidence output. The CLI/no-tool-access
+  wording is gone. "The autonomy ladder" gained a callout for the paper-only
+  `paper_skip_promotion_gate` and the live-startup demotion.
+- **Not built:** a web view of the watchdog's health checks. `./ibkr status` and Telegram alerts
+  remain the only health surfaces.
+
 ## Built (2026-09-30 — scan-loop remediation Task 12: paper-only promotion bypass → run on FULL autonomy)
 
 The Task 14 autonomy ladder's `promotion_blockers` requires >=20 fills, >=60% fill rate, and

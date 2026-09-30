@@ -7,6 +7,7 @@ import { UNKNOWN, relativeAge } from "@/lib/format";
 import { DecideControls } from "./DecideControls";
 import { IdealZoneBar } from "./IdealZoneBar";
 import { ReviewPanel } from "./ReviewPanel";
+import { RationaleTags } from "./RationaleTags";
 import { AlternativesTable } from "./AlternativesTable";
 import type { ApprovalDetail, ControlsResponse } from "./types";
 
@@ -70,6 +71,8 @@ export function ApprovalDetailCard({ detail }: { detail: ApprovalDetail }) {
           <Field label="Order" value={detail.order_state} />
         )}
       </div>
+
+      <RationaleTags tags={detail.rationale_tags} />
 
       {detail.ideal && (
         <section>

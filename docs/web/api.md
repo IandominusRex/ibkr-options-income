@@ -740,7 +740,11 @@ alone — the joined rows are enrichment whose absence never 500s.
 | `as_of` | datetime |
 | `approvals` | `ApprovalSummary[]` |
 
-`ApprovalSummary`: `{ as_of, id, candidate_id, status, underlying, strategy, right, strike, expiry, contracts, premium, blended_score, created_at, expires_at, decided_at, order_state, source, review }`.
+`ApprovalSummary`: `{ as_of, id, candidate_id, status, underlying, strategy, right, strike, expiry, contracts, premium, blended_score, created_at, expires_at, decided_at, order_state, source, review, rationale_tags }`.
+`rationale_tags` is the frozen snapshot's tag list (`[]` when absent). The one the console
+renders specially is `iv_rank_unavailable` (scan-loop Task 9): the name had no IV history, so
+its IV score is the neutral `missing_iv_rank_score` placeholder, shown with the hatch/unknown
+styling rather than as real data. Display only.
 `premium` is per share, always. `order_state` is `null` when no order exists.
 `source` is `"scan"` or `"roll"`, derived from the candidate's `run_id` prefix.
 `created_at` is the approval's actual raise time (`ApprovalRow.created_at`) — never
@@ -760,7 +764,11 @@ assessed on the same run, and the approval-to-fill lineage.
 
 **Response — `ApprovalDetail`:** `ApprovalSummary` plus `{ snapshot, ideal, gate_reasons, alternatives, order_id, fills }`.
 `ideal` is `{ lo, hi, min_credit }` from `RiskVerdictRow`. `review` (inherited from
-`ApprovalSummary`) is the five fields `{ why_attractive, risks, tradeoffs, assignment_considerations, rolling_considerations }` or `null`.
+`ApprovalSummary`) is the five fields `{ why_attractive, risks, tradeoffs, assignment_considerations, rolling_considerations }`
+plus `{ recommendation, priority, confidence, summary, evidence }`, or `null`. `summary` (scan-loop Task 10)
+is the 2-3 sentence plain-English verdict and `evidence` the `F#` (computed fact) / `N#` (news headline)
+ids it cited; both are empty on reviews stored before Task 10. The FACTS/NEWS text those ids point
+into lived only in that scan's prompt, so the console labels each id by kind rather than linking it.
 `order_id` is the id of the order this approval produced, `null` when none exists yet.
 `fills` is every fill against that order (oldest first), `FillSummary[]` — carried here
 so tracing one candidate to its fill price needs no second/third request to

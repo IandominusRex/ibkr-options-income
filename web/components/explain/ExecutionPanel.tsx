@@ -71,6 +71,15 @@ export function ExecutionPanel({ onNavigate }: { onNavigate: (tab: TabKey) => vo
         </div>
       </section>
 
+      <Callout label="Paper-only shortcut, and the live backstop" tone="caution">
+        On the paper account an operator can skip the evidence requirement
+        (<code className="font-mono">automation.paper_skip_promotion_gate</code>) to watch the top
+        rung work end to end. The switch is ignored whenever live trading is on, and only live
+        fills count as evidence for a live account. When the trading service starts in live mode
+        with a rung it has not earned with live fills, it drops itself back to manual and says so
+        on Telegram.
+      </Callout>
+
       <Callout label="A separate switch, not gated by the ladder" tone="positive">
         Automatically closing a losing or winning position is independent of the autonomy rung - it
         runs regardless of setting, because reducing risk should never have to wait for a human to

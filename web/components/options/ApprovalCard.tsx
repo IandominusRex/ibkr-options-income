@@ -5,6 +5,7 @@ import { UNKNOWN, formatDateTime } from "@/lib/format";
 import type { CommandStatus } from "@/lib/commands";
 import type { ApprovalSummary } from "./types";
 import { DecideControls } from "./DecideControls";
+import { RationaleTags } from "./RationaleTags";
 
 export function ApprovalCard({
   approval,
@@ -66,9 +67,19 @@ export function ApprovalCard({
         )}
       </div>
 
+      {approval.rationale_tags && approval.rationale_tags.length > 0 && (
+        <div className="mt-3">
+          <RationaleTags tags={approval.rationale_tags} />
+        </div>
+      )}
+
       {review && (
         <div className="mt-3 space-y-1 text-xs text-muted">
-          <ReviewLine label="Why" text={review.why_attractive} />
+          {review.summary ? (
+            <ReviewLine label="Verdict" text={review.summary} />
+          ) : (
+            <ReviewLine label="Why" text={review.why_attractive} />
+          )}
           {review.risks && <ReviewLine label="Risks" text={review.risks} />}
         </div>
       )}

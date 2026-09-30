@@ -61,4 +61,44 @@ describe("ReviewPanel", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("leads with the plain-English summary as the verdict", () => {
+    render(
+      <ReviewPanel
+        review={{ ...FULL_REVIEW, recommendation: "wait", summary: "Wait for the export ruling." }}
+      />,
+    );
+    expect(screen.getByText("Summary")).toBeDefined();
+    expect(screen.getByText("Verdict: wait")).toBeDefined();
+    expect(screen.getByText("Wait for the export ruling.")).toBeDefined();
+  });
+
+  it("lists cited evidence ids with the kind of source each one is", () => {
+    render(<ReviewPanel review={{ ...FULL_REVIEW, evidence: ["F3", "N11"] }} />);
+    expect(screen.getByText("F3")).toBeDefined();
+    expect(screen.getByText("computed fact")).toBeDefined();
+    expect(screen.getByText("N11")).toBeDefined();
+    expect(screen.getByText("news headline")).toBeDefined();
+  });
+
+  it("renders a summary-only review instead of nothing", () => {
+    render(
+      <ReviewPanel
+        review={{
+          why_attractive: "",
+          risks: "",
+          tradeoffs: "",
+          assignment_considerations: "",
+          rolling_considerations: "",
+          summary: "Sell - nothing inside the window argues against it.",
+        }}
+      />,
+    );
+    expect(screen.getByText("Sell - nothing inside the window argues against it.")).toBeDefined();
+  });
+
+  it("shows no evidence line for a review stored before evidence existed", () => {
+    render(<ReviewPanel review={FULL_REVIEW} />);
+    expect(screen.queryByText("Cited:")).toBeNull();
+  });
 });

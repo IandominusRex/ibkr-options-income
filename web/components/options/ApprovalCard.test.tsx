@@ -356,4 +356,28 @@ describe("ApprovalCard — live-mode second confirmation (M3 3.5)", () => {
     const receipt = await screen.findByTestId("command-receipt");
     expect(receipt.getAttribute("data-state")).toBe("queued");
   });
+
+  it("flags a candidate whose IV rank was unavailable", () => {
+    withClient(<ApprovalCard approval={approval({ rationale_tags: ["iv_rank_unavailable"] })} />);
+    expect(screen.getByText(/IV rank unavailable/)).toBeDefined();
+  });
+
+  it("previews the review summary as the verdict when there is one", () => {
+    withClient(
+      <ApprovalCard
+        approval={approval({
+          review: {
+            why_attractive: "Rich premium.",
+            risks: "",
+            tradeoffs: "",
+            assignment_considerations: "",
+            rolling_considerations: "",
+            summary: "Sell - no red flag inside the trade.",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText("Sell - no red flag inside the trade.")).toBeDefined();
+    expect(screen.queryByText("Rich premium.")).toBeNull();
+  });
 });

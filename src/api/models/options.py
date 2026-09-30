@@ -43,6 +43,11 @@ class ClaudeReviewPayload(BaseModel):
     recommendation: str | None = None
     priority: int | None = None
     confidence: float | None = None
+    # Task 10: a 2-3 sentence plain-English verdict, and the ids of the prompt's FACTS
+    # (``F#``, computed in Python) and NEWS (``N#``, headlines) the verdict relied on.
+    # Both default empty so reviews stored before Task 10 still render.
+    summary: str = ""
+    evidence: list[str] = Field(default_factory=list)
 
 
 class AlternativeStrike(BaseModel):
@@ -105,6 +110,9 @@ class ApprovalSummary(Envelope):
     order_state: str | None = None  # joined from OrderRow when one exists
     source: ApprovalSourceLit  # derived from the candidate's run_id prefix
     review: ClaudeReviewPayload | None = None  # why_attractive/risks preview for list triage
+    # The frozen candidate's rationale tags (e.g. ``iv_rank_unavailable`` - Task 9: the IV
+    # component was scored neutral because the name has no IV history). Display only.
+    rationale_tags: list[str] = Field(default_factory=list)
 
 
 class ApprovalDetail(ApprovalSummary):

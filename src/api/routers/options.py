@@ -175,6 +175,7 @@ def _snapshot_fields(snap: dict[str, Any] | None) -> dict[str, Any]:
         "contracts": snap.get("contracts", 1),
         "premium": snap.get("premium"),
         "blended_score": snap.get("blended_score"),
+        "rationale_tags": snap.get("rationale_tags"),
     }
 
 
@@ -198,6 +199,8 @@ def _build_summary(
     )
     premium = snap_fields.get("premium")
     blended_score = snap_fields.get("blended_score")
+    raw_tags = snap_fields.get("rationale_tags")
+    rationale_tags = [str(t) for t in raw_tags] if isinstance(raw_tags, list) else []
     run_id = cand.run_id if cand else None
 
     if premium is None and cand is not None:
@@ -228,6 +231,7 @@ def _build_summary(
         order_state=order_state,
         source=_source_from_run_id(run_id),
         review=review,
+        rationale_tags=rationale_tags,
     )
 
 
@@ -235,6 +239,7 @@ def _review_payload(payload: dict[str, Any] | None) -> ClaudeReviewPayload | Non
     """Build a ``ClaudeReviewPayload`` from a stored ``ClaudeReviewRow.payload`` dict."""
     if not isinstance(payload, dict):
         return None
+    raw_evidence = payload.get("evidence")
     return ClaudeReviewPayload(
         why_attractive=str(payload.get("why_attractive", "")),
         risks=str(payload.get("risks", "")),
@@ -244,6 +249,8 @@ def _review_payload(payload: dict[str, Any] | None) -> ClaudeReviewPayload | Non
         recommendation=payload.get("recommendation"),
         priority=payload.get("priority"),
         confidence=payload.get("confidence"),
+        summary=str(payload.get("summary") or ""),
+        evidence=[str(e) for e in raw_evidence if e] if isinstance(raw_evidence, list) else [],
     )
 
 
@@ -537,6 +544,7 @@ def get_approval(
         order_state=summary.order_state,
         source=summary.source,
         review=review,
+        rationale_tags=summary.rationale_tags,
         snapshot=approval.snapshot or {},
         ideal=ideal,
         gate_reasons=gate_reasons,

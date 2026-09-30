@@ -596,3 +596,61 @@ def test_status_all_is_newest_first_overall(client) -> None:
     assert approvals[0]["candidate_id"] == "newa"
     assert approvals[1]["candidate_id"] == "c1"
     assert approvals[2]["candidate_id"] == "oldp"
+
+
+# --- Task 10 / Task 9 fields surfaced on the web (2026-09-30) ---------------------------
+
+
+def test_review_carries_summary_and_evidence(client) -> None:
+    with session_scope() as s:
+        _seed_candidate(s, candidate_id="ev1", underlying="SOXL")
+        _seed_approval(s, candidate_id="ev1", snapshot=_snapshot(underlying="SOXL"))
+        s.add(
+            ClaudeReviewRow(
+                candidate_id="ev1",
+                priority=1,
+                recommendation="wait",
+                payload={
+                    "why_attractive": "Rich premium.",
+                    "risks": "Chip export headline.",
+                    "tradeoffs": "",
+                    "assignment_considerations": "",
+                    "recommendation": "wait",
+                    "summary": "Wait for the export ruling to pass before selling.",
+                    "evidence": ["F3", "N11"],
+                },
+            )
+        )
+    listed = client.get("/options/approvals?symbol=SOXL", headers=AUTH).json()["approvals"][0]
+    assert listed["review"]["summary"] == "Wait for the export ruling to pass before selling."
+    assert listed["review"]["evidence"] == ["F3", "N11"]
+    detail = client.get(f"/options/approvals/{listed['id']}", headers=AUTH).json()
+    assert detail["review"]["evidence"] == ["F3", "N11"]
+
+
+def test_pre_task10_review_has_empty_summary_and_evidence(client) -> None:
+    review = client.get("/options/approvals/1", headers=AUTH).json()["review"]
+    assert review["summary"] == ""
+    assert review["evidence"] == []
+
+
+def test_malformed_evidence_is_dropped_not_split_into_characters(client) -> None:
+    from src.api.routers.options import _review_payload
+
+    payload = _review_payload({"why_attractive": "x", "evidence": "F1"})
+    assert payload is not None and payload.evidence == []
+
+
+def test_rationale_tags_come_from_the_frozen_snapshot(client) -> None:
+    snap = _snapshot(underlying="TQQQ") | {"rationale_tags": ["iv_rank_unavailable"]}
+    with session_scope() as s:
+        _seed_candidate(s, candidate_id="tag1", underlying="TQQQ")
+        _seed_approval(s, candidate_id="tag1", snapshot=snap)
+    listed = client.get("/options/approvals?symbol=TQQQ", headers=AUTH).json()["approvals"][0]
+    assert listed["rationale_tags"] == ["iv_rank_unavailable"]
+    detail = client.get(f"/options/approvals/{listed['id']}", headers=AUTH).json()
+    assert detail["rationale_tags"] == ["iv_rank_unavailable"]
+
+
+def test_rationale_tags_default_to_empty(client) -> None:
+    assert client.get("/options/approvals/1", headers=AUTH).json()["rationale_tags"] == []
