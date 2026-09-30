@@ -1613,6 +1613,11 @@ async def _run_scan_body(
     memory = _load_memory(all_symbols)
 
     # --- 8. Claude review (enrichment only — failure does not abort) ---
+    # Final review I2(b): the lease is otherwise renewed only inside the per-symbol loop, and the
+    # review alone may take up to its shared deadline + floor (300s shipped — see
+    # ollama_runner.review_candidates) after the last symbol, on top of scoring/persistence.
+    # Renewing here gives the review + persist + Telegram tail a full fresh TTL.
+    renew_scan_lease(lease_token)
     await tracker.tick("claude", "⏳")
     reused_reviews = False
     try:

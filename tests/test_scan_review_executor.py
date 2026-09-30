@@ -130,30 +130,72 @@ async def test_full_scan_review_call_runs_off_the_event_loop(tmp_path, monkeypat
         {"would_own": ["AAPL"], "actively_wheeling": ["AAPL"], "sectors": {"AAPL": "tech"}},
     )
 
+    window: dict[str, float] = {}
+
     def _blocking_review(*args, **kwargs):
-        time.sleep(0.3)
+        window["start"] = time.monotonic()
+        time.sleep(0.5)
+        window["end"] = time.monotonic()
         return []
 
     _stub_scan(scanmod, monkeypatch, review_side_effect=_blocking_review)
 
     ticks: list[float] = []
+    stop = asyncio.Event()
 
     async def _heartbeat() -> None:
-        for _ in range(6):
-            await asyncio.sleep(0.05)
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
             ticks.append(time.monotonic())
 
-    t0 = time.monotonic()
     heartbeat_task = asyncio.create_task(_heartbeat())
     await scanmod.run_scan(MagicMock(), bot=AsyncMock(), chat_id="1")
+    stop.set()
     await heartbeat_task
-    elapsed = time.monotonic() - t0
 
-    # Sequential (event loop blocked by the synchronous review call) would take roughly
-    # 0.3s (review) + 0.3s (6 x 0.05s heartbeat, unable to progress until review returns
-    # control) ~= 0.6s. Off the event loop (run_in_executor), both run concurrently and the
-    # total is bounded by the slower of the two, ~0.3-0.4s.
-    assert elapsed < 0.5, (
-        f"review_candidates appears to have blocked the event loop: {elapsed:.2f}s elapsed"
+    # Event-based, not a wall-clock race (final review minor — the old `elapsed < 0.5` margin
+    # could flake on a loaded machine): if the synchronous review ran ON the event loop, the
+    # heartbeat could not tick at all while it slept, so zero ticks would fall inside the
+    # review's own [start, end] window. Off the loop (run_in_executor) it keeps ticking every
+    # ~20ms through the 0.5s review — requiring just 3 is a wide margin either way.
+    during = [t for t in ticks if window["start"] < t < window["end"]]
+    assert len(during) >= 3, (
+        f"review_candidates appears to have blocked the event loop: {len(during)} heartbeat "
+        "tick(s) during the review"
     )
-    assert len(ticks) == 6, "the heartbeat coroutine did not run to completion"
+
+
+async def test_scan_lease_is_renewed_immediately_before_the_review(tmp_path, monkeypatch) -> None:
+    """Final review I2(b): the 600s scan lease was renewed only inside the per-symbol loop, but
+    the review alone may now take up to its full deadline + floor (300s) after the last symbol —
+    so it is renewed right before the review starts, too."""
+    import src.orchestrator.scan as scanmod
+    from src.common.config import get_config
+
+    _db_setup(tmp_path, monkeypatch)
+    cfg = get_config()
+    monkeypatch.setattr(
+        cfg,
+        "universe",
+        {"would_own": ["AAPL"], "actively_wheeling": ["AAPL"], "sectors": {"AAPL": "tech"}},
+    )
+    events: list[str] = []
+
+    def _review(*args, **kwargs):
+        events.append("review")
+        return []
+
+    _stub_scan(scanmod, monkeypatch, review_side_effect=_review)
+
+    def _score(cands):
+        events.append("score")  # after the per-symbol loop, before the review
+        return cands
+
+    monkeypatch.setattr(scanmod, "score_candidates", _score)
+    monkeypatch.setattr(scanmod, "renew_scan_lease", lambda *a, **k: events.append("renew") or True)
+
+    await scanmod.run_scan(MagicMock(), bot=AsyncMock(), chat_id="1")
+
+    assert "review" in events
+    after_scoring = events[events.index("score") :]
+    assert after_scoring[after_scoring.index("review") - 1] == "renew"

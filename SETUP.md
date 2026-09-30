@@ -1461,9 +1461,17 @@ claude:
 With it `false`, no NEWS block is built, no `/api/chat` research call is made, and
 `review_candidates` goes straight to the original single-shot `_generate` (`/api/generate`) path
 — byte-identical to the pre-Task-11 prompt. The other Task 11 keys (`news_per_symbol`,
-`news_days`, `news_max_items`, `max_tool_rounds`, `tool_research_timeout_seconds`) only matter
-while it's `true` — see the `src/claude/` and `settings.yaml` rows in `ARCHITECTURE.md` for what
-each one tunes.
+`news_days`, `news_max_items`, `max_tool_rounds`, `tool_research_timeout_seconds`,
+`news_fetch_budget_seconds`) only matter while it's `true` — see the `src/claude/` and
+`settings.yaml` rows in `ARCHITECTURE.md` for what each one tunes.
+
+**Time bound (2026-09-30):** the whole review — NEWS fetch, research turn, final call and the
+single-shot fallback — shares one deadline, `tool_research_timeout_seconds +
+ollama_timeout_seconds` (240s), plus at most one `review_min_call_seconds` floor (60s) for a late
+fallback: never more than 300s. The intraday chain-fetch budget
+(`market_data.chain_fetch_budget_seconds`, 350s) is sized against that 300s — if you raise either
+timeout, re-check the sum in `config/settings.yaml` (a test will fail if it no longer fits in the
+15-minute cycle).
 
 **Live-measured (2026-09-30, `qwen3.5:4b`, this deployment):** `python -m scripts.review_eval
 --model qwen3.5:4b --runs 2` against 7 real stored candidates (META/AMZN CSPs, the only rows in

@@ -101,13 +101,13 @@ _consecutive_failures: int = 0
 _circuit_open: bool = False
 
 # ---------------------------------------------------------------------------
-# Task 11 fix round 1 — shared deadline for the research turn + final chat call
+# Final review I2 — ONE deadline for the whole review path
 # ---------------------------------------------------------------------------
-# The floor `_generate_chat`'s remaining-budget timeout is clamped to when the research turn
-# already ate most of `tool_research_timeout_seconds + ollama_timeout_seconds` — never hand
-# httpx a near-zero or negative timeout, but still leave enough real time for a `format`-
-# constrained reply to have a fair chance.
-_RESEARCH_MIN_FINAL_TIMEOUT_SECONDS = 10.0
+# news fetch + research turn + final chat + single-shot fallback all share
+# D = tool_research_timeout_seconds + ollama_timeout_seconds (see review_candidates). The
+# floor (claude.review_min_call_seconds) replaced the old hard-coded 10s
+# _RESEARCH_MIN_FINAL_TIMEOUT_SECONDS: a call is never handed less than the floor, and the
+# final chat is skipped rather than started with less.
 
 
 def _record_failure() -> None:
@@ -163,7 +163,13 @@ def probe_ollama() -> tuple[bool, str]:
     )
 
 
-def _generate(prompt: str, cfg: object, schema: dict | str | None = REVIEW_SCHEMA) -> str | None:
+def _generate(
+    prompt: str,
+    cfg: object,
+    schema: dict | str | None = REVIEW_SCHEMA,
+    *,
+    timeout: float | None = None,
+) -> str | None:
     """POST to Ollama's `/api/generate`. Returns the model's response text, or None on failure.
 
     `format` grammar-constrains the model's output to `schema`. Defaults to `REVIEW_SCHEMA` — a
@@ -180,6 +186,9 @@ def _generate(prompt: str, cfg: object, schema: dict | str | None = REVIEW_SCHEM
     strategist prompt (universe context + history + active skills) plus the generated JSON
     routinely exceeds it; an undersized window silently truncates the prompt and/or the output.
     All three knobs (`num_ctx`, `keep_alive`, `temperature`) are config-tunable — see ClaudeCfg.
+
+    `timeout` overrides `cfg.ollama_timeout_seconds` — `review_candidates` passes what is left
+    of the review's shared deadline (final review I2).
     """
     url = f"{cfg.ollama_host.rstrip('/')}/api/generate"  # type: ignore[attr-defined]
     body = {
@@ -195,7 +204,8 @@ def _generate(prompt: str, cfg: object, schema: dict | str | None = REVIEW_SCHEM
         },
     }
     try:
-        resp = httpx.post(url, json=body, timeout=cfg.ollama_timeout_seconds)  # type: ignore[attr-defined]
+        req_timeout = timeout if timeout is not None else cfg.ollama_timeout_seconds  # type: ignore[attr-defined]
+        resp = httpx.post(url, json=body, timeout=req_timeout)
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         log.warning("ollama: request to %s failed: %s", url, exc)
@@ -292,6 +302,24 @@ def review_candidates(
     # test explicitly opts in — the production config always holds an exact `bool`.
     research_enabled = cfg.tool_research_enabled is True
 
+    # Final review I2: ONE deadline for the whole review path — NEWS fetch, research turn,
+    # final chat AND the single-shot fallback — D = tool_research_timeout_seconds +
+    # ollama_timeout_seconds (240s shipped). The NEWS fetch may use only its first
+    # `news_fetch_budget_seconds`; every later call gets what is left. The floor
+    # (`review_min_call_seconds`) is the single exception: the final chat is skipped rather than
+    # started with less than the floor, and the fallback always gets at least the floor (capped
+    # at ollama_timeout_seconds). So at most one call runs past D, by at most the floor: the
+    # review is bounded by D + floor (300s shipped) — the number `market_data.
+    # chain_fetch_budget_seconds` is sized against (config/settings.yaml, How the scan works.md).
+    # Before this, the fallback got a fresh ollama_timeout_seconds on top of the research path
+    # and the news fetch had no bound at all (worst case ~420-500s+).
+    t_start = time.monotonic()
+    deadline = t_start + cfg.tool_research_timeout_seconds + cfg.ollama_timeout_seconds
+    floor = float(cfg.review_min_call_seconds)
+
+    def _remaining() -> float:
+        return deadline - time.monotonic()
+
     news_block = ""
     if research_enabled:
         news_block, _news_index = news_block_for_candidates(
@@ -299,6 +327,7 @@ def review_candidates(
             per_symbol=cfg.news_per_symbol,
             days=cfg.news_days,
             max_items=cfg.news_max_items,
+            deadline=min(deadline, t_start + cfg.news_fetch_budget_seconds),
         )
 
     prompt = build_prompt(
@@ -315,41 +344,39 @@ def review_candidates(
 
     reviews: list[ClaudeReview] = []
     if research_enabled:
-        # Fix round 1: the research turn and the final chat call share ONE overall deadline
-        # (tool_research_timeout_seconds + ollama_timeout_seconds) instead of each getting a
-        # fresh full budget stacked on top of the other — research_turn's own httpx timeout only
-        # bounds its `/api/chat` POST, not the tool-EXECUTION time after it (each `search_news`
-        # call has its own timeout too), so the remaining budget is computed from real elapsed
-        # wall time, not assumed from the config values alone.
-        overall_deadline = cfg.tool_research_timeout_seconds + cfg.ollama_timeout_seconds
-        t0 = time.monotonic()
         try:
-            messages = ollama_tools.research_turn(prompt, cfg)
+            messages = ollama_tools.research_turn(prompt, cfg, deadline=deadline)
         except Exception as exc:  # noqa: BLE001 — the research turn must never break a review
             log.warning("ollama: research turn raised %s — falling back to single-shot", exc)
             messages = None
-        elapsed = time.monotonic() - t0
 
         if messages is not None:
-            remaining = max(overall_deadline - elapsed, _RESEARCH_MIN_FINAL_TIMEOUT_SECONDS)
-            raw = _generate_chat(messages, cfg, timeout=remaining)
-            if raw is not None:
-                reviews = parse_ollama_review_output(raw, [c.candidate_id for c in candidates])
-            if not reviews:
+            remaining = _remaining()
+            if remaining < floor:
                 log.warning(
-                    "ollama: research-turn final call produced no reviews — "
-                    "falling back to single-shot"
+                    "ollama: %.0fs of the review deadline left (< %.0fs floor) after the "
+                    "research turn — skipping the final chat, going straight to single-shot",
+                    max(remaining, 0.0),
+                    floor,
                 )
+            else:
+                raw = _generate_chat(messages, cfg, timeout=remaining)
+                if raw is not None:
+                    reviews = parse_ollama_review_output(raw, [c.candidate_id for c in candidates])
+                if not reviews:
+                    log.warning(
+                        "ollama: research-turn final call produced no reviews — "
+                        "falling back to single-shot"
+                    )
 
     if not reviews:
         # Reached when research is disabled, `research_turn` declined/failed (returns `None` —
-        # includes the model choosing not to call `search_news`, per the fix-round-1 change
-        # above), or the research-turn final call returned nothing parseable. Fix round 1: this
-        # used to be reached only when `raw is None`, so a chat reply that parsed to an EMPTY
-        # review list was recorded as a hard failure with no retry — now it always gets this
-        # single-shot retry first. This call keeps its own full `ollama_timeout_seconds` budget,
-        # unaffected by whatever the research path already spent.
-        raw = _generate(prompt, cfg)
+        # including the model choosing not to call `search_news`), the final chat was skipped
+        # for lack of time, or it returned nothing parseable. Gets only what is left of the
+        # shared deadline (final review I2), never less than the floor, never more than
+        # ollama_timeout_seconds — with research off that is the full ollama_timeout_seconds.
+        fallback_timeout = min(float(cfg.ollama_timeout_seconds), max(_remaining(), floor))
+        raw = _generate(prompt, cfg, timeout=fallback_timeout)
         if raw is None:
             _record_failure()
             return []

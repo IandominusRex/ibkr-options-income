@@ -69,7 +69,7 @@ options chain, and the timer resets. Dip_watch names are NEVER on this timer.
 The check is strictly ">120 min" against a stamp written when that symbol finished, and it's only
 evaluated at the 15-minute marks — so in practice it fires on the 9th cycle (~2h15m), not the 8th.
 
-4. Each cycle has a fetch budget (600s). If more symbols are material than fit — which happens in
+4. Each cycle has a fetch budget (350s — was 600s until 2026-09-30, cut to make room for the news-grounded Ollama review; see §5b). If more symbols are material than fit — which happens in
 a sell-off, when everything crosses its bar at once — the best-ranked ones get fetched (retries
 first, then live candidates, then whoever dropped furthest relative to its own threshold) and the
 rest are deferred to next cycle, where they go first. So the cycle always finishes on time instead
@@ -592,17 +592,63 @@ entirely** — your new-entry cadence silently halves to 30 min at the worst pos
 (Profit-take and loss-exit checks still run; they precede the scan in the loop, so risk management
 is never starved.) This already happened 5 times in 66 runs.
 
-`market_data.chain_fetch_budget_seconds` (**600s**, 0 disables) caps chain-fetching per cycle. When
+`market_data.chain_fetch_budget_seconds` (**350s**, 0 disables) caps chain-fetching per cycle. When
 it runs out, remaining material symbols are **demoted to immaterial** — analytics still run, the
 chain is skipped, the cycle finishes on time — and they are carried in
 `ScanResult.unreached_symbols` → next cycle's `must_include_symbols`, where they rank first. A
 cluster drains across consecutive on-time cycles instead of one burst that eats the following one.
 It never aborts the run.
 
-**Why 600s:** `900s cycle − 56s overhead − 150s (symbol_timeout_seconds) = 694s`. The 150s is
-overshoot headroom — the budget can only be checked *between* symbols, so a fetch starting one tick
-under the deadline can still run to its timeout. Rounded down to 600 (~20 fetches), the worst case
-is `600 + 150 + 56 = 806s < 900s`: it cannot overrun.
+**Why 350s (re-derived 2026-09-30, final review I2).** The old sizing — `900 − 56 − 150 = 694`,
+rounded to 600, worst case `600 + 150 + 56 = 806s < 900s` — folded a ~45s one-candidate review
+into the 56s intercept. The Task 11 news-grounded review is 100-155s typical, and before this fix
+its worst case was unbounded in practice (a 240s research path, then a *fresh* 180s single-shot
+fallback, plus a NEWS fetch of 11 sequential queries with no overall limit): ~420-500s+, enough to
+overrun the cycle by itself.
+
+Two changes make the cycle add up again:
+
+1. **The review is bounded.** News fetch + research turn + final chat + single-shot fallback now
+   share **one** deadline, `D = claude.tool_research_timeout_seconds + claude.ollama_timeout_seconds`
+   = 60 + 180 = **240s**. The NEWS fetch may only use its first `claude.news_fetch_budget_seconds`
+   (30s; a real 11-query fetch measured 6.6s). Every later call gets only what's left. The one
+   exception is the floor, `claude.review_min_call_seconds` (60s): the final chat is skipped rather
+   than started with less, and the fallback always gets at least the floor (never more than
+   `ollama_timeout_seconds`). So at most one call runs past `D`, by at most the floor:
+   **review ≤ 240 + 60 = 300s.**
+2. **The budget is re-derived around it**, with every other term measured from
+   `logs/approval.log` (225 intraday cycles, 2026-06-15 → 09-29; each cycle split into
+   *chain time* — the material symbols' own "scan: processing" intervals — *review time* —
+   "passed risk gate" → "N Claude reviews" — and *everything else*):
+
+| Term | Value | Evidence |
+|---|---|---|
+| Chain budget | **350s** | the unknown |
+| In-flight last symbol | 165s | `symbol_timeout_seconds` 150 + ~15s of that symbol's own analytics/screening. Per-symbol p99 = 151s; 39 of 2,847 fetches landed in 150-165s; 1 above (a laptop-sleep artifact) |
+| Other fixed work | 45s | pre-loop VIX/account/probe, the immaterial symbols' analytics, scoring, persistence, Telegram: median 15s, p99 36s, max 43s |
+| Review worst case | 300s | `D` 240 + floor 60, above |
+| Margin | ≥ 30s | |
+
+`budget + 165 + 45 + 300 + 30 < 900` ⇒ `budget < 360`. **350** is the largest round value:
+`350 + 165 + 45 + 300 = 860s`, a 40s margin. That buys ~14 fetches at the median 24s per fetch
+(~7 at p90's 50s). Of the 225 logged cycles, 72 spent more than 350s on chains; under the new
+budget their tail is deferred to the next cycle instead. `tests/test_config_keys.py::
+test_intraday_cycle_budget_still_fits_with_the_bounded_review` re-checks this sum against the
+shipped config, so raising any coupled key without re-checking the others fails CI.
+
+The scan lease (600s TTL) used to be renewed only inside the per-symbol loop; it is now also
+renewed immediately before the review, so the review's 300s plus the persistence/Telegram tail
+always runs under a fresh TTL.
+
+**The watchdog still holds at `watchdog.scan_max_age_minutes: 35`.** `intraday_scan_completed`
+is written when a cycle's scan finishes. With the worst-case cycle at ≤ 860s, every cycle now
+finishes inside its own 15-minute slot, so the largest possible gap between two completions is
+one cycle that finishes fast at the *start* of its slot followed by one that runs the full 860s
+at the *end* of the next: ≈ 900 − 15 + 860 ≈ 1,745s ≈ **29 min < 35**. A gap past 35 min
+therefore means a cycle was skipped or failed — exactly what the check exists for. The one
+benign way to get there is a long manual `/scan` (never budgeted) holding the lease across an
+intraday slot, which makes that cycle skip; that alert is real (no intraday scan ran) and clears
+on the next cycle.
 
 **Priority order** — which fetches a capped cycle buys, highest first:
 
@@ -621,9 +667,24 @@ Manual `/scan` is never budgeted — it is operator-initiated and expected to sw
 ### Why a shorter cycle would make this worse
 
 The intuition that a 10- or 5-minute cycle would spread fetches out and break up clusters is
-backwards, because **the 56s overhead and the 150s margin are paid per cycle regardless of its
-length.** That fixed 206s is 23% of a 15-minute cycle, 34% of a 10-minute one, and 69% of a
-5-minute one:
+backwards, because **the fixed per-cycle cost is paid per cycle regardless of its length.**
+
+**Updated 2026-09-30 (final review I2):** the fixed cost is now `165 + 45 + 300 + 30 = 540s`
+(in-flight symbol + other fixed work + worst-case review + margin), not the old 206s, and the
+argument below gets *stronger*, not weaker — at 29.9s per fetch:
+
+| Cycle | Budget | Fetches/cycle | **Fetches/hour** | Fixed cost | Time to drain 46 |
+|---|---|---|---|---|---|
+| 30 min | 1260s | 42.1 | 84.3 | 30% | 33 min |
+| 20 min | 660s | 22.1 | 66.2 | 45% | 42 min |
+| **15 min** | **350s shipped** (360 max) | **~12** | **~48** | **60%** | **~57 min** |
+| 10 min | 60s | 2.0 | 12.0 | 90% | 229 min |
+
+A sell-off cluster of 46 names now takes roughly an hour to drain at 15 minutes, against ~30 min
+before the review got expensive. Whether that trade — news-grounded reviews for half the
+sell-off throughput — is right, or whether the cycle should lengthen, is an operator decision;
+nothing here changed `scheduler.intraday_loop_minutes`. The pre-2026-09-30 table (206s fixed
+cost) is kept below for the reasoning it records:
 
 | Cycle | Budget | Fetches/cycle | **Fetches/hour** | Fixed cost | Time to drain 46 |
 |---|---|---|---|---|---|
@@ -642,7 +703,7 @@ instead of 15. But in a sell-off you are throughput-bound, not latency-bound: 46
 fetching and you can only buy 23 of them per cycle. Paying 15% throughput for 5 minutes of latency
 makes the queue drain slower, which is the wrong trade precisely when it matters.
 
-**15 minutes is at the knee and should stay there.** If you want more throughput, attack the 29.9s
+**(Pre-2026-09-30 conclusion — with the 540s fixed cost above, lengthening the cycle now buys real throughput; see the updated table.)** 15 minutes was at the knee under the old 206s fixed cost. If you want more throughput, attack the 29.9s
 per-fetch cost (`max_strikes_per_symbol`, or the wide `strike_bands` overrides on the slowest names
 — SOXL 42s, NBIS 39s, HOOD 36s median), not the cycle length.
 
@@ -677,7 +738,9 @@ for the next one rather than losing the day. Manual `/scan` always sends the ful
 | **0.5%** | `market_data.intraday_rescan_move_pct` | `actively_wheeling`, not held — either direction |
 | **2%** | `market_data.held_position_move_pct` | Held stock — **up only**, and *added to* the name's other bucket rule rather than replacing it |
 | **3%** | `market_data.dip_pull_in_pct` | Dip-watch — **down only**, never swept on a timer |
-| **600s** | `market_data.chain_fetch_budget_seconds` | Per-cycle chain-fetch ceiling; overflow defers to next cycle. 0 disables |
+| **350s** | `market_data.chain_fetch_budget_seconds` | Per-cycle chain-fetch ceiling; overflow defers to next cycle. 0 disables. Sized with the review's 300s worst case (§5b) |
+| **240s + 60s** | `claude.tool_research_timeout_seconds` + `claude.ollama_timeout_seconds`, `claude.review_min_call_seconds` | The review's one shared deadline, and the floor the fallback always gets (§5b) |
+| **30s** | `claude.news_fetch_budget_seconds` | The NEWS fetch's share of that deadline |
 | 19 / 15 / 34 | `universe.yaml` | `actively_wheeling` / dip-watch / `would_own` |
 
 **Where to change behaviour:** thresholds in `config/settings.yaml → market_data`, membership in

@@ -142,3 +142,24 @@ def test_retired_collateral_keys_are_gone() -> None:
         "max_correlated_exposure_pct",
     ):
         assert key not in p, f"retired key still present: {key}"
+
+
+def test_intraday_cycle_budget_still_fits_with_the_bounded_review():
+    """Final review I2 guard: the shipped chain-fetch budget, one in-flight symbol, the other
+    fixed per-cycle work and the review's worst case (shared deadline + floor) must still fit
+    inside one intraday cycle with a margin — so raising any of the coupled keys without
+    re-checking the others fails here instead of silently overrunning cycles. The 15s and 45s
+    constants are the log-measured terms documented in config/settings.yaml."""
+    from src.common.config import get_config
+
+    cfg = get_config()
+    md, cl = cfg.market_data, cfg.claude
+    in_flight = md.symbol_timeout_seconds + 15  # last symbol's own analytics/screening
+    other_fixed = 45
+    review_worst = (
+        cl.tool_research_timeout_seconds + cl.ollama_timeout_seconds + cl.review_min_call_seconds
+    )
+    margin = 30
+    cycle = cfg.scheduler.intraday_loop_minutes * 60
+    total = md.chain_fetch_budget_seconds + in_flight + other_fixed + review_worst + margin
+    assert total < cycle, f"{total}s >= {cycle}s cycle"

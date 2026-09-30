@@ -225,8 +225,10 @@ class MarketDataCfg(BaseModel):
     # analytics+sentiment for EVERY symbol material or not, scoring, review, Telegram) - one
     # worst-case symbol's `symbol_timeout_seconds` (150s) of overshoot, since the budget can only
     # be checked between symbols. Never applies to a manual /scan (intraday=False), which is
-    # operator-initiated and expected to sweep in full.
-    chain_fetch_budget_seconds: float = 600.0
+    # operator-initiated and expected to sweep in full. Re-derived 2026-09-30 (final review I2)
+    # against the bounded review: 350 + 165 (in-flight symbol) + 45 (other fixed work) + 300
+    # (review deadline + floor) = 860s < 900s — full arithmetic in config/settings.yaml.
+    chain_fetch_budget_seconds: float = 350.0
 
     # P3-P4 M1 — minimum minutes between automatic portfolio snapshots written by the
     # intraday monitor. A `refresh` command ignores this: an operator asking for a
@@ -323,6 +325,13 @@ class ClaudeCfg(BaseModel):
     # `ollama_timeout_seconds` (the final structured call) since the tool round is a smaller,
     # faster exchange (a handful of search results, not a full multi-candidate review).
     tool_research_timeout_seconds: float = 60.0
+    # Final review I2 — the review path's single shared deadline is
+    # tool_research_timeout_seconds + ollama_timeout_seconds. The NEWS fetch may use only its
+    # first `news_fetch_budget_seconds`; `review_min_call_seconds` is the floor below which the
+    # final chat is skipped and which the single-shot fallback always gets (so the whole review
+    # is bounded by the deadline + this floor). See config/settings.yaml for the sizing.
+    news_fetch_budget_seconds: float = 30.0
+    review_min_call_seconds: float = 60.0
 
 
 class DataCfg(BaseModel):

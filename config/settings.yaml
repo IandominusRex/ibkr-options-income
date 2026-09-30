@@ -145,20 +145,29 @@ market_data:
   # checks still run; they precede the scan). Symbols cut by the budget are carried to
   # `ScanResult.unreached_symbols` -> next cycle's `must_include_symbols`, where they rank first,
   # so a cluster drains over consecutive on-time cycles instead of one burst that eats the next.
-  # Sizing, from a least-squares fit over 19 real full-universe cycles in this deployment:
-  #     scan duration = 56s + 29.9s x (material symbols)
-  # The 56s intercept is fixed per-cycle work (analytics + sentiment run for EVERY symbol,
-  # material or not, because they feed the buy-to-own screen and the Claude prompt; plus VIX,
-  # account, scoring, review, Telegram). So: 900s cycle - 56s overhead - 150s
-  # (`symbol_timeout_seconds`) of overshoot headroom, since the budget can only be checked
-  # between symbols and a fetch in flight can't be preempted => 694s, rounded DOWN to 600s
-  # (~20 fetches). 600 is the largest round value that still cannot overrun: 600 + 150 + 56 =
-  # 806s < 900s even if the final symbol starts one tick under the deadline and then times out.
-  # Coupled to `scheduler.intraday_loop_minutes` - do not change one without the other. Note the
-  # coupling is counter-intuitive: SHORTENING the cycle *lowers* hourly fetch throughput, because
-  # the 56s overhead and the 150s margin are both paid per cycle regardless of its length (206s
-  # of every cycle is fixed = 23% at 15 min, 34% at 10 min, 69% at 5 min).
-  chain_fetch_budget_seconds: 600
+  # RE-DERIVED 2026-09-30 (final review I2) — the old sizing (600 + 150 + 56 = 806 < 900) folded
+  # a ~45s single-candidate review into the 56s intercept; the Task 11 review is 100-155s typical
+  # and is now bounded by its own shared deadline + floor (claude.* below: 60 + 180 + 60 = 300s).
+  # The inequality, every term measured from logs/approval.log (225 intraday cycles,
+  # 2026-06-15..09-29 — see STATUS.md / "How the scan works.md" §5b for the method):
+  #   budget + 165 (in-flight last symbol: symbol_timeout_seconds 150 + up to ~15s of its own
+  #                 analytics/screening; per-symbol p99 = 151s, 39 of 2,847 in 150-165s, only 1
+  #                 above that — a sleep artifact)
+  #          + 45  (every other fixed per-cycle cost — pre-loop VIX/account/probe, the immaterial
+  #                 symbols' analytics, scoring, persistence, Telegram: median 15s, p99 36s,
+  #                 max 43s)
+  #          + 300 (review worst case: D 240s + 60s floor)
+  #          + margin (>= 30s)   < 900s (scheduler.intraday_loop_minutes = 15)
+  #   => budget < 360s. 350 is the largest round value: 350 + 165 + 45 + 300 = 860s, 40s margin.
+  # ~14 fetches at the median 24s per fetch (p90 50s -> ~7). 72 of the 225 logged cycles spent
+  # more than 350s on chains; under this budget their tail defers to the next cycle
+  # (unreached_symbols -> must_include) instead of overrunning it.
+  # Coupled to `scheduler.intraday_loop_minutes` and to claude.{tool_research_timeout_seconds,
+  # ollama_timeout_seconds, review_min_call_seconds} - do not change one without re-checking the
+  # sum. Note the cycle coupling is counter-intuitive: SHORTENING the cycle *lowers* hourly
+  # fetch throughput, because the fixed per-cycle cost (now 165 + 45 + 300 = 510s) is paid per
+  # cycle regardless of its length.
+  chain_fetch_budget_seconds: 350
 
   # Minimum minutes between automatic portfolio snapshots written by the intraday
   # monitor. A `refresh` command ignores this — an operator asking for a fetch
@@ -263,8 +272,8 @@ claude:
   # (tool_research_timeout_seconds + ollama_timeout_seconds = 240s) for the research turn PLUS
   # its final structured /api/chat call together (see ollama_runner.review_candidates) — the
   # final call gets whatever of that 240s the research turn didn't already spend, not a fresh
-  # 180s on top. The single-shot _generate fallback (used when research is off, declines, or
-  # fails) keeps its own separate, unshared ollama_timeout_seconds budget.
+  # 180s on top. SUPERSEDED by the final review's I2 (below): the NEWS fetch and the single-shot
+  # _generate fallback now share the same 240s deadline too.
   # MEASURED 2026-09-30 live against qwen3.5:4b, research turn ON, a real 10-candidate
   # production-shaped batch (scripts/review_eval.py-style inputs, widened to --since 2026-08-01):
   # 153.5s total wall time — comfortably inside the 240s shared deadline. The model DID call
@@ -274,6 +283,27 @@ claude:
   # genuine N#-cited verdicts (SOXL came back "wait" citing N11). See STATUS.md's Task 11 fix
   # round 1 entry for the full breakdown.
   tool_research_timeout_seconds: 60
+  # --- Final review I2 (2026-09-30): ONE deadline for the whole review path ---
+  # The NEWS fetch, the research turn, the final chat AND the single-shot fallback now share
+  # D = tool_research_timeout_seconds + ollama_timeout_seconds = 60 + 180 = 240s (the fallback
+  # used to get a fresh ollama_timeout_seconds on top, and the NEWS fetch was unbounded, for a
+  # worst case of ~420-500s+). Each call gets only what is left of D, with one exception:
+  #
+  # NEWS fetch share: no new news query starts after this many seconds (one in flight can
+  # finish — each has its own ~8s timeout). MEASURED 2026-09-30: a 10-symbol + market NEWS block
+  # (11 queries) took 6.6s end to end (0.4-0.9s per query), so 30s is ~4.5x headroom; a Google
+  # News outage (8s timeout per query x 11 = 88s) is now cut at 30s with a partial block.
+  news_fetch_budget_seconds: 30
+  # Floor: the final research-path chat call is SKIPPED rather than started with less than
+  # this, and the single-shot fallback always gets at least this (never more than
+  # ollama_timeout_seconds). So at most one call runs past D, by at most this floor: the review
+  # is bounded by D + floor = 240 + 60 = 300s — the figure market_data.chain_fetch_budget_seconds
+  # above is sized against. 60s because the historical intraday review is a 1-candidate batch
+  # that completed in 32-59s end to end (29 logged cycles 2026-06-25..09-24, the larger qwen3:8b
+  # model) — a late fallback still has a real chance at the common case, while a 10-candidate
+  # batch (warm 99.6s / cold 110.4s) that reaches the fallback this late is simply lost
+  # (fail-soft: the deterministic list ships without reviews).
+  review_min_call_seconds: 60
 
 storage:
   # SQLAlchemy URL. SQLite for v1; swap for postgresql://... later.

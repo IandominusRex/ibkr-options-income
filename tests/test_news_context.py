@@ -99,3 +99,55 @@ def test_news_block_for_candidates_never_raises_on_bad_fetch(monkeypatch):
         [candidate], per_symbol=5, days=7, max_items=25
     )
     assert block == "" and index == {}
+
+
+# --- final review I2: the NEWS fetch stops when its share of the review deadline runs out ---
+
+
+class _Clock:
+    def __init__(self, t: float = 1000.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_news_block_stops_fetching_at_the_deadline(monkeypatch):
+    """Each fetch takes 10s on a fake clock; with a 25s share only the first three queries
+    start (t=0,10,20) — the rest, including the market query, are skipped, and what was
+    already fetched is still rendered."""
+    clock = _Clock()
+    monkeypatch.setattr(news_context.time, "monotonic", clock)
+    fetched: list[str] = []
+
+    def _slow_fetch(sym, days, limit):
+        fetched.append(sym)
+        clock.t += 10.0
+        return [NewsItem(id="", title=f"{sym} headline", source=None, published=None, url=None)]
+
+    monkeypatch.setattr(news_context, "_fetch", _slow_fetch)
+    block, index = news_context.build_news_block(
+        ["A", "B", "C", "D", "E"], per_symbol=5, days=7, deadline=clock.t + 25.0
+    )
+    assert fetched == ["A", "B", "C"]
+    assert news_context._MARKET_QUERY not in fetched
+    assert len(index) == 3 and "N3" in block
+
+
+def test_news_block_without_deadline_fetches_everything(monkeypatch):
+    fetched: list[str] = []
+    monkeypatch.setattr(news_context, "_fetch", lambda sym, days, limit: fetched.append(sym) or [])
+    news_context.build_news_block(["A", "B"], per_symbol=5, days=7)
+    assert fetched == ["A", "B", news_context._MARKET_QUERY]
+
+
+def test_news_block_for_candidates_passes_the_deadline_through(monkeypatch):
+    seen: dict = {}
+
+    def _fake_build(symbols, *, per_symbol, days, max_items, deadline=None):
+        seen["deadline"] = deadline
+        return "", {}
+
+    monkeypatch.setattr(news_context, "build_news_block", _fake_build)
+    news_context.news_block_for_candidates([], per_symbol=5, days=7, max_items=25, deadline=42.0)
+    assert seen["deadline"] == 42.0

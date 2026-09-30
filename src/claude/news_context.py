@@ -20,6 +20,7 @@ a Google News or yfinance outage must never block a review.
 from __future__ import annotations
 
 import logging
+import time
 
 from src.common.schemas import TradeCandidate
 from src.data.protocols import NewsItem
@@ -113,7 +114,12 @@ def _ordered_underlyings(candidates: list[TradeCandidate]) -> list[str]:
 
 
 def build_news_block(
-    symbols: list[str], *, per_symbol: int, days: int, max_items: int = 25
+    symbols: list[str],
+    *,
+    per_symbol: int,
+    days: int,
+    max_items: int = 25,
+    deadline: float | None = None,
 ) -> tuple[str, dict[str, NewsItem]]:
     """Render the ``=== NEWS ===`` block and its id -> `NewsItem` index.
 
@@ -122,24 +128,31 @@ def build_news_block(
     numbered ``N1``...``Nk`` in that order. Returns ``("", {})`` when nothing was found — the
     caller (`strategist.build_prompt`) simply omits the block, matching every other optional
     context block's fail-soft pattern.
+
+    *deadline* (final review I2, a ``time.monotonic()`` value): no new query starts once it has
+    passed — the NEWS fetch is the first slice of the review's single shared deadline
+    (``ollama_runner.review_candidates``), and 11 sequential queries at up to ~8s each were
+    otherwise unbounded. A query already in flight is not preempted (each provider call has its
+    own timeout); whatever was fetched before the cut-off is still rendered.
     """
     seen_titles: set[str] = set()
     combined: list[NewsItem] = []
+    queries = [(sym, per_symbol) for sym in symbols] + [(_MARKET_QUERY, _MARKET_HEADLINES)]
 
-    for sym in symbols:
-        for item in _fetch(sym, days, per_symbol):
+    for n_done, (query, limit) in enumerate(queries):
+        if deadline is not None and time.monotonic() >= deadline:
+            log.info(
+                "news_context: NEWS fetch budget exhausted after %d/%d queries — skipping the rest",
+                n_done,
+                len(queries),
+            )
+            break
+        for item in _fetch(query, days, limit):
             norm = _normalize_title(item.title)
             if not norm or norm in seen_titles:
                 continue
             seen_titles.add(norm)
             combined.append(item)
-
-    for item in _fetch(_MARKET_QUERY, days, _MARKET_HEADLINES):
-        norm = _normalize_title(item.title)
-        if not norm or norm in seen_titles:
-            continue
-        seen_titles.add(norm)
-        combined.append(item)
 
     combined = combined[:max_items]
     if not combined:
@@ -160,7 +173,12 @@ def build_news_block(
 
 
 def news_block_for_candidates(
-    candidates: list[TradeCandidate], *, per_symbol: int, days: int, max_items: int
+    candidates: list[TradeCandidate],
+    *,
+    per_symbol: int,
+    days: int,
+    max_items: int,
+    deadline: float | None = None,
 ) -> tuple[str, dict[str, NewsItem]]:
     """Convenience wrapper: the distinct underlyings in *candidates* -> `build_news_block`.
 
@@ -170,7 +188,9 @@ def news_block_for_candidates(
     """
     try:
         symbols = _ordered_underlyings(candidates)
-        return build_news_block(symbols, per_symbol=per_symbol, days=days, max_items=max_items)
+        return build_news_block(
+            symbols, per_symbol=per_symbol, days=days, max_items=max_items, deadline=deadline
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("news_context: news_block_for_candidates failed: %s", exc)
         return "", {}

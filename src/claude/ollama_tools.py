@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 import httpx
 
@@ -106,9 +107,14 @@ def _call_name(call: dict) -> str | None:
     return func.get("name") if isinstance(func, dict) else None
 
 
-def research_turn(prompt: str, cfg: object) -> list[dict] | None:
+def research_turn(prompt: str, cfg: object, *, deadline: float | None = None) -> list[dict] | None:
     """Run the bounded tool-calling research turn. Returns the accumulated chat messages for
     the caller's final structured call, or `None` on any failure (see module docstring).
+
+    *deadline* (final review I2, a ``time.monotonic()`` value — the review's single shared
+    deadline): the `/api/chat` POST's timeout is ``min(tool_research_timeout_seconds,
+    remaining)``, and no `search_news` call starts once it has passed (a skipped call gets a
+    "(skipped …)" tool message so the transcript stays one reply per call).
     """
     max_calls = cfg.max_tool_rounds  # type: ignore[attr-defined]
     messages: list[dict] = [
@@ -127,8 +133,14 @@ def research_turn(prompt: str, cfg: object) -> list[dict] | None:
             "num_ctx": cfg.ollama_num_ctx,  # type: ignore[attr-defined]
         },
     }
+    req_timeout = float(cfg.tool_research_timeout_seconds)  # type: ignore[attr-defined]
+    if deadline is not None:
+        req_timeout = min(req_timeout, max(deadline - time.monotonic(), 0.0))
+        if req_timeout <= 0:
+            log.info("ollama research turn: review deadline already passed — skipping")
+            return None
     try:
-        resp = httpx.post(url, json=body, timeout=cfg.tool_research_timeout_seconds)  # type: ignore[attr-defined]
+        resp = httpx.post(url, json=body, timeout=req_timeout)
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as exc:
@@ -165,6 +177,12 @@ def research_turn(prompt: str, cfg: object) -> list[dict] | None:
         args = _call_args(call)
         query = args.get("query")
         if not query:
+            continue
+        if deadline is not None and time.monotonic() >= deadline:
+            log.info(
+                "ollama research turn: review deadline reached — skipping search_news(%r)", query
+            )
+            messages.append({"role": "tool", "content": "(skipped — review time budget exhausted)"})
             continue
         days = args.get("days") or 7
         try:
