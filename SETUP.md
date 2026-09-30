@@ -480,7 +480,12 @@ Two processes must stay running during market hours:
 > yields partial results instead of hanging the symbol. Leave these at the defaults unless a
 > specific name still storms.
 
-### Option A — single launcher (recommended)
+> **Normal operation on macOS: use `./ibkr`, not the commands below.** `./ibkr install` once, then
+> `./ibkr start` / `./ibkr restart` / `./ibkr stop` / `./ibkr status` (§6c). The stack then runs as a
+> background service with no terminal and no Ctrl-C — `./ibkr stop` is how you stop it.
+> `python -m scripts.start` below is the foreground/debug way to run the same thing; don't run both.
+
+### Option A — single launcher (foreground; `./ibkr` runs this for you in the background)
 
 `scripts/start.py` is the one command that brings up every long-running Python service —
 the approval service, the intraday monitor, the web API (§6a), and the research worker (§6a)
@@ -491,7 +496,7 @@ python -m scripts.start
 ```
 
 Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`, and
-`logs/research.log`. Stop with Ctrl-C.
+`logs/research.log`. Stop with Ctrl-C (only when run in a terminal; under `./ibkr`, use `./ibkr stop`).
 Flags: `--no-monitor`, `--no-approval`, `--no-api`, `--no-research`, each skipping one
 service (`--no-eod` skips the built-in EOD scheduler — see §7).
 
@@ -751,11 +756,21 @@ you'd rather script against it than `./ibkr`); `logs`/`watchdog`/`autonomy` are 
 | `com.ibkr.watchdog` | `<venv-python> -m scripts.watchdog` | `StartInterval` = `watchdog.interval_seconds` (default 300s) — a one-shot health check, entirely outside the supervisor's process tree (§6b) |
 | `com.ibkr.gateway` (opt-in, `./ibkr install --with-gateway`) | `scripts/ibc/start_gateway.sh` (§4 "Automating Gateway login with IBC") | `RunAtLoad` only — IBC owns Gateway's own restart cycle, so launchd doesn't fight it |
 
+**Seeing it running / stopping it:** `./ibkr status` (pid + health checks), `./ibkr logs approval`
+(live tail), Telegram `/status`, or Activity Monitor → search `python` / `caffeinate`. Stop with
+`./ibkr stop`. There is no terminal window and nothing to Ctrl-C.
+
 **`caffeinate -i -s`** wraps the supervisor so the Mac won't idle- or system-sleep out from
 under the trading stack while it's running on AC power (the same class of incident as the
 2026-09-11 research-worker sleep freeze — see the troubleshooting table below). It does **not**
 prevent a *closed-lid* sleep on battery — keep the Mac plugged in, or on a wired connection with
 "Prevent automatic sleeping when the display is off" enabled, for unattended operation.
+
+**Toggling `caffeinate`:** it is tied to the stack's lifetime, not a separate switch. While the
+stack is up (`./ibkr start`) the Mac is kept awake; after `./ibkr stop` no caffeinate process
+remains (check: `pmset -g assertions | grep -A2 caffeinate` — any entries left are other
+programs'). To let the Mac sleep, stop the stack; a sleeping Mac freezes scans, the monitor and
+the EOD report.
 
 ```bash
 ./ibkr install                 # writes + loads com.ibkr.supervisor and com.ibkr.watchdog

@@ -20,6 +20,36 @@ to your phone via Telegram.
 
 ---
 
+## Running the system day to day (macOS)
+
+**The system runs as a background service — there is no terminal window to watch or Ctrl-C.**
+Use `./ibkr` from the repo root; it replaces `python -m scripts.start` for normal use.
+
+| I want to… | Run |
+|---|---|
+| Start it (or start it after a stop) | `./ibkr start` |
+| Restart it (after a code or config change) | `./ibkr restart` |
+| **Stop it** (the Ctrl-C replacement) | `./ibkr stop` |
+| Check that it is running | `./ibkr status` — shows `running pid=…` plus health checks |
+| Watch what it is doing, live | `./ibkr logs approval` (also `monitor`, `api`, `research`, `eod`, `supervisor`) — Ctrl-C ends the *tail* only, never the system |
+| First-time setup / re-register the background jobs | `./ibkr install` |
+
+- **`stop` vs `uninstall`:** `stop` halts trading/scanning but leaves the watchdog alarm loaded, so
+  you will get Telegram "supervisor is not running" alerts while stopped — expected. `./ibkr
+  uninstall` removes everything, watchdog included.
+- **Other places to see it running:** Telegram `/status`; the web console at
+  `http://localhost:3000` (needs `npm run dev` in `web/`); `launchctl list | grep ibkr`.
+  In **Activity Monitor**, search `python` (the daemons) or `caffeinate` (see below) — the
+  processes are not labelled "ibkr".
+- **Sleep prevention (`caffeinate`):** the background service wraps the stack in `caffeinate -i -s`
+  so the Mac does not sleep mid-session (on AC power). It lives and dies with the stack, so it is
+  **not** left running when the system is stopped: `./ibkr stop` turns it off, `./ibkr start` turns
+  it back on. Confirm with `pmset -g assertions | grep -A2 caffeinate`.
+- `python -m scripts.start` still works but is now only a foreground/debug alternative — never run
+  it alongside `./ibkr` (two supervisors fight over IBKR clientIds; `./ibkr install` refuses to).
+
+Full details: [SETUP.md §6c](SETUP.md).
+
 ## What it does
 
 | Time | What happens |
@@ -462,11 +492,11 @@ The web console is a FastAPI JSON API + a Next.js frontend. Full setup lives in
 ```bash
 pip install -e ".[web,dev]"        # fastapi, uvicorn, and the dev tools
 # .env needs WEB_API_TOKEN (any random string) and SEC_CONTACT_EMAIL (SEC EDGAR requires it)
-python -m scripts.start            # API + research worker + the IBKR daemons, all supervised
+./ibkr start                       # API + research worker + the IBKR daemons, all supervised (background service)
 cd web && npm install && npm run dev    # Next.js on port 3000 (separate — not a Python script)
 ```
 
-`python -m scripts.start` is the single command for everything on the Python side — see
+`./ibkr start` (which runs `scripts.start` under launchd) is the single command for everything on the Python side — see
 [SETUP.md §6](SETUP.md) for the full daemon setup; `--no-api`/`--no-research` opt out of the
 two web-tier services if you only want the trading daemons.
 
