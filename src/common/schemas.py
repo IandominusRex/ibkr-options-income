@@ -12,7 +12,7 @@ from enum import StrEnum
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _ET = ZoneInfo("America/New_York")
 
@@ -153,6 +153,10 @@ class OptionQuote(BaseModel):
     theta: float | None = None
     vega: float | None = None
     greeks_source: str = "ibkr"  # "ibkr" | "black_scholes"
+    # IBKR's live underlying price from the same option computation (``undPrice``) — the spot
+    # the Black-Scholes fallback uses for any sibling quote that lacks a delta. None when IBKR
+    # sent no greeks for this contract.
+    underlying_price: float | None = None
 
     @property
     def mid(self) -> float | None:
@@ -527,6 +531,14 @@ class RollReview(BaseModel):
     rationale: str
     risks: str
     confidence: float | None = None
+
+    @field_validator("roll_target", "rationale", "risks")
+    @classmethod
+    def _blank_echoed_placeholder(cls, v: str) -> str:
+        # The local reviewer sometimes copies the prompt's JSON template verbatim
+        # ("<2-3 sentences on key risks>"); a card must not present that as analysis.
+        stripped = v.strip()
+        return "" if stripped.startswith("<") and stripped.endswith(">") else v
 
 
 class EODSummary(BaseModel):

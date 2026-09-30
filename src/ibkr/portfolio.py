@@ -52,6 +52,7 @@ async def enrich_positions_with_greeks_async(
     from typing import Any
 
     from src.ibkr.contracts import build_option, qualify_options_async
+    from src.ibkr.market_data import req_fresh_mkt_data
 
     opt_positions = [
         p
@@ -80,7 +81,7 @@ async def enrich_positions_with_greeks_async(
             log.warning("greeks enrich: could not qualify contract for %s", p.symbol)
             continue
         try:
-            ticker = ib.reqMktData(contract, "", False, False)
+            ticker = req_fresh_mkt_data(ib, contract, "", False, False)
             subscribed.append((p, ticker, contract))
         except Exception:
             log.exception("greeks enrich: reqMktData failed for %s", p.symbol)

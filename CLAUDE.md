@@ -19,9 +19,9 @@ read both before making structural changes.
 
 | File | Audience | Purpose |
 |---|---|---|
-| **`README.md`** | Anyone | One-page overview: what the system does, quick start, layout table, safety summary |
+| **`README.md`** | Anyone, including public/portfolio viewers | Short pitch: what it does, Telegram commands, safety summary, fork/quickstart, and a top-level-only layout table. **Deliberately does not** carry the detailed pipeline walkthrough or a per-file layout — those live in `ARCHITECTURE.md` (moved out 2026-09-30 so a first-time reader isn't met with a wall of implementation detail) |
 | **`SETUP.md`** | New users | Complete step-by-step guide from fresh machine to first live trade |
-| **`ARCHITECTURE.md`** | Non-technical users and new contributors | Plain-English walkthrough of every folder, how modules interact, the pipeline, the process/clientId model, data-flow schemas, key invariants, and operational risk handling |
+| **`ARCHITECTURE.md`** | Non-technical users and new contributors | The full technical deep dive: "The pipeline, stage by stage" (the detailed How-it-works/In-plain-English walkthrough — moved here from `README.md`), the folder-by-folder guide (every folder including `web/` and the root `ibkr` script), the process/clientId model, data-flow schemas, key invariants, and operational risk handling |
 | **`STATUS.md`** | Claude and developers | What's built vs. deliberately not built, tech stack, unenforced config, items needing live verification, the live-cutover gate |
 | **`UNIVERSE_RESEARCH.md`** | Claude Code + headless `claude -p` | Deep-research reference for every ticker: tier, verified prices/IV ranks (Jun 2026), CC vs CSP appropriateness, leveraged-ETF assignment rules, IV rank methodology, data-quality warnings. A compact version is injected into every trade-review prompt via `src/claude/prompts/strategist.py`. |
 | **`How the scan works.md`** | Anyone | Operator-facing explanation of scan scheduling and the materiality gate: what `indexes`/`watchlist`/`would_own`/`actively_wheeling` each mean to the scan loop, the 15-min / 120-min clocks, the 0.5% / 2% / 3% thresholds and their directions, and a worked scenario. Update it whenever `market_data.*_pct`, `force_full_scan_minutes`, `intraday_loop_minutes`, or `_compute_material_symbols` changes |
@@ -39,10 +39,10 @@ row that matches:
 
 | What changed | Files to update |
 |---|---|
-| New file or module added | `README.md` layout table · `ARCHITECTURE.md` folder guide |
+| New file or module added | `ARCHITECTURE.md` folder guide (always) · `README.md` layout table only if it's a new top-level directory |
 | Existing module renamed, moved, or deleted | Both above |
 | New config key added to any YAML | `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
-| New script entrypoint added | `SETUP.md` scripts table · `README.md` layout table |
+| New script entrypoint added | `SETUP.md` scripts table · `ARCHITECTURE.md` `scripts/` folder-guide entry |
 | **New Telegram command registered** in `approval_service.py` | `ARCHITECTURE.md` commands table (src/notify/ section) · `SETUP.md` "Using the Telegram bot" commands table · `README.md` Telegram commands table |
 | **New formatter function added** to `formatters.py` | `ARCHITECTURE.md` src/notify/ table description |
 | **New Pydantic schema** added to `schemas.py` | `ARCHITECTURE.md` src/common/ + data-flow sections |
@@ -242,6 +242,10 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
   The connection manager prints a loud mode banner — keep it.
 - Use `LimitOrder` at mid, never `MarketOrder`, for option entries.
 - `qualifyContracts` every option contract before sending an order.
+- **Never call `ib.reqMktData` directly — use `src.ibkr.market_data.req_fresh_mkt_data`.** ib_async
+  keeps one `Ticker` per contract per connection and `cancelMktData` doesn't clear it, so a plain
+  re-subscription hands back the previous subscription's bid/ask/greeks and every "quote ready?"
+  poll passes instantly on stale data (2026-09-30: every approved order failed the send-time re-gate).
 - Respect the market-data line limit (~100): batch option-chain requests and cancel between
   batches (`config/settings.yaml → market_data`).
 

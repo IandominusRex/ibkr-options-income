@@ -2970,3 +2970,25 @@ def test_probe_action_hint_is_escaped_at_the_call_site():
     src = inspect.getsource(approval_service._intraday_scan_loop)
     assert "{probe.action_hint}" not in src
     assert "_md_escape(probe.action_hint)" in src
+
+
+def test_auto_trade_notification_shows_premium_and_yield():
+    """The auto-queued card must say what each trade earns, not just its score (2026-09-30)."""
+    from src.notify.formatters import format_auto_trade_notification
+
+    cand = _make_candidate(strategy=Strategy.CASH_SECURED_PUT, premium=0.97)
+    cand = cand.model_copy(
+        update={
+            "right": OptionRight.PUT,
+            "contracts": 10,
+            "roc_pct": 1.31,
+            "annualized_yield_pct": 53.2,
+        }
+    )
+    text = format_auto_trade_notification([cand])
+
+    assert "10×" in text
+    assert "\\$0\\.97/sh" in text
+    assert "\\$970 credit" in text
+    assert "ROC 1\\.31%" in text
+    assert "Ann\\. 53\\.2%" in text

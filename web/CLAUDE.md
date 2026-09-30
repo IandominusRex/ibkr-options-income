@@ -233,7 +233,8 @@ app/                App Router pages and the root layout
                     change a scoring weight, only the two date-window inputs.
   explain/          System Explanation console. Static content - no react-query, no
                     fetch anywhere on the page - a plain-English walkthrough of how the
-                    pipeline works, adapted from README.md's "How it works" section, so
+                    pipeline works, adapted from ARCHITECTURE.md's "The pipeline, stage by
+                    stage" section, so
                     a non-technical reader can visualise the system without reading the
                     .md files directly. <ExplainShell/> owns one `useState<TabKey>` (same
                     shape as PortfolioShell/PnlShell's tab bar) across eight subtabs -
@@ -696,7 +697,8 @@ components/
                     a first pass with inline labels did), and one content panel per
                     `TabKey` (OverviewPanel/DataPanel/IdeasPanel/GatePanel/ClaudePanel/
                     ExecutionPanel/WatchingPanel/WebLayerPanel) - each panel's prose is
-                    sourced from README.md's matching "How it works" section (WebLayerPanel
+                    sourced from ARCHITECTURE.md's matching "The pipeline, stage by stage"
+                    section (WebLayerPanel
                     instead mirrors docs/web/architecture.md's two-engine-model description,
                     since that mechanism isn't in README.md), built from FactCard grids and
                     Callouts rather than plain paragraphs wherever the content is a set of

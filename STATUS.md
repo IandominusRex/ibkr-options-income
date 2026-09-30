@@ -363,6 +363,57 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Bugs fixed (2026-09-30 — duplicate roll alerts, placeholder review text, bare auto-queue card)
+
+- **One management-point trigger sent ten identical Roll Alerts in a minute.** ib_async runs
+  every `pendingTickersEvent` batch as its own task, so a tick burst called
+  `monitor.intraday.fire_alerts` concurrently; the cooldown row (`roll_alerts`) is written only
+  after the multi-second review + Telegram send, so every task passed `_is_recent_alert` first,
+  and each one ran its own review (which is why the ten cards disagreed). `fire_alerts` now
+  claims each `(position_symbol, trigger)` in an in-process `_IN_FLIGHT` set before any await
+  and releases it after persisting; concurrent callers see the claim and drop out.
+- **The local reviewer's `risks` sometimes read `<2-3 sentences on key risks>`** — the JSON
+  template copied verbatim. `RollReview` now blanks any `roll_target`/`rationale`/`risks` value
+  that is a bare `<…>` placeholder, and the card omits the empty line.
+- **The 🤖 Auto-queued card showed only score and VRP.** Each trade now has a second line:
+  contracts × premium/sh, total credit, ROC, annualized yield.
+
+Tests: `tests/test_monitor.py::test_fire_alerts_concurrent_ticks_send_once` /
+`::test_roll_review_blanks_echoed_prompt_placeholders`,
+`tests/test_notify.py::test_auto_trade_notification_shows_premium_and_yield`.
+
+## Bugs fixed (2026-09-30 — stale scan quotes: every approved order failed live re-validation)
+
+Three approved orders (MARA 13.5C, TQQQ 72P, AMZN 235P) were rejected by the send-time re-gate
+seconds after approval with `live_delta_out_of_range` (+ `live_premium_collapse` for two). The
+re-gate was right; the scan had priced them from stale data.
+
+- **Re-subscribed contracts read the previous subscription's ticker.** ib_async keeps one `Ticker`
+  per contract per connection (`wrapper.tickers`, keyed by contract hash) and `cancelMktData`
+  never clears it, so the scan's second fetch of a contract got an object already holding the
+  last bid/ask/greeks/OI, `_quote_ready` passed on its first poll, and the candidate was priced
+  from a quote 15–30 min old (the market had just opened, so these moved fast). New
+  `src.ibkr.market_data.req_fresh_mkt_data` drops an *idle* cached ticker before subscribing
+  (an actively-streaming one is left alone), and every short-lived subscribe → read → cancel
+  site uses it — including the executor's `_refetch_bid_ask`, which meant the N11 chase loop had
+  been "chasing" the placement-time bid/ask. The executor and roll executor also treat a NaN
+  bid (a fresh ticker's initial value) as missing instead of as a quote.
+- **The Black-Scholes greeks fallback used the prior close as spot.** `_resolve_spot_async`
+  returns the cached daily close (fine for centring the strike band); it was also the spot for
+  BS deltas, which overstated TQQQ's put delta after a ~2% gap and put it just above the 0.20
+  floor. The fallback now uses `_bs_fill_spot_async` (median IBKR `undPrice` from the chain →
+  live snapshot → cached close). New `OptionQuote.underlying_price` carries `undPrice`.
+- **Re-gate rejects now say what they saw.** The log line and the order detail/Telegram failure
+  reason include live mid vs approved premium and live Δ vs approved Δ; before, the live quote
+  wasn't persisted anywhere.
+- **Half-dollar strikes rendered as the next whole strike.** `{strike:.0f}` showed $13.50 as
+  "$14" on approval cards and notifications; `formatters.fmt_strike` replaces it everywhere.
+
+Tests: `tests/test_market_data.py` (`req_fresh_mkt_data`, `_bs_fill_spot_async`, `undPrice`
+capture — including a test pinning the ib_async reuse behaviour itself),
+`tests/test_execution.py::test_live_regate_reject_reports_live_vs_approved_numbers` /
+`::test_fetch_quote_treats_nan_bid_as_missing`, `tests/test_phase3.py` strike formatting.
+
 ## Bugs fixed (2026-09-30 — scan-loop remediation final whole-branch review)
 
 - **C1 — the launchd supervisor killed its own `caffeinate` wrapper, so sleep prevention was

@@ -86,9 +86,37 @@ class ProbeHealth:
 _OPEN_LINES: dict[int, Any] = {}
 
 
+def req_fresh_mkt_data(ib: IB, contract: Any, *args: Any, **kwargs: Any) -> Any:
+    """``reqMktData`` that never hands back a previous subscription's values.
+
+    ib_async keeps one ``Ticker`` per contract for the life of the connection
+    (``wrapper.tickers``, keyed by ``hash(contract)``), and ``cancelMktData`` only unhooks its
+    reqId — so re-subscribing to a contract returns the *same* object, still carrying the last
+    bid/ask/greeks/OI from the earlier subscription. Every "is there a bid/ask yet?" readiness
+    poll then passes on its first check and the caller reads a quote that can be many minutes
+    old. On 2026-09-30 that priced three approved orders from 15–30-minute-old scan quotes,
+    and the send-time re-gate rejected all three against a genuinely fresh quote. Dropping the
+    idle cached ticker first makes every re-subscription start empty.
+
+    A ticker that is still actively subscribed is left alone: it is streaming, so its values
+    are current, and replacing it would orphan that line (``cancelMktData`` resolves the
+    ticker by contract hash). Every short-lived subscribe → read → cancel site must use this
+    instead of ``ib.reqMktData``.
+    """
+    try:
+        wrapper = ib.wrapper
+        key = hash(contract)
+        cached = wrapper.tickers.get(key)
+        if cached is not None and cached not in wrapper.ticker2ReqId["mktData"]:
+            del wrapper.tickers[key]
+    except Exception:
+        log.debug("req_fresh_mkt_data: could not clear cached ticker for %s", contract)
+    return ib.reqMktData(contract, *args, **kwargs)
+
+
 def _open_line(ib: IB, contract: Any, **kwargs: Any) -> Any:
     """reqMktData for *contract* and register the open line. Returns the ticker."""
-    ticker = ib.reqMktData(contract, **kwargs)
+    ticker = req_fresh_mkt_data(ib, contract, **kwargs)
     key = getattr(contract, "conId", None) or id(contract)
     _OPEN_LINES[key] = contract
     return ticker
@@ -293,6 +321,12 @@ def _safe(val: Any) -> float | None:
         return None if math.isnan(f) else f
     except (TypeError, ValueError):
         return None
+
+
+def _positive(val: Any) -> float | None:
+    """``_safe`` that also rejects zero/negative sentinels (IBKR sends -1 for "no data")."""
+    f = _safe(val)
+    return f if f is not None and f > 0 else None
 
 
 def _safe_int(val: Any) -> int | None:
@@ -618,6 +652,40 @@ async def _resolve_spot_async(ib: IB, stock: Any, symbol: str) -> float:
     return await _get_spot_async(ib, stock)
 
 
+async def _bs_fill_spot_async(
+    ib: IB, stock: Any, quotes: Sequence[OptionQuote], *, fallback: float
+) -> float:
+    """Live underlying price for the Black-Scholes greeks fallback.
+
+    ``_resolve_spot_async`` deliberately returns the cached prior close — accurate enough to
+    centre a ±15-45% strike band, not to compute a delta the Rules Engine gates on. In order:
+
+    1. the median ``undPrice`` IBKR attached to this chain's own option computations — live,
+       and free (it arrived with the quotes);
+    2. a live stock snapshot (``_get_spot_async``) — only when IBKR sent no greeks at all,
+       e.g. a delayed-data account; that path itself degrades to the prior close;
+    3. *fallback* (the cached close) if the snapshot fails outright.
+    """
+    prices = sorted(p for q in quotes if (p := q.underlying_price) is not None)
+    if prices:
+        mid = len(prices) // 2
+        live = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
+    else:
+        try:
+            live = await _get_spot_async(ib, stock)
+        except Exception:
+            log.debug("bs_fill_spot: live snapshot failed for %s — using cached close", stock)
+            return fallback
+    if abs(live - fallback) / fallback > 0.005:
+        log.info(
+            "bs_fill_spot: %s live %.2f vs cached close %.2f — BS greeks priced off live",
+            getattr(stock, "symbol", stock),
+            live,
+            fallback,
+        )
+    return live
+
+
 # ---------------------------------------------------------------------------
 # Chain filtering
 # ---------------------------------------------------------------------------
@@ -795,6 +863,7 @@ def _ticker_to_quote(c: Option, ticker: Any) -> OptionQuote:
         theta=_safe(g.theta) if g else None,
         vega=_safe(g.vega) if g else None,
         greeks_source="ibkr",
+        underlying_price=_positive(getattr(g, "undPrice", None)) if g else None,
     )
 
 
@@ -1015,11 +1084,16 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     quotes = await _batch_quotes_async(
         ib, qualified, md.chain_batch_size, md.request_throttle_seconds
     )
-    # IBKR IV → Black-Scholes first (pure/cheap, on-loop); only quotes IBKR couldn't value at all
-    # fall through to the expensive Yahoo download (S2).
-    _enrich_greeks_from_ibkr_iv(symbol, spot, quotes)
-    # yfinance is blocking — run off the event loop so it doesn't stall ib_async.
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _enrich_greeks_yf, symbol, spot, quotes)
+    if any(q.delta is None for q in quotes):
+        # `spot` above is the cached prior close — fine for centring the strike band, wrong for
+        # a delta that decides pass/fail: a 2% overnight gap moved TQQQ's BS put delta across
+        # the 0.20 floor on 2026-09-30. Price the fallback off the live underlying instead.
+        bs_spot = await _bs_fill_spot_async(ib, stock, quotes, fallback=spot)
+        # IBKR IV → Black-Scholes first (pure/cheap, on-loop); only quotes IBKR couldn't value
+        # at all fall through to the expensive Yahoo download (S2).
+        _enrich_greeks_from_ibkr_iv(symbol, bs_spot, quotes)
+        # yfinance is blocking — run off the event loop so it doesn't stall ib_async.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _enrich_greeks_yf, symbol, bs_spot, quotes)
     log.info("get_option_chain_quotes_async: %d quotes for %s", len(quotes), symbol)
     return quotes

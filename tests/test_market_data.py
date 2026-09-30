@@ -28,8 +28,10 @@ from src.ibkr.contracts import (
 from src.ibkr.market_data import (
     _await_ready,
     _batch_quotes,
+    _bs_fill_spot_async,
     _build_chain_contracts,
     _cap_strikes,
+    _close_line,
     _enrich_greeks_from_ibkr_iv,
     _enrich_greeks_yf,
     _filter_expirations,
@@ -1324,3 +1326,140 @@ def test_build_chain_contracts_sets_trading_class():
     exp = (date.today() + timedelta(days=14)).strftime("%Y%m%d")
     contracts = _build_chain_contracts("AMD", [exp], [600.0, 660.0], 630.0, trading_class="AMD")
     assert contracts and all(c.tradingClass == "AMD" for c in contracts)
+
+
+# ---------------------------------------------------------------------------
+# req_fresh_mkt_data — ib_async keeps one Ticker per contract across cancel/re-subscribe
+# (2026-09-30: scan quotes 15-30 min stale, every approved order rejected at send time)
+# ---------------------------------------------------------------------------
+
+
+def _offline_ib():
+    """A real ib_async IB whose client never touches a socket — so the real wrapper's
+    ticker cache (the thing under test) is exercised, not a MagicMock stand-in."""
+    import itertools
+
+    from ib_async import IB
+
+    ib = IB()
+    ib.client.reqMktData = MagicMock()
+    ib.client.cancelMktData = MagicMock()
+    ids = itertools.count(1)
+    ib.client.getReqId = lambda: next(ids)
+    return ib
+
+
+def _stock_contract(con_id: int = 1):
+    from ib_async import Stock
+
+    c = Stock("XYZ", "SMART", "USD")
+    c.conId = con_id
+    return c
+
+
+def test_plain_reqmktdata_reuses_the_stale_ticker():
+    """Documents the ib_async behaviour the helper exists for — if this ever starts failing,
+    the library changed and req_fresh_mkt_data may no longer be needed."""
+    ib = _offline_ib()
+    c = _stock_contract()
+    first = ib.reqMktData(c)
+    first.bid = 1.23
+    ib.cancelMktData(c)
+    again = ib.reqMktData(c)
+    assert again is first and again.bid == 1.23
+
+
+def test_req_fresh_mkt_data_starts_empty_after_a_cancelled_subscription():
+    from src.ibkr.market_data import req_fresh_mkt_data
+
+    ib = _offline_ib()
+    c = _stock_contract()
+    first = req_fresh_mkt_data(ib, c)
+    first.bid = 1.23
+    first.ask = 1.30
+    ib.cancelMktData(c)
+
+    again = req_fresh_mkt_data(ib, c)
+    assert again is not first
+    assert _safe(again.bid) is None and _safe(again.ask) is None
+    # And it is the ticker ib_async now routes ticks + cancels to.
+    assert ib.ticker(c) is again
+    assert ib.cancelMktData(c) is True
+
+
+def test_req_fresh_mkt_data_leaves_an_active_subscription_alone():
+    """A still-streaming ticker is current, and replacing it would orphan its line
+    (cancelMktData resolves the ticker by contract hash)."""
+    from src.ibkr.market_data import req_fresh_mkt_data
+
+    ib = _offline_ib()
+    c = _stock_contract()
+    live = ib.reqMktData(c)
+    live.bid = 1.23
+    assert req_fresh_mkt_data(ib, c) is live
+
+
+def test_quote_ready_is_false_on_a_resubscribed_contract_until_new_ticks_arrive():
+    from src.ibkr.market_data import _open_line
+
+    ib = _offline_ib()
+    c = _stock_contract()
+    t = _open_line(ib, c)
+    t.bid, t.ask, t.putOpenInterest = 1.0, 1.1, 500.0
+    _close_line(ib, c)
+
+    t2 = _open_line(ib, c)
+    assert not _quote_ready(t2, right="P")
+
+
+# ---------------------------------------------------------------------------
+# Black-Scholes fill spot — live underlying, never the cached prior close
+# ---------------------------------------------------------------------------
+
+
+def test_ticker_to_quote_captures_ibkr_underlying_price():
+    g = SimpleNamespace(
+        impliedVol=0.6, delta=-0.2, gamma=0.01, theta=-0.02, vega=0.05, undPrice=79.2
+    )
+    q = _ticker_to_quote(_make_option_contract(right="P"), _make_ticker(greeks=g))
+    assert q.underlying_price == pytest.approx(79.2)
+
+
+async def test_bs_fill_spot_prefers_ibkr_underlying_price_over_cached_close():
+    quotes = [
+        OptionQuote(
+            underlying="TQQQ",
+            right=OptionRight.PUT,
+            strike=k,
+            expiry=date(2026, 10, 9),
+            underlying_price=p,
+        )
+        for k, p in ((70.0, 79.1), (72.0, 79.3), (74.0, None))
+    ]
+    ib = MagicMock()
+    spot = await _bs_fill_spot_async(ib, MagicMock(), quotes, fallback=77.46)
+    assert spot == pytest.approx(79.2)
+
+
+async def test_bs_fill_spot_takes_a_live_snapshot_when_no_underlying_price(monkeypatch):
+    import src.ibkr.market_data as md
+
+    monkeypatch.setattr(md, "_get_spot_async", AsyncMock(return_value=11.805))
+    quotes = [
+        OptionQuote(
+            underlying="MARA", right=OptionRight.CALL, strike=13.5, expiry=date(2026, 10, 9)
+        )
+    ]
+    assert await _bs_fill_spot_async(MagicMock(), MagicMock(), quotes, fallback=11.99) == 11.805
+
+
+async def test_bs_fill_spot_falls_back_to_cached_close_when_snapshot_fails(monkeypatch):
+    import src.ibkr.market_data as md
+
+    monkeypatch.setattr(md, "_get_spot_async", AsyncMock(side_effect=ValueError("no tick")))
+    quotes = [
+        OptionQuote(
+            underlying="MARA", right=OptionRight.CALL, strike=13.5, expiry=date(2026, 10, 9)
+        )
+    ]
+    assert await _bs_fill_spot_async(MagicMock(), MagicMock(), quotes, fallback=11.99) == 11.99

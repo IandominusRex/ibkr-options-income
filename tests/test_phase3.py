@@ -119,6 +119,36 @@ def test_order_notification_sell_placed():
     assert "Close" not in result
 
 
+def test_order_notification_keeps_half_dollar_strikes():
+    """$13.5 used to render as "$14" — a different, real, listed strike."""
+    result = format_order_notification(
+        "failed",
+        underlying="MARA",
+        strategy="covered_call",
+        strike=13.5,
+        right="C",
+        expiry=date(2026, 10, 9),
+        contracts=10,
+        order_id=10,
+    )
+    assert "$13.5 Call" in result
+    assert "$14" not in result
+
+
+def test_order_notification_whole_strike_has_no_decimals():
+    result = format_order_notification(
+        "failed",
+        underlying="AMZN",
+        strategy="cash_secured_put",
+        strike=235.0,
+        right="P",
+        expiry=date(2026, 10, 16),
+        contracts=4,
+        order_id=12,
+    )
+    assert "$235 Put" in result
+
+
 def test_order_notification_buy_placed_shows_close():
     result = format_order_notification(
         "placed",

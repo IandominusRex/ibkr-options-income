@@ -586,6 +586,63 @@ async def test_execute_candidate_humanizes_live_regate_reasons(monkeypatch, tmp_
     assert "collapsed well below the approved premium" in call_text
 
 
+async def test_live_regate_reject_reports_live_vs_approved_numbers(monkeypatch, tmp_path):
+    """The re-gate must say what it saw — on 2026-09-30 three rejects gave no live
+    bid/ask/delta anywhere, so telling a stale scan quote from a real move took a
+    Black-Scholes reconstruction. The real validate_live_quote runs here."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.execution.quote_timeout_seconds = 1.0
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    with dbmod.session_scope() as session:
+        order = OrderRow(candidate_id="cand-001", state=OrderState.QUEUED)
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    from src.execution.executor import execute_candidate
+
+    mock_ib = _make_mock_ib()
+    ticker = mock_ib.reqMktData.return_value
+    ticker.bid, ticker.ask = 0.90, 1.00  # mid 0.95 vs approved 1.55 -> collapse
+    ticker.modelGreeks.delta = -0.15  # below the 0.20 floor
+    mock_bot = _make_mock_bot()
+
+    await execute_candidate(mock_ib, mock_bot, "99999", order_id, _make_candidate())
+
+    with dbmod.session_scope() as s:
+        row = s.get(OrderRow, order_id)
+    assert row.state == OrderState.REJECTED
+    assert "live mid $0.95 vs approved $1.55" in row.detail
+    assert "live Δ 0.15 vs approved 0.25" in row.detail
+    mock_ib.placeOrder.assert_not_called()
+
+
+async def test_fetch_quote_treats_nan_bid_as_missing(monkeypatch):
+    """A fresh ib_async ticker starts at NaN, not None — a NaN bid must not count as a
+    quote or leak into the OptionQuote the re-gate and the order builder read."""
+    mock_cfg = MagicMock()
+    mock_cfg.execution.quote_timeout_seconds = 0.3
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+
+    from src.execution.executor import _fetch_quote
+
+    mock_ib = _make_mock_ib()
+    ticker = mock_ib.reqMktData.return_value
+    ticker.bid = float("nan")
+    ticker.ask = 1.60
+
+    quote, _ = await _fetch_quote(mock_ib, _make_candidate())
+    assert quote.bid is None
+    assert quote.ask == 1.60
+
+
 async def test_execute_candidate_marks_rejected_on_qualify_failure(monkeypatch, tmp_path):
     """Qualification failure must mark the order REJECTED without re-raising."""
     _db_setup(tmp_path, monkeypatch)

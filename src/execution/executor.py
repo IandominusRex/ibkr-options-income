@@ -26,6 +26,7 @@ from src.common.schemas import OptionQuote, OrderState, Strategy, TradeCandidate
 from src.engine.risk_engine import validate_live_quote
 from src.execution.order_builder import build_limit_order, reprice_limit
 from src.ibkr.contracts import build_option
+from src.ibkr.market_data import req_fresh_mkt_data
 from src.storage.db import session_scope
 from src.storage.models import FillRow, OrderRow
 
@@ -41,6 +42,30 @@ def _safe_float(val: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if f != f else f  # NaN check
+
+
+def _two_sided(ticker: object) -> bool:
+    """A usable two-sided market: a real (non-NaN) bid and a positive ask.
+
+    A fresh ib_async ticker starts at NaN, not None, so an ``is not None`` check passes before
+    any tick arrives. Bid may legitimately be $0.00 on far-OTM options — requiring bid > 0
+    would wrongly time those orders out; the -1 "no bid" sentinel is the re-gate's to reject.
+    """
+    bid = _safe_float(getattr(ticker, "bid", None))
+    ask = _safe_float(getattr(ticker, "ask", None))
+    return bid is not None and ask is not None and ask > 0
+
+
+def _live_regate_detail(candidate: TradeCandidate, quote: OptionQuote) -> str:
+    """What the send-time re-gate saw vs what was approved, for the reject message + log."""
+    parts = []
+    mid = quote.mid
+    live_mid = f"${mid:.2f}" if mid is not None else "n/a"
+    parts.append(f"live mid {live_mid} vs approved ${candidate.premium:.2f}")
+    if quote.delta is not None:
+        approved = f"{abs(candidate.delta):.2f}" if candidate.delta is not None else "n/a"
+        parts.append(f"live Δ {abs(quote.delta):.2f} vs approved {approved}")
+    return "; ".join(parts)
 
 
 def _as_float(val: object, default: float) -> float:
@@ -108,14 +133,12 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
     loop = asyncio.get_running_loop()
     # "101" requests open interest; model greeks (delta/IV) stream by default for options
     # and are used for the send-time re-gate and for storing entry IV at fill.
-    ticker = ib.reqMktData(
-        qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
+    ticker = req_fresh_mkt_data(
+        ib, qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
     )
 
     def _has_quote() -> bool:
-        # A valid two-sided market requires a non-None ask > 0. Bid may legitimately
-        # be $0.00 on far-OTM options; requiring bid > 0 wrongly times out those orders.
-        return ticker.bid is not None and ticker.ask is not None and ticker.ask > 0
+        return _two_sided(ticker)
 
     def _has_greeks() -> bool:
         g = getattr(ticker, "modelGreeks", None)
@@ -135,8 +158,9 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
 
     ib.cancelMktData(qualified)
 
-    bid = ticker.bid if ticker.bid is not None else None
-    ask = ticker.ask if (ticker.ask is not None and ticker.ask > 0) else None
+    bid = _safe_float(ticker.bid)
+    ask = _safe_float(ticker.ask)
+    ask = ask if ask is not None and ask > 0 else None
 
     if ask is None:
         raise ValueError(f"No live ask received for {candidate.candidate_id} within {timeout}s")
@@ -166,12 +190,12 @@ async def _refetch_bid_ask(ib: IB, qualified: Contract) -> tuple[float | None, f
     """
     timeout = _quote_timeout()
     loop = asyncio.get_running_loop()
-    ticker = ib.reqMktData(
-        qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
+    ticker = req_fresh_mkt_data(
+        ib, qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
     )
 
     def _has_quote() -> bool:
-        return ticker.bid is not None and ticker.ask is not None and ticker.ask > 0
+        return _two_sided(ticker)
 
     deadline = loop.time() + timeout
     while not _has_quote() and loop.time() < deadline:
@@ -255,18 +279,28 @@ async def execute_candidate(
         # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
         live_verdict = validate_live_quote(candidate, quote)
         if live_verdict.verdict != Verdict.PASS:
+            live_detail = _live_regate_detail(candidate, quote)
             log.warning(
-                "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s",
+                "Live re-gate REJECT — order_id=%s candidate=%s reasons=%s "
+                "(bid=%s ask=%s delta=%s greeks_source=%s; %s)",
                 order_id,
                 candidate.candidate_id,
                 live_verdict.reasons,
+                quote.bid,
+                quote.ask,
+                quote.delta,
+                quote.greeks_source,
+                live_detail,
             )
             from src.notify.formatters import _humanize_reject_reason
 
             # Humanised, not the raw codes — a bare Python list repr like
             # "['live_premium_collapse']" is what row.detail used to read, and the
             # web Orders table renders this field verbatim.
-            reasons_text = ", ".join(_humanize_reject_reason(r) for r in live_verdict.reasons)
+            reasons_text = (
+                ", ".join(_humanize_reject_reason(r) for r in live_verdict.reasons)
+                + f" ({live_detail})"
+            )
             with session_scope() as session:
                 row = session.get(OrderRow, order_id)
                 if row:

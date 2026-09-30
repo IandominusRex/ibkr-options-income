@@ -168,11 +168,14 @@ def _process_button(approval_id: int, action: str) -> tuple[bool, str, str]:
             ).scalar_one_or_none()
 
             if crow:
+                from src.notify.formatters import fmt_strike
+
                 right_lbl = "Call" if crow.right == "C" else "Put"
                 strat_lbl = crow.strategy.replace("_", " ").title()
                 expiry_str = f" · {crow.expiry}" if crow.expiry else ""
+                strike_lbl = fmt_strike(crow.strike)
                 candidate_display = (
-                    f"{crow.underlying} {strat_lbl} ${crow.strike:.0f} {right_lbl}{expiry_str}"
+                    f"{crow.underlying} {strat_lbl} ${strike_lbl} {right_lbl}{expiry_str}"
                 )
             else:
                 candidate_display = candidate_short
@@ -1490,7 +1493,9 @@ async def _fetch_pending_prices(
 
     from ib_async import Contract, Stock
 
+    from src.execution.executor import _safe_float, _two_sided
     from src.ibkr.contracts import build_option
+    from src.ibkr.market_data import req_fresh_mkt_data
 
     timeout = 5.0
     loop = asyncio.get_running_loop()
@@ -1498,14 +1503,16 @@ async def _fetch_pending_prices(
     underlying_price: float | None = None
     try:
         stock = cast(Contract, Stock(candidate.underlying, "SMART", "USD"))
-        ticker = ib.reqMktData(stock, genericTickList="", snapshot=False, regulatorySnapshot=False)
+        ticker = req_fresh_mkt_data(
+            ib, stock, genericTickList="", snapshot=False, regulatorySnapshot=False
+        )
         deadline = loop.time() + timeout
-        while ticker.last is None and loop.time() < deadline:
+        # A fresh ticker starts at NaN, not None — test the value, not the attribute.
+        while _safe_float(ticker.last) is None and loop.time() < deadline:
             await asyncio.sleep(0.1)
         ib.cancelMktData(stock)
-        raw = ticker.last if ticker.last is not None else ticker.close
-        if raw is not None:
-            underlying_price = float(raw)
+        raw = _safe_float(ticker.last)
+        underlying_price = raw if raw is not None else _safe_float(ticker.close)
     except Exception:
         logger.debug("Could not fetch underlying price for %s", candidate.underlying)
 
@@ -1517,14 +1524,14 @@ async def _fetch_pending_prices(
         qualified_list = await ib.qualifyContractsAsync(contract)
         if qualified_list and getattr(qualified_list[0], "conId", None):
             qualified = cast(Contract, qualified_list[0])
-            ticker = ib.reqMktData(
-                qualified, genericTickList="", snapshot=False, regulatorySnapshot=False
+            ticker = req_fresh_mkt_data(
+                ib, qualified, genericTickList="", snapshot=False, regulatorySnapshot=False
             )
             deadline = loop.time() + timeout
-            while (ticker.bid is None or ticker.ask is None) and loop.time() < deadline:
+            while not _two_sided(ticker) and loop.time() < deadline:
                 await asyncio.sleep(0.1)
             ib.cancelMktData(qualified)
-            if ticker.bid is not None and ticker.ask is not None:
+            if _two_sided(ticker):
                 option_mid = (float(ticker.bid) + float(ticker.ask)) / 2
     except Exception:
         logger.debug(

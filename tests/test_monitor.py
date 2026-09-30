@@ -605,6 +605,57 @@ async def test_fire_alerts_suppressed_when_recent(tmp_path: Path) -> None:
     mock_bot.send_message.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_fire_alerts_concurrent_ticks_send_once() -> None:
+    """Overlapping tick batches for one position must yield ONE alert, not one per batch.
+
+    ib_async runs each pendingTickersEvent as its own task, so a burst of ticks calls
+    fire_alerts concurrently. The cooldown row is only written after the (slow) review, so
+    every call used to pass the cooldown check before the first persisted (2026-09-30: ten
+    identical TQQQ management-point alerts in one minute).
+    """
+    import asyncio
+
+    from src.monitor.intraday import fire_alerts
+
+    pos = _make_short_call()
+    quote = _make_quote(delta=0.23)
+    alert = RollAlert(
+        position_symbol=pos.symbol,
+        underlying=pos.underlying,
+        trigger="manage_dte",
+        detail="9 days left",
+    )
+
+    persisted: list[RollAlert] = []
+
+    def _recent(a: RollAlert, _cooldown: int) -> bool:
+        return any(p.position_symbol == a.position_symbol for p in persisted)
+
+    async def _slow_send(**_kw: object) -> None:
+        await asyncio.sleep(0.05)  # stands in for the review + Telegram round-trip
+
+    mock_bot = AsyncMock()
+    mock_bot.send_message.side_effect = _slow_send
+    cfg = MagicMock()
+    cfg.monitor.alert_cooldown_minutes = 30
+    cfg.claude.enabled = False
+
+    with (
+        patch("src.monitor.intraday._is_recent_alert", side_effect=_recent),
+        patch(
+            "src.monitor.intraday._persist_alert",
+            side_effect=lambda a, _r: persisted.append(a),
+        ),
+    ):
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            await asyncio.gather(
+                *(fire_alerts([alert], pos, quote, mock_bot, "c", cfg, ex) for _ in range(10))
+            )
+
+    assert mock_bot.send_message.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Alert text formatting
 # ---------------------------------------------------------------------------
@@ -1040,3 +1091,20 @@ async def test_cancel_uses_stored_contract() -> None:
         await monitor._refresh_subscriptions()
 
     mock_ib.cancelMktData.assert_called_once_with(stored_contract)
+
+
+def test_roll_review_blanks_echoed_prompt_placeholders() -> None:
+    """A small model sometimes copies the JSON template verbatim ("<2-3 sentences on key
+    risks>"); the card must not show the placeholder as if it were analysis."""
+    from src.common.schemas import RollReview
+
+    review = RollReview(
+        position_symbol="TQQQ  261009P00074000",
+        recommendation="roll",
+        roll_target="<e.g. roll to $X strike>",
+        rationale="Real reasoning.",
+        risks="<2-3 sentences on key risks>",
+    )
+    assert review.risks == ""
+    assert review.roll_target == ""
+    assert review.rationale == "Real reasoning."

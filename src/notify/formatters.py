@@ -41,6 +41,16 @@ from src.common.schemas import (
 # the private alias this module's callers already use.
 from src.monitor.triggers import humanize_trigger as _humanize_trigger
 
+
+def fmt_strike(strike: float) -> str:
+    """A strike as the exchange lists it: ``235`` and ``13.5``, never ``14`` for 13.5.
+
+    ``{strike:.0f}`` rounded half-dollar strikes to a *different real listed strike* on every
+    card and notification — an operator approving "$14" was approving the $13.50 contract.
+    """
+    return f"{strike:.2f}".rstrip("0").rstrip(".")
+
+
 _ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 
 _MAX_MESSAGE_LEN = 4000
@@ -107,7 +117,7 @@ def format_candidate(
     parts: list[str] = [
         f"*{_md(candidate.underlying)} — {_md(strategy_label)}*",
         (
-            f"\\${_md(f'{candidate.strike:.0f}')} {_md(right_label)}"
+            f"\\${_md(fmt_strike(candidate.strike))} {_md(right_label)}"
             f" · {_md(str(candidate.expiry))} \\({_md(str(candidate.dte))}d\\)"
         ),
         "",
@@ -402,7 +412,7 @@ def _format_option_snapshot_line(o: PositionSnapshot, *, show_symbol: bool) -> s
     DTE, and P&L $/%. Nested under a stock (show_symbol=False) it's prefixed with `└ `;
     standalone (a CSP, show_symbol=True) it leads with the underlying symbol."""
     right_lbl = "C" if o.right == OptionRight.CALL else "P"
-    strike_s = f"\\${_md(f'{o.strike:.0f}')}" if o.strike else ""
+    strike_s = f"\\${_md(fmt_strike(o.strike))}" if o.strike else ""
     exp_s = _md(str(o.expiry)) if o.expiry else ""
     dte = (o.expiry - today_et()).days if o.expiry else None
     dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
@@ -690,7 +700,7 @@ def _near_miss_lines(cand: TradeCandidate, reasons: list[str] | None) -> list[st
     lines = [
         "_Closest contract \\(did not qualify\\):_",
         (
-            f"  \\${_md(f'{cand.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f"  \\${_md(fmt_strike(cand.strike))}{_md(right_lbl)} · {_md(exp_str)}"
             f" \\({_md(str(cand.dte))}d\\)"
         ),
         (
@@ -887,7 +897,7 @@ def format_near_miss_line(cand: TradeCandidate, reasons: list[str] | None = None
     right = "C" if cand.right == OptionRight.CALL else "P"
     exp = cand.expiry.strftime("%b%d")
     line = (
-        f"↳ closest: {cand.underlying} ${cand.strike:.0f}{right} {exp} ({cand.dte}d)"
+        f"↳ closest: {cand.underlying} ${fmt_strike(cand.strike)}{right} {exp} ({cand.dte}d)"
         f" ${cand.premium:.2f}/sh · ROC {cand.roc_pct:.1f}% · score {cand.blended_score:.0f}"
     )
     if reasons:
@@ -1071,7 +1081,7 @@ def format_ticker_scan_result(
         exp_str = best_cc.expiry.strftime("%b%d")
         contracts_lbl = f" \\({_md(str(int(best_cc.contracts)))} contracts\\)"
         lines.append(
-            f"  \\${_md(f'{best_cc.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f"  \\${_md(fmt_strike(best_cc.strike))}{_md(right_lbl)} · {_md(exp_str)}"
             f" \\({_md(str(best_cc.dte))}d\\){contracts_lbl}"
         )
         lines.append(
@@ -1106,7 +1116,7 @@ def format_ticker_scan_result(
         exp_str = best_csp.expiry.strftime("%b%d")
         contracts_lbl = f" \\({_md(str(int(best_csp.contracts)))} contracts\\)"
         lines.append(
-            f"  \\${_md(f'{best_csp.strike:.0f}')}{_md(right_lbl)} · {_md(exp_str)}"
+            f"  \\${_md(fmt_strike(best_csp.strike))}{_md(right_lbl)} · {_md(exp_str)}"
             f" \\({_md(str(best_csp.dte))}d\\){contracts_lbl}"
         )
         lines.append(
@@ -1245,7 +1255,7 @@ def format_order_notification(
 
     lines = [
         f"{header} — {underlying} {strategy_label}",
-        f"${strike:.0f} {right_label} · {expiry} · {contracts} {noun}",
+        f"${fmt_strike(strike)} {right_label} · {expiry} · {contracts} {noun}",
     ]
 
     if limit_price is not None:
@@ -1467,9 +1477,16 @@ def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
         strat = c.strategy.value.replace("_", " ").title()
         vrp_part = f" VRP{c.vrp:+.1f}%" if c.vrp is not None else ""
         lines.append(
-            f"• *{_md(c.underlying)}* {_md(strat)} \\${_md(f'{c.strike:.0f}')} {_md(right)}"
+            f"• *{_md(c.underlying)}* {_md(strat)} \\${_md(fmt_strike(c.strike))} {_md(right)}"
             f" {_md(str(c.expiry))} \\({_md(str(c.dte))}d\\)"
             f" — score {_md(f'{c.blended_score:.0f}')}/100{_md(vrp_part)}"
+        )
+        credit = c.premium * 100 * c.contracts
+        lines.append(
+            f"   {_md(str(c.contracts))}× @ \\${_md(f'{c.premium:.2f}')}/sh"
+            f" · \\${_md(f'{credit:,.0f}')} credit"
+            f" · ROC {_md(f'{c.roc_pct:.2f}')}%"
+            f" · Ann\\. {_md(f'{c.annualized_yield_pct:.1f}')}%"
         )
     lines += ["", "_The risk gate re\\-validates each order before execution\\._"]
     all_src = ["IBKR option chain"]
@@ -1579,7 +1596,7 @@ def format_positions(
             side = "SHORT" if p.position < 0 else "LONG"
             qty = abs(int(p.position))
             right_lbl = ("C" if p.right == OptionRight.CALL else "P") if p.right else ""
-            strike_s = f"\\${_md(f'{p.strike:.0f}')}" if p.strike else ""
+            strike_s = f"\\${_md(fmt_strike(p.strike))}" if p.strike else ""
             exp_s = _md(str(p.expiry)) if p.expiry else ""
             dte = (p.expiry - today_et()).days if p.expiry else None
             dte_s = f" \\({_md(str(dte))}d\\)" if dte is not None else ""
@@ -1704,7 +1721,7 @@ def format_status(
         parts += ["", "*Short Options*"]
         for p in sorted(short_opts, key=lambda x: x.expiry or date.max):
             right_lbl = ("C" if p.right == OptionRight.CALL else "P") if p.right else ""
-            strike_s = f"\\${_md(f'{p.strike:.0f}')}" if p.strike else ""
+            strike_s = f"\\${_md(fmt_strike(p.strike))}" if p.strike else ""
             dte = (p.expiry - today_et()).days if p.expiry else None
             dte_s = f" {_md(str(dte))}d" if dte is not None else ""
             qty = abs(int(p.position))
@@ -1834,7 +1851,7 @@ def format_fill_confirm(
 
     parts = [
         f"✅ *Filled — {_md(underlying)} {_md(strategy_label)}*",
-        (f"\\${_md(f'{strike:.0f}')} {_md(right_label)} · {_md(str(expiry))}"),
+        (f"\\${_md(fmt_strike(strike))} {_md(right_label)} · {_md(str(expiry))}"),
         (
             f"{_md(qty_str)} contract{'s' if filled_qty != 1 else ''}"
             f" @ \\${_md(f'{avg_price:.2f}')}/sh"
@@ -1861,8 +1878,8 @@ def format_roll_fill_confirm(
     parts = [
         f"🔄 *Rolled — {_md(underlying)} {_md(right_label)}*",
         (
-            f"\\${_md(f'{old_strike:.0f}')} {_md(str(old_expiry))}"
-            f" → \\${_md(f'{new_strike:.0f}')} {_md(str(new_expiry))}"
+            f"\\${_md(fmt_strike(old_strike))} {_md(str(old_expiry))}"
+            f" → \\${_md(fmt_strike(new_strike))} {_md(str(new_expiry))}"
         ),
         (
             f"{_md(qty_str)} contract{'s' if contracts != 1 else ''}"
@@ -1885,7 +1902,7 @@ def format_live_confirm_request(
     parts = [
         "⚠️ *LIVE Order — Confirmation Required*",
         "",
-        (f"{_md(underlying)} \\${_md(f'{strike:.0f}')} {_md(right_label)} · {_md(str(expiry))}"),
+        (f"{_md(underlying)} \\${_md(fmt_strike(strike))} {_md(right_label)} · {_md(str(expiry))}"),
         f"{_md(str(contracts))} contract{'s' if contracts != 1 else ''}",
         "",
         "Tap *CONFIRM LIVE* or let it expire to cancel\\.",
@@ -1910,7 +1927,7 @@ def format_roll_alert(
     """Format a roll alert for Telegram MarkdownV2."""
     right_label = pos.right.value if pos.right else "?"
     strategy = "CC" if right_label == "C" else "CSP"
-    strike_str = f"{pos.strike:.0f}" if pos.strike else "?"
+    strike_str = fmt_strike(pos.strike) if pos.strike else "?"
     sym = pos.underlying or pos.symbol
     triggers_str = " \\+ ".join(_md(_humanize_trigger(a.trigger)) for a in alerts)
 
@@ -1966,7 +1983,7 @@ def format_assignment_alert(
     """
     right_label = pos.right.value if pos.right else "?"
     strategy = "CC" if right_label == "C" else "CSP"
-    strike_str = f"{pos.strike:.0f}" if pos.strike else "?"
+    strike_str = fmt_strike(pos.strike) if pos.strike else "?"
     sym = pos.underlying or pos.symbol
 
     abs_delta = abs(quote.delta) if quote.delta is not None else None
@@ -2038,7 +2055,7 @@ def format_pending_approvals(pending: list[dict]) -> str:
 
         parts.append(
             f"*{_md(str(i))}\\.* {_md(underlying)} {_md(strategy_label)}"
-            f" \\${_md(f'{strike:.0f}')} {_md(right_label)}{_md(expiry_str)}"
+            f" \\${_md(fmt_strike(strike))} {_md(right_label)}{_md(expiry_str)}"
         )
         meta_parts = [f"Score {_md(f'{score:.1f}')}"]
         if expires_str:
@@ -2085,7 +2102,7 @@ def format_fills_history(fills: list[dict]) -> str:
 
         parts.append(
             f"{_md(date_str)}  *{_md(underlying)}* {_md(strategy_short)}"
-            f" \\${_md(f'{strike:.0f}')}{_md(right_label)}"
+            f" \\${_md(fmt_strike(strike))}{_md(right_label)}"
             f"  {_md(str(int(filled_qty)))}× @ \\${_md(f'{avg_price:.2f}')}"
             f"  _{_md(credit_str)}{_md(live_tag)}_"
         )

@@ -24,6 +24,7 @@ from src.common.market_hours import today_et
 from src.common.schemas import PositionSnapshot
 from src.execution.position_manager import close_short_position
 from src.ibkr.contracts import build_option
+from src.ibkr.market_data import req_fresh_mkt_data
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, FillRow
 
@@ -83,7 +84,7 @@ async def _quote_short(ib_scan: IB, pos: PositionSnapshot) -> tuple[float, float
         if not qualified_list:
             return 0.0, None
         qualified = cast(IBContract, qualified_list[0])
-        ticker = ib_scan.reqMktData(qualified, "101", False, False)
+        ticker = req_fresh_mkt_data(ib_scan, qualified, "101", False, False)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + float(cfg.execution.quote_timeout_seconds)
 

@@ -54,10 +54,12 @@ from src.execution.executor import (
     _quote_timeout,
     _refetch_bid_ask,
     _safe_float,
+    _two_sided,
     register_live_confirm,
 )
 from src.execution.order_builder import build_combo_roll_order, reprice_limit
 from src.ibkr.contracts import build_option
+from src.ibkr.market_data import req_fresh_mkt_data
 from src.ibkr.portfolio import get_positions
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, FillRow, OrderRow
@@ -141,12 +143,12 @@ async def _fetch_leg(
 
     timeout = _quote_timeout()
     loop = asyncio.get_running_loop()
-    ticker = ib.reqMktData(
-        qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
+    ticker = req_fresh_mkt_data(
+        ib, qualified, genericTickList="101", snapshot=False, regulatorySnapshot=False
     )
 
     def _has_quote() -> bool:
-        return ticker.bid is not None and ticker.ask is not None and ticker.ask > 0
+        return _two_sided(ticker)
 
     def _has_greeks() -> bool:
         g = getattr(ticker, "modelGreeks", None)
@@ -161,8 +163,9 @@ async def _fetch_leg(
 
     ib.cancelMktData(qualified)
 
-    bid = ticker.bid if ticker.bid is not None else None
-    ask = ticker.ask if (ticker.ask is not None and ticker.ask > 0) else None
+    bid = _safe_float(ticker.bid)
+    ask = _safe_float(ticker.ask)
+    ask = ask if ask is not None and ask > 0 else None
     if ask is None:
         raise ValueError(f"no live ask for {underlying} {right.value} {strike} {expiry}")
 

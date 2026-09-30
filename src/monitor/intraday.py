@@ -40,6 +40,7 @@ from src.common.schemas import (
 )
 from src.ibkr.connection import AutoReconnect, connect_with_retry
 from src.ibkr.contracts import build_option, qualify_options_async
+from src.ibkr.market_data import req_fresh_mkt_data
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.monitor.triggers import check_all
 from src.storage.db import init_db, session_scope
@@ -117,6 +118,14 @@ def _load_entry_iv(pos: PositionSnapshot) -> float | None:
             .first()
         )
     return row[0] if row and row[0] is not None else None
+
+
+# (position_symbol, trigger) keys whose alert is being reviewed/sent right now. ib_async runs
+# every pendingTickersEvent batch as its own task, so a tick burst calls fire_alerts
+# concurrently — and the cooldown row is only written after the multi-second review, so every
+# call used to pass _is_recent_alert first (2026-09-30: ten identical TQQQ alerts in a minute).
+# Claimed synchronously (no await between check and add), so it is race-free on the one loop.
+_IN_FLIGHT: set[tuple[str, str]] = set()
 
 
 def _is_recent_alert(alert: RollAlert, cooldown_minutes: int) -> bool:
@@ -207,12 +216,39 @@ async def fire_alerts(
     tapping Approve queues a ROLL order that ``execute_roll`` executes. Otherwise it is the
     historical alert-only message.
     """
-    fresh = [a for a in alerts if not _is_recent_alert(a, cfg.monitor.alert_cooldown_minutes)]
+    fresh = [
+        a
+        for a in alerts
+        if (a.position_symbol, a.trigger) not in _IN_FLIGHT
+        and not _is_recent_alert(a, cfg.monitor.alert_cooldown_minutes)
+    ]
     if not fresh:
         log.debug(
-            "All %d alert(s) for %s are within cooldown — suppressed", len(alerts), pos.symbol
+            "All %d alert(s) for %s are within cooldown or in flight — suppressed",
+            len(alerts),
+            pos.symbol,
         )
         return
+
+    keys = {(a.position_symbol, a.trigger) for a in fresh}
+    _IN_FLIGHT.update(keys)
+    try:
+        await _review_send_persist(fresh, pos, quote, bot, chat_id, cfg, executor, ib)
+    finally:
+        _IN_FLIGHT.difference_update(keys)
+
+
+async def _review_send_persist(
+    fresh: list[RollAlert],
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    bot: Any,
+    chat_id: str,
+    cfg: Config,
+    executor: ThreadPoolExecutor,
+    ib: IB | None,
+) -> None:
+    """Review, send, and persist alerts already claimed in ``_IN_FLIGHT`` by fire_alerts."""
 
     # Claude review in thread (subprocess — blocks; run off the event loop)
     review: RollReview | None = None
@@ -420,7 +456,7 @@ class IntradayMonitor:
                         if not qualified:
                             log.warning("Could not qualify contract for %s — skipping", pos.symbol)
                             continue
-                        self._ib.reqMktData(qualified[0], "101", False, False)
+                        req_fresh_mkt_data(self._ib, qualified[0], "101", False, False)
                         self._subscriptions[pos.symbol] = (pos, qualified[0])
                         log.info("Subscribed market data: %s", pos.symbol)
                     except Exception:
