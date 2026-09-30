@@ -83,7 +83,7 @@
 **Interfaces:**
 - Produces: `_select_chain(chains: Sequence[Any], symbol: str) -> Any | None`; `build_option(symbol, expiry, strike, right, trading_class: str = "") -> Option`; `_build_chain_contracts(symbol, expirations, strikes, spot, trading_class: str = "") -> list[Option]`
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_market_data.py`)
+- [x] **Step 1: Write the failing tests** (append to `tests/test_market_data.py`)
 
 ```python
 from types import SimpleNamespace
@@ -126,12 +126,12 @@ def test_build_chain_contracts_sets_trading_class():
     assert contracts and all(c.tradingClass == "AMD" for c in contracts)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python -m pytest tests/test_market_data.py -k "select_chain or trading_class" -v`
 Expected: FAIL with `ImportError: cannot import name '_select_chain'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/ibkr/contracts.py`:
 
@@ -184,12 +184,12 @@ Add `Sequence` to the existing `typing`/`collections.abc` import. Change `_build
 
 Rename every later use of `smart` to `chain`. Log `tradingClass` in the existing `symbol=%s expirations=%s …` line (append `tc=%s`, `chain.tradingClass`). Pass `trading_class=chain.tradingClass` to `_build_chain_contracts`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `python -m pytest tests/test_market_data.py -v`
 Expected: all PASS (including the pre-existing `build_chain_contracts` tests, which use the default `trading_class=""`).
 
-- [ ] **Step 5: Live verification (read-only, TWS/Gateway up)**
+- [x] **Step 5: Live verification (read-only, TWS/Gateway up)**
 
 Run:
 ```bash
@@ -207,7 +207,7 @@ EOF
 ```
 Expected: AMD and GOOGL each return **> 0** quotes (before the fix: 0). Run it three times, since the bug was order-dependent.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ibkr/contracts.py src/ibkr/market_data.py tests/test_market_data.py
@@ -228,7 +228,7 @@ git commit -m "fix(ibkr): select the standard option chain, not IBKR's adjusted 
 - **BAC**: `watchlist` + `sectors: financials` + **`would_own` + `actively_wheeling`**. CSPs wanted. Actively wheeling so it's scanned every cycle: a low-vol bank would rarely trip the 3% dip-watch trigger.
 - **DPST** (3× regional-bank ETF, already in `indexes`/`leveraged_etfs`/`sectors: financials`): add to **`would_own` + `actively_wheeling`**. This moves it from the "CC-only leveraged" set into the deliberate-exception set alongside TQQQ/UPRO/SOXL. The `leveraged_etfs` comment block derives the split from `would_own`, so no other file decides it. Update that comment's example lists (CC-only → LABU/TSLL; exception → TQQQ/UPRO/SOXL/DPST, "confirmed 2026-09-29"), and the header's "Leveraged ETFs (LABU/TSLL/DPST) — CC-only" line.
 
-- [ ] **Step 1: Write the failing guard test** (append to `tests/test_universe_consumers.py`)
+- [x] **Step 1: Write the failing guard test** (append to `tests/test_universe_consumers.py`)
 
 ```python
 def test_every_universe_symbol_has_a_sector():
@@ -260,9 +260,9 @@ def test_csp_eligibility_matches_operator_decision():
     assert "DPST" in set(u["leveraged_etfs"]) & set(u["would_own"])
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_universe_consumers.py -k "sector or amd" -v`. Expected: FAIL on the second test (the first may also list other gaps; fix every one it names).
+- [x] **Step 2: Run** `python -m pytest tests/test_universe_consumers.py -k "sector or amd" -v`. Expected: FAIL on the second test (the first may also list other gaps; fix every one it names).
 
-- [ ] **Step 3: Edit `config/universe.yaml`**
+- [x] **Step 3: Edit `config/universe.yaml`**
 
 Under `watchlist:` → `# safe_bets` add:
 
@@ -275,7 +275,7 @@ Under `sectors:` → `# safe_bets stocks` add `AMD: semis` and `BAC: financials`
 
 Add `BAC` and `DPST` to `actively_wheeling` (BAC under `# safe_bets`; DPST under `# risky — leveraged, deliberate would_own exception`) and to the matching block of `would_own`. Update the leveraged-ETF comments as described above. `tests/test_etf_warnings.py` / `src/research/checks/warnings.py` read the split from config. Run them and update any fixture that hard-codes DPST as CC-only.
 
-- [ ] **Step 4: Update the prompt table and research doc**
+- [x] **Step 4: Update the prompt table and research doc**
 
 In `_UNIVERSE_CONTEXT` add two rows in the existing column format, with no stale price anchors (the scan-time spot block overrides them):
 
@@ -286,9 +286,9 @@ In `_UNIVERSE_CONTEXT` add two rows in the existing column format, with no stale
 
 In `docs/archive/UNIVERSE_RESEARCH.md`, add AMD and BAC sections in the same template as neighbouring tickers (tier, CC vs CSP appropriateness: AMD "held — CC only", BAC "held — CC + CSP, actively wheeling"). Also change DPST's section from CC-only to "deliberate would_own exception (2026-09-29): 3× regional banks, so assignment means holding a daily-reset product; size small and prefer short DTE". Change the prompt table's BAC row to `CC+CSP`, and DPST's row the same way.
 
-- [ ] **Step 5: Run** `python -m pytest tests/test_universe_consumers.py tests/test_config_keys.py -v`. Expected: PASS.
+- [x] **Step 5: Run** `python -m pytest tests/test_universe_consumers.py tests/test_config_keys.py -v`. Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add config/universe.yaml src/claude/prompts/strategist.py docs/archive/UNIVERSE_RESEARCH.md tests/
@@ -305,7 +305,7 @@ Docs: `How the scan works.md` (actively_wheeling now includes BAC/DPST); `ARCHIT
 - Modify: `src/notify/approval_service.py:1105-1146` (`_notify_scan_blocked`), `:1391-1398` (pre-scan caller)
 - Test: `tests/test_notify.py`
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_notify.py`)
+- [x] **Step 1: Write the failing tests** (append to `tests/test_notify.py`)
 
 ```python
 import pytest
@@ -348,9 +348,9 @@ def test_probe_action_hint_is_escaped_at_the_call_site():
 
 (Use the repo's existing async-test marker. Check `tests/conftest.py`. If `pytest-asyncio` isn't configured, wrap the call in `asyncio.run(...)` instead.)
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_notify.py -k "scan_blocked or action_hint" -v`. Expected: FAIL.
+- [x] **Step 2: Run** `python -m pytest tests/test_notify.py -k "scan_blocked or action_hint" -v`. Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 At the pre-scan caller, change `f"{code_line}\n\n{probe.action_hint}"` to `f"{code_line}\n\n{_md_escape(probe.action_hint)}"`. Also escape `probe.diagnosis` where it's passed as `reason`: `_notify_scan_blocked` already wraps `reason` in `_md_escape`, so leave that alone.
 
@@ -380,11 +380,11 @@ In `_notify_scan_blocked`, replace the `try/except` body with:
             logger.exception("Intraday loop: failed to send scan-blocked notice")
 ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_notify.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_notify.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Docs:** `SETUP.md` troubleshooting table gets a row: "No 'Scan blocked' Telegram message during a data-farm outage → fixed 2026-09-29 (unescaped hint); if still silent, check `logs/approval.log` for `scan-blocked notice`".
+- [x] **Step 5: Docs:** `SETUP.md` troubleshooting table gets a row: "No 'Scan blocked' Telegram message during a data-farm outage → fixed 2026-09-29 (unescaped hint); if still silent, check `logs/approval.log` for `scan-blocked notice`".
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/notify/approval_service.py tests/test_notify.py SETUP.md
@@ -404,7 +404,7 @@ git commit -m "fix(notify): escape the probe hint and fall back to plain text so
 **Interfaces:**
 - Produces: `SCAN_COMPLETED_KEY = "intraday_scan_completed"` (ISO-8601 UTC string) in `src/storage/system_settings.py`, which Task 5's watchdog reads. Also `_iv_symbols(held: list[str]) -> list[str]` in `eod_report.py`, ordered oldest-observation-first.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `tests/test_eod.py`:
 
@@ -453,9 +453,9 @@ def test_scan_completed_key_is_exported():
     assert SCAN_COMPLETED_KEY == "intraday_scan_completed"
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_eod.py tests/test_monitor_heartbeat.py -k "iv_symbols or retries or scan_completed" -v`. Expected: FAIL.
+- [x] **Step 2: Run** `python -m pytest tests/test_eod.py tests/test_monitor_heartbeat.py -k "iv_symbols or retries or scan_completed" -v`. Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `system_settings.py`: add `SCAN_COMPLETED_KEY = "intraday_scan_completed"` beside `MONITOR_HEARTBEAT_KEY`.
 
@@ -488,17 +488,17 @@ def _iv_symbols(held: list[str]) -> list[str]:
 
 `scripts/backfill_iv.py`: add `argparse` with `--symbols` (comma list; default = universe ∪ currently-held from the latest `position_snapshots` row) and a real `--help`. Keep the existing insert logic.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_eod.py tests/test_eod_idempotency.py tests/test_monitor_heartbeat.py tests/test_iv_history.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_eod.py tests/test_eod_idempotency.py tests/test_monitor_heartbeat.py tests/test_iv_history.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Backfill the two holdings**
+- [x] **Step 5: Backfill the two holdings**
 
 Run: `python -m scripts.backfill_iv --symbols AMD,BAC`
 Then: `sqlite3 data/income_system.db "select symbol,count(*),max(obs_date) from iv_history where symbol in ('AMD','BAC') group by 1"`
 Expected: both have ≥ 200 rows, and `max(obs_date)` is the last trading day.
 
-- [ ] **Step 6: Docs:** `SETUP.md` scripts table (`backfill_iv --symbols`); `ARCHITECTURE.md` EOD section (staleness order + retry + holdings).
+- [x] **Step 6: Docs:** `SETUP.md` scripts table (`backfill_iv --symbols`); `ARCHITECTURE.md` EOD section (staleness order + retry + holdings).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/storage/system_settings.py src/notify/approval_service.py src/orchestrator/eod_report.py scripts/backfill_iv.py tests/ SETUP.md ARCHITECTURE.md
@@ -520,20 +520,20 @@ git commit -m "fix(eod): IV append covers holdings, retries failures, orders by 
 
 **Note:** `src/ibkr/connection.py` and `tests/test_connection.py` had uncommitted operator changes on 2026-09-29. Read `git diff` first and build on them, never over them.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   - `test_start_scheduler.py`: an `eod_proc` running longer than `eod_timeout_minutes` is terminated (SIGTERM, then SIGKILL after `STOP_GRACE_SECONDS`) with an ERROR log line, and a new EOD may be scheduled the next trading day. Use a fake `Popen` with a controllable `poll()` and a fake clock, following the existing scheduler tests.
   - `test_eod.py`: the EOD connection has the 1102 account-summary guard applied (assert the helper from `connection.py` was called on the EOD `IB` object). A successful run writes `EOD_COMPLETED_KEY`.
-- [ ] **Step 2: Run** `python -m pytest tests/test_start_scheduler.py tests/test_eod.py -v`. Expected: FAIL.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run** `python -m pytest tests/test_start_scheduler.py tests/test_eod.py -v`. Expected: FAIL.
+- [x] **Step 3: Implement**
   - In `start.py`'s loop, record the EOD start time. Past the deadline, terminate/kill, log `"EOD exceeded %d min — killed"`, and set `eod_proc = None`.
   - In `eod_report.py`, apply the existing connection guard right after connect.
   - Wrap the account-summary fetch in `asyncio.wait_for(..., 120)`, falling back to the last `portfolio_snapshots` row with a WARNING.
   - Write `EOD_COMPLETED_KEY` (ISO UTC) at the end of a successful run.
   - Add `scheduler.eod_timeout_minutes: 60` to `settings.yaml` + config model.
-- [ ] **Step 4: Run** the tests again. Expected: PASS.
-- [ ] **Step 5:** Task 5's watchdog gets one more check, `eod`: on a trading day, after `scheduler.eod_report` + 90 min ET, `eod_completed` must be dated today (ET). Add it to the checks table and to `tests/test_watchdog.py`, with a pure `eod_check(iso, now_et, due_hhmm, grace_min)` test mirroring `scan_loop_check`.
-- [ ] **Step 6: Docs:** `ARCHITECTURE.md` (EOD timeout + completion key), `SETUP.md` troubleshooting ("EOD summary missing → check `logs/eod.log`; the launcher now kills a run after 60 min").
-- [ ] **Step 7: Commit** `git commit -m "fix(eod): hard timeout, 1102 account-summary guard, completion heartbeat"`
+- [x] **Step 4: Run** the tests again. Expected: PASS.
+- [x] **Step 5:** Task 5's watchdog gets one more check, `eod`: on a trading day, after `scheduler.eod_report` + 90 min ET, `eod_completed` must be dated today (ET). Add it to the checks table and to `tests/test_watchdog.py`, with a pure `eod_check(iso, now_et, due_hhmm, grace_min)` test mirroring `scan_loop_check`.
+- [x] **Step 6: Docs:** `ARCHITECTURE.md` (EOD timeout + completion key), `SETUP.md` troubleshooting ("EOD summary missing → check `logs/eod.log`; the launcher now kills a run after 60 min").
+- [x] **Step 7: Commit** `git commit -m "fix(eod): hard timeout, 1102 account-summary guard, completion heartbeat"`
 
 ---
 
@@ -566,7 +566,7 @@ git commit -m "fix(eod): IV append covers holdings, retries failures, orders by 
 
 **Alert state machine** (`data/watchdog_state.json`): send on an ok→fail transition. While a check keeps failing, re-send every `realert_minutes` (default 60). Send "✅ recovered: <name>" on fail→ok. When `watchdog.deadman_url` is set, GET it on every run where all checks pass (optional external dead-man switch, e.g. healthchecks.io). That's the only thing that can notice the Mac itself being off or asleep. Document this limitation.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_watchdog.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_watchdog.py`)
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -626,9 +626,9 @@ def test_send_telegram_uses_plain_text(monkeypatch):
     assert "parse_mode" not in sent and sent["text"].startswith("🐕")
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_watchdog.py -v`. Expected: FAIL (`ModuleNotFoundError: src.ops`).
+- [x] **Step 2: Run** `python -m pytest tests/test_watchdog.py -v`. Expected: FAIL (`ModuleNotFoundError: src.ops`).
 
-- [ ] **Step 3: Implement `src/ops/watchdog.py`**
+- [x] **Step 3: Implement `src/ops/watchdog.py`**
 
 ```python
 """Out-of-process health watchdog — alerts when the trading stack stops doing its job.
@@ -785,13 +785,13 @@ watchdog:
 
 Add a matching `WatchdogCfg` pydantic model in `src/common/config.py` and wire it into `Config`, following the `AutomationCfg` pattern.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_watchdog.py tests/test_config_keys.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_watchdog.py tests/test_config_keys.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Manual smoke:** `python -m scripts.watchdog` with the stack stopped should send a Telegram message naming `supervisor`. Run it again immediately: no message (inside the re-alert window).
+- [x] **Step 5: Manual smoke:** `python -m scripts.watchdog` with the stack stopped should send a Telegram message naming `supervisor`. Run it again immediately: no message (inside the re-alert window).
 
-- [ ] **Step 6: Docs:** `README.md` layout table (`src/ops/`, `scripts/watchdog.py`); `ARCHITECTURE.md` folder guide + config section (`watchdog:`); `STATUS.md` (built; limitation: can't detect a powered-off Mac unless `deadman_url` is set).
+- [x] **Step 6: Docs:** `README.md` layout table (`src/ops/`, `scripts/watchdog.py`); `ARCHITECTURE.md` folder guide + config section (`watchdog:`); `STATUS.md` (built; limitation: can't detect a powered-off Mac unless `deadman_url` is set).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ops scripts/watchdog.py src/common/config.py config/settings.yaml tests/test_watchdog.py README.md ARCHITECTURE.md STATUS.md
@@ -822,7 +822,7 @@ git commit -m "feat(ops): out-of-process watchdog with plain-text Telegram alert
 
 **`./ibkr` subcommands:** `install [--with-gateway]`, `uninstall`, `start`, `stop`, `restart`, `status`, `logs [approval|monitor|api|research|eod|watchdog|supervisor]`, `watchdog` (run a check now), `autonomy [level]` (Task 12). Everything except `npm run dev`.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_launchd.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_launchd.py`)
 
 ```python
 import plistlib
@@ -856,15 +856,15 @@ def test_control_script_exists_and_is_executable():
     assert p.exists() and p.stat().st_mode & 0o111
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_launchd.py -v`. Expected: FAIL.
+- [x] **Step 2: Run** `python -m pytest tests/test_launchd.py -v`. Expected: FAIL.
 
-- [ ] **Step 3: Implement `scripts/launchd.py`**: `render_plists` (built with `plistlib.dumps`, no string templates), plus a CLI:
+- [x] **Step 3: Implement `scripts/launchd.py`**: `render_plists` (built with `plistlib.dumps`, no string templates), plus a CLI:
   - `install`: writes to `~/Library/LaunchAgents/<label>.plist`, then `launchctl bootstrap gui/$UID <plist>`; if already loaded, `bootout` first.
   - `uninstall`: `bootout` then delete.
   - `start` / `stop`: `launchctl kickstart -k gui/$UID/<label>` / `launchctl bootout …`.
   - `status`: `launchctl print gui/$UID/<label>`, summarised to state and pid, then prints the `/system/status`-equivalent heartbeat ages via `src.ops.watchdog.run_checks`.
 
-- [ ] **Step 4: Implement `ibkr`** (bash, `set -euo pipefail`). It resolves `REPO` from `BASH_SOURCE`, uses `.venv/bin/python`, and dispatches:
+- [x] **Step 4: Implement `ibkr`** (bash, `set -euo pipefail`). It resolves `REPO` from `BASH_SOURCE`, uses `.venv/bin/python`, and dispatches:
   - `install|uninstall|start|stop|restart|status` → `python -m scripts.launchd <cmd> "$@"`
   - `logs` → `tail -F logs/<name>.log`
   - `watchdog` → `python -m scripts.watchdog`
@@ -873,16 +873,16 @@ def test_control_script_exists_and_is_executable():
 
   `restart` = `stop` then `start`. Before `install`, refuse if a non-launchd `scripts.start` is already running (`pgrep -f scripts.start` while the supervisor label isn't loaded) and print "stop the terminal-launched stack first (Ctrl-C)". Two supervisors would fight over clientIds.
 
-- [ ] **Step 5: Run** `python -m pytest tests/test_launchd.py tests/test_start_launcher.py -v`. Expected: PASS.
+- [x] **Step 5: Run** `python -m pytest tests/test_launchd.py tests/test_start_launcher.py -v`. Expected: PASS.
 
-- [ ] **Step 6: Live verification**
+- [x] **Step 6: Live verification**
   1. Stop any terminal-run stack. Run `./ibkr install`, then `./ibkr status`: supervisor running with a pid, watchdog loaded.
   2. `kill <supervisor pid>`. Within ~30 s, `./ibkr status` shows a **new** pid (KeepAlive worked).
   3. `./ibkr stop`. Within 5 min a Telegram "⚠️ supervisor: scripts.start is not running" arrives. `./ibkr start` then gives "✅ recovered: supervisor".
 
-- [ ] **Step 7: Docs:** `SETUP.md` — a new "Run it as a background service (launchd)" section with every `./ibkr` subcommand, the caffeinate/AC-power note, and the `deadman_url` suggestion. Scripts table rows for `./ibkr`, `scripts.launchd`, `scripts.watchdog`. `README.md` quick start uses `./ibkr install`, and the layout table gets `ibkr`. `ARCHITECTURE.md` process model (launchd → scripts.start → children; watchdog separate).
+- [x] **Step 7: Docs:** `SETUP.md` — a new "Run it as a background service (launchd)" section with every `./ibkr` subcommand, the caffeinate/AC-power note, and the `deadman_url` suggestion. Scripts table rows for `./ibkr`, `scripts.launchd`, `scripts.watchdog`. `README.md` quick start uses `./ibkr install`, and the layout table gets `ibkr`. `ARCHITECTURE.md` process model (launchd → scripts.start → children; watchdog separate).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add ibkr scripts/launchd.py tests/test_launchd.py SETUP.md README.md ARCHITECTURE.md
@@ -916,7 +916,7 @@ git commit -m "feat(ops): launchd supervisor + watchdog agents and a single ./ib
 
 Keep the legacy `"illiquid"` label in both tables, because 14 days of existing `risk_verdicts` rows still carry it.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_analytics.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_analytics.py`)
 
 ```python
 from datetime import date, timedelta
@@ -962,9 +962,9 @@ In `tests/test_strategies.py`, add one test per generator: a put quote with OI=5
 
 In `tests/test_risk_verdicts_store.py`: a recorded assessment writes `liquidity == {"bid": …, "ask": …, "spread_pct": …, "open_interest": 5, "volume": …}`.
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_analytics.py tests/test_strategies.py tests/test_risk_verdicts_store.py -k "liquidity or illiquid" -v`. Expected: FAIL.
+- [x] **Step 2: Run** `python -m pytest tests/test_analytics.py tests/test_strategies.py tests/test_risk_verdicts_store.py -k "liquidity or illiquid" -v`. Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def liquidity_failures(quote: OptionQuote, *, enforce_volume: bool = True) -> list[str]:
@@ -1010,11 +1010,11 @@ Add the 7 labels to **both** `formatters._REJECT_REASON_LABELS` and `options.py`
 
 The generators' existing aggregate WARNING line (`rejections: …`) automatically shows the granular codes. Extend it with the threshold values once per symbol: `(limits: spread≤10%, OI≥100, vol≥10, volume gate on)`.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_analytics.py tests/test_strategies.py tests/test_risk_verdicts_store.py tests/test_reason_label_parity.py tests/test_assessed_contracts.py tests/test_storage_db_migrations.py -v`. Expected: PASS. If fixtures assert the literal `"illiquid"` on *newly generated* rejects, update them to the granular code. Leave read-side fixtures on legacy rows alone.
+- [x] **Step 4: Run** `python -m pytest tests/test_analytics.py tests/test_strategies.py tests/test_risk_verdicts_store.py tests/test_reason_label_parity.py tests/test_assessed_contracts.py tests/test_storage_db_migrations.py -v`. Expected: PASS. If fixtures assert the literal `"illiquid"` on *newly generated* rejects, update them to the granular code. Leave read-side fixtures on legacy rows alone.
 
-- [ ] **Step 5: Docs:** `ARCHITECTURE.md` src/analytics (liquidity codes), src/storage (`risk_verdicts.liquidity` column), data-flow (`TradeCandidate` new optional fields). `How the scan works.md`: a short "reading rejection codes" note.
+- [x] **Step 5: Docs:** `ARCHITECTURE.md` src/analytics (liquidity codes), src/storage (`risk_verdicts.liquidity` column), data-flow (`TradeCandidate` new optional fields). `How the scan works.md`: a short "reading rejection codes" note.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/analytics/liquidity.py src/strategies src/common/schemas.py src/storage src/notify/formatters.py src/api/routers/options.py tests ARCHITECTURE.md "How the scan works.md"
@@ -1033,7 +1033,7 @@ git commit -m "feat(scan): split illiquid into 7 precise liquidity codes and per
 **Interfaces:**
 - Produces: `expire_stale_approvals(now: datetime | None = None) -> int`: flips `pending` rows with `expires_at < now` (or a NULL `expires_at` older than `approval.ttl_minutes`) to `expired`, sets `decided_at=now`, returns the count. It never touches `approved` rows (those belong to `process_queued_orders`).
 
-- [ ] **Step 1: Write the failing test** (`tests/test_storage_approvals.py`; reuse the `_db_setup` fixture pattern from `tests/test_autonomy.py`)
+- [x] **Step 1: Write the failing test** (`tests/test_storage_approvals.py`; reuse the `_db_setup` fixture pattern from `tests/test_autonomy.py`)
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -1057,15 +1057,15 @@ def test_expire_stale_approvals_only_touches_pending_past_ttl(db):
     assert by == {"a": "expired", "b": "pending", "c": "approved"}
 ```
 
-- [ ] **Step 2: Run**. Expected: FAIL (`ModuleNotFoundError`).
+- [x] **Step 2: Run**. Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement** `src/storage/approvals.py` with a module docstring explaining R6. Call it at the top of each `_order_poll_loop` iteration (cheap: one UPDATE on an indexed status). Log at INFO only when count > 0.
+- [x] **Step 3: Implement** `src/storage/approvals.py` with a module docstring explaining R6. Call it at the top of each `_order_poll_loop` iteration (cheap: one UPDATE on an indexed status). Log at INFO only when count > 0.
 
-- [ ] **Step 4: One-off cleanup** after deploy: the first poll cycle flips the 33 historical rows. Verify with `sqlite3 data/income_system.db "select status,count(*) from approvals group by 1"`. Expected: no `pending` row past `expires_at`.
+- [x] **Step 4: One-off cleanup** after deploy: the first poll cycle flips the 33 historical rows. Verify with `sqlite3 data/income_system.db "select status,count(*) from approvals group by 1"`. Expected: no `pending` row past `expires_at`.
 
-- [ ] **Step 5: Docs:** `ARCHITECTURE.md` src/storage (new module) + src/notify (poll loop sweep); `README.md` layout table row.
+- [x] **Step 5: Docs:** `ARCHITECTURE.md` src/storage (new module) + src/notify (poll loop sweep); `README.md` layout table row.
 
-- [ ] **Step 6: Commit** `git commit -m "fix(approvals): sweep untapped approvals past TTL to expired"`
+- [x] **Step 6: Commit** `git commit -m "fix(approvals): sweep untapped approvals past TTL to expired"`
 
 ---
 
@@ -1078,9 +1078,9 @@ def test_expire_stale_approvals_only_touches_pending_past_ttl(db):
 
 **Why:** A missing IV rank already passes the IV gate as "data unavailable" (it never blocks). Scoring it as 0 under a 30% weight contradicts that and silently sinks the name (R7). Neutral mirrors how missing sentiment is treated in `engine/scoring.py`. The `iv_rank_unavailable` rationale tag makes the gap visible on the card. With Task 4 and the watchdog's `iv_history` check, this should now be rare. The value lives in YAML so a human can set it back to 0.
 
-- [ ] **Step 1: Failing test:** build a CSP via the generator with `IVStats(iv_rank=None)`. Assert `scores.iv_score == 50.0` and `"iv_rank_unavailable" in candidate.rationale_tags`. Same for CC.
-- [ ] **Step 2: Run**. Expected: FAIL (`iv_score == 0.0`).
-- [ ] **Step 3: Implement:**
+- [x] **Step 1: Failing test:** build a CSP via the generator with `IVStats(iv_rank=None)`. Assert `scores.iv_score == 50.0` and `"iv_rank_unavailable" in candidate.rationale_tags`. Same for CC.
+- [x] **Step 2: Run**. Expected: FAIL (`iv_score == 0.0`).
+- [x] **Step 3: Implement:**
   - Read `get_config().weights.get("missing_iv_rank_score", 50.0)` and use it when `iv_stats.iv_rank is None`.
   - Append the tag where rationale tags are assembled.
   - Add to `scoring_weights.yaml`, with a comment citing R7:
@@ -1092,9 +1092,9 @@ def test_expire_stale_approvals_only_touches_pending_past_ttl(db):
   missing_iv_rank_score: 50
   ```
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_strategies.py tests/test_config_keys.py tests/test_engine.py -v`. Expected: PASS.
-- [ ] **Step 5: Docs:** `ARCHITECTURE.md` config section; `STATUS.md` known-limitations. Add the finding-8 explanation (the "Decision on the score floor" paragraph above, with the component arithmetic) to `How the scan works.md` under a "Why a name misses the score floor" heading.
-- [ ] **Step 6: Commit** `git commit -m "fix(scoring): missing IV rank scores neutral (configurable) and tags the card"`
+- [x] **Step 4: Run** `python -m pytest tests/test_strategies.py tests/test_config_keys.py tests/test_engine.py -v`. Expected: PASS.
+- [x] **Step 5: Docs:** `ARCHITECTURE.md` config section; `STATUS.md` known-limitations. Add the finding-8 explanation (the "Decision on the score floor" paragraph above, with the component arithmetic) to `How the scan works.md` under a "Why a name misses the score floor" heading.
+- [x] **Step 6: Commit** `git commit -m "fix(scoring): missing IV rank scores neutral (configurable) and tags the card"`
 
 ---
 
@@ -1112,7 +1112,7 @@ def test_expire_stale_approvals_only_touches_pending_past_ttl(db):
   - `ClaudeReview.summary` is requested for every candidate, not just single-ticker scans
   - New `ClaudeReview.evidence: list[str] = []` (fact/news ids the verdict cites)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_claude.py`:
 
@@ -1157,9 +1157,9 @@ def test_generate_sends_json_schema_format(monkeypatch):
     assert sent["format"]["type"] == "object" and "reviews" in sent["format"]["properties"]
 ```
 
-- [ ] **Step 2: Run** `python -m pytest tests/test_claude.py tests/test_ollama_runner.py -k "wrapper or facts or schema" -v`. Expected: FAIL.
+- [x] **Step 2: Run** `python -m pytest tests/test_claude.py tests/test_ollama_runner.py -k "wrapper or facts or schema" -v`. Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 1. **Structured output.** `_generate(prompt, cfg, schema: dict | None = REVIEW_SCHEMA)` sends `"format": schema`. Ollama ≥0.5 grammar-constrains to a JSON schema, and the installed version is 0.33.2. Roll and EOD callers pass their own schemas, or `"json"` as before.
 
@@ -1215,9 +1215,9 @@ def test_generate_sends_json_schema_format(monkeypatch):
 
 6. **`scripts/review_eval.py`.** It replays stored `candidates` rows (default: every row since 2026-09-14, or `--ids`) through `ollama_runner.review_candidates` with `--model` and `--runs N`, then prints the per-candidate verdicts, the verdict distribution, how many candidates came back reviewed vs requested, and how many reviews had empty `evidence`. It is read-only (no DB writes) and bypasses the circuit breaker.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_claude.py tests/test_ollama_runner.py tests/test_scan_review_reuse.py tests/test_output_fidelity.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_claude.py tests/test_ollama_runner.py tests/test_scan_review_reuse.py tests/test_output_fidelity.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Evaluate against the baseline** (Ollama running)
+- [x] **Step 5: Evaluate against the baseline** (Ollama running)
 
 Run: `ollama pull qwen3.5:4b && ollama pull qwen3.5:9b && ollama pull gemma4:e4b-it-qat`, then `python -m scripts.review_eval --runs 2 --model <m>` for each of `qwen3:8b`, `qwen3.5:4b`, `qwen3.5:9b`, `gemma4:e4b-it-qat`. Quit Chrome tabs you don't need while doing it; the eval loads one model at a time.
 Baseline (2026-09-29, old prompt): 6/6 "wait" on single-candidate prompts; 1/3 candidates reviewed on the multi-candidate prompt.
@@ -1240,9 +1240,9 @@ Pick the **smallest** model that meets the bar above. Whatever the model:
 
 Also try `think: true` on the final call. It costs time, not memory; keep it only if grounding improves within `ollama_timeout_seconds`. Record the decision in `STATUS.md` and update the model comment block in `config/settings.yaml`.
 
-- [ ] **Step 6: Docs:** `ARCHITECTURE.md` src/claude (schema output, FACTS, rubric, `evidence` field); data-flow for `ClaudeReview.evidence`; `SETUP.md` scripts table (`review_eval`); `STATUS.md`.
+- [x] **Step 6: Docs:** `ARCHITECTURE.md` src/claude (schema output, FACTS, rubric, `evidence` field); data-flow for `ClaudeReview.evidence`; `SETUP.md` scripts table (`review_eval`); `STATUS.md`.
 
-- [ ] **Step 7: Commit** `git commit -m "fix(claude): schema-constrained Ollama reviews, deterministic FACTS and a sell/wait/skip rubric"`
+- [x] **Step 7: Commit** `git commit -m "fix(claude): schema-constrained Ollama reviews, deterministic FACTS and a sell/wait/skip rubric"`
 
 ---
 
@@ -1281,7 +1281,7 @@ def test_news_and_tool_research_never_reach_the_deterministic_layer():
             assert not mod.startswith(_ENRICHMENT_ONLY), f"{pkg} imports {mod}"
 ```
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_data_providers.py`:
 
@@ -1325,17 +1325,17 @@ def test_news_block_numbers_and_dedupes(monkeypatch):
 
 `tests/test_ollama_runner.py`: with `httpx.post` faked to return one `tool_calls` message and then a final `{"reviews": [...]}`, assert that `search_news` ran once, the second request carries **no** `tools` and does carry `format`, and the review parses. Add a second test: a `/api/chat` HTTP error in the research turn falls back to `_generate` and still returns reviews.
 
-- [ ] **Step 2: Run**. Expected: FAIL.
+- [x] **Step 2: Run**. Expected: FAIL.
 
-- [ ] **Step 3: Implement** the three new modules, the factory entry (`data.news_search_provider: google_news`), the NEWS block injection in `build_prompt` (for both full-universe and single-ticker scans; per candidate symbol `claude.news_per_symbol: 5`, plus 3 market headlines for the query `"stock market today"`; `claude.news_days: 7`) and the research turn in `ollama_runner.review_candidates`. Keep the prompt within `ollama_num_ctx`: trim headlines to 140 chars and cap the NEWS block at `claude.news_max_items: 25`.
+- [x] **Step 3: Implement** the three new modules, the factory entry (`data.news_search_provider: google_news`), the NEWS block injection in `build_prompt` (for both full-universe and single-ticker scans; per candidate symbol `claude.news_per_symbol: 5`, plus 3 market headlines for the query `"stock market today"`; `claude.news_days: 7`) and the research turn in `ollama_runner.review_candidates`. Keep the prompt within `ollama_num_ctx`: trim headlines to 140 chars and cap the NEWS block at `claude.news_max_items: 25`.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_data_providers.py tests/test_news_context.py tests/test_ollama_runner.py tests/test_eval_skills.py tests/test_web_fence.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_data_providers.py tests/test_news_context.py tests/test_ollama_runner.py tests/test_eval_skills.py tests/test_web_fence.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Evaluate:** run `python -m scripts.review_eval --runs 2` and confirm that reviews cite `N#` ids where news is relevant and that runtime per scan stays under `ollama_timeout_seconds × candidates`. Record the timings in the commit message.
+- [x] **Step 5: Evaluate:** run `python -m scripts.review_eval --runs 2` and confirm that reviews cite `N#` ids where news is relevant and that runtime per scan stays under `ollama_timeout_seconds × candidates`. Record the timings in the commit message.
 
-- [ ] **Step 6: Docs:** `ARCHITECTURE.md` (src/data new provider; src/claude news + tools; the analytics-tier / enrichment rules restated for the new modules; config keys); `CLAUDE.md` enrichment-tier list gets the two new `src/claude/` modules; `SETUP.md` (no key needed; how to disable with `claude.tool_research_enabled: false`); `STATUS.md`.
+- [x] **Step 6: Docs:** `ARCHITECTURE.md` (src/data new provider; src/claude news + tools; the analytics-tier / enrichment rules restated for the new modules; config keys); `CLAUDE.md` enrichment-tier list gets the two new `src/claude/` modules; `SETUP.md` (no key needed; how to disable with `claude.tool_research_enabled: false`); `STATUS.md`.
 
-- [ ] **Step 7: Commit** `git commit -m "feat(claude): keyless news search and a bounded tool-calling research turn for Ollama reviews"`
+- [x] **Step 7: Commit** `git commit -m "feat(claude): keyless news search and a bounded tool-calling research turn for Ollama reviews"`
 
 ---
 
@@ -1352,7 +1352,7 @@ def test_news_block_numbers_and_dedupes(monkeypatch):
 
 **Preconditions (do not flip until all hold):** Tasks 1, 3, 5 and 6 are deployed; `./ibkr status` is healthy; the watchdog has been silent through one full RTH session; and `automation.max_auto_trades_per_day` (10), `daily_loss_halt_pct` (3.0), `drawdown_halt_pct` (10.0) and `auto_close_enabled` (true) are unchanged. The Rules Engine, concentration caps (≤25% net liq per name) and the send-time re-validation still gate every order.
 
-- [ ] **Step 1: Write the failing tests** (`tests/test_autonomy.py`)
+- [x] **Step 1: Write the failing tests** (`tests/test_autonomy.py`)
 
 ```python
 def test_paper_bypass_clears_blockers(monkeypatch):
@@ -1383,9 +1383,9 @@ def test_bypass_off_by_default():
 
 (The last test pins the **code** default. `config/settings.yaml` sets it `true` for this paper run, so load a config without the key, or assert on `AutomationCfg().paper_skip_promotion_gate`.)
 
-- [ ] **Step 2: Run**. Expected: FAIL.
+- [x] **Step 2: Run**. Expected: FAIL.
 
-- [ ] **Step 3: Implement.** At the top of `promotion_blockers`, after the demotion early-return:
+- [x] **Step 3: Implement.** At the top of `promotion_blockers`, after the demotion early-return:
 
 ```python
     cfg = get_config()
@@ -1410,25 +1410,25 @@ def test_bypass_off_by_default():
 
 Add a `STATUS.md` **live-cutover gate** line: "`automation.paper_skip_promotion_gate` must be `false`". Add an assertion for the same thing in `tests/test_live_cutover.py` if that file checks cutover preconditions.
 
-- [ ] **Step 4: Run** `python -m pytest tests/test_autonomy.py tests/test_command_drain.py tests/test_drain_controls.py tests/test_live_cutover.py -v`. Expected: PASS.
+- [x] **Step 4: Run** `python -m pytest tests/test_autonomy.py tests/test_command_drain.py tests/test_drain_controls.py tests/test_live_cutover.py -v`. Expected: PASS.
 
-- [ ] **Step 5: Flip** (only after the preconditions above hold)
+- [x] **Step 5: Flip** (only after the preconditions above hold)
 
 Run: `./ibkr autonomy full`
 Expected: `autonomy = full`. The next intraday cycle logs `autonomy=full`, and a candidate that passes the gate is auto-queued, with a thread-58 order notification instead of a view-only card. Watch one session with `./ibkr logs approval`. `/halt` in Telegram stops new orders immediately if anything looks wrong.
 
-- [ ] **Step 6: Docs:** `ARCHITECTURE.md` (autonomy ladder + paper override); `SETUP.md` (`./ibkr autonomy`, `/halt` reminder); `STATUS.md` (override on, live-cutover gate).
+- [x] **Step 6: Docs:** `ARCHITECTURE.md` (autonomy ladder + paper override); `SETUP.md` (`./ibkr autonomy`, `/halt` reminder); `STATUS.md` (override on, live-cutover gate).
 
-- [ ] **Step 7: Commit** `git commit -m "feat(autonomy): paper-only promotion-gate override and ./ibkr autonomy; run paper on FULL"`
+- [x] **Step 7: Commit** `git commit -m "feat(autonomy): paper-only promotion-gate override and ./ibkr autonomy; run paper on FULL"`
 
 ---
 
 ### Task 13: Final verification and doc sweep
 
-- [ ] **Step 1:** `python -m pytest -q && ruff check . && ruff format --check . && mypy src`. Expected: all green, and the test count is ≥ 2313 plus the new tests.
-- [ ] **Step 2:** Re-check every CLAUDE.md doc-update row against `git diff --stat main`: new modules (`src/ops/`, `src/storage/approvals.py`, `src/data/google_news_backend.py`, `src/claude/news_context.py`, `src/claude/ollama_tools.py`); new scripts (`ibkr`, `scripts/launchd.py`, `scripts/watchdog.py`, `scripts/review_eval.py`, `scripts/autonomy.py`); new config keys (`watchdog.*`, `claude.news_*`, `claude.tool_research_*`, `data.news_search_provider`, `automation.paper_skip_promotion_gate`, `missing_iv_rank_score`); the universe tickers; the ORM column; the schema fields.
-- [ ] **Step 3:** One full RTH session under launchd on FULL. Afterwards, rerun the post-mortem queries (`risk_verdicts` reason breakdown by granular liquidity code, candidates → approvals → orders → fills) and update the artifact with a "post-remediation" section.
-- [ ] **Step 4:** Commit any doc fix-ups: `git commit -m "docs: sync architecture/setup/status for scan-loop remediation"`.
+- [x] **Step 1:** `python -m pytest -q && ruff check . && ruff format --check . && mypy src`. Expected: all green, and the test count is ≥ 2313 plus the new tests.
+- [x] **Step 2:** Re-check every CLAUDE.md doc-update row against `git diff --stat main`: new modules (`src/ops/`, `src/storage/approvals.py`, `src/data/google_news_backend.py`, `src/claude/news_context.py`, `src/claude/ollama_tools.py`); new scripts (`ibkr`, `scripts/launchd.py`, `scripts/watchdog.py`, `scripts/review_eval.py`, `scripts/autonomy.py`); new config keys (`watchdog.*`, `claude.news_*`, `claude.tool_research_*`, `data.news_search_provider`, `automation.paper_skip_promotion_gate`, `missing_iv_rank_score`); the universe tickers; the ORM column; the schema fields.
+- [ ] **Step 3:** _(Deferred to the operator: needs IB Gateway plus a full trading session on FULL. Autonomy was set to FULL on 2026-09-30.)_ One full RTH session under launchd on FULL. Afterwards, rerun the post-mortem queries (`risk_verdicts` reason breakdown by granular liquidity code, candidates → approvals → orders → fills) and update the artifact with a "post-remediation" section.
+- [x] **Step 4:** Commit any doc fix-ups: `git commit -m "docs: sync architecture/setup/status for scan-loop remediation"`.
 
 ---
 
