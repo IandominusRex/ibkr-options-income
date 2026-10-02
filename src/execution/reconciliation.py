@@ -163,6 +163,26 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
     if fills is None:
         return
 
+    # An execution is claimable by at most one order. Drop executions already recorded
+    # (by execId), and never let the contract-match fallback hand an execution to an order
+    # other than the one IBKR says placed it: a cancelled attempt and its re-queued retry share
+    # a candidate and a contract, so the fallback alone gave the retry's fill to the cancelled
+    # order too (2026-10-01: GOOGL order 15 recorded order 17's 2 @ 2.98 a second time).
+    with session_scope() as s:
+        claimed_exec_ids = {
+            e for (e,) in s.query(FillRow.ib_exec_id).filter(FillRow.ib_exec_id.isnot(None))
+        }
+        known_ib_order_ids = {
+            i for (i,) in s.query(OrderRow.ib_order_id).filter(OrderRow.ib_order_id.isnot(None))
+        }
+
+    def _claimable(f: Any, ib_order_id: int | None) -> bool:
+        ex = getattr(f, "execution", None)
+        if getattr(ex, "execId", None) in claimed_exec_ids:
+            return False
+        exec_order_id = getattr(ex, "orderId", None)
+        return exec_order_id == ib_order_id or exec_order_id not in known_ib_order_ids
+
     is_live = bool(get_config().is_live)
     recovered = 0
     for order_id, candidate_id, ib_order_id in orphans:
@@ -172,9 +192,16 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
             ).scalar_one_or_none()
             if cand is None:
                 continue
-            matched = [f for f in fills if _exec_matches_candidate(f, cand, ib_order_id)]
+            matched = [
+                f
+                for f in fills
+                if _claimable(f, ib_order_id) and _exec_matches_candidate(f, cand, ib_order_id)
+            ]
             if not matched:
                 continue
+            claimed_exec_ids.update(
+                e for f in matched if (e := getattr(f.execution, "execId", None)) is not None
+            )
 
             total_qty = 0.0
             notional = 0.0
@@ -291,11 +318,21 @@ async def reconcile_external_closes(ib: IB, bot: object, chat_id: str) -> None:
         recorded_exec_ids = {
             e for (e,) in s.query(FillRow.ib_exec_id).filter(FillRow.ib_exec_id.isnot(None))
         }
+        # Orders the system placed itself (profit-take/loss-exit closes, rolls). Their fills are
+        # recorded by their own code path, which stores one execId per order — so a close that
+        # fills across several executions leaves the others "unrecorded" here (2026-10-02: a
+        # GOOGL loss-exit filled 1+1; the second execution was re-recorded as a manual close).
+        own_ib_order_ids = {
+            i for (i,) in s.query(OrderRow.ib_order_id).filter(OrderRow.ib_order_id.isnot(None))
+        }
         for f in buys:
             ex = f.execution
             exec_id = getattr(ex, "execId", None)
             if not exec_id or exec_id in recorded_exec_ids:
                 continue  # already recorded (incl. system auto-closes) → never double-count
+            exec_order_id = getattr(ex, "orderId", None)
+            if exec_order_id and exec_order_id in own_ib_order_ids:
+                continue  # one of our own orders, not a manual close
 
             contract = f.contract
             symbol = getattr(contract, "symbol", None)

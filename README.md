@@ -107,8 +107,8 @@ Each stage links to its full technical writeup in **[ARCHITECTURE.md](ARCHITECTU
 - **[Rolling](ARCHITECTURE.md#rolling-a-position)** — income rolls must still clear normal
   economics; defensive rolls are judged on risk reduction instead.
 - **[Loss management](ARCHITECTURE.md#managing-losses-and-circuit-breakers)** — automatic
-  profit-take/loss-exit per position, plus daily-loss and drawdown circuit breakers at the account
-  level.
+  profit-take per position; at the loss line, leveraged ETFs are closed and everything else gets a
+  defensive roll proposal; plus daily-loss and drawdown circuit breakers at the account level.
 - **[The wheel](ARCHITECTURE.md#the-wheel--campaigns)** — CSP→assignment→CC chains tracked as one
   campaign with a real adjusted cost basis.
 - **[End of day](ARCHITECTURE.md#end-of-day--the-daily-report)** — a written P&L narrative,

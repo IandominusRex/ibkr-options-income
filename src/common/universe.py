@@ -157,3 +157,13 @@ def invalidate_universe_cache() -> None:
     the process that made it rather than up to ``_TTL_SECONDS`` later."""
     global _cache
     _cache = None
+
+
+def is_leveraged_etf(symbol: str) -> bool:
+    """True if *symbol* is on ``config/universe.yaml → leveraged_etfs`` (file-only key).
+
+    Used by the loss exit: a short on a leveraged ETF is closed at the loss line because the
+    product can run against the position too fast to manage; every other short is rolled.
+    """
+    raw = get_config().universe.get("leveraged_etfs") or []
+    return symbol.upper() in {str(s).upper() for s in raw}

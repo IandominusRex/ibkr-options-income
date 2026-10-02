@@ -48,7 +48,12 @@ def generate_roll_candidates(
         return []
 
     pos_dte = (position.expiry - today_et()).days
-    pos_delta_abs = abs(position.delta) if position.delta is not None else None
+    # get_positions carries no greeks, so fall back to the existing short's own chain quote —
+    # with |delta| unknown, the defensive branch below rejected every candidate (2026-10-02).
+    pos_delta = (
+        position.delta if position.delta is not None else _infer_current_delta(position, quotes)
+    )
+    pos_delta_abs = abs(pos_delta) if pos_delta is not None else None
 
     should_roll = (pos_dte <= 21) or (pos_delta_abs is not None and pos_delta_abs > 0.40)
     if not should_roll:
@@ -236,4 +241,17 @@ def _infer_current_mid(position: PositionSnapshot, quotes: list[OptionQuote]) ->
             m = q.mid
             if m is not None:
                 return m
+    return None
+
+
+def _infer_current_delta(position: PositionSnapshot, quotes: list[OptionQuote]) -> float | None:
+    """The existing short's delta from its own contract in the chain, or None."""
+    for q in quotes:
+        if (
+            q.right == position.right
+            and q.strike == position.strike
+            and q.expiry == position.expiry
+            and q.delta is not None
+        ):
+            return q.delta
     return None

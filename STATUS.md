@@ -315,7 +315,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 |---|---|
 | **Phase 1 extended Greeks + American pricer** | **Built.** Greeks are resolved in three tiers: (1) `_ticker_to_quote` reads the first available IBKR per-contract computation (`modelGreeks` → `lastGreeks` → `askGreeks` → `bidGreeks` via `_pick_greeks`) so a lagging model tick still yields genuine IBKR greeks (`greeks_source="ibkr"`); (2) `_enrich_greeks_from_ibkr_iv` BS-fills delta locally from an IBKR IV with no network call — Phase 1 extended this to fill **gamma/theta/vega** alongside delta (skipping only when all four greeks are already present); (3) only quotes IBKR could value neither greeks nor IV for fall through to the yfinance Black-Scholes download (`_enrich_greeks_yf`), now **instrumented** (logs how many quotes forced a Yahoo fetch + the elapsed time per symbol) and also filling gamma/theta/vega. Tiers 2/3 set `greeks_source="black_scholes"` so the F6 live gate still treats them as untrusted. The scan batch requests generic ticks `101,106` to capture the IBKR IV. **Phase 1 also added** `src/analytics/american_option.py` (Cox-Ross-Rubinstein binomial-tree American pricer + `early_exercise_premium`) and `bs_gamma`/`bs_theta`/`bs_vega`/`bs_rho` to `black_scholes.py` — the foundation for economic (non-heuristic) assignment triggers. |
 | **Multi-leg / roll execution** | **Built (Phase 4).** A `Strategy.ROLL` candidate is executed as one atomic BAG combo — BUY-to-close the old short + SELL-to-open the new short, no legging risk — via `src/execution/roll_executor.py::execute_roll` (`executor.execute_candidate` delegates instead of refusing). `order_builder.build_combo_roll_order` builds the BAG + net LimitOrder (credit → negative net-debit limit). Re-gates the new leg (`validate_live_quote` delta/live-greeks) + a net-credit floor, LIVE-mode [CONFIRM LIVE] tap, cancel-on-timeout, and writes two FillRows (BUY under the original short's id → ledger `closed_early`; SELL under the new id → monitor tracks it). **Combo limit-price sign convention is mock-tested only — verify on live paper first** (see below). **Wired end-to-end (N20):** when `monitor.roll_execution_enabled` is set, a roll trigger generates a candidate (`execution.roll_pipeline.queue_roll_for_approval`) and sends it with Approve/Reject buttons → QUEUED ROLL order → `execute_roll`. Code default OFF; **turned ON in `config/settings.yaml` on 2026-10-01** for the paper account, so the next approved roll is the D7 BAG-sign verification (Q3 of `docs/live-validation-2026-08.md`) — every roll still needs an Approve tap. **Defensive rolls are now judged on risk, not yield (D4, Task 12):** `roll_pipeline.queue_roll_for_approval` passes `defensive=True`, which skips the ROC/annualized-yield tests and instead requires a `monitor.roll_defensive.min_delta_reduction` cut in \|delta\| within a bounded `max_debit`. |
-| **Live limit-order repricing** | **Built (Phase 4 + C5), default OFF.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (false by default) — the `placeOrder` amend is unverified on a live account (D7 — Q2 of `docs/live-validation-2026-08.md`, not yet run); see the live-verification list below. |
+| **Live limit-order repricing** | **Built (Phase 4 + C5); code default OFF, enabled in `config/settings.yaml` on paper 2026-10-02.** `order_builder.reprice_limit` + chase loops in all three execution paths: (1) entry SELL in `executor.execute_candidate` steps toward the bid (floor: `min_live_premium_ratio × approved premium`); (2) buy-to-close BUY in `position_manager.close_short_position` steps toward the ask; (3) roll BAG combo in `roll_executor.execute_roll` re-fetches per-leg bid/ask, recomputes the live net credit, and steps the BAG net-limit toward market (ceiling: `min_live_premium_ratio × approved credit`). All three gated by `execution.reprice_enabled` (code default false; the shipped paper config sets it true as of 2026-10-02 so the D7 amend question gets observed) — the `placeOrder` amend is unverified on a live account (D7 — Q2 of `docs/live-validation-2026-08.md`, not yet run); see the live-verification list below. |
 | **Unreachable quiet-cycle heartbeat (removed)** | `format_quiet_cycle` / `_send_quiet_heartbeat` could never fire in production: `send_candidates` and `send_buy_list` both return `True` on their *empty* path, so `if not cand_sent and not buy_sent` was never true. Only the mocked tests (which stubbed the return to `False`) ever exercised it. Rather than resurrect it — which would mean two messages per quiet cycle, exactly the flood S6 removed — the heartbeat, `ScanResult.quiet_cycle`, and the likewise orphaned `format_screen_empty` were deleted, and the materiality detail it carried (originally "N/M names moved <0.5%"; reworded 2026-08-27 to "N/M names moved too little" once three different thresholds applied — see the S1 row) now rides on the empty-screen diagnostic that is actually appended. |
 | **`BuyCandidate.rationale`** | A deterministic one-liner built from the screen's own signals (IV richness, VRP, regime, quality, earnings proximity) in `buy_candidates.py` — Claude does **not** review buy-to-own names (only option candidates), by design. The buy-to-own screen applies a score floor + count cap (`scoring_weights.yaml → buy_to_own`, currently 10 names max). The Telegram message (`format_buy_list`) groups candidates by sector (indexes, tech, semis, financials, healthcare, …); all candidate cards are shown inline — the Telegram spoiler wrapping that previously hid each sector behind a "tap to reveal" toggle has been removed. Sectors are sourced from `universe.yaml → sectors` via the `BuyCandidate.sector` field. |
 | **yfinance caching** | **Built, then upgraded to an incremental store.** Daily OHLCV (the 1y history for RSI/MACD/SMAs/ATR/support-resistance/regime **and** HV30) is persisted in the `price_history` table and loaded by `analytics/price_data.get_ohlcv`, which fetches **only the missing tail** from yfinance (or a full year when the store is empty) and is itself `@daily_cached` per calendar day in-process. So scans no longer pull full per-symbol histories every run — steady state makes zero yfinance history calls (the store is current); the 15-min loop reuses the day cache; and a cold process reads settled bars from SQLite instead of re-downloading a year. Seeded by `scripts/backfill_prices.py`, kept fresh by the EOD daily-bar append (mirrors the `iv_history` N4 pattern). `get_fundamental_stats` remains `@daily_cached`. Composite sentiment sources (`sentiment._fetch_stocktwits`, `_fetch_news`, `fetch_sentiment`) are each `@daily_cached` too (S4): each API is hit at most once per calendar day per symbol instead of ~26×/session. VIX is still fetched once per scan (cheap, moves intraday). `TechnicalStats.price` is NOT cached — `technicals._fetch_last_price` makes a separate, uncached `fast_info["lastPrice"]` lookup overlaid as today's bar so the scan-time spot price (N17) stays current; on error it falls back to the last settled close. |
@@ -362,6 +362,82 @@ outside `src/api/commands.py` imports `get_command_engine`); the trading system 
 databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
 
 ---
+
+## Changed (2026-10-02 — loss line rolls instead of closing, except leveraged ETFs)
+
+The loss exit (`automation.max_loss_multiple`, D3) bought back *every* short at 2× the credit.
+On 2026-10-01 it closed 2× GOOGL $335P at $7.00 against a $2.98 credit (−$806) on a 4% dip with
+the put still out of the money — on a name in `would_own`, where the worst case (assignment at
+$335) is the plan. Now:
+
+- **`profit_take.check_loss_exits` closes only shorts on `universe.yaml → leveraged_etfs`**
+  (`common.universe.is_leveraged_etf`) — those can run against a short too fast to manage.
+- **Every other short gets a `loss_multiple` roll alert** from the intraday monitor at the same
+  line (`monitor/triggers.py::check_loss_multiple`), through the existing approvable-roll path
+  (`roll_execution_enabled` → defensive roll candidate → Approve/Reject). It is an escalation
+  trigger in the alert policy (not held back by an earlier alert that day) and repeats at most
+  daily while the line holds. Rolls still need an Approve tap. If no defensive roll fits
+  (`monitor.roll_defensive` bounds — e.g. the debit cap), the alert is alert-only and the
+  position is held toward expiry or assignment.
+
+**Bug fixed with it — no roll alert had ever been approvable.** `get_positions` carries no
+greeks, so the position passed to `generate_roll_candidates` always had `delta=None`, and the
+defensive branch (correctly fail-closed) rejected every candidate: all 60 production roll alerts
+went out `approvable=False`. The monitor now fills the position's delta from the live quote, and
+`generate_roll_candidates` falls back to the short's own chain quote (which also fixes the web
+`roll_request` path). Still fail-closed when delta is unknown everywhere. Tests:
+`tests/test_monitor.py` (loss-line section), `tests/test_loss_exits.py::test_loss_exit_does_not_close_a_non_leveraged_short`,
+`tests/test_roll_pipeline.py::test_defensive_roll_reads_position_delta_from_the_chain`.
+
+## Bugs fixed (2026-10-02 — monitor leaked a market-data line for every closed position)
+
+ib_async keeps one `Ticker` per contract and maps it to only the *latest* reqId. The monitor's
+roll-alert path fetches the underlying's option chain on the monitor's own connection; when that
+chain includes the very contract the monitor is streaming, the chain fetch's `reqMktData` +
+`cancelMktData` overwrote and then removed the monitor's mapping. When the position later closed,
+`cancelMktData(contract)` logged "No reqId found" and IBKR kept streaming the line until reconnect
+(GOOGL $335P: Error 10197 on reqId 10 for hours after the close; TQQQ and AMZN showed the same).
+The monitor now records its own reqId at subscribe time and cancels by it
+(`intraday._cancel_mkt_data`). Test:
+`tests/test_monitor.py::test_unsubscribe_survives_another_subscriber_on_the_same_contract`.
+
+## Bugs fixed (2026-10-02 — a system close's second execution was re-recorded as a manual close)
+
+The GOOGL $335P loss exit (order 22) filled 2 contracts across two executions. `close_short_position`
+writes one `FillRow` under the synthetic `close:` candidate id carrying only the last execution's
+`execId`, so the next `reconcile_external_closes` pass saw the other execution as unrecorded, found
+the original short still "net short" (the `close:` BUY lives under a different candidate id), and
+wrote a spurious BUY 1 @ 7.00 against it plus a "♻️ manual close" message — double-counting the
+debit. `reconcile_external_closes` now skips executions whose `orderId` belongs to a known
+`OrderRow` (a system-placed close or roll records its own fill). Test:
+`tests/test_notify.py::test_external_close_ignores_executions_of_our_own_close_order`.
+
+**Data corrected by hand** (backup: `data/income_system.pre-fill8-fix.db`): the two GOOGL close
+rows were merged into one `FillRow` (BUY 2 @ 7.00, order 22) under the original candidate
+`50b68ea7c4028e24`, matching how manual closes and rolls are attributed; its verdict-ledger
+`realized_pnl` went from −104.97 to −805.91, and the 2026-10-01 journal premium cashflow from −943
+to −243.
+
+Also: the "🛑 Loss exit closed" Telegram message was never delivered for a real fill — IBKR's
+float fill quantity (`2.0`) was interpolated unescaped into MarkdownV2 and rejected with
+"character '.' is reserved". Now formatted `:.0f`. Test:
+`tests/test_loss_exits.py::test_loss_exit_result_escapes_float_fill_qty`.
+
+## Bugs fixed (2026-10-01 — fill reconciler double-recorded a retry's execution)
+
+GOOGL $335P order 15 (IBKR 78) timed out and was cancelled unfilled; the same candidate was
+re-queued as order 17 (IBKR 94), which filled 2 @ 2.98 and was recorded. The next
+`reconcile_orphan_fills` pass contract-matched order 94's execution to cancelled order 15 (its
+`_exec_matches_candidate` fallback matches on contract when the order id differs) and wrote a
+second `FillRow` with the same `execId`, sending "♻️ Recovered a missed fill". The broker held
+2 contracts; the DB said 4. An execution is now claimable once: executions whose `execId` is
+already recorded are skipped, and the contract fallback only applies to executions whose
+`orderId` belongs to no known `OrderRow`. Test:
+`tests/test_notify.py::test_reconcile_does_not_reclaim_another_orders_execution`.
+
+Also: the monitor's `_load_opened_at` falls back to the latest submitted/partial/filled order
+when no fill is recorded yet (IBKR reports the position before the executor writes its fill),
+and an unknown open time is retried each refresh rather than cached.
 
 ## Changed (2026-10-01 — roll alerts: once per position, daily only while a roll is needed; roll execution on)
 

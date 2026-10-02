@@ -9,19 +9,41 @@ import pytest
 from src.common.schemas import OptionRight, PositionSnapshot
 
 
-def _short_put(strike=100.0, qty=-1):
+def _short_put(strike=100.0, qty=-1, underlying="TQQQ"):
+    """A short put — on a leveraged ETF by default, the only shorts the loss exit closes."""
     from datetime import date, timedelta
 
     return PositionSnapshot(
-        symbol="AAPL  260918P00100000",
+        symbol=f"{underlying:<6}260918P00100000",
         sec_type="OPT",
         position=qty,
         avg_cost=250.0,
         right=OptionRight.PUT,
         strike=strike,
         expiry=date.today() + timedelta(days=30),
-        underlying="AAPL",
+        underlying=underlying,
     )
+
+
+@pytest.mark.asyncio
+async def test_loss_exit_does_not_close_a_non_leveraged_short():
+    """2026-10-02: a GOOGL CSP (a name the operator would own) was bought back at 2.35x the
+    credit on a 4% dip. Outside leveraged_etfs the monitor proposes a roll instead."""
+    from src.execution.profit_take import check_loss_exits
+
+    ib_scan, ib_exec, bot = MagicMock(), MagicMock(), AsyncMock()
+    with (
+        patch(
+            "src.ibkr.portfolio.get_positions",
+            return_value=[_short_put(strike=335.0, underlying="GOOGL")],
+        ),
+        patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.98),
+        patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(6.9, 7.1))),
+        patch("src.execution.profit_take.close_short_position", new=AsyncMock()) as close,
+    ):
+        await check_loss_exits(ib_scan, ib_exec, bot, "chat")
+    close.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -169,3 +191,31 @@ async def test_loss_exit_alerts_when_order_does_not_fill():
     text = call_args.kwargs["text"]
     assert "did not fill" in text.lower()
     assert "check IBKR manually" in text
+
+
+@pytest.mark.asyncio
+async def test_loss_exit_result_escapes_float_fill_qty():
+    """IBKR reports filled qty as a float; ``2.0`` unescaped broke MarkdownV2 (2026-10-02)."""
+    import re
+
+    from src.execution.profit_take import check_loss_exits
+
+    ib_scan, ib_exec = MagicMock(), MagicMock()
+    bot = AsyncMock()
+    close_result = MagicMock()
+    close_result.status = "filled"
+    close_result.filled_qty = 2.0
+    close_result.avg_price = 7.00
+    with (
+        patch("src.ibkr.portfolio.get_positions", return_value=[_short_put(qty=-2)]),
+        patch("src.execution.profit_take.net_entry_credit_per_share", return_value=2.98),
+        patch("src.execution.profit_take._quote_short", new=AsyncMock(return_value=(6.9, 7.1))),
+        patch(
+            "src.execution.profit_take.close_short_position",
+            new=AsyncMock(return_value=close_result),
+        ),
+    ):
+        await check_loss_exits(ib_scan, ib_exec, bot, "chat")
+    text = bot.send_message.call_args.kwargs["text"]
+    assert "2 filled" in text
+    assert not re.search(r"(?<!\\)\.", text), text  # every '.' escaped for MarkdownV2

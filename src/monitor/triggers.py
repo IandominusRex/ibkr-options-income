@@ -244,6 +244,43 @@ def check_assignment_risk(
     )
 
 
+def check_loss_multiple(
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    entry_credit: float | None,
+    multiple: float,
+) -> RollAlert | None:
+    """Fire when cost-to-close has reached *multiple* × the entry credit.
+
+    The loss line that used to buy the short back outright (``automation.max_loss_multiple``).
+    Outside the leveraged ETFs the system now proposes a defensive roll here instead of taking
+    the loss — the caller passes ``entry_credit=None`` for a leveraged short, which the
+    approval service's loss exit still closes. Cost-to-close is priced the same way as the
+    loss exit's own check: mid, or the ask when there is no bid.
+    """
+    if pos.position >= 0 or entry_credit is None or entry_credit <= 0 or multiple <= 0:
+        return None
+    ask = quote.ask
+    if ask is None or ask <= 0:
+        return None
+    bid = quote.bid or 0.0
+    cost = (bid + ask) / 2 if bid > 0 else ask
+    if cost < multiple * entry_credit:
+        return None
+    return RollAlert(
+        position_symbol=pos.symbol,
+        underlying=pos.underlying or pos.symbol,
+        trigger="loss_multiple",
+        detail=(
+            f"Cost to close ${cost:.2f} is {cost / entry_credit:.1f}× the ${entry_credit:.2f} "
+            f"credit — past the {multiple:g}× loss line. Not closing at a loss: roll out "
+            f"(and away from the strike) or accept assignment"
+        ),
+        current_delta=quote.delta,
+        dte=quote.dte,
+    )
+
+
 def check_all(
     pos: PositionSnapshot,
     quote: OptionQuote,
@@ -251,11 +288,14 @@ def check_all(
     fund_stats: FundamentalStats | None,
     limits: dict,
     entry_dte: int | None = None,
+    entry_credit: float | None = None,
 ) -> list[RollAlert]:
     """Run all triggers and return every alert that fires.
 
     Pass entry_iv=None to skip the IV-spike check (no entry data available).
     Pass fund_stats=None to skip the ex-div check.
+    Pass entry_credit=None to skip the loss-line check (no fill on record, or a leveraged ETF
+    whose loss exit closes rather than rolls).
     ``entry_dte`` is the position's DTE on the day it was opened. The two expiry-window
     triggers (``manage_dte``, ``dte``) mark a point the position *crosses*; a position opened
     already inside a window never crossed it, so that trigger is skipped (2026-10-01: a
@@ -303,6 +343,10 @@ def check_all(
     if alert:
         alerts.append(alert)
 
+    alert = check_loss_multiple(pos, quote, entry_credit, limits.get("max_loss_multiple", 0.0))
+    if alert:
+        alerts.append(alert)
+
     return alerts
 
 
@@ -324,6 +368,7 @@ TRIGGER_LABELS: dict[str, str] = {
     "iv_spike": "IV spike",
     "ex_div": "ex-dividend",
     "assignment_risk": "assignment risk",
+    "loss_multiple": "loss limit",
 }
 
 

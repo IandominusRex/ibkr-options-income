@@ -256,7 +256,7 @@ async def test_intraday_monitor_passes_manage_at_dte_from_config() -> None:
 
     captured: dict = {}
 
-    def _capture(pos_, quote_, entry_iv, fund_stats, limits, entry_dte=None):
+    def _capture(pos_, quote_, entry_iv, fund_stats, limits, entry_dte=None, entry_credit=None):
         captured.update(limits)
         from src.monitor.triggers import check_all as real_check_all
 
@@ -1080,6 +1080,71 @@ async def test_cancel_uses_stored_contract() -> None:
     mock_ib.cancelMktData.assert_called_once_with(stored_contract)
 
 
+async def test_unsubscribe_survives_another_subscriber_on_the_same_contract() -> None:
+    """2026-10-02: the roll-alert chain fetch subscribed to the monitored GOOGL $335P on the
+    monitor's connection and cancelled, which left ib_async with no reqId for the monitor's
+    stream — cancelMktData(contract) then found "No reqId" and the line streamed for hours.
+    Driven through ib_async's real ticker bookkeeping, not a MagicMock IB."""
+    import itertools
+
+    from ib_async import IB, Option
+
+    from src.common.schemas import OptionRight, PositionSnapshot
+    from src.ibkr.market_data import req_fresh_mkt_data
+
+    ib = IB()
+    ids = itertools.count(10)
+    ib.client.getReqId = lambda: next(ids)  # type: ignore[method-assign]
+    ib.client.reqMktData = MagicMock()  # type: ignore[method-assign]
+    ib.client.cancelMktData = MagicMock()  # type: ignore[method-assign]
+
+    def _contract() -> Option:
+        return Option("GOOGL", "20261016", 335.0, "P", "SMART", conId=865382732)
+
+    from src.monitor.intraday import IntradayMonitor
+
+    template, _ = _make_monitor()
+    monitor = IntradayMonitor(ib, AsyncMock(), "99999", template._cfg, template._executor)
+    pos = PositionSnapshot(
+        symbol="GOOGL 261016P00335000",
+        sec_type="OPT",
+        position=-2.0,
+        avg_cost=298.0,
+        right=OptionRight.PUT,
+        strike=335.0,
+        expiry=date.today() + timedelta(days=14),
+        underlying="GOOGL",
+    )
+    with (
+        patch("src.monitor.intraday.get_positions", return_value=[pos]),
+        patch("src.monitor.intraday._load_entry_iv", return_value=None),
+        patch("src.monitor.intraday._load_opened_at", return_value=None),
+        patch("src.monitor.intraday.get_fundamental_stats", return_value=MagicMock()),
+        patch(
+            "src.monitor.intraday.qualify_options_async",
+            new=AsyncMock(return_value=[_contract()]),
+        ),
+        patch.object(monitor, "_maybe_write_snapshot", new=AsyncMock()),
+        patch.object(monitor, "_write_heartbeat"),
+    ):
+        await monitor._refresh_subscriptions()
+    monitor_req_id = ib.client.reqMktData.call_args.args[0]
+
+    # Another subscriber on the same connection: subscribe + cancel the same contract.
+    req_fresh_mkt_data(ib, _contract(), "", False, False)
+    ib.cancelMktData(_contract())
+    ib.client.cancelMktData.reset_mock()
+
+    with (
+        patch("src.monitor.intraday.get_positions", return_value=[]),
+        patch.object(monitor, "_maybe_write_snapshot", new=AsyncMock()),
+        patch.object(monitor, "_write_heartbeat"),
+    ):
+        await monitor._refresh_subscriptions()
+
+    ib.client.cancelMktData.assert_called_once_with(monitor_req_id)
+
+
 def test_roll_review_blanks_echoed_prompt_placeholders() -> None:
     """A small model sometimes copies the JSON template verbatim ("<2-3 sentences on key
     risks>"); the card must not show the placeholder as if it were analysis."""
@@ -1303,3 +1368,126 @@ def test_load_opened_at_and_entry_dte(tmp_path: Path, monkeypatch: pytest.Monkey
     assert _entry_dte(pos, opened) in (9, 10)  # 9 unless the fill was before ET midnight
     assert _load_opened_at(_short_put(strike=70.0)) is None
     assert _entry_dte(pos, None) is None
+
+
+def test_load_opened_at_falls_back_to_the_working_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IBKR reports the position before the fill row lands; the order's time stands in."""
+    from datetime import UTC, datetime
+
+    from src.monitor.intraday import _load_opened_at
+    from src.storage.db import session_scope
+    from src.storage.models import CandidateRow, OrderRow
+
+    _isolated_db(tmp_path, monkeypatch)
+    pos = _short_put(dte=16)
+    placed = datetime.now(UTC) - timedelta(minutes=3)
+    with session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="cand-googl",
+                run_id="r1",
+                strategy="cash_secured_put",
+                underlying="TQQQ",
+                right="P",
+                strike=74.0,
+                expiry=pos.expiry,
+                blended_score=58.0,
+                payload={},
+            )
+        )
+        s.add(
+            OrderRow(candidate_id="cand-googl", approval_id=1, state="submitted", created_at=placed)
+        )
+
+    opened = _load_opened_at(pos)
+    assert opened is not None
+    assert abs((opened - placed).total_seconds()) < 1
+
+
+# ---------------------------------------------------------------------------
+# Loss line (2026-10-02): outside leveraged ETFs, the loss exit proposes a roll, not a close.
+# ---------------------------------------------------------------------------
+
+
+def test_loss_multiple_fires_at_the_line_and_not_below() -> None:
+    from src.monitor.triggers import check_loss_multiple
+
+    pos = _short_put()
+    at_line = _put_quote(und=77.0).model_copy(update={"bid": 1.95, "ask": 2.05})  # mid 2.00
+    below = _put_quote(und=77.0).model_copy(update={"bid": 1.85, "ask": 1.95})  # mid 1.90
+    alert = check_loss_multiple(pos, at_line, entry_credit=1.00, multiple=2.0)
+    assert alert is not None and alert.trigger == "loss_multiple"
+    assert check_loss_multiple(pos, below, entry_credit=1.00, multiple=2.0) is None
+    # No credit on record / leveraged (caller passes None) / disabled → never fires.
+    assert check_loss_multiple(pos, at_line, entry_credit=None, multiple=2.0) is None
+    assert check_loss_multiple(pos, at_line, entry_credit=1.00, multiple=0.0) is None
+
+
+def test_check_all_runs_the_loss_line_from_limits() -> None:
+    quote = _put_quote(und=77.0).model_copy(update={"bid": 2.4, "ask": 2.6})
+    limits = {"max_loss_multiple": 2.0}
+    triggers = {
+        a.trigger
+        for a in check_all(
+            _short_put(dte=30), quote, None, None, limits, entry_dte=30, entry_credit=1.0
+        )
+    }
+    assert "loss_multiple" in triggers
+    triggers = {
+        a.trigger for a in check_all(_short_put(dte=30), quote, None, None, limits, entry_dte=30)
+    }
+    assert "loss_multiple" not in triggers
+
+
+def test_loss_line_is_not_swallowed_by_an_earlier_alert_that_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It replaced an automatic close, so a delta-drift alert earlier that day can't hide it."""
+    from src.monitor.intraday import _persist_alert, _select_fresh
+
+    _isolated_db(tmp_path, monkeypatch)
+    _persist_alert(_alert("delta_drift"), review=None)
+    got = _select_fresh([_alert("loss_multiple")], opened_at=None)
+    assert [a.trigger for a in got] == ["loss_multiple"]
+
+
+def test_entry_credit_is_not_loaded_for_a_leveraged_etf() -> None:
+    """Leveraged shorts are still closed by the loss exit — the monitor must not also roll them."""
+    from src.monitor.intraday import _load_entry_credit
+
+    with patch("src.execution.profit_take.net_entry_credit_per_share", return_value=1.0) as credit:
+        with patch("src.common.universe.is_leveraged_etf", return_value=True):
+            assert _load_entry_credit(_short_put()) is None
+        credit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_roll_proposal_gets_the_live_quote_delta() -> None:
+    """get_positions carries no greeks; without a delta every defensive roll was rejected and
+    no roll alert was ever approvable (2026-10-02)."""
+    from src.monitor.intraday import fire_alerts
+
+    pos = _short_put()
+    assert pos.delta is None
+    quote = _put_quote(und=72.0, delta=-0.55)
+    cfg = MagicMock()
+    cfg.claude.enabled = False
+    cfg.monitor.roll_execution_enabled = True
+    captured: dict = {}
+
+    async def _queue(ib, roll_pos, chat_id, cfg_):
+        captured["delta"] = roll_pos.delta
+        return None
+
+    with (
+        patch("src.monitor.intraday._select_fresh", side_effect=lambda a, **_k: a),
+        patch("src.monitor.intraday._persist_alert"),
+        patch("src.monitor.intraday._try_queue_roll", side_effect=_queue),
+        ThreadPoolExecutor(max_workers=1) as ex,
+    ):
+        await fire_alerts(
+            [_alert("loss_multiple")], pos, quote, AsyncMock(), "chat", cfg, ex, ib=MagicMock()
+        )
+    assert captured["delta"] == -0.55

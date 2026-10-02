@@ -335,9 +335,11 @@ execution:
   # When an order has not filled, step its limit toward the far quote side to chase a fill
   # instead of only waiting out fill_timeout_minutes then cancelling. A SELL chases down toward
   # the bid (never below min_live_premium_ratio × approved premium); reprices stop after
-  # max_reprices, then the order cancels on timeout as before. Default OFF — unverified on a
-  # live account (see STATUS.md "verify on a live paper session").
-  reprice_enabled: false
+  # max_reprices, then the order cancels on timeout as before. Turned ON for paper 2026-10-02
+  # (a GOOGL loss-exit close sat unfilled 5 min at mid, cancelled, and re-fired 15 min later
+  # $0.70 higher). Still unverified on a live account — watch the paper session for whether the
+  # amend modifies the working order rather than duplicating it (STATUS.md D7).
+  reprice_enabled: true
   reprice_interval_seconds: 45.0   # wait between reprice steps
   max_reprices: 2                  # reprice steps before giving up
   reprice_step_pct: 0.34           # fraction of the remaining distance to the bid per step
@@ -350,7 +352,10 @@ automation:
   # Mark-to-market, not fill cashflow. See config.py AutomationCfg.
   daily_loss_halt_pct: 3.0
   drawdown_halt_pct: 10.0
-  # Buy to close when cost-to-close reaches this multiple of the entry credit. 0 disables.
+  # Loss line: cost-to-close reaching this multiple of the entry credit. 0 disables.
+  # Leveraged ETFs (universe.yaml → leveraged_etfs) are bought back at the line; every other
+  # short (a name you'd own) gets a defensive roll proposal from the monitor instead of a
+  # loss-taking close (2026-10-02). Rolls still need an Approve tap.
   max_loss_multiple: 2.0
   # Risk-reducing closes (profit takes AND loss exits) run independently of autonomy level.
   auto_close_enabled: true

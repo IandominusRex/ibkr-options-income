@@ -236,7 +236,20 @@ def test_defensive_roll_rejects_when_position_delta_is_unknown():
 
     pos = _short_call(delta=-0.62, strike=100.0, dte=10).model_copy(update={"delta": None})
     quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=20)
+    # Unknown on the snapshot AND on the short's own chain quote — still fail-closed.
+    quotes[0] = quotes[0].model_copy(update={"delta": None})
     assert not generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
+
+
+def test_defensive_roll_reads_position_delta_from_the_chain():
+    """2026-10-02: get_positions carries no greeks, so every monitor-built position had
+    delta=None and no defensive roll ever qualified (0 approvable roll alerts in production).
+    The short's own contract in the chain supplies the delta."""
+    from src.strategies.rolling import generate_roll_candidates
+
+    pos = _short_call(delta=-0.62, strike=100.0, dte=10).model_copy(update={"delta": None})
+    quotes = _roll_chain(current_mid=8.00, new_mid=7.70, new_delta=-0.30, new_dte=20)
+    assert generate_roll_candidates(pos, quotes, _iv(), _tech(), defensive=True)
 
 
 def test_income_roll_still_requires_a_credit_and_roc():

@@ -22,6 +22,7 @@ from telegram import Bot
 from src.common.config import get_config
 from src.common.market_hours import today_et
 from src.common.schemas import PositionSnapshot
+from src.common.universe import is_leveraged_etf
 from src.execution.position_manager import close_short_position
 from src.ibkr.contracts import build_option
 from src.ibkr.market_data import req_fresh_mkt_data
@@ -281,6 +282,13 @@ async def check_loss_exits(
 
     Closing risk is always permitted, so this runs on ``automation.auto_close_enabled``
     independently of the autonomy level — that setting governs *opening* exposure.
+
+    **Leveraged ETFs only** (``config/universe.yaml → leveraged_etfs``, 2026-10-02). Every
+    other short is on a name the operator is willing to own, so taking the loss at the line
+    turned a temporary drawdown into a realised one (GOOGL $335P: closed at 2.35× the credit
+    on a 4% dip, still out of the money). For those, the intraday monitor's ``loss_multiple``
+    trigger proposes a defensive roll at the same line instead; a leveraged product can run
+    against a short too fast to manage, so it is still bought back here.
     """
     cfg = get_config()
     if not getattr(cfg.automation, "auto_close_enabled", True):
@@ -306,6 +314,8 @@ async def check_loss_exits(
             and pos.right is not None
         ):
             continue
+        if not is_leveraged_etf(pos.underlying or pos.symbol):
+            continue  # rolled, not closed — the monitor's loss_multiple trigger owns it
 
         with session_scope() as s:
             entry = net_entry_credit_per_share(
@@ -374,7 +384,7 @@ async def check_loss_exits(
                 text=(
                     f"🛑 *Loss exit closed* — {label}\n"
                     f"Entry credit {_md(f'${entry:.2f}')}, closed at "
-                    f"{_md(f'${result.avg_price:.2f}')} · {result.filled_qty} filled"
+                    f"{_md(f'${result.avg_price:.2f}')} · {result.filled_qty:.0f} filled"
                 ),
                 parse_mode="MarkdownV2",
             )

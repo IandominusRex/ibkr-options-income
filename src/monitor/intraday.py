@@ -36,6 +36,7 @@ from src.common.schemas import (
     FundamentalStats,
     OptionQuote,
     OptionRight,
+    OrderState,
     PositionSnapshot,
     RollAlert,
     RollReview,
@@ -46,7 +47,7 @@ from src.ibkr.market_data import req_fresh_mkt_data
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.monitor.triggers import check_all
 from src.storage.db import init_db, session_scope
-from src.storage.models import CandidateRow, FillRow, RollAlertRow
+from src.storage.models import CandidateRow, FillRow, OrderRow, RollAlertRow
 from src.storage.portfolio_snapshots import (
     latest_capture_time,
     save_portfolio_snapshot,
@@ -99,28 +100,89 @@ def _ticker_to_quote(ticker: Any, pos: PositionSnapshot) -> OptionQuote:
     )
 
 
-def _load_opened_at(pos: PositionSnapshot) -> datetime | None:
-    """Return when this short option position was opened (its latest entry fill), or None.
+def _load_entry_credit(pos: PositionSnapshot) -> float | None:
+    """Net entry credit per share for the loss-line trigger, or None to skip it.
 
-    Matched the same way as ``_load_entry_iv``. None for a position with no fill on record
-    (e.g. opened by hand in TWS) — the alert policy then treats it as always-held.
+    None for a leveraged ETF: the approval service's loss exit still closes those outright
+    (they can run against a short too fast to roll), so the monitor must not also propose a
+    roll for them.
+    """
+    from src.common.universe import is_leveraged_etf
+    from src.execution.profit_take import net_entry_credit_per_share
+
+    underlying = pos.underlying or pos.symbol
+    if pos.strike is None or pos.expiry is None or pos.right is None:
+        return None
+    if is_leveraged_etf(underlying):
+        return None
+    with session_scope() as s:
+        return net_entry_credit_per_share(s, underlying, pos.strike, pos.expiry, pos.right.value)
+
+
+def _mkt_data_req_id(ib: Any, ticker: Any) -> int | None:
+    """The reqId ib_async assigned to *ticker*'s streaming subscription, or None."""
+    try:
+        req_id = ib.wrapper.ticker2ReqId["mktData"].get(ticker)
+    except Exception:
+        return None
+    return req_id if isinstance(req_id, int) and req_id > 0 else None
+
+
+def _cancel_mkt_data(ib: Any, contract: Any, req_id: int | None) -> None:
+    """Cancel the monitor's own subscription by reqId, falling back to the contract.
+
+    Clears ib_async's ticker→reqId entry only if it still points at *our* reqId, so a
+    short-lived subscriber that currently owns the mapping keeps its own cancel working.
+    """
+    if not req_id:
+        ib.cancelMktData(contract)
+        return
+    by_ticker = ib.wrapper.ticker2ReqId["mktData"]
+    for ticker, rid in list(by_ticker.items()):
+        if rid == req_id:
+            by_ticker.pop(ticker, None)
+    ib.wrapper._reqId2Contract.pop(req_id, None)
+    ib.client.cancelMktData(req_id)
+
+
+def _load_opened_at(pos: PositionSnapshot) -> datetime | None:
+    """Return when this short option position was opened, or None.
+
+    The latest entry fill, matched the same way as ``_load_entry_iv``; failing that, the
+    latest working/filled order for the contract — IBKR reports the position before the
+    executor records its fill (2026-10-01: GOOGL showed up two minutes before its FillRow).
+    None for a position with no order on record (e.g. opened by hand in TWS) — the alert
+    policy then treats it as always-held.
     """
     if pos.strike is None or pos.expiry is None or pos.right is None:
         return None
+    contract_match = (
+        CandidateRow.underlying == (pos.underlying or pos.symbol),
+        CandidateRow.strike == pos.strike,
+        CandidateRow.expiry == pos.expiry,
+        CandidateRow.right == pos.right.value,
+    )
     with session_scope() as session:
         row = (
             session.query(FillRow.filled_at)
             .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
-            .filter(
-                CandidateRow.underlying == (pos.underlying or pos.symbol),
-                CandidateRow.strike == pos.strike,
-                CandidateRow.expiry == pos.expiry,
-                CandidateRow.right == pos.right.value,
-                FillRow.action == "SELL",
-            )
+            .filter(*contract_match, FillRow.action == "SELL")
             .order_by(FillRow.filled_at.desc())
             .first()
         )
+        if row is None:
+            row = (
+                session.query(OrderRow.created_at)
+                .join(CandidateRow, CandidateRow.candidate_id == OrderRow.candidate_id)
+                .filter(
+                    *contract_match,
+                    OrderRow.state.in_(
+                        [OrderState.SUBMITTED, OrderState.PARTIAL, OrderState.FILLED]
+                    ),
+                )
+                .order_by(OrderRow.created_at.desc())
+                .first()
+            )
     if row is None or row[0] is None:
         return None
     opened: datetime = row[0]
@@ -174,7 +236,9 @@ _IN_FLIGHT: set[tuple[str, str]] = set()
 # - At most one alert per position per ET day, except an escalation (the underlying crossing
 #   the strike) the position hasn't been alerted for yet that day.
 _ONE_SHOT_TRIGGERS = frozenset({"manage_dte", "dte"})
-_ESCALATION_TRIGGERS = frozenset({"strike_breach"})
+# The loss line is an escalation too: it replaced an automatic close, so it must not be
+# swallowed because a delta-drift alert already went out that day.
+_ESCALATION_TRIGGERS = frozenset({"strike_breach", "loss_multiple"})
 _ET = ZoneInfo("America/New_York")
 
 
@@ -335,7 +399,13 @@ async def _review_send_persist(
     # Optionally turn the alert into an approvable roll candidate (gated; default OFF).
     reply_markup = None
     if getattr(cfg.monitor, "roll_execution_enabled", False) is True and ib is not None:
-        approval_id = await _try_queue_roll(ib, pos, chat_id, cfg)
+        # get_positions carries no greeks, and a defensive roll is judged on how much it
+        # reduces |delta| — with the position's delta unknown, every candidate was rejected
+        # and no roll alert was ever approvable (2026-10-02). Use the live quote's delta.
+        roll_pos = pos
+        if pos.delta is None and quote.delta is not None:
+            roll_pos = pos.model_copy(update={"delta": quote.delta})
+        approval_id = await _try_queue_roll(ib, roll_pos, chat_id, cfg)
         if approval_id is not None:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -406,10 +476,20 @@ class IntradayMonitor:
         # which made hash(contract) raise inside reqMktData itself, before any network
         # call — every subscription attempt failed silently).
         self._subscriptions: dict[str, tuple[PositionSnapshot, Any]] = {}
+        # OCC symbol → the reqId of *this monitor's* streaming subscription. ib_async keeps one
+        # Ticker per contract and maps it to only the latest reqId, so when anything else on
+        # this connection briefly subscribes to the same contract (the roll-alert chain fetch
+        # does) and cancels, the monitor's stream is orphaned and cancelMktData(contract) finds
+        # "No reqId" — the line streamed until reconnect (2026-10-02: GOOGL $335P kept
+        # returning Error 10197 for hours after it was closed). Cancel by our own reqId.
+        self._req_ids: dict[str, int] = {}
         # OCC symbol → IV at entry (IV-spike baseline); underlying → fundamentals (ex-div).
         self._entry_iv: dict[str, float | None] = {}
         # OCC symbol → when the position was opened (alert-policy scope + entry DTE).
         self._opened_at: dict[str, datetime | None] = {}
+        # OCC symbol → net entry credit per share (loss-line baseline); None for a leveraged
+        # ETF (its loss exit closes instead of rolling) or a position with no fill on record.
+        self._entry_credit: dict[str, float | None] = {}
         self._fund_stats: dict[str, FundamentalStats] = {}
 
     # ------------------------------------------------------------------
@@ -428,7 +508,9 @@ class IntradayMonitor:
         Clearing first makes the refresh behave identically to a cold start.
         """
         self._subscriptions.clear()
+        self._req_ids.clear()
         self._entry_iv.clear()
+        self._entry_credit.clear()
         self._opened_at.clear()
         await self._refresh_subscriptions()
 
@@ -496,8 +578,11 @@ class IntradayMonitor:
                 # Entry IV (IV-spike baseline) — load once per position; it doesn't change.
                 if pos.symbol not in self._entry_iv:
                     self._entry_iv[pos.symbol] = _load_entry_iv(pos)
-                if pos.symbol not in self._opened_at:
+                # Retried while unknown: the fill/order can land after IBKR reports the position.
+                if self._opened_at.get(pos.symbol) is None:
                     self._opened_at[pos.symbol] = _load_opened_at(pos)
+                if self._entry_credit.get(pos.symbol) is None:
+                    self._entry_credit[pos.symbol] = _load_entry_credit(pos)
                 # Fundamentals (ex-div date) — cache once per underlying for the session.
                 underlying = pos.underlying or pos.symbol
                 if underlying not in self._fund_stats:
@@ -531,8 +616,11 @@ class IntradayMonitor:
                         if not qualified:
                             log.warning("Could not qualify contract for %s — skipping", pos.symbol)
                             continue
-                        req_fresh_mkt_data(self._ib, qualified[0], "101", False, False)
+                        ticker = req_fresh_mkt_data(self._ib, qualified[0], "101", False, False)
                         self._subscriptions[pos.symbol] = (pos, qualified[0])
+                        req_id = _mkt_data_req_id(self._ib, ticker)
+                        if req_id:
+                            self._req_ids[pos.symbol] = req_id
                         log.info("Subscribed market data: %s", pos.symbol)
                     except Exception:
                         log.exception("reqMktData failed for %s", pos.symbol)
@@ -543,9 +631,11 @@ class IntradayMonitor:
                     old_pos, contract = self._subscriptions.pop(sym)
                     self._entry_iv.pop(sym, None)
                     self._opened_at.pop(sym, None)
-                    if contract is not None:
+                    self._entry_credit.pop(sym, None)
+                    req_id = self._req_ids.pop(sym, None)
+                    if contract is not None or req_id:
                         try:
-                            self._ib.cancelMktData(contract)
+                            _cancel_mkt_data(self._ib, contract, req_id)
                             log.info("Unsubscribed market data: %s", sym)
                         except Exception:
                             log.exception("cancelMktData failed for %s", sym)
@@ -588,6 +678,9 @@ class IntradayMonitor:
                 "ex_div_days_ahead": self._cfg.monitor.ex_div_days_ahead,
                 "assignment_alert_delta": self._cfg.monitor.assignment_alert_delta,
                 "assignment_alert_dte": self._cfg.monitor.assignment_alert_dte,
+                "max_loss_multiple": float(
+                    getattr(self._cfg.automation, "max_loss_multiple", 0.0) or 0.0
+                ),
             }
             entry_iv = self._entry_iv.get(local_sym)
             fund_stats = self._fund_stats.get(pos.underlying or pos.symbol)
@@ -599,6 +692,7 @@ class IntradayMonitor:
                 fund_stats=fund_stats,
                 limits=limits,
                 entry_dte=_entry_dte(pos, opened_at),
+                entry_credit=self._entry_credit.get(local_sym),
             )
             if alerts:
                 await fire_alerts(

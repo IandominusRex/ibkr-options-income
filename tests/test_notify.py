@@ -1108,6 +1108,75 @@ async def test_reconcile_recovers_missed_fill(monkeypatch, tmp_path):
     bot.send_message.assert_awaited()  # operator was notified
 
 
+async def test_reconcile_does_not_reclaim_another_orders_execution(monkeypatch, tmp_path):
+    """A cancelled re-attempt of the same candidate must not claim the retry's fill.
+
+    2026-10-01: GOOGL order 15 (ib 78) timed out and was cancelled unfilled; the same
+    candidate was re-queued as order 17 (ib 94), which filled 2 @ 2.98 and was recorded. The
+    reconciler then contract-matched order 94's execution to order 15 and wrote a second
+    FillRow with the same execId — a phantom 2-lot the broker never held.
+    """
+    _db_setup(tmp_path, monkeypatch)
+    _mock_svc_cfg(monkeypatch, chat_id="99999")
+
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_orphan_fills
+    from src.storage.models import CandidateRow, FillRow
+
+    with dbmod.session_scope() as s:
+        s.add(
+            CandidateRow(
+                candidate_id="googl",
+                run_id="r",
+                strategy="cash_secured_put",
+                underlying="GOOGL",
+                right="P",
+                strike=335.0,
+                expiry=_date(2026, 10, 16),
+                blended_score=60.0,
+                payload={"contracts": 4},
+            )
+        )
+        s.add(OrderRow(candidate_id="googl", approval_id=1, state="cancelled", ib_order_id=78))
+        s.add(OrderRow(candidate_id="googl", approval_id=2, state="partial", ib_order_id=94))
+        s.flush()
+        s.add(
+            FillRow(
+                order_id=2,
+                candidate_id="googl",
+                action="SELL",
+                filled_qty=2.0,
+                avg_price=2.98,
+                ib_exec_id="0000e22a.6abc9e8f.01.01",
+            )
+        )
+
+    fill = SimpleNamespace(
+        execution=SimpleNamespace(
+            orderId=94, shares=2.0, price=2.98, side="SLD", execId="0000e22a.6abc9e8f.01.01"
+        ),
+        contract=SimpleNamespace(
+            symbol="GOOGL", right="P", strike=335.0, lastTradeDateOrContractMonth="20261016"
+        ),
+        commissionReport=None,
+    )
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(return_value=[fill])
+    bot = AsyncMock()
+
+    await reconcile_orphan_fills(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        fills = s.query(FillRow).filter_by(candidate_id="googl").all()
+        cancelled = s.query(OrderRow).filter_by(ib_order_id=78).one()
+    assert len(fills) == 1
+    assert cancelled.state == "cancelled"
+    bot.send_message.assert_not_awaited()
+
+
 async def test_reconcile_orphan_fills_does_not_hang_on_dead_socket(monkeypatch, tmp_path):
     """Regression (2026-06-22): a half-dead TWS socket makes reqExecutions never return.
 
@@ -1372,6 +1441,7 @@ def _open_short(
 def _buy_exec(
     *,
     exec_id,
+    order_id=0,
     symbol="AAPL",
     right="C",
     strike=200.0,
@@ -1385,7 +1455,9 @@ def _buy_exec(
     from types import SimpleNamespace
 
     return SimpleNamespace(
-        execution=SimpleNamespace(execId=exec_id, shares=qty, price=price, side=side),
+        execution=SimpleNamespace(
+            execId=exec_id, orderId=order_id, shares=qty, price=price, side=side
+        ),
         contract=SimpleNamespace(
             symbol=symbol,
             right=right,
@@ -1420,6 +1492,47 @@ async def test_external_close_records_buy_fill_under_original_candidate(tmp_path
     assert buys[0].avg_price == 0.80 and buys[0].filled_qty == 2.0
     assert buys[0].ib_exec_id == "x1"
     bot.send_message.assert_awaited()
+
+
+async def test_external_close_ignores_executions_of_our_own_close_order(tmp_path, monkeypatch):
+    """A system close that fills across several executions records one execId; the others
+    must not be re-recorded as a manual close (2026-10-02: GOOGL loss-exit filled 1+1)."""
+    _db_setup(tmp_path, monkeypatch)
+
+    import src.storage.db as dbmod
+    from src.execution.reconciliation import reconcile_external_closes
+    from src.storage.models import FillRow, OrderRow
+
+    with dbmod.session_scope() as s:
+        _open_short(s, candidate_id="cc-1")
+        s.add(
+            OrderRow(id=2, candidate_id="close:AAPL:20260717:200:C", ib_order_id=94, state="filled")
+        )
+        s.add(
+            FillRow(
+                order_id=2,
+                candidate_id="close:AAPL:20260717:200:C",
+                action="BUY",
+                filled_qty=2.0,
+                avg_price=0.80,
+                ib_exec_id="x1",
+            )
+        )
+
+    ib = MagicMock()
+    ib.reqExecutionsAsync = AsyncMock(
+        return_value=[
+            _buy_exec(exec_id="x1", order_id=94, qty=1.0),
+            _buy_exec(exec_id="x2", order_id=94, qty=1.0),
+        ]
+    )
+    bot = AsyncMock()
+
+    await reconcile_external_closes(ib, bot, "99999")
+
+    with dbmod.session_scope() as s:
+        assert s.query(FillRow).filter_by(candidate_id="cc-1", action="BUY").count() == 0
+    bot.send_message.assert_not_awaited()
 
 
 async def test_external_close_is_idempotent_on_exec_id(tmp_path, monkeypatch):
