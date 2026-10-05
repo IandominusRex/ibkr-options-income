@@ -31,12 +31,63 @@ operator's Google Sheet.
 2. The operator's full 2025-04 → 2026-04 history loads from the Activity Statement CSV
    (`U…_AS_Fv2_….csv` format) with zero parse errors on the real file.
 3. The trades table reproduces the sheet's columns and its `% Profit` formula exactly (e.g. NVDA
-   138P 6/17→6/27/2025, $131 → **34.65%**).
+   138P 6/17→6/27/2025, $131 → **34.65%**; AMZN 207.5P 6/25→7/18/2025, $325 → **24.86%**).
 4. A ticker page shows total P&L (options + stock + dividends), wheel-adjusted cost basis, and
    every trade on that ticker.
 5. Notes/tags/outcome overrides survive any re-import.
 6. The Google Sheet's `(auto)` tabs match the dashboard within ~1 minute of any ledger change.
 7. Nothing in this feature is reachable from the risk engine, sizing, or strategies.
+
+**Revisions made while planning (2026-10-05), after reading the real statement file** — these
+supersede anything below that disagrees:
+
+- **R1. No `broker_option_events` table.** Expiries/assignments/exercises are execution rows in
+  the Activity Statement (`C;Ep` price 0 at 16:20 ET; option `A;C` + stock `A;O`/`A;C`; option
+  `C;Ex` + stock `Ex;O`), and in Flex they arrive as Trades rows (`transactionType=BookTrade`,
+  codes in `notes`). The Flex *OptionEAE* section is **not used in v1** (its quantity-sign
+  convention is unverified); the first Flex pull is run with `--dry-run` against an imported
+  CSV to confirm expiries/assignments line up (STATUS.md live-verification item). The builder
+  only ever reads executions.
+- **R2. Activity Statement rows are order-level** (`DataDiscriminator = Order`), not
+  execution-level. A CSV row can be the VWAP of several fills. Rows are one of two
+  `source_kind`s: `exec` (has an IBKR execId) or `order` (doesn't — every CSV row, and any Flex
+  row lacking `ibExecID`). Cross-source dedupe is an **order-level twin pass**
+  (`supersede_twins`), run after every ingest over the affected (contract, ET date) pairs, so
+  arrival order doesn't matter:
+  1. an `order` row is superseded by an `exec` *group* (same contract, same side, same ET date,
+     same `perm_id`, or a single row when it has none) whose summed quantity equals it and whose
+     VWAP is within 0.005;
+  2. two `order` rows from **different `source`s** (csv vs flex) with the same contract, side,
+     date, quantity and price: the later-ingested one is superseded.
+  Within one CSV, identical rows are distinct orders (kept apart by `occurrence_idx`).
+- **R11. Writes use the generic `POST /commands`** (kinds `ledger_import`, `ledger_annotate`,
+  `ledger_ca_reviewed`), so the ledger router is read-only. Uploads accept the **Activity
+  Statement CSV only**; Flex data arrives via the Web Service as XML.
+- **R3. Trade = one opening order** (no per-close slices). Partial closes are listed under the
+  trade; outcome is that of the largest closing quantity, flagged `mixed_close` when closes
+  differ. **`order_key`** is source-independent — `sha1(contract ident | ET trade date | side |
+  total qty | VWAP to 4dp | ordinal among identical orders that day)[:16]` — so a CSV order and
+  its later exec-level twin have the same key. **Annotations are keyed by the opening order's
+  `order_key`**; no re-keying is ever needed.
+- **R4. Premium is the gross opening credit/debit** (what the sheet records — e.g. AMZN 207.5P
+  = 325, not 323.84). `% Profit` = `premium / capital × 365 / DTE` exactly as the sheet.
+  Separately, `net_pnl` = opening cash + closing cash + all commissions, and
+  `annualised_net_pct` = `net_pnl / capital × 365 / days_held`. Both are shown.
+- **R5. Available capital** = contributed capital + realised total P&L − capital utilised (all
+  USD). No dependency on a snapshot's base-currency net liquidation.
+- **R6. Flex pull runs as a step of the EOD report** (`src/orchestrator/eod_report.py` — the
+  scheduler lives in `scripts/start.py`, there is no separate launchd job), plus
+  `scripts/ledger_flex_pull.py` for manual runs (`--query-id` for a one-off 365-day backfill
+  query, `--dry-run` to print counts without committing).
+- **R7. Uploads are JSON** (`{filename, content}`; the browser reads the file as text), because
+  the web proxy and `apiFetch` are JSON-only. Cap 5 MB.
+- **R8. Account guard.** A statement whose account id differs from `IBKR_ACCOUNT` (when set) is
+  rejected (`account_mismatch`). Multi-account is out of scope.
+- **R9. Honest outcomes.** A short closed by a $0.01 buy-back on expiry day is `Bought back`
+  (that's what IBKR records — e.g. NVDA 138P 6/27/2025), even though the old sheet called it
+  `Expired`. The outcome override exists for exactly this.
+- **R10. A trade past expiry with no closing record yet** (live data, Flex not yet run) shows
+  outcome `Pending` rather than `Open`.
 
 **Decisions taken in brainstorming**
 
