@@ -124,6 +124,56 @@ def test_exec_fills_first_then_csv_is_superseded_on_arrival(db) -> None:
     assert csv_row.superseded_by is not None
 
 
+def test_codes_backfilled_from_csv_onto_live_exec_group(db) -> None:
+    # Controller ruling (Task 11): live fills carry no O/C/A/Ep codes — the surviving exec
+    # rows pick up the CSV order row's codes when supersede_twins matches them. CSV first.
+    from src.ledger.ingest import ingest
+
+    ingest(
+        stmt(ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -2, 1.935, codes="C")),
+        source="csv",
+    )
+    ingest(
+        stmt(
+            ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.93, exec_id="e1", perm=77),
+            ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:01", -1, 1.94, exec_id="e2", perm=77),
+        ),
+        source="live",
+    )
+    exec_rows = [x for x in _rows(db) if x.source_kind == "exec"]
+    assert len(exec_rows) == 2
+    assert all(x.codes == "C" for x in exec_rows)
+
+
+def test_codes_backfilled_onto_live_exec_group_arriving_before_csv(db) -> None:
+    # Same ruling, reverse arrival order: the live fill (no codes) lands first, then the CSV
+    # order row (with codes) arrives and supersedes it — the surviving exec rows still end up
+    # with the CSV's codes. The account must already be locked since a live-only ingest with no
+    # tracked account is skipped outright (Review Focus 3 / F20).
+    from src.ledger.ingest import ingest
+    from src.ledger.state import lock_account
+
+    with db() as s:
+        lock_account(s, "U0000001")
+    ingest(
+        stmt(
+            ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.93, exec_id="e1", perm=77),
+            ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:01", -1, 1.94, exec_id="e2", perm=77),
+        ),
+        source="live",
+    )
+    ingest(
+        stmt(ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -2, 1.935, codes="C")),
+        source="csv",
+    )
+    rows = _rows(db)
+    csv_row = next(x for x in rows if x.source_kind == "order")
+    exec_rows = [x for x in rows if x.source_kind == "exec"]
+    assert csv_row.superseded_by is not None
+    assert len(exec_rows) == 2
+    assert all(x.codes == "C" for x in exec_rows)
+
+
 def test_vwap_mismatch_is_not_a_twin(db) -> None:
     from src.ledger.ingest import ingest
 

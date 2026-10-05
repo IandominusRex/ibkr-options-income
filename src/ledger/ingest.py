@@ -220,6 +220,14 @@ def supersede_twins(s: Session, affected: set[tuple[str, date]]) -> int:
                 continue
             used.add(idx)
             order.superseded_by = min(r.id for r in groups[idx])
+            # Live fills carry no O/C/A/Ep codes (controller ruling, Task 11): the order row
+            # being superseded is the only side that ever has them, so backfill onto whichever
+            # survivor rows are still blank. Works regardless of arrival order — a CSV/Flex row
+            # superseded by an earlier-arrived exec group hits this exactly the same way.
+            if order.codes:
+                for r in groups[idx]:
+                    if not r.codes:
+                        r.codes = order.codes
             superseded += 1
         matched: set[int] = set()
         for i, later in enumerate(survivors):

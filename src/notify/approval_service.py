@@ -1906,6 +1906,15 @@ async def _run_service(token: str, chat_id: str) -> None:
             cfg.execution.poll_interval_seconds,
         )
 
+        # Trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §5.3): live
+        # executions + a periodic reqExecutions sweep. Ledger-table writes only; never touches
+        # order handling, and skips everything until a CSV/Flex import has locked the account.
+        from src.ledger.live import attach_live_hook, live_sweep_loop
+
+        if ib is not None:
+            attach_live_hook(ib)
+        ledger_sweep_task = asyncio.create_task(live_sweep_loop(ib))
+
         try:
             await stop_event.wait()
         finally:
@@ -1929,6 +1938,9 @@ async def _run_service(token: str, chat_id: str) -> None:
             drain_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await drain_task
+            ledger_sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ledger_sweep_task
             await app.updater.stop()
             await app.stop()
 
