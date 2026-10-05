@@ -7,23 +7,44 @@ agree by construction. Pure over loaded rows; never writes (tests/test_web_fence
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import get_args
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.common.config import get_config
 from src.common.schemas import (
+    LedgerBasisPoint,
+    LedgerBook,
+    LedgerBucket,
+    LedgerCashItem,
     LedgerClose,
     LedgerContract,
+    LedgerCurvePoint,
+    LedgerMonth,
     LedgerOrphan,
     LedgerOutcome,
+    LedgerStockDisposal,
+    LedgerStockLot,
+    LedgerSummary,
+    LedgerTicker,
+    LedgerTickerDetail,
     LedgerTrade,
+    PortfolioSnapshot,
 )
-from src.storage.models import BrokerExecutionRow, TradeAnnotationRow
+from src.ledger.state import ledger_account
+from src.storage.models import (
+    BrokerCashEventRow,
+    BrokerCorporateActionRow,
+    BrokerExecutionRow,
+    FxRateRow,
+    TradeAnnotationRow,
+)
 
 _EPS = 1e-9
 _ROLL_WINDOW = timedelta(minutes=5)
@@ -393,3 +414,474 @@ def load_annotations(session: Session) -> dict[str, LedgerAnnotation]:
         )
         for r in session.scalars(select(TradeAnnotationRow))
     }
+
+
+# --------------------------------------------------------------------------- #
+# Stock lots (spec §4.3)
+# --------------------------------------------------------------------------- #
+def build_stock_lots(
+    orders: list[LedgerOrder],
+) -> tuple[list[LedgerStockLot], list[LedgerStockDisposal], list[LedgerOrphan]]:
+    """FIFO share lots. Cost is commission-inclusive: ``-(proceeds + commission) / qty``."""
+    lots: list[LedgerStockLot] = []
+    disposals: list[LedgerStockDisposal] = []
+    orphans: list[LedgerOrphan] = []
+    by_contract: dict[str, list[LedgerOrder]] = defaultdict(list)
+    for o in orders:
+        if o.contract.sec_type == "STK":
+            by_contract[o.contract.ident].append(o)
+    for group in by_contract.values():
+        queue: deque[LedgerStockLot] = deque()
+        for o in sorted(group, key=lambda x: x.trade_time):
+            basis = -(o.proceeds + o.commission) / o.quantity
+            q = o.quantity
+            while abs(q) > _EPS and queue and _sign(queue[0].remaining) != _sign(q):
+                head = queue[0]
+                m = min(abs(q), abs(head.remaining))
+                disposals.append(
+                    LedgerStockDisposal(
+                        lot_key=head.lot_key,
+                        underlying=head.underlying,
+                        currency=head.currency,
+                        disposal_date=o.trade_date,
+                        quantity=m,
+                        price=o.price,
+                        realized=(basis - head.cost_per_share) * m * _sign(head.remaining),
+                        codes=o.codes,
+                    )
+                )
+                head.remaining += m * _sign(q)
+                q -= m * _sign(q)
+                if abs(head.remaining) < _EPS:
+                    head.remaining = 0.0
+                    queue.popleft()
+            if abs(q) <= _EPS:
+                continue
+            if o.is_closing:
+                orphans.append(_orphan(o, abs(q)))
+                continue
+            t = _tokens(o.codes)
+            lot = LedgerStockLot(
+                lot_key=o.order_key,
+                underlying=o.contract.underlying,
+                currency=o.contract.currency,
+                acquired_date=o.trade_date,
+                source="assigned" if "A" in t else "exercised" if "Ex" in t else "bought",
+                quantity=q,
+                remaining=q,
+                cost_per_share=basis,
+            )
+            lots.append(lot)
+            queue.append(lot)
+    return lots, disposals, orphans
+
+
+def attach_stock_gains(trades: list[LedgerTrade], disposals: list[LedgerStockDisposal]) -> None:
+    """The sheet's "Capital" column: stock P&L realized when a short call got the shares called away."""
+    for t in trades:
+        if t.computed_outcome != "Called away" or t.close_date is None:
+            continue
+        gains = [
+            d.realized
+            for d in disposals
+            if d.underlying == t.underlying
+            and d.disposal_date == t.close_date
+            and "A" in _tokens(d.codes)
+            and abs(d.price - t.strike) < 1e-6
+        ]
+        t.stock_gain = sum(gains) if gains else None
+
+
+# --------------------------------------------------------------------------- #
+# FX (spec §3 fx_rates; R5)
+# --------------------------------------------------------------------------- #
+class FxTable:
+    """USD conversion at the nearest rate within ``max_gap_days`` of the date; else None."""
+
+    def __init__(self, rates: dict[str, list[tuple[date, float]]], max_gap_days: int) -> None:
+        self._rates = {c: sorted(series) for c, series in rates.items()}
+        self._dates = {c: [d for d, _ in series] for c, series in self._rates.items()}
+        self._max_gap = max_gap_days
+
+    def to_usd(self, amount: float, currency: str, on: date) -> float | None:
+        if currency == "USD":
+            return amount
+        series = self._rates.get(currency)
+        if not series:
+            return None
+        i = bisect.bisect_left(self._dates[currency], on)
+        best: tuple[int, float] | None = None
+        for j in (i - 1, i):
+            if 0 <= j < len(series):
+                d, rate = series[j]
+                gap = abs((d - on).days)
+                if gap <= self._max_gap and (best is None or gap < best[0]):
+                    best = (gap, rate)
+        return amount * best[1] if best else None
+
+
+# --------------------------------------------------------------------------- #
+# Ticker roll-ups (spec §4.4)
+# --------------------------------------------------------------------------- #
+def _collected(t: LedgerTrade) -> float:
+    return t.net_pnl if t.net_pnl is not None else t.premium + t.open_commission
+
+
+def _in_basis_scope(t: LedgerTrade, open_lots: list[LedgerStockLot]) -> bool:
+    if t.side != "Sell":
+        return False
+    start = min(lot.acquired_date for lot in open_lots)
+    assigned_on = {lot.acquired_date for lot in open_lots if lot.source == "assigned"}
+    return t.order_date >= start or (
+        t.computed_outcome == "Assigned" and t.close_date in assigned_on
+    )
+
+
+def _wheel_basis(
+    trades: list[LedgerTrade], open_lots: list[LedgerStockLot], shares: float
+) -> float | None:
+    if shares <= _EPS or not open_lots:
+        return None
+    cost = sum(lot.remaining * lot.cost_per_share for lot in open_lots)
+    collected = sum(_collected(t) for t in trades if _in_basis_scope(t, open_lots))
+    return (cost - collected) / shares
+
+
+def basis_walk(trades: list[LedgerTrade], lots: list[LedgerStockLot]) -> list[LedgerBasisPoint]:
+    open_lots = [lot for lot in lots if lot.remaining > _EPS]
+    shares = sum(lot.remaining for lot in open_lots)
+    if shares <= _EPS:
+        return []
+    cost = sum(lot.remaining * lot.cost_per_share for lot in open_lots)
+    start = min(lot.acquired_date for lot in open_lots)
+    points = [
+        LedgerBasisPoint(point_date=start, label="Shares acquired", basis_per_share=cost / shares)
+    ]
+    collected = 0.0
+    scoped = sorted(
+        (t for t in trades if _in_basis_scope(t, open_lots)),
+        key=lambda t: (t.close_date or t.order_date, t.open_time),
+    )
+    for t in scoped:
+        collected += _collected(t)
+        points.append(
+            LedgerBasisPoint(
+                point_date=t.close_date or t.order_date,
+                label=f"{t.side} {t.strike:g}{t.right} {t.outcome}",
+                basis_per_share=(cost - collected) / shares,
+            )
+        )
+    return points
+
+
+def _unrealized(symbol: str, has_open: bool, snapshot: PortfolioSnapshot | None) -> float | None:
+    if snapshot is None:
+        return None
+    marks = [
+        p.unrealized_pnl
+        for p in snapshot.positions
+        if p.unrealized_pnl is not None
+        and (
+            (p.sec_type == "OPT" and p.underlying == symbol)
+            or (p.sec_type == "STK" and p.symbol == symbol)
+        )
+    ]
+    if marks:
+        return sum(marks)
+    return None if has_open else 0.0
+
+
+def build_tickers(
+    trades: list[LedgerTrade],
+    lots: list[LedgerStockLot],
+    disposals: list[LedgerStockDisposal],
+    cash: list[LedgerCashItem],
+    *,
+    snapshot: PortfolioSnapshot | None,
+) -> list[LedgerTicker]:
+    income = [c for c in cash if c.underlying and c.event_type in ("dividend", "withholding")]
+    symbols = sorted(
+        {t.underlying for t in trades}
+        | {lot.underlying for lot in lots}
+        | {c.underlying for c in income if c.underlying}
+    )
+    out: list[LedgerTicker] = []
+    for sym in symbols:
+        ts = [t for t in trades if t.underlying == sym]
+        closed = [t for t in ts if t.net_pnl is not None]
+        stats = [t for t in closed if not t.exclude_from_stats]
+        sym_lots = [lot for lot in lots if lot.underlying == sym]
+        open_lots = [lot for lot in sym_lots if abs(lot.remaining) > _EPS]
+        shares = sum(lot.remaining for lot in open_lots)
+        currency = (
+            ts[0].currency
+            if ts
+            else sym_lots[0].currency
+            if sym_lots
+            else next(c.currency for c in income if c.underlying == sym)
+        )
+        option_net = sum(t.net_pnl for t in closed if t.net_pnl is not None)
+        stock_realized = sum(d.realized for d in disposals if d.underlying == sym)
+        dividends = sum(c.amount for c in income if c.underlying == sym)
+        capital_days = sum(t.capital * t.days_held for t in stats)
+        stats_net = [t.net_pnl for t in stats if t.net_pnl is not None]
+        open_trades = [t for t in ts if t.close_date is None]
+        dates = [t.order_date for t in ts] + [lot.acquired_date for lot in sym_lots]
+        out.append(
+            LedgerTicker(
+                symbol=sym,
+                currency=currency,
+                option_premium_gross=sum(t.premium for t in ts if t.side == "Sell"),
+                option_net_pnl=option_net,
+                stock_realized=stock_realized,
+                dividends_net=dividends,
+                total_realized=option_net + stock_realized + dividends,
+                unrealized=_unrealized(sym, bool(open_trades) or shares > _EPS, snapshot),
+                n_trades=len(ts),
+                n_open=len(open_trades),
+                n_closed=len(closed),
+                win_rate=sum(1 for v in stats_net if v > 0) / len(stats_net) if stats_net else None,
+                avg_premium=(sum(t.premium for t in stats) / len(stats)) if stats else None,
+                best_trade=max(stats_net) if stats_net else None,
+                worst_trade=min(stats_net) if stats_net else None,
+                annualised_return_pct=(sum(stats_net) / capital_days * 365 * 100)
+                if capital_days
+                else None,
+                shares_held=shares,
+                broker_avg_cost=(
+                    sum(lot.remaining * lot.cost_per_share for lot in open_lots) / shares
+                )
+                if shares > _EPS
+                else None,
+                wheel_adjusted_basis=_wheel_basis(ts, open_lots, shares),
+                first_trade=min(dates) if dates else None,
+                last_trade=max(dates) if dates else None,
+            )
+        )
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio summary (spec §4.5; R5)
+# --------------------------------------------------------------------------- #
+def _bucket(label: str, items: list[tuple[float, bool]]) -> LedgerBucket:
+    """``items`` = (realized_usd, counts_for_win_rate)."""
+    stats = [v for v, counts in items if counts]
+    return LedgerBucket(
+        label=label,
+        n_closed=len(items),
+        realized_usd=sum(v for v, _ in items),
+        win_rate=sum(1 for v in stats if v > 0) / len(stats) if stats else None,
+    )
+
+
+def build_summary(
+    trades: list[LedgerTrade],
+    tickers: list[LedgerTicker],
+    lots: list[LedgerStockLot],
+    disposals: list[LedgerStockDisposal],
+    cash: list[LedgerCashItem],
+    fx: FxTable,
+    *,
+    today: date,
+    snapshot: PortfolioSnapshot | None,
+    orphans: list[LedgerOrphan],
+    unreviewed_corporate_actions: int,
+    marks_as_of: datetime | None,
+) -> LedgerSummary:
+    missing = False
+
+    def usd(amount: float, currency: str, on: date) -> float:
+        nonlocal missing
+        value = fx.to_usd(amount, currency, on)
+        if value is None:
+            missing = True
+            return 0.0
+        return value
+
+    realized: list[tuple[date, float]] = []
+    strategy_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
+    book_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
+    for t in trades:
+        if t.net_pnl is None or t.close_date is None:
+            continue
+        v = usd(t.net_pnl, t.currency, t.close_date)
+        realized.append((t.close_date, v))
+        label = "Long" if t.side == "Buy" else "CSP" if t.right == "P" else "CC"
+        strategy_items[label].append((v, not t.exclude_from_stats))
+        book_items[t.book].append((v, not t.exclude_from_stats))
+    for disp in disposals:
+        v = usd(disp.realized, disp.currency, disp.disposal_date)
+        realized.append((disp.disposal_date, v))
+        strategy_items["Stock"].append((v, False))
+    for c in cash:
+        if c.event_type in ("dividend", "withholding"):
+            realized.append((c.event_date, usd(c.amount, c.currency, c.event_date)))
+    for o in orphans:
+        if o.ibkr_realized_pnl is not None:
+            realized.append((o.trade_date, usd(o.ibkr_realized_pnl, o.currency, o.trade_date)))
+    other = sum(
+        usd(c.amount, c.currency, c.event_date) for c in cash if c.event_type in ("interest", "fee")
+    )
+    total = sum(v for _, v in realized) + other
+
+    flows = [c for c in cash if c.event_type in ("deposit", "withdrawal")]
+    contributed = sum(usd(c.amount, c.currency, c.event_date) for c in flows) if flows else None
+    utilised = sum(
+        usd(t.strike * t.multiplier * t.lots, t.currency, today)
+        for t in trades
+        if t.side == "Sell" and t.right == "P" and t.close_date is None
+    ) + sum(
+        usd(lot.remaining * lot.cost_per_share, lot.currency, lot.acquired_date)
+        for lot in lots
+        if lot.remaining > _EPS
+    )
+    unrealized = (
+        None
+        if snapshot is None
+        else sum(
+            usd(tk.unrealized, tk.currency, today) for tk in tickers if tk.unrealized is not None
+        )
+    )
+
+    months: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    for t in trades:
+        if t.side == "Sell":
+            months[t.order_date.strftime("%Y-%m")][0] += usd(t.premium, t.currency, t.order_date)
+    for d, v in realized:
+        months[d.strftime("%Y-%m")][1] += v
+    curve: list[LedgerCurvePoint] = []
+    running = 0.0
+    by_day: dict[date, float] = defaultdict(float)
+    for d, v in realized:
+        by_day[d] += v
+    for d in sorted(by_day):
+        running += by_day[d]
+        curve.append(LedgerCurvePoint(point_date=d, cumulative_usd=running))
+
+    stats = [t.net_pnl for t in trades if t.net_pnl is not None and not t.exclude_from_stats]
+    open_trades = sorted((t for t in trades if t.close_date is None), key=lambda t: t.expiry)
+    this_month = today.strftime("%Y-%m")
+    return LedgerSummary(
+        total_realized_usd=total,
+        interest_and_fees_usd=other,
+        contributed_usd=contributed,
+        capital_utilised_usd=utilised,
+        available_usd=contributed + total - utilised if contributed is not None else None,
+        unrealized_usd=unrealized,
+        win_rate=sum(1 for v in stats if v > 0) / len(stats) if stats else None,
+        n_trades=len(trades),
+        n_open=len(open_trades),
+        premium_this_month_usd=months[this_month][0] if this_month in months else 0.0,
+        months=[
+            LedgerMonth(month=m, premium_usd=v[0], realized_usd=v[1])
+            for m, v in sorted(months.items())
+        ],
+        curve=curve,
+        by_strategy=[_bucket(k, v) for k, v in sorted(strategy_items.items())],
+        by_book=[_bucket(k, v) for k, v in sorted(book_items.items())],
+        upcoming=open_trades[:20],
+        fx_incomplete=missing,
+        orphan_closes=len(orphans),
+        unreviewed_corporate_actions=unreviewed_corporate_actions,
+        marks_as_of=marks_as_of,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Loading + the one entry point
+# --------------------------------------------------------------------------- #
+def load_cash(session: Session) -> list[LedgerCashItem]:
+    return [
+        LedgerCashItem(
+            event_date=r.event_date,
+            event_type=r.event_type,
+            currency=r.currency,
+            amount=r.amount,
+            description=r.description,
+            underlying=r.underlying,
+        )
+        for r in session.scalars(select(BrokerCashEventRow).order_by(BrokerCashEventRow.event_date))
+    ]
+
+
+def load_fx(session: Session, max_gap_days: int) -> FxTable:
+    rates: dict[str, list[tuple[date, float]]] = defaultdict(list)
+    for r in session.scalars(select(FxRateRow)):
+        rates[r.currency].append((r.rate_date, r.usd_rate))
+    return FxTable(dict(rates), max_gap_days)
+
+
+def build_book(
+    session: Session,
+    *,
+    today: date,
+    snapshot: PortfolioSnapshot | None,
+    marks_as_of: datetime | None = None,
+) -> LedgerBook:
+    orders = group_orders(load_execs(session))
+    trades, option_orphans = build_option_trades(orders, today=today)
+    apply_annotations(trades, load_annotations(session))
+    lots, disposals, stock_orphans = build_stock_lots(orders)
+    attach_stock_gains(trades, disposals)
+    cash = load_cash(session)
+    # F5: the live PortfolioSnapshot is captured from the paper account while the ledger
+    # tracks the real account (ledger_account). A snapshot from any other account must never
+    # be borrowed for this account's marks — treat it as absent rather than silently mixing
+    # books. Spec: "No position snapshot -> unrealized/available shown as n/a, never 0".
+    effective_snapshot = (
+        snapshot
+        if snapshot is not None
+        and snapshot.account is not None
+        and snapshot.account.account == ledger_account(session)
+        else None
+    )
+    tickers = build_tickers(trades, lots, disposals, cash, snapshot=effective_snapshot)
+    orphans = option_orphans + stock_orphans
+    unreviewed = (
+        session.scalar(
+            select(func.count())
+            .select_from(BrokerCorporateActionRow)
+            .where(BrokerCorporateActionRow.reviewed.is_(False))
+        )
+        or 0
+    )
+    summary = build_summary(
+        trades,
+        tickers,
+        lots,
+        disposals,
+        cash,
+        load_fx(session, get_config().ledger.fx_max_gap_days),
+        today=today,
+        snapshot=effective_snapshot,
+        orphans=orphans,
+        unreviewed_corporate_actions=int(unreviewed),
+        marks_as_of=marks_as_of,
+    )
+    return LedgerBook(
+        trades=trades,
+        orphans=orphans,
+        tickers=tickers,
+        summary=summary,
+        lots=lots,
+        disposals=disposals,
+        cash=cash,
+    )
+
+
+def ticker_detail(book: LedgerBook, symbol: str) -> LedgerTickerDetail | None:
+    sym = symbol.upper()
+    ticker = next((t for t in book.tickers if t.symbol.upper() == sym), None)
+    if ticker is None:
+        return None
+    trades = [t for t in book.trades if t.underlying.upper() == sym]
+    lots = [lot for lot in book.lots if lot.underlying.upper() == sym]
+    return LedgerTickerDetail(
+        ticker=ticker,
+        trades=trades,
+        lots=lots,
+        disposals=[d for d in book.disposals if d.underlying.upper() == sym],
+        dividends=[c for c in book.cash if (c.underlying or "").upper() == sym],
+        basis_walk=basis_walk(trades, lots),
+    )

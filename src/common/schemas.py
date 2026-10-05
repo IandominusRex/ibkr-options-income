@@ -995,3 +995,126 @@ class LedgerOrphan(BaseModel):
     quantity: float
     price: float
     ibkr_realized_pnl: float | None
+
+
+# --------------------------------------------------------------------------- #
+# Stock lots, ticker roll-ups, FX, portfolio summary (spec §4.3-4.5; Task 6)
+# --------------------------------------------------------------------------- #
+class LedgerStockLot(BaseModel):
+    lot_key: str
+    underlying: str
+    currency: str
+    acquired_date: date
+    source: Literal["bought", "assigned", "exercised"]
+    quantity: float  # signed quantity originally opened
+    remaining: float
+    cost_per_share: float  # commission-inclusive
+
+
+class LedgerStockDisposal(BaseModel):
+    lot_key: str
+    underlying: str
+    currency: str
+    disposal_date: date
+    quantity: float
+    price: float
+    realized: float
+    codes: str
+
+
+class LedgerCashItem(BaseModel):
+    event_date: date
+    event_type: str
+    currency: str
+    amount: float
+    description: str
+    underlying: str | None = None
+
+
+class LedgerTicker(BaseModel):
+    symbol: str
+    currency: str
+    option_premium_gross: float
+    option_net_pnl: float
+    stock_realized: float
+    dividends_net: float
+    total_realized: float
+    unrealized: float | None
+    n_trades: int
+    n_open: int
+    n_closed: int
+    win_rate: float | None
+    avg_premium: float | None
+    best_trade: float | None
+    worst_trade: float | None
+    annualised_return_pct: float | None
+    shares_held: float
+    broker_avg_cost: float | None
+    wheel_adjusted_basis: float | None
+    first_trade: date | None
+    last_trade: date | None
+
+
+class LedgerBasisPoint(BaseModel):
+    point_date: date
+    label: str
+    basis_per_share: float
+
+
+class LedgerTickerDetail(BaseModel):
+    ticker: LedgerTicker
+    trades: list[LedgerTrade]
+    lots: list[LedgerStockLot]
+    disposals: list[LedgerStockDisposal]
+    dividends: list[LedgerCashItem]
+    basis_walk: list[LedgerBasisPoint]
+
+
+class LedgerMonth(BaseModel):
+    month: str  # "YYYY-MM"
+    premium_usd: float
+    realized_usd: float
+
+
+class LedgerCurvePoint(BaseModel):
+    point_date: date
+    cumulative_usd: float
+
+
+class LedgerBucket(BaseModel):
+    label: str
+    n_closed: int
+    realized_usd: float
+    win_rate: float | None
+
+
+class LedgerSummary(BaseModel):
+    total_realized_usd: float
+    interest_and_fees_usd: float
+    contributed_usd: float | None
+    capital_utilised_usd: float
+    available_usd: float | None
+    unrealized_usd: float | None
+    win_rate: float | None
+    n_trades: int
+    n_open: int
+    premium_this_month_usd: float
+    months: list[LedgerMonth]
+    curve: list[LedgerCurvePoint]
+    by_strategy: list[LedgerBucket]
+    by_book: list[LedgerBucket]
+    upcoming: list[LedgerTrade]
+    fx_incomplete: bool
+    orphan_closes: int
+    unreviewed_corporate_actions: int
+    marks_as_of: datetime | None
+
+
+class LedgerBook(BaseModel):
+    trades: list[LedgerTrade]
+    orphans: list[LedgerOrphan]
+    tickers: list[LedgerTicker]
+    summary: LedgerSummary
+    lots: list[LedgerStockLot]
+    disposals: list[LedgerStockDisposal]
+    cash: list[LedgerCashItem]
