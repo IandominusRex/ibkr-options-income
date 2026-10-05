@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
+
+import pytest
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ledger" / "activity_statement_sample.csv"
 
@@ -64,6 +67,41 @@ def test_failure_records_the_error_and_retries_later(db) -> None:
     assert get_setting(LEDGER_SHEETS_LAST_ERROR_KEY) == ""
 
 
+def test_errors_never_leak_the_sheet_id_or_credentials_path(db, monkeypatch, caplog) -> None:
+    """A ConnectionError embeds the Sheets URL (.../v4/spreadsheets/<id>) and a FileNotFoundError
+    embeds the credentials path verbatim — neither secret may reach the stored setting the web
+    layer displays, or the log (review round 1, finding 1)."""
+    from src.common.config import get_config
+    from src.ledger.sheets_mirror import sync_if_due
+    from src.ledger.state import LEDGER_SHEETS_LAST_ERROR_KEY
+    from src.storage.system_settings import get_setting
+
+    secret_sheet_id = "SECRET_SHEET_abc123"
+    secret_creds_path = "/Users/ian/.secret/google-creds.json"
+    monkeypatch.setattr(get_config().secrets, "ledger_sheet_id", secret_sheet_id)
+    monkeypatch.setattr(get_config().secrets, "google_sheets_credentials_path", secret_creds_path)
+
+    class LeakyWriter:
+        def write_tab(self, title, rows, *, outcome_column=None) -> None:
+            raise ConnectionError(
+                f"POST https://sheets.googleapis.com/v4/spreadsheets/{secret_sheet_id}/values "
+                f"failed; credentials file {secret_creds_path} could not be read"
+            )
+
+    _seed()
+    with caplog.at_level(logging.WARNING, logger="src.ledger.sheets_mirror"):
+        assert sync_if_due(writer_factory=lambda: LeakyWriter()) is False
+
+    stored = get_setting(LEDGER_SHEETS_LAST_ERROR_KEY)
+    assert secret_sheet_id not in stored
+    assert secret_creds_path not in stored
+    assert "<sheet>" in stored
+    assert "<credentials>" in stored
+
+    assert secret_sheet_id not in caplog.text
+    assert secret_creds_path not in caplog.text
+
+
 def test_loop_exits_quietly_when_unconfigured(monkeypatch) -> None:
     from src.common.config import get_config
     from src.ledger.sheets_mirror import mirror_configured, sheets_mirror_loop
@@ -71,6 +109,41 @@ def test_loop_exits_quietly_when_unconfigured(monkeypatch) -> None:
     monkeypatch.setattr(get_config().secrets, "google_sheets_credentials_path", "")
     assert mirror_configured() is False
     asyncio.run(asyncio.wait_for(sheets_mirror_loop(poll_seconds=0.01), timeout=1))
+
+
+async def test_loop_survives_a_cycle_exception_and_cancellation_still_propagates(
+    monkeypatch,
+) -> None:
+    """The controller-mandated guard (review round 1, finding 2): one cycle raising must not
+    kill the loop — the next cycle must still run — and ``task.cancel()`` must still surface as
+    ``CancelledError`` through the awaited task, so ``approval_service``'s shutdown ``finally``
+    can always cancel-and-await it cleanly."""
+    import src.ledger.sheets_mirror as mirror
+
+    monkeypatch.setattr(mirror, "mirror_configured", lambda: True)
+
+    calls: list[str] = []
+
+    def flaky_read_int_setting(key: str) -> int:
+        calls.append(key)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return 0
+
+    monkeypatch.setattr(mirror, "read_int_setting", flaky_read_int_setting)
+
+    task = asyncio.create_task(mirror.sheets_mirror_loop(poll_seconds=0.0))
+    try:
+        async with asyncio.timeout(2):
+            while len(calls) < 2:
+                await asyncio.sleep(0)
+        # The first call raised inside the loop's try/except guard; a second call happening at
+        # all proves the loop kept cycling instead of dying with that exception.
+        assert len(calls) >= 2
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 def test_approval_service_wires_the_mirror() -> None:

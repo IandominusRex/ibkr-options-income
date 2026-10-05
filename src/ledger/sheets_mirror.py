@@ -116,6 +116,26 @@ class GspreadWriter:
                 self._spreadsheet.batch_update({"requests": _outcome_rules(ws.id, outcome_column)})
 
 
+def _scrub_secrets(message: str) -> str:
+    """Redact the configured Sheet id / credentials path from an error message before it is
+    logged or stored in ``LEDGER_SHEETS_LAST_ERROR_KEY`` (shown by the web layer).
+
+    Both are secrets (``.env`` only) that can appear verbatim inside an exception's own
+    message — a ``requests`` connection error embeds the Sheets API URL
+    (``.../v4/spreadsheets/<LEDGER_SHEET_ID>``), and a missing-file error embeds
+    ``GOOGLE_SHEETS_CREDENTIALS_PATH`` directly — so the exception text itself must be scrubbed,
+    not just avoided by the code that raises it.
+    """
+    s = get_config().secrets
+    for secret, placeholder in (
+        (s.ledger_sheet_id, "<sheet>"),
+        (s.google_sheets_credentials_path, "<credentials>"),
+    ):
+        if secret:
+            message = message.replace(secret, placeholder)
+    return message
+
+
 def mirror_configured() -> bool:
     s = get_config().secrets
     return bool(s.google_sheets_credentials_path.strip() and s.ledger_sheet_id.strip())
@@ -154,8 +174,9 @@ def sync_if_due(*, writer_factory: Callable[[], SheetsWriter | None] = default_w
             book = build_book(s, today=datetime.now(ET).date(), snapshot=None)
         sync_once(writer, book)
     except Exception as exc:
-        set_setting(LEDGER_SHEETS_LAST_ERROR_KEY, f"{type(exc).__name__}: {exc}"[:500])
-        log.warning("Google Sheet mirror failed — will retry on the next change", exc_info=True)
+        scrubbed = _scrub_secrets(f"{type(exc).__name__}: {exc}")[:500]
+        set_setting(LEDGER_SHEETS_LAST_ERROR_KEY, scrubbed)
+        log.warning("Google Sheet mirror sync failed (retried on a timer): %s", scrubbed)
         return False
     set_setting(LEDGER_SYNCED_GENERATION_KEY, str(generation))
     set_setting(LEDGER_SHEETS_LAST_SYNC_KEY, datetime.now(UTC).isoformat())
@@ -190,6 +211,9 @@ async def sheets_mirror_loop(*, poll_seconds: float = 15.0) -> None:
             await asyncio.to_thread(sync_if_due)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.warning("Google Sheet mirror cycle failed — will retry next cycle", exc_info=True)
+        except Exception as exc:
+            log.warning(
+                "Google Sheet mirror cycle failed — will retry next cycle: %s",
+                _scrub_secrets(f"{type(exc).__name__}: {exc}"),
+            )
             continue
