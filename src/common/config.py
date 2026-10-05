@@ -49,6 +49,11 @@ class Secrets(BaseSettings):
     sec_contact_email: str = Field(default="", alias="SEC_CONTACT_EMAIL")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    # Trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §5.2, §7).
+    ibkr_flex_token: str = Field(default="", alias="IBKR_FLEX_TOKEN")
+    ibkr_flex_query_id: str = Field(default="", alias="IBKR_FLEX_QUERY_ID")
+    google_sheets_credentials_path: str = Field(default="", alias="GOOGLE_SHEETS_CREDENTIALS_PATH")
+    ledger_sheet_id: str = Field(default="", alias="LEDGER_SHEET_ID")
 
 
 class ReconnectCfg(BaseModel):
@@ -524,6 +529,23 @@ class WatchdogCfg(BaseModel):
     deadman_url: str = ""
 
 
+class LedgerCfg(BaseModel):
+    """Trade ledger tunables (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §8).
+
+    ``account`` pins the IBKR account the ledger tracks. Empty means "lock to the account of the
+    first CSV/Flex import" (R8) — live fills never set the lock, so a paper session can't claim
+    the ledger before the real history is imported.
+    """
+
+    account: str = ""
+    live_sweep_minutes: int = 5
+    sheets_min_interval_seconds: int = 60
+    upload_max_bytes: int = 5_242_880
+    flex_poll_timeout_seconds: float = 600.0
+    flex_poll_interval_seconds: float = 10.0
+    fx_max_gap_days: int = 7
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -540,6 +562,7 @@ class Config(BaseModel):
     watchdog: WatchdogCfg
     data: DataCfg = Field(default_factory=DataCfg)
     research: ResearchCfg = Field(default_factory=ResearchCfg)
+    ledger: LedgerCfg = Field(default_factory=LedgerCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -600,6 +623,7 @@ def get_config() -> Config:
         watchdog=WatchdogCfg(**settings.get("watchdog", {})),
         data=DataCfg(**settings.get("data", {})),
         research=ResearchCfg(**_load_yaml("research.yaml")),
+        ledger=LedgerCfg(**settings.get("ledger", {})),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),
