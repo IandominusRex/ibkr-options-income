@@ -474,7 +474,10 @@ class AppCommandRow(Base):
     promote, roll_request) and ``NULL`` for kinds that may repeat harmlessly (halt,
     resume, set_autonomy, refresh, universe_add, universe_remove — the latter two
     joined this group in M7 after a stable key let a later remove dedupe to an
-    earlier, already-applied command and silently no-op). A NULL key never collides.
+    earlier, already-applied command and silently no-op — and ledger_import,
+    ledger_annotate, ledger_ca_reviewed, which joined in Task 8: an import is an
+    idempotent upsert and an annotation is last-write-wins, so a dedupe key would only
+    ever reject a legitimate second request). A NULL key never collides.
 
     Uniqueness on ``dedupe_key`` is enforced at the DB level by
     ``uq_app_commands_dedupe_key_pending`` — a partial index (``src/storage/db.py``'s

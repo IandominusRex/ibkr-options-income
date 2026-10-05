@@ -4160,7 +4160,10 @@
           "set_autonomy",
           "universe_add",
           "universe_remove",
-          "refresh"
+          "refresh",
+          "ledger_import",
+          "ledger_annotate",
+          "ledger_ca_reviewed"
         ],
         "title": "CommandKind",
         "description": "Every intent the web layer can enqueue. Later milestones register handlers."

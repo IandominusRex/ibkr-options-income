@@ -23,6 +23,7 @@ Design points that are not negotiable (see M1-write-foundation.md Task 1.5):
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Callable
@@ -700,3 +701,107 @@ async def _refresh(*, command: Any, ib: IB | None, **_: Any) -> dict:
         "positions": len(positions),
         "snapshot_id": snapshot_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §6.1, R7, R11).
+#
+# Reporting-only writes: none of these touch an approval, an order, or a gate. ``ledger_import``
+# strips the uploaded file out of the command row once handled (applied or failed) so a 5 MB
+# statement never lingers in app_commands.
+# ---------------------------------------------------------------------------
+
+
+def _strip_upload(command_id: int, filename: str, size: int) -> None:
+    """Replace the uploaded content with its byte count once the import has been handled.
+
+    Wrapped in its own try/except (controller ruling F21): this call lives in
+    ``_ledger_import``'s ``finally``, which runs whether the import applied or raised
+    ``CommandFailed``. A failure in here (e.g. the DB write itself fails) must never
+    propagate — an exception out of a ``finally`` replaces whatever was in flight (a
+    return value, or a ``CommandFailed`` on its way out), silently turning a real result
+    into an unrelated ``handler_error``. Logged, not raised, so the drain still never
+    raises (design point 1 of this module's docstring) and the operator still sees
+    whatever happened to the import itself.
+    """
+    try:
+        from src.storage.db import session_scope
+        from src.storage.models import AppCommandRow
+
+        with session_scope() as s:
+            row = s.get(AppCommandRow, command_id)
+            if row is not None:
+                row.payload = {"filename": filename, "content_bytes": size}
+    except Exception:
+        log.exception("ledger_import: failed to strip uploaded content from command %d", command_id)
+
+
+@register("ledger_import")
+async def _ledger_import(*, command: Any, **_: Any) -> dict:
+    """Parse and ingest an uploaded Activity Statement CSV.
+
+    ``async def`` (controller ruling F8): parsing a multi-MB statement and ingesting it
+    (hashing every row, the twin-match pass) is CPU-bound work that would otherwise block
+    this process's event loop — the same loop the command-drain cycle and every other
+    in-flight async handler (promote, roll_request, refresh) share. The parse and the
+    ingest both run inside one ``asyncio.to_thread`` call so the loop stays free for the
+    length of the whole operation, not just part of it.
+    """
+    from src.api.models.commands import LedgerImportPayload
+    from src.ledger.activity_csv import NotAnActivityStatement, parse_activity_csv
+    from src.ledger.ingest import ingest
+
+    payload = LedgerImportPayload(**command.payload)
+    try:
+        if payload.filename.lower().endswith(".pdf") or payload.content.lstrip().startswith("%PDF"):
+            raise CommandFailed("pdf_not_supported")
+
+        def _parse_and_ingest() -> dict:
+            try:
+                statement = parse_activity_csv(payload.content)
+            except NotAnActivityStatement as exc:
+                raise CommandFailed("not_an_activity_statement", {"detail": str(exc)}) from exc
+            result = ingest(statement, source="csv", filename=payload.filename)
+            if result.status != "ok":
+                raise CommandFailed(
+                    result.reason or "import_failed",
+                    {
+                        "run_id": result.run_id,
+                        "errors": [e.model_dump() for e in result.errors[:50]],
+                    },
+                )
+            return {
+                "run_id": result.run_id,
+                "counts": result.counts,
+                "warnings": len(result.errors),
+            }
+
+        return await asyncio.to_thread(_parse_and_ingest)
+    finally:
+        _strip_upload(command.id, payload.filename, len(payload.content))
+
+
+@register("ledger_annotate")
+def _ledger_annotate(*, command: Any, **_: Any) -> dict:
+    """Apply an operator annotation. Only the fields present in the payload are changed."""
+    from src.api.models.commands import LedgerAnnotatePayload
+    from src.ledger.annotations import annotate
+
+    payload = LedgerAnnotatePayload(**command.payload)
+    fields = payload.model_dump(include=payload.model_fields_set - {"order_key"})
+    with session_scope() as s:
+        annotate(s, order_key=payload.order_key, fields=fields, updated_by=command.requested_by)
+    return {"order_key": payload.order_key, "updated": sorted(fields)}
+
+
+@register("ledger_ca_reviewed")
+def _ledger_ca_reviewed(*, command: Any, **_: Any) -> dict:
+    """Flag one corporate action as human-reviewed. Fails ``not_found`` for an unknown id."""
+    from src.api.models.commands import LedgerCaReviewedPayload
+    from src.ledger.annotations import mark_corporate_action_reviewed
+
+    payload = LedgerCaReviewedPayload(**command.payload)
+    with session_scope() as s:
+        if not mark_corporate_action_reviewed(s, payload.corporate_action_id):
+            raise CommandFailed("not_found")
+    return {"corporate_action_id": payload.corporate_action_id}
