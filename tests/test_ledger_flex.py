@@ -85,6 +85,15 @@ def _client(responses: list[str]) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def _error_client(status: int, body: str = "") -> httpx.Client:
+    """A transport that always answers with an HTTP error status (not a Flex-protocol error)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, text=body)
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
 def test_fetch_retries_while_generation_is_in_progress() -> None:
     sleeps: list[float] = []
     text = fetch_statement(
@@ -115,6 +124,51 @@ def test_fetch_times_out() -> None:
             clock=lambda: next(ticks),
         )
     assert exc.value.code == "timeout"
+
+
+def test_fetch_statement_never_leaks_the_token_through_an_http_error() -> None:
+    """Critical fix (code review, round 1): httpx.HTTPStatusError's message embeds the full
+    request URL, and the token rides every Flex request as the ``t`` query param — so a raw
+    `r.raise_for_status()` would leak it into the raised exception. Nothing about the raised
+    FlexError (str, repr, or its __cause__/__context__ chain) may carry the token."""
+    secret = "SECRET_TOKEN_DO_NOT_LEAK"
+    with pytest.raises(FlexError) as exc_info:
+        fetch_statement(
+            secret, "q", client=_error_client(503, "Service Unavailable"), sleep=lambda _: None
+        )
+
+    exc = exc_info.value
+    assert exc.code == "http"
+    assert secret not in str(exc)
+    assert secret not in repr(exc)
+    assert secret not in str(exc.__cause__)
+    assert secret not in str(exc.__context__)
+    assert exc.__context__ is None  # no chain at all, not merely a suppressed one
+
+
+def test_run_flex_pull_stores_a_redacted_status_on_an_http_error(monkeypatch) -> None:
+    """Same leak, exercised through run_flex_pull's own except clause and its DB write."""
+    from src.common.config import get_config
+
+    secret = "SECRET_TOKEN_DO_NOT_LEAK"
+    monkeypatch.setattr(get_config().secrets, "ibkr_flex_token", secret)
+    monkeypatch.setattr(get_config().secrets, "ibkr_flex_query_id", "q1")
+
+    stored: dict[str, str] = {}
+    monkeypatch.setattr(
+        "src.ledger.flex.set_setting", lambda key, value: stored.__setitem__(key, value)
+    )
+    # Build the mock client with the real httpx.Client *before* patching it, so the patched
+    # constructor (used by fetch_statement) can hand back this one instance without recursing.
+    mock_client = _error_client(503)
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: mock_client)
+
+    with pytest.raises(FlexError):
+        run_flex_pull()
+
+    status = stored.get("ledger_flex_last_status", "")
+    assert status.startswith("failed:")
+    assert secret not in status
 
 
 def test_parse_trades_cash_fx_and_corporate_actions() -> None:

@@ -63,6 +63,41 @@ def _response_error(text: str) -> tuple[str, str]:
     ).strip()
 
 
+def _redacted_http_summary(exc: httpx.HTTPError) -> str:
+    """A safe-to-store, safe-to-log summary of an httpx error.
+
+    Never ``str(exc)`` for one of these: every Flex request carries the token as the ``t``
+    query param (IBKR's only way to authenticate a GET), and ``httpx.HTTPStatusError``'s
+    message embeds the full request URL — ``t`` included.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
+
+def _request(http: httpx.Client, url: str, params: dict[str, str]) -> httpx.Response:
+    """GET ``url`` and raise_for_status, without ever letting the token-bearing request URL
+    reach an exception's message, traceback, or context chain.
+
+    ``httpx.HTTPStatusError``'s message embeds the full request URL. Even ``raise ... from
+    None`` doesn't help here: it only suppresses the traceback's "During handling of the above
+    exception..." text — ``__context__`` is still set to the original exception, and
+    ``str(exc.__context__)`` still contains the URL (confirmed empirically). So the redacted
+    summary is pulled out as a plain string *inside* the except block, and the actual ``raise``
+    happens only once that block has exited — by then the original exception is no longer
+    "currently handled" and cannot attach itself as this one's context.
+    """
+    summary: str | None = None
+    try:
+        r = http.get(url, params=params)
+        r.raise_for_status()
+    except httpx.HTTPError as exc:
+        summary = _redacted_http_summary(exc)
+    if summary is not None:
+        raise FlexError("http", summary)
+    return r
+
+
 def fetch_statement(
     token: str,
     query_id: str,
@@ -77,8 +112,7 @@ def fetch_statement(
     own = client is None
     http = client or httpx.Client(timeout=60.0, headers={"User-Agent": "ibkr-options-income/1.0"})
     try:
-        r = http.get(f"{_BASE}/SendRequest", params={"t": token, "q": query_id, "v": "3"})
-        r.raise_for_status()
+        r = _request(http, f"{_BASE}/SendRequest", {"t": token, "q": query_id, "v": "3"})
         root = ElementTree.fromstring(r.text)
         if (root.findtext("Status") or "").strip() != "Success":
             raise FlexError(*_response_error(r.text))
@@ -86,8 +120,7 @@ def fetch_statement(
         url = (root.findtext("Url") or "").strip() or f"{_BASE}/GetStatement"
         deadline = clock() + timeout
         while True:
-            r = http.get(url, params={"t": token, "q": reference, "v": "3"})
-            r.raise_for_status()
+            r = _request(http, url, {"t": token, "q": reference, "v": "3"})
             if "<FlexQueryResponse" in r.text:
                 return r.text
             code, message = _response_error(r.text)
@@ -285,7 +318,10 @@ def run_flex_pull(
             poll_interval=cfg.ledger.flex_poll_interval_seconds,
             timeout=cfg.ledger.flex_poll_timeout_seconds,
         )
-    except (FlexError, httpx.HTTPError) as exc:
+    except FlexError as exc:
+        # str(exc) is always safe here: fetch_statement never lets a raw httpx.HTTPError (whose
+        # message would embed the token-bearing request URL) escape — _request converts every
+        # one into a redacted FlexError first (see _request's docstring).
         set_setting(LEDGER_FLEX_LAST_RUN_KEY, now)
         set_setting(LEDGER_FLEX_LAST_STATUS_KEY, f"failed: {exc}"[:200])
         raise
