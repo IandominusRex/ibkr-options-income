@@ -138,6 +138,45 @@ def test_vwap_mismatch_is_not_a_twin(db) -> None:
     assert all(x.superseded_by is None for x in _rows(db))
 
 
+def test_reimport_does_not_resupersede_via_an_already_consumed_exec_group(db) -> None:
+    # Review round 1 finding 2: the twin pass's `used` set is local to one call, so a fresh call
+    # (triggered by re-importing the same CSV) must not let an exec group that already consumed
+    # one order row in an earlier run "re-match" a second, still-unsuperseded order row sharing
+    # its qty/price.
+    from src.ledger.activity_csv import number_occurrences
+    from src.ledger.ingest import ingest
+
+    ingest(stmt(ex("NVDA", "2025-07-01, 09:00:00", 1, 100.0)), source="csv")  # locks the account
+
+    ingest(
+        stmt(ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.9, exec_id="g1", perm=1)),
+        source="live",
+    )
+
+    def order_rows():
+        return [r for r in _rows(db) if r.source_kind == "order" and r.strike == 170]
+
+    st = stmt(
+        ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.9),
+        ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.9),
+    )
+    number_occurrences(st)
+    ingest(st, source="csv")
+
+    assert sum(1 for r in order_rows() if r.superseded_by is not None) == 1
+    survivor_id = next(r.id for r in order_rows() if r.superseded_by is None)
+
+    st2 = stmt(
+        ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.9),
+        ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", -1, 1.9),
+    )
+    number_occurrences(st2)
+    ingest(st2, source="csv")
+
+    assert sum(1 for r in order_rows() if r.superseded_by is not None) == 1
+    assert next(r for r in order_rows() if r.id == survivor_id).superseded_by is None
+
+
 def test_two_identical_csv_orders_both_survive(db) -> None:
     from src.ledger.activity_csv import number_occurrences
     from src.ledger.ingest import ingest
@@ -213,6 +252,39 @@ def test_first_import_locks_the_account_and_a_mismatch_is_refused(db) -> None:
         source="csv",
     )
     assert (r.status, r.reason) == ("failed", "account_mismatch")
+
+
+def test_live_account_mismatch_is_skipped_with_no_run_row(db) -> None:
+    # Review round 1 finding 1: a live fill from a foreign (e.g. paper) account must leave no
+    # trace at all once the real account is locked in — not even a failed run row.
+    from src.ledger.ingest import ingest
+    from src.storage.models import LedgerImportRunRow
+
+    ingest(stmt(ex("NVDA", "2025-07-14, 10:00:00", 1, 100.0)), source="csv")  # locks U0000001
+    with db() as s:
+        runs_before = s.scalar(select(func.count()).select_from(LedgerImportRunRow))
+    rows_before = len(_rows(db))
+
+    r = ingest(
+        stmt(
+            ex(
+                "NVDA",
+                "",
+                1,
+                100.0,
+                exec_id="p1",
+                account="DU999",
+                utc=datetime(2025, 7, 15, 14, tzinfo=UTC),
+            ),
+            account="DU999",
+        ),
+        source="live",
+    )
+
+    assert (r.status, r.reason) == ("skipped", "account_mismatch")
+    with db() as s:
+        assert s.scalar(select(func.count()).select_from(LedgerImportRunRow)) == runs_before
+    assert len(_rows(db)) == rows_before
 
 
 def test_live_fills_never_set_the_account_lock(db) -> None:
@@ -322,6 +394,22 @@ def test_generation_bumps_only_on_change(db) -> None:
     g1 = read_int_setting(LEDGER_GENERATION_KEY)
     ingest(stmt(ex("NVDA", "2025-07-14, 10:00:00", 1, 100.0)), source="csv")
     assert g1 == 1 and read_int_setting(LEDGER_GENERATION_KEY) == 1
+
+
+def test_generation_bumps_on_a_backfill_with_no_new_rows(db) -> None:
+    # Review round 1 finding 3: a commission backfill on an existing row changes what the
+    # Sheets mirror shows, so it must bump the generation even though nothing was inserted.
+    from src.ledger.ingest import ingest
+    from src.ledger.state import LEDGER_GENERATION_KEY, read_int_setting
+
+    ingest(
+        stmt(ex("NVDA", "2025-07-14, 10:00:00", 1, 100.0, exec_id="e9", comm=0.0)), source="flex"
+    )
+    g1 = read_int_setting(LEDGER_GENERATION_KEY)
+    ingest(
+        stmt(ex("NVDA", "2025-07-14, 10:00:00", 1, 100.0, exec_id="e9", comm=-1.05)), source="flex"
+    )
+    assert read_int_setting(LEDGER_GENERATION_KEY) == g1 + 1
 
 
 def test_live_noop_ingest_leaves_no_run_row(db) -> None:

@@ -182,22 +182,36 @@ def _best_group(
 
 
 def supersede_twins(s: Session, affected: set[tuple[str, date]]) -> int:
-    """Run the R2 twin pass over each affected (contract ident, ET date). Returns rows superseded."""
+    """Run the R2 twin pass over each affected (contract ident, ET date). Returns rows superseded.
+
+    Exec rows are never themselves marked superseded, so an exec group that already consumed an
+    order row in an earlier ingest call reappears, unmarked, on every later call — the query below
+    only ever sees the *order* side's history. Without seeding ``used`` from that history, a
+    group already spent on one order row would look free again and could wrongly re-match a
+    second, still-unsuperseded order row with the same qty/price (found in review round 1).
+    """
     superseded = 0
     for ident, day in sorted(affected):
-        rows = list(
+        all_rows = list(
             s.scalars(
                 select(BrokerExecutionRow)
                 .where(
                     BrokerExecutionRow.contract_ident == ident,
                     BrokerExecutionRow.trade_date == day,
-                    BrokerExecutionRow.superseded_by.is_(None),
                 )
                 .order_by(BrokerExecutionRow.id)
             )
         )
+        already_consumed = {
+            r.superseded_by
+            for r in all_rows
+            if r.source_kind == "order" and r.superseded_by is not None
+        }
+        rows = [r for r in all_rows if r.superseded_by is None]
         groups = _exec_groups([r for r in rows if r.source_kind == "exec"])
-        used: set[int] = set()
+        used: set[int] = {
+            idx for idx, group in enumerate(groups) if min(r.id for r in group) in already_consumed
+        }
         survivors: list[BrokerExecutionRow] = []
         for order in (r for r in rows if r.source_kind == "order"):
             idx = _best_group(order, groups, used)
@@ -329,7 +343,9 @@ def ingest(
     errors = statement.errors[:_MAX_STORED_ERRORS]
     with session_scope() as s:
         refusal = "parse_errors" if statement.fatal else _account_refusal(s, statement, source)
-        if refusal == "no_ledger_account":
+        if refusal == "no_ledger_account" or (source == "live" and refusal == "account_mismatch"):
+            # Review Focus 3 / F20: a paper (or otherwise foreign-account) live fill must leave
+            # no trace at all — no run row, no execution row — same as the no-account-yet case.
             return LedgerImportResult(run_id=None, status="skipped", reason=refusal)
         run = LedgerImportRunRow(
             source=source,
@@ -387,7 +403,10 @@ def ingest(
 
         run.status, run.counts, run.finished_at = "ok", dict(counts), _now()
         run.errors = [e.model_dump() for e in errors]
-        if inserted_or_superseded:
+        if touched:
+            # Broader than "inserted or superseded" on purpose (review round 1): a commission/
+            # perm_id/ib_order_id backfill or a book retag changes what the Sheets mirror and
+            # readers see even with zero new rows, so it must bump the generation too.
             bump_generation(s)
         log.info("ledger ingest (%s %s): %s", source, filename or "", dict(counts))
         return LedgerImportResult(run_id=run.id, status="ok", counts=dict(counts), errors=errors)
