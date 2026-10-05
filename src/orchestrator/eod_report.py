@@ -537,6 +537,17 @@ async def run() -> None:
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)
 
+    # 7b. Trade ledger: pull recent executions from the IBKR Flex Web Service (spec R6).
+    #     Reporting only — a Flex failure never fails the EOD report. Runs after the Telegram
+    #     send (not before), so a slow Flex poll (up to 10 min) never delays the operator's
+    #     report (controller ruling, Task 10 F9a).
+    try:
+        from src.ledger.flex import run_flex_pull
+
+        await asyncio.to_thread(run_flex_pull)
+    except Exception:
+        logger.exception("EOD: trade-ledger Flex pull failed — continuing")
+
     # 8. Prune the write-only audit table so SQLite stays bounded. Forensics-only — no
     # production code reads it back, so a bounded window costs nothing operationally.
     # Also prune the intraday portfolio snapshots to the configured retention (P3-P4 M1)

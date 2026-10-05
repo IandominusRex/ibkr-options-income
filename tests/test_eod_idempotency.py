@@ -196,3 +196,19 @@ def test_a_different_date_creates_a_second_row(db, session, an_eod_summary) -> N
     _write_journal(an_eod_summary(entry_date=date(2026, 9, 9)), "a", [])
     _write_journal(an_eod_summary(entry_date=date(2026, 9, 10)), "b", [])
     assert session.query(JournalRow).count() == 2
+
+
+def test_eod_step_7b_calls_run_flex_pull(db, eod_env) -> None:
+    """The EOD step (7b) pulls the trade ledger's Flex statement (Task 10, F9b)."""
+    with patch("src.ledger.flex.run_flex_pull") as flex_pull:
+        await_eod_run(eod_env)
+
+    flex_pull.assert_called_once_with()
+
+
+def test_eod_swallows_a_flex_pull_failure(db, eod_env, caplog) -> None:
+    """A broken Flex pull is logged and never fails (or truncates) the EOD report."""
+    with patch("src.ledger.flex.run_flex_pull", side_effect=RuntimeError("boom")):
+        await_eod_run(eod_env)  # must not raise
+
+    assert "trade-ledger Flex pull failed" in caplog.text

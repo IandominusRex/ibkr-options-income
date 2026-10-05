@@ -881,3 +881,23 @@ def seed_wheel(seed_leg):
         seed_leg(candidate_id="w3", sold=(1, 1.0, 1.0), symbol="AAPL", expiry_in_days=-1)
 
     return _seed
+
+
+@pytest.fixture(autouse=True)
+def _blank_flex_secrets(monkeypatch):
+    """Keep the test session network-isolated from the IBKR Flex Web Service (Task 10, F9b).
+
+    A developer's real .env may carry a live IBKR_FLEX_TOKEN/IBKR_FLEX_QUERY_ID. get_config()
+    is a process-wide @lru_cache(maxsize=1), so without this, any test that reaches
+    run_flex_pull — directly, via the EOD orchestrator's step 7b, or via
+    scripts.ledger_flex_pull — could make a real HTTP request against IBKR using those
+    credentials. Blank both env vars and drop the cached Config so every test sees Flex as
+    unconfigured unless it explicitly monkeypatches its own token/query id back in.
+    """
+    from src.common.config import get_config
+
+    monkeypatch.setenv("IBKR_FLEX_TOKEN", "")
+    monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "")
+    get_config.cache_clear()
+    yield
+    get_config.cache_clear()
