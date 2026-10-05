@@ -836,7 +836,7 @@ class LedgerContract(BaseModel):
     underlying: str
     sec_type: Literal["OPT", "STK"]
     currency: str = "USD"
-    right: Literal["P", "C"] | None = None
+    right: Literal["C", "P"] | None = None
     strike: float | None = None
     expiry: date | None = None
     multiplier: float = 1.0
@@ -950,7 +950,7 @@ class LedgerTrade(BaseModel):
     underlying: str
     currency: str
     side: Literal["Sell", "Buy"]
-    right: Literal["P", "C"]
+    right: Literal["C", "P"]
     strike: float
     expiry: date
     multiplier: float

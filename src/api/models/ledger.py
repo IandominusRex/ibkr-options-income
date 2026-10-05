@@ -14,7 +14,6 @@ from src.common.schemas import (
     LedgerTicker,
     LedgerTickerDetail,
     LedgerTrade,
-    OptionRight,
 )
 from src.reporting.trade_ledger import TradeSort
 
@@ -33,14 +32,15 @@ class LedgerTickerResponse(Envelope):
 
 class LedgerTradesFilters(BaseModel):
     symbol: str | None = None
-    # `OptionRight` (a real StrEnum, rendered as a named $ref component), not a bare
-    # `Literal["P", "C"]`: pydantic's JSON-schema generator shares a process-global cache for
-    # inline Literal schemas keyed by VALUE SET, order-insensitive — whichever equally-valued
-    # Literal gets built first (by any model, anywhere in the app) silently wins the rendered
-    # member order for every other one, including pre-existing, unrelated fields like
-    # `CampaignLeg.right`/`OptionLeg.right` in src/api/models/pnl.py. A real Enum sidesteps
-    # that cache entirely (its member order is fixed by the class body, not by build order).
-    right: OptionRight | None = None
+    # `Literal["C", "P"]`, matching `filter_trades`'s own signature AND the order
+    # `LedgerContract.right`/`LedgerTrade.right`/`CampaignLeg.right`/`OptionLeg.right` all
+    # already use: pydantic's JSON-schema generator shares a process-global cache for inline
+    # Literal schemas keyed by VALUE SET, order-insensitive, so the FIRST such schema built
+    # anywhere in the app silently wins the rendered member order for every other one with the
+    # same value set. A second, reversed declaration (`Literal["P", "C"]`) is what made
+    # docs/web/openapi.json nondeterministic under the full test suite until this was aligned —
+    # every "P"/"C" Literal in the app must declare this same order, or the ambiguity returns.
+    right: Literal["C", "P"] | None = None
     outcome: LedgerOutcome | None = None
     book: Literal["system", "manual"] | None = None
     tag: str | None = None

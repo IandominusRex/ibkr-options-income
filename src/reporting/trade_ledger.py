@@ -1018,7 +1018,7 @@ def filter_trades(
     trades: list[LedgerTrade],
     *,
     symbol: str | None = None,
-    right: Literal["P", "C"] | None = None,
+    right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
     book: Literal["system", "manual"] | None = None,
     tag: str | None = None,

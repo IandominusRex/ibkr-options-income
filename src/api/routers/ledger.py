@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, date, datetime
-from typing import Literal, cast
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
@@ -35,7 +35,7 @@ from src.api.models.ledger import (
 )
 from src.api.portfolio_source import read_portfolio
 from src.common.config import get_config
-from src.common.schemas import LedgerBook, LedgerOutcome, LedgerTrade, OptionRight
+from src.common.schemas import LedgerBook, LedgerOutcome, LedgerTrade
 from src.ledger.state import (
     LEDGER_FLEX_LAST_RUN_KEY,
     LEDGER_FLEX_LAST_STATUS_KEY,
@@ -74,16 +74,10 @@ def _now() -> datetime:
 
 
 def _filtered(db: Session, f: LedgerTradesFilters) -> list[LedgerTrade]:
-    # f.right is an `OptionRight` (see LedgerTradesFilters — a real Enum, not a bare Literal,
-    # to dodge pydantic's process-global inline-Literal schema cache; see the comment there).
-    # filter_trades' own signature (Task 6/7, not ours to change) still takes the narrower
-    # Literal["P", "C"] it was written against — OptionRight's values ARE exactly "P"/"C", so
-    # this cast is just bridging two correct, differently-shaped types, not a real unsafe cast.
-    right = cast(Literal["P", "C"], f.right.value) if f.right is not None else None
     return filter_trades(
         _book(db).trades,
         symbol=f.symbol,
-        right=right,
+        right=f.right,
         outcome=f.outcome,
         book=f.book,
         tag=f.tag,
@@ -95,7 +89,7 @@ def _filtered(db: Session, f: LedgerTradesFilters) -> list[LedgerTrade]:
 
 def _filters(
     symbol: str | None,
-    right: OptionRight | None,
+    right: Literal["C", "P"] | None,
     outcome: LedgerOutcome | None,
     book: Literal["system", "manual"] | None,
     tag: str | None,
@@ -144,7 +138,7 @@ def get_trades(
     db: TradingDb,
     _user: OwnerUser,
     symbol: str | None = None,
-    right: OptionRight | None = None,
+    right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
     book: Literal["system", "manual"] | None = None,
     tag: str | None = None,
@@ -167,7 +161,7 @@ def get_trades_csv(
     db: TradingDb,
     _user: OwnerUser,
     symbol: str | None = None,
-    right: OptionRight | None = None,
+    right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
     book: Literal["system", "manual"] | None = None,
     tag: str | None = None,

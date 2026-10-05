@@ -42,6 +42,11 @@ def test_trade_filters(seeded) -> None:
     amzn = seeded.get("/ledger/trades?symbol=AMZN", headers=OWNER).json()
     assert amzn["n"] == 3 and amzn["filters"]["symbol"] == "AMZN"
     assert seeded.get("/ledger/trades?outcome=Expired", headers=OWNER).json()["n"] == 1
+    # AMZN 235C, OPEN 3C, OPEN1 5C.
+    calls = seeded.get("/ledger/trades?right=C", headers=OWNER).json()
+    assert calls["n"] == 3 and all(t["right"] == "C" for t in calls["trades"])
+    assert seeded.get("/ledger/trades?right=X", headers=OWNER).status_code == 422
+    assert seeded.get("/ledger/trades?outcome=bogus", headers=OWNER).status_code == 422
     assert seeded.get("/ledger/trades?sort=bogus", headers=OWNER).status_code == 422
 
 
