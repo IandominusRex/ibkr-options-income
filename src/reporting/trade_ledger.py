@@ -12,7 +12,7 @@ import hashlib
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from typing import get_args
+from typing import Literal, get_args
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -885,3 +885,162 @@ def ticker_detail(book: LedgerBook, symbol: str) -> LedgerTickerDetail | None:
         dividends=[c for c in book.cash if (c.underlying or "").upper() == sym],
         basis_walk=basis_walk(trades, lots),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Sheet-format rows (CSV export + Google Sheet mirror) and filters (spec §6.1, §7)
+# --------------------------------------------------------------------------- #
+SHEET_HEADER: list[str] = [
+    "Sell/Buy",
+    "Put/Call",
+    "Order Date",
+    "Expiration Date",
+    "Ticker",
+    "Lots",
+    "Strike Price",
+    "Premium",
+    "Outcome",
+    "Capital",
+    "DTE",
+    "% Profit",
+    "Notes",
+    "Close Date",
+    "Net P&L",
+    "Book",
+    "Tags",
+    "Commission",
+]
+TICKER_HEADER: list[str] = [
+    "Ticker",
+    "Currency",
+    "Total realized",
+    "Option net",
+    "Stock realized",
+    "Dividends",
+    "Unrealized",
+    "Trades",
+    "Open",
+    "Win rate",
+    "Shares",
+    "Broker avg cost",
+    "Wheel-adjusted basis",
+    "Annualised return %",
+]
+# F10: the sort vocabulary is defined once, as `TradeSort`, and derived into `TRADE_SORTS` so the
+# two can never drift apart. Task 9's API imports `TradeSort` rather than re-listing the strings.
+TradeSort = Literal[
+    "order_date",
+    "-order_date",
+    "expiry",
+    "-expiry",
+    "pct_profit",
+    "-pct_profit",
+    "net_pnl",
+    "-net_pnl",
+    "underlying",
+    "-underlying",
+]
+TRADE_SORTS: tuple[str, ...] = get_args(TradeSort)
+
+
+def _num(v: float) -> float | int:
+    return int(v) if float(v).is_integer() else round(v, 4)
+
+
+def _blank(v: float | None, digits: int = 2) -> object:
+    return "" if v is None else round(v, digits)
+
+
+def sheet_row(t: LedgerTrade) -> list[object]:
+    commission = t.open_commission + sum(c.commission for c in t.closes)
+    return [
+        t.side,
+        "Put" if t.right == "P" else "Call",
+        t.order_date.isoformat(),
+        t.expiry.isoformat(),
+        t.underlying,
+        _num(t.lots),
+        _num(t.strike),
+        round(t.premium, 2),
+        t.outcome,
+        _blank(t.stock_gain),
+        t.dte,
+        "" if t.pct_profit is None else f"{t.pct_profit:.2f}%",
+        t.notes,
+        t.close_date.isoformat() if t.close_date else "",
+        _blank(t.net_pnl),
+        t.book,
+        ", ".join(t.tags),
+        round(commission, 2),
+    ]
+
+
+def ticker_row(t: LedgerTicker) -> list[object]:
+    return [
+        t.symbol,
+        t.currency,
+        round(t.total_realized, 2),
+        round(t.option_net_pnl, 2),
+        round(t.stock_realized, 2),
+        round(t.dividends_net, 2),
+        _blank(t.unrealized),
+        t.n_trades,
+        t.n_open,
+        "" if t.win_rate is None else f"{t.win_rate * 100:.0f}%",
+        _num(t.shares_held),
+        _blank(t.broker_avg_cost, 4),
+        _blank(t.wheel_adjusted_basis, 4),
+        "" if t.annualised_return_pct is None else f"{t.annualised_return_pct:.2f}%",
+    ]
+
+
+def summary_rows(s: LedgerSummary) -> list[list[object]]:
+    def money(v: float | None) -> object:
+        return "n/a" if v is None else round(v, 2)
+
+    return [
+        ["Metric", "Value (USD)"],
+        ["Total Profit", money(s.total_realized_usd)],
+        ["Contributed capital", money(s.contributed_usd)],
+        ["Capital utilised", money(s.capital_utilised_usd)],
+        ["Available capital", money(s.available_usd)],
+        ["Unrealized", money(s.unrealized_usd)],
+        ["Win rate", "n/a" if s.win_rate is None else f"{s.win_rate * 100:.0f}%"],
+        ["Premium this month", money(s.premium_this_month_usd)],
+        ["Trades", s.n_trades],
+        ["Open trades", s.n_open],
+        ["FX incomplete", "yes" if s.fx_incomplete else "no"],
+        ["Orphan closes", s.orphan_closes],
+    ]
+
+
+def filter_trades(
+    trades: list[LedgerTrade],
+    *,
+    symbol: str | None = None,
+    right: Literal["P", "C"] | None = None,
+    outcome: LedgerOutcome | None = None,
+    book: Literal["system", "manual"] | None = None,
+    tag: str | None = None,
+    since: date | None = None,
+    until: date | None = None,
+    sort: TradeSort = "-order_date",
+) -> list[LedgerTrade]:
+    out = [
+        t
+        for t in trades
+        if (symbol is None or t.underlying.upper() == symbol.upper())
+        and (right is None or t.right == right)
+        and (outcome is None or t.outcome == outcome)
+        and (book is None or t.book == book)
+        and (tag is None or tag in t.tags)
+        and (since is None or t.order_date >= since)
+        and (until is None or t.order_date <= until)
+    ]
+    field_name = sort.lstrip("-")
+    if sort not in TRADE_SORTS:
+        raise ValueError(f"unknown sort {sort!r}")
+    present = [t for t in out if getattr(t, field_name) is not None]
+    absent = [t for t in out if getattr(t, field_name) is None]
+    present.sort(key=lambda t: (getattr(t, field_name), t.open_time), reverse=sort.startswith("-"))
+    return present + absent
