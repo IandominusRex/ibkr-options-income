@@ -47,11 +47,13 @@ class NavResponse(Envelope):
 # "pnl" flipped to available=True in P4 M5 (the P&L surfaces ship).
 # "explain" added alongside the P3-P4 M6 System tab: a static, read-nothing walkthrough of
 # how the pipeline works, not a data surface, so it carries no fallback/degraded story.
+# "ledger" added with the trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md).
 _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("research", "Research", True, None),
     ("options", "Options", True, None),
     ("portfolio", "Portfolio", True, None),
     ("pnl", "P&L", True, None),
+    ("ledger", "Ledger", True, None),
     ("universe", "Universe", True, None),
     ("explain", "System Explanation", True, None),
 ]

@@ -52,6 +52,7 @@ def test_nav_lists_every_section_with_availability(client) -> None:
         "options",
         "portfolio",
         "pnl",
+        "ledger",
         "universe",
         "explain",
     }
@@ -65,6 +66,9 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     # P4 M5 ships the P&L surfaces — every section is now available, none carries a note.
     assert sections["pnl"]["available"] is True
     assert sections["pnl"]["note"] is None
+    # The trade ledger ships its read surfaces from day one too.
+    assert sections["ledger"]["available"] is True
+    assert sections["ledger"]["note"] is None
     # System Explanation is a static walkthrough, not a data surface — ships available
     # from day one, same as every other section.
     assert sections["explain"]["available"] is True

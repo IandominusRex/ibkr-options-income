@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from src.api.routers import (
     commands,
+    ledger,
     meta,
     options,
     pnl,
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(portfolio.router, prefix="/portfolio")
     app.include_router(pnl.router, prefix="/pnl")
+    app.include_router(ledger.router)
     app.include_router(universe.router)
     app.include_router(watchlist.router)
     app.include_router(commands.router)
