@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 
-> **Progress (2026-10-06):** Tasks 1–11 complete and reviewed on branch `feat/trade-ledger` (commits `8e4e2c7`..`d2f0082`). Task 12 (Google Sheets mirror) was in progress when execution was paused; Tasks 12–17 remain. Rulings that amended this plan during execution (account-gated snapshot, price-free `order_key`, Flex token redaction, codes backfill on twin supersede, etc.) are listed in the execution summary, not here.
+> **Progress (2026-10-06):** Tasks 1–12 complete and reviewed on branch `feat/trade-ledger` (commits `8e4e2c7`..`bf9d644`); docs (ARCHITECTURE, SETUP, STATUS, README, CLAUDE.md, docs/web/commands.md, spec R8 note) updated for the built backend in `aec5def`. Execution paused here. Remaining: Tasks 13–16 (web `/ledger` pages) and Task 17 (fence tests, final doc pass, full gate, real-file smoke). Rulings that amended this plan during execution are listed in the execution summary, not here.
 **Goal:** A broker-truth ledger of every execution ever made on the IBKR account. It is built from Activity Statement CSV uploads, a nightly Flex pull and live executions, rolled up into trades, tickers and a portfolio. It is viewable and editable on the web dashboard at `/ledger` and mirrored to the operator's Google Sheet.
 
 **Architecture:**
@@ -5039,7 +5039,7 @@ git commit -m "feat(ledger): live executions via commission-report hook + reqExe
 
 ---
 
-### Task 12: Google Sheets mirror
+### Task 12: Google Sheets mirror ✅
 
 **Files:**
 - Modify: `pyproject.toml` (dependencies), `src/notify/approval_service.py` (mirror task)
@@ -5057,11 +5057,11 @@ git commit -m "feat(ledger): live executions via commission-report hook + reqExe
   - `sync_if_due(*, writer_factory=default_writer) -> bool`
   - `async sheets_mirror_loop(*, poll_seconds=15.0) -> None`
 
-- [ ] **Step 1: Add dependencies**
+- [x] **Step 1: Add dependencies**
 
 In `pyproject.toml`'s `dependencies` list, add `"gspread>=6.1",` and `"google-auth>=2.30",`. Then run `pip install -e .` (or `pip install "gspread>=6.1" "google-auth>=2.30"` in the venv).
 
-- [ ] **Step 2: Write the failing test** — `tests/test_ledger_sheets_mirror.py`
+- [x] **Step 2: Write the failing test** — `tests/test_ledger_sheets_mirror.py`
 
 ```python
 """Google Sheet mirror: three (auto) tabs, full rewrite, generation-driven (spec §7)."""
@@ -5139,12 +5139,12 @@ def test_approval_service_wires_the_mirror() -> None:
     assert "sheets_mirror_loop()" in Path("src/notify/approval_service.py").read_text()
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_sheets_mirror.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger.sheets_mirror'`.
 
-- [ ] **Step 4: Write `src/ledger/sheets_mirror.py`**
+- [x] **Step 4: Write `src/ledger/sheets_mirror.py`**
 
 ```python
 """One-way mirror of the ledger into the operator's Google Sheet (spec §7).
@@ -5314,7 +5314,7 @@ async def sheets_mirror_loop(*, poll_seconds: float = 15.0) -> None:
         await asyncio.to_thread(sync_if_due)
 ```
 
-- [ ] **Step 5: Wire the mirror into `src/notify/approval_service.py`**
+- [x] **Step 5: Wire the mirror into `src/notify/approval_service.py`**
 
 Directly after `ledger_sweep_task = asyncio.create_task(live_sweep_loop(ib))` (Task 11), add:
 
@@ -5332,12 +5332,12 @@ In the `finally:` block, after the `ledger_sweep_task` cancellation, add:
                 await ledger_mirror_task
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_sheets_mirror.py -v`, then `python -m pytest -q && ruff check . && mypy src`.
 Expected: all PASS. If mypy complains that `gspread` lacks stubs, add `[[tool.mypy.overrides]] module = ["gspread", "gspread.*"] ignore_missing_imports = true` to `pyproject.toml`, following any existing override style there.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ledger/sheets_mirror.py tests/test_ledger_sheets_mirror.py
