@@ -712,6 +712,25 @@ async def _refresh(*, command: Any, ib: IB | None, **_: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _write_stripped_payload(command_id: int, filename: str, size: int) -> None:
+    """The actual DB write behind ``_strip_upload``, split out as its own narrow seam.
+
+    This is the one thing ``_strip_upload`` does, and the one thing a test needs to fail
+    in isolation to exercise F21 — patching this name touches nothing else in the module
+    (unlike patching ``session_scope`` itself, which ``_applied``/``_fail``/``drain_once``
+    also use, or patching a lazily-imported name from ``src.storage.db``, which would also
+    poison any other module's *first* lazy import of it for the rest of the process —
+    e.g. ``src.ledger.ingest``'s own module-level ``session_scope`` binding, which is
+    captured once at its first import and never re-read).
+    """
+    from src.storage.models import AppCommandRow
+
+    with session_scope() as s:
+        row = s.get(AppCommandRow, command_id)
+        if row is not None:
+            row.payload = {"filename": filename, "content_bytes": size}
+
+
 def _strip_upload(command_id: int, filename: str, size: int) -> None:
     """Replace the uploaded content with its byte count once the import has been handled.
 
@@ -725,13 +744,7 @@ def _strip_upload(command_id: int, filename: str, size: int) -> None:
     whatever happened to the import itself.
     """
     try:
-        from src.storage.db import session_scope
-        from src.storage.models import AppCommandRow
-
-        with session_scope() as s:
-            row = s.get(AppCommandRow, command_id)
-            if row is not None:
-                row.payload = {"filename": filename, "content_bytes": size}
+        _write_stripped_payload(command_id, filename, size)
     except Exception:
         log.exception("ledger_import: failed to strip uploaded content from command %d", command_id)
 

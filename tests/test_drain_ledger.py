@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,22 +25,16 @@ def run_command(monkeypatch, tmp_path):
 
     from src.notify.command_drain import drain_once
     from src.storage.app_commands import enqueue_command
-    from src.storage.db import session_scope
     from src.storage.models import AppCommandRow
 
-    # Bound once, here, at fixture-setup time — before a test body (e.g. the F21 tests
-    # below) monkeypatches `src.storage.db.session_scope` itself. `_strip_upload`'s own
-    # deferred `from src.storage.db import session_scope` re-resolves the module attribute
-    # on every call, which is exactly the hook those tests need; this closure's calls must
-    # not share that hook, or every enqueue/read-back in this fixture would break too.
     def run(kind: str, payload: dict):
-        with session_scope() as s:
+        with dbmod.session_scope() as s:
             row, _ = enqueue_command(
                 s, kind=kind, payload=payload, requested_by="owner", dedupe_key=None
             )
             cid = row.id
         asyncio.run(drain_once(None, MagicMock(), "chat"))
-        with session_scope() as s:
+        with dbmod.session_scope() as s:
             r = s.get(AppCommandRow, cid)
             return r.status, r.result, r.payload
 
@@ -153,35 +146,53 @@ def test_ledger_import_offloads_parse_and_ingest_to_a_thread(run_command, monkey
 # ---------------------------------------------------------------------------
 
 
-def test_strip_upload_swallows_its_own_failure_and_logs(monkeypatch, caplog) -> None:
+def test_strip_upload_swallows_its_own_failure_and_logs(monkeypatch) -> None:
     """Unit-level: force the internal DB write _strip_upload performs to fail, and assert
     the function itself never raises — it is the thing standing in `_ledger_import`'s
-    `finally`, so an unswallowed exception here would replace whatever was in flight."""
+    `finally`, so an unswallowed exception here would replace whatever was in flight.
+
+    Patches `_write_stripped_payload` — the narrow seam `_strip_upload` delegates its one
+    DB write to — rather than `session_scope` itself. Patching `session_scope` globally
+    (on `src.storage.db` or on `command_drain`'s own module-level name) would also poison
+    any other module's first *lazy* import of it for the rest of the process (e.g.
+    `src.ledger.ingest`'s own module-level binding, captured once at its first import and
+    never re-read), and `command_drain`'s own name is shared with `_applied`/`_fail`/
+    `drain_once` besides. `_write_stripped_payload` is called from nowhere else.
+
+    Asserts the log call directly on `command_drain`'s own `log` object rather than via
+    `caplog`: this repo's `src.common.logging.setup_logging()` does `root.handlers.clear()`
+    the first time anything calls `get_logger()`, which — depending on which other module
+    happens to trigger that first call, and when — can race with pytest's caplog handler
+    and silently drop the record. Patching `log.exception` itself sidesteps the stdlib
+    logging plumbing (and that race) entirely.
+    """
+    import src.notify.command_drain as drain
     from src.notify.command_drain import _strip_upload
 
-    def boom():
+    def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr("src.storage.db.session_scope", boom)
+    monkeypatch.setattr(drain, "_write_stripped_payload", boom)
 
-    with caplog.at_level(logging.ERROR):
-        _strip_upload(123, "stmt.csv", 999)  # must not raise
+    logged: list[tuple[object, ...]] = []
+    monkeypatch.setattr(drain.log, "exception", lambda *a, **k: logged.append(a))
 
-    assert any("strip" in r.message.lower() for r in caplog.records)
+    _strip_upload(123, "stmt.csv", 999)  # must not raise
+
+    assert logged, "a failure inside _strip_upload must be logged, not silently dropped"
+    assert "strip" in str(logged[0]).lower()
 
 
 def test_a_strip_failure_does_not_mask_a_successful_import(run_command, monkeypatch) -> None:
     """End-to-end: even when the finally-block's own DB write fails, the import's real
     result (status=applied, counts) must still land on the command row — not
-    handler_error."""
+    handler_error. See `test_strip_upload_swallows_its_own_failure_and_logs` for why the
+    failure is injected via `_write_stripped_payload` and not `session_scope` itself."""
 
-    def boom():
+    def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("disk full")
 
-    # `_strip_upload` does its own deferred `from src.storage.db import session_scope`, so
-    # patching the db module's attribute (not command_drain's own module-level name, which
-    # `_applied`/`_fail`/`drain_once` also use) affects only that one internal lookup.
-    monkeypatch.setattr("src.storage.db.session_scope", boom)
+    monkeypatch.setattr("src.notify.command_drain._write_stripped_payload", boom)
 
     status, result, payload = run_command(
         "ledger_import", {"filename": "stmt.csv", "content": FIXTURE.read_text()}
@@ -198,10 +209,10 @@ def test_a_strip_failure_does_not_mask_a_failed_import(run_command, monkeypatch)
     """Same as above, but on the CommandFailed path: a foreign CSV still reports
     not_an_activity_statement, not handler_error, even when the finally's own write fails."""
 
-    def boom():
+    def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr("src.storage.db.session_scope", boom)
+    monkeypatch.setattr("src.notify.command_drain._write_stripped_payload", boom)
 
     status, result, _ = run_command("ledger_import", {"filename": "x.csv", "content": "a,b\n1,2\n"})
 
