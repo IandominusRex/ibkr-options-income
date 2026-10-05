@@ -187,6 +187,7 @@ def test_build_book_ignores_a_snapshot_from_a_different_account(db) -> None:
     be treated as no snapshot at all (unrealized None), never borrowed across accounts."""
     from src.common.schemas import AccountSnapshot, LedgerContract, ParsedExecution, ParsedStatement
     from src.ledger.ingest import ingest
+    from src.ledger.state import ledger_account
     from src.reporting.trade_ledger import build_book
 
     stmt = ParsedStatement(
@@ -237,7 +238,73 @@ def test_build_book_ignores_a_snapshot_from_a_different_account(db) -> None:
         ],
     )
     with db() as s:
+        # Not vacuous: the ingest above really did lock the ledger account to the statement's
+        # account, so the gate below is comparing against a real value, not None == None.
+        assert ledger_account(s) == "U0000001"
         book = build_book(s, today=date(2025, 7, 20), snapshot=snap)
     nvda = next(t for t in book.tickers if t.symbol == "NVDA")
     assert nvda.unrealized is None
     assert book.summary.unrealized_usd is None
+
+
+def test_build_book_uses_a_snapshot_from_the_matching_account(db) -> None:
+    """F5 happy path: a snapshot whose account matches the locked ledger account must still
+    reach unrealized/marks — the gate only drops a snapshot from a *different* account."""
+    from src.common.schemas import AccountSnapshot, LedgerContract, ParsedExecution, ParsedStatement
+    from src.ledger.ingest import ingest
+    from src.ledger.state import ledger_account
+    from src.reporting.trade_ledger import build_book
+
+    stmt = ParsedStatement(
+        account="U0000001",
+        executions=[
+            ParsedExecution(
+                contract=LedgerContract(
+                    underlying="NVDA",
+                    sec_type="OPT",
+                    right="P",
+                    strike=170.0,
+                    expiry=date(2025, 7, 25),
+                    multiplier=100.0,
+                ),
+                trade_time=datetime(2025, 7, 18, 14, 0, tzinfo=UTC),
+                quantity=-1,
+                price=1.9,
+                proceeds=190.0,
+                commission=-1.0,
+                codes="O",
+                source_kind="order",
+            )
+        ],
+    )
+    ingest(stmt, source="csv", filename=None)
+    snap = PortfolioSnapshot(
+        captured_at=datetime(2025, 7, 20, 15, tzinfo=UTC),
+        source="monitor",
+        account=AccountSnapshot(
+            account="U0000001",
+            net_liquidation=0.0,
+            total_cash=0.0,
+            buying_power=0.0,
+            maintenance_margin=0.0,
+            excess_liquidity=0.0,
+        ),
+        positions=[
+            PositionSnapshot.model_validate(
+                {
+                    "symbol": "NVDA 250725P00170000",
+                    "sec_type": "OPT",
+                    "underlying": "NVDA",
+                    "position": -1,
+                    "avg_cost": 190.0,
+                    "unrealized_pnl": 55.0,
+                }
+            )
+        ],
+    )
+    with db() as s:
+        assert ledger_account(s) == "U0000001"
+        book = build_book(s, today=date(2025, 7, 20), snapshot=snap)
+    nvda = next(t for t in book.tickers if t.symbol == "NVDA")
+    assert nvda.unrealized == 55.0
+    assert book.summary.unrealized_usd == 55.0
