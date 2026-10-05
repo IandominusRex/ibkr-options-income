@@ -276,6 +276,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **P&L calendar** (`/calendar` command) — per-day realized cashflow view for the last 30 days, derived from `FillRow` records (SELL = credit, BUY = debit), with fill count and running total.
 - **Richer order notification cards** (`format_order_notification`) — `action` parameter distinguishes BUY (close) vs SELL (open); fills display "Opened" / "Closed" wording with emoji; placed orders show "Close Order Placed" header for buy-to-close entries.
 - **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
+- **Trade ledger backend** (`src/ledger/`, `src/reporting/trade_ledger.py`, `src/api/routers/ledger.py`) — a broker-truth ledger of every IBKR execution (CSV/Flex/live), rolled up into trades → tickers → a USD portfolio summary, with a read-only API and a one-way Google Sheets mirror. The web dashboard pages are **not** built yet — see "Built (2026-10-06 — trade ledger backend)" below for the full detail, the deferred-for-v1 list, and known limitations.
 
 ---
 
@@ -329,6 +330,8 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − net_premium/100` per share for share-acquiring (put) assignments. **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads it via `campaigns.adjusted_cost_basis_for(symbol)` and uses it — falling back to IBKR's raw `avg_cost` when no open assigned campaign exists — for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
 | **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
+| **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Not built — Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md.** The backend (Tasks 1-12: ingestion, read-only API, Sheets mirror) is built and committed on `feat/trade-ledger`; execution is paused before the web pages and before Task 17 (the dedicated fence test + final docs sweep, this entry included). Use the CLI (`scripts.ledger_import`, `scripts.ledger_flex_pull`) and the read-only API (`GET /ledger/*`) in the meantime — see `SETUP.md` §15. |
+| **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` and its two companions) | **Not built — Task 17 Step 1.** `src/ledger/` is not currently imported by `engine/`/`execution/`/`strategies/` (verified by hand), and `test_reporting_never_writes_anything` already covers `trade_ledger.py`'s no-writes rule since it globs all of `src/reporting/` — but nothing yet asserts this automatically for `src/ledger/` the way the rest of the fence is asserted elsewhere. See `CLAUDE.md`'s "`src/ledger/` fence" paragraph. |
 
 ---
 
@@ -360,6 +363,133 @@ write-scoped engine guarded by a runtime `before_flush` listener (`tests/test_we
 outside `src/api/commands.py` imports `get_command_engine`); the trading system never imports `src.api` or
 `src.research` (one-way import fence, `tests/test_web_fence.py`); the research and trading
 databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
+
+---
+
+## Built (2026-10-06 — trade ledger backend: CSV/Flex/live ingestion, read-only API, Google Sheets mirror)
+
+**docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-12 — built and committed on
+`feat/trade-ledger`. Execution paused here: Tasks 13-16 (the web dashboard) and Task 17 (the
+dedicated fence test + final docs sweep) are not done.** A broker-truth ledger of *every*
+execution the IBKR account has ever recorded — not just what this system itself placed — rolled
+up into trades → tickers → a whole-account portfolio summary. Complements, and is deliberately
+separate from, `src/reporting/pnl.py`/`GET /pnl/*` (the *system-performance* view, this system's
+own orders only); the ledger is the *whole-account* view, covering manual TWS trades and
+pre-system history too.
+
+**Built:**
+- **Ingestion** (`src/ledger/`) — `activity_csv.py` parses the IBKR Activity Statement CSV
+  (order-level rows, multi-section, zero parse errors against the operator's real 2025-04 →
+  2026-04 history); `flex.py` is the Flex Web Service client + XML parser (SendRequest →
+  GetStatement polling with backoff on IBKR's `1018`/`1019` "not ready" codes, every error
+  redacted before it can reach a log line with the token in it); `live.py` converts `ib_async`
+  `Fill`/`Execution`/`CommissionReport` objects to the ledger's own schema — the one place that
+  conversion happens. `ingest.py` is the single writer for all three feeds: a dedupe key per
+  execution, an order/exec **twin pass** (`supersede_twins`) that matches an order-level
+  CSV/Flex row against the matching exec-level Flex/live rows reporting the same fill and marks
+  the lower-priority one `superseded_by` the survivor (codes copied across so an order-level
+  row's `O`/`C`/`A`/`Ep` tokens aren't lost when a codeless live fill supersedes it), and
+  `book="system"` tagging for rows whose `ib_order_id` matches a known trading-system order.
+- **The account lock (R8, amended).** The first CSV/Flex import with no `ledger.account`
+  configured locks the ledger to that statement's account; a later import for a different
+  account fails `account_mismatch`; a live fill for an unlocked or mismatched account is
+  silently skipped (no trace at all), so a paper session run alongside real-account history can
+  never pollute or claim the ledger. **The spec's original R8 named `IBKR_ACCOUNT` as the lock
+  source; the plan's own `ledger.account`-or-first-import rule was adopted instead, because
+  `IBKR_ACCOUNT` is the paper account in this v1 deployment** — using it as the lock would have
+  locked the ledger to paper on day one. The spec is amended with a one-line note to this effect.
+- **Unrealized P&L is account-matched, not assumed.** `build_book` only prices open ledger
+  trades off the live position snapshot when that snapshot's own account equals the ledger's
+  locked account — since the only snapshot source in this v1 deployment is the paper account,
+  unrealized P&L and capital-utilised currently read `None` ("n/a") for the (real-account)
+  ledger, never a paper-account number silently mislabelled as real. This resolves itself
+  automatically once a real-account snapshot source exists (live cutover, or a real-account
+  `refresh`) — no code change needed.
+- **Live sweep is RTH-gated; the commission hook is not.** `attach_live_hook` records a fill the
+  moment `commissionReportEvent` fires, at any hour. `live_sweep_loop`'s periodic
+  `reqExecutions` catch-up sweep (reusing the exec process's own bounded
+  `reconciliation._req_executions_bounded`) only runs during `is_rth()` — outside RTH it simply
+  doesn't fire, relying on the event hook and the next Flex pull to have caught everything.
+  Paper-account (or any non-tracked-account) fills are dropped before `ingest` is ever called —
+  no run row, no execution row, nothing to clean up later.
+- **The Flex pull runs inside the EOD report, not on its own nightly schedule (R6).**
+  `src/orchestrator/eod_report.py` step 7b calls `run_flex_pull` after the Telegram send (not
+  before), so a slow Flex poll (up to `ledger.flex_poll_timeout_seconds`, default 600s) never
+  delays the operator's report; its failure is caught and logged, never failing the EOD run.
+  `scripts/ledger_flex_pull.py` **exits 0 with a message, not an error, when Flex isn't
+  configured** (`IBKR_FLEX_TOKEN`/`IBKR_FLEX_QUERY_ID` unset) — the ledger works CSV/live-only
+  with no Flex query at all.
+- **Secrets are redacted everywhere they could leak.** The Flex token never appears in a raised
+  exception's message, traceback, or exception-chain context (`flex.py`'s `_request`/
+  `_redacted_http_summary` — a token-bearing request URL is pulled apart into a safe summary
+  *before* the real exception is re-raised, specifically because `raise ... from None` alone
+  does not stop `str(exc.__context__)` from still containing the URL). The Sheets mirror
+  redacts the configured sheet id and credentials path out of any error string before it is
+  logged or stored in `system_settings` (`sheets_mirror.py`'s `_scrub_secrets`) — both are `.env`
+  secrets that otherwise appear verbatim inside `requests`/`gspread` exception text.
+- **`ledger.upload_max_bytes`** (default 5 MiB) is enforced on the `ledger_import` command
+  payload itself (`LedgerImportPayload._enforce_upload_limit`, read fresh from config on every
+  validation) — not just as a client-side hint.
+- **The Google Sheets mirror is generation-driven, not polled blindly.** Every ingest or
+  annotation bumps a `system_settings` generation counter (`src/ledger/state.py`); the mirror
+  loop only attempts a sync when the generation is ahead of the last-synced value, throttled to
+  at most once per `ledger.sheets_min_interval_seconds` (default 60s). It writes exactly three
+  tabs it owns — `Ledger (auto)`, `Tickers (auto)`, `Summary (auto)` — as a full rewrite each
+  time, and never reads or writes any other tab in the spreadsheet.
+- **Read-only API** (`GET /ledger/summary`, `/tickers`, `/tickers/{symbol}`, `/trades`,
+  `/trades.csv`, `/trades/{order_key}`, `/imports`) and three command kinds
+  (`ledger_import`/`ledger_annotate`/`ledger_ca_reviewed`) applied by the drain, same intent-
+  queue pattern as every other web write — see `docs/web/commands.md`.
+
+**Deferred from the spec for v1 (plan's reviewed scope cuts, F13):**
+- Delta/IV captured at trade entry (the ledger has no option-chain connection, so these would
+  need to come from the trading DB's own `candidates`/`risk_verdicts` rows at import time, not
+  the broker statement — out of scope for v1).
+- A campaign timeline view (the wheel-thread visualisation `GET /portfolio/campaigns` already
+  has, extended to broker-truth trades).
+- A roll-chain UI (visualising `rolled_from`/`rolled_to` as a connected chain rather than two
+  separate trade rows).
+- Per-line import errors surfaced in a UI (today they're in the `LedgerImportResult`/
+  `LedgerImportRunRow.errors` JSON, readable via `GET /ledger/imports`, but not rendered
+  per-line anywhere — moot until the dashboard exists).
+- Drag-and-drop CSV upload (needs the dashboard's `/ledger/import` page).
+- A timezone recorded on the import run row (`LedgerImportRunRow` has no `tz` column — every
+  timestamp in the ledger is already normalised to UTC/ET at parse time, so this is a convenience
+  field, not a correctness gap).
+- A "Net P&L" column in the Google Sheet (the sheet's `Capital`/outcome columns are spec-intended
+  to mirror the operator's original hand-built sheet exactly; a net-of-commissions column was
+  reviewed and cut from v1 scope).
+
+**Needs live verification (Task 17 Step 4 — none of this has been exercised against the real
+Flex Web Service or a live TWS session yet):**
+1. The Flex Trades section actually carries expiries, assignments, and exercises as execution-
+   level rows with `openCloseIndicator`/`notes` codes (`O`/`C`/`A`/`Ep`) rather than needing the
+   separate (unread-in-v1) Option Exercises/Assignments/Expirations section — verify with
+   `python -m scripts.ledger_flex_pull --dry-run` against a real account's recent activity and
+   confirm expiries/assignments show codes like `C;Ep`/`A;C`.
+2. Flex's `dateTime` attribute is genuinely US/Eastern wall-clock (assumed by
+   `parse_et_timestamp`) and not UTC or exchange-local for a non-US instrument.
+3. Flex's `ibOrderID` attribute equals the same `permId` the IBKR API's `Execution.permId`
+   reports for the same order — the twin pass's order/exec matching assumes these are the same
+   number space.
+4. Live manual-trade visibility (same-day, not next-EOD) genuinely depends on setting TWS's
+   Master API client ID to 14 — verify a manual TWS fill shows up in the ledger same-day with
+   the setting on, and only at the next EOD Flex pull with it off.
+
+**Known limitations:**
+- Paper-account fills are excluded once the ledger is locked to the real account (by design,
+  R8) — this bot's own paper-mode trades won't appear in the ledger until live cutover.
+- USD totals need FX rates; without a Flex backfill query (see `SETUP.md` §15 step 2) the rate
+  table is sparse and `LedgerSummary.fx_incomplete` will be `true` more often than not.
+- Corporate actions are flagged for human review (`BrokerCorporateActionRow.reviewed`) but never
+  auto-applied to cost basis.
+- Flex's `OptionEAE` (Exercises/Assignments/Expirations) section is not read in v1 — those events
+  are expected to arrive as Trades rows with `openCloseIndicator`/`notes` codes instead (see live-
+  verification item 1 above).
+- The Sheets mirror is one-way (ledger → sheet only) and carries no unrealized P&L.
+- There is no PDF statement import — `ledger_import` fails `pdf_not_supported` for a `.pdf`
+  upload; only the CSV export of an Activity Statement is supported.
+- No dashboard UI exists yet (Tasks 13-16) — use the CLI and the read-only API (`SETUP.md` §15).
 
 ---
 

@@ -83,6 +83,12 @@ supersede anything below that disagrees:
   the web proxy and `apiFetch` are JSON-only. Cap 5 MB.
 - **R8. Account guard.** A statement whose account id differs from `IBKR_ACCOUNT` (when set) is
   rejected (`account_mismatch`). Multi-account is out of scope.
+  > **Amended during implementation (controller ruling F4, Task 17):** the shipped guard locks
+  > to `ledger.account` (new config key) if set, else the first CSV/Flex import's account (R8's
+  > intent preserved, just not tied to `IBKR_ACCOUNT` specifically) — adopted because
+  > `IBKR_ACCOUNT` is the **paper** account in this v1 deployment, and locking the ledger to it
+  > would have claimed the ledger for paper on the very first import. See `CLAUDE.md`'s
+  > "`src/ledger/` fence" note and `STATUS.md`'s trade-ledger entry for the live behaviour.
 - **R9. Honest outcomes.** A short closed by a $0.01 buy-back on expiry day is `Bought back`
   (that's what IBKR records — e.g. NVDA 138P 6/27/2025), even though the old sheet called it
   `Expired`. The outcome override exists for exactly this.

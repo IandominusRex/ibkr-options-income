@@ -416,6 +416,94 @@ to the new approval.
   halt/resume notify).
 - **Milestone:** M1 of P3/P4 (built, Task 1.4).
 
+### `ledger_import` — import an IBKR Activity Statement CSV into the trade ledger
+
+- **Payload:** `{ filename: str (<= 200 chars), content: str }` — `content` is the CSV text as
+  the browser read it (the web proxy is JSON-only, so this travels as a string, not a file
+  upload). `content`'s size is enforced server-side against `ledger.upload_max_bytes` (default 5
+  MiB, config) at parse time via a `field_validator` — `422` past that, read fresh on every
+  validation so lowering the config value actually narrows what `POST /commands` accepts, not
+  just a client-side hint.
+- **Dedupe key:** `None` (may repeat). Two imports of the same statement are harmless: `ingest`
+  dedupes every row by its own key, so a replayed or duplicate import changes nothing.
+- **Applied by:** docs/superpowers/plans/2026-10-05-trade-ledger.md Tasks 1-12. The drain's
+  `_ledger_import` handler (`src/notify/command_drain.py`) is `async def` — parsing a multi-MB
+  statement and ingesting it (hashing every row, the order/exec twin-match pass) is CPU-bound
+  work, so the whole parse-and-ingest runs inside one `asyncio.to_thread` call rather than
+  blocking the event loop the command-drain cycle and every other in-flight handler share. It
+  rejects a `.pdf` upload before parsing (by filename extension or a literal `%PDF` content
+  prefix), then calls `src.ledger.activity_csv.parse_activity_csv` and
+  `src.ledger.ingest.ingest(..., source="csv")` — the same code path
+  `python -m scripts.ledger_import` uses for a CLI import (`SETUP.md` §15). **The uploaded
+  content never lingers:** a `finally` block (`_strip_upload`) overwrites the command row's
+  payload with `{"filename", "content_bytes": <size>}` once the import has been handled —
+  applied or failed — so a 5 MB statement is never retained in `app_commands`. That strip is
+  itself wrapped in its own try/except so a failure in it can never mask the real result or
+  `CommandFailed` the import itself produced.
+- **Result on success:** `{"run_id": int, "counts": {...}, "warnings": int}` — `counts` is the
+  same per-kind breakdown (`new`/`duplicate`/`superseded`/`cash_new`/…) `ingest` always returns.
+- **Live mode:** No confirmation needed — importing a statement cannot reach an order.
+- **Failure modes:** `pdf_not_supported` (the upload is a PDF, not the CSV export of an Activity
+  Statement — IBKR's PDF statements aren't parsed); `not_an_activity_statement` (`detail`: the
+  parser's message — the text isn't a recognisable IBKR Activity Statement CSV at all, e.g. a
+  foreign file); `parse_errors` (the CSV parsed, but at least one Trades-section row was
+  unreadable, which poisons the whole import rather than risk silently dropping executions);
+  `account_mismatch` (the statement's account doesn't match the account the ledger is already
+  locked to — see the account-lock note in `CLAUDE.md`/`STATUS.md`). The latter two failures
+  carry `{"run_id": int, "errors": [...]}` in `detail` — the parse errors or ingest result that
+  caused the refusal.
+- **Reachable today:** only via `POST /commands {"kind": "ledger_import", ...}` directly, or
+  `python -m scripts.ledger_import` (the CLI, same code path) — the dashboard's `/ledger/import`
+  upload page (Tasks 13-16) is not built yet.
+- **Milestone:** Trade ledger Tasks 1-12 (docs/superpowers/plans/2026-10-05-trade-ledger.md),
+  web dashboard pages not built.
+
+### `ledger_annotate` — edit an operator note/tag/outcome-override on a ledger trade
+
+- **Payload:** `{ order_key: str (exactly 16 lowercase-hex chars), notes?: str (<= 2000 chars),
+  tags?: list[str] (<= 20 items, each <= 32 chars), outcome_override?: LedgerOutcome | "" | null,
+  exclude_from_stats?: bool }` — every field but `order_key` is optional, and **only the fields
+  actually present in the request are applied** (`model_fields_set`, not truthiness): an omitted
+  `notes` leaves the existing note untouched, while an explicit `notes: ""` clears it.
+  `outcome_override: ""` is the sentinel that clears a prior override back to `None` — a real
+  outcome string never collides with it, since `""` isn't a `LedgerOutcome` value.
+- **Dedupe key:** `None` (may repeat). The handler is an upsert keyed on `order_key`'s own
+  uniqueness, same idempotency shape as `halt`/`resume`/`set_autonomy`/the universe kinds —
+  repeating an annotate just re-applies the same (or a different) set of edits, last write wins.
+- **Applied by:** docs/superpowers/plans/2026-10-05-trade-ledger.md Tasks 1-12. The drain's
+  `_ledger_annotate` handler calls `src.ledger.annotations.annotate`, the only writer of
+  `trade_annotations` — it upserts a row for `order_key` (creating one with blank defaults if
+  none exists yet) and applies only the keys the payload actually set. `order_key` is the
+  source-independent key `src/reporting/trade_ledger.py::group_orders` derives (contract + ET
+  date + sign + \|qty\| + an ordinal, deliberately excluding price), so an annotation survives
+  any later re-import of the same history.
+- **Result:** `{"order_key": str, "updated": [<sorted field names that were actually set>]}`.
+- **Live mode:** No confirmation needed — an annotation is operator metadata, never an order.
+- **Failure modes:** none beyond the generic (no `CommandFailed` path in this handler — an
+  unknown `order_key` simply creates a fresh, otherwise-blank annotation row rather than 404ing,
+  since the ledger has no independent notion of "that trade doesn't exist" at the annotation
+  layer).
+- **Reachable today:** only via `POST /commands` directly — no dashboard inline-edit UI yet
+  (Tasks 13-16).
+- **Milestone:** Trade ledger Tasks 1-12, web dashboard pages not built.
+
+### `ledger_ca_reviewed` — flag a corporate action as human-reviewed
+
+- **Payload:** `{ corporate_action_id: int }`.
+- **Dedupe key:** `None` (may repeat — re-flagging an already-reviewed action is harmless).
+- **Applied by:** docs/superpowers/plans/2026-10-05-trade-ledger.md Tasks 1-12. The drain's
+  `_ledger_ca_reviewed` handler calls `src.ledger.annotations.mark_corporate_action_reviewed`,
+  which sets `BrokerCorporateActionRow.reviewed = True` for the given id. Corporate actions are
+  **flagged for human review, never auto-applied to cost basis** — this command only records
+  that a human looked at it; it changes no financial figure.
+- **Result:** `{"corporate_action_id": int}`.
+- **Live mode:** No confirmation needed.
+- **Failure modes:** `not_found` (no `BrokerCorporateActionRow` with that id).
+- **Reachable today:** only via `POST /commands` directly — `GET /ledger/imports` lists
+  corporate actions (including `reviewed`) for reference, but no dashboard "mark reviewed"
+  button exists yet (Tasks 13-16).
+- **Milestone:** Trade ledger Tasks 1-12, web dashboard pages not built.
+
 ---
 
 ## The drain loop
