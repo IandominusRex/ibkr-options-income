@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+
+> **Progress (2026-10-06):** Tasks 1–11 complete and reviewed on branch `feat/trade-ledger` (commits `8e4e2c7`..`d2f0082`). Task 12 (Google Sheets mirror) was in progress when execution was paused; Tasks 12–17 remain. Rulings that amended this plan during execution (account-gated snapshot, price-free `order_key`, Flex token redaction, codes backfill on twin supersede, etc.) are listed in the execution summary, not here.
 **Goal:** A broker-truth ledger of every execution ever made on the IBKR account. It is built from Activity Statement CSV uploads, a nightly Flex pull and live executions, rolled up into trades, tickers and a portfolio. It is viewable and editable on the web dashboard at `/ledger` and mirrored to the operator's Google Sheet.
 
 **Architecture:**
@@ -98,7 +100,7 @@ These five inputs aren't exercised by the spec's own examples but will happen to
 
 ---
 
-### Task 1: Ledger schemas and contract helpers
+### Task 1: Ledger schemas and contract helpers ✅
 
 **Files:**
 - Modify: `src/common/schemas.py` (append at end of file; add `Any` to the `typing` import and `ConfigDict` to the `pydantic` import)
@@ -118,7 +120,7 @@ These five inputs aren't exercised by the spec's own examples but will happen to
   - `parse_number(value) -> float`
   - `ET: ZoneInfo`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_ledger_contracts.py`
+- [x] **Step 1: Write the failing test** — `tests/test_ledger_contracts.py`
 
 ```python
 """Contract identity + time helpers shared by every ledger feed (spec §5, R2)."""
@@ -195,12 +197,12 @@ def test_only_trades_errors_are_fatal() -> None:
     assert bad.fatal is True
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_contracts.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger'` (or ImportError on `LedgerParseError`).
 
-- [ ] **Step 3: Append the schemas to `src/common/schemas.py`**
+- [x] **Step 3: Append the schemas to `src/common/schemas.py`**
 
 Change the imports at the top: `from typing import Literal` → `from typing import Any, Literal`, and `from pydantic import BaseModel, Field, field_validator` → `from pydantic import BaseModel, ConfigDict, Field, field_validator`. If either name is already imported, leave it alone. Then append:
 
@@ -328,7 +330,7 @@ class LedgerImportResult(BaseModel):
     errors: list[LedgerParseError] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Create `src/ledger/__init__.py`**
+- [x] **Step 4: Create `src/ledger/__init__.py`**
 
 ```python
 """Trade ledger: whole-account broker truth (docs/superpowers/specs/2026-10-04-trade-ledger-design.md).
@@ -338,7 +340,7 @@ Reporting only. Nothing here is importable from src/engine/, src/execution/ or s
 """
 ```
 
-- [ ] **Step 5: Create `src/ledger/contracts.py`**
+- [x] **Step 5: Create `src/ledger/contracts.py`**
 
 ```python
 """Contract identity and time helpers shared by every ledger feed (CSV, Flex, live)."""
@@ -430,12 +432,12 @@ def parse_number(value: str) -> float:
     return float(v)
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_contracts.py -v`
 Expected: all PASS. Then run `ruff check src/ledger src/common tests/test_ledger_contracts.py` and `mypy src`; expect them clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ledger/__init__.py src/ledger/contracts.py tests/test_ledger_contracts.py
@@ -445,7 +447,7 @@ git commit -m "feat(ledger): contract identity, ET time helpers, ledger schemas"
 
 ---
 
-### Task 2: ORM tables, ledger config and secrets
+### Task 2: ORM tables, ledger config and secrets ✅
 
 **Files:**
 - Modify: `src/storage/models.py` (append), `src/common/config.py`, `config/settings.yaml`, `.env.example`
@@ -464,7 +466,7 @@ git commit -m "feat(ledger): contract identity, ET time helpers, ledger schemas"
   - `ledger_account(session) -> str | None`
   - `lock_account(session, account) -> None`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_ledger_models.py`
+- [x] **Step 1: Write the failing test** — `tests/test_ledger_models.py`
 
 ```python
 """Ledger tables, config and the generation/account-lock state (spec §3, §8, R8)."""
@@ -549,12 +551,12 @@ def test_account_lock_prefers_config_then_setting(db, monkeypatch) -> None:
         assert ledger_account(s) == "U9"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_models.py -v`
 Expected: FAIL. ImportError on `BrokerExecutionRow`, and `Config` has no attribute `ledger`.
 
-- [ ] **Step 3: Append the ORM classes to `src/storage/models.py`**
+- [x] **Step 3: Append the ORM classes to `src/storage/models.py`**
 
 ```python
 # --------------------------------------------------------------------------- #
@@ -695,7 +697,7 @@ class TradeAnnotationRow(Base):
 
 Check the `from sqlalchemy import (...)` block at the top of `models.py` already includes `Boolean, Date, DateTime, Float, Integer, JSON, String, Text, UniqueConstraint`; add any that are missing. New tables are created by the existing `Base.metadata.create_all` in `init_db`, so no `_ADDED_COLUMNS` entry is needed.
 
-- [ ] **Step 4: Add `LedgerCfg` and secrets to `src/common/config.py`**
+- [x] **Step 4: Add `LedgerCfg` and secrets to `src/common/config.py`**
 
 In `class Secrets`, after the `openai_api_key` line, add:
 
@@ -733,7 +735,7 @@ In `class Config`, directly after the line `research: ResearchCfg = Field(defaul
     ledger: LedgerCfg = Field(default_factory=LedgerCfg)
 ```
 
-- [ ] **Step 5: Add the YAML block and env keys**
+- [x] **Step 5: Add the YAML block and env keys**
 
 Append to `config/settings.yaml`:
 
@@ -764,7 +766,7 @@ GOOGLE_SHEETS_CREDENTIALS_PATH=
 LEDGER_SHEET_ID=
 ```
 
-- [ ] **Step 6: Create `src/ledger/state.py`**
+- [x] **Step 6: Create `src/ledger/state.py`**
 
 ```python
 """Ledger-wide ``system_settings`` keys: the change generation the Sheets mirror follows, the
@@ -818,12 +820,12 @@ def lock_account(session: Session, account: str) -> None:
     set_setting(LEDGER_ACCOUNT_KEY, account.strip(), session=session)
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_models.py tests/test_ledger_contracts.py -v`
 Expected: all PASS. `mypy src` should be clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/ledger/state.py tests/test_ledger_models.py
@@ -833,7 +835,7 @@ git commit -m "feat(ledger): ledger tables, LedgerCfg, flex/sheets secrets, gene
 
 ---
 
-### Task 3: Activity Statement CSV parser
+### Task 3: Activity Statement CSV parser ✅
 
 **Files:**
 - Create: `src/ledger/activity_csv.py`, `tests/fixtures/ledger/activity_statement_sample.csv`
@@ -846,7 +848,7 @@ git commit -m "feat(ledger): ledger tables, LedgerCfg, flex/sheets secrets, gene
   - `class NotAnActivityStatement(ValueError)`
   - `number_occurrences(statement: ParsedStatement) -> None` (also used by Flex in Task 10)
 
-- [ ] **Step 1: Create the fixture** — `tests/fixtures/ledger/activity_statement_sample.csv`
+- [x] **Step 1: Create the fixture** — `tests/fixtures/ledger/activity_statement_sample.csv`
 
 This is a scrubbed copy of the real statement's row shapes. The account id is fake, and the file includes one deliberately non-100 multiplier contract (`OPEN1`, multiplier 50).
 
@@ -904,7 +906,7 @@ Financial Instrument Information,Data,Equity and Index Options,OPEN1 251219C0000
 
 The fixture holds 4 stock rows and 11 option rows, so the parser should produce **15 executions**. The SubTotal, Total and Forex rows are not executions.
 
-- [ ] **Step 2: Write the failing test** — `tests/test_ledger_activity_csv.py`
+- [x] **Step 2: Write the failing test** — `tests/test_ledger_activity_csv.py`
 
 ```python
 """Activity Statement CSV parser (spec §5.1; R1, R2, R7, R11; Review Focus 1, 5)."""
@@ -1031,12 +1033,12 @@ def test_operators_real_statement_parses_cleanly() -> None:
     assert len(st.executions) == 608  # 485 option + 123 stock order rows (Apr-2025..Apr-2026 file)
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_activity_csv.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger.activity_csv'`.
 
-- [ ] **Step 4: Write `src/ledger/activity_csv.py`**
+- [x] **Step 4: Write `src/ledger/activity_csv.py`**
 
 ```python
 """IBKR Activity Statement CSV -> ParsedStatement (spec §5.1; revisions R1, R2, R7, R11).
@@ -1289,7 +1291,7 @@ def parse_activity_csv(text: str) -> ParsedStatement:
     return acc.st
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_activity_csv.py -v`
 Expected: all PASS except the real-file test, which reports SKIPPED. Then run the real file once locally:
@@ -1300,7 +1302,7 @@ LEDGER_REAL_STATEMENT="$HOME/Downloads/U1234567_U1234567_20250401_20260401_AS_Fv
 ```
 Expected: PASS. If the count differs from 608, print the `Trades:unsupported` warnings and reconcile the count against the real file before changing the parser.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ledger/activity_csv.py tests/fixtures/ledger/activity_statement_sample.csv tests/test_ledger_activity_csv.py
@@ -1309,7 +1311,7 @@ git commit -m "feat(ledger): IBKR Activity Statement CSV parser"
 
 ---
 
-### Task 4: Ingest — dedupe, twin pass, account lock, book tagging, CLI
+### Task 4: Ingest — dedupe, twin pass, account lock, book tagging, CLI ✅
 
 **Files:**
 - Create: `src/ledger/ingest.py`, `scripts/ledger_import.py`
@@ -1340,7 +1342,7 @@ git commit -m "feat(ledger): IBKR Activity Statement CSV parser"
 - **Book:** an inserted row whose `ib_order_id` matches an `OrderRow.ib_order_id` gets book `system`, provided the order's `snapshot` is null or `snapshot["underlying"]` equals the row's underlying.
 - **Generation:** bumped when anything was inserted or superseded.
 
-- [ ] **Step 1: Write the failing test** — `tests/test_ledger_ingest.py`
+- [x] **Step 1: Write the failing test** — `tests/test_ledger_ingest.py`
 
 ```python
 """Ingest: idempotent upsert, order-level twin pass, account lock, book tagging (spec §5.4, R2, R8).
@@ -1556,12 +1558,12 @@ def test_cli_dry_run_writes_nothing_and_real_run_imports(db, capsys) -> None:
     assert '"status": "ok"' in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_ingest.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger.ingest'`.
 
-- [ ] **Step 3: Write `src/ledger/ingest.py`**
+- [x] **Step 3: Write `src/ledger/ingest.py`**
 
 ```python
 """The only writer of the broker_* ledger tables (spec §5.4; revisions R2, R8).
@@ -1878,7 +1880,7 @@ def ingest(
         return LedgerImportResult(run_id=run.id, status="ok", counts=dict(counts), errors=errors)
 ```
 
-- [ ] **Step 4: Write `scripts/ledger_import.py`**
+- [x] **Step 4: Write `scripts/ledger_import.py`**
 
 ```python
 """Import an IBKR Activity Statement CSV into the trade ledger.
@@ -1936,12 +1938,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_ingest.py -v`
 Expected: all PASS. Then run `ruff check . && mypy src`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ledger/ingest.py scripts/ledger_import.py tests/test_ledger_ingest.py
@@ -1950,7 +1952,7 @@ git commit -m "feat(ledger): idempotent ingest with order-level twin pass, accou
 
 ---
 
-### Task 5: Trade builder — orders, FIFO, option trades, outcomes, rolls, orphans
+### Task 5: Trade builder — orders, FIFO, option trades, outcomes, rolls, orphans ✅
 
 **Files:**
 - Modify: `src/common/schemas.py` (append `LedgerClose`, `LedgerTrade`, `LedgerOrphan`)
@@ -1971,7 +1973,7 @@ git commit -m "feat(ledger): idempotent ingest with order-level twin pass, accou
   - `load_annotations(session) -> dict[str, LedgerAnnotation]`
   - Schemas `LedgerClose`, `LedgerTrade`, `LedgerOrphan` (field lists below)
 
-- [ ] **Step 1: Append schemas to `src/common/schemas.py`**
+- [x] **Step 1: Append schemas to `src/common/schemas.py`**
 
 ```python
 class LedgerClose(BaseModel):
@@ -2040,7 +2042,7 @@ class LedgerOrphan(BaseModel):
     ibkr_realized_pnl: float | None
 ```
 
-- [ ] **Step 2: Write the failing test** — `tests/test_trade_ledger_trades.py`
+- [x] **Step 2: Write the failing test** — `tests/test_trade_ledger_trades.py`
 
 ```python
 """Orders, FIFO, option trades, outcomes, rolls, orphans, annotations (spec §4.1–4.2; R3, R4, R9, R10)."""
@@ -2217,12 +2219,12 @@ def test_annotation_override_and_notes() -> None:
     assert t.notes == "treat as expired" and t.tags == ["earnings"]
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_trade_ledger_trades.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.reporting.trade_ledger'`.
 
-- [ ] **Step 4: Write `src/reporting/trade_ledger.py` (part 1)**
+- [x] **Step 4: Write `src/reporting/trade_ledger.py` (part 1)**
 
 ```python
 """Read-only builders for the whole-account trade ledger (spec §4; revisions R3–R5, R9, R10).
@@ -2562,12 +2564,12 @@ def load_annotations(session: Session) -> dict[str, LedgerAnnotation]:
     }
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python -m pytest tests/test_trade_ledger_trades.py tests/test_web_fence.py -v`
 Expected: all PASS. `test_reporting_never_writes_anything` stays green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/reporting/trade_ledger.py tests/test_trade_ledger_trades.py
@@ -2577,7 +2579,7 @@ git commit -m "feat(ledger): order grouping, FIFO option trades, outcomes, rolls
 
 ---
 
-### Task 6: Stock lots, ticker roll-ups, FX, portfolio summary, `build_book`
+### Task 6: Stock lots, ticker roll-ups, FX, portfolio summary, `build_book` ✅
 
 **Files:**
 - Modify: `src/common/schemas.py` (append), `src/reporting/trade_ledger.py` (append)
@@ -2596,7 +2598,7 @@ git commit -m "feat(ledger): order grouping, FIFO option trades, outcomes, rolls
   - `build_book(session, *, today, snapshot, marks_as_of=None) -> LedgerBook`
   - `ticker_detail(book, symbol) -> LedgerTickerDetail | None`
 
-- [ ] **Step 1: Append schemas to `src/common/schemas.py`**
+- [x] **Step 1: Append schemas to `src/common/schemas.py`**
 
 ```python
 class LedgerStockLot(BaseModel):
@@ -2719,7 +2721,7 @@ class LedgerBook(BaseModel):
     cash: list[LedgerCashItem]
 ```
 
-- [ ] **Step 2: Write the failing test** — `tests/test_trade_ledger_book.py`
+- [x] **Step 2: Write the failing test** — `tests/test_trade_ledger_book.py`
 
 ```python
 """Stock lots, wheel cost basis, tickers, FX, summary, build_book (spec §4.3–4.5; R4, R5)."""
@@ -2877,12 +2879,12 @@ def test_build_book_end_to_end_from_the_fixture(db) -> None:
 
 `PositionSnapshot`'s required fields may differ from the dict above. If so, open `src/common/schemas.py`, read `class PositionSnapshot`, and fill the required fields with neutral values. The test relies only on `sec_type`, `underlying`, `symbol` and `unrealized_pnl`.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_trade_ledger_book.py -v`
 Expected: FAIL with ImportError on `FxTable`, `build_stock_lots`, and the other new names.
 
-- [ ] **Step 4: Append to `src/reporting/trade_ledger.py`**
+- [x] **Step 4: Append to `src/reporting/trade_ledger.py`**
 
 Add to the imports: `import bisect`, `from sqlalchemy import func`, `from src.common.config import get_config`, the new schema names (`LedgerBasisPoint, LedgerBook, LedgerBucket, LedgerCashItem, LedgerCurvePoint, LedgerMonth, LedgerStockDisposal, LedgerStockLot, LedgerSummary, LedgerTicker, LedgerTickerDetail, PortfolioSnapshot`), and `BrokerCashEventRow, BrokerCorporateActionRow, FxRateRow` from `src.storage.models`. Then append:
 
@@ -3273,12 +3275,12 @@ def ticker_detail(book: LedgerBook, symbol: str) -> LedgerTickerDetail | None:
     )
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python -m pytest tests/test_trade_ledger_book.py tests/test_trade_ledger_trades.py tests/test_web_fence.py -v`
 Expected: all PASS. Then run `ruff check . && mypy src`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/reporting/trade_ledger.py tests/test_trade_ledger_book.py
@@ -3288,7 +3290,7 @@ git commit -m "feat(ledger): stock lots, wheel cost basis, ticker roll-ups, FX, 
 
 ---
 
-### Task 7: Sheet rows and trade filters (shared by the API CSV and the Sheets mirror)
+### Task 7: Sheet rows and trade filters (shared by the API CSV and the Sheets mirror) ✅
 
 **Files:**
 - Modify: `src/reporting/trade_ledger.py` (append)
@@ -3304,7 +3306,7 @@ git commit -m "feat(ledger): stock lots, wheel cost basis, ticker roll-ups, FX, 
   - `filter_trades(trades, *, symbol=None, right=None, outcome=None, book=None, tag=None, since=None, until=None, sort="-order_date") -> list[LedgerTrade]`
   - `TRADE_SORTS: tuple[str, ...]`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_trade_ledger_rows.py`
+- [x] **Step 1: Write the failing test** — `tests/test_trade_ledger_rows.py`
 
 ```python
 """The sheet-format row (one shape for CSV export + Google Sheet) and trade filters (spec §6, §7)."""
@@ -3359,12 +3361,12 @@ def test_filters_and_sort() -> None:
     assert by_pct[0].pct_profit >= by_pct[1].pct_profit
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_trade_ledger_rows.py -v`
 Expected: FAIL with ImportError on `SHEET_HEADER`.
 
-- [ ] **Step 3: Append to `src/reporting/trade_ledger.py`**
+- [x] **Step 3: Append to `src/reporting/trade_ledger.py`**
 
 ```python
 # --------------------------------------------------------------------------- #
@@ -3466,12 +3468,12 @@ def filter_trades(
     return present + absent
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `python -m pytest tests/test_trade_ledger_rows.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/reporting/trade_ledger.py tests/test_trade_ledger_rows.py
@@ -3480,7 +3482,7 @@ git commit -m "feat(ledger): sheet-format rows and trade filters"
 
 ---
 
-### Task 8: Command kinds, annotations writer, drain handlers
+### Task 8: Command kinds, annotations writer, drain handlers ✅
 
 **Files:**
 - Modify: `src/api/models/commands.py`, `src/notify/command_drain.py`
@@ -3499,7 +3501,7 @@ git commit -m "feat(ledger): sheet-format rows and trade filters"
     - `ledger_annotate` → `{"order_key", "updated": [...]}`
     - `ledger_ca_reviewed` → `{"corporate_action_id"}`, or failed with reason `not_found`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_command_schemas.py`:
 
@@ -3623,12 +3625,12 @@ def test_corporate_action_reviewed(run_command) -> None:
 
 `enqueue_command`'s signature is defined in `src/storage/app_commands.py`. If it differs from `(s, *, kind, payload, requested_by, dedupe_key)`, match the existing one; `tests/test_drain_refresh.py` shows real usage.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_drain_ledger.py tests/test_command_schemas.py -v`
 Expected: FAIL. `CommandKind` has no `LEDGER_IMPORT`, and the drain marks these commands `unknown_kind`.
 
-- [ ] **Step 3: Extend `src/api/models/commands.py`**
+- [x] **Step 3: Extend `src/api/models/commands.py`**
 
 Add `from typing import Annotated` to the imports. If `Literal` is already imported from `typing`, extend that import. Then:
 
@@ -3682,7 +3684,7 @@ The test uses `"a" * 16` and `"b" * 16`, which are valid hex. Add these three en
 
 Add the three kinds to the `None` tuple in `dedupe_key_for`. Then extend its docstring with one sentence: "The three ledger kinds are repeatable too — imports are idempotent upserts and annotations are last-write-wins."
 
-- [ ] **Step 4: Create `src/ledger/annotations.py`**
+- [x] **Step 4: Create `src/ledger/annotations.py`**
 
 ```python
 """The only writer of ``trade_annotations`` and the corporate-action review flag.
@@ -3727,7 +3729,7 @@ def mark_corporate_action_reviewed(session: Session, ca_id: int) -> bool:
     return True
 ```
 
-- [ ] **Step 5: Register handlers in `src/notify/command_drain.py`**
+- [x] **Step 5: Register handlers in `src/notify/command_drain.py`**
 
 Append at the end of the file:
 
@@ -3801,12 +3803,12 @@ def _ledger_ca_reviewed(*, command: Any, **_: Any) -> dict:
 
 `command.id` exists because `pending_commands` returns `AppCommandRow`s; confirm this by reading `src/storage/app_commands.py::pending_commands`. Note that `CommandFailed` raised inside the `try` still runs the `finally` block, which is intended.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/test_drain_ledger.py tests/test_command_schemas.py tests/test_write_path_invariants.py tests/test_api_command_engine.py -v`
 Expected: all PASS. If `test_write_path_invariants.py` enumerates the control kinds that need no live confirmation, the ledger kinds must not join `ORDER_REACHING`; they don't, because they aren't added there.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ledger/annotations.py tests/test_drain_ledger.py
@@ -3816,7 +3818,7 @@ git commit -m "feat(ledger): ledger_import / ledger_annotate / ledger_ca_reviewe
 
 ---
 
-### Task 9: Read-only API — `/ledger/*`
+### Task 9: Read-only API — `/ledger/*` ✅
 
 **Files:**
 - Create: `src/api/models/ledger.py`, `src/api/routers/ledger.py`
@@ -3840,7 +3842,7 @@ git commit -m "feat(ledger): ledger_import / ledger_annotate / ledger_ca_reviewe
   - `GET /ledger/imports` → `{as_of, runs, flex, sheets, corporate_actions}`
   - Nav section `ledger`
 
-- [ ] **Step 1: Write the failing test** — `tests/test_api_ledger.py`
+- [x] **Step 1: Write the failing test** — `tests/test_api_ledger.py`
 
 ```python
 """GET /ledger/* — thin renderers over src/reporting/trade_ledger.py (spec §6.1)."""
@@ -3932,12 +3934,12 @@ def test_nav_has_a_ledger_section(client) -> None:
     assert sections["ledger"]["available"] is True
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_api_ledger.py -v`
 Expected: FAIL with 404 on `/ledger/summary`.
 
-- [ ] **Step 3: Create `src/api/models/ledger.py`**
+- [x] **Step 3: Create `src/api/models/ledger.py`**
 
 ```python
 """Response shapes for GET /ledger/* (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §6.1)."""
@@ -4037,7 +4039,7 @@ class LedgerImportsResponse(Envelope):
     corporate_actions: list[LedgerCorporateActionOut]
 ```
 
-- [ ] **Step 4: Create `src/api/routers/ledger.py`**
+- [x] **Step 4: Create `src/api/routers/ledger.py`**
 
 ```python
 """GET /ledger/* — the whole-account trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §6).
@@ -4262,7 +4264,7 @@ def get_imports(db: TradingDb, _user: OwnerUser) -> LedgerImportsResponse:
 
 **Dependency note:** `src/ledger/state.py` imports `get_setting/set_setting` from `src.storage.system_settings`. The router only imports constants from it, which does not give the API a write handle. Run `tests/test_web_fence.py` to confirm.
 
-- [ ] **Step 5: Wire the router and nav**
+- [x] **Step 5: Wire the router and nav**
 
 In `src/api/main.py`, add `ledger` to the `from src.api.routers import (...)` list, and add `app.include_router(ledger.router)` after `app.include_router(pnl.router, prefix="/pnl")`.
 
@@ -4270,12 +4272,12 @@ In `src/api/routers/meta.py`, add one comment line above `_SECTIONS`: `# "ledger
 
 In `tests/test_api_meta.py`, add `"ledger"` to the expected section-key set.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/test_api_ledger.py tests/test_api_meta.py tests/test_web_fence.py -v`
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/api/models/ledger.py src/api/routers/ledger.py tests/test_api_ledger.py
@@ -4285,7 +4287,7 @@ git commit -m "feat(ledger): read-only /ledger API, CSV export, nav section"
 
 ---
 
-### Task 10: Flex Web Service — client, XML parser, EOD step, CLI
+### Task 10: Flex Web Service — client, XML parser, EOD step, CLI ✅
 
 **Files:**
 - Create: `src/ledger/flex.py`, `scripts/ledger_flex_pull.py`
@@ -4310,7 +4312,7 @@ Flex specifics:
 - **FX:** `<ConversionRate reportDate fromCurrency toCurrency rate>`. With base B = `toCurrency`, `usd_rate(c) = rate(c→B) / rate(USD→B)` and `usd_rate(B) = 1 / rate(USD→B)`.
 - **OptionEAE:** ignored in v1 (R1).
 
-- [ ] **Step 1: Write the failing test** — `tests/test_ledger_flex.py`
+- [x] **Step 1: Write the failing test** — `tests/test_ledger_flex.py`
 
 ```python
 """Flex Web Service client + parser (spec §5.2; R1, R6)."""
@@ -4421,12 +4423,12 @@ def test_pull_is_a_noop_when_unconfigured(monkeypatch) -> None:
     assert run_flex_pull() is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_flex.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger.flex'`.
 
-- [ ] **Step 3: Write `src/ledger/flex.py`**
+- [x] **Step 3: Write `src/ledger/flex.py`**
 
 ```python
 """IBKR Flex Web Service client + Flex XML parser (spec §5.2; revisions R1, R6).
@@ -4684,7 +4686,7 @@ def run_flex_pull(
     return result
 ```
 
-- [ ] **Step 4: Write `scripts/ledger_flex_pull.py`**
+- [x] **Step 4: Write `scripts/ledger_flex_pull.py`**
 
 ```python
 """Pull the IBKR Flex statement into the trade ledger now.
@@ -4735,7 +4737,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Add the EOD step**
+- [x] **Step 5: Add the EOD step**
 
 In `src/orchestrator/eod_report.py`, insert directly above the line `    # 7. Send Telegram.`:
 
@@ -4750,12 +4752,12 @@ In `src/orchestrator/eod_report.py`, insert directly above the line `    # 7. Se
         logger.exception("EOD: trade-ledger Flex pull failed — continuing")
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_flex.py -v` and then the full `python -m pytest -q`.
 Expected: all PASS. Existing EOD tests are unaffected, because `run_flex_pull` returns `None` when unconfigured.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/ledger/flex.py scripts/ledger_flex_pull.py tests/test_ledger_flex.py
@@ -4765,7 +4767,7 @@ git commit -m "feat(ledger): Flex Web Service pull (EOD step + CLI)"
 
 ---
 
-### Task 11: Live executions — commission-report hook and sweep in the approval service
+### Task 11: Live executions — commission-report hook and sweep in the approval service ✅
 
 **Files:**
 - Create: `src/ledger/live.py`
@@ -4786,7 +4788,7 @@ git commit -m "feat(ledger): Flex Web Service pull (EOD step + CLI)"
 - `Fill.execution` has `execId`, `time` (UTC datetime), `acctNumber`, `side` (`"BOT"`/`"SLD"`), `shares`, `price`, `permId`, `orderId`.
 - `Fill.commissionReport` has `commission` (positive cost) and `realizedPNL`. IB uses `sys.float_info.max` to mean "unset".
 
-- [ ] **Step 1: Write the failing test** — `tests/test_ledger_live.py`
+- [x] **Step 1: Write the failing test** — `tests/test_ledger_live.py`
 
 ```python
 """Live fills -> ledger (spec §5.3; Review Focus 3)."""
@@ -4882,12 +4884,12 @@ def test_approval_service_wires_the_ledger_tasks() -> None:
     assert "attach_live_hook(ib)" in text and "live_sweep_loop(ib)" in text
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_ledger_live.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.ledger.live'`.
 
-- [ ] **Step 3: Write `src/ledger/live.py`**
+- [x] **Step 3: Write `src/ledger/live.py`**
 
 ```python
 """Live executions from the exec process's IBKR connection into the ledger (spec §5.3).
@@ -4999,7 +5001,7 @@ async def live_sweep_loop(ib: Any, *, interval_minutes: float | None = None) -> 
             log.warning("ledger sweep failed — will retry next cycle", exc_info=True)
 ```
 
-- [ ] **Step 4: Wire it into `src/notify/approval_service.py`**
+- [x] **Step 4: Wire it into `src/notify/approval_service.py`**
 
 Directly after the block that creates `drain_task` and logs `"Command drain loop started (poll every %ss)"`, add:
 
@@ -5022,12 +5024,12 @@ In the `finally:` block that cancels `drain_task`, add right after the drain-tas
                 await ledger_sweep_task
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python -m pytest tests/test_ledger_live.py tests/test_web_fence.py -v`, then `python -m pytest -q`.
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/ledger/live.py tests/test_ledger_live.py
