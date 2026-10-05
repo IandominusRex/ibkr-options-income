@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _ET = ZoneInfo("America/New_York")
 
@@ -806,3 +806,126 @@ class EquityCurve(BaseModel):
     points: list[EquityPoint] = Field(default_factory=list)
     gaps: list[date] = Field(default_factory=list)
     starts_at: date | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Trade ledger — whole-account broker truth
+# (docs/superpowers/specs/2026-10-04-trade-ledger-design.md). Read by src/ledger/,
+# src/reporting/trade_ledger.py and src/api/ only — never by engine/execution/strategies.
+# --------------------------------------------------------------------------- #
+LedgerSourceKind = Literal["exec", "order"]
+LedgerSource = Literal["csv", "flex", "live"]
+LedgerOutcome = Literal[
+    "Open",
+    "Pending",
+    "Expired",
+    "Assigned",
+    "Called away",
+    "Exercised",
+    "Bought back",
+    "Sold",
+    "Rolled",
+]
+
+
+class LedgerContract(BaseModel):
+    """A normalized IBKR contract identity, independent of which feed reported it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    underlying: str
+    sec_type: Literal["OPT", "STK"]
+    currency: str = "USD"
+    right: Literal["P", "C"] | None = None
+    strike: float | None = None
+    expiry: date | None = None
+    multiplier: float = 1.0
+
+    @property
+    def ident(self) -> str:
+        if self.sec_type == "STK":
+            return f"STK:{self.underlying}:{self.currency}"
+        assert self.expiry is not None and self.strike is not None and self.right is not None
+        return (
+            f"OPT:{self.underlying}:{self.expiry:%Y%m%d}:{self.right}:"
+            f"{self.strike:g}:{self.currency}"
+        )
+
+
+class ParsedExecution(BaseModel):
+    """One execution (``exec_id`` set) or one order-level statement row (``exec_id`` None)."""
+
+    contract: LedgerContract
+    trade_time: datetime  # timezone-aware UTC
+    quantity: float  # signed: + bought, - sold (contracts or shares)
+    price: float  # per share
+    proceeds: float  # signed cash, contract currency
+    commission: float = 0.0  # signed; negative is a cost
+    codes: str = ""  # raw IBKR code string, e.g. "A;O", "C;Ep"
+    exec_id: str | None = None
+    perm_id: int | None = None
+    ib_order_id: int | None = None
+    account: str | None = None
+    ibkr_realized_pnl: float | None = None
+    source_kind: LedgerSourceKind
+    occurrence_idx: int = 0
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ParsedCashEvent(BaseModel):
+    event_type: Literal["dividend", "withholding", "deposit", "withdrawal", "fee", "interest"]
+    event_date: date
+    currency: str
+    amount: float  # signed
+    description: str
+    underlying: str | None = None
+    occurrence_idx: int = 0
+
+
+class ParsedCorporateAction(BaseModel):
+    event_date: date
+    underlying: str | None
+    description: str
+    quantity: float
+    proceeds: float
+    occurrence_idx: int = 0
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ParsedFxRate(BaseModel):
+    rate_date: date
+    currency: str
+    usd_rate: float  # USD per 1 unit of `currency`
+
+
+class LedgerParseError(BaseModel):
+    line: int
+    section: str
+    message: str
+
+
+class ParsedStatement(BaseModel):
+    """What every feed (Activity CSV, Flex XML, live fills) normalises to before ingest."""
+
+    account: str | None = None
+    base_currency: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    executions: list[ParsedExecution] = Field(default_factory=list)
+    cash_events: list[ParsedCashEvent] = Field(default_factory=list)
+    corporate_actions: list[ParsedCorporateAction] = Field(default_factory=list)
+    fx_rates: list[ParsedFxRate] = Field(default_factory=list)
+    errors: list[LedgerParseError] = Field(default_factory=list)
+
+    @property
+    def fatal(self) -> bool:
+        """A broken Trades row poisons the whole import; other sections only warn."""
+        return any(e.section == "Trades" for e in self.errors)
+
+
+class LedgerImportResult(BaseModel):
+    run_id: int | None
+    status: Literal["ok", "failed", "skipped"]
+    reason: str | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    errors: list[LedgerParseError] = Field(default_factory=list)
