@@ -187,6 +187,23 @@ def test_an_order_that_closes_and_opens_splits() -> None:
     assert long.premium == pytest.approx(-200.0)
 
 
+def test_an_order_that_closes_and_opens_splits_with_realistic_codes() -> None:
+    """IBKR gives a crossing order (closes the old position, opens a new one in the same fill)
+    the code pair ``C;O``, not a bare ``C``. ``is_closing`` must not treat that as a pure close —
+    otherwise the leftover 2 lots never become a new opening and the order is misrouted to the
+    orphan list instead of splitting into a close + a new long, exactly as the bare-code variant
+    above does."""
+    trades, orphans = trades_of(
+        ex("NVDA 18JUL25 170 P", "2025-07-11, 10:00:00", -1, 2.0, codes="O"),
+        ex("NVDA 18JUL25 170 P", "2025-07-14, 10:00:00", 3, 1.0, codes="C;O"),
+    )
+    assert orphans == []
+    short, long = sorted(trades, key=lambda t: t.open_time)
+    assert short.outcome == "Bought back" and short.closes[0].quantity == 1
+    assert long.side == "Buy" and long.lots == 2.0
+    assert long.premium == pytest.approx(-200.0)
+
+
 def test_orphan_close_is_reported_not_turned_into_a_long() -> None:
     # Review Focus 1: the statement starts after the put was sold.
     trades, orphans = trades_of(
@@ -201,6 +218,7 @@ def test_non_100_multiplier_drives_premium_and_capital() -> None:
     (t,), _ = trades_of(ex("OPEN1 19DEC25 5 C", "2025-11-20, 10:00:00", -2, 0.5, multiplier=50.0))
     assert t.premium == pytest.approx(50.0)
     assert t.capital == pytest.approx(5 * 50 * 2)
+    assert t.pct_profit == pytest.approx(t.premium / t.capital * 365 / t.dte * 100)
 
 
 def test_annotation_override_and_notes() -> None:

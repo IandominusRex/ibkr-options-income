@@ -80,7 +80,13 @@ class LedgerOrder:
 
     @property
     def is_closing(self) -> bool:
-        return "C" in _tokens(self.codes)
+        """True only for a pure close. IBKR gives a crossing order that both closes the old
+        position and opens a new one the codes ``C;O`` together (group_orders also merges codes
+        across a perm group, so a multi-fill crossing order ends up the same way) — that order
+        must still flow through FIFO matching and leave its unmatched remainder as a new
+        Opening, not get diverted to the orphan list for having a ``C`` token at all."""
+        tokens = _tokens(self.codes)
+        return "C" in tokens and "O" not in tokens
 
 
 @dataclass
