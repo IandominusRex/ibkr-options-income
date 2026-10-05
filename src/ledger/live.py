@@ -149,6 +149,16 @@ async def live_sweep_loop(ib: Any, *, interval_minutes: float | None = None) -> 
     )
     while True:
         await asyncio.sleep(minutes * 60)
-        new = await _sweep_once(ib)
+        try:
+            new = await _sweep_once(ib)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # _sweep_once already guards its own ingest call, but is_rth()/ib.isConnected()/
+            # get_config() are unguarded — a surprise there must not kill this task, since the
+            # approval service's shutdown `finally` awaits it outside a CancelledError suppress
+            # and would otherwise re-raise whatever killed the loop, skipping app/IBKR shutdown.
+            log.warning("ledger sweep cycle failed — will retry next cycle", exc_info=True)
+            continue
         if new:
             log.info("ledger sweep: %d new execution(s)", new)

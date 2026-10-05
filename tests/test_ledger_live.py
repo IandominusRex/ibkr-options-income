@@ -10,6 +10,7 @@ Controller rulings pinned here:
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from sqlalchemy import select
 def fill(
     *,
     sec="OPT",
+    symbol="NVDA",
     side="SLD",
     shares=1,
     price=1.9,
@@ -31,20 +33,22 @@ def fill(
     order_id=55,
     commission=1.05,
     realized=sys.float_info.max,
+    time=None,
+    currency="USD",
 ):
     return SimpleNamespace(
         contract=SimpleNamespace(
             secType=sec,
-            symbol="NVDA",
+            symbol=symbol,
             lastTradeDateOrContractMonth="20250718",
             strike=170.0,
             right="P",
             multiplier="100" if sec == "OPT" else "",
-            currency="USD",
+            currency=currency,
         ),
         execution=SimpleNamespace(
             execId=exec_id,
-            time=datetime(2025, 7, 11, 14, 0, tzinfo=UTC),
+            time=time if time is not None else datetime(2025, 7, 11, 14, 0, tzinfo=UTC),
             acctNumber=account,
             side=side,
             shares=shares,
@@ -80,12 +84,14 @@ def test_fill_to_execution_skips_combos() -> None:
 
 def test_live_fills_are_skipped_until_an_import_locks_the_account(db) -> None:
     from src.ledger.live import ingest_fills
+    from src.ledger.state import ledger_account
     from src.storage.models import BrokerExecutionRow, LedgerImportRunRow
 
     assert ingest_fills([fill()]) == 0
     with db() as s:
         assert s.scalars(select(BrokerExecutionRow)).first() is None
         assert s.scalars(select(LedgerImportRunRow)).first() is None
+        assert ledger_account(s) is None
 
 
 def test_paper_fills_never_reach_the_real_ledger(db) -> None:
@@ -113,6 +119,46 @@ def test_matching_account_fill_is_ingested(db) -> None:
     with db() as s:
         row = s.scalars(select(BrokerExecutionRow)).one()
         assert (row.source, row.exec_id) == ("live", "e1")
+
+
+def test_overnight_sgx_live_fill_twins_its_csv_row_through_the_live_path(db) -> None:
+    # Review Focus 4, exercised through src.ledger.live (fill_to_execution + ingest_fills), not
+    # the ingest()-level ParsedExecution bypass pinned in tests/test_ledger_ingest.py.
+    # 03:30 UTC Nov 3 == 22:30 ET Nov 2, so the CSV row and the live fill must land on the same
+    # ET trade date and twin-match.
+    from src.ledger.ingest import ingest
+    from src.ledger.live import ingest_fills
+    from src.ledger.state import lock_account
+    from src.storage.models import BrokerExecutionRow
+    from tests.test_ledger_ingest import ex, stmt
+
+    with db() as s:
+        lock_account(s, "U0000001")
+    ingest(stmt(ex("A17U", "2025-11-02, 22:30:00", 500, 2.77, currency="SGD")), source="csv")
+
+    new = ingest_fills(
+        [
+            fill(
+                sec="STK",
+                symbol="A17U",
+                side="BOT",
+                shares=500,
+                price=2.77,
+                currency="SGD",
+                time=datetime(2025, 11, 3, 3, 30, tzinfo=UTC),
+                exec_id="x1",
+                perm=5,
+            )
+        ]
+    )
+    assert new == 1
+
+    with db() as s:
+        rows = list(s.scalars(select(BrokerExecutionRow)))
+    csv_row = next(r for r in rows if r.source_kind == "order")
+    live_row = next(r for r in rows if r.source_kind == "exec")
+    assert csv_row.superseded_by is not None
+    assert live_row.trade_date == date(2025, 11, 2)
 
 
 def test_hook_swallows_errors(monkeypatch) -> None:
@@ -202,3 +248,39 @@ async def test_sweep_ingests_fills_returned_during_rth(monkeypatch) -> None:
     result = await live._sweep_once(SimpleNamespace(isConnected=lambda: True))
     assert result == 3
     assert calls == [sentinel_fills]
+
+
+# --------------------------------------------------------------------------- #
+# Sweep-loop hardening: an unguarded failure (is_rth()/ib.isConnected()/get_config() raising)
+# must not kill the background task — the approval service's shutdown `finally` awaits it
+# outside a CancelledError suppress and would otherwise re-raise whatever killed it.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_sweep_loop_survives_a_failing_iteration(monkeypatch) -> None:
+    import src.ledger.live as live
+
+    calls = {"sleep": 0, "sweep": 0}
+
+    async def fake_sleep(_seconds):
+        calls["sleep"] += 1
+        if calls["sleep"] > 2:
+            raise asyncio.CancelledError
+
+    async def flaky_sweep_once(_ib):
+        calls["sweep"] += 1
+        if calls["sweep"] == 1:
+            raise RuntimeError("is_rth() blew up")
+        return 0
+
+    monkeypatch.setattr(live.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(live, "_sweep_once", flaky_sweep_once)
+
+    with pytest.raises(asyncio.CancelledError):
+        await live.live_sweep_loop(
+            SimpleNamespace(isConnected=lambda: True), interval_minutes=0.001
+        )
+
+    # The first (raising) iteration didn't kill the loop — a second iteration ran.
+    assert calls["sweep"] == 2
