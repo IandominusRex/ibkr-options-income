@@ -929,3 +929,69 @@ class LedgerImportResult(BaseModel):
     reason: str | None = None
     counts: dict[str, int] = Field(default_factory=dict)
     errors: list[LedgerParseError] = Field(default_factory=list)
+
+
+class LedgerClose(BaseModel):
+    """One closing order's share of a trade (a trade may close in several orders)."""
+
+    order_key: str
+    close_date: date
+    close_time: datetime
+    quantity: float  # contracts closed by this order, positive
+    cash: float  # signed proceeds attributable to this close
+    commission: float  # signed
+    codes: str
+
+
+class LedgerTrade(BaseModel):
+    """One opening option order and everything that closed it (spec §4.2, R3, R4, R9, R10)."""
+
+    order_key: str
+    underlying: str
+    currency: str
+    side: Literal["Sell", "Buy"]
+    right: Literal["P", "C"]
+    strike: float
+    expiry: date
+    multiplier: float
+    lots: float
+    order_date: date
+    open_time: datetime
+    close_date: date | None
+    dte: int
+    days_held: int
+    premium: float  # gross opening credit (+) / debit (-), contract currency
+    open_commission: float
+    closes: list[LedgerClose] = Field(default_factory=list)
+    outcome: LedgerOutcome
+    computed_outcome: LedgerOutcome
+    outcome_overridden: bool = False
+    mixed_close: bool = False
+    capital: float
+    pct_profit: float | None  # the sheet's formula, in %; short options only
+    net_pnl: float | None  # fully closed only, after all commissions
+    return_pct: float | None
+    annualised_net_pct: float | None
+    stock_gain: float | None = None  # realized stock P&L when this call got the shares called away
+    book: Literal["system", "manual"]
+    rolled_from: str | None = None
+    rolled_to: str | None = None
+    ibkr_realized_pnl: float | None = None
+    exec_row_ids: list[int] = Field(default_factory=list)
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
+    exclude_from_stats: bool = False
+
+
+class LedgerOrphan(BaseModel):
+    """A closing order with no opening in the imported history (Review Focus 1)."""
+
+    order_key: str
+    underlying: str
+    sec_type: Literal["OPT", "STK"]
+    contract_ident: str
+    currency: str
+    trade_date: date
+    quantity: float
+    price: float
+    ibkr_realized_pnl: float | None
