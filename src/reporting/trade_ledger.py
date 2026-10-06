@@ -738,7 +738,7 @@ def build_summary(
     )
     unrealized = (
         None
-        if snapshot is None
+        if snapshot is None or any(tk.unrealized is None for tk in tickers)
         else sum(
             usd(tk.unrealized, tk.currency, today) for tk in tickers if tk.unrealized is not None
         )

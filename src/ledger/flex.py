@@ -325,10 +325,15 @@ def run_flex_pull(
         set_setting(LEDGER_FLEX_LAST_RUN_KEY, now)
         set_setting(LEDGER_FLEX_LAST_STATUS_KEY, f"failed: {exc}"[:200])
         raise
-    statement = parse_flex_xml(xml)
-    if dry_run:
-        return statement
-    result = ingest(statement, source="flex", filename=f"flex:{qid}")
+    try:
+        statement = parse_flex_xml(xml)
+        if dry_run:
+            return statement
+        result = ingest(statement, source="flex", filename=f"flex:{qid}")
+    except Exception as exc:
+        set_setting(LEDGER_FLEX_LAST_RUN_KEY, now)
+        set_setting(LEDGER_FLEX_LAST_STATUS_KEY, f"failed: {type(exc).__name__}"[:200])
+        raise
     set_setting(LEDGER_FLEX_LAST_RUN_KEY, now)
     set_setting(
         LEDGER_FLEX_LAST_STATUS_KEY,

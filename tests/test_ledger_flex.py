@@ -214,3 +214,30 @@ def test_cli_prints_not_configured_and_exits_zero(monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "run_flex_pull", lambda **kwargs: None)
     assert cli.main([]) == 0
     assert "not configured" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("failure", ["parse", "ingest"])
+def test_run_flex_pull_records_failure_for_parse_and_ingest_errors(monkeypatch, failure) -> None:
+    """M11: a non-FlexError must not leave the previous "ok" status showing."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(get_config().secrets, "ibkr_flex_token", "tok")
+    monkeypatch.setattr(get_config().secrets, "ibkr_flex_query_id", "q1")
+    stored: dict[str, str] = {"ledger_flex_last_status": "ok"}
+    monkeypatch.setattr(
+        "src.ledger.flex.set_setting", lambda key, value: stored.__setitem__(key, value)
+    )
+    monkeypatch.setattr("src.ledger.flex.fetch_statement", lambda *a, **k: "<x/>")
+    if failure == "parse":
+        monkeypatch.setattr(
+            "src.ledger.flex.parse_flex_xml", lambda xml: (_ for _ in ()).throw(ValueError("bad"))
+        )
+    else:
+        monkeypatch.setattr("src.ledger.flex.parse_flex_xml", lambda xml: object())
+        monkeypatch.setattr(
+            "src.ledger.flex.ingest", lambda *a, **k: (_ for _ in ()).throw(OSError("disk"))
+        )
+    with pytest.raises(Exception):  # noqa: B017
+        run_flex_pull()
+    assert stored["ledger_flex_last_status"].startswith("failed:")
+    assert stored["ledger_flex_last_status"] != "ok"

@@ -104,10 +104,31 @@ def ingest_fills(fills: list[Any]) -> int:
     return result.counts.get("new", 0) if result.status == "ok" else 0
 
 
+_hook_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _log_hook_result(task: asyncio.Task[Any]) -> None:
+    _hook_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning(
+            "ledger live hook failed — ignored (never affects order handling)",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
 def on_commission_report(trade: Any, fill: Any, report: Any) -> None:
-    """``ib.commissionReportEvent`` handler. Must never raise into order handling."""
+    """``ib.commissionReportEvent`` handler. Must never raise into order handling.
+
+    The SQLite write runs in a worker thread (a contended write lock can block for up to
+    ``busy_timeout``), so the handler only schedules it and returns immediately.
+    """
     try:
-        ingest_fills([fill])
+        task = asyncio.get_running_loop().create_task(asyncio.to_thread(ingest_fills, [fill]))
+        _hook_tasks.add(task)
+        task.add_done_callback(_log_hook_result)
     except Exception:
         log.exception("ledger live hook failed — ignored (never affects order handling)")
 
@@ -133,7 +154,7 @@ async def _sweep_once(ib: Any) -> int | None:
     if fills is None:
         return None
     try:
-        return ingest_fills(list(fills))
+        return await asyncio.to_thread(ingest_fills, list(fills))
     except Exception:
         log.warning("ledger sweep failed to ingest — will retry next cycle", exc_info=True)
         return None

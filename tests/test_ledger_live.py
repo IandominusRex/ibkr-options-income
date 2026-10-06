@@ -284,3 +284,62 @@ async def test_sweep_loop_survives_a_failing_iteration(monkeypatch) -> None:
 
     # The first (raising) iteration didn't kill the loop — a second iteration ran.
     assert calls["sweep"] == 2
+
+
+@pytest.mark.asyncio
+async def test_hook_returns_without_ingesting_synchronously(monkeypatch) -> None:
+    """I1: the hook only schedules the write on a worker thread; it never blocks the loop."""
+    import threading
+
+    import src.ledger.live as live
+
+    main = threading.get_ident()
+    seen: list[int] = []
+
+    def spy(fills):
+        seen.append(threading.get_ident())
+        return 1
+
+    monkeypatch.setattr(live, "ingest_fills", spy)
+    live.on_commission_report(None, fill(), None)
+    assert seen == []  # not run inline
+    await asyncio.gather(*list(live._hook_tasks))
+    assert seen and seen[0] != main
+
+
+@pytest.mark.asyncio
+async def test_hook_task_exceptions_are_logged_not_raised(monkeypatch, caplog) -> None:
+    import src.ledger.live as live
+
+    def boom(_fills):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(live, "ingest_fills", boom)
+    with caplog.at_level("WARNING"):
+        live.on_commission_report(None, fill(), None)
+        await asyncio.gather(*list(live._hook_tasks), return_exceptions=True)
+        await asyncio.sleep(0)
+    assert "ledger live hook failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sweep_ingests_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    import src.ledger.live as live
+
+    main = threading.get_ident()
+    seen: list[int] = []
+
+    async def returns_fills(ib, context):
+        return [fill()]
+
+    def spy(fills):
+        seen.append(threading.get_ident())
+        return 1
+
+    monkeypatch.setattr(live, "is_rth", lambda: True)
+    monkeypatch.setattr(live, "_req_executions_bounded", returns_fills)
+    monkeypatch.setattr(live, "ingest_fills", spy)
+    assert await live._sweep_once(SimpleNamespace(isConnected=lambda: True)) == 1
+    assert seen[0] != main

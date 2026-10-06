@@ -113,6 +113,9 @@ def _upsert_execution(
         if row.ibkr_realized_pnl is None and e.ibkr_realized_pnl is not None:
             row.ibkr_realized_pnl = e.ibkr_realized_pnl
             changed = True
+        if not row.codes and e.codes:
+            row.codes = e.codes
+            changed = True
         return False, changed, order_id_backfilled, row.id
     c = e.contract
     new_row = BrokerExecutionRow(

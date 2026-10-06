@@ -500,3 +500,25 @@ def test_cli_dry_run_writes_nothing_and_real_run_imports(db, capsys) -> None:
     assert main([str(FIXTURE)]) == 0
     assert len(_rows(db)) == 15
     assert '"status": "ok"' in capsys.readouterr().out
+
+
+def test_exec_duplicate_backfills_codes_so_a_live_close_stays_an_orphan(db) -> None:
+    """M1: live fill lands first with no codes; the Flex row for the same execId carries ``C``.
+    The duplicate must backfill the codes, or the close would be read as a fake long."""
+    from src.ledger.ingest import ingest
+
+    close = "AMZN 10OCT25 215 P"
+    live = ex(close, "2025-10-03, 14:45:08", 1, 0.5, exec_id="X1", perm=9, codes="")
+    flex = ex(close, "2025-10-03, 14:45:08", 1, 0.5, exec_id="X1", perm=9, codes="C")
+    ingest(stmt(live), source="live")
+    ingest(stmt(flex), source="flex", filename="flex:q")
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0].codes == "C"
+    # a stored code is never overwritten by a later, different one
+    ingest(
+        stmt(ex(close, "2025-10-03, 14:45:08", 1, 0.5, exec_id="X1", perm=9, codes="O")),
+        source="flex",
+        filename="flex:q2",
+    )
+    assert _rows(db)[0].codes == "C"

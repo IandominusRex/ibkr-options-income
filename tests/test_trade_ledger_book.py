@@ -308,3 +308,30 @@ def test_build_book_uses_a_snapshot_from_the_matching_account(db) -> None:
     nvda = next(t for t in book.tickers if t.symbol == "NVDA")
     assert nvda.unrealized == 55.0
     assert book.summary.unrealized_usd == 55.0
+
+
+def test_summary_unrealized_is_none_when_any_open_ticker_has_no_mark() -> None:
+    """I2: a partial sum is never reported as the account's unrealized."""
+    execs = [
+        ex("NVDA 25JUL25 170 P", "2025-07-18, 10:00:00", -1, 1.9),
+        ex("AMZN 25JUL25 200 P", "2025-07-18, 10:00:00", -1, 2.0),
+    ]
+    snap = PortfolioSnapshot(
+        captured_at=datetime(2025, 7, 20, 15, tzinfo=UTC),
+        source="monitor",
+        positions=[
+            PositionSnapshot.model_validate(
+                {
+                    "symbol": "NVDA 250725P00170000",
+                    "sec_type": "OPT",
+                    "underlying": "NVDA",
+                    "position": -1,
+                    "avg_cost": 190.0,
+                    "unrealized_pnl": 55.0,
+                }
+            )
+        ],
+    )
+    _, _, _, tickers, summary = _book(execs, date(2025, 7, 20), snapshot=snap)
+    assert {t.symbol: t.unrealized for t in tickers} == {"NVDA": 55.0, "AMZN": None}
+    assert summary.unrealized_usd is None
