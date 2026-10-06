@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 
-> **Progress (2026-10-06):** Tasks 1–12 complete and reviewed on branch `feat/trade-ledger` (commits `8e4e2c7`..`bf9d644`); docs (ARCHITECTURE, SETUP, STATUS, README, CLAUDE.md, docs/web/commands.md, spec R8 note) updated for the built backend in `aec5def`. Execution paused here. Remaining: Tasks 13–16 (web `/ledger` pages) and Task 17 (fence tests, final doc pass, full gate, real-file smoke). Rulings that amended this plan during execution are listed in the execution summary, not here.
+> **Progress (2026-10-07):** All 17 tasks complete and reviewed on branch `feat/trade-ledger`; final whole-branch review fixes landed in `9b7d17d`..`4b9eb50`.
 **Goal:** A broker-truth ledger of every execution ever made on the IBKR account. It is built from Activity Statement CSV uploads, a nightly Flex pull and live executions, rolled up into trades, tickers and a portfolio. It is viewable and editable on the web dashboard at `/ledger` and mirrored to the operator's Google Sheet.
 
 **Architecture:**
@@ -5347,7 +5347,7 @@ git commit -m "feat(ledger): Google Sheet mirror (three auto tabs, generation-dr
 
 ---
 
-### Task 13: Web — ledger types, helpers, nav, Overview page
+### Task 13: Web — ledger types, helpers, nav, Overview page ✅
 
 **Files:**
 - Create:
@@ -5369,7 +5369,7 @@ git commit -m "feat(ledger): Google Sheet mirror (three auto tabs, generation-dr
   - Helpers `money(v, currency?)`, `pct(v)`, `rate(v)`, `signClass(v)`
   - Components `<LedgerNav/>`, `<OutcomePill outcome overridden?/>`, `<TickerTable tickers/>`, `<PnlCurve points/>`, `<MonthlyBars months/>`
 
-- [ ] **Step 1: Write the failing test** — `web/components/ledger/LedgerOverview.test.tsx`
+- [x] **Step 1: Write the failing test** — `web/components/ledger/LedgerOverview.test.tsx`
 
 ```tsx
 import { screen, within } from "@testing-library/react";
@@ -5447,12 +5447,12 @@ describe("LedgerOverview", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd web && npx vitest run components/ledger/LedgerOverview.test.tsx`
 Expected: FAIL with `Cannot find module './LedgerOverview'`.
 
-- [ ] **Step 3: Create `web/components/ledger/types.ts`**
+- [x] **Step 3: Create `web/components/ledger/types.ts`**
 
 ```ts
 // Hand-mirrors the Ledger* models in src/common/schemas.py and src/api/models/ledger.py.
@@ -5554,7 +5554,7 @@ export type LedgerImportsResponse = {
 };
 ```
 
-- [ ] **Step 4: Create `web/components/ledger/format.ts`**
+- [x] **Step 4: Create `web/components/ledger/format.ts`**
 
 ```ts
 // Ledger number formatting. Unknown renders "n/a" - an unknown is never shown as zero.
@@ -5582,7 +5582,7 @@ export function signClass(v: number | null | undefined): string {
 }
 ```
 
-- [ ] **Step 5: Create `LedgerNav.tsx`, `OutcomePill.tsx`, `Charts.tsx`, `TickerTable.tsx`**
+- [x] **Step 5: Create `LedgerNav.tsx`, `OutcomePill.tsx`, `Charts.tsx`, `TickerTable.tsx`**
 
 `web/components/ledger/LedgerNav.tsx`:
 
@@ -5776,7 +5776,7 @@ export function TickerTable({ tickers }: { tickers: LedgerTicker[] }) {
 }
 ```
 
-- [ ] **Step 6: Create `LedgerOverview.tsx` and the page**
+- [x] **Step 6: Create `LedgerOverview.tsx` and the page**
 
 `web/components/ledger/LedgerOverview.tsx`:
 
@@ -5916,12 +5916,12 @@ export default function LedgerPage() {
 
 In `web/components/shell/RailSection.tsx`, add `ledger: "/ledger",` to the `HREF` map after `pnl: "/pnl",`.
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 Run: `cd web && npx vitest run components/ledger` then `npm test`
 Expected: all PASS. The recharts `ResponsiveContainer` warns about zero size under jsdom; that's harmless.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add web/components/ledger web/app/ledger/page.tsx web/components/shell/RailSection.tsx
@@ -5930,7 +5930,7 @@ git commit -m "feat(web): ledger overview - tiles, P&L curve, monthly bars, tick
 
 ---
 
-### Task 14: Web — Trades page with filters, side panel and annotation editing
+### Task 14: Web — Trades page with filters, side panel and annotation editing ✅
 
 **Files:**
 - Create: `web/components/ledger/TradesTable.tsx`, `web/components/ledger/TradePanel.tsx`, `web/components/ledger/TradesView.tsx`, `web/app/ledger/trades/page.tsx`
@@ -5946,7 +5946,7 @@ git commit -m "feat(web): ledger overview - tiles, P&L curve, monthly bars, tick
   - `<TradePanel orderKey onClose/>`
   - `<TradesView fixedSymbol?/>`, reused by the ticker page in Task 15
 
-- [ ] **Step 1: Write the failing test** — `web/components/ledger/TradesView.test.tsx`
+- [x] **Step 1: Write the failing test** — `web/components/ledger/TradesView.test.tsx`
 
 ```tsx
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -6015,12 +6015,12 @@ describe("TradesView", () => {
 
 `renderWithQuery` matches the longest exact key first and then falls back to prefix matching. That's why `/ledger/trades/0123…` and `/commands/77` are listed before their shorter prefixes. If the prefix order in `web/lib/test-query.tsx` differs, order the keys so that each exact path appears.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd web && npx vitest run components/ledger/TradesView.test.tsx`
 Expected: FAIL with `Cannot find module './TradesView'`.
 
-- [ ] **Step 3: Create `TradesTable.tsx`**
+- [x] **Step 3: Create `TradesTable.tsx`**
 
 ```tsx
 "use client";
@@ -6074,7 +6074,7 @@ export function TradesTable({ trades, onSelect }: { trades: LedgerTrade[]; onSel
 }
 ```
 
-- [ ] **Step 4: Create `TradePanel.tsx`**
+- [x] **Step 4: Create `TradePanel.tsx`**
 
 ```tsx
 "use client";
@@ -6200,7 +6200,7 @@ export function TradePanel({ orderKey, onClose }: { orderKey: string; onClose: (
 }
 ```
 
-- [ ] **Step 5: Create `TradesView.tsx` and the page**
+- [x] **Step 5: Create `TradesView.tsx` and the page**
 
 ```tsx
 "use client";
@@ -6295,12 +6295,12 @@ export default function LedgerTradesPage() {
 
 `submitCommand` posts to `/commands` and `useCommandStatus` polls `/commands/{id}`; confirm both by reading `web/lib/commands.ts`. If `useCommandStatus(null)` doesn't disable itself, guard it the same way other callers in `web/components/options/` do.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `cd web && npx vitest run components/ledger` then `npm test`
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add web/components/ledger/TradesTable.tsx web/components/ledger/TradePanel.tsx web/components/ledger/TradesView.tsx web/components/ledger/TradesView.test.tsx web/app/ledger/trades/page.tsx
@@ -6309,7 +6309,7 @@ git commit -m "feat(web): ledger trades table with filters, CSV export, trade pa
 
 ---
 
-### Task 15: Web — Ticker drill-down page
+### Task 15: Web — Ticker drill-down page ✅
 
 **Files:**
 - Create: `web/components/ledger/TickerView.tsx`, `web/app/ledger/ticker/[symbol]/page.tsx`
@@ -6319,7 +6319,7 @@ git commit -m "feat(web): ledger trades table with filters, CSV export, trade pa
 - Consumes: `GET /ledger/tickers/{symbol}` (Task 9); `<TradesView fixedSymbol/>` (Task 14); Task 13 helpers.
 - Produces: `<TickerView symbol/>`.
 
-- [ ] **Step 1: Write the failing test** — `web/components/ledger/TickerView.test.tsx`
+- [x] **Step 1: Write the failing test** — `web/components/ledger/TickerView.test.tsx`
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -6370,12 +6370,12 @@ describe("TickerView", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd web && npx vitest run components/ledger/TickerView.test.tsx`
 Expected: FAIL with `Cannot find module './TickerView'`.
 
-- [ ] **Step 3: Create `TickerView.tsx`**
+- [x] **Step 3: Create `TickerView.tsx`**
 
 ```tsx
 "use client";
@@ -6504,12 +6504,12 @@ export default function LedgerTickerPage({ params }: { params: Promise<{ symbol:
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cd web && npx vitest run components/ledger` then `npm test`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/components/ledger/TickerView.tsx web/components/ledger/TickerView.test.tsx "web/app/ledger/ticker/[symbol]/page.tsx"
@@ -6518,7 +6518,7 @@ git commit -m "feat(web): ledger ticker drill-down - basis walk, lots, dividends
 
 ---
 
-### Task 16: Web — Import page
+### Task 16: Web — Import page ✅
 
 **Files:**
 - Create: `web/components/ledger/ImportView.tsx`, `web/app/ledger/import/page.tsx`
@@ -6528,7 +6528,7 @@ git commit -m "feat(web): ledger ticker drill-down - basis walk, lots, dividends
 - Consumes: `GET /ledger/imports` (Task 9); `submitCommand`/`useCommandStatus`; commands `ledger_import` and `ledger_ca_reviewed` (Task 8).
 - Produces: `<ImportView/>`.
 
-- [ ] **Step 1: Write the failing test** — `web/components/ledger/ImportView.test.tsx`
+- [x] **Step 1: Write the failing test** — `web/components/ledger/ImportView.test.tsx`
 
 ```tsx
 import { fireEvent, screen, waitFor } from "@testing-library/react";
@@ -6580,12 +6580,12 @@ describe("ImportView", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd web && npx vitest run components/ledger/ImportView.test.tsx`
 Expected: FAIL with `Cannot find module './ImportView'`.
 
-- [ ] **Step 3: Create `ImportView.tsx`**
+- [x] **Step 3: Create `ImportView.tsx`**
 
 ```tsx
 "use client";
@@ -6732,12 +6732,12 @@ export default function LedgerImportPage() {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cd web && npx vitest run components/ledger` then `npm test` and `npx tsc --noEmit`
 Expected: all PASS and type-clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/components/ledger/ImportView.tsx web/components/ledger/ImportView.test.tsx web/app/ledger/import/page.tsx
@@ -6746,7 +6746,7 @@ git commit -m "feat(web): ledger import page - CSV upload, feed status, corporat
 
 ---
 
-### Task 17: Fences, docs, and the full gate
+### Task 17: Fences, docs, and the full gate ✅
 
 **Files:**
 - Modify:
@@ -6754,7 +6754,7 @@ git commit -m "feat(web): ledger import page - CSV upload, feed status, corporat
   - `ARCHITECTURE.md`, `SETUP.md`, `STATUS.md`, `README.md`, `CLAUDE.md`, `docs/web/commands.md`
 - Test: `tests/test_web_fence.py`
 
-- [ ] **Step 1: Add the fence tests** — append to `tests/test_web_fence.py`
+- [x] **Step 1: Add the fence tests** — append to `tests/test_web_fence.py`
 
 ```python
 # ---------------------------------------------------------------------------
@@ -6795,7 +6795,7 @@ def test_only_the_ledger_package_writes_the_ledger_tables() -> None:
 Run: `python -m pytest tests/test_web_fence.py -v`
 Expected: all PASS, including the existing `test_the_api_still_writes_exactly_one_table` and `test_reporting_never_writes_anything`.
 
-- [ ] **Step 2: Update `ARCHITECTURE.md`**
+- [x] **Step 2: Update `ARCHITECTURE.md`**
   - **Folder guide.** Add a `src/ledger/` entry listing each module and its one-line role: `contracts.py`, `state.py`, `activity_csv.py`, `ingest.py`, `annotations.py`, `flex.py`, `live.py` and `sheets_mirror.py`. Use the descriptions from this plan's File Structure table. Also state the fence: unreachable from engine/execution/strategies, and imports nothing from `src.claude`.
   - **`src/reporting/`.** Add `trade_ledger.py`, the whole-account builder: orders, FIFO trades, outcomes, rolls, orphans, lots, wheel basis, tickers, FX and the USD summary. Note that it is read-only, like `pnl.py`.
   - **`src/api/`.** Add `routers/ledger.py` and `models/ledger.py`, listing the `/ledger/*` routes.
@@ -6806,7 +6806,7 @@ Expected: all PASS, including the existing `test_the_api_still_writes_exactly_on
   - **`scripts/`.** Add `ledger_import.py` and `ledger_flex_pull.py`.
   - **`web/`.** Add `app/ledger/{page,trades,ticker/[symbol],import}` and `components/ledger/`.
 
-- [ ] **Step 3: Update `SETUP.md`**
+- [x] **Step 3: Update `SETUP.md`**
 
 Add a "Trade ledger" section covering these steps:
 1. **Import history:** `python -m scripts.ledger_import ~/Downloads/<statement>.csv`, or use the dashboard `/ledger/import` page. The first import locks the ledger to that account (`ledger.account` in `settings.yaml` overrides this).
@@ -6832,7 +6832,7 @@ Also update:
   - Flex `1012` → token expired, so regenerate it.
   - The sheet isn't updating → see `/ledger/import` "Google Sheet mirror: failing: …".
 
-- [ ] **Step 4: Update `STATUS.md`**
+- [x] **Step 4: Update `STATUS.md`**
   - **Built:** the trade ledger (all of the above).
   - **Live-verification items:**
     1. The Flex Trades section carries expiries, assignments and exercises as BookTrade rows with `notes` codes (R1). Verify with `--dry-run` against an imported CSV period.
@@ -6847,7 +6847,7 @@ Also update:
     - The Sheets mirror is one-way and carries no unrealized P&L.
     - There is no PDF import.
 
-- [ ] **Step 5: Update the remaining docs**
+- [x] **Step 5: Update the remaining docs**
   - **`docs/web/commands.md`:** add a `### \`ledger_import\``, `### \`ledger_annotate\`` and `### \`ledger_ca_reviewed\`` section under "Every kind". Each needs its payload, its result shape and its failure-reason table:
     - `ledger_import`: `pdf_not_supported`, `not_an_activity_statement`, `parse_errors`, `account_mismatch`.
     - `ledger_ca_reviewed`: `not_found`.
@@ -6855,7 +6855,7 @@ Also update:
   - **`README.md`:** add one line to the feature pitch: "Trade ledger: every IBKR execution, per-ticker P&L and wheel cost basis, CSV/Flex/live ingestion, mirrored to Google Sheets".
   - **`CLAUDE.md`:** in "The third, read-only tier — `src/reporting/`", add `trade_ledger.py` (the whole-account builder). Add a short paragraph stating the `src/ledger/` fence and naming `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`.
 
-- [ ] **Step 6: Run the full gate**
+- [x] **Step 6: Run the full gate**
 
 ```bash
 python -m pytest -q
@@ -6868,14 +6868,14 @@ cd web && npm test && npx tsc --noEmit && cd ..
 ```
 Expected: everything passes. Report the actual counts; don't claim a pass without the output.
 
-- [ ] **Step 7: End-to-end smoke on the real file (local, not committed)**
+- [x] **Step 7: End-to-end smoke on the real file (local, not committed)**
 
 ```bash
 python -m scripts.ledger_import ~/Downloads/U1234567_U1234567_20250401_20260401_AS_Fv2_<hash>.csv --dry-run
 ```
 Expected: `"fatal": false`, with 485 OPT + 123 STK executions. Do **not** run the non-dry import against the operator's real DB unless the operator asks for it.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tests/test_web_fence.py docs/web/commands.md
