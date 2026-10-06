@@ -78,7 +78,12 @@ export function LedgerOverview() {
             </p>
           )}
           <div className="grid gap-6 lg:grid-cols-2">
-            <PnlCurve points={summary.data.summary.curve} />
+            <div className="space-y-1">
+              <PnlCurve points={summary.data.summary.curve} />
+              <p className="text-xs text-muted" data-testid="curve-caption">
+                Trading P&amp;L only. The Total profit tile also includes interest and fees.
+              </p>
+            </div>
             <MonthlyBars months={summary.data.summary.months} />
           </div>
         </>
@@ -91,7 +96,9 @@ export function LedgerOverview() {
       )}
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-content">By ticker</h2>
-        <TickerTable tickers={tickers.data?.tickers ?? []} />
+        {tickers.isError && <p className="text-sm text-muted">Could not load tickers.</p>}
+        {tickers.isLoading && <p className="text-sm text-muted">Loading tickers</p>}
+        {tickers.data && <TickerTable tickers={tickers.data.tickers} />}
       </section>
       {summary.data && summary.data.summary.upcoming.length > 0 && (
         <section className="space-y-2">

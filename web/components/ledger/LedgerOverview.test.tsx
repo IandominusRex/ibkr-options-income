@@ -41,6 +41,14 @@ describe("LedgerOverview", () => {
     expect(within(tiles).getByTestId("tile-win-rate")).toHaveTextContent("75%");
   });
 
+  it("labels the P&L curve as excluding interest and fees", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary() },
+      "/ledger/tickers": { as_of: ISO, tickers: [aTicker()] },
+    });
+    expect(await screen.findByTestId("curve-caption")).toHaveTextContent(/interest and fees/);
+  });
+
   it("links each ticker to its drill-down page", async () => {
     renderWithQuery(<LedgerOverview />, {
       "/ledger/summary": { as_of: ISO, summary: aSummary() },

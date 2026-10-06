@@ -72,7 +72,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
       {isError && <p className="text-sm text-muted">Could not load trades.</p>}
       {data && <p className="text-xs text-muted">{data.n} trades</p>}
       {data && <TradesTable trades={data.trades} onSelect={setSelected} />}
-      {selected && <TradePanel orderKey={selected} onClose={() => setSelected(null)} />}
+      {selected && <TradePanel key={selected} orderKey={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

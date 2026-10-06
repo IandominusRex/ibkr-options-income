@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { submitCommand, useCommandStatus } from "@/lib/commands";
@@ -22,15 +22,24 @@ export function TradePanel({ orderKey, onClose }: { orderKey: string; onClose: (
   const [error, setError] = useState<string | null>(null);
   const status = useCommandStatus(commandId);
 
+  // Re-sync the form from server data only for a newly selected trade or right after a save
+  // was applied, never on a background refetch (that would wipe unsaved edits).
+  const syncedKey = useRef<string | null>(null);
+  const resync = useRef(false);
+
   useEffect(() => {
     if (!data) return;
+    if (syncedKey.current === orderKey && !resync.current) return;
+    syncedKey.current = orderKey;
+    resync.current = false;
     setNotes(data.trade.notes);
     setTags(data.trade.tags.join(", "));
     setOverride(data.trade.outcome_overridden ? data.trade.outcome : "");
     setExclude(data.trade.exclude_from_stats);
-  }, [data]);
+  }, [data, orderKey]);
 
   useEffect(() => {
+    if (status.data?.status === "applied") resync.current = true;
     if (status.data?.status === "applied") void qc.invalidateQueries({ queryKey: ["ledger"] });
   }, [status.data?.status, qc]);
 
