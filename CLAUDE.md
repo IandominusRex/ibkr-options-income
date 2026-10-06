@@ -210,7 +210,7 @@ read-only module.
 normalises to a `ParsedStatement` and lands through `src/ledger/ingest.py::ingest`, never through
 a second writer. The same fence applies here as everywhere else in the reporting tier: nothing
 in `src/ledger/` is imported by `engine/`, `execution/`, or `strategies/`, and `src/ledger/`
-imports nothing from `src.claude`. `src/ledger/live.py` is the one place `ib_async` objects
+imports nothing from `src.claude` *directly* (transitively, `live.py` reaches `src.claude.memory` through `src.execution.reconciliation`'s `_req_executions_bounded` helper; this is harmless at runtime because `live.py` only runs inside `approval_service`). `src/ledger/live.py` is the one place `ib_async` objects
 (`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
 schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
 Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping

@@ -1570,6 +1570,11 @@ to a Google Sheet.
    `commissionReportEvent`s for trades placed from *any* client on the account, including a
    manual fill you place by hand in TWS itself, so the ledger picks it up the same day instead
    of waiting for the next Flex pull.
+   **Caveat:** the exec process's orphan-fill reconciliation matches by contract as a
+   fallback, so with the master id set a manual TWS sell-to-open of the exact same contract as
+   a recoverable SUBMITTED, REJECTED or CANCELLED system order could be booked as that order's
+   fill. Leave the setting off if you routinely place manual trades in contracts the system
+   also trades.
 5. **Checking it worked:** the CLI commands above print what they did. From a running API
    (`python -m scripts.run_api`), `curl -H "Authorization: Bearer $WEB_API_TOKEN"
    http://localhost:8787/ledger/summary` (or `/ledger/trades`, `/ledger/tickers`) confirms the

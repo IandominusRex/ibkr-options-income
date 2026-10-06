@@ -402,8 +402,11 @@ pre-system history too.
 - **Unrealized P&L is account-matched, not assumed.** `build_book` only prices open ledger
   trades off the live position snapshot when that snapshot's own account equals the ledger's
   locked account — since the only snapshot source in this v1 deployment is the paper account,
-  unrealized P&L and capital-utilised currently read `None` ("n/a") for the (real-account)
-  ledger, never a paper-account number silently mislabelled as real. This resolves itself
+  unrealized P&L currently reads `None` ("n/a") for the (real-account) ledger, never a
+  paper-account number silently mislabelled as real. (Capital utilised is computed from ledger
+  data and always has a value; "available capital" is `None` only when there are no deposits.
+  The summary's `unrealized_usd` is also `None` whenever any open ticker lacks a mark, never a
+  partial sum.) This resolves itself
   automatically once a real-account snapshot source exists (live cutover, or a real-account
   `refresh`) — no code change needed.
 - **Live sweep is RTH-gated; the commission hook is not.** `attach_live_hook` records a fill the
@@ -457,9 +460,6 @@ pre-system history too.
 - A timezone recorded on the import run row (`LedgerImportRunRow` has no `tz` column — every
   timestamp in the ledger is already normalised to UTC/ET at parse time, so this is a convenience
   field, not a correctness gap).
-- A "Net P&L" column in the Google Sheet (the sheet's `Capital`/outcome columns are spec-intended
-  to mirror the operator's original hand-built sheet exactly; a net-of-commissions column was
-  reviewed and cut from v1 scope).
 
 **Needs live verification ( none of this has been exercised against the real
 Flex Web Service or a live TWS session yet):**
@@ -475,7 +475,13 @@ Flex Web Service or a live TWS session yet):**
    number space.
 4. Live manual-trade visibility (same-day, not next-EOD) genuinely depends on setting TWS's
    Master API client ID to 14 — verify a manual TWS fill shows up in the ledger same-day with
-   the setting on, and only at the next EOD Flex pull with it off.
+   the setting on, and only at the next EOD Flex pull with it off. Also confirm the exec
+   process does not claim a manual fill as its own: `reconcile_orphan_fills`' contract-match
+   fallback could book a manual TWS sell-to-open of the same contract as a recoverable
+   SUBMITTED/REJECTED/CANCELLED order's fill.
+5. Flex vs CSV cash-event dedupe: the cash-event keys omit the description and depend on the CSV
+   "Date" and Flex `dateTime` agreeing for dividends. A mismatch would double-count dividends
+   when both sources cover the same period; compare a CSV and a Flex pull of the same dates.
 
 **Known limitations:**
 - Paper-account fills are excluded once the ledger is locked to the real account (by design,
@@ -494,8 +500,14 @@ Flex Web Service or a live TWS session yet):**
   "reviewed" flag, both through the command queue (applied by the approval service, so they
   appear once the drain has run, not instantly). Uploads are capped at `ledger.upload_max_bytes`
   (5 MiB) and are sent as JSON text, not multipart.
-- Unrealized P&L and capital-utilised read "n/a" until a position snapshot exists for the
-  ledger's locked account (see "Unrealized P&L is account-matched" above).
+- Unrealized P&L reads "n/a" until a position snapshot exists for the ledger's locked account
+  (see "Unrealized P&L is account-matched" above), and stays "n/a" while any open ticker has no
+  mark.
+- Per-ticker `total_realized` excludes orphan closes (closing trades with no opening in the
+  imported history), while the portfolio summary's `total_realized_usd` includes their IBKR
+  realized P&L, so the sum of the ticker rows can differ from the Total profit tile.
+- The P&L curve and monthly realised figures exclude interest and fees; the Total profit tile
+  includes them. The Overview chart carries a caption saying so.
 
 ---
 
