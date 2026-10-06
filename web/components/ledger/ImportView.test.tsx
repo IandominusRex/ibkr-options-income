@@ -44,4 +44,48 @@ describe("ImportView", () => {
     });
     expect(await screen.findByText(/Imported: 3 new/)).toBeInTheDocument();
   });
+
+  it("rejects an over-size file in the browser without posting", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    const before = apiFetchMock.mock.calls.filter((c) => c[0] === "/commands").length;
+    const big = file("big.csv", "a");
+    Object.defineProperty(big, "size", { value: 6 * 1024 * 1024 });
+    fireEvent.change(await screen.findByLabelText("Activity Statement CSV"), { target: { files: [big] } });
+    expect(await screen.findByText(/over 5 MB/)).toBeInTheDocument();
+    expect(apiFetchMock.mock.calls.filter((c) => c[0] === "/commands").length).toBe(before);
+  });
+
+  it("shows the error message of a failed import command", async () => {
+    renderWithQuery(<ImportView />, { "/commands/9": { ...PENDING, status: "failed", result: { reason: "not_an_activity_statement" } }, "/ledger/imports": IMPORTS, "/commands": PENDING });
+    fireEvent.change(await screen.findByLabelText("Activity Statement CSV"), { target: { files: [file("s.csv", "x")] } });
+    expect(await screen.findByText(/Import failed: not_an_activity_statement/)).toBeInTheDocument();
+  });
+
+  it("shows n/a, not zero, when counts are missing", async () => {
+    renderWithQuery(<ImportView />, { "/commands/9": { ...PENDING, status: "applied", result: {} }, "/ledger/imports": IMPORTS, "/commands": PENDING });
+    fireEvent.change(await screen.findByLabelText("Activity Statement CSV"), { target: { files: [file("s.csv", "x")] } });
+    expect(await screen.findByText(/Imported: n\/a new/)).toBeInTheDocument();
+  });
+
+  it("marks a corporate action reviewed: disabled while pending, list refreshed after applied", async () => {
+    let cmdStatus = "pending";
+    let reviewed = false;
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/ledger/imports") return { ...IMPORTS, corporate_actions: [{ ...IMPORTS.corporate_actions[0], reviewed }] };
+      if (path === "/commands") return { ...PENDING, kind: "ledger_ca_reviewed" };
+      if (path === "/commands/9") return { ...PENDING, status: cmdStatus, result: null };
+      return {};
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Mark reviewed" }));
+    await waitFor(() => {
+      const post = apiFetchMock.mock.calls.filter((c) => c[0] === "/commands").at(-1);
+      expect(JSON.parse((post![1] as RequestInit).body as string)).toEqual({ kind: "ledger_ca_reviewed", payload: { corporate_action_id: 4 } });
+    });
+    expect(await screen.findByRole("button", { name: "Marking" })).toBeDisabled();
+    cmdStatus = "applied";
+    reviewed = true;
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Mark/ })).toBeNull(), { timeout: 4000 });
+    expect(screen.getByText("reviewed")).toBeInTheDocument();
+  });
 });

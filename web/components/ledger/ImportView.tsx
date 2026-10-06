@@ -33,17 +33,32 @@ export function ImportView() {
   const [message, setMessage] = useState<string | null>(null);
   const status = useCommandStatus(commandId);
 
+  const [reviewId, setReviewId] = useState<{ command: number; action: number } | null>(null);
+  const reviewStatus = useCommandStatus(reviewId?.command ?? null);
+  const reviewPending = reviewId !== null && !(reviewStatus.data && reviewStatus.data.status !== "pending");
+
   useEffect(() => {
     const st = status.data;
     if (!st) return;
     if (st.status === "applied") {
-      const counts = (st.result?.counts ?? {}) as Record<string, number>;
-      setMessage(`Imported: ${counts.new ?? 0} new, ${counts.duplicate ?? 0} already present, ${counts.superseded ?? 0} merged with broker fills.`);
+      const counts = (st.result?.counts ?? null) as Record<string, number> | null;
+      const part = (key: string, label: string) => `${counts && typeof counts[key] === "number" ? counts[key] : "n/a"} ${label}`;
+      setMessage(`Imported: ${part("new", "new")}, ${part("duplicate", "already present")}, ${part("superseded", "merged with broker fills")}.`);
       void qc.invalidateQueries({ queryKey: ["ledger"] });
     } else if (st.status === "failed") {
       setMessage(`Import failed: ${String(st.result?.reason ?? "error")}`);
     }
   }, [status.data, qc]);
+
+  useEffect(() => {
+    const st = reviewStatus.data;
+    if (!st) return;
+    if (st.status === "applied") {
+      void qc.invalidateQueries({ queryKey: ["ledger"] });
+    } else if (st.status === "failed" || st.status === "expired") {
+      setMessage(`Could not mark reviewed: ${String(st.result?.reason ?? st.status)}`);
+    }
+  }, [reviewStatus.data, qc]);
 
   async function onFile(f: File | undefined) {
     setMessage(null);
@@ -56,8 +71,8 @@ export function ImportView() {
       setMessage("That file is over 5 MB. Split the period into two statements.");
       return;
     }
-    const content = await readText(f);
     try {
+      const content = await readText(f);
       const r = await submitCommand("ledger_import", { filename: f.name, content });
       setCommandId(r.id);
       setMessage("Importing");
@@ -67,8 +82,13 @@ export function ImportView() {
   }
 
   async function markReviewed(id: number) {
-    await submitCommand("ledger_ca_reviewed", { corporate_action_id: id });
-    void qc.invalidateQueries({ queryKey: ["ledger", "imports"] });
+    setMessage(null);
+    try {
+      const r = await submitCommand("ledger_ca_reviewed", { corporate_action_id: id });
+      setReviewId({ command: r.id, action: id });
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Could not mark reviewed");
+    }
   }
 
   return (
@@ -101,7 +121,7 @@ export function ImportView() {
                     <span className="tabular text-muted">{a.event_date}</span>
                     <span className="text-content">{a.description}</span>
                     {a.reviewed ? <span className="text-xs text-muted">reviewed</span> : (
-                      <button type="button" onClick={() => void markReviewed(a.id)} className="rounded bg-elevated px-2 py-0.5 text-xs text-content">Mark reviewed</button>
+                      <button type="button" disabled={reviewPending} onClick={() => void markReviewed(a.id)} className="rounded bg-elevated px-2 py-0.5 text-xs text-content">{reviewPending && reviewId?.action === a.id ? "Marking" : "Mark reviewed"}</button>
                     )}
                   </li>
                 ))}
