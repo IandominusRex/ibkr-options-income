@@ -452,11 +452,11 @@ to the new approval.
   locked to — see the account-lock note in `CLAUDE.md`/`STATUS.md`). The latter two failures
   carry `{"run_id": int, "errors": [...]}` in `detail` — the parse errors or ingest result that
   caused the refusal.
-- **Reachable today:** only via `POST /commands {"kind": "ledger_import", ...}` directly, or
-  `python -m scripts.ledger_import` (the CLI, same code path) — the dashboard's `/ledger/import`
-  upload page (Tasks 13-16) is not built yet.
-- **Milestone:** Trade ledger Tasks 1-12 (docs/superpowers/plans/2026-10-05-trade-ledger.md),
-  web dashboard pages not built.
+- **Reachable from:** the upload control on `/ledger/import` (`components/ledger/ImportView.tsx`
+  reads the file as text and submits `{filename, content}`), `POST /commands` directly, or
+  `python -m scripts.ledger_import` (the CLI, same code path).
+- **Milestone:** Trade ledger (docs/superpowers/plans/2026-10-05-trade-ledger.md, backend Tasks
+  1-12, web pages Tasks 13-16).
 
 ### `ledger_annotate` — edit an operator note/tag/outcome-override on a ledger trade
 
@@ -483,9 +483,9 @@ to the new approval.
   unknown `order_key` simply creates a fresh, otherwise-blank annotation row rather than 404ing,
   since the ledger has no independent notion of "that trade doesn't exist" at the annotation
   layer).
-- **Reachable today:** only via `POST /commands` directly — no dashboard inline-edit UI yet
-  (Tasks 13-16).
-- **Milestone:** Trade ledger Tasks 1-12, web dashboard pages not built.
+- **Reachable from:** the trade panel on `/ledger/trades` and `/ledger/ticker/[symbol]`
+  (`components/ledger/TradePanel.tsx`), or `POST /commands` directly.
+- **Milestone:** Trade ledger (backend Tasks 1-12, web pages Tasks 13-16).
 
 ### `ledger_ca_reviewed` — flag a corporate action as human-reviewed
 
@@ -499,10 +499,9 @@ to the new approval.
 - **Result:** `{"corporate_action_id": int}`.
 - **Live mode:** No confirmation needed.
 - **Failure modes:** `not_found` (no `BrokerCorporateActionRow` with that id).
-- **Reachable today:** only via `POST /commands` directly — `GET /ledger/imports` lists
-  corporate actions (including `reviewed`) for reference, but no dashboard "mark reviewed"
-  button exists yet (Tasks 13-16).
-- **Milestone:** Trade ledger Tasks 1-12, web dashboard pages not built.
+- **Reachable from:** the corporate-actions list on `/ledger/import`
+  (`components/ledger/ImportView.tsx`, fed by `GET /ledger/imports`), or `POST /commands` directly.
+- **Milestone:** Trade ledger (backend Tasks 1-12, web pages Tasks 13-16).
 
 ---
 

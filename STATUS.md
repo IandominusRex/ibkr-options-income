@@ -276,7 +276,7 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **P&L calendar** (`/calendar` command) — per-day realized cashflow view for the last 30 days, derived from `FillRow` records (SELL = credit, BUY = debit), with fill count and running total.
 - **Richer order notification cards** (`format_order_notification`) — `action` parameter distinguishes BUY (close) vs SELL (open); fills display "Opened" / "Closed" wording with emoji; placed orders show "Close Order Placed" header for buy-to-close entries.
 - **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
-- **Trade ledger backend** (`src/ledger/`, `src/reporting/trade_ledger.py`, `src/api/routers/ledger.py`) — a broker-truth ledger of every IBKR execution (CSV/Flex/live), rolled up into trades → tickers → a USD portfolio summary, with a read-only API and a one-way Google Sheets mirror. The web dashboard pages are **not** built yet — see "Built (2026-10-06 — trade ledger backend)" below for the full detail, the deferred-for-v1 list, and known limitations.
+- **Trade ledger backend** (`src/ledger/`, `src/reporting/trade_ledger.py`, `src/api/routers/ledger.py`) — a broker-truth ledger of every IBKR execution (CSV/Flex/live), rolled up into trades → tickers → a USD portfolio summary, with a read-only API and a one-way Google Sheets mirror. The web dashboard (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) is built too — see "Built (2026-10-06 — trade ledger backend)" below for the full detail, the deferred-for-v1 list, and known limitations.
 
 ---
 
@@ -330,8 +330,8 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − net_premium/100` per share for share-acquiring (put) assignments. **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads it via `campaigns.adjusted_cost_basis_for(symbol)` and uses it — falling back to IBKR's raw `avg_cost` when no open assigned campaign exists — for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
 | **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
-| **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Not built — Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md.** The backend (Tasks 1-12: ingestion, read-only API, Sheets mirror) is built and committed on `feat/trade-ledger`; execution is paused before the web pages and before Task 17 (the dedicated fence test + final docs sweep, this entry included). Use the CLI (`scripts.ledger_import`, `scripts.ledger_flex_pull`) and the read-only API (`GET /ledger/*`) in the meantime — see `SETUP.md` §15. |
-| **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` and its two companions) | **Not built — Task 17 Step 1.** `src/ledger/` is not currently imported by `engine/`/`execution/`/`strategies/` (verified by hand), and `test_reporting_never_writes_anything` already covers `trade_ledger.py`'s no-writes rule since it globs all of `src/reporting/` — but nothing yet asserts this automatically for `src/ledger/` the way the rest of the fence is asserted elsewhere. See `CLAUDE.md`'s "`src/ledger/` fence" paragraph. |
+| **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
+| **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
 
 ---
 
@@ -368,9 +368,10 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ## Built (2026-10-06 — trade ledger backend: CSV/Flex/live ingestion, read-only API, Google Sheets mirror)
 
-**docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-12 — built and committed on
-`feat/trade-ledger`. Execution paused here: Tasks 13-16 (the web dashboard) and Task 17 (the
-dedicated fence test + final docs sweep) are not done.** A broker-truth ledger of *every*
+**docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-17 — built and committed on
+`feat/trade-ledger`: the backend (Tasks 1-12), the web dashboard (Tasks 13-16: `/ledger`,
+`/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) and the fence tests + docs sweep
+(Task 17).** A broker-truth ledger of *every*
 execution the IBKR account has ever recorded — not just what this system itself placed — rolled
 up into trades → tickers → a whole-account portfolio summary. Complements, and is deliberately
 separate from, `src/reporting/pnl.py`/`GET /pnl/*` (the *system-performance* view, this system's
@@ -450,9 +451,9 @@ pre-system history too.
 - A roll-chain UI (visualising `rolled_from`/`rolled_to` as a connected chain rather than two
   separate trade rows).
 - Per-line import errors surfaced in a UI (today they're in the `LedgerImportResult`/
-  `LedgerImportRunRow.errors` JSON, readable via `GET /ledger/imports`, but not rendered
-  per-line anywhere — moot until the dashboard exists).
-- Drag-and-drop CSV upload (needs the dashboard's `/ledger/import` page).
+  `LedgerImportRunRow.errors` JSON, readable via `GET /ledger/imports`; the `/ledger/import`
+  page shows counts and the failure reason, not a per-line list).
+- Drag-and-drop CSV upload (`/ledger/import` takes a file picker only).
 - A timezone recorded on the import run row (`LedgerImportRunRow` has no `tz` column — every
   timestamp in the ledger is already normalised to UTC/ET at parse time, so this is a convenience
   field, not a correctness gap).
@@ -460,7 +461,7 @@ pre-system history too.
   to mirror the operator's original hand-built sheet exactly; a net-of-commissions column was
   reviewed and cut from v1 scope).
 
-**Needs live verification (Task 17 Step 4 — none of this has been exercised against the real
+**Needs live verification ( none of this has been exercised against the real
 Flex Web Service or a live TWS session yet):**
 1. The Flex Trades section actually carries expiries, assignments, and exercises as execution-
    level rows with `openCloseIndicator`/`notes` codes (`O`/`C`/`A`/`Ep`) rather than needing the
@@ -489,7 +490,12 @@ Flex Web Service or a live TWS session yet):**
 - The Sheets mirror is one-way (ledger → sheet only) and carries no unrealized P&L.
 - There is no PDF statement import — `ledger_import` fails `pdf_not_supported` for a `.pdf`
   upload; only the CSV export of an Activity Statement is supported.
-- No dashboard UI exists yet (Tasks 13-16) — use the CLI and the read-only API (`SETUP.md` §15).
+- The dashboard is read-mostly: the only edits are trade annotations and the corporate-action
+  "reviewed" flag, both through the command queue (applied by the approval service, so they
+  appear once the drain has run, not instantly). Uploads are capped at `ledger.upload_max_bytes`
+  (5 MiB) and are sent as JSON text, not multipart.
+- Unrealized P&L and capital-utilised read "n/a" until a position snapshot exists for the
+  ledger's locked account (see "Unrealized P&L is account-matched" above).
 
 ---
 

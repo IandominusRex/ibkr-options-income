@@ -213,11 +213,12 @@ in `src/ledger/` is imported by `engine/`, `execution/`, or `strategies/`, and `
 imports nothing from `src.claude`. `src/ledger/live.py` is the one place `ib_async` objects
 (`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
 schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
-**A dedicated fence test (grepping engine/execution/strategies for `src.ledger`/`trade_ledger`,
-and asserting only `src/ledger/` constructs the six `BrokerExecutionRow`-family writers) is
-planned for Task 17 Step 1 and has not been added yet** — Tasks 1-12 (the ingestion backend,
-read-only API, and Google Sheets mirror) are built and committed on `feat/trade-ledger`; the web
-dashboard pages (Tasks 13-16) and this fence test are not.
+Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping
+engine/execution/strategies for `src.ledger`/`trade_ledger`), `::test_the_ledger_never_imports_the_enrichment_layer`
+and `::test_only_the_ledger_package_writes_the_ledger_tables` (only `src/ledger/` constructs the
+six writer rows) — keep them green. The web `/ledger/*` pages are read-only over `GET /ledger/*`;
+their two edits (annotations, corporate-action reviewed) and the CSV upload are intents drained by
+`approval_service`, like every other web write.
 
 ## Reference documentation
 

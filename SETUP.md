@@ -1512,10 +1512,10 @@ completed in 33.3s and returned a review citing NEWS ids (`N3`, `N5`).
 
 ## 15. Trade ledger (optional)
 
-**Status: the ingestion backend is built and committed on `feat/trade-ledger`
-(docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-12). The web dashboard pages
-(`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) are not built yet
-(Tasks 13-16) — everything below uses the CLI and the read-only API instead.** A broker-truth
+**Status: built on `feat/trade-ledger` (docs/superpowers/plans/2026-10-05-trade-ledger.md) —
+the ingestion backend and read-only API, plus the dashboard pages `/ledger` (overview),
+`/ledger/trades`, `/ledger/ticker/[symbol]` and `/ledger/import`. Everything below works from the
+CLI or the dashboard.** A broker-truth
 ledger of every execution the IBKR account has ever recorded — not just what this system placed
 — rolled up into trades → tickers → portfolio, with CSV/Flex/live ingestion and a one-way mirror
 to a Google Sheet.
@@ -1526,7 +1526,8 @@ to a Google Sheet.
    python -m scripts.ledger_import ~/Downloads/<statement>.csv --dry-run  # parse + count, writes nothing
    python -m scripts.ledger_import ~/Downloads/<statement>.csv            # import for real
    ```
-   The **first** import (CSV or Flex) locks the ledger to that statement's account — every later
+   Or use the dashboard's `/ledger/import` page (choose the CSV file; it shows the result, feed
+   status, corporate actions awaiting review, and import history). The **first** import (CSV or Flex) locks the ledger to that statement's account — every later
    import for a different account fails `account_mismatch`. Override the lock explicitly with
    `ledger.account` in `config/settings.yaml` if you need to set it before importing (e.g. to
    reserve the real account while only paper history exists so far).
@@ -1573,9 +1574,9 @@ to a Google Sheet.
    (`python -m scripts.run_api`), `curl -H "Authorization: Bearer $WEB_API_TOKEN"
    http://localhost:8787/ledger/summary` (or `/ledger/trades`, `/ledger/tickers`) confirms the
    book is populated; `GET /ledger/imports` reports the Flex/Sheets feed status (`configured`,
-   `last_run`, `last_status`/`last_error`) and the last 50 import runs — this is the CLI-era
-   stand-in for the "Google Sheet mirror: failing: …" status line the not-yet-built `/ledger`
-   dashboard page will eventually show.
+   `last_run`, `last_status`/`last_error`) and the last 50 import runs — the same data the
+   dashboard's `/ledger/import` page renders (including the "Google Sheet mirror: failing: …"
+   line).
 
 Also update:
 - Troubleshooting rows: `account_mismatch` on a ledger import, a Flex `1012` error, and the
@@ -1637,4 +1638,4 @@ Also update:
 | The watchdog alerts `eod: …` after a day on which the supervisor restarted (crash + `KeepAlive` respawn, `./ibkr restart`, a reboot) around 16:15 ET | A supervisor restart while `scripts.run_eod` was running kills that EOD child with it; the relaunched supervisor only catches up an EOD that *never started* that day, so the interrupted run is lost and `eod_completed` is never written for today | Run it by hand once the stack is back: `python -m scripts.run_eod` (idempotent — safe to re-run). The watchdog's `eod` check clears on its next cycle after it finishes |
 | `python -m scripts.ledger_import <file>.csv` (or the `ledger_import` command) fails `account_mismatch` | The statement's account doesn't match the one the ledger is already locked to (its first-ever CSV/Flex import, or an explicit `ledger.account` in `config/settings.yaml`) — most often a paper-account statement imported after the real account was already locked in, or vice versa | Confirm which account the ledger is tracking: `GET /ledger/imports` or the `ledger_account` row in `system_settings`. Import the matching account's statement instead, or clear/change `ledger.account` before the first import if you genuinely meant to switch accounts (there is no "re-lock" command — it is a deliberate one-way guard, R8) |
 | `python -m scripts.ledger_flex_pull` (or the EOD step 7b) fails with `Flex error 1012: ...` | The Flex Web Service token expired or was revoked | Regenerate the token in Client Portal → Settings → Flex Web Service and update `IBKR_FLEX_TOKEN` in `.env` |
-| The Google Sheet isn't updating | The mirror is unconfigured, erroring, or just hasn't hit its sync interval yet | Check `GET /ledger/imports` → `sheets: {configured, last_run, last_error}` (the dashboard's `/ledger/import` "Google Sheet mirror: failing: …" status line isn't built yet — Tasks 13-16 — this route is the stand-in). `configured: false` means `GOOGLE_SHEETS_CREDENTIALS_PATH`/`LEDGER_SHEET_ID` aren't both set; a non-null `last_error` is redacted (never contains the sheet id or credentials path) but still names the failure type. Confirm the spreadsheet is shared with the service account's email as Editor, and that `ledger.sheets_min_interval_seconds` (default 60s) has actually elapsed since the last ledger change |
+| The Google Sheet isn't updating | The mirror is unconfigured, erroring, or just hasn't hit its sync interval yet | Check `GET /ledger/imports` → `sheets: {configured, last_run, last_error}` (the same status the dashboard's `/ledger/import` page shows as "Google Sheet mirror: failing: …"). `configured: false` means `GOOGLE_SHEETS_CREDENTIALS_PATH`/`LEDGER_SHEET_ID` aren't both set; a non-null `last_error` is redacted (never contains the sheet id or credentials path) but still names the failure type. Confirm the spreadsheet is shared with the service account's email as Editor, and that `ledger.sheets_min_interval_seconds` (default 60s) has actually elapsed since the last ledger change |

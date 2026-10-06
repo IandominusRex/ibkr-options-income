@@ -6,7 +6,7 @@ cash-secured-put opportunities, gets a plain-English review from Claude, and sen
 to your phone via Telegram.
 
 **Trade ledger:** every IBKR execution, per-ticker P&L and wheel cost basis, CSV/Flex/live
-ingestion, mirrored to Google Sheets.
+ingestion, mirrored to Google Sheets — with a `/ledger` web dashboard (overview, trades, per-ticker drill-down, import).
 
 > ⚠️ **Not financial advice.** This is a personal automation project for one IBKR account, shared
 > for educational/portfolio purposes. Trading options involves substantial risk of loss — read the
