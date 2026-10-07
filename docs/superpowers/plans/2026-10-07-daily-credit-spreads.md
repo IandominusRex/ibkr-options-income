@@ -89,6 +89,20 @@ tracker; the copy on `main` stays unticked until the branch merges.
   2026-10-08 (checked read-only), so nothing is mis-booked today.
 - **`npx tsc --noEmit` in `web/`** reports 9 errors, all in test files under `components/options/` and
   `app/api/`, none touched by this branch. Vitest doesn't type-check, so `npm test` stays green.
+- **For Task 13 and the final review: a separation gap the Design table doesn't list.** The
+  wheel's `src/execution/reconciliation.py` matches a recovered fill to a stuck wheel `OrderRow`
+  by `orderId` alone (`_exec_matches_candidate`), and the ledger's live sweep also reads
+  `reqExecutions`. If the wheel's `reqExecutions` also returns clientId 30's executions, a spreads
+  fill whose order id equals a stuck wheel order's `ib_order_id` could be recovered as that wheel
+  order's fill. The ledger side is already safe, because Task 3 tags by underlying. During the
+  Task 11 Step 9 paper check, see whether the wheel process receives the spreads fill. If it
+  does, gate the reconciliation's order-id match on the contract too.
+- **Self-review of Tasks 2–3 (2026-10-08), two minors deferred:**
+  - The portfolio snapshot excludes spreads legs, so an open spread has no ledger mark. The summary's
+    `unrealized_usd` reads n/a while one is open, but only once the snapshot account matches the
+    ledger account (live).
+  - `test_only_the_healthcheck_asks_for_spreads_positions` greps the literal
+    `include_spreads=True`, so a caller that passes a variable would slip past it.
 
 **Operator to-dos:**
 - [ ] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. It is
