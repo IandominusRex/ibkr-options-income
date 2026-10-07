@@ -18,12 +18,13 @@ tracker; the copy on `main` stays unticked until the branch merges.
 `no such table: fills`, because they read the real `data/income_system.db`, which is git-ignored):
 - `ln -s "<main checkout>/.venv" .venv`, since the venv lives in the main checkout.
 - `IBKR_CONFIG_USE_EXAMPLES=1 .venv/bin/python -c "from src.storage.db import init_db; init_db()"`
+- `ln -s "<main checkout>/web/node_modules" web/node_modules`, for the web tests (Task 3 on).
 
 | Task | Status | Commits | Date | Gate |
 |---|---|---|---|---|
 | 1 Spreads config, book helpers, wheel-side guards | ✅ done | `8baac24` (code), then docs + this log | 2026-10-08 | pytest 2744 passed, 1 skipped; ruff and mypy clean |
 | 2 `get_positions` filter | ✅ done | `f7127f1` (code), then docs + this log | 2026-10-08 | pytest 2749 passed, 1 skipped; ruff and mypy clean |
-| 3 Ledger `spreads` book | ⬜ | | | |
+| 3 Ledger `spreads` book | ✅ done | `dd471f8` (code), then docs + this log | 2026-10-08 | pytest 2752 passed, 1 skipped; ruff and mypy clean; web 487/487 |
 | 4 Schemas and same-day pricing | ⬜ | | | |
 | 5 GEX levels | ⬜ | | | |
 | 6 Candidate selection | ⬜ | | | |
@@ -64,11 +65,30 @@ tracker; the copy on `main` stays unticked until the branch merges.
   section gained a bullet. Task 17 lists neither row, so it has nothing to skip; its Step 5 deletes
   the STATUS section as already noted.
 
+**Rulings (Task 3):**
+- **`docs/web/openapi.json` regenerated and committed with the code.** The plan doesn't list it,
+  but `tests/test_openapi_current.py` fails until the checked-in schema matches the app. The diff
+  is only `"spreads"` added to the four `book` enums.
+- **`web/lib/api-types.ts` generated from that file** (`npx openapi-typescript
+  ../docs/web/openapi.json`) instead of starting the API. The output differs from the old file in
+  exactly the four unions the plan predicted.
+- **Step 3's failure message differed from the plan:** the builder test failed with
+  `{'manual'} != {'spreads'}`, not a pydantic `literal_error`, because the builder collapsed every
+  non-`system` book to `manual` before `LedgerTrade` saw it. Same root cause; nothing changed.
+- **Docs moved forward again:** ARCHITECTURE's `ingest.py`, `trade_ledger.py`,
+  `routers/ledger.py`, ledger-schemas and web-ledger rows, plus STATUS's ledger line and
+  "In progress" bullet. Task 17 lists none of these rows.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
 - **Pre-flight (2026-10-08):** every spreads config field that Tasks 2–17 consume (31 of them)
   exists in Task 1's models.
+- **Existing ledger rows are not retagged** (STATUS lists it as not handled). A re-import retags
+  a row only when it backfills the order id. The operator's ledger had no SPY/SPX/XSP rows on
+  2026-10-08 (checked read-only), so nothing is mis-booked today.
+- **`npx tsc --noEmit` in `web/`** reports 9 errors, all in test files under `components/options/` and
+  `app/api/`, none touched by this branch. Vitest doesn't type-check, so `npm test` stays green.
 
 **Operator to-dos:**
 - [ ] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. It is
@@ -1281,7 +1301,7 @@ git commit -m "feat(spreads): wheel position view excludes the spreads book by d
   - `LedgerSummary.by_strategy` gains a `"Spread"` bucket
   - `GET /ledger/trades?book=spreads`
 
-- [ ] **Step 1: Write the failing ingest tests**
+- [x] **Step 1: Write the failing ingest tests**
 
 Append to `tests/test_ledger_ingest.py`:
 
@@ -1316,7 +1336,7 @@ def test_a_wheel_order_id_collision_never_moves_a_spreads_row_to_system(db) -> N
     assert row.book == "spreads"
 ```
 
-- [ ] **Step 2: Write the failing builder test**
+- [x] **Step 2: Write the failing builder test**
 
 Append to `tests/test_trade_ledger_book.py`:
 
@@ -1335,12 +1355,12 @@ def test_spreads_book_flows_through_and_is_labelled_spread() -> None:
     assert {"spreads", "manual"} <= {b.label for b in summary.by_book}
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_ledger_ingest.py tests/test_trade_ledger_book.py -q -k "spreads"`
 Expected: FAIL. `counts` has no `spreads` key, and `LedgerTrade.book` rejects `"spreads"` with a pydantic `literal_error`.
 
-- [ ] **Step 4: Add `LedgerBookName` to `src/common/schemas.py`**
+- [x] **Step 4: Add `LedgerBookName` to `src/common/schemas.py`**
 
 Directly above `class LedgerTrade(BaseModel):` (anchor), insert:
 
@@ -1350,7 +1370,7 @@ LedgerBookName = Literal["system", "manual", "spreads"]
 
 In `LedgerTrade`, replace `book: Literal["system", "manual"]` with `book: LedgerBookName`.
 
-- [ ] **Step 5: Tag spreads rows in `src/ledger/ingest.py`**
+- [x] **Step 5: Tag spreads rows in `src/ledger/ingest.py`**
 
 Add `from src.common.books import is_spreads_underlying` to the imports. Directly above `def _tag_books(`, insert:
 
@@ -1398,7 +1418,7 @@ Anchor `        touched = inserted_or_superseded or any_backfill or bool(counts[
         )
 ```
 
-- [ ] **Step 6: Carry the book through `src/reporting/trade_ledger.py`**
+- [x] **Step 6: Carry the book through `src/reporting/trade_ledger.py`**
 
 Add `LedgerBookName` to the existing `from src.common.schemas import (...)` block. Add near the top-level helpers (above `def group_orders`):
 
@@ -1433,16 +1453,16 @@ Make these replacements:
 
 - In `filter_trades`'s signature, anchor `    book: Literal["system", "manual"] | None = None,` becomes `    book: LedgerBookName | None = None,`.
 
-- [ ] **Step 7: API accepts `book=spreads`**
+- [x] **Step 7: API accepts `book=spreads`**
 
 In `src/api/routers/ledger.py` and `src/api/models/ledger.py`, import `LedgerBookName` from `src.common.schemas` and replace every `Literal["system", "manual"]` with `LedgerBookName`. There are three occurrences in the router and one in the models. Run `grep -n 'Literal\["system", "manual"\]' src` afterwards; expected output is empty.
 
-- [ ] **Step 8: Run the Python tests**
+- [x] **Step 8: Run the Python tests**
 
 Run: `python -m pytest tests/test_ledger_ingest.py tests/test_trade_ledger_book.py tests/test_api_ledger.py -q`
 Expected: PASS.
 
-- [ ] **Step 9: Web: write the failing test**
+- [x] **Step 9: Web: write the failing test**
 
 Append inside `describe("TradesView", ...)` in `web/components/ledger/TradesView.test.tsx`:
 
@@ -1460,19 +1480,19 @@ Append inside `describe("TradesView", ...)` in `web/components/ledger/TradesView
 Run: `cd web && npx vitest run components/ledger/TradesView.test.tsx`
 Expected: FAIL, because the `<select>` has no `spreads` option so the change is ignored.
 
-- [ ] **Step 10: Web: implement**
+- [x] **Step 10: Web: implement**
 
 - `web/components/ledger/types.ts`: replace `book: "system" | "manual";` with `book: "system" | "manual" | "spreads";`.
 - `web/components/ledger/TradesView.tsx`: anchor `<option value="manual">Manual</option>`. Append right after it: `<option value="spreads">Spreads</option>`.
 - `web/components/ledger/LedgerOverview.tsx`: anchor `title="By book (system vs your own trades)"`. Replace the title with `title="By book (wheel system, credit spreads, your own trades)"`.
 - `web/lib/api-types.ts`: start the API (`python -m scripts.run_api`, port 8787), then `cd web && npm run gen:api`. If the API can't run in your environment, hand-edit the four `"system" | "manual"` unions in that file to `"system" | "manual" | "spreads"`; the regenerated file will be identical.
 
-- [ ] **Step 11: Run the web tests and the full gate**
+- [x] **Step 11: Run the web tests and the full gate**
 
 Run: `cd web && npm test && cd .. && python -m pytest -q && ruff check . && mypy src`
 Expected: all green.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 ruff format src/common/schemas.py src/ledger/ingest.py src/reporting/trade_ledger.py src/api/routers/ledger.py src/api/models/ledger.py tests/test_ledger_ingest.py tests/test_trade_ledger_book.py

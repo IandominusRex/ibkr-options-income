@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–2 of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–3 of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. Only the config and the wheel-side guards
@@ -381,6 +381,13 @@ exist; there is no `src/spreads/` package yet, so nothing trades spreads.
 - **The wheel never sees a spreads leg:** `get_positions()` drops SPY/SPX/XSP contracts by default,
   so the monitor, profit-take, rolls, budget seeding, approval re-gate and EOD report ignore them.
   Only `scripts/healthcheck.py` asks for both books (`include_spreads=True`).
+- **Trade ledger `spreads` book:** ingest tags SPY/SPX/XSP executions `book="spreads"` by
+  underlying (before, and never overridden by, the wheel's order-id `system` tagging). The
+  builder labels them `Spread` in the by-strategy breakdown, and `/ledger/trades?book=spreads`
+  plus the web ledger's Book filter show them. **Not handled:** rows already in the ledger keep
+  their book (a re-import retags an existing row only when it backfills the row's order id), so
+  SPY/SPX/XSP history imported before this change stays `manual`/`system`, while the same history
+  imported fresh would land as `spreads`.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 
@@ -502,7 +509,9 @@ pre-system history too.
   CSV/Flex row against the matching exec-level Flex/live rows reporting the same fill and marks
   the lower-priority one `superseded_by` the survivor (codes copied across so an order-level
   row's `O`/`C`/`A`/`Ep` tokens aren't lost when a codeless live fill supersedes it), and
-  `book="system"` tagging for rows whose `ib_order_id` matches a known trading-system order.
+  `book="system"` tagging for rows whose `ib_order_id` matches a known trading-system order
+  (since 2026-10-08, `book="spreads"` tagging by underlying runs first and is never overridden
+  by an order-id match; see the daily credit spreads section).
 - **The account lock (R8, amended).** The first CSV/Flex import with no `ledger.account`
   configured locks the ledger to that statement's account; a later import for a different
   account fails `account_mismatch`; a live fill for an unlocked or mismatched account is
