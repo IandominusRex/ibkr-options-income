@@ -68,7 +68,7 @@ def main() -> int:
         print(f"  Buying power    : {snap.buying_power:,.2f}")
         print(f"  Excess liquidity: {snap.excess_liquidity:,.2f}")
 
-        positions = get_positions(ib)
+        positions = get_positions(ib, include_spreads=True)  # account truth: both books
         print(f"\nPositions ({len(positions)}):")
         if not positions:
             print("  (none)")

@@ -13,6 +13,7 @@ from datetime import date
 
 from ib_async import IB
 
+from src.common.books import is_spreads_underlying
 from src.common.config import get_config
 from src.common.logging import get_logger
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
@@ -109,11 +110,22 @@ def _parse_expiry(yyyymmdd: str) -> date | None:
         return None
 
 
-def get_positions(ib: IB) -> list[PositionSnapshot]:
-    """Snapshot current positions (stocks and options) as typed objects."""
+def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnapshot]:
+    """Snapshot current positions (stocks and options) as typed objects.
+
+    The daily credit-spread system trades in this same account. Its contracts
+    (``config/spreads.yaml → book_underlyings``) are dropped by default, so no wheel consumer —
+    the intraday monitor, profit-take, rolls, the scan's budget seeding, the approval re-gate,
+    the EOD report — ever alerts on, sizes against, or closes a spread leg. Pass
+    ``include_spreads=True`` only for an account-truth view (``scripts/healthcheck.py``).
+    """
     out: list[PositionSnapshot] = []
+    skipped = 0
     for item in ib.portfolio():
         c = item.contract
+        if not include_spreads and is_spreads_underlying(c.symbol):
+            skipped += 1
+            continue
         right = None
         strike = None
         expiry = None
@@ -137,7 +149,7 @@ def get_positions(ib: IB) -> list[PositionSnapshot]:
                 underlying=underlying,
             )
         )
-    log.info("Fetched %d portfolio positions", len(out))
+    log.info("Fetched %d portfolio positions (%d spreads-book skipped)", len(out), skipped)
     return out
 
 
