@@ -5,6 +5,9 @@ holdings and a watchlist every 15 minutes during market hours, scores and ranks 
 cash-secured-put opportunities, gets a plain-English review from Claude, and sends the top candidates
 to your phone via Telegram.
 
+**Trade ledger:** every IBKR execution, per-ticker P&L and wheel cost basis, CSV/Flex/live
+ingestion, mirrored to Google Sheets — with a `/ledger` web dashboard (overview, trades, per-ticker drill-down, import).
+
 > ⚠️ **Not financial advice.** This is a personal automation project for one IBKR account, shared
 > for educational/portfolio purposes. Trading options involves substantial risk of loss — read the
 > code and run it on paper before risking real capital. MIT-licensed; see [LICENSE](LICENSE).

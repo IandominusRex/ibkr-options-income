@@ -691,6 +691,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["get_summary_ledger_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/tickers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Tickers */
+        get: operations["get_tickers_ledger_tickers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/tickers/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ticker */
+        get: operations["get_ticker_ledger_tickers__symbol__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/trades": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Trades */
+        get: operations["get_trades_ledger_trades_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/trades.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Trades Csv */
+        get: operations["get_trades_csv_ledger_trades_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/trades/{order_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Trade */
+        get: operations["get_trade_ledger_trades__order_key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ledger/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Imports */
+        get: operations["get_imports_ledger_imports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -1571,7 +1690,7 @@ export interface components {
          * @description Every intent the web layer can enqueue. Later milestones register handlers.
          * @enum {string}
          */
-        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "universe_add" | "universe_remove" | "refresh";
+        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "universe_add" | "universe_remove" | "refresh" | "ledger_import" | "ledger_annotate" | "ledger_ca_reviewed";
         /** CommandRequest */
         CommandRequest: {
             kind: components["schemas"]["CommandKind"];
@@ -1844,6 +1963,144 @@ export interface components {
             /** Min Credit */
             min_credit?: number | null;
         };
+        /** LedgerBasisPoint */
+        LedgerBasisPoint: {
+            /**
+             * Point Date
+             * Format: date
+             */
+            point_date: string;
+            /** Label */
+            label: string;
+            /** Basis Per Share */
+            basis_per_share: number;
+        };
+        /** LedgerBucket */
+        LedgerBucket: {
+            /** Label */
+            label: string;
+            /** N Closed */
+            n_closed: number;
+            /** Realized Usd */
+            realized_usd: number;
+            /** Win Rate */
+            win_rate: number | null;
+        };
+        /** LedgerCashItem */
+        LedgerCashItem: {
+            /**
+             * Event Date
+             * Format: date
+             */
+            event_date: string;
+            /** Event Type */
+            event_type: string;
+            /** Currency */
+            currency: string;
+            /** Amount */
+            amount: number;
+            /** Description */
+            description: string;
+            /** Underlying */
+            underlying?: string | null;
+        };
+        /**
+         * LedgerClose
+         * @description One closing order's share of a trade (a trade may close in several orders).
+         */
+        LedgerClose: {
+            /** Order Key */
+            order_key: string;
+            /**
+             * Close Date
+             * Format: date
+             */
+            close_date: string;
+            /**
+             * Close Time
+             * Format: date-time
+             */
+            close_time: string;
+            /** Quantity */
+            quantity: number;
+            /** Cash */
+            cash: number;
+            /** Commission */
+            commission: number;
+            /** Codes */
+            codes: string;
+        };
+        /** LedgerCorporateActionOut */
+        LedgerCorporateActionOut: {
+            /** Id */
+            id: number;
+            /**
+             * Event Date
+             * Format: date
+             */
+            event_date: string;
+            /** Underlying */
+            underlying: string | null;
+            /** Description */
+            description: string;
+            /** Quantity */
+            quantity: number;
+            /** Proceeds */
+            proceeds: number;
+            /** Reviewed */
+            reviewed: boolean;
+        };
+        /** LedgerCurvePoint */
+        LedgerCurvePoint: {
+            /**
+             * Point Date
+             * Format: date
+             */
+            point_date: string;
+            /** Cumulative Usd */
+            cumulative_usd: number;
+        };
+        /** LedgerExecutionOut */
+        LedgerExecutionOut: {
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Source Kind */
+            source_kind: string;
+            /** Exec Id */
+            exec_id: string | null;
+            /**
+             * Trade Time
+             * Format: date-time
+             */
+            trade_time: string;
+            /** Quantity */
+            quantity: number;
+            /** Price */
+            price: number;
+            /** Proceeds */
+            proceeds: number;
+            /** Commission */
+            commission: number;
+            /** Codes */
+            codes: string;
+            /** Book */
+            book: string;
+            /** Superseded By */
+            superseded_by: number | null;
+        };
+        /** LedgerFeedStatus */
+        LedgerFeedStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Last Run */
+            last_run: string | null;
+            /** Last Status */
+            last_status: string | null;
+            /** Last Error */
+            last_error: string | null;
+        };
         /**
          * LedgerFilters
          * @description Echoed back on every response so the client can prove what it is looking at.
@@ -1871,6 +2128,57 @@ export interface components {
              */
             book: "paper" | "live" | "all";
         };
+        /** LedgerImportRunOut */
+        LedgerImportRunOut: {
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Filename */
+            filename: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason: string | null;
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Errors */
+            errors: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** LedgerImportsResponse */
+        LedgerImportsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Runs */
+            runs: components["schemas"]["LedgerImportRunOut"][];
+            flex: components["schemas"]["LedgerFeedStatus"];
+            sheets: components["schemas"]["LedgerFeedStatus"];
+            /** Corporate Actions */
+            corporate_actions: components["schemas"]["LedgerCorporateActionOut"][];
+        };
+        /** LedgerMonth */
+        LedgerMonth: {
+            /** Month */
+            month: string;
+            /** Premium Usd */
+            premium_usd: number;
+            /** Realized Usd */
+            realized_usd: number;
+        };
         /** LedgerResponse */
         LedgerResponse: {
             /**
@@ -1885,6 +2193,340 @@ export interface components {
             marks_as_of?: string | null;
             /** N Legs */
             n_legs: number;
+        };
+        /** LedgerStockDisposal */
+        LedgerStockDisposal: {
+            /** Lot Key */
+            lot_key: string;
+            /** Underlying */
+            underlying: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Disposal Date
+             * Format: date
+             */
+            disposal_date: string;
+            /** Quantity */
+            quantity: number;
+            /** Price */
+            price: number;
+            /** Realized */
+            realized: number;
+            /** Codes */
+            codes: string;
+        };
+        /** LedgerStockLot */
+        LedgerStockLot: {
+            /** Lot Key */
+            lot_key: string;
+            /** Underlying */
+            underlying: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Acquired Date
+             * Format: date
+             */
+            acquired_date: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "bought" | "assigned" | "exercised";
+            /** Quantity */
+            quantity: number;
+            /** Remaining */
+            remaining: number;
+            /** Cost Per Share */
+            cost_per_share: number;
+        };
+        /** LedgerSummary */
+        LedgerSummary: {
+            /** Total Realized Usd */
+            total_realized_usd: number;
+            /** Interest And Fees Usd */
+            interest_and_fees_usd: number;
+            /** Contributed Usd */
+            contributed_usd: number | null;
+            /** Capital Utilised Usd */
+            capital_utilised_usd: number;
+            /** Available Usd */
+            available_usd: number | null;
+            /** Unrealized Usd */
+            unrealized_usd: number | null;
+            /** Win Rate */
+            win_rate: number | null;
+            /** N Trades */
+            n_trades: number;
+            /** N Open */
+            n_open: number;
+            /** Premium This Month Usd */
+            premium_this_month_usd: number;
+            /** Months */
+            months: components["schemas"]["LedgerMonth"][];
+            /** Curve */
+            curve: components["schemas"]["LedgerCurvePoint"][];
+            /** By Strategy */
+            by_strategy: components["schemas"]["LedgerBucket"][];
+            /** By Book */
+            by_book: components["schemas"]["LedgerBucket"][];
+            /** Upcoming */
+            upcoming: components["schemas"]["LedgerTrade"][];
+            /** Fx Incomplete */
+            fx_incomplete: boolean;
+            /** Orphan Closes */
+            orphan_closes: number;
+            /** Unreviewed Corporate Actions */
+            unreviewed_corporate_actions: number;
+            /** Marks As Of */
+            marks_as_of: string | null;
+        };
+        /** LedgerSummaryResponse */
+        LedgerSummaryResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            summary: components["schemas"]["LedgerSummary"];
+        };
+        /** LedgerTicker */
+        LedgerTicker: {
+            /** Symbol */
+            symbol: string;
+            /** Currency */
+            currency: string;
+            /** Option Premium Gross */
+            option_premium_gross: number;
+            /** Option Net Pnl */
+            option_net_pnl: number;
+            /** Stock Realized */
+            stock_realized: number;
+            /** Dividends Net */
+            dividends_net: number;
+            /** Total Realized */
+            total_realized: number;
+            /** Unrealized */
+            unrealized: number | null;
+            /** N Trades */
+            n_trades: number;
+            /** N Open */
+            n_open: number;
+            /** N Closed */
+            n_closed: number;
+            /** Win Rate */
+            win_rate: number | null;
+            /** Avg Premium */
+            avg_premium: number | null;
+            /** Best Trade */
+            best_trade: number | null;
+            /** Worst Trade */
+            worst_trade: number | null;
+            /** Annualised Return Pct */
+            annualised_return_pct: number | null;
+            /** Shares Held */
+            shares_held: number;
+            /** Broker Avg Cost */
+            broker_avg_cost: number | null;
+            /** Wheel Adjusted Basis */
+            wheel_adjusted_basis: number | null;
+            /** First Trade */
+            first_trade: string | null;
+            /** Last Trade */
+            last_trade: string | null;
+        };
+        /** LedgerTickerDetail */
+        LedgerTickerDetail: {
+            ticker: components["schemas"]["LedgerTicker"];
+            /** Trades */
+            trades: components["schemas"]["LedgerTrade"][];
+            /** Lots */
+            lots: components["schemas"]["LedgerStockLot"][];
+            /** Disposals */
+            disposals: components["schemas"]["LedgerStockDisposal"][];
+            /** Dividends */
+            dividends: components["schemas"]["LedgerCashItem"][];
+            /** Basis Walk */
+            basis_walk: components["schemas"]["LedgerBasisPoint"][];
+        };
+        /** LedgerTickerResponse */
+        LedgerTickerResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            detail: components["schemas"]["LedgerTickerDetail"];
+        };
+        /** LedgerTickersResponse */
+        LedgerTickersResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Tickers */
+            tickers: components["schemas"]["LedgerTicker"][];
+        };
+        /**
+         * LedgerTrade
+         * @description One opening option order and everything that closed it (spec §4.2, R3, R4, R9, R10).
+         */
+        LedgerTrade: {
+            /** Order Key */
+            order_key: string;
+            /** Underlying */
+            underlying: string;
+            /** Currency */
+            currency: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "Sell" | "Buy";
+            /**
+             * Right
+             * @enum {string}
+             */
+            right: "C" | "P";
+            /** Strike */
+            strike: number;
+            /**
+             * Expiry
+             * Format: date
+             */
+            expiry: string;
+            /** Multiplier */
+            multiplier: number;
+            /** Lots */
+            lots: number;
+            /**
+             * Order Date
+             * Format: date
+             */
+            order_date: string;
+            /**
+             * Open Time
+             * Format: date-time
+             */
+            open_time: string;
+            /** Close Date */
+            close_date: string | null;
+            /** Dte */
+            dte: number;
+            /** Days Held */
+            days_held: number;
+            /** Premium */
+            premium: number;
+            /** Open Commission */
+            open_commission: number;
+            /** Closes */
+            closes?: components["schemas"]["LedgerClose"][];
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled";
+            /**
+             * Computed Outcome
+             * @enum {string}
+             */
+            computed_outcome: "Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled";
+            /**
+             * Outcome Overridden
+             * @default false
+             */
+            outcome_overridden: boolean;
+            /**
+             * Mixed Close
+             * @default false
+             */
+            mixed_close: boolean;
+            /** Capital */
+            capital: number;
+            /** Pct Profit */
+            pct_profit: number | null;
+            /** Net Pnl */
+            net_pnl: number | null;
+            /** Return Pct */
+            return_pct: number | null;
+            /** Annualised Net Pct */
+            annualised_net_pct: number | null;
+            /** Stock Gain */
+            stock_gain?: number | null;
+            /**
+             * Book
+             * @enum {string}
+             */
+            book: "system" | "manual";
+            /** Rolled From */
+            rolled_from?: string | null;
+            /** Rolled To */
+            rolled_to?: string | null;
+            /** Ibkr Realized Pnl */
+            ibkr_realized_pnl?: number | null;
+            /** Exec Row Ids */
+            exec_row_ids?: number[];
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Exclude From Stats
+             * @default false
+             */
+            exclude_from_stats: boolean;
+        };
+        /** LedgerTradeResponse */
+        LedgerTradeResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            trade: components["schemas"]["LedgerTrade"];
+            /** Executions */
+            executions: components["schemas"]["LedgerExecutionOut"][];
+        };
+        /** LedgerTradesFilters */
+        LedgerTradesFilters: {
+            /** Symbol */
+            symbol?: string | null;
+            /** Right */
+            right?: ("C" | "P") | null;
+            /** Outcome */
+            outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
+            /** Book */
+            book?: ("system" | "manual") | null;
+            /** Tag */
+            tag?: string | null;
+            /** Since */
+            since?: string | null;
+            /** Until */
+            until?: string | null;
+            /**
+             * Sort
+             * @default -order_date
+             * @enum {string}
+             */
+            sort: "order_date" | "-order_date" | "expiry" | "-expiry" | "pct_profit" | "-pct_profit" | "net_pnl" | "-net_pnl" | "underlying" | "-underlying";
+        };
+        /** LedgerTradesResponse */
+        LedgerTradesResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            filters: components["schemas"]["LedgerTradesFilters"];
+            /** N */
+            n: number;
+            /** Trades */
+            trades: components["schemas"]["LedgerTrade"][];
         };
         /**
          * LineItemValue
@@ -3874,6 +4516,204 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_summary_ledger_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerSummaryResponse"];
+                };
+            };
+        };
+    };
+    get_tickers_ledger_tickers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTickersResponse"];
+                };
+            };
+        };
+    };
+    get_ticker_ledger_tickers__symbol__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTickerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trades_ledger_trades_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                right?: ("C" | "P") | null;
+                outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
+                book?: ("system" | "manual") | null;
+                tag?: string | null;
+                since?: string | null;
+                until?: string | null;
+                sort?: "order_date" | "-order_date" | "expiry" | "-expiry" | "pct_profit" | "-pct_profit" | "net_pnl" | "-net_pnl" | "underlying" | "-underlying";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTradesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trades_csv_ledger_trades_csv_get: {
+        parameters: {
+            query?: {
+                symbol?: string | null;
+                right?: ("C" | "P") | null;
+                outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
+                book?: ("system" | "manual") | null;
+                tag?: string | null;
+                since?: string | null;
+                until?: string | null;
+                sort?: "order_date" | "-order_date" | "expiry" | "-expiry" | "pct_profit" | "-pct_profit" | "net_pnl" | "-net_pnl" | "underlying" | "-underlying";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trade_ledger_trades__order_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTradeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_imports_ledger_imports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerImportsResponse"];
                 };
             };
         };

@@ -1857,6 +1857,562 @@
         }
       }
     },
+    "/ledger/summary": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Summary",
+        "operationId": "get_summary_ledger_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerSummaryResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ledger/tickers": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Tickers",
+        "operationId": "get_tickers_ledger_tickers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerTickersResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/ledger/tickers/{symbol}": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Ticker",
+        "operationId": "get_ticker_ledger_tickers__symbol__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerTickerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledger/trades": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Trades",
+        "operationId": "get_trades_ledger_trades_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "right",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "C",
+                    "P"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Right"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "Open",
+                    "Pending",
+                    "Expired",
+                    "Assigned",
+                    "Called away",
+                    "Exercised",
+                    "Bought back",
+                    "Sold",
+                    "Rolled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "system",
+                    "manual"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Book"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "order_date",
+                "-order_date",
+                "expiry",
+                "-expiry",
+                "pct_profit",
+                "-pct_profit",
+                "net_pnl",
+                "-net_pnl",
+                "underlying",
+                "-underlying"
+              ],
+              "type": "string",
+              "default": "-order_date",
+              "title": "Sort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerTradesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledger/trades.csv": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Trades Csv",
+        "operationId": "get_trades_csv_ledger_trades_csv_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "right",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "C",
+                    "P"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Right"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "Open",
+                    "Pending",
+                    "Expired",
+                    "Assigned",
+                    "Called away",
+                    "Exercised",
+                    "Bought back",
+                    "Sold",
+                    "Rolled"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "system",
+                    "manual"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Book"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "order_date",
+                "-order_date",
+                "expiry",
+                "-expiry",
+                "pct_profit",
+                "-pct_profit",
+                "net_pnl",
+                "-net_pnl",
+                "underlying",
+                "-underlying"
+              ],
+              "type": "string",
+              "default": "-order_date",
+              "title": "Sort"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledger/trades/{order_key}": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Trade",
+        "operationId": "get_trade_ledger_trades__order_key__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "order_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerTradeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledger/imports": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Imports",
+        "operationId": "get_imports_ledger_imports_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerImportsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/universe": {
       "get": {
         "tags": [
@@ -4160,7 +4716,10 @@
           "set_autonomy",
           "universe_add",
           "universe_remove",
-          "refresh"
+          "refresh",
+          "ledger_import",
+          "ledger_annotate",
+          "ledger_ca_reviewed"
         ],
         "title": "CommandKind",
         "description": "Every intent the web layer can enqueue. Later milestones register handlers."
@@ -4796,6 +5355,358 @@
         "title": "IdealZonePayload",
         "description": "The denormalised ideal zone from ``RiskVerdictRow`` (lo / hi / min_credit)."
       },
+      "LedgerBasisPoint": {
+        "properties": {
+          "point_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Point Date"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "basis_per_share": {
+            "type": "number",
+            "title": "Basis Per Share"
+          }
+        },
+        "type": "object",
+        "required": [
+          "point_date",
+          "label",
+          "basis_per_share"
+        ],
+        "title": "LedgerBasisPoint"
+      },
+      "LedgerBucket": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "realized_usd": {
+            "type": "number",
+            "title": "Realized Usd"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "n_closed",
+          "realized_usd",
+          "win_rate"
+        ],
+        "title": "LedgerBucket"
+      },
+      "LedgerCashItem": {
+        "properties": {
+          "event_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Event Date"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_date",
+          "event_type",
+          "currency",
+          "amount",
+          "description"
+        ],
+        "title": "LedgerCashItem"
+      },
+      "LedgerClose": {
+        "properties": {
+          "order_key": {
+            "type": "string",
+            "title": "Order Key"
+          },
+          "close_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Close Date"
+          },
+          "close_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Close Time"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "cash": {
+            "type": "number",
+            "title": "Cash"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission"
+          },
+          "codes": {
+            "type": "string",
+            "title": "Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_key",
+          "close_date",
+          "close_time",
+          "quantity",
+          "cash",
+          "commission",
+          "codes"
+        ],
+        "title": "LedgerClose",
+        "description": "One closing order's share of a trade (a trade may close in several orders)."
+      },
+      "LedgerCorporateActionOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "event_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Event Date"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "proceeds": {
+            "type": "number",
+            "title": "Proceeds"
+          },
+          "reviewed": {
+            "type": "boolean",
+            "title": "Reviewed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "event_date",
+          "underlying",
+          "description",
+          "quantity",
+          "proceeds",
+          "reviewed"
+        ],
+        "title": "LedgerCorporateActionOut"
+      },
+      "LedgerCurvePoint": {
+        "properties": {
+          "point_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Point Date"
+          },
+          "cumulative_usd": {
+            "type": "number",
+            "title": "Cumulative Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "point_date",
+          "cumulative_usd"
+        ],
+        "title": "LedgerCurvePoint"
+      },
+      "LedgerExecutionOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_kind": {
+            "type": "string",
+            "title": "Source Kind"
+          },
+          "exec_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Id"
+          },
+          "trade_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Trade Time"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "proceeds": {
+            "type": "number",
+            "title": "Proceeds"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission"
+          },
+          "codes": {
+            "type": "string",
+            "title": "Codes"
+          },
+          "book": {
+            "type": "string",
+            "title": "Book"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "source_kind",
+          "exec_id",
+          "trade_time",
+          "quantity",
+          "price",
+          "proceeds",
+          "commission",
+          "codes",
+          "book",
+          "superseded_by"
+        ],
+        "title": "LedgerExecutionOut"
+      },
+      "LedgerFeedStatus": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run"
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "last_run",
+          "last_status",
+          "last_error"
+        ],
+        "title": "LedgerFeedStatus"
+      },
       "LedgerFilters": {
         "properties": {
           "as_of": {
@@ -4878,6 +5789,150 @@
         "title": "LedgerFilters",
         "description": "Echoed back on every response so the client can prove what it is looking at."
       },
+      "LedgerImportRunOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "filename",
+          "started_at",
+          "finished_at",
+          "status",
+          "reason",
+          "counts",
+          "errors"
+        ],
+        "title": "LedgerImportRunOut"
+      },
+      "LedgerImportsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerImportRunOut"
+            },
+            "type": "array",
+            "title": "Runs"
+          },
+          "flex": {
+            "$ref": "#/components/schemas/LedgerFeedStatus"
+          },
+          "sheets": {
+            "$ref": "#/components/schemas/LedgerFeedStatus"
+          },
+          "corporate_actions": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerCorporateActionOut"
+            },
+            "type": "array",
+            "title": "Corporate Actions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "runs",
+          "flex",
+          "sheets",
+          "corporate_actions"
+        ],
+        "title": "LedgerImportsResponse"
+      },
+      "LedgerMonth": {
+        "properties": {
+          "month": {
+            "type": "string",
+            "title": "Month"
+          },
+          "premium_usd": {
+            "type": "number",
+            "title": "Premium Usd"
+          },
+          "realized_usd": {
+            "type": "number",
+            "title": "Realized Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month",
+          "premium_usd",
+          "realized_usd"
+        ],
+        "title": "LedgerMonth"
+      },
       "LedgerResponse": {
         "properties": {
           "as_of": {
@@ -4920,6 +5975,1023 @@
           "n_legs"
         ],
         "title": "LedgerResponse"
+      },
+      "LedgerStockDisposal": {
+        "properties": {
+          "lot_key": {
+            "type": "string",
+            "title": "Lot Key"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "disposal_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Disposal Date"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "realized": {
+            "type": "number",
+            "title": "Realized"
+          },
+          "codes": {
+            "type": "string",
+            "title": "Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lot_key",
+          "underlying",
+          "currency",
+          "disposal_date",
+          "quantity",
+          "price",
+          "realized",
+          "codes"
+        ],
+        "title": "LedgerStockDisposal"
+      },
+      "LedgerStockLot": {
+        "properties": {
+          "lot_key": {
+            "type": "string",
+            "title": "Lot Key"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "acquired_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Acquired Date"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "bought",
+              "assigned",
+              "exercised"
+            ],
+            "title": "Source"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "remaining": {
+            "type": "number",
+            "title": "Remaining"
+          },
+          "cost_per_share": {
+            "type": "number",
+            "title": "Cost Per Share"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lot_key",
+          "underlying",
+          "currency",
+          "acquired_date",
+          "source",
+          "quantity",
+          "remaining",
+          "cost_per_share"
+        ],
+        "title": "LedgerStockLot"
+      },
+      "LedgerSummary": {
+        "properties": {
+          "total_realized_usd": {
+            "type": "number",
+            "title": "Total Realized Usd"
+          },
+          "interest_and_fees_usd": {
+            "type": "number",
+            "title": "Interest And Fees Usd"
+          },
+          "contributed_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contributed Usd"
+          },
+          "capital_utilised_usd": {
+            "type": "number",
+            "title": "Capital Utilised Usd"
+          },
+          "available_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Usd"
+          },
+          "unrealized_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Usd"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "n_trades": {
+            "type": "integer",
+            "title": "N Trades"
+          },
+          "n_open": {
+            "type": "integer",
+            "title": "N Open"
+          },
+          "premium_this_month_usd": {
+            "type": "number",
+            "title": "Premium This Month Usd"
+          },
+          "months": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerMonth"
+            },
+            "type": "array",
+            "title": "Months"
+          },
+          "curve": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerCurvePoint"
+            },
+            "type": "array",
+            "title": "Curve"
+          },
+          "by_strategy": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerBucket"
+            },
+            "type": "array",
+            "title": "By Strategy"
+          },
+          "by_book": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerBucket"
+            },
+            "type": "array",
+            "title": "By Book"
+          },
+          "upcoming": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerTrade"
+            },
+            "type": "array",
+            "title": "Upcoming"
+          },
+          "fx_incomplete": {
+            "type": "boolean",
+            "title": "Fx Incomplete"
+          },
+          "orphan_closes": {
+            "type": "integer",
+            "title": "Orphan Closes"
+          },
+          "unreviewed_corporate_actions": {
+            "type": "integer",
+            "title": "Unreviewed Corporate Actions"
+          },
+          "marks_as_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks As Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_realized_usd",
+          "interest_and_fees_usd",
+          "contributed_usd",
+          "capital_utilised_usd",
+          "available_usd",
+          "unrealized_usd",
+          "win_rate",
+          "n_trades",
+          "n_open",
+          "premium_this_month_usd",
+          "months",
+          "curve",
+          "by_strategy",
+          "by_book",
+          "upcoming",
+          "fx_incomplete",
+          "orphan_closes",
+          "unreviewed_corporate_actions",
+          "marks_as_of"
+        ],
+        "title": "LedgerSummary"
+      },
+      "LedgerSummaryResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/LedgerSummary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "summary"
+        ],
+        "title": "LedgerSummaryResponse"
+      },
+      "LedgerTicker": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "option_premium_gross": {
+            "type": "number",
+            "title": "Option Premium Gross"
+          },
+          "option_net_pnl": {
+            "type": "number",
+            "title": "Option Net Pnl"
+          },
+          "stock_realized": {
+            "type": "number",
+            "title": "Stock Realized"
+          },
+          "dividends_net": {
+            "type": "number",
+            "title": "Dividends Net"
+          },
+          "total_realized": {
+            "type": "number",
+            "title": "Total Realized"
+          },
+          "unrealized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized"
+          },
+          "n_trades": {
+            "type": "integer",
+            "title": "N Trades"
+          },
+          "n_open": {
+            "type": "integer",
+            "title": "N Open"
+          },
+          "n_closed": {
+            "type": "integer",
+            "title": "N Closed"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "avg_premium": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Premium"
+          },
+          "best_trade": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Trade"
+          },
+          "worst_trade": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Trade"
+          },
+          "annualised_return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualised Return Pct"
+          },
+          "shares_held": {
+            "type": "number",
+            "title": "Shares Held"
+          },
+          "broker_avg_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Avg Cost"
+          },
+          "wheel_adjusted_basis": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wheel Adjusted Basis"
+          },
+          "first_trade": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Trade"
+          },
+          "last_trade": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Trade"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "currency",
+          "option_premium_gross",
+          "option_net_pnl",
+          "stock_realized",
+          "dividends_net",
+          "total_realized",
+          "unrealized",
+          "n_trades",
+          "n_open",
+          "n_closed",
+          "win_rate",
+          "avg_premium",
+          "best_trade",
+          "worst_trade",
+          "annualised_return_pct",
+          "shares_held",
+          "broker_avg_cost",
+          "wheel_adjusted_basis",
+          "first_trade",
+          "last_trade"
+        ],
+        "title": "LedgerTicker"
+      },
+      "LedgerTickerDetail": {
+        "properties": {
+          "ticker": {
+            "$ref": "#/components/schemas/LedgerTicker"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerTrade"
+            },
+            "type": "array",
+            "title": "Trades"
+          },
+          "lots": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerStockLot"
+            },
+            "type": "array",
+            "title": "Lots"
+          },
+          "disposals": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerStockDisposal"
+            },
+            "type": "array",
+            "title": "Disposals"
+          },
+          "dividends": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerCashItem"
+            },
+            "type": "array",
+            "title": "Dividends"
+          },
+          "basis_walk": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerBasisPoint"
+            },
+            "type": "array",
+            "title": "Basis Walk"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticker",
+          "trades",
+          "lots",
+          "disposals",
+          "dividends",
+          "basis_walk"
+        ],
+        "title": "LedgerTickerDetail"
+      },
+      "LedgerTickerResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "detail": {
+            "$ref": "#/components/schemas/LedgerTickerDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "detail"
+        ],
+        "title": "LedgerTickerResponse"
+      },
+      "LedgerTickersResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "tickers": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerTicker"
+            },
+            "type": "array",
+            "title": "Tickers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "tickers"
+        ],
+        "title": "LedgerTickersResponse"
+      },
+      "LedgerTrade": {
+        "properties": {
+          "order_key": {
+            "type": "string",
+            "title": "Order Key"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "Sell",
+              "Buy"
+            ],
+            "title": "Side"
+          },
+          "right": {
+            "type": "string",
+            "enum": [
+              "C",
+              "P"
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "expiry": {
+            "type": "string",
+            "format": "date",
+            "title": "Expiry"
+          },
+          "multiplier": {
+            "type": "number",
+            "title": "Multiplier"
+          },
+          "lots": {
+            "type": "number",
+            "title": "Lots"
+          },
+          "order_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Order Date"
+          },
+          "open_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Open Time"
+          },
+          "close_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Date"
+          },
+          "dte": {
+            "type": "integer",
+            "title": "Dte"
+          },
+          "days_held": {
+            "type": "integer",
+            "title": "Days Held"
+          },
+          "premium": {
+            "type": "number",
+            "title": "Premium"
+          },
+          "open_commission": {
+            "type": "number",
+            "title": "Open Commission"
+          },
+          "closes": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerClose"
+            },
+            "type": "array",
+            "title": "Closes"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "Open",
+              "Pending",
+              "Expired",
+              "Assigned",
+              "Called away",
+              "Exercised",
+              "Bought back",
+              "Sold",
+              "Rolled"
+            ],
+            "title": "Outcome"
+          },
+          "computed_outcome": {
+            "type": "string",
+            "enum": [
+              "Open",
+              "Pending",
+              "Expired",
+              "Assigned",
+              "Called away",
+              "Exercised",
+              "Bought back",
+              "Sold",
+              "Rolled"
+            ],
+            "title": "Computed Outcome"
+          },
+          "outcome_overridden": {
+            "type": "boolean",
+            "title": "Outcome Overridden",
+            "default": false
+          },
+          "mixed_close": {
+            "type": "boolean",
+            "title": "Mixed Close",
+            "default": false
+          },
+          "capital": {
+            "type": "number",
+            "title": "Capital"
+          },
+          "pct_profit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Profit"
+          },
+          "net_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Pnl"
+          },
+          "return_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Pct"
+          },
+          "annualised_net_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualised Net Pct"
+          },
+          "stock_gain": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stock Gain"
+          },
+          "book": {
+            "type": "string",
+            "enum": [
+              "system",
+              "manual"
+            ],
+            "title": "Book"
+          },
+          "rolled_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolled From"
+          },
+          "rolled_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolled To"
+          },
+          "ibkr_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ibkr Realized Pnl"
+          },
+          "exec_row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Exec Row Ids"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "exclude_from_stats": {
+            "type": "boolean",
+            "title": "Exclude From Stats",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_key",
+          "underlying",
+          "currency",
+          "side",
+          "right",
+          "strike",
+          "expiry",
+          "multiplier",
+          "lots",
+          "order_date",
+          "open_time",
+          "close_date",
+          "dte",
+          "days_held",
+          "premium",
+          "open_commission",
+          "outcome",
+          "computed_outcome",
+          "capital",
+          "pct_profit",
+          "net_pnl",
+          "return_pct",
+          "annualised_net_pct",
+          "book"
+        ],
+        "title": "LedgerTrade",
+        "description": "One opening option order and everything that closed it (spec \u00a74.2, R3, R4, R9, R10)."
+      },
+      "LedgerTradeResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "trade": {
+            "$ref": "#/components/schemas/LedgerTrade"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerExecutionOut"
+            },
+            "type": "array",
+            "title": "Executions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "trade",
+          "executions"
+        ],
+        "title": "LedgerTradeResponse"
+      },
+      "LedgerTradesFilters": {
+        "properties": {
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "C",
+                  "P"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "Open",
+                  "Pending",
+                  "Expired",
+                  "Assigned",
+                  "Called away",
+                  "Exercised",
+                  "Bought back",
+                  "Sold",
+                  "Rolled"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Book"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "order_date",
+              "-order_date",
+              "expiry",
+              "-expiry",
+              "pct_profit",
+              "-pct_profit",
+              "net_pnl",
+              "-net_pnl",
+              "underlying",
+              "-underlying"
+            ],
+            "title": "Sort",
+            "default": "-order_date"
+          }
+        },
+        "type": "object",
+        "title": "LedgerTradesFilters"
+      },
+      "LedgerTradesResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/LedgerTradesFilters"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "trades": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerTrade"
+            },
+            "type": "array",
+            "title": "Trades"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "filters",
+          "n",
+          "trades"
+        ],
+        "title": "LedgerTradesResponse"
       },
       "LineItemValue": {
         "properties": {

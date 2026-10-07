@@ -165,8 +165,11 @@ def setup_logging() -> None:
 
     # Quiet noisy third-party loggers unless we are in DEBUG
     if level > logging.DEBUG:
-        for noisy in ("ib_async", "httpx", "telegram", "apscheduler"):
+        for noisy in ("ib_async", "telegram", "apscheduler"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Always, even at DEBUG: httpx's INFO request line embeds the Flex token (?t=...)
+    for secret_bearing in ("httpx", "httpcore"):
+        logging.getLogger(secret_bearing).setLevel(logging.WARNING)
 
     _CONFIGURED = True
 

@@ -435,3 +435,14 @@ monitor:
     max_debit: 0.50
     min_delta_reduction: 0.10
     require_breakeven_improvement: true
+
+# Trade ledger — whole-account history, dashboard /ledger, Google Sheet mirror.
+# docs/superpowers/specs/2026-10-04-trade-ledger-design.md §8. Secrets live in .env.
+ledger:
+  account: ""                      # IBKR account to track; "" = lock to the first CSV/Flex import
+  live_sweep_minutes: 5            # reqExecutions sweep cadence in the approval service
+  sheets_min_interval_seconds: 60  # Google Sheet rewrite at most this often
+  upload_max_bytes: 5242880        # dashboard CSV upload cap (5 MB)
+  flex_poll_timeout_seconds: 600   # give up waiting for IBKR to generate a Flex statement
+  flex_poll_interval_seconds: 10
+  fx_max_gap_days: 7               # nearest FX rate may be at most this many days away

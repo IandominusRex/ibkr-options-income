@@ -2372,8 +2372,13 @@ async def test_intraday_loop_probe_block_reports_diagnosis_and_codes():
             approval_service._intraday_scan_loop(app, ib_scan, None, "123")
         )
         try:
+            # Wait for the block message itself: the loop sends "Scan started" first, so
+            # stopping at the first send_message call races the probe branch.
             for _ in range(200):
-                if bot.send_message.call_count >= 1:
+                if any(
+                    "Scan blocked" in c.kwargs.get("text", "")
+                    for c in bot.send_message.call_args_list
+                ):
                     break
                 await asyncio.sleep(0.01)
         finally:

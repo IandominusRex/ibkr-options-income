@@ -474,7 +474,10 @@ class AppCommandRow(Base):
     promote, roll_request) and ``NULL`` for kinds that may repeat harmlessly (halt,
     resume, set_autonomy, refresh, universe_add, universe_remove — the latter two
     joined this group in M7 after a stable key let a later remove dedupe to an
-    earlier, already-applied command and silently no-op). A NULL key never collides.
+    earlier, already-applied command and silently no-op — and ledger_import,
+    ledger_annotate, ledger_ca_reviewed, which joined in Task 8: an import is an
+    idempotent upsert and an annotation is last-write-wins, so a dedupe key would only
+    ever reject a legitimate second request). A NULL key never collides.
 
     Uniqueness on ``dedupe_key`` is enforced at the DB level by
     ``uq_app_commands_dedupe_key_pending`` — a partial index (``src/storage/db.py``'s
@@ -569,3 +572,139 @@ class UniverseOverrideRow(Base):
     action: Mapped[str] = mapped_column(String(8))  # "add" | "remove"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     created_by: Mapped[str] = mapped_column(String(64))  # user id; the audit trail
+
+
+# --------------------------------------------------------------------------- #
+# Trade ledger — whole-account broker truth (docs/superpowers/specs/2026-10-04-trade-ledger-design.md).
+# Written only by src/ledger/ingest.py and src/ledger/annotations.py; read by
+# src/reporting/trade_ledger.py. Never read by the engine, execution, or strategies.
+# --------------------------------------------------------------------------- #
+class BrokerExecutionRow(Base):
+    """One IBKR execution (``source_kind="exec"``) or one order-level statement row (``"order"``).
+
+    ``superseded_by`` is set on a row whose twin from a higher-priority feed exists (spec R2);
+    builders ignore superseded rows. ``trade_time`` is naive UTC; ``trade_date`` is the
+    US/Eastern date.
+    """
+
+    __tablename__ = "broker_executions"
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_broker_executions_dedupe_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dedupe_key: Mapped[str] = mapped_column(String(96))
+    source_kind: Mapped[str] = mapped_column(String(8))  # "exec" | "order"
+    source: Mapped[str] = mapped_column(String(8))  # "csv" | "flex" | "live"
+    exec_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    perm_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    ib_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    account: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trade_time: Mapped[datetime] = mapped_column(DateTime)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    contract_ident: Mapped[str] = mapped_column(String(80), index=True)
+    underlying: Mapped[str] = mapped_column(String(24), index=True)
+    sec_type: Mapped[str] = mapped_column(String(4))
+    right: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    strike: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
+    multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    currency: Mapped[str] = mapped_column(String(3))
+    quantity: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+    proceeds: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float, default=0.0)
+    codes: Mapped[str] = mapped_column(String(32), default="")
+    ibkr_realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    occurrence_idx: Mapped[int] = mapped_column(Integer, default=0)
+    superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    book: Mapped[str] = mapped_column(String(8), default="manual")  # "system" | "manual"
+    import_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class BrokerCashEventRow(Base):
+    """Dividend, withholding, deposit/withdrawal, fee or interest cash line."""
+
+    __tablename__ = "broker_cash_events"
+    __table_args__ = (UniqueConstraint("dedupe_key", name="uq_broker_cash_events_dedupe_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dedupe_key: Mapped[str] = mapped_column(String(96))
+    event_type: Mapped[str] = mapped_column(String(12))
+    event_date: Mapped[date] = mapped_column(Date, index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    amount: Mapped[float] = mapped_column(Float)
+    description: Mapped[str] = mapped_column(Text, default="")
+    underlying: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(8))
+    import_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class BrokerCorporateActionRow(Base):
+    """Stored and flagged for human review — never auto-applied to cost basis (spec §3)."""
+
+    __tablename__ = "broker_corporate_actions"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_broker_corporate_actions_dedupe_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dedupe_key: Mapped[str] = mapped_column(String(96))
+    event_date: Mapped[date] = mapped_column(Date)
+    underlying: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    quantity: Mapped[float] = mapped_column(Float, default=0.0)
+    proceeds: Mapped[float] = mapped_column(Float, default=0.0)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(8))
+    import_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class FxRateRow(Base):
+    """USD per 1 unit of ``currency`` on ``rate_date`` (from Forex trades / Flex ConversionRates)."""
+
+    __tablename__ = "fx_rates"
+    __table_args__ = (UniqueConstraint("rate_date", "currency", name="uq_fx_rates_date_currency"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rate_date: Mapped[date] = mapped_column(Date, index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    usd_rate: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(8))
+
+
+class LedgerImportRunRow(Base):
+    """One ingest call — its source, outcome, counts and (capped) parse errors."""
+
+    __tablename__ = "ledger_import_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(8))
+    filename: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(8), default="running")
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class TradeAnnotationRow(Base):
+    """Operator edits, keyed by the opening order's source-independent ``order_key`` (R3)."""
+
+    __tablename__ = "trade_annotations"
+    __table_args__ = (UniqueConstraint("order_key", name="uq_trade_annotations_order_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_key: Mapped[str] = mapped_column(String(16))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    outcome_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    exclude_from_stats: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by: Mapped[str] = mapped_column(String(64), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

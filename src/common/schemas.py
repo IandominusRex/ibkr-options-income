@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _ET = ZoneInfo("America/New_York")
 
@@ -806,3 +806,315 @@ class EquityCurve(BaseModel):
     points: list[EquityPoint] = Field(default_factory=list)
     gaps: list[date] = Field(default_factory=list)
     starts_at: date | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Trade ledger — whole-account broker truth
+# (docs/superpowers/specs/2026-10-04-trade-ledger-design.md). Read by src/ledger/,
+# src/reporting/trade_ledger.py and src/api/ only — never by engine/execution/strategies.
+# --------------------------------------------------------------------------- #
+LedgerSourceKind = Literal["exec", "order"]
+LedgerSource = Literal["csv", "flex", "live"]
+LedgerOutcome = Literal[
+    "Open",
+    "Pending",
+    "Expired",
+    "Assigned",
+    "Called away",
+    "Exercised",
+    "Bought back",
+    "Sold",
+    "Rolled",
+]
+
+
+class LedgerContract(BaseModel):
+    """A normalized IBKR contract identity, independent of which feed reported it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    underlying: str
+    sec_type: Literal["OPT", "STK"]
+    currency: str = "USD"
+    right: Literal["C", "P"] | None = None
+    strike: float | None = None
+    expiry: date | None = None
+    multiplier: float = 1.0
+
+    @property
+    def ident(self) -> str:
+        if self.sec_type == "STK":
+            return f"STK:{self.underlying}:{self.currency}"
+        assert self.expiry is not None and self.strike is not None and self.right is not None
+        return (
+            f"OPT:{self.underlying}:{self.expiry:%Y%m%d}:{self.right}:"
+            f"{self.strike:g}:{self.currency}"
+        )
+
+
+class ParsedExecution(BaseModel):
+    """One execution (``exec_id`` set) or one order-level statement row (``exec_id`` None)."""
+
+    contract: LedgerContract
+    trade_time: datetime  # timezone-aware UTC
+    quantity: float  # signed: + bought, - sold (contracts or shares)
+    price: float  # per share
+    proceeds: float  # signed cash, contract currency
+    commission: float = 0.0  # signed; negative is a cost
+    codes: str = ""  # raw IBKR code string, e.g. "A;O", "C;Ep"
+    exec_id: str | None = None
+    perm_id: int | None = None
+    ib_order_id: int | None = None
+    account: str | None = None
+    ibkr_realized_pnl: float | None = None
+    source_kind: LedgerSourceKind
+    occurrence_idx: int = 0
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ParsedCashEvent(BaseModel):
+    event_type: Literal["dividend", "withholding", "deposit", "withdrawal", "fee", "interest"]
+    event_date: date
+    currency: str
+    amount: float  # signed
+    description: str
+    underlying: str | None = None
+    occurrence_idx: int = 0
+
+
+class ParsedCorporateAction(BaseModel):
+    event_date: date
+    underlying: str | None
+    description: str
+    quantity: float
+    proceeds: float
+    occurrence_idx: int = 0
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ParsedFxRate(BaseModel):
+    rate_date: date
+    currency: str
+    usd_rate: float  # USD per 1 unit of `currency`
+
+
+class LedgerParseError(BaseModel):
+    line: int
+    section: str
+    message: str
+
+
+class ParsedStatement(BaseModel):
+    """What every feed (Activity CSV, Flex XML, live fills) normalises to before ingest."""
+
+    account: str | None = None
+    base_currency: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    executions: list[ParsedExecution] = Field(default_factory=list)
+    cash_events: list[ParsedCashEvent] = Field(default_factory=list)
+    corporate_actions: list[ParsedCorporateAction] = Field(default_factory=list)
+    fx_rates: list[ParsedFxRate] = Field(default_factory=list)
+    errors: list[LedgerParseError] = Field(default_factory=list)
+
+    @property
+    def fatal(self) -> bool:
+        """A broken Trades row poisons the whole import; other sections only warn."""
+        return any(e.section == "Trades" for e in self.errors)
+
+
+class LedgerImportResult(BaseModel):
+    run_id: int | None
+    status: Literal["ok", "failed", "skipped"]
+    reason: str | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    errors: list[LedgerParseError] = Field(default_factory=list)
+
+
+class LedgerClose(BaseModel):
+    """One closing order's share of a trade (a trade may close in several orders)."""
+
+    order_key: str
+    close_date: date
+    close_time: datetime
+    quantity: float  # contracts closed by this order, positive
+    cash: float  # signed proceeds attributable to this close
+    commission: float  # signed
+    codes: str
+
+
+class LedgerTrade(BaseModel):
+    """One opening option order and everything that closed it (spec §4.2, R3, R4, R9, R10)."""
+
+    order_key: str
+    underlying: str
+    currency: str
+    side: Literal["Sell", "Buy"]
+    right: Literal["C", "P"]
+    strike: float
+    expiry: date
+    multiplier: float
+    lots: float
+    order_date: date
+    open_time: datetime
+    close_date: date | None
+    dte: int
+    days_held: int
+    premium: float  # gross opening credit (+) / debit (-), contract currency
+    open_commission: float
+    closes: list[LedgerClose] = Field(default_factory=list)
+    outcome: LedgerOutcome
+    computed_outcome: LedgerOutcome
+    outcome_overridden: bool = False
+    mixed_close: bool = False
+    capital: float
+    pct_profit: float | None  # the sheet's formula, in %; short options only
+    net_pnl: float | None  # fully closed only, after all commissions
+    return_pct: float | None
+    annualised_net_pct: float | None
+    stock_gain: float | None = None  # realized stock P&L when this call got the shares called away
+    book: Literal["system", "manual"]
+    rolled_from: str | None = None
+    rolled_to: str | None = None
+    ibkr_realized_pnl: float | None = None
+    exec_row_ids: list[int] = Field(default_factory=list)
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
+    exclude_from_stats: bool = False
+
+
+class LedgerOrphan(BaseModel):
+    """A closing order with no opening in the imported history (Review Focus 1)."""
+
+    order_key: str
+    underlying: str
+    sec_type: Literal["OPT", "STK"]
+    contract_ident: str
+    currency: str
+    trade_date: date
+    quantity: float
+    price: float
+    ibkr_realized_pnl: float | None
+
+
+# --------------------------------------------------------------------------- #
+# Stock lots, ticker roll-ups, FX, portfolio summary (spec §4.3-4.5; Task 6)
+# --------------------------------------------------------------------------- #
+class LedgerStockLot(BaseModel):
+    lot_key: str
+    underlying: str
+    currency: str
+    acquired_date: date
+    source: Literal["bought", "assigned", "exercised"]
+    quantity: float  # signed quantity originally opened
+    remaining: float
+    cost_per_share: float  # commission-inclusive
+
+
+class LedgerStockDisposal(BaseModel):
+    lot_key: str
+    underlying: str
+    currency: str
+    disposal_date: date
+    quantity: float
+    price: float
+    realized: float
+    codes: str
+
+
+class LedgerCashItem(BaseModel):
+    event_date: date
+    event_type: str
+    currency: str
+    amount: float
+    description: str
+    underlying: str | None = None
+
+
+class LedgerTicker(BaseModel):
+    symbol: str
+    currency: str
+    option_premium_gross: float
+    option_net_pnl: float
+    stock_realized: float
+    dividends_net: float
+    total_realized: float
+    unrealized: float | None
+    n_trades: int
+    n_open: int
+    n_closed: int
+    win_rate: float | None
+    avg_premium: float | None
+    best_trade: float | None
+    worst_trade: float | None
+    annualised_return_pct: float | None
+    shares_held: float
+    broker_avg_cost: float | None
+    wheel_adjusted_basis: float | None
+    first_trade: date | None
+    last_trade: date | None
+
+
+class LedgerBasisPoint(BaseModel):
+    point_date: date
+    label: str
+    basis_per_share: float
+
+
+class LedgerTickerDetail(BaseModel):
+    ticker: LedgerTicker
+    trades: list[LedgerTrade]
+    lots: list[LedgerStockLot]
+    disposals: list[LedgerStockDisposal]
+    dividends: list[LedgerCashItem]
+    basis_walk: list[LedgerBasisPoint]
+
+
+class LedgerMonth(BaseModel):
+    month: str  # "YYYY-MM"
+    premium_usd: float
+    realized_usd: float
+
+
+class LedgerCurvePoint(BaseModel):
+    point_date: date
+    cumulative_usd: float
+
+
+class LedgerBucket(BaseModel):
+    label: str
+    n_closed: int
+    realized_usd: float
+    win_rate: float | None
+
+
+class LedgerSummary(BaseModel):
+    total_realized_usd: float
+    interest_and_fees_usd: float
+    contributed_usd: float | None
+    capital_utilised_usd: float
+    available_usd: float | None
+    unrealized_usd: float | None
+    win_rate: float | None
+    n_trades: int
+    n_open: int
+    premium_this_month_usd: float
+    months: list[LedgerMonth]
+    curve: list[LedgerCurvePoint]
+    by_strategy: list[LedgerBucket]
+    by_book: list[LedgerBucket]
+    upcoming: list[LedgerTrade]
+    fx_incomplete: bool
+    orphan_closes: int
+    unreviewed_corporate_actions: int
+    marks_as_of: datetime | None
+
+
+class LedgerBook(BaseModel):
+    trades: list[LedgerTrade]
+    orphans: list[LedgerOrphan]
+    tickers: list[LedgerTicker]
+    summary: LedgerSummary
+    lots: list[LedgerStockLot]
+    disposals: list[LedgerStockDisposal]
+    cash: list[LedgerCashItem]

@@ -80,3 +80,24 @@ def test_same_record_processed_by_multiple_handlers_is_idempotent():
     first = f.filter(rec)
     second = f.filter(rec)
     assert first == second is True
+
+
+def test_httpx_loggers_are_pinned_to_warning_even_at_debug(monkeypatch):
+    """M8: httpx's INFO request line embeds the Flex token, so DEBUG must not unmute it."""
+    import src.common.logging as lg
+    from src.common.config import get_config
+
+    saved = {n: logging.getLogger(n).level for n in ("httpx", "httpcore")}
+    monkeypatch.setattr(lg, "_CONFIGURED", False)
+    monkeypatch.setattr(get_config().logging, "level", "DEBUG")
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    try:
+        lg.setup_logging()
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        for n, lv in saved.items():
+            logging.getLogger(n).setLevel(lv)

@@ -283,3 +283,45 @@ def test_the_portfolio_snapshot_writers_are_the_two_we_intended() -> None:
         "src/monitor/intraday.py",
         "src/notify/command_drain.py",
     }
+
+
+# ---------------------------------------------------------------------------
+# Trade ledger (docs/superpowers/specs/2026-10-04-trade-ledger-design.md §9).
+# ---------------------------------------------------------------------------
+
+_LEDGER_WRITERS = (
+    "BrokerExecutionRow(",
+    "BrokerCashEventRow(",
+    "BrokerCorporateActionRow(",
+    "FxRateRow(",
+    "LedgerImportRunRow(",
+    "TradeAnnotationRow(",
+)
+
+
+def test_the_trading_path_never_imports_the_ledger() -> None:
+    """The ledger is reporting. It must never reach a gate, a size, or a screen."""
+    for pkg in ("engine", "execution", "strategies"):
+        for path in (ROOT / "src" / pkg).rglob("*.py"):
+            text = path.read_text()
+            assert "src.ledger" not in text, f"{path} imports the trade ledger"
+            assert "trade_ledger" not in text, f"{path} imports the trade-ledger builder"
+
+
+def test_the_ledger_never_imports_the_enrichment_layer() -> None:
+    ledger = ROOT / "src" / "ledger"
+    assert ledger.is_dir()
+    for path in ledger.rglob("*.py"):
+        assert "src.claude" not in path.read_text(), f"{path} imports the enrichment layer"
+
+
+def test_only_the_ledger_package_writes_the_ledger_tables() -> None:
+    for path in (ROOT / "src").rglob("*.py"):
+        rel = path.relative_to(ROOT)
+        if rel.parts[:2] == ("src", "ledger") or path.name == "models.py":
+            continue
+        text = path.read_text()
+        for writer in _LEDGER_WRITERS:
+            assert writer not in text, (
+                f"{rel} constructs {writer[:-1]} — only src/ledger/ may write it"
+            )

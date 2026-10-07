@@ -1,0 +1,49 @@
+Statement,Header,Field Name,Field Value
+Statement,Data,Title,Activity Statement
+Statement,Data,Period,"April 1, 2025 - April 1, 2026"
+Account Information,Header,Field Name,Field Value
+Account Information,Data,Account,U0000001
+Account Information,Data,Base Currency,SGD
+Deposits & Withdrawals,Header,Currency,Settle Date,Description,Amount
+Deposits & Withdrawals,Data,USD,2025-05-26,Electronic Fund Transfer,45000
+Deposits & Withdrawals,Data,SGD,2026-01-02,Disbursement Initiated,-6371.24
+Deposits & Withdrawals,Data,Total,,,-6371.24
+Fees,Header,Subtitle,Currency,Date,Description,Amount
+Fees,Data,Other Fees,SGD,2025-07-02,Snapshot fee for Jun 2025,-0.04
+Dividends,Header,Currency,Date,Description,Amount
+Dividends,Data,USD,2025-06-13,QDTE(US77926X3044) Cash Dividend USD 0.145807 per Share (Ordinary Dividend),29.16
+Dividends,Data,Total,,,29.16
+Withholding Tax,Header,Currency,Date,Description,Amount,Code
+Withholding Tax,Data,USD,2025-06-13,QDTE(US77926X3044) Cash Dividend USD 0.145807 per Share - US Tax,-8.75,
+Withholding Tax,Data,USD,2025-06-13,QDTE(US77926X3044) Cash Dividend USD 0.145807 per Share - US Tax,8.75,
+Withholding Tax,Data,USD,2025-06-13,QDTE(US77926X3044) Cash Dividend USD 0.145807 per Share - US Tax,-8.75,
+Interest,Header,Currency,Date,Description,Amount
+Interest,Data,SGD,2025-04-03,SGD Credit Interest for Mar-2025,20.73
+Interest,Data,Total,,,20.73
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code
+Trades,Data,Order,Stocks,SGD,A17U,"2025-07-17, 01:31:33",500,2.77,2.78,-1385,-2.725,1387.725,0,5,O
+Trades,Data,Order,Stocks,USD,AMZN,"2025-10-10, 16:20:00",100,215,216.37,-21500,0,21500,0,137,A;O
+Trades,Data,Order,Stocks,USD,AMZN,"2025-10-31, 16:20:00",-100,235,244.22,23500,-0.018094,-21324.143072,2576.968262,-922,A;C
+Trades,Data,Order,Stocks,USD,OPEN,"2025-09-19, 16:20:00",400,3,9.57,-1200,0,1200,0,2628,Ex;O
+Trades,SubTotal,,Stocks,USD,AMZN,,0,,,2000,-0.02,,,,
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code
+Trades,Data,Order,Equity and Index Options,USD,NVDA 27JUN25 138 P,"2025-06-17, 10:02:11",-1,1.31,1.30,131,-1.0446,-129.9554,0,1,O
+Trades,Data,Order,Equity and Index Options,USD,NVDA 27JUN25 138 P,"2025-06-27, 11:09:57",1,0.01,0,-1,-1.1531655,129.843793,127.690628,-1,C
+Trades,Data,Order,Equity and Index Options,USD,AMZN 18JUL25 207.5 P,"2025-06-25, 13:17:15",-1,3.25,3.325,325,-1.1562066,-323.8437934,0,-7.5,O
+Trades,Data,Order,Equity and Index Options,USD,AMZN 18JUL25 207.5 P,"2025-07-18, 16:20:00",1,0,0,0,0,323.843793,323.843793,0,C;Ep
+Trades,Data,Order,Equity and Index Options,USD,AMZN 10OCT25 215 P,"2025-10-03, 14:45:08",-1,1.77,1.785,177,-1.1430721,-175.8569279,0,-1.5,O
+Trades,Data,Order,Equity and Index Options,USD,AMZN 10OCT25 215 P,"2025-10-10, 16:20:00",1,0,0,0,0,175.856928,0,0,A;C
+Trades,Data,Order,Equity and Index Options,USD,AMZN 31OCT25 235 C,"2025-10-20, 10:30:00",-1,4.01,4.0,401,-1.0,-400,0,1,O
+Trades,Data,Order,Equity and Index Options,USD,AMZN 31OCT25 235 C,"2025-10-31, 16:20:00",1,0,9.22,0,0,401.129428,0,922,A;C
+Trades,Data,Order,Equity and Index Options,USD,OPEN 19SEP25 3 C,"2025-07-21, 10:00:00",4,1.2,1.2,-480,-2.6,482.6,0,0,O
+Trades,Data,Order,Equity and Index Options,USD,OPEN 19SEP25 3 C,"2025-09-19, 16:20:00",-4,0,6.57,0,0,-615.078814,0,-2628,C;Ex
+Trades,Data,Order,Equity and Index Options,USD,OPEN1 19DEC25 5 C,"2025-11-20, 10:00:00",-2,0.5,0.5,50,-1.0,-49,0,0,O
+Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,,Proceeds,Comm in SGD,,,MTM in SGD,Code
+Trades,Data,Order,Forex,SGD,USD.SGD,"2026-01-06, 06:49:36",-15.88,1.2795,,20.31846,-2.5656,,,-0.017468,
+Trades,Total,,Forex,SGD,,,,,,20.31846,-2.5656,,,-0.017468,
+Corporate Actions,Header,Asset Category,Currency,Report Date,Date/Time,Description,Quantity,Proceeds,Value,Realized P/L,Code
+Corporate Actions,Data,Warrants,USD,2025-11-18,"2025-11-17, 20:25:00","OPEN(US6837121036) Spinoff OPENW 1 for 30 (OPENW, OPENW 20NOV26 11.5 C, US6837121291)",30,0,7.056,0,
+Corporate Actions,Data,Total,,,,,,0,7.056,0,
+Financial Instrument Information,Header,Asset Category,Symbol,Description,Conid,Security ID,Underlying,Listing Exch,Multiplier,Expiry,Delivery Month,Type,Strike,Code
+Financial Instrument Information,Data,Equity and Index Options,NVDA  250627P00138000,NVDA 27JUN25 138 P,1,,NVDA,CBOE,100,2025-06-27,2025-06,P,138,
+Financial Instrument Information,Data,Equity and Index Options,OPEN1 251219C00005000,OPEN1 19DEC25 5 C,2,,OPEN,CBOE,50,2025-12-19,2025-12,C,5,

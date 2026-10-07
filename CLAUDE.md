@@ -184,15 +184,41 @@ realised-P&L accounting rule** (`legs.py` — `fill_economics` and `classify_out
 verbatim** out of `src/claude/eval/reconcile.py` in P3-P4 M4 Task 4.1 so the reconciler and the
 reporting layer share one implementation; `reconcile.py` imports them from there) plus the
 read-only P&L builders over the trading DB (`pnl.py` — legs, campaigns, summary, equity curve).
-It reads the whole book, including enrichment-side tables, which is why it stays on the read
-side of the tier line exactly as `src/api/` and `src/research/` do:
+It also holds `trade_ledger.py` — the whole-account trade-ledger builder (orders → FIFO trades →
+outcomes/rolls/orphans, stock lots and wheel-adjusted cost basis, ticker roll-ups, FX, and the
+USD portfolio summary; docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-12). It is
+read-only, like `pnl.py` — same no-writes rule, same tier. It reads the whole book, including
+enrichment-side tables, which is why it stays on the read side of the tier line exactly as
+`src/api/` and `src/research/` do:
 
 - `src/reporting/` imports nothing from `src.claude`;
 - `src/engine/`, `src/execution/` and `src/strategies/` may never import `src.reporting`.
 
-Both asserted in `tests/test_web_fence.py`. The one inversion the fence allows:
-`src/claude/eval/reconcile.py` imports the neutral read-only accounting module — the fence stops
-`eval/` reaching the **engine**, not `eval/` importing a read-only module.
+Both asserted in `tests/test_web_fence.py` — `test_reporting_never_writes_anything` already
+covers `trade_ledger.py` (it globs every file under `src/reporting/`), since the builder has no
+`session.add`/`session.merge`/`session.delete`/`session.commit` call of its own. The one
+inversion the fence allows: `src/claude/eval/reconcile.py` imports the neutral read-only
+accounting module — the fence stops `eval/` reaching the **engine**, not `eval/` importing a
+read-only module.
+
+### The `src/ledger/` fence — the only writer of the broker-truth ledger tables
+
+`src/ledger/` (`contracts.py`, `activity_csv.py`, `flex.py`, `live.py`, `ingest.py`,
+`annotations.py`, `sheets_mirror.py`, `state.py`) is the **only** writer of the six
+`broker_*`/ledger tables (`BrokerExecutionRow`, `BrokerCashEventRow`, `BrokerCorporateActionRow`,
+`FxRateRow`, `LedgerImportRunRow`, `TradeAnnotationRow`) — every execution/CSV/Flex/live feed
+normalises to a `ParsedStatement` and lands through `src/ledger/ingest.py::ingest`, never through
+a second writer. The same fence applies here as everywhere else in the reporting tier: nothing
+in `src/ledger/` is imported by `engine/`, `execution/`, or `strategies/`, and `src/ledger/`
+imports nothing from `src.claude` *directly* (transitively, `live.py` reaches `src.claude.memory` through `src.execution.reconciliation`'s `_req_executions_bounded` helper; this is harmless at runtime because `live.py` only runs inside `approval_service`). `src/ledger/live.py` is the one place `ib_async` objects
+(`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
+schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
+Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping
+engine/execution/strategies for `src.ledger`/`trade_ledger`), `::test_the_ledger_never_imports_the_enrichment_layer`
+and `::test_only_the_ledger_package_writes_the_ledger_tables` (only `src/ledger/` constructs the
+six writer rows) — keep them green. The web `/ledger/*` pages are read-only over `GET /ledger/*`;
+their two edits (annotations, corporate-action reviewed) and the CSV upload are intents drained by
+`approval_service`, like every other web write.
 
 ## Reference documentation
 

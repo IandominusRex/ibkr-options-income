@@ -253,3 +253,50 @@ def test_halt_rejects_unknown_keys() -> None:
 def test_set_autonomy_rejects_unknown_keys() -> None:
     with pytest.raises(ValidationError):
         validate_payload(CommandKind.SET_AUTONOMY, {"level": "manual", "force": True})
+
+
+# ---------------------------------------------------------------------------
+# Task 8 — ledger_import / ledger_annotate / ledger_ca_reviewed payload validation.
+# ---------------------------------------------------------------------------
+
+
+def test_ledger_payloads_validate_and_are_never_deduped() -> None:
+    from src.api.models.commands import (
+        LedgerAnnotatePayload,
+        LedgerCaReviewedPayload,
+        LedgerImportPayload,
+    )
+
+    imp = validate_payload(CommandKind.LEDGER_IMPORT, {"filename": "s.csv", "content": "x"})
+    assert isinstance(imp, LedgerImportPayload)
+    ann = validate_payload(CommandKind.LEDGER_ANNOTATE, {"order_key": "a" * 16, "notes": "hi"})
+    assert isinstance(ann, LedgerAnnotatePayload) and ann.model_fields_set == {"order_key", "notes"}
+    ca = validate_payload(CommandKind.LEDGER_CA_REVIEWED, {"corporate_action_id": 3})
+    assert isinstance(ca, LedgerCaReviewedPayload)
+    for kind, p in (
+        (CommandKind.LEDGER_IMPORT, imp),
+        (CommandKind.LEDGER_ANNOTATE, ann),
+        (CommandKind.LEDGER_CA_REVIEWED, ca),
+    ):
+        assert dedupe_key_for(kind, p) is None
+
+
+def test_ledger_annotate_rejects_unknown_outcome_and_bad_key() -> None:
+    with pytest.raises(ValidationError):
+        validate_payload(
+            CommandKind.LEDGER_ANNOTATE, {"order_key": "a" * 16, "outcome_override": "Won"}
+        )
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.LEDGER_ANNOTATE, {"order_key": "short"})
+
+
+def test_ledger_import_content_over_the_configured_limit_is_rejected(monkeypatch) -> None:
+    """F6: ``ledger.upload_max_bytes`` is enforced server-side, not just a fixed Field cap."""
+    from src.common.config import get_config
+
+    monkeypatch.setattr(get_config().ledger, "upload_max_bytes", 10)
+    with pytest.raises(ValidationError):
+        validate_payload(CommandKind.LEDGER_IMPORT, {"filename": "s.csv", "content": "x" * 11})
+    # Still accepts content at or under the (lowered) limit.
+    m = validate_payload(CommandKind.LEDGER_IMPORT, {"filename": "s.csv", "content": "x" * 10})
+    assert m.content == "x" * 10
