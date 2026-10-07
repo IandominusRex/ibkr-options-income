@@ -1,8 +1,10 @@
 """One-way mirror of the ledger into the operator's Google Sheet (spec §7).
 
-Writes three tabs it owns — "Ledger (auto)", "Tickers (auto)", "Summary (auto)" — as a full
-rewrite each time, so corrections and outcome overrides always propagate. The operator's own
-tabs are never read or written. Driven by the ledger generation counter (src/ledger/state.py):
+Two modes, chosen by ``ledger.sheets_tabs`` in settings.yaml. With a role -> gid map it writes
+into those existing tabs (options ledger, buy-and-hold holdings, tickers, dashboard summary) and
+touches nothing else; with no map it creates and owns three "(auto)" tabs. Either way each tab is
+a full rewrite each time, so corrections and outcome overrides always propagate, and a role (or
+tab) not listed is never read or written. Driven by the ledger generation counter (src/ledger/state.py):
 any ingest or annotation bumps it; the mirror syncs when it is ahead of the last synced value,
 at most once per ``ledger.sheets_min_interval_seconds``. Failures are recorded and retried; they
 never block ingestion. Unrealized P&L is deliberately not mirrored (no live marks here).
@@ -31,6 +33,7 @@ from src.reporting.trade_ledger import (
     SHEET_HEADER,
     TICKER_HEADER,
     build_book,
+    buy_hold_rows,
     sheet_row,
     summary_rows,
     ticker_row,
@@ -55,9 +58,12 @@ _OUTCOME_COLOURS: dict[str, tuple[float, float, float]] = {
 }
 
 
+TabTarget = str | int  # a tab title (created if missing) or an existing tab's gid
+
+
 class SheetsWriter(Protocol):
     def write_tab(
-        self, title: str, rows: list[list[Any]], *, outcome_column: int | None = None
+        self, target: TabTarget, rows: list[list[Any]], *, outcome_column: int | None = None
     ) -> None: ...
 
 
@@ -94,26 +100,37 @@ class GspreadWriter:
 
         self._spreadsheet = gspread.service_account(filename=credentials_path).open_by_key(sheet_id)
 
+    def _has_outcome_rules(self, sheet_id: int) -> bool:
+        meta = self._spreadsheet.fetch_sheet_metadata()
+        return any(
+            sh["properties"]["sheetId"] == sheet_id and sh.get("conditionalFormats")
+            for sh in meta["sheets"]
+        )
+
     def write_tab(
-        self, title: str, rows: list[list[Any]], *, outcome_column: int | None = None
+        self, target: TabTarget, rows: list[list[Any]], *, outcome_column: int | None = None
     ) -> None:
         import gspread
         from gspread.utils import ValueInputOption
 
         width = max(len(r) for r in rows)
-        try:
-            ws = self._spreadsheet.worksheet(title)
-            created = False
-        except gspread.WorksheetNotFound:
-            ws = self._spreadsheet.add_worksheet(title=title, rows=len(rows) + 50, cols=width)
-            created = True
+        if isinstance(target, int):
+            # A gid names a tab the operator already made; never create one under their feet.
+            ws = self._spreadsheet.get_worksheet_by_id(target)
+            fresh = not self._has_outcome_rules(ws.id) if outcome_column is not None else False
+        else:
+            try:
+                ws = self._spreadsheet.worksheet(target)
+                fresh = False
+            except gspread.WorksheetNotFound:
+                ws = self._spreadsheet.add_worksheet(title=target, rows=len(rows) + 50, cols=width)
+                fresh = True
         ws.clear()
-        ws.resize(rows=len(rows) + 50, cols=width)
+        ws.resize(rows=len(rows) + 50, cols=max(width, ws.col_count))
         ws.update(values=rows, range_name="A1", value_input_option=ValueInputOption.user_entered)
-        if created:
-            ws.freeze(rows=1)
-            if outcome_column is not None:
-                self._spreadsheet.batch_update({"requests": _outcome_rules(ws.id, outcome_column)})
+        ws.freeze(rows=1)
+        if fresh and outcome_column is not None:
+            self._spreadsheet.batch_update({"requests": _outcome_rules(ws.id, outcome_column)})
 
 
 def _scrub_secrets(message: str) -> str:
@@ -149,16 +166,26 @@ def default_writer() -> SheetsWriter | None:
 
 
 def sync_once(writer: SheetsWriter, book: LedgerBook) -> None:
-    writer.write_tab(
-        LEDGER_TAB,
-        [SHEET_HEADER, *(sheet_row(t) for t in book.trades)],
-        outcome_column=_OUTCOME_COLUMN,
-    )
-    writer.write_tab(TICKERS_TAB, [TICKER_HEADER, *(ticker_row(t) for t in book.tickers)])
-    writer.write_tab(
-        SUMMARY_TAB,
-        [*summary_rows(book.summary), ["Updated (UTC)", datetime.now(UTC).isoformat()]],
-    )
+    ledger_rows: list[list[Any]] = [SHEET_HEADER, *(sheet_row(t) for t in book.trades)]
+    ticker_rows: list[list[Any]] = [TICKER_HEADER, *(ticker_row(t) for t in book.tickers)]
+    summary: list[list[Any]] = [
+        *summary_rows(book.summary),
+        ["Updated (UTC)", datetime.now(UTC).isoformat()],
+    ]
+    tabs = get_config().ledger.sheets_tabs
+    if not tabs:
+        writer.write_tab(LEDGER_TAB, ledger_rows, outcome_column=_OUTCOME_COLUMN)
+        writer.write_tab(TICKERS_TAB, ticker_rows)
+        writer.write_tab(SUMMARY_TAB, summary)
+        return
+    if "options" in tabs:
+        writer.write_tab(tabs["options"], ledger_rows, outcome_column=_OUTCOME_COLUMN)
+    if "buy_and_hold" in tabs:
+        writer.write_tab(tabs["buy_and_hold"], buy_hold_rows(book))
+    if "tickers" in tabs:
+        writer.write_tab(tabs["tickers"], ticker_rows)
+    if "summary" in tabs:
+        writer.write_tab(tabs["summary"], summary)
 
 
 def sync_if_due(*, writer_factory: Callable[[], SheetsWriter | None] = default_writer) -> bool:

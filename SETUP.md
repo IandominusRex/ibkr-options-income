@@ -1591,10 +1591,17 @@ to a Google Sheet.
    - Share your spreadsheet with the service account's email (as **Editor**).
    - Set `GOOGLE_SHEETS_CREDENTIALS_PATH` (path to the JSON key) and `LEDGER_SHEET_ID` (the id
      in the sheet's URL, between `/d/` and `/edit`) in `.env`.
-   - The system writes exactly three tabs it owns — `Ledger (auto)`, `Tickers (auto)`,
-     `Summary (auto)` — as a full rewrite whenever the ledger changes (throttled to at most once
-     per `ledger.sheets_min_interval_seconds`, default 60s). It never reads or writes any other
-     tab in the spreadsheet. The mirror carries no unrealized P&L (no live marks in the sheet).
+   - **Which tabs it writes** is set by `ledger.sheets_tabs` in `config/settings.yaml`, a map of
+     role → tab **gid** (the number after `gid=` in the tab's URL — *not* the spreadsheet id):
+     `options` (one row per option trade), `buy_and_hold` (one row per ticker with open stock
+     lots: shares, avg cost, cost basis, source bought/assigned, dividends — native currency, so
+     SGD/GBP lines stay SGD/GBP), `tickers` (per-ticker roll-up) and `summary` (portfolio
+     summary + an `Updated (UTC)` row). Each listed tab is **fully rewritten** whenever the
+     ledger changes (throttled to at most once per `ledger.sheets_min_interval_seconds`, default
+     60s), so don't hand-edit or add columns inside them. A role you leave out (e.g. a credit
+     spreads tab) and every other tab are never read or written. With `sheets_tabs: {}` the
+     mirror falls back to creating three tabs it owns: `Ledger (auto)`, `Tickers (auto)`,
+     `Summary (auto)`. The mirror carries no unrealized P&L (no live marks in the sheet).
 4. **Optional: see manual TWS trades intraday, not just at the nightly Flex pull.** In TWS,
    Global Configuration → API → Settings → set **Master API client ID = 14** — this is the
    approval service's exec connection, and with the master id set, IBKR delivers
@@ -1674,4 +1681,4 @@ Also update:
 | The watchdog alerts `eod: …` after a day on which the supervisor restarted (crash + `KeepAlive` respawn, `./ibkr restart`, a reboot) around 16:15 ET | A supervisor restart while `scripts.run_eod` was running kills that EOD child with it; the relaunched supervisor only catches up an EOD that *never started* that day, so the interrupted run is lost and `eod_completed` is never written for today | Run it by hand once the stack is back: `python -m scripts.run_eod` (idempotent — safe to re-run). The watchdog's `eod` check clears on its next cycle after it finishes |
 | `python -m scripts.ledger_import <file>.csv` (or the `ledger_import` command) fails `account_mismatch` | The statement's account doesn't match the one the ledger is already locked to (its first-ever CSV/Flex import, or an explicit `ledger.account` in `config/settings.yaml`) — most often a paper-account statement imported after the real account was already locked in, or vice versa | Confirm which account the ledger is tracking: `GET /ledger/imports` or the `ledger_account` row in `system_settings`. Import the matching account's statement instead, or clear/change `ledger.account` before the first import if you genuinely meant to switch accounts (there is no "re-lock" command — it is a deliberate one-way guard, R8) |
 | `python -m scripts.ledger_flex_pull` (or the EOD step 7b) fails with `Flex error 1012: ...` | The Flex Web Service token expired or was revoked | Regenerate the token in Client Portal → Settings → Flex Web Service and update `IBKR_FLEX_TOKEN` in `.env` |
-| The Google Sheet isn't updating | The mirror is unconfigured, erroring, or just hasn't hit its sync interval yet | Check `GET /ledger/imports` → `sheets: {configured, last_run, last_error}` (the same status the dashboard's `/ledger/import` page shows as "Google Sheet mirror: failing: …"). `configured: false` means `GOOGLE_SHEETS_CREDENTIALS_PATH`/`LEDGER_SHEET_ID` aren't both set; a non-null `last_error` is redacted (never contains the sheet id or credentials path) but still names the failure type. Confirm the spreadsheet is shared with the service account's email as Editor, and that `ledger.sheets_min_interval_seconds` (default 60s) has actually elapsed since the last ledger change |
+| The Google Sheet isn't updating | The mirror is unconfigured, erroring, or just hasn't hit its sync interval yet | Check `GET /ledger/imports` → `sheets: {configured, last_run, last_error}` (the same status the dashboard's `/ledger/import` page shows as "Google Sheet mirror: failing: …"). `configured: false` means `GOOGLE_SHEETS_CREDENTIALS_PATH`/`LEDGER_SHEET_ID` aren't both set; a non-null `last_error` is redacted (never contains the sheet id or credentials path) but still names the failure type. Confirm `LEDGER_SHEET_ID` is the spreadsheet id (the long string between `/d/` and `/edit`), not a tab gid, that every gid in `ledger.sheets_tabs` exists in that spreadsheet, and that the spreadsheet is shared with the service account's email as Editor, and that `ledger.sheets_min_interval_seconds` (default 60s) has actually elapsed since the last ledger change |

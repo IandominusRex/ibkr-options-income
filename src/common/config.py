@@ -583,6 +583,20 @@ class LedgerCfg(BaseModel):
     flex_poll_timeout_seconds: float = 600.0
     flex_poll_interval_seconds: float = 10.0
     fx_max_gap_days: int = 7
+    # Google Sheet tab gids the mirror writes into (role -> gid; roles: options, buy_and_hold,
+    # tickers, summary). Empty = legacy mode: create/own the three "(auto)" tabs. A role left out
+    # is simply not written, so the operator's other tabs are never touched.
+    sheets_tabs: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("sheets_tabs")
+    @classmethod
+    def _known_tab_roles(cls, v: dict[str, int]) -> dict[str, int]:
+        unknown = set(v) - {"options", "buy_and_hold", "tickers", "summary"}
+        if unknown:
+            raise ValueError(f"unknown ledger.sheets_tabs roles: {sorted(unknown)}")
+        if len(set(v.values())) != len(v):
+            raise ValueError("ledger.sheets_tabs gids must be distinct")
+        return v
 
 
 class Config(BaseModel):

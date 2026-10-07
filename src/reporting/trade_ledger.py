@@ -994,6 +994,62 @@ def ticker_row(t: LedgerTicker) -> list[object]:
     ]
 
 
+BUY_HOLD_HEADER: list[str] = [
+    "Ticker",
+    "Currency",
+    "Shares",
+    "Avg cost",
+    "Cost basis",
+    "Lots",
+    "First acquired",
+    "Source",
+    "Dividends",
+    "Stock realized",
+    "Wheel-adjusted basis",
+]
+
+
+def buy_hold_rows(book: LedgerBook) -> list[list[object]]:
+    """One row per ticker with open stock lots: the long-term holdings view for the sheet.
+
+    Native currency throughout (SGD / GBP lines are never converted), commission-inclusive cost,
+    and no market value — the sheet carries no live marks. ``Source`` splits the open shares by
+    how they were acquired (bought / assigned / exercised) so wheel-assigned shares can be told
+    apart from deliberate buys.
+    """
+    tickers = {t.symbol: t for t in book.tickers}
+    by_symbol: dict[str, list[LedgerStockLot]] = defaultdict(list)
+    for lot in book.lots:
+        if lot.remaining > 1e-9:
+            by_symbol[lot.underlying].append(lot)
+    rows: list[list[object]] = []
+    for symbol in sorted(by_symbol):
+        lots = by_symbol[symbol]
+        shares = sum(lot.remaining for lot in lots)
+        cost = sum(lot.remaining * lot.cost_per_share for lot in lots)
+        by_source: dict[str, float] = defaultdict(float)
+        for lot in lots:
+            by_source[lot.source] += lot.remaining
+        tk = tickers.get(symbol)
+        rows.append(
+            [
+                symbol,
+                lots[0].currency,
+                _num(shares),
+                round(cost / shares, 4),
+                round(cost, 2),
+                len(lots),
+                min(lot.acquired_date for lot in lots).isoformat(),
+                ", ".join(f"{src} {_num(q)}" for src, q in sorted(by_source.items())),
+                _blank(tk.dividends_net) if tk else "",
+                _blank(tk.stock_realized) if tk else "",
+                _blank(tk.wheel_adjusted_basis, 4) if tk else "",
+            ]
+        )
+    header: list[object] = list(BUY_HOLD_HEADER)
+    return [header, *rows]
+
+
 def summary_rows(s: LedgerSummary) -> list[list[object]]:
     def money(v: float | None) -> object:
         return "n/a" if v is None else round(v, 2)

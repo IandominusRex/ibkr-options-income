@@ -529,9 +529,10 @@ pre-system history too.
 - **The Google Sheets mirror is generation-driven, not polled blindly.** Every ingest or
   annotation bumps a `system_settings` generation counter (`src/ledger/state.py`); the mirror
   loop only attempts a sync when the generation is ahead of the last-synced value, throttled to
-  at most once per `ledger.sheets_min_interval_seconds` (default 60s). It writes exactly three
-  tabs it owns — `Ledger (auto)`, `Tickers (auto)`, `Summary (auto)` — as a full rewrite each
-  time, and never reads or writes any other tab in the spreadsheet.
+  at most once per `ledger.sheets_min_interval_seconds` (default 60s). It writes the tabs named
+  in `ledger.sheets_tabs` (role → gid: `options`, `buy_and_hold`, `tickers`, `summary`) as a full
+  rewrite each time, and never reads or writes any tab not listed; with an empty map it falls
+  back to three tabs it owns — `Ledger (auto)`, `Tickers (auto)`, `Summary (auto)`.
 - **Read-only API** (`GET /ledger/summary`, `/tickers`, `/tickers/{symbol}`, `/trades`,
   `/trades.csv`, `/trades/{order_key}`, `/imports`) and three command kinds
   (`ledger_import`/`ledger_annotate`/`ledger_ca_reviewed`) applied by the drain, same intent-
