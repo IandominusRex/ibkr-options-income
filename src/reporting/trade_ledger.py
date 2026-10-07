@@ -10,6 +10,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 from collections import Counter, defaultdict, deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal, get_args
@@ -21,6 +22,7 @@ from src.common.config import get_config
 from src.common.schemas import (
     LedgerBasisPoint,
     LedgerBook,
+    LedgerBookName,
     LedgerBucket,
     LedgerCashItem,
     LedgerClose,
@@ -127,6 +129,20 @@ class LedgerAnnotation:
     exclude_from_stats: bool
 
 
+def _merge_book(books: Iterable[str]) -> str:
+    """One order's book from its executions: spreads, then system, else manual."""
+    seen = set(books)
+    if "spreads" in seen:
+        return "spreads"
+    return "system" if "system" in seen else "manual"
+
+
+def _book_name(value: str) -> LedgerBookName:
+    if value == "spreads":
+        return "spreads"
+    return "system" if value == "system" else "manual"
+
+
 def group_orders(execs: list[LedgerExec]) -> list[LedgerOrder]:
     """Merge fills sharing a perm_id (per contract) and assign source-independent keys (R3).
 
@@ -162,7 +178,7 @@ def group_orders(execs: list[LedgerExec]) -> list[LedgerOrder]:
                 proceeds=sum(e.proceeds for e in group),
                 commission=sum(e.commission for e in group),
                 codes=";".join(dict.fromkeys(c for e in group for c in e.codes.split(";") if c)),
-                book="system" if any(e.book == "system" for e in group) else "manual",
+                book=_merge_book(e.book for e in group),
                 ibkr_realized_pnl=sum(realized) if realized else None,
                 row_ids=[e.row_id for e in group],
             )
@@ -290,7 +306,7 @@ def _trade_from_opening(op: Opening, *, today: date) -> LedgerTrade:
         annualised_net_pct=net / capital * 365 / days_held * 100
         if net is not None and capital
         else None,
-        book="system" if o.book == "system" else "manual",
+        book=_book_name(o.book),
         ibkr_realized_pnl=sum(realized) if realized else None,
         exec_row_ids=row_ids,
     )
@@ -707,7 +723,10 @@ def build_summary(
             continue
         v = usd(t.net_pnl, t.currency, t.close_date)
         realized.append((t.close_date, v))
-        label = "Long" if t.side == "Buy" else "CSP" if t.right == "P" else "CC"
+        if t.book == "spreads":
+            label = "Spread"
+        else:
+            label = "Long" if t.side == "Buy" else "CSP" if t.right == "P" else "CC"
         strategy_items[label].append((v, not t.exclude_from_stats))
         book_items[t.book].append((v, not t.exclude_from_stats))
     for disp in disposals:
@@ -1076,7 +1095,7 @@ def filter_trades(
     symbol: str | None = None,
     right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
-    book: Literal["system", "manual"] | None = None,
+    book: LedgerBookName | None = None,
     tag: str | None = None,
     since: date | None = None,
     until: date | None = None,

@@ -91,7 +91,7 @@ export function LedgerOverview() {
       {summary.data && (summary.data.summary.by_strategy.length > 0 || summary.data.summary.by_book.length > 0) && (
         <div className="grid gap-6 md:grid-cols-2">
           <Buckets title="By strategy" rows={summary.data.summary.by_strategy} />
-          <Buckets title="By book (system vs your own trades)" rows={summary.data.summary.by_book} />
+          <Buckets title="By book (wheel system, credit spreads, your own trades)" rows={summary.data.summary.by_book} />
         </div>
       )}
       <section className="space-y-2">

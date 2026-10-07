@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.common.books import is_spreads_underlying
 from src.common.schemas import (
     LedgerImportResult,
     LedgerSource,
@@ -248,6 +249,23 @@ def supersede_twins(s: Session, affected: set[tuple[str, date]]) -> int:
     return superseded
 
 
+def _tag_spreads(s: Session, row_ids: set[int]) -> int:
+    """Tag ``book="spreads"`` on rows in ``row_ids`` whose underlying belongs to the spreads book.
+
+    Runs before :func:`_tag_books` on every touched row. CSV and Flex rows often carry no order
+    id, and the spreads service's order ids come from its own clientId and can equal a wheel
+    order's — so the underlying, which the two books never share, decides.
+    """
+    if not row_ids:
+        return 0
+    tagged = 0
+    for r in s.scalars(select(BrokerExecutionRow).where(BrokerExecutionRow.id.in_(row_ids))):
+        if r.book != "spreads" and is_spreads_underlying(r.underlying):
+            r.book = "spreads"
+            tagged += 1
+    return tagged
+
+
 def _tag_books(s: Session, row_ids: set[int]) -> int:
     """Tag ``book="system"`` on rows in ``row_ids`` whose ``ib_order_id`` matches a known
     ``OrderRow`` (F17): rows inserted this run, and existing rows whose ``ib_order_id`` was
@@ -262,6 +280,8 @@ def _tag_books(s: Session, row_ids: set[int]) -> int:
         )
     )
     for r in rows:
+        if r.book == "spreads":
+            continue  # an order-id collision with a wheel order must never retag a spreads row
         for order in s.scalars(select(OrderRow).where(OrderRow.ib_order_id == r.ib_order_id)):
             snap = order.snapshot or {}
             if not snap or snap.get("underlying") == r.underlying:
@@ -387,6 +407,7 @@ def ingest(
                 any_backfill = True
             affected.add((e.contract.ident, et_date(e.trade_time)))
         counts["superseded"] = supersede_twins(s, affected)
+        counts["spreads"] = _tag_spreads(s, touched_ids)
         counts["system"] = _tag_books(s, touched_ids)
         for c in statement.cash_events:
             counts[
@@ -405,7 +426,12 @@ def ingest(
         inserted_or_superseded = bool(
             counts["new"] or counts["superseded"] or counts["cash_new"] or counts["ca_new"]
         )
-        touched = inserted_or_superseded or any_backfill or bool(counts["system"])
+        touched = (
+            inserted_or_superseded
+            or any_backfill
+            or bool(counts["system"])
+            or bool(counts["spreads"])
+        )
 
         if source == "live" and not touched:
             s.delete(run)

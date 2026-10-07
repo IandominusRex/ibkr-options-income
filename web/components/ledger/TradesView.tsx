@@ -54,7 +54,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
         </label>
         <label className="text-xs text-muted">Book
           <select aria-label="Book" value={f.book} onChange={set("book")} className={`${field} ml-2`}>
-            <option value="">All</option><option value="system">System</option><option value="manual">Manual</option>
+            <option value="">All</option><option value="system">System</option><option value="manual">Manual</option><option value="spreads">Spreads</option>
           </select>
         </label>
         <label className="text-xs text-muted">Tag<input aria-label="Tag" value={f.tag} onChange={set("tag")} className={`${field} ml-2 w-24`} /></label>

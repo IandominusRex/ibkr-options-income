@@ -2041,7 +2041,8 @@
                 {
                   "enum": [
                     "system",
-                    "manual"
+                    "manual",
+                    "spreads"
                   ],
                   "type": "string"
                 },
@@ -2234,7 +2235,8 @@
                 {
                   "enum": [
                     "system",
-                    "manual"
+                    "manual",
+                    "spreads"
                   ],
                   "type": "string"
                 },
@@ -6723,7 +6725,8 @@
             "type": "string",
             "enum": [
               "system",
-              "manual"
+              "manual",
+              "spreads"
             ],
             "title": "Book"
           },
@@ -6897,7 +6900,8 @@
                 "type": "string",
                 "enum": [
                   "system",
-                  "manual"
+                  "manual",
+                  "spreads"
                 ]
               },
               {

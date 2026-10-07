@@ -59,4 +59,13 @@ describe("TradesView", () => {
     });
     expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
+
+  it("filters by the spreads book", async () => {
+    renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
+    fireEvent.change(await screen.findByLabelText("Book"), { target: { value: "spreads" } });
+    await waitFor(() => {
+      const paths = apiFetchMock.mock.calls.map((c) => String(c[0]));
+      expect(paths.some((p) => p.includes("book=spreads"))).toBe(true);
+    });
+  });
 });

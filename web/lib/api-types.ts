@@ -2459,7 +2459,7 @@ export interface components {
              * Book
              * @enum {string}
              */
-            book: "system" | "manual";
+            book: "system" | "manual" | "spreads";
             /** Rolled From */
             rolled_from?: string | null;
             /** Rolled To */
@@ -2501,7 +2501,7 @@ export interface components {
             /** Outcome */
             outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
             /** Book */
-            book?: ("system" | "manual") | null;
+            book?: ("system" | "manual" | "spreads") | null;
             /** Tag */
             tag?: string | null;
             /** Since */
@@ -4597,7 +4597,7 @@ export interface operations {
                 symbol?: string | null;
                 right?: ("C" | "P") | null;
                 outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
-                book?: ("system" | "manual") | null;
+                book?: ("system" | "manual" | "spreads") | null;
                 tag?: string | null;
                 since?: string | null;
                 until?: string | null;
@@ -4635,7 +4635,7 @@ export interface operations {
                 symbol?: string | null;
                 right?: ("C" | "P") | null;
                 outcome?: ("Open" | "Pending" | "Expired" | "Assigned" | "Called away" | "Exercised" | "Bought back" | "Sold" | "Rolled") | null;
-                book?: ("system" | "manual") | null;
+                book?: ("system" | "manual" | "spreads") | null;
                 tag?: string | null;
                 since?: string | null;
                 until?: string | null;

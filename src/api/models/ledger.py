@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.api.models.common import Envelope
 from src.common.schemas import (
+    LedgerBookName,
     LedgerOutcome,
     LedgerSummary,
     LedgerTicker,
@@ -42,7 +43,7 @@ class LedgerTradesFilters(BaseModel):
     # every "P"/"C" Literal in the app must declare this same order, or the ambiguity returns.
     right: Literal["C", "P"] | None = None
     outcome: LedgerOutcome | None = None
-    book: Literal["system", "manual"] | None = None
+    book: LedgerBookName | None = None
     tag: str | None = None
     since: date | None = None
     until: date | None = None

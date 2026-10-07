@@ -522,3 +522,33 @@ def test_exec_duplicate_backfills_codes_so_a_live_close_stays_an_orphan(db) -> N
         filename="flex:q2",
     )
     assert _rows(db)[0].codes == "C"
+
+
+def test_spreads_underlyings_are_tagged_spreads_without_an_order_id(db) -> None:
+    from src.ledger.ingest import ingest
+
+    result = ingest(
+        stmt(
+            ex("XSP 07OCT26 680 P", "2026-10-07, 10:05:00", -1, 0.60),
+            ex("AMZN 10OCT25 215 P", "2025-10-03, 14:45:08", -1, 1.77),
+        ),
+        source="csv",
+        filename="s.csv",
+    )
+    assert result.counts["spreads"] == 1
+    assert {r.underlying: r.book for r in _rows(db)} == {"XSP": "spreads", "AMZN": "manual"}
+
+
+def test_a_wheel_order_id_collision_never_moves_a_spreads_row_to_system(db) -> None:
+    """Order ids are unique per clientId only: the spreads service (30) can reuse the wheel's."""
+    from src.ledger.ingest import ingest
+    from src.storage.models import OrderRow
+
+    with db() as s:
+        s.add(OrderRow(candidate_id="w1", ib_order_id=42, snapshot=None))
+    ingest(
+        stmt(ex("XSP 07OCT26 680 P", "2026-10-07, 10:05:00", -1, 0.60, exec_id="x1", order_id=42)),
+        source="csv",
+    )
+    (row,) = _rows(db)
+    assert row.book == "spreads"

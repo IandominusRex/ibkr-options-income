@@ -35,7 +35,7 @@ from src.api.models.ledger import (
 )
 from src.api.portfolio_source import read_portfolio
 from src.common.config import get_config
-from src.common.schemas import LedgerBook, LedgerOutcome, LedgerTrade
+from src.common.schemas import LedgerBook, LedgerBookName, LedgerOutcome, LedgerTrade
 from src.ledger.state import (
     LEDGER_FLEX_LAST_RUN_KEY,
     LEDGER_FLEX_LAST_STATUS_KEY,
@@ -91,7 +91,7 @@ def _filters(
     symbol: str | None,
     right: Literal["C", "P"] | None,
     outcome: LedgerOutcome | None,
-    book: Literal["system", "manual"] | None,
+    book: LedgerBookName | None,
     tag: str | None,
     since: date | None,
     until: date | None,
@@ -140,7 +140,7 @@ def get_trades(
     symbol: str | None = None,
     right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
-    book: Literal["system", "manual"] | None = None,
+    book: LedgerBookName | None = None,
     tag: str | None = None,
     since: date | None = None,
     until: date | None = None,
@@ -163,7 +163,7 @@ def get_trades_csv(
     symbol: str | None = None,
     right: Literal["C", "P"] | None = None,
     outcome: LedgerOutcome | None = None,
-    book: Literal["system", "manual"] | None = None,
+    book: LedgerBookName | None = None,
     tag: str | None = None,
     since: date | None = None,
     until: date | None = None,

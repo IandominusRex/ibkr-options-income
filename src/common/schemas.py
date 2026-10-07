@@ -943,6 +943,9 @@ class LedgerClose(BaseModel):
     codes: str
 
 
+LedgerBookName = Literal["system", "manual", "spreads"]
+
+
 class LedgerTrade(BaseModel):
     """One opening option order and everything that closed it (spec §4.2, R3, R4, R9, R10)."""
 
@@ -973,7 +976,7 @@ class LedgerTrade(BaseModel):
     return_pct: float | None
     annualised_net_pct: float | None
     stock_gain: float | None = None  # realized stock P&L when this call got the shares called away
-    book: Literal["system", "manual"]
+    book: LedgerBookName
     rolled_from: str | None = None
     rolled_to: str | None = None
     ibkr_realized_pnl: float | None = None

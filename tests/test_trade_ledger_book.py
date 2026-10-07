@@ -335,3 +335,37 @@ def test_summary_unrealized_is_none_when_any_open_ticker_has_no_mark() -> None:
     _, _, _, tickers, summary = _book(execs, date(2025, 7, 20), snapshot=snap)
     assert {t.symbol: t.unrealized for t in tickers} == {"NVDA": 55.0, "AMZN": None}
     assert summary.unrealized_usd is None
+
+
+def test_spreads_book_flows_through_and_is_labelled_spread() -> None:
+    spread = [
+        ex(
+            "XSP 07OCT26 680 P",
+            "2026-10-07, 10:05:00",
+            -1,
+            0.60,
+            codes="O",
+            perm=77,
+            book="spreads",
+        ),
+        ex(
+            "XSP 07OCT26 675 P", "2026-10-07, 10:05:00", 1, 0.25, codes="O", perm=77, book="spreads"
+        ),
+        ex(
+            "XSP 07OCT26 680 P", "2026-10-07, 14:00:00", 1, 0.10, codes="C", perm=78, book="spreads"
+        ),
+        ex(
+            "XSP 07OCT26 675 P",
+            "2026-10-07, 14:00:00",
+            -1,
+            0.02,
+            codes="C",
+            perm=78,
+            book="spreads",
+        ),
+    ]
+    trades, _, _, _, summary = _book([*spread, *WHEEL], date(2026, 10, 8))
+    assert {t.book for t in trades if t.underlying == "XSP"} == {"spreads"}
+    assert {t.book for t in trades if t.underlying == "AMZN"} == {"manual"}
+    assert "Spread" in {b.label for b in summary.by_strategy}
+    assert {"spreads", "manual"} <= {b.label for b in summary.by_book}

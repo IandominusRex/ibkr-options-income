@@ -21,7 +21,7 @@ export type LedgerTrade = {
   premium: number; open_commission: number; closes: LedgerClose[]; outcome: LedgerOutcome;
   computed_outcome: LedgerOutcome; outcome_overridden: boolean; mixed_close: boolean;
   capital: number; pct_profit: number | null; net_pnl: number | null; return_pct: number | null;
-  annualised_net_pct: number | null; stock_gain: number | null; book: "system" | "manual";
+  annualised_net_pct: number | null; stock_gain: number | null; book: "system" | "manual" | "spreads";
   rolled_from: string | null; rolled_to: string | null; ibkr_realized_pnl: number | null;
   exec_row_ids: number[]; notes: string; tags: string[]; exclude_from_stats: boolean;
 };
