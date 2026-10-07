@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
+# Tests read the committed config/*.example.yaml, never the operator's private config/*.yaml
+# (set before anything imports src.common.config and caches a Config).
+os.environ["IBKR_CONFIG_USE_EXAMPLES"] = "1"
+
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -916,8 +922,5 @@ def _blank_flex_secrets(monkeypatch):
     monkeypatch.setenv("IBKR_FLEX_TOKEN", "")
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "")
     get_config.cache_clear()
-    # The operator's settings.yaml pins ledger.account to their real or paper account; tests
-    # need the shipped default ("" = lock to the first import) unless they set it themselves.
-    get_config().ledger.account = ""
     yield
     get_config.cache_clear()

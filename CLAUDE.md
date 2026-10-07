@@ -41,7 +41,7 @@ row that matches:
 |---|---|
 | New file or module added | `ARCHITECTURE.md` folder guide (always) · `README.md` layout table only if it's a new top-level directory |
 | Existing module renamed, moved, or deleted | Both above |
-| New config key added to any YAML | `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
+| New config key added to any YAML | Add it to the committed `config/<name>.example.yaml` (the private copy is git-ignored) · `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
 | New script entrypoint added | `SETUP.md` scripts table · `ARCHITECTURE.md` `scripts/` folder-guide entry |
 | **New Telegram command registered** in `approval_service.py` | `ARCHITECTURE.md` commands table (src/notify/ section) · `SETUP.md` "Using the Telegram bot" commands table · `README.md` Telegram commands table |
 | **New formatter function added** to `formatters.py` | `ARCHITECTURE.md` src/notify/ table description |
@@ -246,7 +246,10 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
 ## Conventions
 
 - Python ≥ 3.12. Config in `config/*.yaml`; **secrets only in `.env`** (gitignored) — never log or
-  commit them.
+  commit them. `settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml` and `universe.yaml` are
+  the operator's **private, git-ignored** copies; the repo commits `config/<name>.example.yaml`.
+  Never `git add` a private config file or anything holding an account number; tests read the
+  examples (`IBKR_CONFIG_USE_EXAMPLES=1` in `tests/conftest.py`).
 - All tunables (deltas, DTE, IV thresholds, weights, concentration limits) live in
   `config/risk_limits.yaml` and `config/scoring_weights.yaml`. Change behavior there, not in code.
 - One **clientId per process** (`config/settings.yaml → ibkr.client_ids`). The trading_skills MCP

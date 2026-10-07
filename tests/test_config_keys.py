@@ -47,7 +47,9 @@ def _src_text() -> str:
 
 
 def test_every_risk_limit_key_is_read_or_allowlisted() -> None:
-    limits = yaml.safe_load((_ROOT / "config" / "risk_limits.yaml").read_text(encoding="utf-8"))
+    limits = yaml.safe_load(
+        (_ROOT / "config" / "risk_limits.example.yaml").read_text(encoding="utf-8")
+    )
     keys = _leaf_keys(limits)
     src = _src_text()
 
@@ -78,7 +80,9 @@ def test_allowlist_entries_exist_in_config() -> None:
     removed from the YAML but forgotten here would satisfy that test forever while quietly
     lying about what's actually configurable (Task 9's config sweep).
     """
-    limits = yaml.safe_load((_ROOT / "config" / "risk_limits.yaml").read_text(encoding="utf-8"))
+    limits = yaml.safe_load(
+        (_ROOT / "config" / "risk_limits.example.yaml").read_text(encoding="utf-8")
+    )
     present = _leaf_keys(limits)
     stale = _KNOWN_UNENFORCED - present
     assert not stale, (
@@ -92,7 +96,9 @@ def test_allowlist_entries_exist_in_config() -> None:
 # no schema field that silently does nothing (N15 extends the guard to settings.yaml). The
 # `max_concurrent_lines` enforcement (a MarketDataCfg validator) keeps that key from being dead.
 def test_every_settings_key_is_referenced_in_src() -> None:
-    settings = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
+    settings = yaml.safe_load(
+        (_ROOT / "config" / "settings.example.yaml").read_text(encoding="utf-8")
+    )
     keys = _leaf_keys(settings)
     src = _src_text()
     unread = sorted(k for k in keys if not re.search(rf"\b{re.escape(k)}\b", src))
@@ -171,7 +177,7 @@ def test_claude_cfg_code_defaults_match_the_shipped_yaml():
     with an undersized window. Code defaults must match what ships."""
     from src.common.config import ClaudeCfg
 
-    shipped = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text())["claude"]
+    shipped = yaml.safe_load((_ROOT / "config" / "settings.example.yaml").read_text())["claude"]
     defaults = ClaudeCfg()
     for key in (
         "ollama_model",
@@ -186,5 +192,5 @@ def test_claude_cfg_code_defaults_match_the_shipped_yaml():
 
 
 def test_news_search_provider_is_explicit_in_settings_yaml():
-    shipped = yaml.safe_load((_ROOT / "config" / "settings.yaml").read_text())["data"]
+    shipped = yaml.safe_load((_ROOT / "config" / "settings.example.yaml").read_text())["data"]
     assert shipped.get("news_search_provider") == "google_news"

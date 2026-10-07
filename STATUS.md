@@ -366,6 +366,18 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Built (2026-10-07 — private operator config; examples committed)
+
+`config/settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml` and `universe.yaml` are now
+git-ignored operator files; the repo commits `config/<name>.example.yaml` (the shipped defaults).
+`src/common/config.py::config_path` reads the private copy, falls back to the example with a
+warning, and always uses the example under `IBKR_CONFIG_USE_EXAMPLES=1`, which
+`tests/conftest.py` sets so the suite never depends on one operator's settings (an
+operator-set `ledger.account` had broken the ledger tests). `.gitignore` also now covers database
+backups, IBKR statement exports, Google service-account keys and other credential files. Tests:
+`tests/test_private_config.py`. **Not handled:** an existing clone that pulls this change sees
+its tracked config files deleted; copy the examples back (`SETUP.md` §2b) before restarting.
+
 ## Fixed (2026-10-07 — lost and mis-attributed buy-to-close fills)
 
 Found by comparing the paper account's IBKR Activity Statement (imported into the trade ledger)

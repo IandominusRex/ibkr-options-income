@@ -65,6 +65,30 @@ longer works — Reddit blocks it at the edge.)
 
 ---
 
+## 2b. Create your own config files
+
+The repo ships **templates** — `config/settings.example.yaml`, `risk_limits.example.yaml`,
+`scoring_weights.example.yaml` and `universe.example.yaml`. Your own copies (the files without
+`.example`) are **git-ignored**, so your account IDs, limits, weights and universe never reach
+GitHub:
+
+```bash
+for f in settings risk_limits scoring_weights universe; do
+  cp config/$f.example.yaml config/$f.yaml
+done
+```
+
+Edit `config/settings.yaml` and friends from then on. If one of your files is missing, the system
+falls back to the example and logs a warning, so a fresh clone still runs. **When you pull an
+update that adds new config keys**, the code defaults cover them; diff your file against the
+example (`diff config/settings.yaml config/settings.example.yaml`) to adopt any new setting
+explicitly. The test suite always reads the examples (`IBKR_CONFIG_USE_EXAMPLES=1`, set in
+`tests/conftest.py`), never your copies. The other files in `config/` (`research*.yaml`,
+`symbol_directory_overrides.yaml`, `universe_archive.yaml`) are shared reference data and stay
+committed.
+
+---
+
 ## 3. Configure your secrets (.env)
 
 Your broker account ID and Telegram credentials are kept in a file called `.env` that is never

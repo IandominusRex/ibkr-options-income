@@ -166,6 +166,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env          # fill in Telegram token/chat-id and IBKR account
+for f in settings risk_limits scoring_weights universe; do cp config/$f.example.yaml config/$f.yaml; done
+                              # your own config: git-ignored, edit freely
 # Start IB Gateway (paper account, API enabled, port 4002)
 
 python -m scripts.healthcheck  # verifies connection, prints account summary

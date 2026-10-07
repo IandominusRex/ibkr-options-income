@@ -1,7 +1,30 @@
 # Secrets
 .env
-.env.local
+.env.*
+!.env.example
+!.env*.example
 *.key
+*.pem
+*.p12
+secrets/
+# Google service-account keys (GOOGLE_SHEETS_CREDENTIALS_PATH) and other credential JSON
+*service-account*.json
+*credentials*.json
+client_secret*.json
+
+# Operator config: the repo ships config/<name>.example.yaml; your own copies stay local
+# (src/common/config.py falls back to the example when a private file is missing).
+config/settings.yaml
+config/risk_limits.yaml
+config/scoring_weights.yaml
+config/universe.yaml
+
+# IBKR statements and exports (account numbers, real trades) — the ledger fixture is the
+# only statement-shaped file tracked, under tests/fixtures/
+statements/
+*_AS_*.csv
+*.qfx
+*.ofx
 
 # Python
 __pycache__/
@@ -15,6 +38,8 @@ venv/
 
 # Data & logs (local state, never commit)
 data/*.db
+data/*.db.bak*
+data/*.bak*
 data/*.db-shm
 data/*.db-wal
 data/*.parquet
@@ -52,4 +77,5 @@ node_modules/
 # Web (Next.js)
 web/.next
 web/.env.local
+web/.env*.local
 web/out

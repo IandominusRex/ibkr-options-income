@@ -11,6 +11,8 @@ Usage:
 from __future__ import annotations
 
 import functools
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Project root = two levels up from this file (src/common/config.py -> root).
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "config"
+
+# The operator's own tuning (accounts, limits, weights, universe) lives in these files, which are
+# git-ignored; the repo ships ``<name>.example.yaml`` beside each. A missing private file falls
+# back to its example (loudly), and ``IBKR_CONFIG_USE_EXAMPLES=1`` forces the examples (the test
+# suite sets it, so tests never depend on one operator's settings).
+PRIVATE_CONFIG_FILES = (
+    "settings.yaml",
+    "risk_limits.yaml",
+    "scoring_weights.yaml",
+    "universe.yaml",
+)
+USE_EXAMPLES_ENV = "IBKR_CONFIG_USE_EXAMPLES"
+
+log = logging.getLogger(__name__)
 
 
 class Secrets(BaseSettings):
@@ -620,8 +636,34 @@ class Config(BaseModel):
         return url
 
 
-def _load_yaml(name: str) -> dict[str, Any]:
+def example_path(name: str) -> Path:
+    """``config/settings.yaml`` → ``config/settings.example.yaml``."""
     path = CONFIG_DIR / name
+    return path.with_name(f"{path.stem}.example{path.suffix}")
+
+
+def config_path(name: str) -> Path:
+    """The file ``name`` is read from: the private copy, else its committed example."""
+    path = CONFIG_DIR / name
+    if name not in PRIVATE_CONFIG_FILES:
+        return path
+    example = example_path(name)
+    if os.environ.get(USE_EXAMPLES_ENV) == "1":
+        return example
+    if path.exists() or not example.exists():
+        return path
+    log.warning(
+        "config/%s not found; using the shipped defaults in %s. Copy it to config/%s to "
+        "keep your own settings (see SETUP.md §2).",
+        name,
+        example.name,
+        name,
+    )
+    return example
+
+
+def _load_yaml(name: str) -> dict[str, Any]:
+    path = config_path(name)
     if not path.exists():
         raise FileNotFoundError(f"Missing config file: {path}")
     with path.open("r", encoding="utf-8") as fh:
