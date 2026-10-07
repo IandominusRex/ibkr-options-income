@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ib_async import IB
 from sqlalchemy import select
@@ -40,6 +41,7 @@ from src.common.config import get_config
 from src.common.schemas import OrderState
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, FillRow, OrderRow
+from src.storage.orders import open_short_candidate_id
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +151,7 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
             .all()
         )
         orphans = [(o.id, o.candidate_id, o.ib_order_id) for o in rows]
+        created = {o.id: o.created_at for o in rows}
         already_filled = {
             fid
             for (fid,) in s.query(FillRow.order_id).filter(
@@ -185,6 +188,21 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
 
     is_live = bool(get_config().is_live)
     recovered = 0
+    close_orphans = [o for o in orphans if o[1].startswith(_CLOSE_PREFIX)]
+    orphans = [o for o in orphans if not o[1].startswith(_CLOSE_PREFIX)]
+    for order_id, candidate_id, ib_order_id in close_orphans:
+        if ib_order_id is not None and await _recover_close_fill(
+            order_id,
+            candidate_id,
+            ib_order_id,
+            created[order_id],
+            [f for f in fills if _claimable(f, ib_order_id)],
+            claimed_exec_ids,
+            is_live,
+            bot,
+            chat_id,
+        ):
+            recovered += 1
     for order_id, candidate_id, ib_order_id in orphans:
         with session_scope() as s:
             cand = s.execute(
@@ -265,6 +283,161 @@ async def reconcile_orphan_fills(ib: IB, bot: object, chat_id: str) -> None:
 
     if recovered:
         log.warning("Fill reconciliation: recovered %d missed fill(s)", recovered)
+
+
+_CLOSE_PREFIX = "close:"
+_ET = ZoneInfo("America/New_York")
+
+
+def _parse_close_id(candidate_id: str) -> tuple[str, date, float, str] | None:
+    """``close:{underlying}:{YYYYMMDD}:{strike}:{right}`` → its contract, or None."""
+    parts = candidate_id.split(":")
+    if len(parts) != 5:
+        return None
+    expiry = _expiry_to_date(parts[2])
+    try:
+        strike = float(parts[3])
+    except ValueError:
+        return None
+    if expiry is None or parts[4] not in ("C", "P"):
+        return None
+    return parts[1], expiry, strike, parts[4]
+
+
+def _as_utc(ts: datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+
+def _is_close_execution(
+    f: Any, ib_order_id: int, contract: tuple[str, date, float, str], placed_at: datetime | None
+) -> bool:
+    """A BOT execution of *this* close order: order id AND contract must both match.
+
+    The order id alone is not proof: IBKR order ids restart after a Gateway restart
+    (2026-10-05/06: two different closes both carry 188).
+    """
+    ex = getattr(f, "execution", None)
+    con = getattr(f, "contract", None)
+    if ex is None or con is None or getattr(ex, "orderId", None) != ib_order_id:
+        return False
+    if str(getattr(ex, "side", "") or "").upper() != "BOT":
+        return False
+    underlying, expiry, strike, right = contract
+    if getattr(con, "symbol", None) != underlying:
+        return False
+    if str(getattr(con, "right", "") or "")[:1].upper() != right:
+        return False
+    if abs(float(getattr(con, "strike", 0.0) or 0.0) - strike) > 1e-3:
+        return False
+    if _expiry_to_date(str(getattr(con, "lastTradeDateOrContractMonth", ""))) != expiry:
+        return False
+    exec_time = _as_utc(getattr(ex, "time", None))
+    placed = _as_utc(placed_at)
+    return not (exec_time and placed and exec_time < placed - timedelta(minutes=1))
+
+
+async def _recover_close_fill(
+    order_id: int,
+    candidate_id: str,
+    ib_order_id: int,
+    placed_at: datetime | None,
+    fills: list[Any],
+    claimed_exec_ids: set[str],
+    is_live: bool,
+    bot: object,
+    chat_id: str,
+) -> bool:
+    """Record a buy-to-close the system placed but lost track of (2026-10-02 TQQQ 74P).
+
+    ``close_short_position`` leaves an order SUBMITTED when it errors after placeOrder (older
+    rows say REJECTED; a timeout cancel can also race a fill). Its BUY execution is the
+    system's own order id, so ``reconcile_external_closes`` deliberately skips it — this is
+    the only pass that can record it. The fill goes on the short it closes. A close still
+    SUBMITTED from an earlier ET day with no execution was a DAY order that ended unfilled:
+    mark it CANCELLED so it stops blocking the next close of that position.
+    """
+    contract = _parse_close_id(candidate_id)
+    if contract is None:
+        return False
+    matched = [f for f in fills if _is_close_execution(f, ib_order_id, contract, placed_at)]
+    if not matched:
+        placed = _as_utc(placed_at)
+        if placed is not None and placed.astimezone(_ET).date() < datetime.now(_ET).date():
+            with session_scope() as s:
+                order = s.get(OrderRow, order_id)
+                if order is not None and order.state == OrderState.SUBMITTED:
+                    order.state = OrderState.CANCELLED
+                    order.detail = "DAY close order ended with no execution (reconciliation)"
+                    log.warning(
+                        "Fill reconciliation: close order_id=%s from an earlier day had no "
+                        "execution; marked cancelled",
+                        order_id,
+                    )
+        return False
+
+    total_qty = sum(float(getattr(f.execution, "shares", 0.0) or 0.0) for f in matched)
+    if total_qty <= 0:
+        return False
+    notional = sum(
+        float(getattr(f.execution, "shares", 0.0) or 0.0)
+        * float(getattr(f.execution, "price", 0.0) or 0.0)
+        for f in matched
+    )
+    avg_price = notional / total_qty
+    commission = 0.0
+    for f in matched:
+        cr = getattr(f, "commissionReport", None)
+        c = getattr(cr, "commission", None) if cr is not None else None
+        if c:
+            commission += float(c)
+    exec_id = getattr(matched[-1].execution, "execId", None)
+    underlying, expiry, strike, right = contract
+    with session_scope() as s:
+        order = s.get(OrderRow, order_id)
+        if order is None or order.state not in _RECOVERABLE_STATES:
+            return False
+        fill_candidate = (
+            open_short_candidate_id(s, underlying, right, strike, expiry) or candidate_id
+        )
+        order.state = OrderState.FILLED
+        order.filled_qty = total_qty
+        order.avg_fill_price = avg_price
+        order.detail = "Recovered close fill from reqExecutions"
+        s.add(
+            FillRow(
+                order_id=order_id,
+                candidate_id=fill_candidate,
+                action="BUY",
+                filled_qty=total_qty,
+                avg_price=avg_price,
+                commission=commission or None,
+                ib_exec_id=exec_id,
+                is_live=is_live,
+            )
+        )
+    claimed_exec_ids.update(
+        e for f in matched if (e := getattr(f.execution, "execId", None)) is not None
+    )
+    log.warning(
+        "Fill reconciliation: recovered close fill for order_id=%s %s qty=%.0f @ %.2f",
+        order_id,
+        candidate_id,
+        total_qty,
+        avg_price,
+    )
+    try:
+        await bot.send_message(  # type: ignore[attr-defined]
+            chat_id=chat_id,
+            text=(
+                f"♻️ Recovered a missed close: bought back {total_qty:.0f} {underlying} "
+                f"{strike:g}{right} @ {avg_price:.2f} (order_id={order_id})."
+            ),
+        )
+    except Exception:
+        log.exception("Fill reconciliation: failed to notify for order_id=%s", order_id)
+    return True
 
 
 def _net_short_qty(session, candidate_id: str) -> float:

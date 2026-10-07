@@ -916,5 +916,8 @@ def _blank_flex_secrets(monkeypatch):
     monkeypatch.setenv("IBKR_FLEX_TOKEN", "")
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "")
     get_config.cache_clear()
+    # The operator's settings.yaml pins ledger.account to their real or paper account; tests
+    # need the shipped default ("" = lock to the first import) unless they set it themselves.
+    get_config().ledger.account = ""
     yield
     get_config.cache_clear()

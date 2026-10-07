@@ -14,11 +14,13 @@ for manual approvals).
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.common.schemas import OrderState
-from src.storage.models import OrderRow
+from src.storage.models import CandidateRow, FillRow, OrderRow
 
 # States in which a prior order for the same candidate makes a new order a duplicate:
 # still working (QUEUED/SUBMITTED) or already executed (FILLED/PARTIAL). Terminal
@@ -71,3 +73,35 @@ def active_order_for(session: Session, candidate_id: str) -> OrderRow | None:
         .order_by(OrderRow.created_at.desc(), OrderRow.id.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def open_short_candidate_id(
+    session: Session, underlying: str, right: str, strike: float, expiry: date
+) -> str | None:
+    """The system short a buy-to-close of this exact contract closes, or None.
+
+    A close's ``OrderRow`` carries a synthetic ``close:`` id (the idempotency key), but its
+    BUY ``FillRow`` belongs on the candidate that SOLD the contract: the verdict-ledger
+    reconciler and ``/pnl/system`` pair a short's fills by ``candidate_id``, so a debit filed
+    under the synthetic id is invisible to both (2026-10: five profit-take closes read as
+    still open). Picks the most recently sold candidate that is still net short
+    (Σ SELL − Σ BUY > 0); None when the system never sold it (a hand-opened short).
+    """
+    rows = session.execute(
+        select(CandidateRow.candidate_id, CandidateRow.strike, FillRow.action, FillRow.filled_qty)
+        .join(FillRow, FillRow.candidate_id == CandidateRow.candidate_id)
+        .where(
+            CandidateRow.underlying == underlying,
+            CandidateRow.right == right[:1].upper(),
+            CandidateRow.expiry == expiry,
+        )
+        .order_by(FillRow.filled_at)
+    ).all()
+    net: dict[str, float] = {}
+    for candidate_id, cand_strike, action, qty in rows:
+        if abs((cand_strike or 0.0) - strike) >= 1e-3:
+            continue
+        sign = -1.0 if (action or "SELL").upper() == "BUY" else 1.0
+        net[candidate_id] = net.get(candidate_id, 0.0) + sign * (qty or 0.0)
+    open_ids = [cid for cid, q in net.items() if q > 0]
+    return open_ids[-1] if open_ids else None

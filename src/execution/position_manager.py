@@ -34,6 +34,8 @@ from typing import cast
 
 from ib_async import IB, LimitOrder
 from ib_async import Contract as IBContract
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from src.common.config import get_config
 from src.common.schemas import OrderState, PositionSnapshot
@@ -41,8 +43,8 @@ from src.execution.executor import _as_float, _refetch_bid_ask, _safe_float
 from src.execution.order_builder import reprice_limit
 from src.ibkr.contracts import build_option
 from src.storage.db import session_scope
-from src.storage.models import FillRow, OrderRow
-from src.storage.orders import has_active_order
+from src.storage.models import CandidateRow, FillRow, OrderRow
+from src.storage.orders import open_short_candidate_id
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ async def close_short_position(
     # 1. Idempotency + OrderRow creation in one transaction. has_active_order blocks a
     #    second close while the first is still working (the F1 stacking path).
     with session_scope() as session:
-        if has_active_order(session, cand_id):
+        if _close_blocked(session, cand_id, pos):
             log.info("close: active close order already exists for %s — skipping", pos.symbol)
             return CloseResult("skipped", pos.symbol, qty, limit_price, detail="already_working")
         order_row = OrderRow(
@@ -110,6 +112,7 @@ async def close_short_position(
         session.flush()
         order_id = order_row.id
 
+    placed = False
     try:
         contract = build_option(
             pos.underlying or pos.symbol, pos.expiry, pos.strike, pos.right.value
@@ -122,6 +125,7 @@ async def close_short_position(
 
         order = LimitOrder("BUY", qty, limit_price, tif="DAY")
         trade = ib_exec.placeOrder(qualified, order)
+        placed = True
         log.info(
             "close placed: %s qty=%d @ %.2f order_id=%s", pos.symbol, qty, limit_price, order_id
         )
@@ -204,10 +208,22 @@ async def close_short_position(
 
             new_state = OrderState.FILLED if filled_qty >= qty else OrderState.PARTIAL
             with session_scope() as session:
+                # The fill belongs to the short it closes (verdict ledger, /pnl/system); the
+                # synthetic id stays on the OrderRow as the idempotency key.
+                fill_candidate = (
+                    open_short_candidate_id(
+                        session,
+                        pos.underlying or pos.symbol,
+                        pos.right.value,
+                        pos.strike,
+                        pos.expiry,
+                    )
+                    or cand_id
+                )
                 session.add(
                     FillRow(
                         order_id=order_id,
-                        candidate_id=cand_id,
+                        candidate_id=fill_candidate,
                         action="BUY",  # buy-to-close debit
                         filled_qty=filled_qty,
                         avg_price=avg_price,
@@ -237,8 +253,55 @@ async def close_short_position(
 
     except Exception:
         log.exception("close failed for %s", pos.symbol)
+        if placed:
+            # IBKR holds the order (2026-10-02: the Gateway dropped mid-reprice and the order
+            # filled 8s later). REJECTED would be false and would let the next cycle stack a
+            # second buy-to-close; SUBMITTED keeps has_active_order blocking that, and
+            # reconcile_orphan_fills records the fill or expires the DAY order.
+            _mark_order(
+                order_id,
+                OrderState.SUBMITTED,
+                "error after the order reached IBKR; awaiting fill reconciliation",
+            )
+            return CloseResult(
+                "error", pos.symbol, qty, limit_price, detail="exception_after_placement"
+            )
         _mark_order(order_id, OrderState.REJECTED, "exception during close")
         return CloseResult("error", pos.symbol, qty, limit_price, detail="exception")
+
+
+def _close_blocked(session: Session, cand_id: str, pos: PositionSnapshot) -> bool:
+    """True when a close for this contract is working, or already filled for this sale.
+
+    A working (QUEUED/SUBMITTED) close always blocks. A FILLED/PARTIAL one blocks too (a
+    stale portfolio snapshot can still show the short right after its close fills, and a
+    second buy-to-close would leave the account net long), but only until the system sells
+    the contract again: ``cand_id`` is per contract, so counting every past filled close
+    would block a later re-sale of the same strike/expiry from ever being auto-closed.
+    """
+    assert pos.expiry is not None and pos.strike is not None and pos.right is not None
+    closes = session.execute(
+        select(OrderRow.state, OrderRow.created_at).where(
+            OrderRow.candidate_id == cand_id,
+            OrderRow.state.in_(
+                [OrderState.QUEUED, OrderState.SUBMITTED, OrderState.FILLED, OrderState.PARTIAL]
+            ),
+        )
+    ).all()
+    if any(state in (OrderState.QUEUED, OrderState.SUBMITTED) for state, _ in closes):
+        return True
+    last_sale = session.execute(
+        select(func.max(FillRow.filled_at))
+        .join(CandidateRow, CandidateRow.candidate_id == FillRow.candidate_id)
+        .where(
+            FillRow.action == "SELL",
+            CandidateRow.underlying == (pos.underlying or pos.symbol),
+            CandidateRow.right == pos.right.value,
+            CandidateRow.expiry == pos.expiry,
+            func.abs(CandidateRow.strike - pos.strike) < 1e-3,
+        )
+    ).scalar_one_or_none()
+    return any(last_sale is None or created_at > last_sale for _, created_at in closes)
 
 
 def _mark_order(order_id: int, state: str, detail: str) -> None:

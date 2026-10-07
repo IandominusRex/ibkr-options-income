@@ -366,6 +366,42 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Fixed (2026-10-07 — lost and mis-attributed buy-to-close fills)
+
+Found by comparing the paper account's IBKR Activity Statement (imported into the trade ledger)
+with the trading DB: every system fill matched the broker, except that the system's own closes
+were wrong in two ways.
+
+- **A close that filled at IBKR was recorded as REJECTED.** On 2026-10-02 the profit-take
+  close for TQQQ 74P (order 23) was placed, the Gateway dropped mid-reprice, and the except path
+  in `position_manager.close_short_position` marked the order REJECTED. IBKR filled it 8s later
+  (10 @ 0.49), and nothing could recover it: `reconcile_orphan_fills` only handled SELL entries
+  with a `CandidateRow`, and `reconcile_external_closes` skips the system's own order ids. The DB
+  thought the short was still open. **Fix:** an error after `placeOrder` now leaves the order
+  SUBMITTED (it still blocks a second, stacking close), and `reconcile_orphan_fills` recovers
+  `close:` orders by broker order id + contract, or expires one still SUBMITTED from an earlier
+  ET day with no execution.
+- **Every profit-take/loss-exit close filed its BUY fill under the synthetic `close:` id**, so
+  the verdict-ledger reconciler and `/pnl/system` never paired it with the short it closed:
+  five closed trades read `still_open` and would have become `expired_worthless` at expiry,
+  booking the full premium as kept. **Fix:** the fill is attributed to the short it closes
+  (`storage/orders.open_short_candidate_id`); the synthetic id stays on the `OrderRow` as the
+  idempotency key. Rolls already did this.
+- **A filled close blocked every later close of the same contract.** The close guard counted a
+  FILLED close as active forever, so a re-sale of the same strike/expiry could never be
+  auto-closed (profit-take and loss-exit would silently skip). **Fix:** `_close_blocked` lets a
+  filled close block only until the contract is sold again.
+- **Data repaired** (backup `data/income_system.db.bak-20261007-150529-pre-close-repair`): order
+  23 → FILLED with its BUY fill from the statement; fills 12–16 re-attributed to their entry
+  candidates; the verdict ledger now shows all six as `closed_early` with realized P&L.
+- **Known limitations.** A close still SUBMITTED that actually filled on an *earlier* day while
+  the exec connection was down the whole time is marked CANCELLED, because `reqExecutions` only
+  returns recent executions; the trade ledger (Flex/CSV) still shows the true fill. IBKR order
+  ids restarting after a Gateway restart remain a hazard for the *entry* reconciliation's
+  order-id match; only the close path now also requires the contract.
+- Tests: `tests/test_close_fill_recovery.py`. The test suite also now resets `ledger.account` to
+  `""` per test (`tests/conftest.py`), since an operator-set account broke the ledger tests.
+
 ## Built (2026-10-02 — automatic IB Gateway restart on an Error 10197 block; Gateway now under IBC)
 
 - **Incident.** Every intraday scan from 07:37 to 23:16 SGT on 2026-10-02 was blocked by Error
