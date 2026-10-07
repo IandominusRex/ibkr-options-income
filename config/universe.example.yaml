@@ -48,7 +48,7 @@
 
 # safe_bets — core ETF backbone
 indexes:
-  - SPY          # S&P 500; 0.8–2.5%/mo at 0.30Δ; most liquid
+  # SPY is reserved for the daily credit-spread book (config/spreads.example.yaml → book_underlyings)
   - QQQ          # Nasdaq-100; slightly higher IV than SPY
   - IWM          # Russell 2000; better premiums, higher vol
   - SMH          # Semiconductor sector proxy; good OI
@@ -175,7 +175,6 @@ would_own:
   - DPST
 
   # dip-watch — would_own-eligible, but only scanned on a ≥3% drop (market_data.dip_pull_in_pct)
-  - SPY
   - QQQ
   - IWM
   - SMH
@@ -198,7 +197,6 @@ would_own:
 # risk engine enforce the cap rather than pruning names here.
 sectors:
   # Indexes
-  SPY: index
   QQQ: index
   IWM: index
   SMH: semis

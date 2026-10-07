@@ -1,0 +1,100 @@
+# Daily credit-spread system — docs/superpowers/plans/2026-10-07-daily-credit-spreads.md.
+# Committed template: copy to config/spreads.yaml (git-ignored) to keep your own settings.
+# Runs beside the wheel in the same IBKR account. The two never share an underlying:
+# book_underlyings must not appear anywhere in config/universe.yaml (enforced at config load).
+
+enabled: false            # master switch; when false the service process idles
+mode: shadow              # shadow = record would-be trades with simulated fills | paper = real paper orders
+underlying: SPY           # traded: SPY 0DTE options (American, settle in shares: never held to expiry)
+underlying_sec_type: STK  # spot and session stats come from the SPY stock contract
+trading_class: SPY
+exchange: SMART
+book_underlyings: [SPY, SPX, XSP]  # all reserved for this book: none may appear in config/universe.yaml
+order_ref_prefix: "CS:"   # audit tag on every spreads order; nothing gates on it
+db_url: "sqlite:///data/spreads.db"
+max_market_data_lines: 30 # wheel chain_batch_size (40) + this must stay <= 95
+halt_file: "data/spreads.halt"  # touch this file to stop new entries; exits keep running
+
+schedule:                 # all ET, zero-padded HH:MM
+  map_time: "09:31"       # first GEX map: prior-close OI, live quotes; its expected move is the day's yardstick
+  map_refresh_minutes: 60
+  entry_start: "09:35"    # opening entries allowed, but only when the entry trigger fires
+  entry_end: "13:30"
+  entry_check_minutes: 5  # at most one traded-chain fetch per 5 min once the trigger is armed
+  manage_interval_seconds: 30  # also how often the price tape is sampled
+  force_close: "15:45"
+  eod_summary: "16:10"
+  skip_early_close_days: true
+
+entry:                    # when, and which side (OPG's "sell after the move")
+  trigger: move           # move = only after a stalled move, one side | always = every check, both sides (original rule)
+  min_move_em: 0.5        # the move must be >= 0.5 x the day's expected move (gap included)
+  max_move_em: 1.5        # beyond 1.5 x it is a trend day: never sell against it. null = no cap
+  stall_minutes: 10       # no new low (puts) / new high (calls) for this long first
+  max_tape_age_seconds: 120  # the price tape must be this fresh, or nothing arms
+  gap_day_pct: 0.003      # tag only: |open / prior close - 1| >= 0.3% marks the trade as a gap day
+
+gex:
+  symbol: SPX
+  sec_type: IND
+  trading_class: SPXW
+  exchange: CBOE
+  scale_to_underlying: null   # null = live SPY spot ÷ SPX spot, recomputed with every map (SPY trails SPX/10 as dividends accrue)
+  strike_band_pct: 0.03
+  expiries: 2                 # today + the next listed expiry
+  flip_search_pct: 0.03
+  flip_buffer_pct: 0.002      # no entries when spot is within 0.2% of the gamma flip
+  negative_gamma_action: allow  # allow = trade it, tagged regime=negative in the trade log | skip
+
+selection:
+  sides: [put, call]
+  width: 5.0                  # SPY points = $500 gross risk per contract
+  short_delta_max: 0.15
+  em_multiple: 1.0            # short strike at least 1.0 × expected move from spot
+  em_straddle_factor: 1.0     # expected move = ATM straddle mid × this
+  wall_buffer_pct: 0.001      # and beyond the wall by at least 0.1% of spot
+  min_credit_pct_of_width: 0.05  # $25 on a 5-wide; far-OTM 0DTE credits are thin — the backtest decides
+  max_leg_spread_pct: 0.30    # (ask - bid) / mid, per leg
+  strike_band_pct: 0.03
+
+risk:
+  starting_capital_usd: 100000      # the book's own capital; grows/shrinks with its realized P&L (per mode)
+  max_loss_pct_of_capital: 0.10     # a spread's full max loss <= 10% of current capital: this sets the contract count
+  max_total_risk_pct_of_capital: 0.10  # all open spreads together (one full-size spread at a time)
+  max_daily_loss_pct_of_capital: 0.10  # no new entries once today's realized loss reaches this
+  max_contracts: 100          # sanity ceiling against a bad quote sizing to an absurd count
+  max_open_spreads: 2
+  max_trades_per_day: 2
+  one_side_per_day: true      # after the day's first spread, only that side may be sold again
+  min_excess_liquidity_usd: 10000  # whole-account floor (the wheel shares the margin)
+  max_quote_age_seconds: 20
+  events: []                  # operator-maintained. Whole day: - {day: 2026-10-28, label: FOMC}
+                              # Until a time (ET): - {day: 2026-08-28, until: "10:30", label: Fed chair speech}
+                              # CPI/PPI print before the open, so they usually need no entry here
+  ex_dividend_dates: []       # SPY ex-dividend dates (quarterly), operator-maintained: no new CALL spreads
+                              # on the day before or the day of (early-assignment risk on short calls)
+
+exits:
+  profit_take_pct: 50         # compare with 80: python -m scripts.spreads_backtest ... --profit-take 80
+  stop_debit_multiple: 2.0    # close when the debit to close reaches 2 × the entry credit
+  close_on_short_strike_touch: true
+  max_hold_minutes: 150       # close a spread held this long. null = off
+  let_expire: false           # SPY settles in shares: the 15:45 time stop closes every spread
+  let_expire_max_debit: 0.05  # with let_expire: true only (cash-settled XSP/SPX): this cheap at force_close is left to expire
+
+execution:
+  order_ttl_seconds: 60
+  reprice_steps: 3
+  reprice_tick: 0.01
+  close_ttl_seconds: 30
+  close_max_concession: 0.10
+  shadow_slippage_per_leg: 0.02
+  commission_per_contract: 0.65   # per leg; shadow + backtest P&L only (paper uses real commissions)
+
+backtest:
+  thetadata_url: "http://127.0.0.1:25503"
+  cache_dir: "data/spreads_bt"
+  option_symbol: "SPXW"
+  index_symbol: "SPX"
+  trade_scale: 10.0           # SPX points per SPY point (SPX is the proxy; SPY ≈ SPX/10 less accrued dividends)
+  fill_haircut: 0.5           # fraction of the mid→natural gap paid on every simulated fill

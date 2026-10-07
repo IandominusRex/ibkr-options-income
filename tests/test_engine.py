@@ -1289,13 +1289,13 @@ def test_gate_rejects_premium_below_fair_value():
 
 
 def test_gate_accepts_a_low_iv_name_paying_a_real_edge():
-    """SPY at 13.5% IV was rejected by the flat 1% ROC floor regardless of edge."""
+    """A low-IV index (QQQ standing in for SPY, which the spreads book now reserves) at 13.5% IV was rejected by the flat 1% ROC floor regardless of edge."""
     from src.common.schemas import IdealZone, OptionRight
     from src.engine.risk_engine import validate_candidates
 
-    zone = IdealZone(symbol="SPY", right=OptionRight.PUT, dte=21, spot=660.0, min_credit=1.80)
+    zone = IdealZone(symbol="QQQ", right=OptionRight.PUT, dte=21, spot=660.0, min_credit=1.80)
     cand = _csp_candidate(
-        underlying="SPY", strike=640.0, contracts=1, current_iv=13.5, dte=21, premium=2.10
+        underlying="QQQ", strike=640.0, contracts=1, current_iv=13.5, dte=21, premium=2.10
     ).model_copy(update={"ideal": zone, "roc_pct": 0.33, "annualized_yield_pct": 4.0})
     verdicts = validate_candidates([cand], _account(net_liq=2_000_000.0, cash=500_000.0), [])
     assert verdicts[0].verdict.value == "pass", verdicts[0].reasons
@@ -1387,3 +1387,12 @@ def test_require_vrp_edge_false_bypasses_the_gate(monkeypatch: pytest.MonkeyPatc
     ).model_copy(update={"ideal": zone})
     verdicts = validate_candidates([cand], _account(), [])
     assert "premium_below_fair_value" not in verdicts[0].reasons
+
+
+def test_rules_engine_rejects_a_spreads_book_underlying() -> None:
+    from src.common.schemas import Verdict
+
+    cand = _candidate(candidate_id="xsp-1", underlying="XSP")
+    (verdict,) = validate_candidates([cand], _account(), [])
+    assert verdict.verdict == Verdict.REJECT
+    assert "reserved_for_spreads_book" in verdict.reasons

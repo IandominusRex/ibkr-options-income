@@ -13,8 +13,9 @@ from __future__ import annotations
 import functools
 import logging
 import os
+from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -34,6 +35,7 @@ PRIVATE_CONFIG_FILES = (
     "risk_limits.yaml",
     "scoring_weights.yaml",
     "universe.yaml",
+    "spreads.yaml",
 )
 USE_EXAMPLES_ENV = "IBKR_CONFIG_USE_EXAMPLES"
 
@@ -70,6 +72,8 @@ class Secrets(BaseSettings):
     ibkr_flex_query_id: str = Field(default="", alias="IBKR_FLEX_QUERY_ID")
     google_sheets_credentials_path: str = Field(default="", alias="GOOGLE_SHEETS_CREDENTIALS_PATH")
     ledger_sheet_id: str = Field(default="", alias="LEDGER_SHEET_ID")
+    # Daily credit spreads (docs/superpowers/plans/2026-10-07-daily-credit-spreads.md).
+    telegram_thread_spreads: str = Field(default="", alias="TELEGRAM_THREAD_SPREADS")
 
 
 class ReconnectCfg(BaseModel):
@@ -599,6 +603,203 @@ class LedgerCfg(BaseModel):
         return v
 
 
+def _hhmm(v: str) -> str:
+    """Zero-padded 'HH:MM' only — the spreads schedule is compared as strings."""
+    parts = v.split(":")
+    if len(parts) != 2 or not all(len(p) == 2 and p.isdigit() for p in parts):
+        raise ValueError(f"time must be zero-padded 'HH:MM', got {v!r}")
+    h, m = int(parts[0]), int(parts[1])
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"time out of range (00:00–23:59), got {v!r}")
+    return v
+
+
+class SpreadsScheduleCfg(BaseModel):
+    map_time: str = "09:31"
+    map_refresh_minutes: int = 60
+    entry_start: str = "09:35"
+    entry_end: str = "13:30"
+    entry_check_minutes: int = 5
+    manage_interval_seconds: int = 30
+    force_close: str = "15:45"
+    eod_summary: str = "16:10"
+    skip_early_close_days: bool = True
+
+    @field_validator("map_time", "entry_start", "entry_end", "force_close", "eod_summary")
+    @classmethod
+    def _valid_time(cls, v: str) -> str:
+        return _hhmm(v)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> SpreadsScheduleCfg:
+        if not (self.map_time <= self.entry_start < self.entry_end <= self.force_close):
+            raise ValueError(
+                "spreads schedule must satisfy map_time <= entry_start < entry_end <= force_close"
+            )
+        if self.force_close >= self.eod_summary:
+            raise ValueError("spreads schedule: eod_summary must be after force_close")
+        return self
+
+
+class SpreadsGexCfg(BaseModel):
+    symbol: str = "SPX"
+    sec_type: Literal["IND", "STK"] = "IND"
+    trading_class: str = "SPXW"
+    exchange: str = "CBOE"
+    # None = the live ratio (traded spot ÷ GEX-source spot), recomputed with every map: SPY drifts
+    # below SPX/10 as dividends accrue. A number pins it (0.1 for XSP, 1.0 for SPX itself).
+    scale_to_underlying: float | None = None
+    strike_band_pct: float = 0.03
+    expiries: int = 2
+    flip_search_pct: float = 0.03
+    flip_buffer_pct: float = 0.002
+    # Traded by default and tagged regime="negative" in the trade log (operator decision,
+    # 2026-10-07: paper account, gather the data first). "skip" restores the stricter rule.
+    negative_gamma_action: Literal["skip", "allow"] = "allow"
+
+
+class SpreadsEntryCfg(BaseModel):
+    """When, and on which side, a spread may be sold (src/spreads/tape.py::trigger)."""
+
+    trigger: Literal["move", "always"] = "move"
+    min_move_em: float = 0.5
+    max_move_em: float | None = 1.5
+    stall_minutes: int = 10
+    max_tape_age_seconds: float = 120.0
+    gap_day_pct: float = 0.003  # tag only — never gates
+
+    @model_validator(mode="after")
+    def _band(self) -> SpreadsEntryCfg:
+        if self.min_move_em < 0 or self.stall_minutes < 0:
+            raise ValueError("spreads entry: min_move_em and stall_minutes must be >= 0")
+        if self.max_move_em is not None and self.max_move_em <= self.min_move_em:
+            raise ValueError("spreads entry: max_move_em must be above min_move_em (or null)")
+        return self
+
+
+class SpreadsEventCfg(BaseModel):
+    """A scheduled event: no new entries all ``day``, or only until ``until`` ET when it is set."""
+
+    day: date
+    until: str | None = None
+    label: str = ""
+
+    @field_validator("until")
+    @classmethod
+    def _valid_until(cls, v: str | None) -> str | None:
+        return None if v is None else _hhmm(v)
+
+
+class SpreadsSelectionCfg(BaseModel):
+    sides: list[Literal["put", "call"]] = [
+        "put",
+        "call",
+    ]  # pydantic copies list defaults per instance
+    width: float = 5.0
+    short_delta_max: float = 0.15
+    em_multiple: float = 1.0
+    em_straddle_factor: float = 1.0
+    wall_buffer_pct: float = 0.001
+    min_credit_pct_of_width: float = 0.05
+    max_leg_spread_pct: float = 0.30
+    strike_band_pct: float = 0.03
+
+
+class SpreadsRiskCfg(BaseModel):
+    # Sizing (Design → "Position sizing"): the book's capital is starting_capital_usd plus the
+    # realized P&L of its closed spreads in the current mode, and every cap is a share of it.
+    starting_capital_usd: float = 100_000.0
+    max_loss_pct_of_capital: float = 0.10
+    max_total_risk_pct_of_capital: float = 0.10
+    max_daily_loss_pct_of_capital: float = 0.10
+    max_contracts: int = 100  # sanity ceiling against a bad quote sizing to an absurd count
+    max_open_spreads: int = 2
+    max_trades_per_day: int = 2
+    one_side_per_day: bool = True
+    min_excess_liquidity_usd: float = 10_000.0
+    max_quote_age_seconds: float = 20.0
+    events: list[SpreadsEventCfg] = Field(default_factory=list)
+    ex_dividend_dates: list[date] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _fractions(self) -> SpreadsRiskCfg:
+        if self.starting_capital_usd <= 0:
+            raise ValueError("spreads risk: starting_capital_usd must be positive")
+        for name in (
+            "max_loss_pct_of_capital",
+            "max_total_risk_pct_of_capital",
+            "max_daily_loss_pct_of_capital",
+        ):
+            if not 0 < getattr(self, name) <= 1:
+                raise ValueError(f"spreads risk: {name} is a fraction in (0, 1], e.g. 0.10 for 10%")
+        return self
+
+
+class SpreadsExitsCfg(BaseModel):
+    profit_take_pct: float = 50.0
+    stop_debit_multiple: float = 2.0
+    close_on_short_strike_touch: bool = True
+    max_hold_minutes: int | None = 150
+    let_expire: bool = False  # SPY settles in shares; True only for cash-settled XSP/SPX
+    let_expire_max_debit: float = 0.05
+
+
+class SpreadsExecutionCfg(BaseModel):
+    order_ttl_seconds: float = 60.0
+    reprice_steps: int = 3
+    reprice_tick: float = 0.01
+    close_ttl_seconds: float = 30.0
+    close_max_concession: float = 0.10
+    shadow_slippage_per_leg: float = 0.02
+    commission_per_contract: float = 0.65
+
+
+class SpreadsBacktestCfg(BaseModel):
+    thetadata_url: str = "http://127.0.0.1:25503"
+    cache_dir: str = "data/spreads_bt"
+    option_symbol: str = "SPXW"
+    index_symbol: str = "SPX"
+    trade_scale: float = 10.0
+    fill_haircut: float = 0.5
+
+
+class SpreadsCfg(BaseModel):
+    """Daily credit-spread system (config/spreads.yaml). See the plan's Design section."""
+
+    enabled: bool = False
+    mode: Literal["shadow", "paper"] = "shadow"
+    underlying: str = "SPY"
+    underlying_sec_type: Literal["STK", "IND"] = "STK"
+    trading_class: str = "SPY"
+    exchange: str = "SMART"
+    book_underlyings: list[str] = [
+        "SPY",
+        "SPX",
+        "XSP",
+    ]  # pydantic copies list defaults per instance
+    order_ref_prefix: str = "CS:"
+    db_url: str = "sqlite:///data/spreads.db"
+    max_market_data_lines: int = 30
+    halt_file: str = "data/spreads.halt"
+    schedule: SpreadsScheduleCfg = Field(default_factory=SpreadsScheduleCfg)
+    entry: SpreadsEntryCfg = Field(default_factory=SpreadsEntryCfg)
+    gex: SpreadsGexCfg = Field(default_factory=SpreadsGexCfg)
+    selection: SpreadsSelectionCfg = Field(default_factory=SpreadsSelectionCfg)
+    risk: SpreadsRiskCfg = Field(default_factory=SpreadsRiskCfg)
+    exits: SpreadsExitsCfg = Field(default_factory=SpreadsExitsCfg)
+    execution: SpreadsExecutionCfg = Field(default_factory=SpreadsExecutionCfg)
+    backtest: SpreadsBacktestCfg = Field(default_factory=SpreadsBacktestCfg)
+
+    @model_validator(mode="after")
+    def _underlying_in_book(self) -> SpreadsCfg:
+        book = {s.upper() for s in self.book_underlyings}
+        if self.underlying.upper() not in book:
+            raise ValueError(
+                f"spreads.underlying {self.underlying!r} must be listed in book_underlyings {sorted(book)}"
+            )
+        return self
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -617,6 +818,7 @@ class Config(BaseModel):
     data: DataCfg = Field(default_factory=DataCfg)
     research: ResearchCfg = Field(default_factory=ResearchCfg)
     ledger: LedgerCfg = Field(default_factory=LedgerCfg)
+    spreads: SpreadsCfg = Field(default_factory=SpreadsCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -648,6 +850,49 @@ class Config(BaseModel):
             rel = url[len("sqlite:///") :]
             return f"sqlite:///{(ROOT / rel).as_posix()}"
         return url
+
+    def spreads_db_url_abs(self) -> str:
+        """Resolve the relative spreads sqlite path against the project root."""
+        url = self.spreads.db_url
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+            rel = url[len("sqlite:///") :]
+            return f"sqlite:///{(ROOT / rel).as_posix()}"
+        return url
+
+    def spreads_halt_path(self) -> Path:
+        return ROOT / self.spreads.halt_file
+
+    @model_validator(mode="after")
+    def _spreads_isolated(self) -> Config:
+        """The wheel and the spreads book may never share an underlying or overrun the line cap.
+
+        Book membership is decided by underlying alone (positions carry no order tag; IBKR nets
+        same-contract positions across clientIds), so an overlap here would silently merge the
+        two books. Checked on every load, enabled or not.
+        """
+        book = {s.upper() for s in self.spreads.book_underlyings}
+        wheel = {
+            str(sym).upper()
+            for value in self.universe.values()
+            if isinstance(value, list)
+            for sym in value
+        }
+        clash = sorted(book & wheel)
+        if clash:
+            raise ValueError(
+                f"spreads.book_underlyings {clash} also appear in config/universe.yaml — the "
+                "wheel and the spreads book may never share an underlying"
+            )
+        if self.spreads.enabled:
+            budget = self.market_data.chain_batch_size + self.spreads.max_market_data_lines
+            if budget > 95:
+                raise ValueError(
+                    f"market_data.chain_batch_size + spreads.max_market_data_lines = {budget} "
+                    "exceeds the 95-line market-data budget shared by every clientId"
+                )
+            if "spreads" not in self.ibkr.client_ids:
+                raise ValueError("ibkr.client_ids.spreads must be set when spreads.enabled is true")
+        return self
 
 
 def example_path(name: str) -> Path:
@@ -705,6 +950,7 @@ def get_config() -> Config:
         data=DataCfg(**settings.get("data", {})),
         research=ResearchCfg(**_load_yaml("research.yaml")),
         ledger=LedgerCfg(**settings.get("ledger", {})),
+        spreads=SpreadsCfg(**_load_yaml("spreads.yaml")),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),

@@ -574,12 +574,12 @@ def test_indexes_never_carry_override_metadata_even_with_a_stray_row(client) -> 
 
     with session_scope() as s:
         s.add(
-            UniverseOverrideRow(symbol="SPY", list_name="indexes", action="add", created_by="owner")
+            UniverseOverrideRow(symbol="QQQ", list_name="indexes", action="add", created_by="owner")
         )
 
     body = client.get("/universe", headers=AUTH).json()
     indexes = next(lst for lst in body["lists"] if lst["name"] == "indexes")
-    entry = next(e for e in indexes["entries"] if e["symbol"] == "SPY")
+    entry = next(e for e in indexes["entries"] if e["symbol"] == "QQQ")
     assert entry["overridden"] is False
     assert entry["created_by"] is None
     assert entry["created_at"] is None

@@ -14,6 +14,7 @@ the cumulative budgets are consumed greedily in that order.
 
 from __future__ import annotations
 
+from src.common.books import is_spreads_underlying
 from src.common.config import get_config
 from src.common.market_hours import today_et
 from src.common.schemas import (
@@ -150,6 +151,10 @@ def validate_candidates(
     for cand in candidates:
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
+        # The spreads book owns these underlyings outright (config/spreads.yaml). A web universe
+        # override could still put one in front of the wheel; it must never reach an order.
+        if is_spreads_underlying(cand.underlying):
+            reasons.append("reserved_for_spreads_book")
 
         # --- Income quality gates. Scoped to the income strategies: a ROLL is a defensive
         # repair, not an income trade. A roll that pays a debit to move a challenged short
