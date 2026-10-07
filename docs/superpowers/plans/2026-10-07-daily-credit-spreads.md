@@ -22,7 +22,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | Task | Status | Commits | Date | Gate |
 |---|---|---|---|---|
 | 1 Spreads config, book helpers, wheel-side guards | ✅ done | `8baac24` (code), then docs + this log | 2026-10-08 | pytest 2744 passed, 1 skipped; ruff and mypy clean |
-| 2 `get_positions` filter | ⬜ | | | |
+| 2 `get_positions` filter | ✅ done | `f7127f1` (code), then docs + this log | 2026-10-08 | pytest 2749 passed, 1 skipped; ruff and mypy clean |
 | 3 Ledger `spreads` book | ⬜ | | | |
 | 4 Schemas and same-day pricing | ⬜ | | | |
 | 5 GEX levels | ⬜ | | | |
@@ -57,6 +57,12 @@ tracker; the copy on `main` stays unticked until the branch merges.
   reads lists only.
 - **Private `config/settings.yaml` not edited.** The worktree-isolated session can't write the
   main checkout, so this moved to the operator to-dos below.
+
+**Rulings (Task 2):**
+- **Docs moved forward again** (same reason as Task 1): ARCHITECTURE's `src/ibkr/` `portfolio.py`
+  row and `scripts/` `healthcheck.py` row now describe `include_spreads`, and STATUS's "In progress"
+  section gained a bullet. Task 17 lists neither row, so it has nothing to skip; its Step 5 deletes
+  the STATUS section as already noted.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -1091,7 +1097,7 @@ git commit -m "feat(spreads): config, book helpers, wheel-side isolation guards"
 - Consumes: `src.common.books.is_spreads_underlying` (Task 1).
 - Produces: `get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnapshot]`. The default drops spreads-book contracts, so every existing caller keeps working unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_wheel_spreads_isolation.py`:
 
@@ -1172,12 +1178,12 @@ def test_only_the_healthcheck_asks_for_spreads_positions() -> None:
     assert offenders == []
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_wheel_spreads_isolation.py -q`
 Expected: FAIL. `test_wheel_view_drops_spreads_book_legs` gets `['SPY', 'SPY', 'XSP', 'AAPL']`, and `include_spreads` is an unexpected keyword.
 
-- [ ] **Step 3: Implement the filter**
+- [x] **Step 3: Implement the filter**
 
 In `src/ibkr/portfolio.py`, add `from src.common.books import is_spreads_underlying` to the imports. Replace the whole `get_positions` function (anchor: `def get_positions(ib: IB) -> list[PositionSnapshot]:`) with:
 
@@ -1225,7 +1231,7 @@ def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnap
     return out
 ```
 
-- [ ] **Step 4: Healthcheck shows account truth**
+- [x] **Step 4: Healthcheck shows account truth**
 
 In `scripts/healthcheck.py`, anchor `positions = get_positions(ib)`. Replace with:
 
@@ -1233,12 +1239,12 @@ In `scripts/healthcheck.py`, anchor `positions = get_positions(ib)`. Replace wit
         positions = get_positions(ib, include_spreads=True)  # account truth: both books
 ```
 
-- [ ] **Step 5: Run the tests and the gate**
+- [x] **Step 5: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_wheel_spreads_isolation.py -q && python -m pytest -q && ruff check . && mypy src`
 Expected: PASS. Existing tests mock `ib.portfolio()` with wheel symbols only (none mocks a SPY position; checked in the 2026-10-07 dry run), so they're unaffected.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 ruff format src/ibkr/portfolio.py scripts/healthcheck.py tests/test_wheel_spreads_isolation.py

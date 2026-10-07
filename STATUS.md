@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Task 1 of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–2 of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. Only the config and the wheel-side guards
@@ -378,6 +378,9 @@ exist; there is no `src/spreads/` package yet, so nothing trades spreads.
 - **Wheel behaviour change:** the rules engine rejects SPY/SPX/XSP candidates
   (`reserved_for_spreads_book`), and config load refuses to start if any of them is in
   `universe.yaml`. SPY left the committed example universe; three wheel tests moved to QQQ.
+- **The wheel never sees a spreads leg:** `get_positions()` drops SPY/SPX/XSP contracts by default,
+  so the monitor, profit-take, rolls, budget seeding, approval re-gate and EOD report ignore them.
+  Only `scripts/healthcheck.py` asks for both books (`include_spreads=True`).
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 
