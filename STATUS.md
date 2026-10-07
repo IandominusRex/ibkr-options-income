@@ -366,6 +366,23 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## In progress (2026-10-08 — daily credit spreads: Task 1 of 17 built)
+
+Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
+tasks are done). Branch `feat/daily-credit-spreads`. Only the config and the wheel-side guards
+exist; there is no `src/spreads/` package yet, so nothing trades spreads.
+
+- `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
+  `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
+- `src/common/books.py`: SPY, SPX and XSP belong to the spreads book.
+- **Wheel behaviour change:** the rules engine rejects SPY/SPX/XSP candidates
+  (`reserved_for_spreads_book`), and config load refuses to start if any of them is in
+  `universe.yaml`. SPY left the committed example universe; three wheel tests moved to QQQ.
+- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
+  line to the private `config/settings.yaml` before the service exists (Task 13).
+
+Task 17 replaces this section with the plan's "Built" section.
+
 ## Built (2026-10-07 — private operator config; examples committed)
 
 `config/settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml` and `universe.yaml` are now

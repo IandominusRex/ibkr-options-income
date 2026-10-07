@@ -304,6 +304,12 @@ The build is feature-complete; there are no remaining phases. For any change:
    is paper-only and IBKR is mocked.
 3. **Update docs** per the mandatory doc-update table above. If you build, defer, or change the status
    of a feature/limitation, reflect it in **`STATUS.md`**.
+4. **Executing a plan** under `docs/superpowers/plans/`: keep the plan's **Progress log** current
+   without being asked. After each task, tick its step checkboxes and update its row: status,
+   commits, gate result, date, and every ruling (any deviation from the task text, and why). Commit
+   that with the task. A plan with no Progress log gets one under its title. A new session resumes
+   from that log and `git log`, never from memory. The `.superpowers/sdd/` ledger is git-ignored
+   scratch, not the record.
 
 ## The web layer and the trading database
 

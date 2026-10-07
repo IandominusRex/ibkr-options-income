@@ -1,6 +1,74 @@
 # Daily Credit Spreads (SPY 0DTE) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Keep the Progress log below current without being asked** (see its first paragraph).
+
+## Progress log
+
+**For agentic workers: update this after every task, unprompted.** When a task is done, tick its
+step checkboxes (`- [x]`), set its row to ✅ with the commits, the gate result and the date, list
+every ruling you made (any deviation from the task text, and why), and commit this file with the
+task or right after it. If you stop part-way through a task, mark it 🟡 and name the next step.
+Resume at the first row that is not ✅, and check it against `git log --oneline main..feat/daily-credit-spreads`.
+
+**Where the work lives:** branch `feat/daily-credit-spreads`, in the git-ignored worktree
+`.claude/worktrees/daily-credit-spreads`. This copy of the plan, on that branch, is the live
+tracker; the copy on `main` stays unticked until the branch merges.
+
+**Setting up a fresh worktree** (otherwise 4 tests in `tests/test_monitor*.py` fail with
+`no such table: fills`, because they read the real `data/income_system.db`, which is git-ignored):
+- `ln -s "<main checkout>/.venv" .venv`, since the venv lives in the main checkout.
+- `IBKR_CONFIG_USE_EXAMPLES=1 .venv/bin/python -c "from src.storage.db import init_db; init_db()"`
+
+| Task | Status | Commits | Date | Gate |
+|---|---|---|---|---|
+| 1 Spreads config, book helpers, wheel-side guards | ✅ done | `8baac24` (code), then docs + this log | 2026-10-08 | pytest 2744 passed, 1 skipped; ruff and mypy clean |
+| 2 `get_positions` filter | ⬜ | | | |
+| 3 Ledger `spreads` book | ⬜ | | | |
+| 4 Schemas and same-day pricing | ⬜ | | | |
+| 5 GEX levels | ⬜ | | | |
+| 6 Candidate selection | ⬜ | | | |
+| 6A Session tape and entry trigger | ⬜ | | | |
+| 7 Deterministic spreads gate | ⬜ | | | |
+| 8 Exit manager and reconciliation | ⬜ | | | |
+| 9 Spreads database | ⬜ | | | |
+| 10 IBKR I/O | ⬜ | | | |
+| 11 Combo orders and executor | ⬜ | | | |
+| 12 Telegram notifier | ⬜ | | | |
+| 13 Service, entrypoint, supervisor | ⬜ | | | |
+| 14 Performance report | ⬜ | | | |
+| 15 ThetaData client | ⬜ | | | |
+| 16 Minute replay and backtest script | ⬜ | | | |
+| 17 Fences, docs, full gate | ⬜ | | | |
+
+**Rulings (Task 1):**
+- **Docs moved forward from Task 17.** `CLAUDE.md` requires the docs to match the code at every
+  stopping point, so the Task 1 share of Task 17's doc work landed with Task 1. When you reach
+  Task 17:
+  - **Step 3.2:** skip it. The `books.py` row is already in ARCHITECTURE's `src/common/` table,
+    verbatim.
+  - **Step 3.1:** replace the interim "in progress" `spreads.yaml` row in ARCHITECTURE's
+    `config/` table. Don't add a second row.
+  - **Step 4:** skip the `book_underlyings` troubleshooting row, which is already in SETUP.
+    SETUP §2b's copy loop also already includes `spreads`.
+  - **Step 5:** delete STATUS's "In progress (2026-10-08 — daily credit spreads…)" section when
+    you add the "Built" section.
+- **Left as is:** `config/universe.example.yaml` line 31, a tier comment that still names SPY as a
+  `safe_bets` example. It isn't one of the three edits Step 4 lists, and the isolation validator
+  reads lists only.
+- **Private `config/settings.yaml` not edited.** The worktree-isolated session can't write the
+  main checkout, so this moved to the operator to-dos below.
+
+**Notes for later tasks:**
+- **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
+  Fix), but the plan's rows have two. Split each row into cause and fix.
+- **Pre-flight (2026-10-08):** every spreads config field that Tasks 2–17 consume (31 of them)
+  exists in Task 1's models.
+
+**Operator to-dos:**
+- [ ] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. It is
+  needed before Task 13's service runs, and harmless now.
+- [ ] After the merge, `cp config/spreads.example.yaml config/spreads.yaml`. Until then, every
+  process logs the usual "config/spreads.yaml not found; using the shipped defaults" warning.
 
 **Goal:** Add a second trading system for same-day (0DTE) SPY credit spreads. It shares the wheel's IBKR paper account and IB Gateway but never touches the wheel's positions, budget or decisions. It places short strikes outside dealer-gamma "action zones", is gated by its own deterministic rules engine, and shows up in the trade ledger as a separate `spreads` book.
 
@@ -344,7 +412,7 @@ Added with the 2026-10-07 amendment:
   - `src.common.books.is_spreads_underlying(symbol: str | None) -> bool`
   - Risk-engine reason string `"reserved_for_spreads_book"`.
 
-- [ ] **Step 1: Write the failing config tests**
+- [x] **Step 1: Write the failing config tests**
 
 `tests/test_spreads_config.py`:
 
@@ -503,12 +571,12 @@ def test_rules_engine_rejects_a_spreads_book_underlying() -> None:
     assert "reserved_for_spreads_book" in verdict.reasons
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_config.py tests/test_books.py tests/test_engine.py::test_rules_engine_rejects_a_spreads_book_underlying -q`
 Expected: FAIL with `ImportError: cannot import name 'SpreadsCfg'` and `ModuleNotFoundError: No module named 'src.common.books'`.
 
-- [ ] **Step 3: Create `config/spreads.example.yaml`**
+- [x] **Step 3: Create `config/spreads.example.yaml`**
 
 This is the committed template. `config/spreads.yaml` is the operator's private copy (git-ignored, Step 5 adds it to `PRIVATE_CONFIG_FILES`); when it is missing, config load falls back to this file and logs a warning, exactly like `settings.yaml`.
 
@@ -615,7 +683,7 @@ backtest:
   fill_haircut: 0.5           # fraction of the mid→natural gap paid on every simulated fill
 ```
 
-- [ ] **Step 4: Add the client id to `config/settings.example.yaml`, and keep `config/spreads.yaml` private**
+- [x] **Step 4: Add the client id to `config/settings.example.yaml`, and keep `config/spreads.yaml` private**
 
 In `config/settings.example.yaml` (committed), anchor the line `    healthcheck: 19` under `ibkr.client_ids`. Insert above it:
 
@@ -638,7 +706,7 @@ SPY leaves the committed example universe (the operator's private `config/univer
 
 Then `grep -n "SPY" config/universe.example.yaml` should show only the comment and the QQQ note ("slightly higher IV than SPY").
 
-- [ ] **Step 5: Add the spreads config models to `src/common/config.py`**
+- [x] **Step 5: Add the spreads config models to `src/common/config.py`**
 
 1. Change the import line `from pydantic import BaseModel, Field, field_validator, model_validator` so that `Literal` and `date` are available. Add these to the module imports:
 
@@ -912,7 +980,7 @@ class SpreadsCfg(BaseModel):
         spreads=SpreadsCfg(**_load_yaml("spreads.yaml")),
 ```
 
-- [ ] **Step 6: Create `src/common/books.py`**
+- [x] **Step 6: Create `src/common/books.py`**
 
 ```python
 """Which book a contract belongs to: the wheel, or the daily credit-spread system.
@@ -940,7 +1008,7 @@ def is_spreads_underlying(symbol: str | None) -> bool:
     return symbol is not None and symbol.upper() in spreads_underlyings()
 ```
 
-- [ ] **Step 7: Reject spreads-book underlyings in the wheel's rules engine**
+- [x] **Step 7: Reject spreads-book underlyings in the wheel's rules engine**
 
 In `src/engine/risk_engine.py`, add the import among the other `src.common` imports, in sorted order (`ruff check --fix src/engine/risk_engine.py` places it):
 
@@ -965,7 +1033,7 @@ Insert directly after `limits = _strategy_limits(cand.strategy)`:
             reasons.append("reserved_for_spreads_book")
 ```
 
-- [ ] **Step 7b: Move the three existing wheel tests that used SPY as a wheel ticker onto QQQ**
+- [x] **Step 7b: Move the three existing wheel tests that used SPY as a wheel ticker onto QQQ**
 
 SPY is now a spreads-book underlying: the rules engine rejects it (`reserved_for_spreads_book`) and the example universe no longer lists it. Exactly three existing tests relied on SPY being a wheel name (found by a dry run of this plan on 2026-10-07):
 
@@ -990,19 +1058,19 @@ with
 
 The web test `web/components/universe/UniverseList.test.tsx` builds its own SPY fixture and does not read the YAML, so it is unaffected.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [x] **Step 8: Run the tests to verify they pass**
 
 Run: `python -m pytest tests/test_spreads_config.py tests/test_books.py tests/test_engine.py tests/test_api_universe.py tests/test_drain_universe.py -q`
 Expected: PASS.
 
-- [ ] **Step 9: Run the full gate**
+- [x] **Step 9: Run the full gate**
 
 Run: `python -m pytest -q && ruff check . && mypy src`
 Expected: all green. If a test constructs `Config(...)` with a universe that contains `SPX`, the new validator will fail it. Fix that test's fixture (use another symbol) rather than weakening the validator.
 
 `tests/test_private_config.py::test_private_config_files_are_gitignored` now also checks `spreads.yaml`: it must be git-ignored (Step 4) and `config/spreads.example.yaml` must be in the git index. Run `git add config/spreads.example.yaml .gitignore` before this gate, or that test fails until the commit.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 ruff format src/common/config.py src/common/books.py src/engine/risk_engine.py tests/test_spreads_config.py tests/test_books.py tests/test_engine.py tests/test_api_universe.py tests/test_drain_universe.py

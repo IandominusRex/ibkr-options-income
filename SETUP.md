@@ -68,12 +68,12 @@ longer works — Reddit blocks it at the edge.)
 ## 2b. Create your own config files
 
 The repo ships **templates** — `config/settings.example.yaml`, `risk_limits.example.yaml`,
-`scoring_weights.example.yaml` and `universe.example.yaml`. Your own copies (the files without
-`.example`) are **git-ignored**, so your account IDs, limits, weights and universe never reach
-GitHub:
+`scoring_weights.example.yaml`, `universe.example.yaml` and `spreads.example.yaml` (the daily
+credit-spread system, off by default). Your own copies (the files without `.example`) are
+**git-ignored**, so your account IDs, limits, weights and universe never reach GitHub:
 
 ```bash
-for f in settings risk_limits scoring_weights universe; do
+for f in settings risk_limits scoring_weights universe spreads; do
   cp config/$f.example.yaml config/$f.yaml
 done
 ```
@@ -1631,6 +1631,7 @@ Also update:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Config load fails with *"spreads.book_underlyings [...] also appear in config/universe.yaml"* | SPY, XSP or SPX is in the wheel universe (the committed example used to list SPY). They are reserved for the daily credit-spread book | Remove it from `config/universe.yaml`: the two books may never share an underlying |
 | Every approved order fails at once with *"Live re-validation failed: delta drifted outside target band … live mid collapsed well below the approved premium"* | Before 2026-09-30, repeat scans read a re-subscribed contract's **cached** ib_async ticker, so candidates were priced from quotes 15–30 min old and the send-time re-gate (correctly) rejected them against a fresh quote | Fixed by `req_fresh_mkt_data` — restart the daemons (`./ibkr restart`) to pick it up. The failure message now shows *live mid vs approved* and *live Δ vs approved*: a small gap is a genuine market move (expected — the gate is working); a large, systematic gap on every order means stale data again |
 | `ConnectionRefusedError` on healthcheck | IB Gateway not running, API not enabled, or wrong port | Start IB Gateway and check API settings (Step 4). Confirm `config/settings.yaml → ibkr.paper_port` matches the Socket port set in Gateway (default `4002`). |
 | `clientId already in use` | Another process using the same IBKR client ID | Check `config/settings.yaml` for the `client_ids` map; each process needs a unique ID |
