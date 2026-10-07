@@ -40,7 +40,6 @@ a CSP entry signal for them, so don't treat a DIP-WATCH name's price rise as a r
 a CSP candidate on it.
 
 SAFE_BETS — Core income (fund-manager grade, stable assignment):
-  SPY  ~$540  IVR 15-35  CC+CSP  0.8-2.5%/mo   index; ETF, no earnings risk; ACTIVELY_WHEELING
   QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; ACTIVELY_WHEELING
   IWM  ~$200  IVR 20-45  CC+CSP  1.5-3.0%/mo   small-cap index; DIP-WATCH
   SMH  ~$220  IVR 28-55  CC+CSP  2.0-4.0%/mo   semi sector ETF; diversified; DIP-WATCH
