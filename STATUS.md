@@ -363,6 +363,52 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Built (2026-10-02 — automatic IB Gateway restart on an Error 10197 block; Gateway now under IBC)
+
+- **Incident.** Every intraday scan from 07:37 to 23:16 SGT on 2026-10-02 was blocked by Error
+  10197 ("No market data during competing live session"). The operator logged out of every other
+  IBKR session, and the 23:16 cycle was *still* blocked; a manual Gateway restart cleared it at
+  once. A Gateway that hit 10197 does not regain the live-data entitlement when the competing
+  session ends — only a fresh login does — and the loop's recovery (`_force_scan_reconnect`)
+  only rebuilds the local API socket, so it could never fix it.
+- **Built.** `src/ops/gateway_control.py::GatewayRestarter`, called from the intraday loop's
+  pre-scan probe branch whenever the observed codes include 10197: stops the `com.ibkr.gateway`
+  launchd job's process group (SIGTERM, SIGKILL after `stop_timeout_seconds`), waits until it is
+  gone, then a plain `launchctl kickstart`, so IBC logs in fresh from `.env`. Bounded by the new
+  `gateway_recovery` block in `settings.yaml` (30-min cooldown, 3/day per ET day, off-switch), and
+  refuses when the agent isn't loaded. The 🛑 *Scan blocked* message reports the outcome instead
+  of "forcing a reconnect"; the socket reconnect is skipped once a restart has run. Other block
+  causes (1100, flaps, no subscription) are unchanged.
+- **Found while building it:** `launchctl kickstart -k` leaves Gateway **down** — it relaunches
+  while the old JVM is still exiting and `start_gateway.sh`'s duplicate-instance guard exits 0
+  (reproduced live 23:40). Hence stop-wait-start.
+  `./ibkr start` had the same bug (it `kickstart -k`s every agent); a loaded gateway now goes
+  through the same unthrottled `GatewayRestarter.stop_and_start()` instead — verified live
+  23:52 (old JVM stopped, relaunched and logged in within ~11s).
+- **`~/Applications/ibc/config.ini` credentials blanked** (they had been filled in, contrary to
+  `SETUP.md`); IBC already took them from `.env` via `start_gateway.sh`'s args.
+- **Gateway moved under IBC on this machine** (it had been hand-started). Two fixes were needed
+  for `./ibkr install --with-gateway` to work at all: the agent now runs `start_gateway.sh` as a
+  child of the venv python (`scripts/launchd.py`) because macOS TCC denied launchd's `/bin/bash`
+  access under `~/Desktop` (exit 126), and IBC's unzipped scripts lacked the execute bit
+  (`chmod u+x`, now a step in `SETUP.md`). IBC logs in unattended (no 2FA on the paper login).
+- **Test-suite guard.** An existing loop test fed a 10197 probe through the loop with the
+  restarter unmocked and restarted the live Gateway twice during development. The real
+  `launchctl`/`os.killpg` calls now sit behind module-level `_run_cmd`/`_killpg`, which
+  `tests/conftest.py::_forbid_real_gateway_restart` (autouse) replaces suite-wide.
+- **Known limitations.** The cooldown/daily-cap state is in-memory (resets when the approval
+  service restarts). Only the pre-scan probe triggers a restart — a 10197 that first shows up
+  mid-scan (circuit breaker) or at order-send time is caught on the next cycle's probe. A restart
+  that lands while an order is mid-send makes that order fail its send-time quote check (nothing
+  is placed). If another session genuinely stays logged in, each restart only buys data until
+  IBKR hands it back to that session — after 3 restarts the message tells the operator to find it.
+- Tests: `tests/test_gateway_control.py` (stop-then-start, SIGKILL escalation, cooldown, daily
+  cap and ET-day reset, agent not loaded, kickstart failure, port never opens),
+  `tests/test_gateway_recovery_loop.py` (10197 → restart and no socket reconnect; refused restart
+  → reconnect; non-10197 → unchanged), `tests/test_launchd.py` (python-wrapped gateway agent).
+
+---
+
 ## Changed (2026-10-02 — loss line rolls instead of closing, except leveraged ETFs)
 
 The loss exit (`automation.max_loss_multiple`, D3) bought back *every* short at 2× the credit.

@@ -120,7 +120,18 @@ def render_plists(
     if with_gateway:
         gateway: dict[str, object] = {
             "Label": LABEL_GATEWAY,
-            "ProgramArguments": [str(repo / "scripts" / "ibc" / "start_gateway.sh")],
+            # Run the script as a child of the venv python rather than exec'ing it: macOS
+            # TCC refuses launchd's /bin/bash access to anything under ~/Desktop (exit 126,
+            # "Operation not permitted" — 2026-10-02), while the venv python already holds
+            # that grant (the supervisor relies on it). A child process inherits the
+            # python's TCC attribution; an exec would not. The script path goes in argv,
+            # not the -c source, so the space in the repo path needs no quoting.
+            "ProgramArguments": [
+                str(python),
+                "-c",
+                "import subprocess, sys; sys.exit(subprocess.call(['/bin/bash', sys.argv[1]]))",
+                str(repo / "scripts" / "ibc" / "start_gateway.sh"),
+            ],
             "WorkingDirectory": str(repo),
             "RunAtLoad": True,
             # IBC owns Gateway's own restart cycle — launchd restarting the wrapper over
@@ -224,6 +235,20 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+def _restart_loaded_gateway() -> tuple[bool, str]:
+    """Stop-wait-start the loaded ``com.ibkr.gateway`` job (``src/ops/gateway_control.py``).
+
+    Never ``kickstart -k`` for this label: it relaunches while the old Gateway JVM is still
+    exiting, ``start_gateway.sh``'s duplicate-instance guard exits 0, and Gateway is left
+    down (reproduced 2026-10-02). Unthrottled — this is the operator asking.
+    """
+    from src.common.config import get_config
+    from src.ops.gateway_control import GatewayRestarter
+
+    cfg = get_config()
+    return GatewayRestarter(cfg.gateway_recovery, port=cfg.ibkr_port).stop_and_start()
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     labels = _stack_labels()
     if not labels:
@@ -231,6 +256,14 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 1
     ok = True
     for label in labels:
+        if label == LABEL_GATEWAY and _is_loaded(label):
+            gw_ok, detail = _restart_loaded_gateway()
+            print(
+                f"start {label}: {'ok' if gw_ok else 'FAILED'} — {detail}",
+                file=sys.stdout if gw_ok else sys.stderr,
+            )
+            ok = ok and gw_ok
+            continue
         r = subprocess.run(
             ["launchctl", "kickstart", "-k", _gui_target(label)],
             capture_output=True,

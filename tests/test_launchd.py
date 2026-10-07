@@ -35,7 +35,13 @@ def test_render_with_gateway_is_opt_in(tmp_path):
     out = render_plists(tmp_path, tmp_path / "py", with_gateway=True, watchdog_interval=300)
     gw = plistlib.loads(out["com.ibkr.gateway"])
     assert gw["KeepAlive"] is False
-    assert gw["ProgramArguments"][0].endswith("scripts/ibc/start_gateway.sh")
+    # Launched through the venv python, not exec'd directly: macOS TCC blocks launchd's
+    # /bin/bash from reading a script under ~/Desktop (exit 126 "Operation not permitted"),
+    # while the venv python already holds that grant (the supervisor relies on it too).
+    args = gw["ProgramArguments"]
+    assert args[0] == str(tmp_path / "py")
+    assert args[1] == "-c" and "subprocess.call" in args[2]
+    assert args[-1].endswith("scripts/ibc/start_gateway.sh")
 
 
 def test_control_script_exists_and_is_executable():
@@ -332,3 +338,33 @@ def test_stop_reports_failure_if_a_label_never_unloads(monkeypatch):
     monkeypatch.setattr(launchd, "BOOTOUT_WAIT_SECONDS", 0.0)
     monkeypatch.setattr(launchd.time, "sleep", lambda s: None)
     assert launchd.cmd_stop(ns) == 1
+
+
+def test_start_restarts_a_loaded_gateway_without_kickstart_k(monkeypatch):
+    """`kickstart -k` on the gateway relaunches while the old JVM is still exiting;
+    start_gateway.sh's duplicate guard then starts nothing and Gateway is left down
+    (2026-10-02). A loaded gateway must go through the stop-wait-start path instead."""
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: label == launchd.LABEL_GATEWAY)
+    restarted: list[bool] = []
+
+    def fake_restart():
+        restarted.append(True)
+        return True, "API port 4002 accepting connections"
+
+    monkeypatch.setattr(launchd, "_restart_loaded_gateway", fake_restart)
+    assert launchd.cmd_start(ns) == 0
+    assert restarted == [True]
+    gateway_kickstarts = [
+        argv
+        for argv in calls
+        if argv[:2] == ["launchctl", "kickstart"] and argv[-1].endswith(launchd.LABEL_GATEWAY)
+    ]
+    assert gateway_kickstarts == []
+
+
+def test_start_reports_a_failed_gateway_restart(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: label == launchd.LABEL_GATEWAY)
+    monkeypatch.setattr(launchd, "_restart_loaded_gateway", lambda: (False, "port never opened"))
+    assert launchd.cmd_start(ns) == 1

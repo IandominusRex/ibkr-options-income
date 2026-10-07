@@ -377,6 +377,17 @@ watchdog:
   realert_minutes: 60
   deadman_url: ""                # optional: e.g. a healthchecks.io ping URL — catches the Mac being off
 
+# Automatic IB Gateway restart when a scan is blocked by Error 10197 (another login holds the
+# live market-data entitlement). A Gateway stuck on 10197 only recovers with a fresh login, so
+# the intraday loop restarts the IBC-managed `com.ibkr.gateway` launchd agent (no effect if
+# Gateway was started by hand). See src/ops/gateway_control.py.
+gateway_recovery:
+  enabled: true
+  cooldown_minutes: 30           # min gap between restarts
+  max_restarts_per_day: 3        # per ET day; after that, alert the operator instead
+  stop_timeout_seconds: 30       # wait for the old Gateway to exit before SIGKILL
+  port_wait_seconds: 90          # wait for the relaunched Gateway's API port
+
 # Backend selection for the src/data/ provider abstraction layer (Phase 2).
 # Each key names the active backend for one of the three Protocols in src/data/protocols.py.
 # Phase 2 ships only the "yfinance" backend; "fmp" is accepted (the stub exists in

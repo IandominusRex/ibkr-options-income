@@ -811,9 +811,7 @@ def seed_closed_ledger_rows(client):  # noqa: ARG001 - binds storage engine to t
                     baseline_rank=1,
                     baseline_score=score,
                     agreement=win,
-                    outcome=(
-                        VerdictOutcome.EXPIRED_WORTHLESS if win else VerdictOutcome.ASSIGNED
-                    ),
+                    outcome=(VerdictOutcome.EXPIRED_WORTHLESS if win else VerdictOutcome.ASSIGNED),
                     outcome_date=date.today() - timedelta(days=offset_days),
                     realized_pnl=150.0 if win else -50.0,
                     filled=True,
@@ -881,3 +879,22 @@ def seed_wheel(seed_leg):
         seed_leg(candidate_id="w3", sold=(1, 1.0, 1.0), symbol="AAPL", expiry_in_days=-1)
 
     return _seed
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_gateway_restart(monkeypatch):
+    """Never let a test run launchctl or signal a real process group.
+
+    ``src/ops/gateway_control.py`` restarts the operator's actual IB Gateway. On 2026-10-02 an
+    intraday-loop test that fed an Error 10197 probe through the loop — without mocking the
+    restarter — restarted the live Gateway twice mid-session. Tests that exercise the
+    restarter inject their own fakes (``run=``/``killpg=``); anything that reaches the real
+    OS boundary fails loudly instead.
+    """
+    import src.ops.gateway_control as gc
+
+    def _refuse(*args, **kwargs):
+        raise AssertionError(f"test tried to touch the real Gateway: {args!r}")
+
+    monkeypatch.setattr(gc, "_run_cmd", _refuse)
+    monkeypatch.setattr(gc, "_killpg", _refuse)

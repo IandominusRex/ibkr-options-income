@@ -502,6 +502,29 @@ class AutomationCfg(BaseModel):
     paper_skip_promotion_gate: bool = False
 
 
+class GatewayRecoveryCfg(BaseModel):
+    """Automatic IB Gateway restart on an Error 10197 competing-live-session block
+    (``src/ops/gateway_control.py``). A Gateway that hit 10197 does not regain the live-data
+    entitlement when the other session logs out — only a fresh login clears it (2026-10-02:
+    ~16h blocked until a manual restart). Only acts when the ``com.ibkr.gateway`` launchd
+    agent (IBC auto-login) is loaded; a hand-started Gateway can't log itself back in.
+    """
+
+    enabled: bool = True
+    # Minimum minutes between two restarts — a session still genuinely holding the data
+    # would otherwise get a restart every 15-min cycle.
+    cooldown_minutes: int = 30
+    # Per ET trading day. Once spent, the block message tells the operator to find the
+    # other session instead of restarting again.
+    max_restarts_per_day: int = 3
+    # How long to wait for the old Gateway process group to exit before SIGKILL. Relaunching
+    # while it is still alive trips start_gateway.sh's duplicate-instance guard, which exits
+    # without starting anything (verified 2026-10-02 with `launchctl kickstart -k`).
+    stop_timeout_seconds: int = 30
+    # How long to wait for the relaunched Gateway's API port to accept connections.
+    port_wait_seconds: int = 90
+
+
 class WatchdogCfg(BaseModel):
     """Out-of-process health watchdog (``src/ops/watchdog.py``, ``scripts/watchdog.py``),
     run every ``interval_seconds`` under launchd/cron — never inside the processes it
@@ -538,6 +561,7 @@ class Config(BaseModel):
     monitor: MonitorCfg
     automation: AutomationCfg
     watchdog: WatchdogCfg
+    gateway_recovery: GatewayRecoveryCfg = Field(default_factory=GatewayRecoveryCfg)
     data: DataCfg = Field(default_factory=DataCfg)
     research: ResearchCfg = Field(default_factory=ResearchCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
@@ -598,6 +622,7 @@ def get_config() -> Config:
         monitor=MonitorCfg(**settings.get("monitor", {})),
         automation=AutomationCfg(**settings.get("automation", {})),
         watchdog=WatchdogCfg(**settings.get("watchdog", {})),
+        gateway_recovery=GatewayRecoveryCfg(**settings.get("gateway_recovery", {})),
         data=DataCfg(**settings.get("data", {})),
         research=ResearchCfg(**_load_yaml("research.yaml")),
         risk=_load_yaml("risk_limits.yaml"),

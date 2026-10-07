@@ -1124,6 +1124,7 @@ async def _notify_scan_blocked(
     detail: str,
     *,
     retry_symbols: list[str] | None = None,
+    recovery_note: str | None = None,
 ) -> None:
     """Tell the operator a scan cycle was *blocked* (not merely skipped) and exactly why.
 
@@ -1136,6 +1137,10 @@ async def _notify_scan_blocked(
     ``ScanResult.unreached_symbols`` / ``must_include_symbols``), so the operator sees not just
     that a run was cut short but exactly which names will be retried and when. Omitted for the
     pre-scan health-probe block, which has no partial run to report on.
+
+    ``recovery_note`` (2026-10-02) replaces the default "forcing a reconnect" line with what
+    was actually done instead — the outcome of an automatic Gateway restart on an Error 10197
+    block (``_restart_gateway_for_competing_session``). Plain text; escaped here.
     """
     logger.error("Intraday loop: scan BLOCKED — %s | %s", reason, detail)
     retry_line = ""
@@ -1147,8 +1152,12 @@ async def _notify_scan_blocked(
     text = (
         f"\U0001f6d1 *Scan blocked* · {now_et_hhmm()}\n\n"
         f"*{_md_escape(reason)}*\n{detail}\n\n"
-        f"Forcing a reconnect; the next 15\\-min cycle should recover\\."
-        f"{retry_line}"
+        + (
+            _md_escape(recovery_note)
+            if recovery_note
+            else "Forcing a reconnect; the next 15\\-min cycle should recover\\."
+        )
+        + retry_line
     )
     cfg_s = get_config().secrets
     thread = thread_id(cfg_s.telegram_thread_scan)
@@ -1167,6 +1176,33 @@ async def _notify_scan_blocked(
             )
         except Exception:
             logger.exception("Intraday loop: failed to send scan-blocked notice")
+
+
+async def _restart_gateway_for_competing_session(bot_data: dict) -> tuple[str, bool]:
+    """Restart the IBC-managed Gateway after an Error 10197 block.
+
+    Returns ``(operator message, whether a restart was actually attempted)``.
+
+    A Gateway stuck on 10197 does not regain the live-data entitlement when the competing
+    session logs out — only a fresh login clears it, which a scan-socket reconnect never
+    triggers (2026-10-02: blocked ~16h). ``GatewayRestarter`` (``src/ops/gateway_control.py``)
+    is rate-limited by ``gateway_recovery`` and refuses unless the ``com.ibkr.gateway``
+    launchd agent is loaded; one instance lives in ``bot_data`` so its cooldown/daily-cap
+    state spans cycles. Runs in a thread — a restart blocks for up to ~2 min. Never raises.
+    """
+    from src.ops.gateway_control import GatewayRestarter
+
+    try:
+        restarter = bot_data.get("gateway_restarter")
+        if restarter is None:
+            cfg = get_config()
+            restarter = GatewayRestarter(cfg.gateway_recovery, port=cfg.ibkr_port)
+            bot_data["gateway_restarter"] = restarter
+        outcome = await asyncio.to_thread(restarter.restart)
+        return outcome.message, outcome.attempted
+    except Exception:
+        logger.exception("Intraday loop: automatic Gateway restart failed")
+        return "Automatic Gateway restart failed unexpectedly (see logs/system.log).", False
 
 
 async def _force_scan_reconnect(ib_scan: IB) -> None:
@@ -1415,6 +1451,14 @@ async def _intraday_scan_loop(
                     if probe.error_codes
                     else "No IBKR error code was reported\\."
                 )
+                # Error 10197 (another login holds the live-data entitlement) is the one block
+                # a socket reconnect can't clear — restart Gateway for a fresh login instead.
+                recovery_note: str | None = None
+                restarted = False
+                if 10197 in probe.error_codes:
+                    recovery_note, restarted = await _restart_gateway_for_competing_session(
+                        bot_data
+                    )
                 await _notify_scan_blocked(
                     bot,
                     chat_id,
@@ -1422,8 +1466,11 @@ async def _intraday_scan_loop(
                     f"Pre\\-scan health probe on {probe.probe_symbol} returned no quote within "
                     f"{probe.probe_timeout:.0f}s, though the socket still reports connected\\. "
                     f"{code_line}\n\n{_md_escape(probe.action_hint)}",
+                    recovery_note=recovery_note,
                 )
-                await _force_scan_reconnect(ib_scan)
+                if not restarted:
+                    # A Gateway restart already dropped every socket; AutoReconnect is on it.
+                    await _force_scan_reconnect(ib_scan)
                 await _note_intraday_skip(
                     bot_data, bot, chat_id, f"data-farm health probe failed ({probe.diagnosis})"
                 )
