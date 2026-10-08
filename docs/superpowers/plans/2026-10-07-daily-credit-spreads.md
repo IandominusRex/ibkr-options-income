@@ -37,7 +37,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 12 Telegram notifier | ✅ done | `7cae8b3` (code), then docs + this log | 2026-10-08 | pytest 2873 passed, 1 skipped; ruff and mypy clean |
 | 13 Service, entrypoint, supervisor | ✅ done | `12bfa0c` (code + docs), then the off-loop map fix + this log | 2026-10-08 | pytest 2887 passed, 1 skipped; ruff and mypy clean |
 | 14 Performance report | ✅ done | `882e515` (code + this log) | 2026-10-08 | pytest 2891 passed, 1 skipped; ruff and mypy clean |
-| 15 ThetaData client | ⬜ | | | |
+| 15 ThetaData client | ✅ done (Step 5 is the operator's) | `0fdeda3` (code + this log) | 2026-10-08 | pytest 2894 passed, 1 skipped; ruff and mypy clean |
 | 16 Minute replay and backtest script | ⬜ | | | |
 | 17 Fences, docs, full gate | ⬜ | | | |
 
@@ -219,6 +219,15 @@ tracker; the copy on `main` stays unticked until the branch merges.
   stopping point between them; `report.py`, `scripts/spreads_report.py`, the backtest package and
   `scripts/spreads_backtest.py` get their ARCHITECTURE / SETUP / STATUS rows in Task 17, which owns the full
   `src/spreads/` table. If the run stops before Task 17, those rows are still missing.
+
+**Rulings (Task 15):**
+- **No deviation in code.** The tests, `backtest/__init__.py` and `thetadata.py` are the plan's text verbatim
+  (`ruff format` re-wrapped lines). Step 2's failure was the expected `ModuleNotFoundError: No module named
+  'src.spreads.backtest'`; Step 4 passed first time (3/3). Pre-flight: `backtest.thetadata_url` and
+  `backtest.option_symbol` exist in `SpreadsCfg` and `spreads.example.yaml`.
+- **Step 5 left unticked on purpose.** It is the operator's one-off `curl` against a running Theta Terminal to
+  confirm `SPXW` vs `SPX` as the option symbol. The client was tested only against `httpx.MockTransport`, never
+  against a real Terminal, so the v3 parameter names and CSV column names rest on the plan's 2026-10-07 docs check.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -7158,7 +7167,7 @@ The endpoints were verified against the ThetaData v3 docs on 2026-10-07. The The
 | `GET /v3/option/history/open_interest` | `symbol`, `expiration`, `date` | `strike`, `right`, `open_interest` |
 | `GET /v3/index/history/price` | `symbol`, `date`, `interval` | `timestamp`, `price` |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_thetadata.py`:
 
@@ -7230,12 +7239,12 @@ def test_http_errors_are_raised_and_never_cached(tmp_path) -> None:
     assert calls["n"] == 2
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_thetadata.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.backtest'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/spreads/backtest/__init__.py`:
 
@@ -7314,7 +7323,7 @@ class ThetaDataClient:
         )
 ```
 
-- [ ] **Step 4: Run the tests and the gate, then commit**
+- [x] **Step 4: Run the tests and the gate, then commit**
 
 Run: `python -m pytest tests/test_spreads_thetadata.py -q && ruff check . && mypy src`
 Expected: PASS.
