@@ -39,7 +39,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 14 Performance report | ✅ done | `882e515` (code + this log) | 2026-10-08 | pytest 2891 passed, 1 skipped; ruff and mypy clean |
 | 15 ThetaData client | ✅ done (Step 5 is the operator's) | `0fdeda3` (code + this log) | 2026-10-08 | pytest 2894 passed, 1 skipped; ruff and mypy clean |
 | 16 Minute replay and backtest script | ✅ done | `3e8ab7f` (code + this log) | 2026-10-08 | pytest 2904 passed, 1 skipped; ruff and mypy clean |
-| 17 Fences, docs, full gate | ⬜ | | | |
+| 17 Fences, docs, full gate | ✅ done | `4424aee` (fence test + docs), then this log | 2026-10-08 | pytest 2910 passed, 1 skipped; ruff and mypy clean; web 487/487 |
 
 **Rulings (Task 1):**
 - **Docs moved forward from Task 17.** `CLAUDE.md` requires the docs to match the code at every
@@ -241,6 +241,34 @@ tracker; the copy on `main` stays unticked until the branch merges.
   script was type-checked, but no real Theta Terminal was reachable. The first real backtest is the operator's
   (after Task 15 Step 5).
 
+**Rulings (Task 17):**
+- **Fence tests passed on their first run**, because they guard code that already exists; there is no feature to
+  watch fail. To prove they can fail, breaches were injected (a forbidden `src.engine` and `src.ledger` import, a
+  `.reqMktData(` call and `MarketOrder` in `src/spreads/pricing.py`, and a `src.spreads` import in
+  `src/engine/risk_engine.py`): 4 of the 6 tests failed. Both files were then restored from a copy and
+  `git status` showed only the new test.
+- **Step 3.3: the `src/spreads/` section keeps its existing rows** instead of being replaced by the plan's
+  terser table. Tasks 4–13 wrote those rows against the real code and they are more precise than the plan's
+  summaries (reason codes, sign convention, line budget). The interim heading lost "IN PROGRESS", the intro now
+  carries the plan's text, the `report.py` / `backtest/*` rows were added, and the `notify.py` row's "Nothing
+  calls it yet" now says `service.py` is its only caller. Cost if wrong: swap the rows for the plan's table.
+- **Step 3.1:** the interim `spreads.yaml` row was replaced, not duplicated. **Step 3.2 skipped** (the `books.py`
+  row exists). **Step 3.4:** only `spreads_report.py` and `spreads_backtest.py` were added, directly after the
+  existing `run_spreads.py` row, which keeps the spreads scripts together. **Step 3.5:** a row in the process
+  table plus a line in the supervisor diagram (the diagram did not list the `spreads` service).
+- **Step 4 (SETUP):** §16 as written. The three new Troubleshooting rows were split into the table's three
+  columns (Symptom | Likely cause | Fix); the `book_underlyings` row already existed. SETUP.md has no scripts table
+  (CLAUDE.md's trigger table assumes one), so §16 is where the four spreads scripts are documented. Quoted alert
+  text, the halt-file path, the 16:10 ET summary and the `spread_positions` table name were checked against the code.
+- **Step 5 (STATUS):** the interim "In progress" section was **replaced in place** (the file is newest-first) by the
+  "Built" section, rather than a new section above the 2026-10-06 heading plus a deletion. The heading date is
+  2026-10-08, the day it was built. Extra items beyond the plan's text, all from earlier rulings: the not-retagged
+  ledger rows, the wheel-`reqExecutions` separation gap, the missing ledger mark for an open spread, and that the
+  service, the Telegram send path and the ThetaData client have never run against the real thing. "Not built" is a
+  table, so the plan's "bullet" became a row.
+- **Gate (Step 6):** `ruff`, `mypy`, `pytest` 2910 passed / 1 skipped, and `cd web && npm test` 62 files / 487
+  tests. The web run prints React "hydration error" warnings that were there before this branch; no test fails.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
@@ -280,6 +308,11 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - [ ] Add `TELEGRAM_THREAD_SPREADS=4308` to your private `.env`, next to the other `TELEGRAM_THREAD_*`
   lines. It is needed before Task 13's service sends its first message. The worktree-isolated session
   is refused writes to the main checkout, so this one is yours.
+- [ ] Task 11 Step 9: run `scripts.spreads_combo_check` during RTH on the paper Gateway and confirm TWS shows a
+  **credit**; at the same time see whether the wheel process receives the spreads fill (the `reqExecutions`
+  separation gap in the notes below). Do not set `mode: paper` before this.
+- [ ] Task 15 Step 5: with the Theta Terminal running, check `SPXW` vs `SPX` for `backtest.option_symbol`, and note
+  which worked in SETUP §16.
 - [ ] After the merge, `cp config/spreads.example.yaml config/spreads.yaml`. Until then, every
   process logs the usual "config/spreads.yaml not found; using the shipped defaults" warning.
 
@@ -8054,7 +8087,7 @@ git commit -m "feat(spreads): minute-replay backtest over ThetaData using the li
 **Interfaces:**
 - Consumes everything above. Produces no code interfaces; this task is guarantees and documentation.
 
-- [ ] **Step 1: Write the fence tests**
+- [x] **Step 1: Write the fence tests**
 
 `tests/test_spreads_fence.py`:
 
@@ -8131,7 +8164,7 @@ def test_spreads_store_has_its_own_declarative_base() -> None:
 Run: `python -m pytest tests/test_spreads_fence.py -q`
 Expected: PASS. If any assertion fails, the offending import is a real fence breach. Fix the code, not the test.
 
-- [ ] **Step 2: `CLAUDE.md`: add the spreads fence**
+- [x] **Step 2: `CLAUDE.md`: add the spreads fence**
 
 Anchor: the heading `## Reference documentation`. Insert directly above it:
 
@@ -8174,7 +8207,7 @@ In the doc-update trigger table (anchor: the row starting `| **New module under 
 | **New module under `src/spreads/`** or a new key in `config/spreads.example.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
 ```
 
-- [ ] **Step 3: `ARCHITECTURE.md`: folder guide, config, scripts, processes**
+- [x] **Step 3: `ARCHITECTURE.md`: folder guide, config, scripts, processes**
 
 1. In the `### config/` table, after the row starting `` | `settings.yaml → ledger:` ``, add:
 
@@ -8232,7 +8265,7 @@ CLAUDE.md "The spreads fence".
 
 6. Under `## Key invariants`, add a bullet: "The wheel and the spreads book never share an underlying, and the wheel never sees a spreads leg (`get_positions` default, the rules-engine reject `reserved_for_spreads_book`, ledger `book=\"spreads\"`)."
 
-- [ ] **Step 4: `SETUP.md`: operator section**
+- [x] **Step 4: `SETUP.md`: operator section**
 
 Anchor: the heading `## Troubleshooting`. Insert directly above it:
 
@@ -8296,7 +8329,7 @@ In the `## Troubleshooting` table, add these rows:
 | Config load fails with "spreads.book_underlyings [...] also appear in config/universe.yaml" | SPY, XSP or SPX is in the wheel universe (the committed example used to list SPY). Remove it: the two books may never share an underlying |
 ```
 
-- [ ] **Step 5: `STATUS.md`: what is built, what needs live verification**
+- [x] **Step 5: `STATUS.md`: what is built, what needs live verification**
 
 Anchor: the heading `## Built (2026-10-06 — trade ledger backend: CSV/Flex/live ingestion, read-only API, Google Sheets mirror)`. Insert directly above it:
 
@@ -8334,7 +8367,7 @@ Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md`. Ships `enable
 
 In `## Not built (deliberately deferred)`, add a bullet: "Live trading for the spreads system (`run()` refuses `LIVE_TRADING=true`), intraday flow-based GEX (needs a paid vendor feed), and web pages for the spreads book beyond the ledger filter."
 
-- [ ] **Step 6: Run the full gate**
+- [x] **Step 6: Run the full gate**
 
 Run:
 
@@ -8352,7 +8385,7 @@ Expected: all green. Then re-check the doc-update trigger table in `CLAUDE.md` a
 - new storage models: these are in `src/spreads/store.py`, not `src/storage/models.py`, so no `src/storage/` doc change
 - new schemas: covered by the `src/spreads/` section
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 ruff format tests/test_spreads_fence.py
