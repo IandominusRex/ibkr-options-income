@@ -12,6 +12,7 @@ no mocked subprocess plumbing).
 from __future__ import annotations
 
 import plistlib
+import subprocess
 from pathlib import Path
 
 from scripts.launchd import render_plists
@@ -280,12 +281,23 @@ def _fake_launchctl(monkeypatch):
         rc = 1 if argv[:2] == ["launchctl", "print"] else 0
         return subprocess.CompletedProcess(argv, rc, stdout="", stderr="")
 
+    def fake_stop_gateway():
+        calls.append(["<stop gateway group>"])
+        return True, "stopped (pid=4242)"
+
+    def fake_wait_port():
+        calls.append(["<wait gateway port>"])
+        return True, "API port 4002 accepting connections"
+
     monkeypatch.setattr(launchd.subprocess, "run", fake_run)
     monkeypatch.setattr(
         launchd,
         "_installed_labels",
         lambda: [launchd.LABEL_SUPERVISOR, launchd.LABEL_WATCHDOG, launchd.LABEL_GATEWAY],
     )
+    # The real ones reach src/ops/gateway_control.py (signals, launchctl, a port probe).
+    monkeypatch.setattr(launchd, "_stop_loaded_gateway", fake_stop_gateway)
+    monkeypatch.setattr(launchd, "_wait_for_gateway_port", fake_wait_port)
     return launchd, calls, argparse.Namespace()
 
 
@@ -367,4 +379,80 @@ def test_start_reports_a_failed_gateway_restart(monkeypatch):
     launchd, calls, ns = _fake_launchctl(monkeypatch)
     monkeypatch.setattr(launchd, "_is_loaded", lambda label: label == launchd.LABEL_GATEWAY)
     monkeypatch.setattr(launchd, "_restart_loaded_gateway", lambda: (False, "port never opened"))
+    assert launchd.cmd_start(ns) == 1
+
+
+# --- 2026-10-09: `./ibkr restart` left Gateway down until it was run a second time ----------
+#
+# `stop` booted the gateway label out, and bootout returns once the job's own pid exits — the
+# Gateway JVM (a grandchild in the job's process group) was still shutting down. `start` then
+# bootstrapped the plist, start_gateway.sh's duplicate-instance guard saw the dying JVM and
+# exited 0, and `start` printed "ok (reloaded)" for a Gateway that never came up. The second
+# restart worked only because by then nothing was left running.
+
+
+def test_stop_stops_the_gateway_group_before_bootout(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    loaded = {launchd.LABEL_SUPERVISOR: False, launchd.LABEL_GATEWAY: True}
+
+    def fake_bootout(label):
+        calls.append(["launchctl", "bootout", label])
+        loaded[label] = False
+
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: loaded[label])
+    monkeypatch.setattr(launchd, "_bootout", fake_bootout)
+    assert launchd.cmd_stop(ns) == 0
+    gw = calls.index(["<stop gateway group>"])
+    assert calls[gw + 1] == ["launchctl", "bootout", launchd.LABEL_GATEWAY]
+
+
+def test_stop_skips_the_group_stop_when_the_gateway_is_not_loaded(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    assert launchd.cmd_stop(ns) == 0
+    assert ["<stop gateway group>"] not in calls
+
+
+def test_stop_fails_when_the_gateway_group_will_not_die(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    loaded = {launchd.LABEL_SUPERVISOR: False, launchd.LABEL_GATEWAY: True}
+
+    def fake_bootout(label):
+        loaded[label] = False
+
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: loaded[label])
+    monkeypatch.setattr(launchd, "_bootout", fake_bootout)
+    monkeypatch.setattr(
+        launchd, "_stop_loaded_gateway", lambda: (False, "process group still alive")
+    )
+    # Non-zero, so `./ibkr restart` (set -e) never bootstraps over a Gateway that is still up.
+    assert launchd.cmd_stop(ns) == 1
+
+
+def _kickstart_fails_unloaded(monkeypatch, launchd, calls):
+    """kickstart of an unloaded label fails, forcing `start` down the bootstrap path."""
+
+    def fake_run(argv, *a, **k):
+        calls.append(list(argv))
+        rc = 113 if argv[1] == "kickstart" else 0
+        return subprocess.CompletedProcess(argv, rc, stdout="", stderr="")
+
+    monkeypatch.setattr(launchd, "_is_loaded", lambda label: False)
+    monkeypatch.setattr(launchd.subprocess, "run", fake_run)
+
+
+def test_start_waits_for_the_gateway_port_after_a_bootstrap(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    _kickstart_fails_unloaded(monkeypatch, launchd, calls)
+    assert launchd.cmd_start(ns) == 0
+    gw_bootstrap = [c for c in calls if c[:2] == ["launchctl", "bootstrap"]][-1]
+    assert gw_bootstrap[-1].endswith(f"{launchd.LABEL_GATEWAY}.plist")
+    assert calls[-1] == ["<wait gateway port>"]
+
+
+def test_start_fails_when_a_bootstrapped_gateway_never_opens_its_port(monkeypatch):
+    launchd, calls, ns = _fake_launchctl(monkeypatch)
+    _kickstart_fails_unloaded(monkeypatch, launchd, calls)
+    monkeypatch.setattr(
+        launchd, "_wait_for_gateway_port", lambda: (False, "port 4002 not accepting")
+    )
     assert launchd.cmd_start(ns) == 1

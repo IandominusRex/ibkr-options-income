@@ -176,3 +176,45 @@ def test_port_never_opens_reports_not_ok():
     out = w.restarter(port_wait_seconds=20).restart()
     assert out.attempted and not out.ok
     assert "4002" in out.message
+
+
+# --- stop() — what `./ibkr stop` runs before bootout (2026-10-09) ----------------------------
+
+
+def test_stop_waits_for_the_group_and_never_starts():
+    w = FakeWorld()
+    ok, _ = w.restarter().stop()
+    assert ok
+    assert w.signals == [(4242, signal.SIGTERM)]
+    assert not w.group_alive
+    assert _kickstarts(w) == []
+
+
+def test_stop_of_a_job_that_is_not_running_sends_nothing():
+    w = FakeWorld(running=False)
+    ok, detail = w.restarter().stop()
+    assert ok and detail == "not running"
+    assert w.signals == []
+
+
+def test_stop_reports_a_group_that_survives_sigkill():
+    w = FakeWorld(dies_on=-1)
+
+    def killpg(pgid: int, sig: int) -> None:  # immune to SIGKILL too
+        if sig:
+            w.signals.append((pgid, sig))
+
+    r = GatewayRestarter(
+        GatewayRecoveryCfg(stop_timeout_seconds=5),
+        port=4002,
+        run=w.run,
+        killpg=killpg,
+        getpgid=w.getpgid,
+        sleep=w.sleep,
+        monotonic=w.monotonic,
+        port_open=w.port_open,
+        uid=501,
+    )
+    ok, detail = r.stop()
+    assert not ok and "4242" in detail
+    assert w.signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]

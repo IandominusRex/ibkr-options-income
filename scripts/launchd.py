@@ -50,6 +50,10 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.ops.gateway_control import GatewayRestarter
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -235,6 +239,14 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+def _gateway_restarter() -> GatewayRestarter:
+    from src.common.config import get_config
+    from src.ops.gateway_control import GatewayRestarter
+
+    cfg = get_config()
+    return GatewayRestarter(cfg.gateway_recovery, port=cfg.ibkr_port)
+
+
 def _restart_loaded_gateway() -> tuple[bool, str]:
     """Stop-wait-start the loaded ``com.ibkr.gateway`` job (``src/ops/gateway_control.py``).
 
@@ -242,11 +254,24 @@ def _restart_loaded_gateway() -> tuple[bool, str]:
     exiting, ``start_gateway.sh``'s duplicate-instance guard exits 0, and Gateway is left
     down (reproduced 2026-10-02). Unthrottled — this is the operator asking.
     """
-    from src.common.config import get_config
-    from src.ops.gateway_control import GatewayRestarter
+    return _gateway_restarter().stop_and_start()
 
-    cfg = get_config()
-    return GatewayRestarter(cfg.gateway_recovery, port=cfg.ibkr_port).stop_and_start()
+
+def _stop_loaded_gateway() -> tuple[bool, str]:
+    """Stop the gateway job's whole process group and wait for it before ``bootout``.
+
+    ``bootout`` alone returns once the job's own pid has exited, with the Gateway JVM (a
+    grandchild in the job's group) still shutting down — so ``./ibkr restart``'s bootstrap
+    ran ``start_gateway.sh`` into its duplicate-instance guard, which exits 0 and leaves
+    Gateway down until a second restart (2026-10-09).
+    """
+    return _gateway_restarter().stop()
+
+
+def _wait_for_gateway_port() -> tuple[bool, str]:
+    """After a bootstrap, confirm Gateway actually came up rather than reporting ``ok`` for
+    a job that hit the duplicate guard and exited."""
+    return _gateway_restarter().wait_for_port()
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -276,7 +301,14 @@ def cmd_start(args: argparse.Namespace) -> int:
         # out of launchd entirely, so fall back to re-bootstrapping the on-disk plist
         # `install` wrote; RunAtLoad then starts it immediately.
         r2 = _bootstrap(label)
-        if r2.returncode == 0:
+        if r2.returncode == 0 and label == LABEL_GATEWAY:
+            gw_ok, detail = _wait_for_gateway_port()
+            print(
+                f"start {label}: {'ok (reloaded)' if gw_ok else 'FAILED'} — {detail}",
+                file=sys.stdout if gw_ok else sys.stderr,
+            )
+            ok = ok and gw_ok
+        elif r2.returncode == 0:
             print(f"start {label}: ok (reloaded)")
         else:
             ok = False
@@ -291,6 +323,10 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return 0
     ok = True
     for label in labels:
+        group_err = None
+        if label == LABEL_GATEWAY and _is_loaded(label):
+            gw_ok, detail = _stop_loaded_gateway()
+            group_err = None if gw_ok else detail
         _bootout(label)
         deadline = time.monotonic() + BOOTOUT_WAIT_SECONDS
         while _is_loaded(label) and time.monotonic() < deadline:
@@ -298,6 +334,9 @@ def cmd_stop(args: argparse.Namespace) -> int:
         if _is_loaded(label):
             ok = False
             print(f"stop {label}: still loaded after {BOOTOUT_WAIT_SECONDS:.0f}s", file=sys.stderr)
+        elif group_err is not None:
+            ok = False
+            print(f"stop {label}: unloaded, but {group_err}", file=sys.stderr)
         else:
             print(f"stop {label}: ok")
     return 0 if ok else 1

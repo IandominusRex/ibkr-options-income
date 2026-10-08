@@ -191,17 +191,35 @@ class GatewayRestarter:
         Assumes the job is loaded — a ``kickstart`` of an unloaded label fails, reported as
         ``ok=False``.
         """
-        pid = self._job_pid()
-        if pid is not None:
-            log.warning("gateway restart: stopping %s (pid=%d)", GATEWAY_LABEL, pid)
-            self._stop_group(pid)
+        self.stop()
 
         r = self._run(["launchctl", "kickstart", self._target], capture_output=True, text=True)
         if r.returncode != 0:
             return False, (
                 f"launchctl kickstart exited {r.returncode} ({(r.stderr or '').strip()})"
             )
+        return self.wait_for_port()
 
+    def stop(self) -> tuple[bool, str]:
+        """Stop the job's process group and wait until it and the job are both gone.
+
+        Also what ``./ibkr stop`` uses before ``launchctl bootout`` (``scripts/launchd.py``):
+        bootout alone returns as soon as the job's own pid exits, while the Gateway JVM — a
+        grandchild in the job's group — is still shutting down, so ``./ibkr restart``'s
+        bootstrap hit ``start_gateway.sh``'s duplicate guard and left Gateway down
+        (2026-10-09). A label that isn't loaded, or a job that isn't running, is already
+        stopped.
+        """
+        pid = self._job_pid()
+        if pid is None:
+            return True, "not running"
+        log.warning("gateway restart: stopping %s (pid=%d)", GATEWAY_LABEL, pid)
+        if self._stop_group(pid):
+            return True, f"stopped (pid={pid})"
+        return False, f"process group of pid {pid} still alive after SIGKILL"
+
+    def wait_for_port(self) -> tuple[bool, str]:
+        """Wait up to ``port_wait_seconds`` for the relaunched Gateway's API port."""
         deadline = self._monotonic() + self._cfg.port_wait_seconds
         while self._monotonic() < deadline:
             if self._port_open(self._port):
@@ -244,20 +262,21 @@ class GatewayRestarter:
             self._sleep(_POLL_SECONDS)
         return not self._group_alive(pgid) and self._job_pid() is None
 
-    def _stop_group(self, pid: int) -> None:
+    def _stop_group(self, pid: int) -> bool:
+        """SIGTERM, then SIGKILL, the job's process group. True once the group and job are gone."""
         try:
             pgid = self._getpgid(pid)
         except ProcessLookupError:
-            return
+            return True
         try:
             self._killpg(pgid, signal.SIGTERM)
         except ProcessLookupError:
-            return
+            return True
         if self._wait_stopped(pgid, self._cfg.stop_timeout_seconds):
-            return
+            return True
         log.warning("gateway restart: group %d ignored SIGTERM — sending SIGKILL", pgid)
         try:
             self._killpg(pgid, signal.SIGKILL)
         except ProcessLookupError:
-            return
-        self._wait_stopped(pgid, 10)
+            return True
+        return self._wait_stopped(pgid, 10)

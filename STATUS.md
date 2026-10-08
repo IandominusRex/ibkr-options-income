@@ -472,6 +472,13 @@ were wrong in two ways.
 - **Found while building it:** `launchctl kickstart -k` leaves Gateway **down** — it relaunches
   while the old JVM is still exiting and `start_gateway.sh`'s duplicate-instance guard exits 0
   (reproduced live 23:40). Hence stop-wait-start.
+  **Fixed 2026-10-09:** `./ibkr stop` (and so `./ibkr restart`) had the same race by another
+  route — `launchctl bootout` returns once the job's own pid exits, with the JVM still shutting
+  down, so `restart`'s `bootstrap` hit the duplicate guard and Gateway stayed down until a second
+  restart. `stop` now runs `GatewayRestarter.stop()` (the same group stop + wait) before
+  `bootout`, and `start`'s bootstrap path waits for the API port and reports `FAILED` instead of
+  `ok (reloaded)`. Tests: `tests/test_launchd.py` (group stop precedes bootout; unkillable group
+  fails `stop`; port wait after bootstrap), `tests/test_gateway_control.py` (`stop()`).
   `./ibkr start` had the same bug (it `kickstart -k`s every agent); a loaded gateway now goes
   through the same unthrottled `GatewayRestarter.stop_and_start()` instead — verified live
   23:52 (old JVM stopped, relaunched and logged in within ~11s).
