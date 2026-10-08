@@ -164,3 +164,19 @@ def test_refresh_reprices_on_fresh_quotes_and_keeps_the_id() -> None:
     assert fresh.spread_id == c.spread_id
     assert fresh.credit_mid == pytest.approx(0.52) and fresh.quote_time == later
     assert refresh_candidate(c, q(679, "P", 0.70, 0.74), q(674, "P", 0.18, None), later) is None
+
+
+# Review minor — a candidate's quote time is when the chain was quoted, not when it was judged,
+# so the gate's stale_quote check can actually fail.
+def test_a_candidate_carries_the_chains_quote_time() -> None:
+    from datetime import timedelta
+
+    later = NOW + timedelta(seconds=45)
+    (put,) = select_candidates(
+        chain(q(679, "P", 0.80, 0.86, -0.12), q(674, "P", 0.20, 0.24, -0.04)),
+        levels(),
+        CFG,
+        later,
+        sides=["put"],
+    )
+    assert put.quote_time == NOW

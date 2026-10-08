@@ -12,6 +12,13 @@ after a Gateway drop). Exits run whenever spreads are open, even with entries bl
 file, a reconcile mismatch, or a disconnect only ever stops NEW risk. Each phase is guarded so
 one failing phase (a dropped socket mid-requote) never takes the others down.
 
+In paper mode the broker is the truth for what can be closed: every tick re-reconciles
+spreads.db with IBKR's positions (a local cache, so it is free) and keeps entries blocked
+while they disagree or an opening order is still working; every close is capped at the
+contracts the broker still holds, and none is sent while an earlier close order for the same
+spread is still live. While the Gateway is down, ``while_disconnected`` keeps alerting about
+open spreads — the "still open after the time stop" alert can't wait for a reconnect.
+
 This is the only ``src/spreads`` module that may import ``src.ledger`` / ``src.storage``: in
 paper mode it attaches the ledger's live commission-report hook so spreads fills land in the
 trade ledger (``src/ledger`` dedupes by execId and tags them ``book="spreads"``).
@@ -41,11 +48,11 @@ from src.common.schemas import (
     SpreadVerdict,
 )
 from src.spreads import store
-from src.spreads.executor import FillResult
+from src.spreads.executor import UNRESOLVED, FillResult, close_ref
 from src.spreads.gex import build_levels, expected_move, regime_at
 from src.spreads.manager import debit_to_close, evaluate_exit, intrinsic_debit, reconcile
 from src.spreads.notify import SpreadsNotifier, fmt_entry, fmt_eod, fmt_exit, fmt_map
-from src.spreads.pricing import ET
+from src.spreads.pricing import ET, day_schedule
 from src.spreads.risk import validate
 from src.spreads.selector import select_candidates
 from src.spreads.tape import SessionTape, trigger
@@ -72,6 +79,7 @@ class Broker(Protocol):
     async def session_quote(self) -> SessionSnapshot | None: ...
     async def excess_liquidity(self) -> float | None: ...
     def broker_legs(self) -> dict[int, float]: ...
+    def working_refs(self) -> set[str]: ...
 
 
 class Executor(Protocol):
@@ -126,6 +134,7 @@ class SpreadsService:
         self.entries_blocked: str | None = None
         self.eod_sent_for: date | None = None
         self._alerted: set[tuple[date, str]] = set()
+        self._mismatch_ticks = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -148,6 +157,92 @@ class SpreadsService:
 
     def on_disconnect(self) -> None:
         self.entries_blocked = "disconnected"
+
+    async def while_disconnected(self) -> None:
+        """Called by ``run()`` on every pass the Gateway is down: exits can't run, so say so."""
+        self.on_disconnect()
+        mode = self.cfg.mode
+        held = store.open_positions(mode) + store.expiring_positions(mode)
+        if not held:
+            return
+        et = self.now().astimezone(ET)
+        await self.alert_once(
+            "disconnected_open",
+            f"[SPREADS] IB Gateway is disconnected with {len(held)} {mode} spread(s) open — "
+            "exits are paused until it reconnects",
+        )
+        force_close = day_schedule(self.cfg.schedule, et.date()).force_close
+        if (
+            is_trading_day(et.date())
+            and et.strftime("%H:%M") >= force_close
+            and not self.cfg.exits.let_expire
+        ):
+            await self.alert_once(
+                "disconnected_after_time_stop",
+                f"[SPREADS] URGENT: {len(held)} {self.cfg.underlying} spread(s) still open past "
+                f"the {force_close} ET time stop and the Gateway is down — close them by hand "
+                "in TWS before the bell or risk assignment",
+            )
+
+    async def _check_broker(self) -> None:
+        """Paper only: re-reconcile every tick and hold entries while broker and DB disagree."""
+        if self.cfg.mode != "paper" or self.entries_blocked == "disconnected":
+            return
+        mode = self.cfg.mode
+        problems = reconcile(
+            store.open_positions(mode) + store.expiring_positions(mode), self.broker.broker_legs()
+        )
+        opening = sorted(r for r in self.broker.working_refs() if not r.endswith(":X"))
+        if opening:
+            problems.append("opening order(s) still working: " + ", ".join(opening))
+        if problems:
+            self.entries_blocked = "reconcile: " + "; ".join(problems)
+            self._mismatch_ticks += 1
+            if self._mismatch_ticks == 2:  # one tick of fill-to-position lag is normal
+                await self.alert_once(
+                    "reconcile",
+                    "[SPREADS] entries blocked — broker and spreads.db disagree:\n"
+                    + "\n".join(problems),
+                )
+            return
+        self._mismatch_ticks = 0
+        if self.entries_blocked is not None:
+            log.info("spreads: broker and spreads.db agree again — entries unblocked")
+            self.entries_blocked = None
+
+    def _broker_holdings(self, positions: list[SpreadPosition]) -> dict[str, int]:
+        """Contracts of each spread the broker still holds both legs of, allocated in DB order
+        so two spreads sharing a leg can't both claim it."""
+        remaining = dict(self.broker.broker_legs())
+        held: dict[str, int] = {}
+        for p in positions:
+            if p.short_con_id is None or p.long_con_id is None:
+                held[p.spread_id] = 0
+                continue
+            short_held = max(0.0, -remaining.get(p.short_con_id, 0.0))
+            long_held = max(0.0, remaining.get(p.long_con_id, 0.0))
+            n = int(min(p.contracts, short_held, long_held))
+            remaining[p.short_con_id] = remaining.get(p.short_con_id, 0.0) + n
+            remaining[p.long_con_id] = remaining.get(p.long_con_id, 0.0) - n
+            held[p.spread_id] = n
+        return held
+
+    async def _after_order(self, spread_id: str, kind: str, result: FillResult) -> None:
+        """Block entries on an order that may still be live; flag a fill whose price surprised."""
+        reason = result.reason or ""
+        if reason in UNRESOLVED:
+            self.entries_blocked = f"{kind} order {result.order_ref}: {reason}"
+            await self.alert_once(
+                f"unresolved:{result.order_ref}",
+                f"[SPREADS] the {kind} order for {spread_id} may still be live at IBKR ({reason}) "
+                "— entries blocked until the broker shows it gone",
+            )
+        elif reason.startswith("check_fill") and result.filled_qty > 0:
+            await self.alert_once(
+                f"check_fill:{result.order_ref}",
+                f"[SPREADS] {spread_id} {kind} filled at {result.price} but {reason} — check the "
+                "fill in TWS (the combo price sign is not yet verified, plan Task 11 Step 9)",
+            )
 
     async def alert_once(self, key: str, text: str) -> None:
         mark = (self.now().astimezone(ET).date(), key)
@@ -174,7 +269,8 @@ class SpreadsService:
         if not is_trading_day(today):
             return
         hhmm = et.strftime("%H:%M")
-        s = self.cfg.schedule
+        s = day_schedule(self.cfg.schedule, today)
+        await self._guard("broker", self._check_broker())
         if self._map_due(now, hhmm):
             await self._guard("map", self._build_map(now))
         if s.map_time <= hhmm < s.force_close:
@@ -186,7 +282,7 @@ class SpreadsService:
             await self._guard("eod", self._eod(now))
 
     def _map_due(self, now: datetime, hhmm: str) -> bool:
-        s = self.cfg.schedule
+        s = day_schedule(self.cfg.schedule, now.astimezone(ET).date())
         if not (s.map_time <= hhmm < s.force_close):
             return False
         if self.map_failed_at is not None and now - self.map_failed_at < _MAP_RETRY:
@@ -232,11 +328,18 @@ class SpreadsService:
                 "[SPREADS] could not build the GEX map (no chain or no index price) — no entries until it builds",
             )
             return
+        try:
+            # The gamma-flip search is scipy-heavy: keep it off the loop so the heartbeat runs.
+            levels = await asyncio.to_thread(build_levels, gex_chain, traded, self.cfg, now)
+        except Exception:
+            # Never trade on the previous map for another hour: no map, no entries, retry soon.
+            self.levels = None
+            self.map_failed_at = now
+            raise
         self.map_failed_at = None
         self.map_at = now
         self.gex_chain = gex_chain
-        # The gamma-flip search is scipy-heavy: keep it off the loop so the ib_async heartbeat runs.
-        self.levels = await asyncio.to_thread(build_levels, gex_chain, traded, self.cfg, now)
+        self.levels = levels
         store.record_map(self.levels)
         tape = self._tape_for(now)
         if tape.day_em is None:
@@ -332,14 +435,23 @@ class SpreadsService:
             }
         )
         excess = await self.broker.excess_liquidity()
+        gex_chain = self.gex_chain
         for cand in select_candidates(chain, levels, self.cfg, now, sides=allowed.sides):
-            verdict = validate(cand, self._context(now, levels, excess), self.cfg)
+            # Validated on the clock it runs at, so the quote's age (chain.as_of) is real.
+            verdict = validate(cand, self._context(self.now(), levels, excess), self.cfg)
             store.record_candidate(cand, verdict, levels.regime, now)
             if not verdict.approved:
                 continue
 
             def recheck(fresh: SpreadCandidate) -> SpreadVerdict:
-                return validate(fresh, self._context(self.now(), levels, excess), self.cfg)
+                at = self.now()
+                moved = levels.model_copy(
+                    update={
+                        "spot": fresh.spot,
+                        "regime": regime_at(gex_chain, fresh.spot, levels.scale, at),
+                    }
+                )
+                return validate(fresh, self._context(at, moved, excess), self.cfg)
 
             result = await self.executor.open(cand, verdict.contracts, recheck)
             store.record_order(
@@ -354,8 +466,11 @@ class SpreadsService:
                 reason=result.reason,
                 now=now,
             )
+            await self._after_order(cand.spread_id, "open", result)
             if result.filled_qty < 1 or result.price is None:
                 log.info("spreads entry %s not filled: %s", cand.spread_id, result.reason)
+                if self.entries_blocked:
+                    return
                 continue
             tags = self._entry_context(cand.side, levels, now)
             pos = store.open_position(
@@ -369,6 +484,8 @@ class SpreadsService:
                 context=tags,
             )
             await self.notifier.send(fmt_entry(pos, self.cfg.mode, tags))
+            if self.entries_blocked:
+                return
 
     async def _manage(self, now: datetime) -> None:
         mode = self.cfg.mode
@@ -378,8 +495,21 @@ class SpreadsService:
         spot = await self.broker.spot()
         if spot is not None:
             self.last_spot = spot
+        today = now.astimezone(ET).date()
+        for p in positions:
+            if p.expiry < today:  # nothing left to close: the broker has settled it already
+                await self.alert_once(
+                    f"expired_open:{p.spread_id}",
+                    f"[SPREADS] {p.spread_id} expired on {p.expiry} but spreads.db still holds it "
+                    "open — check the broker for an assignment, then settle it with "
+                    "python -m scripts.spreads_resolve",
+                )
+        positions = [p for p in positions if p.expiry >= today]
         if not positions:
             return
+        paper = mode == "paper"
+        held = self._broker_holdings(store.expiring_positions(mode) + positions) if paper else {}
+        working = self.broker.working_refs() if paper else set()
         legs: list[ChainOption] = []
         for p in positions:
             r = _right(p.side)
@@ -405,7 +535,25 @@ class SpreadsService:
                 await self.notifier.send(fmt_exit(p.spread_id, "left to expire", None, None, mode))
                 continue
             urgent = decision.reason not in ("profit_take", "max_hold")
-            result = await self.executor.close(p, short_q, long_q, urgent=urgent)
+            target = p
+            if paper:
+                if close_ref(self.cfg, p.spread_id) in working:
+                    log.info(
+                        "spreads: a close of %s is still working — not sending another", p.spread_id
+                    )
+                    continue
+                qty = held.get(p.spread_id, 0)
+                if qty < p.contracts:
+                    await self.alert_once(
+                        f"not_held:{p.spread_id}",
+                        f"[SPREADS] the broker holds {qty} of {p.contracts} contract(s) of "
+                        f"{p.spread_id} — closing only what it holds; settle the rest with "
+                        "python -m scripts.spreads_resolve",
+                    )
+                    if qty < 1:
+                        continue
+                    target = p.model_copy(update={"contracts": qty})
+            result = await self.executor.close(target, short_q, long_q, urgent=urgent)
             store.record_order(
                 spread_id=p.spread_id,
                 kind="close",
@@ -418,6 +566,7 @@ class SpreadsService:
                 reason=result.reason,
                 now=now,
             )
+            await self._after_order(p.spread_id, "close", result)
             if result.filled_qty < 1 or result.price is None:
                 await self.alert_once(
                     f"close:{p.spread_id}:{decision.reason}",
@@ -435,16 +584,14 @@ class SpreadsService:
             await self.notifier.send(
                 fmt_exit(p.spread_id, decision.reason, result.price, realized, mode)
             )
-        if (
-            now.astimezone(ET).strftime("%H:%M") >= self.cfg.schedule.force_close
-            and not self.cfg.exits.let_expire
-        ):
+        force_close = day_schedule(self.cfg.schedule, now.astimezone(ET).date()).force_close
+        if now.astimezone(ET).strftime("%H:%M") >= force_close and not self.cfg.exits.let_expire:
             still = store.open_positions(mode)
             if still:  # a time-stop close did not fill: SPY settles in shares
                 await self.alert_once(
                     "open_after_time_stop",
                     f"[SPREADS] {len(still)} {self.cfg.underlying} spread(s) still open after "
-                    f"{self.cfg.schedule.force_close} ET — close by hand before 16:00 or risk assignment",
+                    f"{force_close} ET — close by hand before the bell or risk assignment",
                 )
 
     async def _eod(self, now: datetime) -> None:
@@ -486,7 +633,10 @@ async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
         pass
 
 
-async def _warn_if_ledger_tracks_another_account(account: str, notifier: Notifier) -> None:
+async def _note_ledger_account(account: str) -> None:
+    """Say where paper fills go. The trade ledger is single-account and normally tracks the REAL
+    account while trading runs on paper, so it ignores paper fills by design — that is not a
+    problem to fix. Paper spreads results live in spreads.db (``scripts.spreads_report``)."""
     try:
         from src.ledger.state import ledger_account
         from src.storage.db import session_scope
@@ -497,10 +647,11 @@ async def _warn_if_ledger_tracks_another_account(account: str, notifier: Notifie
         log.exception("spreads: could not read the ledger's tracked account")
         return
     if tracked != account:
-        await notifier.send(
-            f"[SPREADS] the trade ledger tracks {tracked or 'no account yet'}, not {account}: paper "
-            f"spread fills will not appear in /ledger until config/settings.yaml → ledger.account "
-            f"is {account}"
+        log.info(
+            "spreads: the trade ledger tracks %s, not %s, so paper spread fills stay out of "
+            "/ledger (by design); read them with python -m scripts.spreads_report --mode paper",
+            tracked or "no account yet",
+            account,
         )
 
 
@@ -553,25 +704,29 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
         return True
 
     interval = sc.schedule.manage_interval_seconds
-    while not await connect():
-        if stop.is_set():
-            return
-        await _sleep_or_stop(stop, interval)
-
-    account = cfg.secrets.ibkr_account or ib.managedAccounts()[0]
-    broker = IbkrSpreadsBroker(ib, sc, account)
+    # Built before the first connect so a Gateway that is down at startup still raises the
+    # open-spreads alerts; the account is filled in once IBKR names it.
+    broker = IbkrSpreadsBroker(ib, sc, cfg.secrets.ibkr_account or "")
     notifier = SpreadsNotifier.from_config(cfg)
     service = SpreadsService(
         broker, SpreadExecutor(ib, broker, sc), notifier, sc, halt_path=cfg.spreads_halt_path()
     )
+    while not await connect():
+        if stop.is_set():
+            return
+        await service.while_disconnected()
+        await _sleep_or_stop(stop, interval)
+
+    account = cfg.secrets.ibkr_account or ib.managedAccounts()[0]
+    broker.account = account
     if sc.mode == "paper":
         attach_live_hook(ib)
-        await _warn_if_ledger_tracks_another_account(account, notifier)
+        await _note_ledger_account(account)
     await service.start()
 
     while not stop.is_set():
         if not ib.isConnected():
-            service.on_disconnect()
+            await service.while_disconnected()
             if await connect():
                 await service.start()
             else:

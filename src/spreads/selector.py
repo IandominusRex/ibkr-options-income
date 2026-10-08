@@ -51,7 +51,7 @@ def _build(
     long_q: ChainOption,
     width: float,
     spot: float,
-    now: datetime,
+    quote_time: datetime,
 ) -> SpreadCandidate | None:
     short_mid, long_mid = short_q.mid, long_q.mid
     if short_mid is None or long_mid is None or short_q.bid is None or long_q.ask is None:
@@ -71,7 +71,7 @@ def _build(
         short_leg_spread_pct=short_q.spread_pct,
         long_leg_spread_pct=long_q.spread_pct,
         spot=spot,
-        quote_time=now,
+        quote_time=quote_time,
     )
 
 
@@ -113,7 +113,7 @@ def select_candidates(
                 long_q,
                 s.width,
                 chain.spot,
-                now,
+                chain.as_of,  # when the quotes were taken: the gate's stale_quote input
             )
             if cand is None or cand.credit_mid <= 0:
                 continue
@@ -125,7 +125,12 @@ def select_candidates(
 
 
 def refresh_candidate(
-    c: SpreadCandidate, short_q: ChainOption, long_q: ChainOption, now: datetime
+    c: SpreadCandidate,
+    short_q: ChainOption,
+    long_q: ChainOption,
+    now: datetime,
+    spot: float | None = None,
 ) -> SpreadCandidate | None:
-    """The same spread repriced on fresh leg quotes (the send-time re-gate's input)."""
-    return _build(c.spread_id, c.side, short_q, long_q, c.width, c.spot, now)
+    """The same spread repriced on fresh leg quotes and, when known, a fresh spot (the
+    send-time re-gate's input)."""
+    return _build(c.spread_id, c.side, short_q, long_q, c.width, spot or c.spot, now)

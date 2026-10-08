@@ -13,7 +13,7 @@ import math
 from src.common.config import SpreadsCfg
 from src.common.market_hours import is_early_close, is_trading_day, next_session
 from src.common.schemas import SpreadCandidate, SpreadRiskContext, SpreadVerdict
-from src.spreads.pricing import ET
+from src.spreads.pricing import ET, day_schedule
 
 
 def size(c: SpreadCandidate, cfg: SpreadsCfg, capital_usd: float) -> int:
@@ -26,10 +26,11 @@ def size(c: SpreadCandidate, cfg: SpreadsCfg, capital_usd: float) -> int:
 
 
 def validate(c: SpreadCandidate, ctx: SpreadRiskContext, cfg: SpreadsCfg) -> SpreadVerdict:
-    r, s, sched = cfg.risk, cfg.selection, cfg.schedule
+    r, s = cfg.risk, cfg.selection
     reasons: list[str] = []
     now_et = ctx.now.astimezone(ET)
     today = now_et.date()
+    sched = day_schedule(cfg.schedule, today)
     hhmm = now_et.strftime("%H:%M")
 
     # --- Calendar and clock.

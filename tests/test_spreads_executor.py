@@ -72,11 +72,15 @@ def q(strike, bid, ask, con) -> ChainOption:
 
 
 class FakeBroker:
-    def __init__(self, quotes: list[ChainOption]) -> None:
+    def __init__(self, quotes: list[ChainOption], spot: float | None = None) -> None:
         self.quotes = quotes
+        self.spot_now = spot
 
     async def requote(self, legs):
         return self.quotes
+
+    async def spot(self):
+        return self.spot_now
 
 
 class FakeTrade:
@@ -98,8 +102,14 @@ class FakeIB:
         self.placed: list[float] = []
         self.trade: FakeTrade | None = None
         self.cancelled = False
+        self.ignore_cancel = False
+        self.drop_after: int | None = None  # raise ConnectionError on this many-th send
+        self.report_sign = 1.0  # -1 makes IBKR report a credit as a positive average
+        self.commission_each: float | None = None  # None: 0.65 per contract per leg
 
     def placeOrder(self, contract, order):
+        if self.drop_after is not None and len(self.placed) >= self.drop_after:
+            raise ConnectionError("Not connected")
         self.placed.append(order.lmtPrice)
         if self.trade is None:
             order.permId, order.orderId = 9001, 7
@@ -107,18 +117,19 @@ class FakeIB:
         if self.fill_at is not None and abs(order.lmtPrice - self.fill_at) < 1e-9:
             qty = self.fill_qty or int(order.totalQuantity)
             self.trade.orderStatus.filled = qty
-            self.trade.orderStatus.avgFillPrice = order.lmtPrice
+            self.trade.orderStatus.avgFillPrice = order.lmtPrice * self.report_sign
             self.trade.orderStatus.status = "Filled" if qty == order.totalQuantity else "Submitted"
+            each = 0.65 * qty if self.commission_each is None else self.commission_each
             self.trade.fills = [
-                SimpleNamespace(commissionReport=SimpleNamespace(commission=0.65 * qty))
-                for _ in range(2)
+                SimpleNamespace(commissionReport=SimpleNamespace(commission=each)) for _ in range(2)
             ]
         return self.trade
 
     def cancelOrder(self, order) -> None:
         self.cancelled = True
         assert self.trade is not None
-        self.trade.orderStatus.status = "Cancelled"
+        if not self.ignore_cancel:
+            self.trade.orderStatus.status = "Cancelled"
 
 
 def approve(fresh: SpreadCandidate) -> SpreadVerdict:
@@ -208,3 +219,77 @@ async def test_urgent_close_ends_at_the_natural_debit() -> None:
     r = await ex.close(position(), q(679, 0.38, 0.42, 111), q(674, 0.08, 0.12, 222), urgent=True)
     assert ib.placed == [0.30, 0.31, 0.32, 0.34]
     assert r.filled_qty == 1 and r.price == pytest.approx(0.34)
+
+
+# Review I2 (trading core) — an order this side could not see to the end may still be live.
+async def test_an_unconfirmed_cancel_is_reported_unresolved() -> None:
+    ib = FakeIB(fill_at=None)
+    ib.ignore_cancel = True
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(ib, FakeBroker(fresh), PAPER, now=lambda: NOW, poll_seconds=0.01)
+    ex_wait = ex._wait_done
+
+    async def short_wait(trade, seconds):
+        return await ex_wait(trade, min(seconds, 0.05))
+
+    ex._wait_done = short_wait  # type: ignore[method-assign]
+    r = await ex.open(cand(), 1, approve)
+    assert ib.cancelled and r.filled_qty == 0 and r.reason == "cancel_unconfirmed"
+
+
+async def test_a_dropped_socket_mid_ladder_is_reported_not_raised() -> None:
+    ib = FakeIB(fill_at=None)
+    ib.drop_after = 1
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    r = await SpreadExecutor(ib, FakeBroker(fresh), PAPER, now=lambda: NOW, poll_seconds=0.01).open(
+        cand(), 1, approve
+    )
+    assert r.filled_qty == 0 and r.reason == "connection_lost"
+    ib2 = FakeIB(fill_at=None)
+    ib2.drop_after = 0
+    r2 = await SpreadExecutor(
+        ib2, FakeBroker(fresh), PAPER, now=lambda: NOW, poll_seconds=0.01
+    ).open(cand(), 1, approve)
+    assert r2.reason == "not_sent" and ib2.placed == []
+
+
+# Review I4 — the BAG fill sign is unverified: keep the magnitude and flag the surprise.
+async def test_a_credit_reported_as_a_positive_average_is_flagged_not_stored_negative() -> None:
+    ib = FakeIB(fill_at=-0.61)
+    ib.report_sign = -1.0
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    r = await SpreadExecutor(ib, FakeBroker(fresh), PAPER, now=lambda: NOW, poll_seconds=0.01).open(
+        cand(), 1, approve
+    )
+    assert r.price == pytest.approx(0.61) and r.reason == "check_fill:positive_sign"
+
+
+# Review I5 — the commission report lands after Filled; never record a free fill.
+async def test_a_missing_commission_report_is_charged_at_the_configured_rate() -> None:
+    ib = FakeIB(fill_at=-0.61)
+    ib.commission_each = 0.0
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(
+        ib,
+        FakeBroker(fresh),
+        PAPER,
+        now=lambda: NOW,
+        poll_seconds=0.01,
+        commission_wait_seconds=0.05,
+    )
+    r = await ex.open(cand(), 1, approve)
+    assert r.filled_qty == 1 and r.commission == pytest.approx(2 * 0.65)
+
+
+# Review minor — the send-time re-gate sees the spot at send time, not the decision's.
+async def test_the_send_time_regate_sees_a_fresh_spot() -> None:
+    seen: list[float] = []
+
+    def spy(fresh: SpreadCandidate) -> SpreadVerdict:
+        seen.append(fresh.spot)
+        return reject(fresh)
+
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(FakeIB(None), FakeBroker(fresh, spot=684.5), PAPER, now=lambda: NOW)
+    await ex.open(cand(), 1, spy)
+    assert seen == [684.5]

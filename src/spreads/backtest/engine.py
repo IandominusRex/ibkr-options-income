@@ -31,7 +31,7 @@ from src.common.schemas import (
 )
 from src.spreads.gex import build_levels, expected_move, regime_at
 from src.spreads.manager import debit_to_close, evaluate_exit, intrinsic_debit
-from src.spreads.pricing import ET, delta, implied_vol, years_to_close
+from src.spreads.pricing import ET, day_schedule, delta, implied_vol, years_to_close
 from src.spreads.risk import validate
 from src.spreads.selector import select_candidates
 from src.spreads.tape import SessionTape, trigger
@@ -220,7 +220,7 @@ def run_day(
     k, h = cfg.backtest.trade_scale, cfg.backtest.fill_haircut
     capital = cfg.risk.starting_capital_usd if capital_usd is None else capital_usd
     comm = cfg.execution.commission_per_contract
-    s = cfg.schedule
+    s = day_schedule(cfg.schedule, data.day)
     symbol = cfg.backtest.option_symbol
     refresh = timedelta(minutes=s.map_refresh_minutes)
     entry_every = timedelta(minutes=s.entry_check_minutes)

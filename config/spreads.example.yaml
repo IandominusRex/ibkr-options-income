@@ -10,7 +10,7 @@ underlying_sec_type: STK  # spot and session stats come from the SPY stock contr
 trading_class: SPY
 exchange: SMART
 book_underlyings: [SPY, SPX, XSP]  # all reserved for this book: none may appear in config/universe.yaml
-order_ref_prefix: "CS:"   # audit tag on every spreads order; nothing gates on it
+order_ref_prefix: "CS:"   # tag on every spreads order: audit, plus the service spotting its own still-working orders
 db_url: "sqlite:///data/spreads.db"
 max_market_data_lines: 30 # wheel chain_batch_size (40) + this must stay <= 95
 halt_file: "data/spreads.halt"  # touch this file to stop new entries; exits keep running

@@ -20,6 +20,7 @@ from ib_async import Index, Option, Stock
 
 from src.common.books import is_spreads_underlying
 from src.common.config import SpreadsCfg
+from src.common.market_hours import is_rth
 from src.common.schemas import ChainOption, ChainSnapshot, SessionSnapshot
 from src.ibkr.contracts import qualify_options_async
 from src.ibkr.market_data import req_fresh_mkt_data
@@ -108,6 +109,11 @@ def _all_asked(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
     return lambda: all(_num(getattr(t, "ask", None)) is not None for _, t in pairs)
 
 
+def _contract_key(c: Any) -> Any:
+    con_id = int(getattr(c, "conId", 0) or 0)
+    return con_id or id(c)
+
+
 class IbkrSpreadsBroker:
     def __init__(
         self,
@@ -127,20 +133,31 @@ class IbkrSpreadsBroker:
         self._indexes: dict[str, Any] = {}
 
     async def _index(self, symbol: str, exchange: str, sec_type: str = "IND") -> Any:
-        """The qualified underlying: an ``Index`` (SPX, XSP) or a ``Stock`` (SPY), cached."""
+        """The qualified underlying: an ``Index`` (SPX, XSP) or a ``Stock`` (SPY), cached once
+        qualified — a qualification that failed (a Gateway hiccup) is retried next time, never
+        cached with ``conId=0`` for the rest of the session."""
         if symbol not in self._indexes:
             idx = (
                 Stock(symbol, exchange, "USD")
                 if sec_type == "STK"
                 else Index(symbol, exchange, "USD")
             )
-            await self.ib.qualifyContractsAsync(idx)
+            try:
+                await self.ib.qualifyContractsAsync(idx)
+            except Exception:
+                log.exception("spreads: could not qualify %s", symbol)
+            if not getattr(idx, "conId", 0):
+                return idx
             self._indexes[symbol] = idx
         return self._indexes[symbol]
 
     async def index_spot(self, symbol: str, exchange: str, sec_type: str = "IND") -> float | None:
-        """Last print, else the prior close. None without the data entitlement."""
+        """Last print. Outside regular hours the prior close stands in; during them a missing
+        print is None, never yesterday's close passed off as the live spot. None without the
+        data entitlement or an unqualified contract."""
         idx = await self._index(symbol, exchange, sec_type)
+        if not getattr(idx, "conId", 0):
+            return None
         t = req_fresh_mkt_data(self.ib, idx, "", False, False)
         try:
             await _wait(
@@ -151,7 +168,7 @@ class IbkrSpreadsBroker:
                 self.quote_wait,
             )
             value = _num(getattr(t, "last", None))
-            if value is None:
+            if value is None and not is_rth(self.now()):
                 value = _num(getattr(t, "close", None))
             return value if value is not None and value > 0 else None
         finally:
@@ -171,6 +188,8 @@ class IbkrSpreadsBroker:
         idx = await self._index(
             self.cfg.underlying, self.cfg.exchange, self.cfg.underlying_sec_type
         )
+        if not getattr(idx, "conId", 0):
+            return None
         t = req_fresh_mkt_data(self.ib, idx, "", False, False)
         try:
             await _wait(
@@ -197,17 +216,25 @@ class IbkrSpreadsBroker:
             self.ib.cancelMktData(idx)
 
     async def quote(self, contracts: list[Any]) -> list[ChainOption]:
-        out: list[ChainOption] = []
-        for i in range(0, len(contracts), self.max_lines):
-            batch = contracts[i : i + self.max_lines]
+        """One quote per input contract, in order. Each distinct contract is subscribed once:
+        ib_async keys a ticker's reqId by ticker, so a second subscription to the same contract
+        overwrites the first's and one ``cancelMktData`` would leave a line open for good."""
+        unique: dict[Any, Any] = {}
+        for c in contracts:
+            unique.setdefault(_contract_key(c), c)
+        distinct = list(unique.values())
+        quoted: dict[Any, ChainOption] = {}
+        for i in range(0, len(distinct), self.max_lines):
+            batch = distinct[i : i + self.max_lines]
             pairs = [(c, req_fresh_mkt_data(self.ib, c, "101,106", False, False)) for c in batch]
             try:
                 await _wait(_all_asked(pairs), self.quote_wait)
-                out.extend(to_chain_option(c, t) for c, t in pairs)
+                for c, t in pairs:
+                    quoted[_contract_key(c)] = to_chain_option(c, t)
             finally:
                 for c, _ in pairs:
                     self.ib.cancelMktData(c)
-        return out
+        return [quoted[_contract_key(c)] for c in contracts]
 
     async def fetch_chain(
         self,
@@ -221,6 +248,9 @@ class IbkrSpreadsBroker:
         sec_type: str = "IND",
     ) -> ChainSnapshot | None:
         idx = await self._index(symbol, exchange, sec_type)
+        if not getattr(idx, "conId", 0):
+            log.warning("spreads: %s is not qualified yet — no chain this pass", symbol)
+            return None
         spot = await self.index_spot(symbol, exchange, sec_type)
         if spot is None:
             spot = spot_hint
@@ -268,14 +298,38 @@ class IbkrSpreadsBroker:
         return await self.quote([c for c in contracts if c.conId])
 
     async def excess_liquidity(self) -> float | None:
-        """From the account-update stream ib_async keeps (no reqAccountSummary: Error 322)."""
-        by_ccy: dict[str, float] = {}
+        """In USD, from the account-update stream ib_async keeps (no reqAccountSummary: Error
+        322). A non-USD base account reports it in its base currency; that is converted with
+        the stream's own ``ExchangeRate`` for USD (base units per USD). None if it can't be."""
+        excess: dict[str, float] = {}
+        usd_rate: float | None = None
         for v in self.ib.accountValues(self.account):
-            if v.tag == "ExcessLiquidity" and getattr(v, "account", self.account) == self.account:
-                num = _num(v.value)
-                if num is not None:
-                    by_ccy[v.currency] = num
-        return by_ccy.get("USD", by_ccy.get("BASE"))
+            if getattr(v, "account", self.account) != self.account:
+                continue
+            num = _num(v.value)
+            if num is None:
+                continue
+            if v.tag == "ExcessLiquidity":
+                excess[v.currency] = num
+            elif v.tag == "ExchangeRate" and v.currency == "USD" and num > 0:
+                usd_rate = num
+        if "USD" in excess:
+            return excess["USD"]
+        local = {c: x for c, x in excess.items() if c != "BASE"}
+        base = excess.get("BASE", next(iter(local.values())) if len(local) == 1 else None)
+        if base is None or usd_rate is None:
+            return None
+        return base / usd_rate
+
+    def working_refs(self) -> set[str]:
+        """``orderRef`` of every spreads order IBKR still shows working for this clientId."""
+        prefix = self.cfg.order_ref_prefix
+        refs: set[str] = set()
+        for t in self.ib.openTrades():
+            ref = str(getattr(t.order, "orderRef", "") or "")
+            if ref.startswith(prefix):
+                refs.add(ref)
+        return refs
 
     def broker_legs(self) -> dict[int, float]:
         legs: dict[int, float] = defaultdict(float)

@@ -204,3 +204,25 @@ def test_spreads_tables_never_share_the_trading_base() -> None:
     from src.storage.models import Base
 
     assert not set(SpreadsBase.metadata.tables) & set(Base.metadata.tables)
+
+
+# Review minor — a spread the service can no longer close is settled by hand, not by editing SQL.
+def test_spreads_resolve_settles_an_open_spread(store, monkeypatch, capsys) -> None:
+    import scripts.spreads_resolve as resolve
+
+    store.open_position(
+        cand("gone"), mode="paper", contracts=2, credit=0.60, commission=2.6, now=NOW, perm_id=1
+    )
+    assert store.held_contracts("gone") == 2 and store.held_contracts("nope") is None
+    monkeypatch.setattr(
+        "sys.argv",
+        ["spreads_resolve", "--spread-id", "gone", "--debit", "0.10", "--commission", "2.6"],
+    )
+    resolve.main()
+    assert store.open_positions("paper") == []
+    ((_, reason, pnl),) = store.closed_results("paper")
+    assert reason == "resolved_by_hand" and pnl == pytest.approx((0.60 - 0.10) * 200 - 2.6 - 2.6)
+    assert "settled 2 contract(s)" in capsys.readouterr().out
+    monkeypatch.setattr("sys.argv", ["spreads_resolve", "--spread-id", "gone", "--debit", "0"])
+    with pytest.raises(SystemExit):
+        resolve.main()

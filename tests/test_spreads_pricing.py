@@ -73,3 +73,28 @@ def test_amendment_schemas_default_safely() -> None:
     assert SpreadTrigger(reason="no_move").sides == []
     assert SessionSnapshot(as_of=TEN_AM, last=690.0).prior_close is None
     assert SpreadExit(spread_id="s1", reason="max_hold", close=True).reason == "max_hold"
+
+
+# Review I6 — on an early-close session the time stop moves with the close (SPY settles in shares).
+def test_day_schedule_moves_the_time_stop_and_entry_end_on_an_early_close() -> None:
+    from datetime import date
+
+    from src.common.config import get_config
+    from src.spreads.pricing import close_time, day_schedule
+
+    sched = get_config().spreads.schedule
+    black_friday = date(2026, 11, 27)
+    early = day_schedule(sched, black_friday)
+    assert close_time(black_friday).hour == 13
+    assert (early.entry_end, early.force_close) == ("10:30", "12:45")
+    assert early.map_time == sched.map_time and early.entry_start == sched.entry_start
+    assert day_schedule(sched, date(2026, 11, 24)) is sched
+
+
+def test_years_to_close_uses_the_early_close() -> None:
+    from datetime import UTC, date, datetime
+
+    from src.spreads.pricing import years_to_close
+
+    noon = datetime(2026, 11, 27, 17, 0, tzinfo=UTC)  # 12:00 EST
+    assert years_to_close(noon, date(2026, 11, 27)) * 365 * 24 == pytest.approx(1.0)

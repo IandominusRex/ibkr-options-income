@@ -336,6 +336,20 @@ def mark_expiring(spread_id: str) -> None:
         row.status = "expiring"
 
 
+def held_contracts(spread_id: str) -> int | None:
+    """Contracts still open on an open or expiring spread; None if there is no such spread."""
+    with spreads_session() as s:
+        row = (
+            s.query(SpreadPositionRow)
+            .filter(
+                SpreadPositionRow.spread_id == spread_id,
+                SpreadPositionRow.status.in_(("open", "expiring")),
+            )
+            .one_or_none()
+        )
+        return row.contracts if row is not None else None
+
+
 def close_position(
     spread_id: str,
     *,

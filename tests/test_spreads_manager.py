@@ -161,3 +161,16 @@ def test_reconcile_reports_missing_and_unexpected_legs() -> None:
 
 def test_reconcile_ignores_shadow_positions() -> None:
     assert reconcile([pos(mode="shadow")], {}) == []
+
+
+# Review I6 — the day after Thanksgiving closes at 13:00, so the time stop is 12:45.
+def test_time_stop_fires_before_an_early_close() -> None:
+    from datetime import date
+
+    day = date(2026, 11, 27)
+    p = pos(expiry=day, opened_at=datetime(2026, 11, 27, 15, 0, tzinfo=UTC))
+    s, lg = legs(0.50, 0.54, 0.12, 0.16)
+    s, lg = s.model_copy(update={"expiry": day}), lg.model_copy(update={"expiry": day})
+    at_1246 = datetime(2026, 11, 27, 17, 46, tzinfo=UTC)  # 12:46 EST
+    e = evaluate_exit(p, s, lg, 688.0, at_1246, CFG)
+    assert e is not None and e.reason == "time_stop"

@@ -8,19 +8,51 @@ from __future__ import annotations
 
 import math
 from datetime import date, datetime, time
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from scipy.stats import norm
+
+from src.common.market_hours import session_close
+
+if TYPE_CHECKING:
+    from src.common.config import SpreadsScheduleCfg
 
 ET = ZoneInfo("America/New_York")
 _YEAR_SECONDS = 365.0 * 24 * 3600
 MIN_T = 60.0 / _YEAR_SECONDS  # one minute — keeps gamma finite at the bell
 
 
-def years_to_close(now: datetime, expiry: date, close: time = time(16, 0)) -> float:
+_REGULAR_CLOSE = time(16, 0)
+
+
+def close_time(day: date) -> time:
+    """*day*'s ET session close: 13:00 on an early-close session, else 16:00."""
+    return session_close(day) or _REGULAR_CLOSE
+
+
+def years_to_close(now: datetime, expiry: date, close: time | None = None) -> float:
     """Calendar-time years from *now* (aware) to *expiry*'s close, floored at zero."""
-    expiry_dt = datetime.combine(expiry, close, tzinfo=ET)
+    expiry_dt = datetime.combine(expiry, close or close_time(expiry), tzinfo=ET)
     return max((expiry_dt - now.astimezone(ET)).total_seconds(), 0.0) / _YEAR_SECONDS
+
+
+def day_schedule(sched: SpreadsScheduleCfg, day: date) -> SpreadsScheduleCfg:
+    """The schedule for ET *day*. The configured times assume a 16:00 close; on an early-close
+    session ``entry_end`` and ``force_close`` move earlier by as much as the close does, so the
+    time stop still lands before the bell (SPY settles in shares)."""
+    close = close_time(day)
+    if close >= _REGULAR_CLOSE:
+        return sched
+    shift = datetime.combine(day, _REGULAR_CLOSE) - datetime.combine(day, close)
+
+    def earlier(hhmm: str) -> str:
+        t = datetime.combine(day, time.fromisoformat(hhmm)) - shift
+        return max(t.time(), time.fromisoformat(sched.entry_start)).strftime("%H:%M")
+
+    return sched.model_copy(
+        update={"entry_end": earlier(sched.entry_end), "force_close": earlier(sched.force_close)}
+    )
 
 
 def _d1(spot: float, strike: float, t: float, iv: float, r: float) -> float:

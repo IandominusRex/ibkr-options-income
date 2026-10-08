@@ -111,8 +111,12 @@ class FakeIB:
         self.values: list[SimpleNamespace] = []
         self.priced: list[tuple[str, str]] = []  # (secType, symbol) of every spot/session request
         self.secdef: list[tuple] = []
+        self.open_trades: list[SimpleNamespace] = []
+        self.subscribed: list[int] = []
+        self.qualify_fails = 0
 
     def reqMktData(self, contract, *args, **kwargs):
+        self.subscribed.append(getattr(contract, "conId", 0))
         self.open += 1
         self.max_open = max(self.max_open, self.open)
         if contract.secType in ("IND", "STK"):
@@ -132,6 +136,9 @@ class FakeIB:
         self.open -= 1
 
     async def qualifyContractsAsync(self, *contracts):
+        if self.qualify_fails:
+            self.qualify_fails -= 1
+            return []
         for c in contracts:
             if not c.conId:
                 c.conId = next(self._ids)
@@ -151,6 +158,9 @@ class FakeIB:
 
     def positions(self):
         return self.positions_list
+
+    def openTrades(self):
+        return self.open_trades
 
     def accountValues(self, account: str = ""):
         return self.values
@@ -275,3 +285,63 @@ async def test_excess_liquidity_prefers_usd() -> None:
     assert await _broker(ib).excess_liquidity() == 60000.0
     ib.values = []
     assert await _broker(ib).excess_liquidity() is None
+
+
+# Review I3 — a contract repeated in one batch is subscribed once (a second reqMktData would
+# overwrite the first's reqId and leak its line for the life of the connection).
+async def test_a_repeated_leg_is_subscribed_once_and_fanned_back_out() -> None:
+    ib = FakeIB()
+    legs = [
+        ChainOption(strike=679, right="P", expiry=TODAY, con_id=42),
+        ChainOption(strike=674, right="P", expiry=TODAY, con_id=43),
+        ChainOption(strike=679, right="P", expiry=TODAY, con_id=42),
+    ]
+    quotes = await _broker(ib).requote(legs)
+    assert [q.con_id for q in quotes] == [42, 43, 42]
+    assert sorted(ib.subscribed) == [42, 43] and ib.open == 0
+
+
+# Review minor — a failed qualification is retried, not cached with conId=0 for the session.
+async def test_a_failed_qualification_is_retried_next_time() -> None:
+    ib = FakeIB()
+    ib.qualify_fails = 1
+    broker = _broker(ib)
+    assert await broker.spot() is None
+    assert await broker.spot() == 690.0
+
+
+# Review minor — during regular hours yesterday's close is never the live spot.
+async def test_the_prior_close_is_not_a_spot_during_regular_hours() -> None:
+    ib = FakeIB(spot=None)
+    ib.session = {"open": math.nan, "high": math.nan, "low": math.nan, "close": 688.0}
+    assert await _broker(ib).spot() is None
+    evening = IbkrSpreadsBroker(
+        ib,
+        CFG,
+        "DU1",
+        quote_wait_seconds=0.05,
+        now=lambda: datetime(2026, 10, 7, 23, 0, tzinfo=UTC),
+    )
+    assert await evening.spot() == 688.0
+
+
+# Review minor — a non-USD base account reports excess liquidity in its base currency.
+async def test_excess_liquidity_converts_a_non_usd_base_currency() -> None:
+    ib = FakeIB()
+    ib.values = [
+        SimpleNamespace(account="DU1", tag="ExcessLiquidity", value="133000", currency="SGD"),
+        SimpleNamespace(account="DU1", tag="ExchangeRate", value="1.33", currency="USD"),
+    ]
+    assert await _broker(ib).excess_liquidity() == pytest.approx(100_000.0)
+    ib.values = ib.values[:1]  # no rate to convert with: unknown, never a mislabelled number
+    assert await _broker(ib).excess_liquidity() is None
+
+
+def test_working_refs_lists_only_spreads_orders() -> None:
+    ib = FakeIB()
+    ib.open_trades = [
+        SimpleNamespace(order=SimpleNamespace(orderRef="CS:s1:X")),
+        SimpleNamespace(order=SimpleNamespace(orderRef="wheel-123")),
+        SimpleNamespace(order=SimpleNamespace(orderRef="")),
+    ]
+    assert _broker(ib).working_refs() == {"CS:s1:X"}

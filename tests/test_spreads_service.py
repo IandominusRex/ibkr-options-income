@@ -519,3 +519,218 @@ async def test_the_gex_map_is_built_off_the_event_loop_thread(
     await svc.tick()
     assert svc.levels is not None
     assert seen and seen[0] != threading.get_ident()
+
+
+# ---------------------------------------------------------------- review fixes (paper mode)
+
+PAPER = CFG.model_copy(update={"mode": "paper"})
+
+
+def _paper_spread(st, spread_id="p1", contracts=2, at=T0945, expiry=TODAY):
+    from src.common.schemas import SpreadCandidate
+
+    return st.open_position(
+        SpreadCandidate(
+            spread_id=spread_id,
+            side="put",
+            expiry=expiry,
+            short_strike=679,
+            long_strike=674,
+            width=5,
+            short_con_id=6790,
+            long_con_id=6740,
+            credit_mid=0.6,
+            credit_natural=0.55,
+            spot=690,
+            quote_time=at,
+        ),
+        mode="paper",
+        contracts=contracts,
+        credit=0.6,
+        commission=2.6,
+        now=at,
+        perm_id=1,
+    )
+
+
+class RecordingExecutor:
+    """Closes fill at 0.30 for whatever quantity is asked; opens report *open_result*."""
+
+    def __init__(self, open_result=None) -> None:
+        self.closes: list[int] = []
+        self.opens = 0
+        self.open_result = open_result
+
+    async def open(self, c, contracts, recheck):
+        from src.spreads.executor import FillResult
+
+        self.opens += 1
+        return self.open_result or FillResult(0, None, 0.0, reason="not_filled", order_ref="CS:x")
+
+    async def close(self, pos, short_q, long_q, *, urgent):
+        from src.spreads.executor import FillResult
+
+        self.closes.append(pos.contracts)
+        return FillResult(pos.contracts, 0.30, 1.3, order_ref=f"CS:{pos.spread_id}:X")
+
+
+class PaperBroker(FakeBroker):
+    def __init__(self, clock) -> None:
+        super().__init__(clock)
+        self.working: set[str] = set()
+        # the profit-take quotes: mid 0.28 on a 0.60 credit
+        self.leg_quotes = {
+            (679.0, "P"): o(679, "P", 0.30, 0.34),
+            (674.0, "P"): o(674, "P", 0.03, 0.05),
+        }
+
+    def working_refs(self):
+        return self.working
+
+
+def _paper(tmp_path, clock, executor):
+    from src.spreads.service import SpreadsService
+
+    broker = PaperBroker(clock)
+    notifier = FakeNotifier()
+    svc = SpreadsService(
+        broker, executor, notifier, PAPER, halt_path=tmp_path / "halt", now=lambda: clock[0]
+    )
+    return svc, broker, notifier
+
+
+# Review I1 — a close is capped at what the broker still holds (it may have filled during a drop).
+async def test_a_paper_close_never_exceeds_what_the_broker_holds(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=2)
+    clock = [T1100]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {6790: -1.0, 6740: 1.0}  # one of the two already closed at IBKR
+    await svc.tick()
+    assert ex.closes == [1]
+    assert any("holds 1 of 2" in m for m in notifier.sent)
+    (p,) = spreads_db.open_positions("paper")
+    assert p.contracts == 1  # left for the operator to settle; never closed twice
+
+
+async def test_a_paper_spread_the_broker_no_longer_holds_is_not_closed(
+    tmp_path, spreads_db
+) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T1100]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {}
+    await svc.tick()
+    assert ex.closes == []  # a BUY combo now would open a reversed SPY spread nothing manages
+    assert any("holds 0 of 1" in m for m in notifier.sent)
+
+
+async def test_no_second_close_while_the_first_is_still_working(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T1100]
+    ex = RecordingExecutor()
+    svc, broker, _ = _paper(tmp_path, clock, ex)
+    broker.legs = {6790: -1.0, 6740: 1.0}
+    broker.working = {"CS:p1:X"}
+    await svc.tick()
+    assert ex.closes == []
+    broker.working = set()
+    await svc.tick()
+    assert ex.closes == [1]
+
+
+async def test_every_paper_tick_rereconciles_and_unblocks_once_consistent(
+    tmp_path, spreads_db
+) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T0945]
+    svc, broker, notifier = _paper(tmp_path, clock, RecordingExecutor())
+    broker.legs = {6790: -1.0, 6740: 1.0}
+    await svc.start()
+    assert svc.entries_blocked is None
+    broker.legs = {6790: -1.0}  # the long leg vanished at the broker
+    await svc.tick()
+    assert svc.entries_blocked and "6740" in svc.entries_blocked
+    assert not any("disagree" in m for m in notifier.sent)  # one tick of lag is not alerted
+    await svc.tick()
+    assert sum("disagree" in m for m in notifier.sent) == 1
+    broker.legs = {6790: -1.0, 6740: 1.0}
+    await svc.tick()
+    assert svc.entries_blocked is None
+    broker.working = {"CS:20261007-P680-675-100000"}  # an opening order still live at IBKR
+    await svc.tick()
+    assert svc.entries_blocked and "still working" in svc.entries_blocked
+
+
+async def test_an_unresolved_open_blocks_entries(tmp_path, spreads_db) -> None:
+    from src.spreads.executor import FillResult
+
+    clock = [T0945]
+    ex = RecordingExecutor(FillResult(0, None, 0.0, reason="cancel_unconfirmed", order_ref="CS:o"))
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    assert ex.opens == 1
+    assert svc.entries_blocked and "cancel_unconfirmed" in svc.entries_blocked
+    assert any("may still be live" in m for m in notifier.sent)
+
+
+# Review I2 (trading core) — the Gateway down through the close still reaches the operator.
+async def test_open_spreads_are_alerted_while_disconnected(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T1100]
+    svc, _, notifier = _paper(tmp_path, clock, RecordingExecutor())
+    await svc.while_disconnected()
+    await svc.while_disconnected()
+    assert svc.entries_blocked == "disconnected"
+    assert sum("disconnected with 1 paper spread" in m for m in notifier.sent) == 1
+    assert not any("URGENT" in m for m in notifier.sent)
+    clock[0] = datetime(2026, 10, 7, 19, 46, tzinfo=UTC)  # 15:46 ET
+    await svc.while_disconnected()
+    assert sum("URGENT" in m for m in notifier.sent) == 1
+
+
+async def test_nothing_is_alerted_while_disconnected_with_nothing_open(
+    tmp_path, spreads_db
+) -> None:
+    clock = [T1100]
+    svc, _, notifier = _paper(tmp_path, clock, RecordingExecutor())
+    await svc.while_disconnected()
+    assert notifier.sent == []
+
+
+# Review minor — a spread past its expiry is not retried every tick; the operator is told how
+# to settle it.
+async def test_an_expired_but_open_spread_is_alerted_not_closed(tmp_path, spreads_db) -> None:
+    from datetime import timedelta
+
+    yesterday = TODAY - timedelta(days=1)
+    _paper_spread(spreads_db, contracts=1, at=T0945 - timedelta(days=1), expiry=yesterday)
+    clock = [T1100]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {}
+    await svc.tick()
+    await svc.tick()
+    assert ex.closes == []
+    assert sum("spreads_resolve" in m and "expired" in m for m in notifier.sent) == 1
+
+
+# Review minor — a map that fails to build never leaves the previous one in use.
+async def test_a_failed_map_rebuild_drops_the_old_map(tmp_path, spreads_db, monkeypatch) -> None:
+    import src.spreads.service as service
+
+    clock = [T0945]
+    svc, _, _ = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    assert svc.levels is not None
+
+    def boom(*a, **k):
+        raise RuntimeError("scipy blew up")
+
+    monkeypatch.setattr(service, "build_levels", boom)
+    clock[0] = datetime(2026, 10, 7, 14, 46, tzinfo=UTC)  # 10:46, an hour later: refresh due
+    await svc.tick()
+    assert svc.levels is None and svc.map_failed_at == clock[0]

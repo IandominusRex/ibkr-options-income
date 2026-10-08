@@ -5,6 +5,12 @@ caller's ``recheck`` — the same ``risk.validate`` — immediately before the o
 core invariant's second gate run). An unfilled order is cancelled; a partial fill is reported
 as what it is. Shadow fills charge ``shadow_slippage_per_leg`` per leg and the configured
 commission so shadow P&L is not flattered by mid-price fills.
+
+An order this module could not see to the end — the socket dropped while working it, or the
+cancel was not confirmed — is reported with an ``UNRESOLVED`` reason: it may still be live at
+IBKR, so the service blocks entries and the next close waits until the broker shows it gone.
+The combo fill price's sign is not trusted (plan Task 11 Step 9 is still unverified): the
+magnitude is used, and a sign or a price outside the ladder is flagged for the operator.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ log = logging.getLogger(__name__)
 
 class Requoter(Protocol):
     async def requote(self, legs: list[ChainOption]) -> list[ChainOption]: ...
+    async def spot(self) -> float | None: ...
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,17 @@ class FillResult:
     order_ref: str = ""
 
 
+UNRESOLVED = ("connection_lost", "cancel_unconfirmed")
+
+
+def open_ref(cfg: SpreadsCfg, spread_id: str) -> str:
+    return f"{cfg.order_ref_prefix}{spread_id}"
+
+
+def close_ref(cfg: SpreadsCfg, spread_id: str) -> str:
+    return f"{cfg.order_ref_prefix}{spread_id}:X"
+
+
 def _right(side: str) -> str:
     return "P" if side == "put" else "C"
 
@@ -55,17 +73,17 @@ def _match(quotes: list[ChainOption], strike: float, right: str) -> ChainOption 
     return next((x for x in quotes if x.right == right and abs(x.strike - strike) < 1e-6), None)
 
 
-def _commission(trade: Any) -> float:
-    total = 0.0
+def _reported_commissions(trade: Any) -> list[float]:
+    """One entry per fill: its reported commission (positive), or 0.0 while none has arrived."""
+    out: list[float] = []
     for f in getattr(trade, "fills", []) or []:
         rep = getattr(f, "commissionReport", None)
         try:
             c = float(getattr(rep, "commission", 0.0) or 0.0)
         except (TypeError, ValueError):
-            continue
-        if math.isfinite(c) and abs(c) < 1e9:
-            total += abs(c)
-    return total
+            c = 0.0
+        out.append(abs(c) if math.isfinite(c) and abs(c) < 1e9 else 0.0)
+    return out
 
 
 class SpreadExecutor:
@@ -77,12 +95,14 @@ class SpreadExecutor:
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         poll_seconds: float = 0.25,
+        commission_wait_seconds: float = 2.0,
     ) -> None:
         self.ib = ib
         self.broker = broker
         self.cfg = cfg
         self.now = now
         self.poll = poll_seconds
+        self.commission_wait = commission_wait_seconds
 
     async def open(
         self,
@@ -91,7 +111,7 @@ class SpreadExecutor:
         recheck: Callable[[SpreadCandidate], SpreadVerdict],
     ) -> FillResult:
         x = self.cfg.execution
-        ref = f"{self.cfg.order_ref_prefix}{c.spread_id}"
+        ref = open_ref(self.cfg, c.spread_id)
         if self.cfg.mode == "shadow":
             credit = round(c.credit_mid - 2 * x.shadow_slippage_per_leg, 4)
             if credit <= 0:
@@ -106,12 +126,13 @@ class SpreadExecutor:
             ChainOption(strike=c.long_strike, right=right, expiry=c.expiry, con_id=c.long_con_id),  # type: ignore[arg-type]
         ]
         quotes = await self.broker.requote(legs)
+        spot = await self.broker.spot()
         short_q, long_q = (
             _match(quotes, c.short_strike, right),
             _match(quotes, c.long_strike, right),
         )
         fresh = (
-            refresh_candidate(c, short_q, long_q, self.now())
+            refresh_candidate(c, short_q, long_q, self.now(), spot)
             if short_q is not None and long_q is not None
             else None
         )
@@ -130,18 +151,20 @@ class SpreadExecutor:
         if not ladder:
             return FillResult(0, None, 0.0, reason="no_price_above_floor", order_ref=ref)
         bag, order = build_open_order(self.cfg.underlying, fresh, qty, ladder[0], ref)
-        filled, avg, commission, perm, oid = await self._work(
+        filled, avg, commission, perm, oid, unresolved = await self._work(
             bag, order, [-p for p in ladder], x.order_ttl_seconds
         )
-        return FillResult(
-            filled,
-            -avg if avg is not None else None,
-            commission,
-            perm,
-            oid,
-            None if filled else "not_filled",
-            ref,
-        )
+        reason = unresolved or (None if filled else "not_filled")
+        # A credit is a negative BAG limit, so IBKR should report a negative average. Use the
+        # magnitude either way; flag a positive sign or a price off the ladder.
+        received = abs(avg) if avg is not None else None
+        if avg is not None and received is not None:
+            if avg > 0:
+                reason = reason or "check_fill:positive_sign"
+            elif received < ladder[-1] - x.reprice_tick - 1e-9 or received >= fresh.width:
+                # Worse than any limit sent, or more than the spread can be worth.
+                reason = reason or "check_fill:off_ladder"
+        return FillResult(filled, received, commission, perm, oid, reason, ref)
 
     async def close(
         self,
@@ -152,7 +175,7 @@ class SpreadExecutor:
         urgent: bool,
     ) -> FillResult:
         x = self.cfg.execution
-        ref = f"{self.cfg.order_ref_prefix}{pos.spread_id}:X"
+        ref = close_ref(self.cfg, pos.spread_id)
         mid, nat = debit_to_close(short_q, long_q)
         if self.cfg.mode == "shadow":
             # Width (a full max loss) only when the short leg has no ask at all.
@@ -173,10 +196,14 @@ class SpreadExecutor:
         if urgent and nat is not None and nat <= cap and ladder[-1] < round_tick(nat) - 1e-9:
             ladder.append(round_tick(nat))
         bag, order = build_close_order(self.cfg.underlying, pos, pos.contracts, ladder[0], ref)
-        filled, avg, commission, perm, oid = await self._work(
+        filled, avg, commission, perm, oid, unresolved = await self._work(
             bag, order, ladder, x.close_ttl_seconds
         )
-        return FillResult(filled, avg, commission, perm, oid, None if filled else "not_filled", ref)
+        reason = unresolved or (None if filled else "not_filled")
+        paid = abs(avg) if avg is not None else None
+        if avg is not None and avg < 0:
+            reason = reason or "check_fill:negative_sign"
+        return FillResult(filled, paid, commission, perm, oid, reason, ref)
 
     async def _wait_done(self, trade: Any, seconds: float) -> bool:
         deadline = asyncio.get_running_loop().time() + seconds
@@ -186,25 +213,61 @@ class SpreadExecutor:
             await asyncio.sleep(self.poll)
         return True
 
+    async def _commission(self, trade: Any, filled: int) -> float:
+        """The fills' reported commissions. ib_async creates each Fill with an empty report and
+        the real one arrives after the order is Filled, so wait briefly; any fill still without
+        one is charged the configured rate (2 legs × contracts) rather than nothing."""
+        if filled < 1:
+            return sum(_reported_commissions(trade))
+        deadline = asyncio.get_running_loop().time() + self.commission_wait
+        while True:
+            reported = _reported_commissions(trade)
+            if reported and all(c > 0 for c in reported):
+                return sum(reported)
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await asyncio.sleep(self.poll)
+        estimate = 2 * filled * self.cfg.execution.commission_per_contract
+        log.warning(
+            "spreads: commission report missing for %s; charging the configured %.2f",
+            getattr(trade.order, "orderRef", ""),
+            estimate,
+        )
+        return max(sum(reported), estimate)
+
     async def _work(
         self, bag: Any, order: Any, lmt_prices: list[float], ttl: float
-    ) -> tuple[int, float | None, float, int | None, int | None]:
-        trade = self.ib.placeOrder(bag, order)
+    ) -> tuple[int, float | None, float, int | None, int | None, str | None]:
+        """Place, walk the ladder, cancel what is left. The last item is an ``UNRESOLVED``
+        reason when the order may still be live at IBKR."""
+        ref = getattr(order, "orderRef", "")
+        try:
+            trade = self.ib.placeOrder(bag, order)
+        except (ConnectionError, OSError):
+            log.exception("spreads order %s: could not be sent", ref)
+            return 0, None, 0.0, None, None, "not_sent"
+        unresolved: str | None = None
         per_step = ttl / max(len(lmt_prices), 1)
-        for i, px in enumerate(lmt_prices):
-            if i > 0:
-                if trade.isDone():
+        try:
+            for i, px in enumerate(lmt_prices):
+                if i > 0:
+                    if trade.isDone():
+                        break
+                    order.lmtPrice = px
+                    trade = self.ib.placeOrder(bag, order)
+                if await self._wait_done(trade, per_step):
                     break
-                order.lmtPrice = px
-                trade = self.ib.placeOrder(bag, order)
-            if await self._wait_done(trade, per_step):
-                break
-        if not trade.isDone():
-            self.ib.cancelOrder(order)
-            await self._wait_done(trade, 5.0)
+            if not trade.isDone():
+                self.ib.cancelOrder(order)
+                if not await self._wait_done(trade, 5.0):
+                    unresolved = "cancel_unconfirmed"
+        except (ConnectionError, OSError):
+            log.exception("spreads order %s: connection lost while working it", ref)
+            unresolved = "connection_lost"
         filled = int(trade.orderStatus.filled or 0)
         avg = float(trade.orderStatus.avgFillPrice) if filled else None
         perm = int(getattr(trade.order, "permId", 0) or 0) or None
         oid = int(getattr(trade.order, "orderId", 0) or 0) or None
-        log.info("spreads order %s: filled %d @ %s", getattr(order, "orderRef", ""), filled, avg)
-        return filled, avg, _commission(trade), perm, oid
+        commission = await self._commission(trade, filled)
+        log.info("spreads order %s: filled %d @ %s (%s)", ref, filled, avg, unresolved or "done")
+        return filled, avg, commission, perm, oid, unresolved

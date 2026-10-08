@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from src.common.config import SpreadsCfg
 from src.common.schemas import ChainOption, SpreadExit, SpreadPosition
-from src.spreads.pricing import ET
+from src.spreads.pricing import ET, day_schedule
 
 
 def _leg_mid(q: ChainOption | None) -> float | None:
@@ -73,7 +73,8 @@ def evaluate_exit(
     x = cfg.exits
     mid, _ = debit_to_close(short_q, long_q)
     touched = short_strike_touched(pos, spot)
-    if now.astimezone(ET).strftime("%H:%M") >= cfg.schedule.force_close:
+    now_et = now.astimezone(ET)
+    if now_et.strftime("%H:%M") >= day_schedule(cfg.schedule, now_et.date()).force_close:
         if (
             x.let_expire
             and mid is not None

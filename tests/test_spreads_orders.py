@@ -82,3 +82,13 @@ def test_ladders() -> None:
     assert credit_ladder(0.45, 0.40, 3, 0.01, 0.50) == []
     assert debit_ladder(0.30, 3, 0.01, 0.40) == [0.30, 0.31, 0.32]
     assert debit_ladder(0.30, 3, 0.01, 0.31) == [0.30, 0.31]
+
+
+# Review I4 — the operator check reads IBKR's fill-price sign, which the executor relies on.
+def test_combo_check_reads_the_fill_sign() -> None:
+    from scripts.spreads_combo_check import fill_sign_verdict
+
+    assert fill_sign_verdict("open", -0.42).startswith("OK")
+    assert fill_sign_verdict("open", 0.42).startswith("MISMATCH")
+    assert fill_sign_verdict("close", 0.10).startswith("OK")
+    assert fill_sign_verdict("close", -0.10).startswith("MISMATCH")
