@@ -28,7 +28,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 4 Schemas and same-day pricing | ✅ done | `1875ffc` (code), then docs + this log | 2026-10-08 | pytest 2761 passed, 1 skipped; ruff and mypy clean |
 | 5 GEX levels | ✅ done | `44ede26` (code), then docs + this log | 2026-10-08 | pytest 2771 passed, 1 skipped; ruff and mypy clean |
 | 6 Candidate selection | ✅ done | `d55b323` (code), then docs + this log | 2026-10-08 | pytest 2779 passed, 1 skipped; ruff and mypy clean |
-| 6A Session tape and entry trigger | ⬜ (skipped on purpose: not asked for in the 6–7 session; run it before Task 13) | | | |
+| 6A Session tape and entry trigger | ✅ done | `4f8cf71` (code), then docs + this log | 2026-10-08 | pytest 2845 passed, 1 skipped; ruff and mypy clean |
 | 7 Deterministic spreads gate | ✅ done | `5100d27` (code), then docs + this log | 2026-10-08 | pytest 2811 passed, 1 skipped; ruff and mypy clean |
 | 8 Exit manager and reconciliation | ✅ done | `1d32946` (code), then docs + this log | 2026-10-08 | pytest 2826 passed, 1 skipped; ruff and mypy clean |
 | 9 Spreads database | ✅ done | `78c3492` (code), then docs + this log | 2026-10-08 | pytest 2835 passed, 1 skipped; ruff and mypy clean |
@@ -140,6 +140,16 @@ tracker; the copy on `main` stays unticked until the branch merges.
   unknown `spread_id` raises `NoResultFound`. Task 13 only passes ids it read from the same DB, but a
   stale id after a manual DB edit would crash the tick; wrap them if that matters.
 
+**Rulings (Task 6A):**
+- **No deviation in code.** The tests and `tape.py` are the plan's text verbatim (`ruff format` re-wrapped
+  the test file). Step 2's failure was the expected `ModuleNotFoundError: No module named
+  'src.spreads.tape'`; Step 4 passed first time (10/10).
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the `tape.py` row, and
+  STATUS's "In progress" section a bullet (heading now "Tasks 1–9 and 6A"). Task 17 Step 3.3's full table
+  replaces them.
+- **For Task 13:** `trigger()` reads `tape.day_em`, which Task 13 must set from the day's first map (read
+  back from `spreads.db` after a restart), and `max_tape_age_seconds` counts from `tape.last_at`, so the
+  sampler must call `observe` every tick even when nothing else changed.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -2665,7 +2675,7 @@ Added by the 2026-10-07 amendment. It runs after Task 6 and before Task 7; nothi
     - `extreme_at(side) -> datetime | None` (when the low/high was made; the first observation when unknown)
   - `trigger(tape: SessionTape | None, now, cfg) -> SpreadTrigger`, with these reasons: `always`, `armed` (both fire), and `no_tape`, `stale_tape`, `no_expected_move`, `no_move`, `still_moving`, `runaway_move` (no side)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_tape.py`:
 
@@ -2805,12 +2815,12 @@ Check the numbers:
 - The call side in the flush rises only 0.6 above the 689.8 low (0.10×), so it never arms.
 - Both sides: drop = 694 − 690 = 4 and rise = 690 − 686 = 4 (0.67× each). Both stalled; the newer extreme (the 09:40 high) wins, so calls.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_tape.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.tape'`.
 
-- [ ] **Step 3: Implement `src/spreads/tape.py`**
+- [x] **Step 3: Implement `src/spreads/tape.py`**
 
 ```python
 """The session tape and the entry trigger — OPG's "sell after the move", as rules.
@@ -2949,12 +2959,12 @@ def trigger(tape: SessionTape | None, now: datetime, cfg: SpreadsCfg) -> SpreadT
     return SpreadTrigger(sides=[side], reason="armed", move_em=m)
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_tape.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/tape.py tests/test_spreads_tape.py

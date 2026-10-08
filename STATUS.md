@@ -366,12 +366,12 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–9 of 17 built, 6A not yet)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–9 and 6A of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
 schemas, the same-day pricing math, the GEX levels, candidate selection, the rules gate, the exit
-manager and the spreads database exist; nothing trades spreads yet. Task 6A (the session tape and entry trigger) is still to do.
+manager, the spreads database and the session tape / entry trigger exist; nothing trades spreads yet.
 
 - `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
   `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
@@ -402,6 +402,11 @@ manager and the spreads database exist; nothing trades spreads yet. Task 6A (the
   beyond both the expected-move edge and the gamma wall (less a buffer) that clears the delta cap and the
   minimum credit. Pure functions over a chain snapshot; it takes the entry trigger's side choice as a
   plain list, so it does not wait on Task 6A.
+- **Session tape and entry trigger (Task 6A):** `src/spreads/tape.py` samples the index's price and session
+  high/low into a `SessionTape` and `trigger` picks the one side to sell: after a move of at least
+  0.5 × the day's expected move has stalled for 10 minutes, never against a move beyond 1.5 ×, never on
+  a missing or stale tape. `entry.trigger: always` restores the original both-sides rule. Pure; nothing
+  calls it yet.
 - **Rules gate (Task 7):** `src/spreads/risk.py` is the spreads book's only gate: `validate` approves or
   names every reason it refuses (calendar, event and ex-dividend windows, gamma regime, quote quality,
   book limits), and `size` sizes each trade to 10% of the book's own capital. Negative gamma is traded by
