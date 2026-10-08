@@ -464,7 +464,7 @@ A simplified 6-ticker universe, so the whole day fits in one table:
 |---|---|---|---|
 | **NVDA** | actively_wheeling | no | ±0.5% |
 | **HOOD** | actively_wheeling | no | ±0.5% |
-| **SPY** | actively_wheeling | **yes, 100 sh** | **±0.5% OR +2% up** — both rules apply |
+| **QQQ** | actively_wheeling | **yes, 100 sh** | **±0.5% OR +2% up** — both rules apply |
 | **AAPL** | dip-watch | no | −3% down only |
 | **MSFT** | dip-watch | no | −3% down only |
 | **TSLL** | `indexes:` only, not in `would_own` | no | **never scanned** |
@@ -473,8 +473,8 @@ The daemon started at 09:12 this morning.
 
 ### 09:30 — first eligible cycle → forced full sweep
 
-Nothing to gate against, and the startup flag is unset. NVDA, HOOD, and SPY (actively_wheeling
-∪ held — SPY is both) get a chain fetch unconditionally. AAPL and MSFT are dip_watch: each gets a
+Nothing to gate against, and the startup flag is unset. NVDA, HOOD, and QQQ (actively_wheeling
+∪ held — QQQ is both) get a chain fetch unconditionally. AAPL and MSFT are dip_watch: each gets a
 yfinance probe instead. Say neither gapped ≥3% overnight → both are seed-only (yfinance baseline
 persisted, no chain fetch). TSLL is not in `all_symbols` and is not touched.
 
@@ -482,7 +482,7 @@ persisted, no chain fetch). TSLL is not in `all_symbols` and is not touched.
 |---|---|---|
 | NVDA | 180.00 | ✅ yes |
 | HOOD | 118.00 | ✅ yes |
-| SPY | 640.00 | no |
+| QQQ | 640.00 | no |
 | AAPL | 232.00 (yfinance seed — no chain fetch) | — |
 | MSFT | 315.00 (yfinance seed — no chain fetch) | — |
 
@@ -501,7 +501,7 @@ Cheap-probe all five first (sub-second), then decide:
 |---|---|---|---|
 | NVDA | 180.30 | +0.17% | **fetch** — rule (d), cleared the floor last time. The move alone wouldn't have. |
 | HOOD | 117.60 | −0.34% | **fetch** — rule (d) |
-| SPY | 640.50 | +0.08% | skip — needs +2% |
+| QQQ | 640.50 | +0.08% | skip — needs +2% |
 | AAPL | 231.50 | −0.22% | skip — needs −3% |
 | MSFT | 315.20 | +0.06% | skip |
 
@@ -514,18 +514,18 @@ time → `cleared_floor = {HOOD}`.
 |---|---|---|---|
 | NVDA | 181.40 | +0.61% vs **180.30** | **fetch** — rule (b), a genuine 0.5% move off the 09:45 baseline |
 | HOOD | 117.20 | — | **fetch** — rule (d) again |
-| SPY | 641.00 | +0.16% | skip |
+| QQQ | 641.00 | +0.16% | skip |
 | AAPL | 230.90 | −0.47% | skip |
 | MSFT | 315.00 | −0.06% | skip |
 
 **2 chain fetches.** NVDA baseline → 181.40.
 
-### 10:45 — an AAPL selloff and an SPY rally
+### 10:45 — an AAPL selloff and a QQQ rally
 
 | Ticker | Probe | vs. baseline | Verdict |
 |---|---|---|---|
 | AAPL | 224.60 | **−3.19%** vs 232.00 (09:30) | **fetch** — rule (c). This is the dip pull-in: AAPL has been outside the rotation all morning and one real drop brings it in. CSP candidates get generated for it this cycle. |
-| SPY | 653.00 | **+2.03%** vs 640.00 (09:30) | **fetch**. Note it would already have fired at +0.5% via rule (b) — SPY is `actively_wheeling`, and holding it doesn't take that rule away. Rule (a) matters only for a held name in no other bucket. |
+| QQQ | 653.00 | **+2.03%** vs 640.00 (09:30) | **fetch**. Note it would already have fired at +0.5% via rule (b) — QQQ is `actively_wheeling`, and holding it doesn't take that rule away. Rule (a) matters only for a held name in no other bucket. |
 | MSFT | 322.00 | **+2.22%** | **skip** — the gate is down-only for dip-watch. A rally is not a reason to newly sell a put on a name outside the core rotation. |
 | NVDA | 181.60 | +0.11% vs 181.40 | skip |
 | HOOD | 117.30 | — | fetch if still cleared_floor |
@@ -535,14 +535,14 @@ step. The baseline-is-last-fetch rule is what caught it.
 
 ### 12:15 — the staleness net fires, for exactly one symbol
 
-Last-fetch stamps going into this cycle: NVDA **10:02**, HOOD 12:02, SPY 10:47, AAPL 10:47,
+Last-fetch stamps going into this cycle: NVDA **10:02**, HOOD 12:02, QQQ 10:47, AAPL 10:47,
 MSFT **09:33**.
 
 | Ticker | Age | Verdict |
 |---|---|---|
 | **NVDA** | **133 min** | **forced fetch** — rule (f) |
 | HOOD | 13 min | not stale |
-| SPY | 88 min | not stale |
+| QQQ | 88 min | not stale |
 | AAPL | 88 min | not stale |
 | MSFT | **162 min** | **not forced** — dip-watch is permanently excluded from the net |
 
@@ -551,7 +551,7 @@ Note the cycle this lands on. NVDA was fetched during the 10:00 cycle, but the c
 it is only 118 minutes old and survives. It fires one cycle later. **In practice the net fires on
 the 9th cycle after a fetch, not the 8th — an effective worst-case cadence of ~2h15m, not 2h00m.**
 
-**1 forced fetch.** Under the old group rule, NVDA crossing the line would have dragged SPY and
+**1 forced fetch.** Under the old group rule, NVDA crossing the line would have dragged QQQ and
 HOOD along too — 3 fetches where 1 was needed.
 
 **MSFT is the case worth internalizing.** It can sit on its 09:30 baseline all day. That is
@@ -567,7 +567,7 @@ price gets *easier* to trip as the day goes on, not harder.
 | 09:45 | 2 | NVDA, HOOD — cleared floor |
 | 10:00 | 2 | NVDA (0.5% move), HOOD (cleared floor) |
 | 10:15–10:30 | 1–2 | HOOD, occasional NVDA |
-| 10:45 | 4 | AAPL (−3% dip pull-in), SPY (+2% rally), NVDA, HOOD |
+| 10:45 | 4 | AAPL (−3% dip pull-in), QQQ (+2% rally), NVDA, HOOD |
 | 11:00–11:45 | 1–2 | mostly HOOD |
 | 12:15 | 1 | NVDA — staleness net (133 min since its 10:02 stamp) |
 | 12:30–15:45 | 1–3 | ordinary moves + staleness, spread out |

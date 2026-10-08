@@ -10,12 +10,10 @@ cancels it. Refuses to run with LIVE_TRADING=true.
 Expected in TWS: a BAG on SPY, "SELL 600P / BUY 595P", shown as a CREDIT of 4.50. If TWS shows
 a DEBIT, the sign convention in src/spreads/orders.py is wrong — do not enable paper mode.
 
-``--fill`` (stop the spreads service first — this connects as its clientId): opens a fillable
-one-lot at the natural credit, prints IBKR's ``avgFillPrice`` (the executor expects a NEGATIVE
-average for a credit), then closes it at the natural debit and prints that (expected
-POSITIVE). Pick strikes near enough the money to have a natural credit. While it runs, watch
-the wheel's logs: if the wheel process reports a recovered fill for this order, its
-``reqExecutions`` sees clientId 30's executions (the separation gap the plan notes).
+``--fill``: opens a fillable one-lot at the natural credit, prints whether IBKR's
+``avgFillPrice`` is NEGATIVE as the executor expects for a credit, then closes it at the
+natural debit and checks that average is POSITIVE. Pick strikes near enough the money to have
+a natural credit. If the close does not fill, it says so: close the SPY spread by hand.
 """
 
 from __future__ import annotations
@@ -120,7 +118,7 @@ async def _main(short: float, long_: float, wait: float, fill: bool) -> None:
         ib,
         cfg.ibkr.host,
         cfg.ibkr_port,
-        cfg.ibkr.client_ids["spreads" if fill else "healthcheck"],
+        cfg.ibkr.client_ids["healthcheck"],
         timeout=cfg.ibkr.connect_timeout_seconds,
         label="spreads_combo_check",
     )

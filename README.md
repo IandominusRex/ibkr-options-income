@@ -74,6 +74,7 @@ the IDs listed below; override any `TELEGRAM_THREAD_*` variable in `.env` to mat
 | **54** (`TELEGRAM_THREAD_CC`) | `TELEGRAM_THREAD_CC` | Covered-call candidates on currently-held underlyings |
 | **56** (`TELEGRAM_THREAD_BUY`) | `TELEGRAM_THREAD_BUY` | Buy-to-own recommendations (stocks worth owning to sell CCs against) |
 | **58** (`TELEGRAM_THREAD_ACCOUNT`) | `TELEGRAM_THREAD_ACCOUNT` | Account snapshot: net liq, holdings with nested CCs/CSPs, per-position unrealized P&L % — sent fresh at 09:00 ET then edited in-place each cycle |
+| **4308** (`TELEGRAM_THREAD_SPREADS`) | `TELEGRAM_THREAD_SPREADS` | The daily credit-spread book (SPY 0DTE, `src/spreads/`): the 09:31 ET GEX map, every entry and exit, alerts (spreads still open past the time stop, a Gateway drop with spreads open, broker/DB mismatches) and the 16:10 ET summary |
 
 ## How it works, in short
 
@@ -187,7 +188,7 @@ Use `./ibkr` from the repo root; it replaces `python -m scripts.start` for norma
 | Restart it (after a code or config change) | `./ibkr restart` |
 | **Stop it** (the Ctrl-C replacement) | `./ibkr stop` |
 | Check that it is running | `./ibkr status` — shows `running pid=…` plus health checks |
-| Watch what it is doing, live | `./ibkr logs approval` (also `monitor`, `api`, `research`, `eod`, `supervisor`) — Ctrl-C ends the *tail* only, never the system |
+| Watch what it is doing, live | `./ibkr logs approval` (also `monitor`, `api`, `research`, `eod`, `spreads`, `supervisor`) — Ctrl-C ends the *tail* only, never the system |
 | First-time setup / re-register the background jobs | `./ibkr install` |
 
 - **`stop` vs `uninstall`:** `stop` halts trading/scanning but leaves the watchdog alarm loaded, so

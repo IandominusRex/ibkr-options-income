@@ -284,7 +284,7 @@ have one), and the fences.
   separation gap (operator's Step 9), Task 11 Step 9 (the BAG sign check), Task 15 Step 5, and the two Tasks 2–3
   minors above. The ThetaData client and the backtest have never touched a real Terminal.
 
-**Fresh-context review (2026-10-08), `0d2f848..1f7b01c`: verdict "with fixes", NOT yet fixed.** Two independent
+**Fresh-context review (2026-10-08), `0d2f848..1f7b01c`: verdict "with fixes". ALL FIXED the same day (see "Review fixes" below).** Two independent
 reviewers ran, one on the trading core and one on the wheel side, ledger and infra. Gate on their runs: pytest 2911
 passed, 1 skipped; ruff and mypy clean; spreads tests 173 passed. The coordinator confirmed C1, I-L2 and I-L3 against
 the code. Open findings:
@@ -334,6 +334,65 @@ the code. Open findings:
   docs/comments (`models.py:619`, `ibkr logs` usage, the README topic table, "How the scan works.md"'s SPY
   example, STATUS "index" wording).
 
+**Review fixes (2026-10-08): every finding above, Critical through Minor, fixed and tested.** Commits:
+`ff4cfd2` (C1), `59fb110` (trading core: I1–I6 and the core minors), `fa392dc` (ledger, wheel and web isolation,
+fences, backtest), then the docs and this log. Gate: pytest 2957 passed, 1 skipped; ruff and mypy clean; web 487/487.
+Each fix has a test named after its finding, for example `test_a_paper_close_never_exceeds_what_the_broker_holds`.
+- **C1:** `manager.debit_to_close` treats a missing bid beside a live ask as a no-bid market (mark at ask/2, sell
+  for 0 at natural); `chain.to_chain_option` turns a NaN or −1 bid beside a live ask into `0.0`; the shadow close
+  falls back to width only when the short ask is missing.
+- **I1:** each paper tick runs `_check_broker` (reconcile, plus any opening order still working → entries blocked;
+  unblocks by itself once consistent). `_manage` caps each close at `_broker_holdings` and skips while
+  `close_ref` is in `broker.working_refs()`. `executor._work` reports `connection_lost` / `cancel_unconfirmed` /
+  `not_sent` instead of raising, and `_after_order` blocks entries on them.
+- **I2:** `SpreadsService.while_disconnected`, called by `run()` on every disconnected pass (the service is now
+  built before the first connect).
+- **I3:** `IbkrSpreadsBroker.quote` subscribes each distinct conId once and fans the results back out.
+- **I4:** the executor records `abs(avgFillPrice)` and flags `check_fill:positive_sign` / `negative_sign` /
+  `off_ladder`; `spreads_combo_check --fill` prints IBKR's sign for a real one-lot round trip.
+- **I5:** `executor._commission` waits up to 2 s for every fill's report, then charges `2 × qty ×
+  commission_per_contract` for any still missing.
+- **I6:** `pricing.day_schedule` moves `entry_end` and `force_close` earlier by the close shift on an early-close
+  session (13:30 → 10:30, 15:45 → 12:45), used by `risk`, `manager`, `service` and the backtest;
+  `years_to_close` uses the expiry's real close.
+- **I-L1:** `trade_ledger.spread_pairs` / `_price_spreads` / `_stat_units` (see ARCHITECTURE).
+- **I-L2:** SETUP §16 rewritten (keep the ledger on the real account; read paper results from `spreads_report`);
+  the startup note is a log line only.
+- **I-L3:** `reconciliation._exec_matches_candidate` checks the underlying before the order-id match.
+- **Minors:**
+  - `quote_time = chain.as_of`, and the decision gate runs on `self.now()`.
+  - The send-time re-gate gets a fresh spot (`broker.spot()` → `refresh_candidate(..., spot)`) and recomputes
+    the regime at it.
+  - A failed qualification is not cached; no prior-close spot during RTH; non-USD excess liquidity is converted
+    via `ExchangeRate`.
+  - A failed `build_levels` clears the map.
+  - Expired-but-open spreads are alerted, plus a new `scripts/spreads_resolve.py` (`store.held_contracts`).
+  - The fences parse imports with `ast`, cover every module outside `src/spreads` and every non-spreads
+    script, and add a transitive `sys.modules` check. `ledger/live.py` imports `_req_executions_bounded`
+    lazily, which made the old CLAUDE.md caveat moot.
+  - Web: `deps.assert_not_reserved` (422 on both routes), the drain refuses, and the composer drops old rows.
+  - `books.is_spreads_underlying` accepts `SPXW` (and NDXP/RUTW for NDX/RUT).
+  - Line budget: new `spreads.reserved_monitor_lines` (20) against `market_data.max_concurrent_lines`.
+  - Backtest: `data_end` close at the last quote, intraday capital, a failed day is skipped (the run fails if
+    none loads), and today is not cached.
+  - Docs: the `models.py` comment, `ibkr logs` usage, the README topic table, the SPY example in "How the scan
+    works.md" (now QQQ), STATUS "index" wording.
+
+**Rulings (review fixes):**
+- **Naive timestamps (the core minor):** no code change. Every read returns aware UTC; the plan's own Task 9
+  stores naive UTC, like the trading DB. The Global Constraints line now says so.
+- **`--fill` uses the `healthcheck` clientId, not 30.** With I-L3 fixed, whether the wheel sees clientId 30's
+  executions no longer matters, and clientId 30 would have meant stopping the whole supervisor (`./ibkr stop`
+  has no per-service form).
+- **Ledger pairing needed no schema change.** The legs are paired at build time (same underlying, right, expiry
+  and size, opened within 60 s). The short leg carries the spread's capital and returns; the long leg carries
+  capital 0 and returns `None`; per-leg net P&L is unchanged.
+- **The per-tick reconcile alerts only on the second consecutive mismatching tick** (one tick of
+  fill-to-position lag is normal) but blocks entries at once. It unblocks by itself once consistent, which
+  Review Focus 1 allows ("until the broker and DB agree").
+- **The plan's Task 13 and Task 17 text** (`_warn_if_ledger_tracks_another_account`, SETUP §16 step 2) are kept
+  as written history; the corrected text is in the code and SETUP.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
@@ -374,8 +433,9 @@ the code. Open findings:
   lines. It is needed before Task 13's service sends its first message. The worktree-isolated session
   is refused writes to the main checkout, so this one is yours.
 - [ ] Task 11 Step 9: run `scripts.spreads_combo_check` during RTH on the paper Gateway and confirm TWS shows a
-  **credit**; at the same time see whether the wheel process receives the spreads fill (the `reqExecutions`
-  separation gap in the notes below). Do not set `mode: paper` before this.
+  **credit**, then run it again with `--fill` and confirm both lines print `OK` (IBKR's `avgFillPrice` sign).
+  Do not set `mode: paper` before this. (The `reqExecutions` separation watch is no longer needed: I-L3 closed
+  it in code.)
 - [ ] Task 15 Step 5: with the Theta Terminal running, check `SPXW` vs `SPX` for `backtest.option_symbol`, and note
   which worked in SETUP §16.
 - [ ] After the merge, `cp config/spreads.example.yaml config/spreads.yaml`. Until then, every
@@ -631,7 +691,7 @@ The book has its own capital: `risk.starting_capital_usd` ($100,000) plus the re
   - All prices are per share, so contract value is ×100.
   - IV is a decimal (0.18).
   - Spreads store commissions as **positive costs**. The ledger keeps its own negative-is-cost convention.
-- **Times:** ET via `ZoneInfo("America/New_York")`. Every stored timestamp is timezone-aware UTC.
+- **Times:** ET via `ZoneInfo("America/New_York")`. Every stored timestamp is UTC: stored naive in SQLite (the trading DB's convention) and always read back timezone-aware. *(Amended 2026-10-08 by the review: the original "timezone-aware" wording contradicted Task 9's own code.)*
 - **Quality gate after every task:**
   - `python -m pytest -q`
   - `ruff check .`
@@ -8379,7 +8439,7 @@ commission) and places no orders.
 Only do this if shadow **and** backtest both show positive expectancy after costs.
 
 1. During RTH, run `python -m scripts.spreads_combo_check --short <spot−60> --long <short−5>`. TWS must show the BAG as a **credit**. If it shows a debit, stop: see STATUS.md.
-2. Make sure the trade ledger tracks the **paper** account: `config/settings.yaml → ledger.account: "<DU…>"`. Otherwise paper spread fills won't appear in `/ledger`; the service warns about this on startup.
+2. *(Superseded 2026-10-08 by the review, I-L2: do NOT repoint the ledger. It tracks the real account and ignores paper fills by design; read paper results with `scripts.spreads_report --mode paper`. See SETUP §16.)*
 3. Set `mode: paper` and restart. Spread fills appear in the ledger under book **Spreads**.
 
 Live trading is not supported by this build. The service refuses to run with `LIVE_TRADING=true`.

@@ -21,10 +21,10 @@ means:
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/refresh/universe_add/universe_remove — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
+| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/refresh/universe_add/universe_remove — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, and a `universe_add` of a spreads-book underlying (SPY/SPX/XSP) is `422` `reserved_for_spreads_book`, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
 | `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
-| `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
+| `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. `422` (`reserved_for_spreads_book`) for a spreads-book underlying (SPY/SPX/XSP). Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
 | `DELETE` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_remove` intent. Same `422`/`404` as above, plus `409` when removing an `actively_wheeling` symbol from `would_own`. See the `universe_remove` section below. |
 
 Every route requires the `owner` role. A viewer token gets `403`.
@@ -357,8 +357,12 @@ to the new approval.
   research symbol directory) is `404` — checked both by `POST /universe/{list_name}/{symbol}`
   and, since the M7 final-review round, by the generic `POST /commands` route too
   (`src/api/deps.py::assert_known_symbol`, shared by both), so the generic route can no
-  longer be used to bypass the thin wrapper's symbol check. A command that reaches the drain
-  is therefore always valid and always applies.
+  longer be used to bypass the thin wrapper's symbol check. A `universe_add` of a spreads-book
+  underlying (SPY/SPX/XSP — `config/spreads.yaml → book_underlyings`) is `422`
+  `reserved_for_spreads_book` at both routes (`src/api/deps.py::assert_not_reserved`). The one
+  drain-side failure is defence in depth for that same case: `_universe_add` fails
+  `reserved_for_spreads_book`, and the composer drops any older `add` row for such a symbol.
+  Every other command that reaches the drain is valid and applies.
 - **Milestone:** M7, built (Task 7.4; boundary check closed at the generic route in the
   final-review round).
 

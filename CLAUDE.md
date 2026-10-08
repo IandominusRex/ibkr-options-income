@@ -211,7 +211,7 @@ read-only module.
 normalises to a `ParsedStatement` and lands through `src/ledger/ingest.py::ingest`, never through
 a second writer. The same fence applies here as everywhere else in the reporting tier: nothing
 in `src/ledger/` is imported by `engine/`, `execution/`, or `strategies/`, and `src/ledger/`
-imports nothing from `src.claude` *directly* (transitively, `live.py` reaches `src.claude.memory` through `src.execution.reconciliation`'s `_req_executions_bounded` helper; this is harmless at runtime because `live.py` only runs inside `approval_service`). `src/ledger/live.py` is the one place `ib_async` objects
+imports nothing from `src.claude`, directly or at import time: `live.py` imports `src.execution.reconciliation`'s `_req_executions_bounded` lazily, inside its own wrapper, because a module-level import loaded `src.execution` and, through it, `src.claude.memory` into every process that attaches the ledger's commission hook, the spreads service included. Only the RTH sweep, which runs only inside `approval_service`, reaches it. `src/ledger/live.py` is the one place `ib_async` objects
 (`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
 schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
 Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping
@@ -236,7 +236,10 @@ credit spreads in the **same IBKR account and Gateway** as the wheel, with its o
 - **The wheel learns about the spreads book only through `src/common/books.py`.** Three places:
   `get_positions()` drops spreads contracts by default (only `scripts/healthcheck.py` passes
   `include_spreads=True`), the rules engine rejects `reserved_for_spreads_book`, and ledger
-  ingest tags `book="spreads"`. No wheel layer imports `src.spreads`.
+  ingest tags `book="spreads"`. The web universe override refuses those underlyings too (`422`
+  at both routes, refused in the drain, dropped by the composer), and the wheel's fill recovery
+  requires the underlying to match even on an order-id match. No module outside `src/spreads/`
+  imports `src.spreads`.
 - **`src/spreads/risk.py::validate` is the spreads system's only gate** — deterministic, no LLM,
   run at decision time and again at send time on fresh quotes. The core invariant holds
   unchanged: nothing an LLM produces reaches a spreads order (the package imports nothing from
@@ -245,11 +248,17 @@ credit spreads in the **same IBKR account and Gateway** as the wheel, with its o
 - `src/spreads/` imports nothing from `src.claude`, `src.engine`, `src.execution`,
   `src.strategies`, `src.orchestrator`, `src.monitor`, `src.notify`, `src.reporting`, `src.api`,
   `src.research`; only `src/spreads/service.py` may import `src.ledger` / `src.storage`.
-- At most `max_market_data_lines` (30) open lines; `market_data.chain_batch_size + 30 ≤ 95`
-  is enforced at load. `req_fresh_mkt_data` only; `LimitOrder` only.
+- At most `max_market_data_lines` (30) open lines; with spreads enabled,
+  `market_data.chain_batch_size + max_market_data_lines + reserved_monitor_lines ≤
+  market_data.max_concurrent_lines` is enforced at load. `req_fresh_mkt_data` only;
+  `LimitOrder` only.
+- In paper mode the broker is the truth for what a close may send: never close more than the
+  broker holds, never send a second close while one is working (see `service.py`).
 - `run()` idles when `LIVE_TRADING=true` — shadow/paper only until a separate live plan exists.
 
-Enforced by `tests/test_spreads_fence.py`, `tests/test_wheel_spreads_isolation.py` and
+Enforced by `tests/test_spreads_fence.py` (imports parsed with `ast`, so `from src import
+engine`, relative imports and `importlib` count, plus a `sys.modules` check that the spreads
+process loads no wheel layer even transitively), `tests/test_wheel_spreads_isolation.py` and
 `tests/test_spreads_config.py` — keep them green.
 
 ## Reference documentation

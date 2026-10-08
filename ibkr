@@ -23,7 +23,7 @@ Usage: ibkr <command> [args]
   stop                       Stop the supervisor (and gateway) — the watchdog keeps running
   restart                    stop, then start (the watchdog is never touched)
   status                     Agent state/pid plus the watchdog's own health checks
-  logs <name>                Tail a log: approval|monitor|api|research|eod|watchdog|supervisor
+  logs <name>                Tail a log: approval|monitor|api|research|eod|spreads|watchdog|supervisor
   watchdog                   Run one watchdog health check now (not through launchd)
   autonomy [level]           Show/set the autonomy rung (scripts/autonomy.py, Task 12)
 EOF
@@ -65,7 +65,7 @@ case "${cmd}" in
   logs)
     name="${1:-}"
     if [[ -z "${name}" ]]; then
-      echo "Usage: ibkr logs <approval|monitor|api|research|eod|watchdog|supervisor>" >&2
+      echo "Usage: ibkr logs <approval|monitor|api|research|eod|spreads|watchdog|supervisor>" >&2
       exit 1
     fi
     if [[ "${name}" == "supervisor" ]]; then

@@ -616,7 +616,8 @@ class BrokerExecutionRow(Base):
     ibkr_realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     occurrence_idx: Mapped[int] = mapped_column(Integer, default=0)
     superseded_by: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    book: Mapped[str] = mapped_column(String(8), default="manual")  # "system" | "manual"
+    # "system" | "manual" | "spreads"
+    book: Mapped[str] = mapped_column(String(8), default="manual")
     import_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

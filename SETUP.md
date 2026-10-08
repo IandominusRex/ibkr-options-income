@@ -813,7 +813,7 @@ the EOD report.
 ./ibkr start                   # reloads/restarts the supervisor (+ gateway)
 ./ibkr restart                 # stop, then start (supervisor + gateway only)
 ./ibkr uninstall                # unloads and deletes every installed agent's plist, watchdog included
-./ibkr logs approval             # tail logs/approval.log (also: monitor|api|research|eod|watchdog|supervisor)
+./ibkr logs approval             # tail logs/approval.log (also: monitor|api|research|eod|spreads|watchdog|supervisor)
 ./ibkr watchdog                  # run one watchdog health check right now (not through launchd)
 ./ibkr autonomy [level]         # show/set the autonomy rung (scripts/autonomy.py)
 ```
@@ -1673,10 +1673,22 @@ commission) and places no orders.
 Only do this if shadow **and** backtest both show positive expectancy after costs.
 
 1. During RTH, run `python -m scripts.spreads_combo_check --short <spot−60> --long <short−5>`. TWS must show the BAG as a **credit**. If it shows a debit, stop: see STATUS.md.
-2. Make sure the trade ledger tracks the **paper** account: `config/settings.yaml → ledger.account: "<DU…>"`. Otherwise paper spread fills won't appear in `/ledger`; the service warns about this on startup.
-3. Set `mode: paper` and restart. Spread fills appear in the ledger under book **Spreads**.
+2. Still during RTH, run `python -m scripts.spreads_combo_check --short <spot−5> --long <short−5> --fill`. It opens a one-lot near the money and closes it straight away, then prints `OK` or `MISMATCH` for each fill price's sign (the executor expects a negative average for the opening credit and a positive one for the closing debit). Any `MISMATCH`: stop and see STATUS.md. If it says the close did not fill, close the SPY spread by hand in TWS at once.
+3. Leave the trade ledger on your **real** account. It tracks one account and ignores paper fills by design (`ledger.account`; changing it to the paper account would make every real-account import fail `account_mismatch`). Paper spread results live in `data/spreads.db`: `python -m scripts.spreads_report --mode paper`.
+4. Set `mode: paper` and restart.
+5. If the Spreads thread ever says the broker holds fewer contracts than spreads.db, or that a spread *expired … but spreads.db still holds it open*: check TWS for what happened (an assignment, or a close that filled while the Gateway was down), then record it with `python -m scripts.spreads_resolve --spread-id <id> --debit <price paid per share> [--contracts N] [--commission USD]`.
 
 Live trading is not supported by this build. The service refuses to run with `LIVE_TRADING=true`.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.run_spreads` | The spreads service (clientId 30). Normally started by `scripts.start` / `./ibkr restart`; `--no-spreads` skips it. Logs to `logs/spreads.log` (`./ibkr logs spreads`) |
+| `python -m scripts.spreads_report --mode shadow\|paper [--csv path]` | Results from `data/spreads.db`, split by every trade tag |
+| `python -m scripts.spreads_backtest --start … --end … [--profit-take N] [--trigger move\|always] [--negative-gamma allow\|skip] [--csv path]` | ThetaData minute replay of the live rules. A day whose data won't load is listed as skipped instead of ending the run |
+| `python -m scripts.spreads_combo_check --short K --long K [--fill]` | Paper-only check of the combo order sign: display only by default, a filled-and-closed one-lot with `--fill` |
+| `python -m scripts.spreads_resolve --spread-id ID --debit D [--contracts N] [--commission C]` | Settle by hand a spread the service can no longer close (it expired while still open, or the broker no longer holds it) |
 
 ---
 
@@ -1686,7 +1698,10 @@ Live trading is not supported by this build. The service refuses to run with `LI
 |---|---|---|
 | Spreads thread says *"could not build the GEX map (no chain or no index price)"* | No Cboe index-data subscription for SPX, or the Gateway lost its data farm | Check Client Portal → Settings → Market Data Subscriptions, then run `python -m scripts.healthcheck` |
 | Shadow mode records no spreads for days | Expected on quiet days: the move trigger sells only after a move of at least half the day's expected move has stalled | Check that the SPY session stats arrive (`python -m scripts.healthcheck`), and run `python -m scripts.spreads_backtest ... --trigger always` to see what the original every-check rule would have done |
-| Spreads thread says *"entries blocked — broker and spreads.db disagree"* | A paper spread was closed or changed outside the system, or a fill was missed during a Gateway restart | Compare the TWS positions with `data/spreads.db → spread_positions`, fix the row or the position, then restart the spreads service |
+| Spreads thread says *"entries blocked — broker and spreads.db disagree"* | A paper spread was closed or changed outside the system, a fill was missed during a Gateway restart, or an opening order is still working at IBKR | Compare the TWS positions and open orders with `data/spreads.db → spread_positions`. Settle a spread the broker no longer holds with `python -m scripts.spreads_resolve`, or close a stray position by hand. The service re-checks every 30 s and unblocks entries by itself once they agree |
+| Spreads thread says *"IB Gateway is disconnected with N spread(s) open"*, or *"URGENT … past the time stop"* | The Gateway (or its connection) is down while spreads are open, so exits are paused | Restore the Gateway. Past the time stop, close the SPY spreads by hand in TWS before the bell: SPY settles in shares |
+| Spreads thread says a fill *"… check_fill:positive_sign"* (or `negative_sign` / `off_ladder`) | IBKR reported the combo's average fill price with an unexpected sign or outside the ladder | The magnitude was recorded. Compare it with the fill in TWS and fix the row with `scripts.spreads_resolve` if needed; report it, because the BAG sign convention (plan Task 11 Step 9) is still unverified |
+| Config load fails with *"… exceeds market_data.max_concurrent_lines"* | With `spreads.enabled: true`, the wheel's scan batch, the spreads lines and the monitor's reserved lines together exceed the configured market-data cap | Lower `spreads.max_market_data_lines` or `market_data.chain_batch_size`, or raise `market_data.max_concurrent_lines` if your login really has the headroom |
 | Config load fails with *"spreads.book_underlyings [...] also appear in config/universe.yaml"* | SPY, XSP or SPX is in the wheel universe (the committed example used to list SPY). They are reserved for the daily credit-spread book | Remove it from `config/universe.yaml`: the two books may never share an underlying |
 | Every approved order fails at once with *"Live re-validation failed: delta drifted outside target band … live mid collapsed well below the approved premium"* | Before 2026-09-30, repeat scans read a re-subscribed contract's **cached** ib_async ticker, so candidates were priced from quotes 15–30 min old and the send-time re-gate (correctly) rejected them against a fresh quote | Fixed by `req_fresh_mkt_data` — restart the daemons (`./ibkr restart`) to pick it up. The failure message now shows *live mid vs approved* and *live Δ vs approved*: a small gap is a genuine market move (expected — the gate is working); a large, systematic gap on every order means stale data again |
 | `ConnectionRefusedError` on healthcheck | IB Gateway not running, API not enabled, or wrong port | Start IB Gateway and check API settings (Step 4). Confirm `config/settings.yaml → ibkr.paper_port` matches the Socket port set in Gateway (default `4002`). |
