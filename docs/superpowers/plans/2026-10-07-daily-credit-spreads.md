@@ -79,6 +79,16 @@ tracker; the copy on `main` stays unticked until the branch merges.
   `routers/ledger.py`, ledger-schemas and web-ledger rows, plus STATUS's ledger line and
   "In progress" bullet. Task 17 lists none of these rows.
 
+**Rulings (Task 4):**
+- **Docs moved forward again.** ARCHITECTURE's `src/common/` `schemas.py` row and Data-flow table
+  now describe the spreads types, and a new interim `src/spreads/` section sits above `src/ops/`
+  listing only `__init__.py` and `pricing.py`. Each later task adds its own rows to it. When you
+  reach Task 17 **Step 3.3:** don't insert a second section; replace the interim one (its heading
+  carries "IN PROGRESS") with the plan's full file table. STATUS's "In progress" section gained a
+  bullet.
+- **No deviation in code.** The tests, schemas and `pricing.py` are the plan's text verbatim; Step 2's
+  failure was the expected `ImportError: cannot import name 'ChainOption'`.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
@@ -1541,7 +1551,7 @@ git commit -m "feat(ledger): spreads book — tagged by underlying, labelled Spr
   - `price(spot, strike, t, iv, right, r=0.0) -> float`
   - `implied_vol(target, spot, strike, t, right, r=0.0) -> float | None`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_pricing.py`:
 
@@ -1615,12 +1625,12 @@ def test_amendment_schemas_default_safely() -> None:
     assert SpreadExit(spread_id="s1", reason="max_hold", close=True).reason == "max_hold"
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_pricing.py -q`
 Expected: FAIL with `ImportError: cannot import name 'ChainOption'`.
 
-- [ ] **Step 3: Append the spreads schemas to `src/common/schemas.py`**
+- [x] **Step 3: Append the spreads schemas to `src/common/schemas.py`**
 
 Append at the end of the file:
 
@@ -1825,7 +1835,7 @@ class SpreadTradeRecord(BaseModel):
 
 (`Literal`, `date`, `datetime`, `BaseModel`, `Field` are already imported in this module. Confirm with `grep -n "^from" src/common/schemas.py`.)
 
-- [ ] **Step 4: Create the package and `src/spreads/pricing.py`**
+- [x] **Step 4: Create the package and `src/spreads/pricing.py`**
 
 `src/spreads/__init__.py`:
 
@@ -1927,12 +1937,12 @@ def implied_vol(
     return (a + b) / 2
 ```
 
-- [ ] **Step 5: Run the tests and the gate**
+- [x] **Step 5: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_pricing.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 ruff format src/common/schemas.py src/spreads/__init__.py src/spreads/pricing.py tests/test_spreads_pricing.py

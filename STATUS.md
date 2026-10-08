@@ -366,11 +366,11 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–3 of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–4 of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
-tasks are done). Branch `feat/daily-credit-spreads`. Only the config and the wheel-side guards
-exist; there is no `src/spreads/` package yet, so nothing trades spreads.
+tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
+schemas and the same-day pricing math exist; nothing trades spreads yet.
 
 - `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
   `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
@@ -388,6 +388,10 @@ exist; there is no `src/spreads/` package yet, so nothing trades spreads.
   their book (a re-import retags an existing row only when it backfills the row's order id), so
   SPY/SPX/XSP history imported before this change stays `manual`/`system`, while the same history
   imported fresh would land as `spreads`.
+- **Schemas and pricing (Task 4):** the spreads Pydantic types (`ChainOption`, `ChainSnapshot`, `GexLevels`,
+  `SpreadCandidate`, `SpreadPosition`, the trigger and trade-log types …) are in `src/common/schemas.py`,
+  and `src/spreads/pricing.py` holds Black-Scholes with fractional-year time (the wheel's
+  `analytics/black_scholes.py` returns `None` at 0 DTE). Pure math and data shapes: no I/O, no behaviour change.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 
