@@ -25,8 +25,8 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 1 Spreads config, book helpers, wheel-side guards | ✅ done | `8baac24` (code), then docs + this log | 2026-10-08 | pytest 2744 passed, 1 skipped; ruff and mypy clean |
 | 2 `get_positions` filter | ✅ done | `f7127f1` (code), then docs + this log | 2026-10-08 | pytest 2749 passed, 1 skipped; ruff and mypy clean |
 | 3 Ledger `spreads` book | ✅ done | `dd471f8` (code), then docs + this log | 2026-10-08 | pytest 2752 passed, 1 skipped; ruff and mypy clean; web 487/487 |
-| 4 Schemas and same-day pricing | ⬜ | | | |
-| 5 GEX levels | ⬜ | | | |
+| 4 Schemas and same-day pricing | ✅ done | `1875ffc` (code), then docs + this log | 2026-10-08 | pytest 2761 passed, 1 skipped; ruff and mypy clean |
+| 5 GEX levels | ✅ done | `44ede26` (code), then docs + this log | 2026-10-08 | pytest 2771 passed, 1 skipped; ruff and mypy clean |
 | 6 Candidate selection | ⬜ | | | |
 | 6A Session tape and entry trigger | ⬜ | | | |
 | 7 Deterministic spreads gate | ⬜ | | | |
@@ -89,6 +89,16 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **No deviation in code.** The tests, schemas and `pricing.py` are the plan's text verbatim; Step 2's
   failure was the expected `ImportError: cannot import name 'ChainOption'`.
 
+**Rulings (Task 5):**
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the `gex.py`
+  row, and STATUS's "In progress" section a bullet. Task 17 Step 3.3's full table replaces them.
+- **No deviation in code.** Tests and `gex.py` are the plan's text verbatim (`ruff format` only
+  re-wrapped one line). Step 2's failure was the expected `ModuleNotFoundError: No module named
+  'src.spreads.gex'`.
+- **Pre-flight:** the three config fields Task 5 reads (`gex.scale_to_underlying`,
+  `gex.flip_search_pct`, `selection.em_straddle_factor`) all exist in Task 1's `SpreadsCfg` and in
+  `config/spreads.example.yaml`.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
@@ -113,6 +123,14 @@ tracker; the copy on `main` stays unticked until the branch merges.
     ledger account (live).
   - `test_only_the_healthcheck_asks_for_spreads_positions` greps the literal
     `include_spreads=True`, so a caller that passes a variable would slip past it.
+
+- **Self-review of Tasks 4–5 (2026-10-08), no Critical/Important; one note for Task 13.**
+  `gamma_flip` evaluates net GEX at 121 spots, and every evaluation recomputes gamma for every
+  option with scipy scalar calls. Measured: 0.62 s for a 320-option SPX snapshot (two expiries, ±3%
+  on a 5-point grid); a full chain could take a few seconds. It runs about once an hour (the map
+  refresh), but it is synchronous, so **Task 13 should call `build_levels` through
+  `asyncio.to_thread`** (or otherwise off the event loop) so a map refresh cannot stall the
+  ib_async heartbeat. `regime_at` is a single pass and is cheap.
 
 **Operator to-dos:**
 - [ ] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. It is
@@ -1972,7 +1990,7 @@ git commit -m "feat(spreads): schemas and fractional-day Black-Scholes"
   - `build_levels(gex_chain, traded_chain, cfg, now) -> GexLevels` (scales SPX levels by `cfg.gex.scale_to_underlying`, or by the live traded/GEX spot ratio when it is `None`, and records the multiplier as `GexLevels.scale`)
   - `regime_at(gex_chain, traded_spot, scale, now) -> GammaRegime` (`scale` = the map's `GexLevels.scale`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_gex.py`:
 
@@ -2097,12 +2115,12 @@ def test_build_levels_uses_the_live_spy_spx_ratio() -> None:
     assert build_levels(_spx_chain(), spy, pinned, NOW).put_wall == pytest.approx(680.0)
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_gex.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.gex'`.
 
-- [ ] **Step 3: Implement `src/spreads/gex.py`**
+- [x] **Step 3: Implement `src/spreads/gex.py`**
 
 ```python
 """Dealer gamma exposure (GEX) levels from a chain snapshot — the day's "action zones".
@@ -2237,12 +2255,12 @@ def regime_at(
     return regime_of(sum(per.values()), bool(per))
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_gex.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/gex.py tests/test_spreads_gex.py

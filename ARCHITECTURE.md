@@ -869,6 +869,7 @@ modules listed below exist so far**; Task 17 replaces this section with the full
 |---|---|
 | `__init__.py` | Package marker. |
 | `pricing.py` | Black-Scholes gamma/delta/price/implied vol with **fractional-year** time, plus the ET clock (`ET`, `years_to_close`). `analytics/black_scholes.py` takes integer calendar DTE and returns `None` at 0 DTE, which is exactly the regime this system trades, so the package carries its own pure-math copy. `MIN_T` (one minute) keeps gamma finite at the bell. |
+| `gex.py` | Dealer gamma exposure from a chain snapshot (pure, no I/O): `strike_gex`/`net_gex` (Γ·OI·100·S²·1%, calls +, puts −, Γ recomputed with fractional-day `T`), `regime_of`, `gamma_flip` (the sign change nearest spot, searched ±`gex.flip_search_pct`), `walls` (largest call GEX at/above spot, most negative put GEX at/below), `expected_move` (ATM straddle mid × `selection.em_straddle_factor`), `build_levels` (SPX levels × `gex.scale_to_underlying`, or the **live SPY/SPX ratio** when that is `null`, recorded on `GexLevels.scale`) and `regime_at` (re-evaluates the regime at a new spot between map refreshes). Open interest is the prior close's, so the levels are a strike-placement guide and a tag, never a price target. |
 
 ---
 
