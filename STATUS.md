@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–9 and 6A of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–10 and 6A of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
@@ -420,6 +420,10 @@ manager, the spreads database and the session tape / entry trigger exist; nothin
   that shares no table with the trading DB. It stores every GEX map, candidate and order attempt, and one
   row per spread that doubles as the trade log (entry tags, worst mark, holding time, realized P&L), kept
   separately for `shadow` and `paper`. The file is created on first use; nothing calls it yet.
+- **IBKR I/O (Task 10):** `src/spreads/chain.py` (`IbkrSpreadsBroker`) reads the chain, leg quotes, the SPY
+  session quote, account excess liquidity and the spreads-underlying legs the broker holds. It is the only
+  spreads module that touches `ib_async`, and it never holds more than `max_market_data_lines` lines.
+  Not exercised against a live Gateway yet (tests use a fake IB); nothing calls it yet.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 

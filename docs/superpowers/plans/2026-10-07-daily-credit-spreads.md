@@ -32,7 +32,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 7 Deterministic spreads gate | ✅ done | `5100d27` (code), then docs + this log | 2026-10-08 | pytest 2811 passed, 1 skipped; ruff and mypy clean |
 | 8 Exit manager and reconciliation | ✅ done | `1d32946` (code), then docs + this log | 2026-10-08 | pytest 2826 passed, 1 skipped; ruff and mypy clean |
 | 9 Spreads database | ✅ done | `78c3492` (code), then docs + this log | 2026-10-08 | pytest 2835 passed, 1 skipped; ruff and mypy clean |
-| 10 IBKR I/O | ⬜ | | | |
+| 10 IBKR I/O | ✅ done | `5c2ffcf` (code), then docs + this log | 2026-10-08 | pytest 2858 passed, 1 skipped; ruff and mypy clean |
 | 11 Combo orders and executor | ⬜ | | | |
 | 12 Telegram notifier | ⬜ | | | |
 | 13 Service, entrypoint, supervisor | ⬜ | | | |
@@ -150,6 +150,15 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **For Task 13:** `trigger()` reads `tape.day_em`, which Task 13 must set from the day's first map (read
   back from `spreads.db` after a restart), and `max_tape_age_seconds` counts from `tape.last_at`, so the
   sampler must call `observe` every tick even when nothing else changed.
+**Rulings (Task 10):**
+- **No deviation in code.** Tests and `chain.py` are the plan's text verbatim (`ruff format` re-wrapped
+  both). Step 2's failure was the expected `ModuleNotFoundError: No module named 'src.spreads.chain'`;
+  Step 4 passed first time (13/13).
+- **The Task 6–7 deferred minor is closed by construction:** `fetch_chain` requests `Option(...,
+  tradingClass=trading_class)` for each (expiry, strike, right) exactly once, so a snapshot has one
+  option per key; no dedupe was added.
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the `chain.py` row;
+  STATUS's section a bullet (heading "Tasks 1–10 and 6A"). Task 17 Step 3.3 replaces them.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -4363,7 +4372,7 @@ git commit -m "feat(spreads): separate spreads.db — maps, candidates, position
     - `async excess_liquidity() -> float | None`
     - `broker_legs() -> dict[int, float]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_chain.py`:
 
@@ -4584,12 +4593,12 @@ async def test_excess_liquidity_prefers_usd() -> None:
 
 The `async def` tests run natively: `pyproject.toml` sets `asyncio_mode = "auto"`.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_chain.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.chain'`.
 
-- [ ] **Step 3: Implement `src/spreads/chain.py`**
+- [x] **Step 3: Implement `src/spreads/chain.py`**
 
 ```python
 """IBKR I/O for the spreads system — chains, quotes, spot, account, broker legs.
@@ -4866,12 +4875,12 @@ class IbkrSpreadsBroker:
         return {k: v for k, v in legs.items() if v}
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_chain.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/chain.py tests/test_spreads_chain.py
