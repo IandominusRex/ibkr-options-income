@@ -269,6 +269,21 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **Gate (Step 6):** `ruff`, `mypy`, `pytest` 2910 passed / 1 skipped, and `cd web && npm test` 62 files / 487
   tests. The web run prints React "hydration error" warnings that were there before this branch; no test fails.
 
+**Final whole-branch review (2026-10-08): self-review, not a fresh reviewer.** The session rule is to spawn an
+agent only when the operator asks, so the author reviewed the branch (36 commits, `0d2f848..dddcf4c`) against
+`code-reviewer.md`. A fresh-context review of the whole branch is **still advisable before the merge**; the
+package is `.superpowers/sdd/2026-10-07-daily-credit-spreads/review-0d2f848..dddcf4c.diff` (git-ignored, rebuild with
+`review-package` if it is gone). What the self-review covered: the wheel-side diffs (`risk_engine.py`, `portfolio.py`,
+`ingest.py`, `trade_ledger.py`, `start.py`, `healthcheck.py`), a map of Review Focus 1–7 to their tests (all seven
+have one), and the fences.
+- **One Important finding, fixed:** nothing git-ignored the ThetaData cache (`data/spreads_bt/`, licensed market
+  data), the trade-log CSVs that SETUP §16 tells the operator to write, or `data/spreads.halt`, so a `git add .`
+  could have committed them. `test_spreads_runtime_files_are_gitignored` failed first (cache path not ignored),
+  then passed after three `.gitignore` lines; suite 2911 passed, 1 skipped, ruff and mypy clean.
+- **No other Critical/Important findings.** Still open and deliberately carried: the wheel `reqExecutions`
+  separation gap (operator's Step 9), Task 11 Step 9 (the BAG sign check), Task 15 Step 5, and the two Tasks 2–3
+  minors above. The ThetaData client and the backtest have never touched a real Terminal.
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.

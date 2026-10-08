@@ -49,6 +49,10 @@ data/eod_scheduler_state.json
 data/watchdog_state.json
 data/sentiment_history.json
 data/backups/
+# Daily credit spreads: the ThetaData cache (licensed market data), exported trade CSVs, the halt switch
+data/spreads_bt/
+data/spreads_*.csv
+data/spreads.halt
 logs/*.log
 logs/*.log.*
 logs/*.out
