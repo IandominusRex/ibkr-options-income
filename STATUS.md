@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–11 and 6A of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–12 and 6A of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
@@ -431,6 +431,10 @@ manager, the spreads database and the session tape / entry trigger exist; nothin
   negative limit = credit) is unverified. Before ever setting `mode: paper`, run `python -m
   scripts.spreads_combo_check --short K --long K` during RTH on the paper Gateway and confirm TWS shows a
   credit; if it shows a debit, flip it in `orders.py` and its tests. Nothing calls the executor yet.
+- **Telegram notifier (Task 12):** `src/spreads/notify.py` posts the map, entries (tagged with the gamma regime and
+  the move it sold against), exits and the end-of-day summary to the spreads' own topic
+  (`TELEGRAM_THREAD_SPREADS`; empty means the General topic). Best effort: a send failure is logged and never
+  reaches trading code. Not sent to a real chat yet; nothing calls it.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 

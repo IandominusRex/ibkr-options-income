@@ -34,7 +34,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 9 Spreads database | ✅ done | `78c3492` (code), then docs + this log | 2026-10-08 | pytest 2835 passed, 1 skipped; ruff and mypy clean |
 | 10 IBKR I/O | ✅ done | `5c2ffcf` (code), then docs + this log | 2026-10-08 | pytest 2858 passed, 1 skipped; ruff and mypy clean |
 | 11 Combo orders and executor | ✅ done (Step 9 is the operator's) | `e1e8d0b` (code), then docs + this log | 2026-10-08 | pytest 2870 passed, 1 skipped; ruff and mypy clean |
-| 12 Telegram notifier | ⬜ | | | |
+| 12 Telegram notifier | ✅ done | `7cae8b3` (code), then docs + this log | 2026-10-08 | pytest 2873 passed, 1 skipped; ruff and mypy clean |
 | 13 Service, entrypoint, supervisor | ⬜ | | | |
 | 14 Performance report | ⬜ | | | |
 | 15 ThetaData client | ⬜ | | | |
@@ -174,6 +174,18 @@ tracker; the copy on `main` stays unticked until the branch merges.
   add only `run_spreads.py`, `spreads_report.py` and `spreads_backtest.py`: the `spreads_combo_check.py`
   row already exists.** Task 17 Step 3.3's full table replaces the `src/spreads/` rows. SETUP's scripts
   table is Task 17's (§16).
+
+**Rulings (Task 12):**
+- **No deviation in code.** The tests and `notify.py` are the plan's text verbatim (`ruff format` re-wrapped
+  long lines in both). Step 2's failure was the expected `ModuleNotFoundError: No module named
+  'src.spreads.notify'`; Step 4 passed first time (3/3). `Secrets.telegram_thread_spreads` already existed from
+  Task 1, so the only config edit is the `.env.example` line.
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the `notify.py` row, STATUS's
+  section a bullet (heading now "Tasks 1–12 and 6A"), and SETUP.md's `.env` block and its "find the topic id" step
+  list `TELEGRAM_THREAD_SPREADS`. Task 17 Step 3.3's full table replaces the ARCHITECTURE row; **Task 17 Step 4 /
+  §16 need not re-add the `.env` line to SETUP's `.env` block** (it is there; §16 still says what the variable is for).
+- **Not exercised against a real chat:** the send path is tested with a fake `Bot`. The first real message is
+  Task 13's startup notice; the operator needs `TELEGRAM_THREAD_SPREADS` in the private `.env` (empty is fine).
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -5590,7 +5602,7 @@ This step can't run in CI. Record its result in `STATUS.md`.
   - `fmt_exit(spread_id, reason, debit, realized_usd, mode) -> str`
   - `fmt_eod(day, mode, trades, realized_usd, open_count) -> str`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_notify.py`:
 
@@ -5659,12 +5671,12 @@ async def test_send_posts_to_the_spreads_thread(monkeypatch) -> None:
     assert SpreadsNotifier("tok", "123", "").thread_id is None
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_notify.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.notify'`.
 
-- [ ] **Step 3: Implement `src/spreads/notify.py`**
+- [x] **Step 3: Implement `src/spreads/notify.py`**
 
 ```python
 """Telegram output for the spreads system — its own thread, its own Bot, no src.notify import.
@@ -5766,7 +5778,7 @@ class SpreadsNotifier:
             log.exception("spreads notify failed")
 ```
 
-- [ ] **Step 4: Run the tests and the gate, then commit**
+- [x] **Step 4: Run the tests and the gate, then commit**
 
 Run: `python -m pytest tests/test_spreads_notify.py -q && ruff check . && mypy src`
 Expected: PASS.

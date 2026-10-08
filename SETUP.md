@@ -112,6 +112,7 @@ TELEGRAM_THREAD_CSP=52     # Cash-secured put candidates
 TELEGRAM_THREAD_CC=54      # Covered-call candidates
 TELEGRAM_THREAD_BUY=56     # Buy-to-own recommendations
 TELEGRAM_THREAD_ACCOUNT=58 # Account snapshot
+TELEGRAM_THREAD_SPREADS=   # Daily credit-spread system (src/spreads/); empty = General topic
 
 LIVE_TRADING=false              # Keep false until you are ready to go live
 ```
@@ -127,7 +128,8 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
    response — that number identifies the topic the message was sent in. Repeat this for each
    topic you want the bot to use, and set the corresponding `TELEGRAM_THREAD_*` variable
    (`TELEGRAM_THREAD_SCAN`, `TELEGRAM_THREAD_CSP`, `TELEGRAM_THREAD_CC`, `TELEGRAM_THREAD_BUY`,
-   `TELEGRAM_THREAD_ACCOUNT`). Leave a variable unset for DMs or plain (non-forum) groups.
+   `TELEGRAM_THREAD_ACCOUNT`, and `TELEGRAM_THREAD_SPREADS` for the optional daily credit-spread
+   system). Leave a variable unset for DMs or plain (non-forum) groups.
 
 ---
 
