@@ -112,7 +112,7 @@ TELEGRAM_THREAD_CSP=52     # Cash-secured put candidates
 TELEGRAM_THREAD_CC=54      # Covered-call candidates
 TELEGRAM_THREAD_BUY=56     # Buy-to-own recommendations
 TELEGRAM_THREAD_ACCOUNT=58 # Account snapshot
-TELEGRAM_THREAD_SPREADS=   # Daily credit-spread system (src/spreads/); empty = General topic
+TELEGRAM_THREAD_SPREADS=4308 # Daily credit-spread system (src/spreads/)
 
 LIVE_TRADING=false              # Keep false until you are ready to go live
 ```

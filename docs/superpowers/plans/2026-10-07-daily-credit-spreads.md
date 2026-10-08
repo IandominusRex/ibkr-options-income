@@ -185,7 +185,11 @@ tracker; the copy on `main` stays unticked until the branch merges.
   list `TELEGRAM_THREAD_SPREADS`. Task 17 Step 3.3's full table replaces the ARCHITECTURE row; **Task 17 Step 4 /
   §16 need not re-add the `.env` line to SETUP's `.env` block** (it is there; §16 still says what the variable is for).
 - **Not exercised against a real chat:** the send path is tested with a fake `Bot`. The first real message is
-  Task 13's startup notice; the operator needs `TELEGRAM_THREAD_SPREADS` in the private `.env` (empty is fine).
+  Task 13's startup notice; the operator needs `TELEGRAM_THREAD_SPREADS=4308` in the private `.env`.
+- **Thread id set (operator, 2026-10-08):** the spreads topic is `4308`. `.env.example` and SETUP's `.env` block now
+  carry `TELEGRAM_THREAD_SPREADS=4308`; `Secrets.telegram_thread_spreads` still defaults to `""` in code (the other
+  topics' code defaults mirror `.env.example`, but changing it was not asked for). The private `.env` is outside this
+  worktree, so the line there is the operator's (see the to-dos).
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -221,8 +225,11 @@ tracker; the copy on `main` stays unticked until the branch merges.
   ib_async heartbeat. `regime_at` is a single pass and is cheap.
 
 **Operator to-dos:**
-- [ ] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. It is
-  needed before Task 13's service runs, and harmless now.
+- [x] Add `spreads: 30` under `ibkr.client_ids` in your private `config/settings.yaml`. Done by the
+  operator (confirmed 2026-10-08, `settings.yaml` line 18).
+- [ ] Add `TELEGRAM_THREAD_SPREADS=4308` to your private `.env`, next to the other `TELEGRAM_THREAD_*`
+  lines. It is needed before Task 13's service sends its first message. The worktree-isolated session
+  is refused writes to the main checkout, so this one is yours.
 - [ ] After the merge, `cp config/spreads.example.yaml config/spreads.yaml`. Until then, every
   process logs the usual "config/spreads.yaml not found; using the shipped defaults" warning.
 

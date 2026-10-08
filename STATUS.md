@@ -435,8 +435,9 @@ manager, the spreads database and the session tape / entry trigger exist; nothin
   the move it sold against), exits and the end-of-day summary to the spreads' own topic
   (`TELEGRAM_THREAD_SPREADS`; empty means the General topic). Best effort: a send failure is logged and never
   reaches trading code. Not sent to a real chat yet; nothing calls it.
-- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
-  line to the private `config/settings.yaml` before the service exists (Task 13).
+- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml` and, since 2026-10-08, in the
+  operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308`
+  in `.env.example`; the operator's private `.env` needs the same line before the service exists (Task 13).
 
 Task 17 replaces this section with the plan's "Built" section.
 
