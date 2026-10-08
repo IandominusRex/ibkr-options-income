@@ -1,0 +1,282 @@
+"""IBKR I/O for the spreads system — chains, quotes, spot, account, broker legs.
+
+Every subscription goes through ``req_fresh_mkt_data`` and is cancelled before the next batch,
+so at most ``max_market_data_lines`` lines are ever open from this clientId (the ~100-line cap
+is shared by every clientId on the login — CLAUDE.md "Safety"). ib_async objects become
+``ChainOption`` / ``ChainSnapshot`` here and nowhere else in ``src/spreads``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC, date, datetime
+from typing import Any
+
+from ib_async import Index, Option, Stock
+
+from src.common.books import is_spreads_underlying
+from src.common.config import SpreadsCfg
+from src.common.schemas import ChainOption, ChainSnapshot, SessionSnapshot
+from src.ibkr.contracts import qualify_options_async
+from src.ibkr.market_data import req_fresh_mkt_data
+from src.spreads.pricing import ET
+
+log = logging.getLogger(__name__)
+
+_SENTINEL = 1e300  # IB reports "no value" as sys.float_info.max
+
+
+def _num(x: Any) -> float | None:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(v) or math.isinf(v) or abs(v) >= _SENTINEL:
+        return None
+    return v
+
+
+def to_chain_option(contract: Any, ticker: Any) -> ChainOption:
+    right = "C" if str(contract.right).upper().startswith("C") else "P"
+    exp = str(contract.lastTradeDateOrContractMonth)[:8]
+    g = getattr(ticker, "modelGreeks", None)
+    bid = _num(getattr(ticker, "bid", None))
+    ask = _num(getattr(ticker, "ask", None))
+    oi = _num(getattr(ticker, "callOpenInterest" if right == "C" else "putOpenInterest", None))
+    return ChainOption(
+        strike=float(contract.strike),
+        right=right,  # type: ignore[arg-type]
+        expiry=date(int(exp[:4]), int(exp[4:6]), int(exp[6:8])),
+        bid=bid if bid is not None and bid >= 0 else None,
+        ask=ask if ask is not None and ask > 0 else None,
+        iv=_num(getattr(g, "impliedVol", None)) if g is not None else None,
+        delta=_num(getattr(g, "delta", None)) if g is not None else None,
+        open_interest=int(oi) if oi is not None and oi >= 0 else None,
+        con_id=int(getattr(contract, "conId", 0) or 0) or None,
+    )
+
+
+def band_strikes(strikes: Iterable[float], spot: float, band_pct: float) -> list[float]:
+    return sorted(float(k) for k in strikes if abs(float(k) - spot) <= spot * band_pct)
+
+
+def next_expiries(expirations: Iterable[str], today: date, n: int) -> list[str]:
+    floor = today.strftime("%Y%m%d")
+    return sorted(e for e in expirations if e >= floor)[: max(n, 0)]
+
+
+def pick_chain(chains: Sequence[Any], trading_class: str) -> Any | None:
+    matches = [c for c in chains if c.tradingClass == trading_class and c.expirations]
+    if not matches:
+        return None
+    return max(matches, key=lambda c: (c.exchange == "SMART", len(c.expirations), len(c.strikes)))
+
+
+def parity_spot(options: list[ChainOption], guess: float) -> float | None:
+    """Put-call parity (r≈0 intraday): S ≈ K + C − P at the fully quoted strike nearest *guess*."""
+    if not options:
+        return None
+    earliest = min(o.expiry for o in options)
+    mids: dict[float, dict[str, float]] = {}
+    for o in options:
+        m = o.mid
+        if o.expiry == earliest and m is not None:
+            mids.setdefault(o.strike, {})[o.right] = m
+    both = [k for k, v in mids.items() if "C" in v and "P" in v]
+    if not both:
+        return None
+    k = min(both, key=lambda s: abs(s - guess))
+    return k + mids[k]["C"] - mids[k]["P"]
+
+
+async def _wait(predicate: Callable[[], bool], ceiling: float) -> None:
+    deadline = asyncio.get_running_loop().time() + ceiling
+    while not predicate() and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+
+
+def _all_asked(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
+    """A predicate bound to this batch (a lambda in the batch loop trips ruff B023)."""
+    return lambda: all(_num(getattr(t, "ask", None)) is not None for _, t in pairs)
+
+
+class IbkrSpreadsBroker:
+    def __init__(
+        self,
+        ib: Any,
+        cfg: SpreadsCfg,
+        account: str,
+        *,
+        quote_wait_seconds: float = 3.0,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self.ib = ib
+        self.cfg = cfg
+        self.account = account
+        self.max_lines = max(1, cfg.max_market_data_lines)
+        self.quote_wait = quote_wait_seconds
+        self.now = now
+        self._indexes: dict[str, Any] = {}
+
+    async def _index(self, symbol: str, exchange: str, sec_type: str = "IND") -> Any:
+        """The qualified underlying: an ``Index`` (SPX, XSP) or a ``Stock`` (SPY), cached."""
+        if symbol not in self._indexes:
+            idx = (
+                Stock(symbol, exchange, "USD")
+                if sec_type == "STK"
+                else Index(symbol, exchange, "USD")
+            )
+            await self.ib.qualifyContractsAsync(idx)
+            self._indexes[symbol] = idx
+        return self._indexes[symbol]
+
+    async def index_spot(self, symbol: str, exchange: str, sec_type: str = "IND") -> float | None:
+        """Last print, else the prior close. None without the data entitlement."""
+        idx = await self._index(symbol, exchange, sec_type)
+        t = req_fresh_mkt_data(self.ib, idx, "", False, False)
+        try:
+            await _wait(
+                lambda: (
+                    _num(getattr(t, "last", None)) is not None
+                    or _num(getattr(t, "close", None)) is not None
+                ),
+                self.quote_wait,
+            )
+            value = _num(getattr(t, "last", None))
+            if value is None:
+                value = _num(getattr(t, "close", None))
+            return value if value is not None and value > 0 else None
+        finally:
+            self.ib.cancelMktData(idx)
+
+    async def spot(self) -> float | None:
+        return await self.index_spot(
+            self.cfg.underlying, self.cfg.exchange, self.cfg.underlying_sec_type
+        )
+
+    async def session_quote(self) -> SessionSnapshot | None:
+        """The traded index now, with IBKR's session stats (open/high/low/prior close ticks).
+
+        The entry trigger's tape (``tape.SessionTape``) is fed from here every tick. A missing
+        stat stays ``None``; the tape keeps the last known value.
+        """
+        idx = await self._index(
+            self.cfg.underlying, self.cfg.exchange, self.cfg.underlying_sec_type
+        )
+        t = req_fresh_mkt_data(self.ib, idx, "", False, False)
+        try:
+            await _wait(
+                lambda: all(_num(getattr(t, f, None)) is not None for f in ("last", "high", "low")),
+                self.quote_wait,
+            )
+            last = _num(getattr(t, "last", None))
+            if last is None or last <= 0:
+                return None
+
+            def stat(name: str) -> float | None:
+                v = _num(getattr(t, name, None))
+                return v if v is not None and v > 0 else None
+
+            return SessionSnapshot(
+                as_of=self.now(),
+                last=last,
+                open=stat("open"),
+                high=stat("high"),
+                low=stat("low"),
+                prior_close=stat("close"),
+            )
+        finally:
+            self.ib.cancelMktData(idx)
+
+    async def quote(self, contracts: list[Any]) -> list[ChainOption]:
+        out: list[ChainOption] = []
+        for i in range(0, len(contracts), self.max_lines):
+            batch = contracts[i : i + self.max_lines]
+            pairs = [(c, req_fresh_mkt_data(self.ib, c, "101,106", False, False)) for c in batch]
+            try:
+                await _wait(_all_asked(pairs), self.quote_wait)
+                out.extend(to_chain_option(c, t) for c, t in pairs)
+            finally:
+                for c, _ in pairs:
+                    self.ib.cancelMktData(c)
+        return out
+
+    async def fetch_chain(
+        self,
+        *,
+        symbol: str,
+        trading_class: str,
+        exchange: str,
+        expiries: int,
+        band_pct: float,
+        spot_hint: float | None = None,
+        sec_type: str = "IND",
+    ) -> ChainSnapshot | None:
+        idx = await self._index(symbol, exchange, sec_type)
+        spot = await self.index_spot(symbol, exchange, sec_type)
+        if spot is None:
+            spot = spot_hint
+        if spot is None:
+            log.warning("spreads: no %s index price (index-data subscription?) and no hint", symbol)
+            return None
+        params = await self.ib.reqSecDefOptParamsAsync(symbol, "", sec_type, idx.conId)
+        chain = pick_chain(params, trading_class)
+        if chain is None:
+            log.warning("spreads: no %s option chain with tradingClass %s", symbol, trading_class)
+            return None
+        today = self.now().astimezone(ET).date()
+        exps = next_expiries(chain.expirations, today, expiries)
+        strikes = band_strikes(chain.strikes, spot, band_pct)
+        contracts = [
+            Option(symbol, e, k, r, "SMART", tradingClass=trading_class)
+            for e in exps
+            for k in strikes
+            for r in ("C", "P")
+        ]
+        qualified = await qualify_options_async(self.ib, contracts, chunk_size=self.max_lines)
+        options = await self.quote(qualified)
+        implied = parity_spot(options, spot)
+        if implied is not None and abs(implied - spot) / spot > 0.002:
+            log.warning("spreads: %s index %.2f vs parity-implied %.2f", symbol, spot, implied)
+        return ChainSnapshot(symbol=symbol, spot=spot, as_of=self.now(), options=options)
+
+    async def requote(self, legs: list[ChainOption]) -> list[ChainOption]:
+        contracts = []
+        for leg in legs:
+            c = Option(
+                self.cfg.underlying,
+                f"{leg.expiry:%Y%m%d}",
+                leg.strike,
+                leg.right,
+                "SMART",
+                tradingClass=self.cfg.trading_class,
+            )
+            if leg.con_id:
+                c.conId = leg.con_id
+            contracts.append(c)
+        unknown = [c for c in contracts if not c.conId]
+        if unknown:
+            await qualify_options_async(self.ib, unknown, chunk_size=self.max_lines)
+        return await self.quote([c for c in contracts if c.conId])
+
+    async def excess_liquidity(self) -> float | None:
+        """From the account-update stream ib_async keeps (no reqAccountSummary: Error 322)."""
+        by_ccy: dict[str, float] = {}
+        for v in self.ib.accountValues(self.account):
+            if v.tag == "ExcessLiquidity" and getattr(v, "account", self.account) == self.account:
+                num = _num(v.value)
+                if num is not None:
+                    by_ccy[v.currency] = num
+        return by_ccy.get("USD", by_ccy.get("BASE"))
+
+    def broker_legs(self) -> dict[int, float]:
+        legs: dict[int, float] = defaultdict(float)
+        for p in self.ib.positions():
+            c = p.contract
+            if p.account == self.account and c.secType == "OPT" and is_spreads_underlying(c.symbol):
+                legs[int(c.conId)] += float(p.position)
+        return {k: v for k, v in legs.items() if v}
