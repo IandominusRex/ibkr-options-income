@@ -378,6 +378,11 @@ Each fix has a test named after its finding, for example `test_a_paper_close_nev
   - Docs: the `models.py` comment, `ibkr logs` usage, the README topic table, the SPY example in "How the scan
     works.md" (now QQQ), STATUS "index" wording.
 
+**Next: a fresh review of the fix round (`1f7b01c..3f77372`) before merging.** The handoff is
+`.superpowers/sdd/2026-10-07-daily-credit-spreads/review-handoff-1f7b01c..3f77372.md`, with the diff beside it
+(both git-ignored; rebuild the diff with `git diff 1f7b01c..3f77372`). It lists ten points the author is least
+sure of. The first is a possible premature `profit_take` if a short leg's bid tick arrives after its ask.
+
 **Rulings (review fixes):**
 - **Naive timestamps (the core minor):** no code change. Every read returns aware UTC; the plan's own Task 9
   stores naive UTC, like the trading DB. The Global Constraints line now says so.
