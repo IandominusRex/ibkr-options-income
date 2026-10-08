@@ -366,12 +366,12 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–7 of 17 built, 6A not yet)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–9 of 17 built, 6A not yet)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
-schemas, the same-day pricing math, the GEX levels, candidate selection and the rules gate exist;
-nothing trades spreads yet. Task 6A (the session tape and entry trigger) is still to do.
+schemas, the same-day pricing math, the GEX levels, candidate selection, the rules gate, the exit
+manager and the spreads database exist; nothing trades spreads yet. Task 6A (the session tape and entry trigger) is still to do.
 
 - `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
   `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
@@ -406,6 +406,15 @@ nothing trades spreads yet. Task 6A (the session tape and entry trigger) is stil
   names every reason it refuses (calendar, event and ex-dividend windows, gamma regime, quote quality,
   book limits), and `size` sizes each trade to 10% of the book's own capital. Negative gamma is traded by
   default (`negative_gamma_action: allow`) and only refused under `skip`. Nothing calls it yet.
+- **Exit manager (Task 8):** `src/spreads/manager.py` decides when an open spread closes: stop at 2× the
+  credit, profit-take at 50%, short-strike touch, a 150-minute maximum hold, and the 15:45 time stop, which
+  fires even when a leg has no quote. SPY spreads are never left to expire (`let_expire: false`); the
+  leave-to-expire branch exists only for a cash-settled XSP/SPX book. It also holds the settlement value and
+  the broker-reconciliation check. Pure functions; nothing calls them yet.
+- **Spreads database (Task 9):** `src/spreads/store.py` is `data/spreads.db`, a SQLite file on its own engine
+  that shares no table with the trading DB. It stores every GEX map, candidate and order attempt, and one
+  row per spread that doubles as the trade log (entry tags, worst mark, holding time, realized P&L), kept
+  separately for `shadow` and `paper`. The file is created on first use; nothing calls it yet.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 

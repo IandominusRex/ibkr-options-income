@@ -30,8 +30,8 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 6 Candidate selection | ✅ done | `d55b323` (code), then docs + this log | 2026-10-08 | pytest 2779 passed, 1 skipped; ruff and mypy clean |
 | 6A Session tape and entry trigger | ⬜ (skipped on purpose: not asked for in the 6–7 session; run it before Task 13) | | | |
 | 7 Deterministic spreads gate | ✅ done | `5100d27` (code), then docs + this log | 2026-10-08 | pytest 2811 passed, 1 skipped; ruff and mypy clean |
-| 8 Exit manager and reconciliation | ⬜ | | | |
-| 9 Spreads database | ⬜ | | | |
+| 8 Exit manager and reconciliation | ✅ done | `1d32946` (code), then docs + this log | 2026-10-08 | pytest 2826 passed, 1 skipped; ruff and mypy clean |
+| 9 Spreads database | ✅ done | `78c3492` (code), then docs + this log | 2026-10-08 | pytest 2835 passed, 1 skipped; ruff and mypy clean |
 | 10 IBKR I/O | ⬜ | | | |
 | 11 Combo orders and executor | ⬜ | | | |
 | 12 Telegram notifier | ⬜ | | | |
@@ -119,6 +119,27 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **Deferred minor for Task 10:** `select_candidates` builds a `{strike: option}` dict per side, so
   two options at the same strike, right and expiry (say from two trading classes) keep only the
   last. Task 10's chain fetch must return one option per (strike, right, expiry).
+
+**Rulings (Tasks 8–9):**
+- **Task 6A is still not built.** The operator asked for Tasks 8 and 9. Neither consumes `tape.py`:
+  Task 8 reads a position, two leg quotes and the spot, and Task 9 stores the `SpreadEntryContext`
+  that Task 13 will build. 6A stays ⬜ and must land before Task 13.
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the
+  `manager.py` and `store.py` rows, and STATUS's "In progress" section two bullets (its heading now
+  reads "Tasks 1–9 of 17 built, 6A not yet"). Task 17 Step 3.3's full table replaces them.
+- **No deviation in code.** Both test files and both modules are the plan's text verbatim (`ruff
+  format` only re-wrapped lines). Task 8's Step 2 failure was the expected `ModuleNotFoundError: No
+  module named 'src.spreads.manager'`; Step 4 passed first time (15/15). Task 9's Step 2 failed on
+  the missing `src.spreads.store`, but the import sits inside the `store` fixture, so 8 tests
+  errored and 1 failed instead of one collection error; Step 4 passed first time (9/9).
+- **Self-review of Tasks 8–9 (2026-10-08), no Critical/Important.** Checked the one wiring the plan's
+  tests don't pin: `reconcile` only knows the positions it is given, and Task 13 passes
+  `open_positions(mode) + expiring_positions(mode)`, so a spread marked expiring is not reported as
+  an unexpected broker leg.
+- **Deferred minor for Task 13:** `note_mark`, `mark_expiring` and `close_position` use `.one()`, so an
+  unknown `spread_id` raises `NoResultFound`. Task 13 only passes ids it read from the same DB, but a
+  stale id after a manual DB edit would crash the tick; wrap them if that matters.
+
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -3334,7 +3355,7 @@ git commit -m "feat(spreads): deterministic rules gate and sizing"
   - `intrinsic_debit(pos, spot) -> float`
   - `reconcile(expected, broker_legs) -> list[str]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_manager.py`:
 
@@ -3478,12 +3499,12 @@ def test_reconcile_ignores_shadow_positions() -> None:
     assert reconcile([pos(mode="shadow")], {}) == []
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_manager.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.manager'`.
 
-- [ ] **Step 3: Implement `src/spreads/manager.py`**
+- [x] **Step 3: Implement `src/spreads/manager.py`**
 
 ```python
 """Exit rules for open spreads, settlement math, and broker reconciliation. Pure.
@@ -3585,12 +3606,12 @@ def reconcile(expected: list[SpreadPosition], broker_legs: dict[int, float]) -> 
     return problems
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_manager.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/manager.py tests/test_spreads_manager.py
@@ -3628,7 +3649,7 @@ git commit -m "feat(spreads): exit rules, settlement value, broker reconciliatio
     - `trade_log(mode) -> list[SpreadTradeRecord]`, every spread opened in *mode* (open or closed), oldest first, with its tags, holding time and MAE
     - `closed_results(mode) -> list[tuple[str, str, float]]`, returning (regime at entry, exit_reason, realized USD) per closed spread, in close order
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_store.py`:
 
@@ -3795,12 +3816,12 @@ def test_spreads_tables_never_share_the_trading_base() -> None:
     assert not set(SpreadsBase.metadata.tables) & set(Base.metadata.tables)
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_store.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.store'`.
 
-- [ ] **Step 3: Implement `src/spreads/store.py`**
+- [x] **Step 3: Implement `src/spreads/store.py`**
 
 ```python
 """The spreads system's own SQLite database (``data/spreads.db``).
@@ -4288,12 +4309,12 @@ def closed_results(mode: str) -> list[tuple[str, str, float]]:
     return [(t.regime, t.exit_reason or "", t.pnl_usd) for t in closed]
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_store.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/store.py tests/test_spreads_store.py
