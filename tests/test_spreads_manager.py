@@ -62,7 +62,26 @@ def legs(short_bid, short_ask, long_bid, long_ask):
 def test_debit_to_close_mid_and_natural() -> None:
     mid, nat = debit_to_close(*legs(0.40, 0.44, 0.10, 0.14))
     assert mid == pytest.approx(0.30) and nat == pytest.approx(0.34)
-    assert debit_to_close(*legs(None, 0.44, 0.10, 0.14)) == (None, pytest.approx(0.34))
+    # A short leg nobody bids is a no-bid market (bid 0), not an unquoted one.
+    assert debit_to_close(*legs(None, 0.44, 0.10, 0.14)) == (
+        pytest.approx(0.10),
+        pytest.approx(0.34),
+    )
+
+
+# Review C1 — ib_async NaNs a size-0 bid, which is the normal state of a winning far-OTM long.
+def test_a_long_leg_nobody_bids_is_worth_zero_not_unquoted() -> None:
+    mid, nat = debit_to_close(*legs(0.03, 0.05, None, 0.01))
+    assert mid == pytest.approx(0.035) and nat == pytest.approx(0.05)
+    # No long quote at all: no mark to decide on, but the natural price (sell the long for 0)
+    # still prices a close.
+    short, _ = legs(0.03, 0.05, None, None)
+    assert debit_to_close(short, None) == (None, pytest.approx(0.05))
+
+
+def test_a_winner_with_a_no_bid_long_still_takes_profit() -> None:
+    e = evaluate_exit(pos(entry_credit=0.30), *legs(0.03, 0.05, None, 0.01), 690.0, MIDDAY, CFG)
+    assert e is not None and e.reason == "profit_take"
 
 
 def test_profit_take_at_half_the_credit() -> None:

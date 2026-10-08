@@ -44,6 +44,16 @@ def test_to_chain_option_cleans_sentinels_and_reads_put_oi() -> None:
     assert o.expiry == TODAY and o.right == "P"
 
 
+# Review C1 — ib_async sets bid to NaN when the bid size is 0 (wrapper.priceSizeTick): with a
+# live ask that is a no-bid market, worth 0 to a seller, not a missing quote.
+def test_a_nan_bid_beside_a_live_ask_is_a_zero_bid() -> None:
+    ticker = SimpleNamespace(
+        bid=math.nan, ask=0.01, modelGreeks=None, callOpenInterest=None, putOpenInterest=None
+    )
+    o = to_chain_option(_contract(650, "P"), ticker)
+    assert o.bid == 0.0 and o.ask == 0.01 and o.mid == pytest.approx(0.005)
+
+
 def test_to_chain_option_without_greeks() -> None:
     ticker = SimpleNamespace(
         bid=0.5, ask=0.6, modelGreeks=None, callOpenInterest=math.nan, putOpenInterest=None

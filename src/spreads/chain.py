@@ -46,6 +46,10 @@ def to_chain_option(contract: Any, ticker: Any) -> ChainOption:
     g = getattr(ticker, "modelGreeks", None)
     bid = _num(getattr(ticker, "bid", None))
     ask = _num(getattr(ticker, "ask", None))
+    if ask is not None and ask > 0 and (bid is None or bid < 0):
+        # ib_async NaNs a size-0 bid (wrapper.priceSizeTick): beside a live ask that is a
+        # no-bid market — worth 0 to a seller — not a missing quote.
+        bid = 0.0
     oi = _num(getattr(ticker, "callOpenInterest" if right == "C" else "putOpenInterest", None))
     return ChainOption(
         strike=float(contract.strike),

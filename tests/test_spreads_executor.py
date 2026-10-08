@@ -145,6 +145,20 @@ async def test_shadow_close_uses_mid_plus_slippage_or_the_worst_case() -> None:
     assert worst.price == pytest.approx(5.0)
 
 
+# Review C1 — a winner whose long nobody bids must not be booked as a full max loss.
+async def test_shadow_time_stop_close_with_a_no_bid_long_books_the_real_debit() -> None:
+    ex = SpreadExecutor(None, FakeBroker([]), SHADOW, now=lambda: NOW)
+    r = await ex.close(position(), q(679, 0.03, 0.05, 111), q(674, None, 0.01, 222), urgent=True)
+    assert r.price == pytest.approx(0.035 + 0.04)
+
+
+async def test_paper_close_with_a_no_bid_long_still_sends_an_order() -> None:
+    ib = FakeIB(fill_at=0.05)
+    ex = SpreadExecutor(ib, FakeBroker([]), PAPER, now=lambda: NOW, poll_seconds=0.01)
+    r = await ex.close(position(), q(679, 0.03, 0.05, 111), q(674, None, 0.01, 222), urgent=True)
+    assert ib.placed and r.filled_qty == 1 and r.price == pytest.approx(0.05)
+
+
 async def test_paper_open_walks_the_ladder_until_it_fills() -> None:
     ib = FakeIB(fill_at=-0.60)
     fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]

@@ -18,17 +18,41 @@ from src.common.schemas import ChainOption, SpreadExit, SpreadPosition
 from src.spreads.pricing import ET
 
 
+def _leg_mid(q: ChainOption | None) -> float | None:
+    """A leg's mid; a leg nobody bids (but with a live ask) is a no-bid market worth ask / 2."""
+    if q is None:
+        return None
+    if q.mid is not None:
+        return q.mid
+    if q.ask is not None and q.ask > 0 and (q.bid is None or q.bid < 0):
+        return q.ask / 2
+    return None
+
+
+def _sale_value(q: ChainOption | None) -> float:
+    """What selling the long leg back fetches at the natural price: its bid, else nothing."""
+    if q is None or q.bid is None or q.bid < 0:
+        return 0.0
+    return q.bid
+
+
 def debit_to_close(
     short_q: ChainOption | None, long_q: ChainOption | None
 ) -> tuple[float | None, float | None]:
-    """(mid debit, natural debit = short ask − long bid) per share; None where unquoted."""
+    """(mid debit, natural debit = short ask − long bid) per share; None where unquoted.
+
+    ib_async reports a bid as NaN whenever its size is 0 (``wrapper.priceSizeTick``), which is
+    the normal state of a far-OTM 0DTE long once the trade is winning. A missing bid is a
+    no-bid market, not a missing quote: the long sells for nothing at the natural price and is
+    marked at ask / 2. Only a missing short ask leaves a close unpriceable.
+    """
     mid: float | None = None
     nat: float | None = None
-    if short_q is not None and long_q is not None:
-        if short_q.mid is not None and long_q.mid is not None:
-            mid = round(short_q.mid - long_q.mid, 4)
-        if short_q.ask is not None and long_q.bid is not None and long_q.bid >= 0:
-            nat = round(short_q.ask - long_q.bid, 4)
+    short_mid, long_mid = _leg_mid(short_q), _leg_mid(long_q)
+    if short_mid is not None and long_mid is not None:
+        mid = round(short_mid - long_mid, 4)
+    if short_q is not None and short_q.ask is not None and short_q.ask > 0:
+        nat = round(short_q.ask - _sale_value(long_q), 4)
     return mid, nat
 
 

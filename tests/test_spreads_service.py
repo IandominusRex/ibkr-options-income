@@ -251,6 +251,23 @@ async def test_a_full_shadow_day_maps_enters_and_takes_profit(tmp_path, spreads_
     assert sum("trade(s)" in m for m in notifier.sent) == 1
 
 
+# Review C1 — the typical winner: the far-OTM long has no bid (ib_async NaN → None).
+async def test_a_winner_whose_long_nobody_bids_takes_profit(tmp_path, spreads_db) -> None:
+    clock = [T0945]
+    svc, broker, _ = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    clock[0] = T1005
+    await svc.tick()
+    broker.leg_quotes = {
+        (679.0, "P"): o(679, "P", 0.03, 0.05),
+        (674.0, "P"): o(674, "P", None, 0.01),
+    }
+    clock[0] = T1100
+    await svc.tick()
+    ((_, reason, pnl),) = spreads_db.closed_results("shadow")
+    assert reason == "profit_take" and pnl > 0
+
+
 async def test_entries_are_sized_to_ten_percent_of_the_books_capital(tmp_path, spreads_db) -> None:
     roomy = ONE_A_DAY.model_copy(
         update={"risk": ONE_A_DAY.risk.model_copy(update={"max_contracts": 100})}

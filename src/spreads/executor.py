@@ -155,6 +155,7 @@ class SpreadExecutor:
         ref = f"{self.cfg.order_ref_prefix}{pos.spread_id}:X"
         mid, nat = debit_to_close(short_q, long_q)
         if self.cfg.mode == "shadow":
+            # Width (a full max loss) only when the short leg has no ask at all.
             base = mid if mid is not None else nat if nat is not None else pos.width
             debit = (
                 min(pos.width, round(base + 2 * x.shadow_slippage_per_leg, 4))
