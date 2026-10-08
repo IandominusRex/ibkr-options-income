@@ -35,7 +35,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 10 IBKR I/O | ✅ done | `5c2ffcf` (code), then docs + this log | 2026-10-08 | pytest 2858 passed, 1 skipped; ruff and mypy clean |
 | 11 Combo orders and executor | ✅ done (Step 9 is the operator's) | `e1e8d0b` (code), then docs + this log | 2026-10-08 | pytest 2870 passed, 1 skipped; ruff and mypy clean |
 | 12 Telegram notifier | ✅ done | `7cae8b3` (code), then docs + this log | 2026-10-08 | pytest 2873 passed, 1 skipped; ruff and mypy clean |
-| 13 Service, entrypoint, supervisor | ⬜ | | | |
+| 13 Service, entrypoint, supervisor | ✅ done | `12bfa0c` (code + docs), then the off-loop map fix + this log | 2026-10-08 | pytest 2887 passed, 1 skipped; ruff and mypy clean |
 | 14 Performance report | ⬜ | | | |
 | 15 ThetaData client | ⬜ | | | |
 | 16 Minute replay and backtest script | ⬜ | | | |
@@ -190,6 +190,25 @@ tracker; the copy on `main` stays unticked until the branch merges.
   carry `TELEGRAM_THREAD_SPREADS=4308`; `Secrets.telegram_thread_spreads` still defaults to `""` in code (the other
   topics' code defaults mirror `.env.example`, but changing it was not asked for). The private `.env` is outside this
   worktree, so the line there is the operator's (see the to-dos).
+
+**Rulings (Task 13):**
+- **One deviation in code: the GEX map is built with `await asyncio.to_thread(build_levels, ...)`**, not a direct
+  call. The Tasks 4–5 self-review asked for it (`gamma_flip` is 0.6 s+ of scipy and a direct call would stall the
+  ib_async heartbeat once an hour). New test `test_the_gex_map_is_built_off_the_event_loop_thread` failed first
+  (build ran on the loop thread), then passed. Everything else in `service.py`, `run_spreads.py`, the start.py
+  entries and the tests is the plan's text verbatim (`ruff format` re-wrapped lines). Step 2's failure was the
+  expected `ModuleNotFoundError: No module named 'src.spreads.service'` (12 tests); Step 6 passed first time. The
+  launcher test was added with the start.py change, so it was not watched failing on its own.
+- **Docs moved forward again:** ARCHITECTURE gained the `service.py` row (interim `src/spreads/` section), a
+  `scripts/` row for `run_spreads.py`, and `--no-spreads` in the `start.py` row; SETUP's flags line lists
+  `--no-spreads`; STATUS's section a bullet (heading "Tasks 1–13 and 6A"). **Task 17 Step 4: the `run_spreads.py`
+  row already exists; add only `spreads_report.py` and `spreads_backtest.py`.** Task 17 Step 3.3's full
+  `src/spreads/` table replaces the `service.py` row.
+- **Not run against a Gateway.** The tests drive the service with a fake broker. First live-paper run needs the
+  operator to-dos (`spreads: 30` is now in place; `spreads.yaml` copy after merge) and Task 11 Step 9 first.
+- **Deferred minors carried:** `note_mark`/`mark_expiring`/`close_position` use `.one()`, but `_guard` now catches a
+  stale `spread_id` and alerts once per phase instead of crashing the tick. Still open: the wheel's
+  `reqExecutions` separation gap (see Notes) is the operator's Step 9 observation.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -5818,7 +5837,7 @@ git commit -m "feat(spreads): Telegram notifier and message formats"
   - `scripts.run_spreads.main()`
   - Supervisor service key `"spreads"` and the `--no-spreads` flag.
 
-- [ ] **Step 1: Write the failing service tests**
+- [x] **Step 1: Write the failing service tests**
 
 `tests/test_spreads_service.py`:
 
@@ -6208,12 +6227,12 @@ Check the numbers in the first test:
 
 The SPX OI (a small put at 6800, a large call at 6950) puts the flip below 6800, more than 1% from spot. So `near_gamma_flip` never triggers and the regime at 6900 is positive.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_service.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.service'`.
 
-- [ ] **Step 3: Implement `src/spreads/service.py`**
+- [x] **Step 3: Implement `src/spreads/service.py`**
 
 ```python
 """The spreads process: GEX map → price tape → exits → entries → end of day, on the ET clock.
@@ -6747,7 +6766,7 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
 
 `attach_live_hook` subscribes on the same `ib`. On a reconnect, ib_async keeps event subscriptions on the `IB` object, so the hook survives reconnects without being attached twice.
 
-- [ ] **Step 4: Create `scripts/run_spreads.py`**
+- [x] **Step 4: Create `scripts/run_spreads.py`**
 
 ```python
 """Daily credit-spread service entrypoint.
@@ -6787,7 +6806,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Register the service with the supervisor**
+- [x] **Step 5: Register the service with the supervisor**
 
 In `scripts/start.py`, anchor the `"research": {` entry of `SERVICES`. After its closing `},`, add:
 
@@ -6817,12 +6836,12 @@ def test_spreads_service_is_supervised_and_can_be_skipped():
 
 (If the file imports `start` differently, follow its existing import; the other tests there reference `start.SERVICES`.)
 
-- [ ] **Step 6: Run the tests and the gate**
+- [x] **Step 6: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_service.py tests/test_start_launcher.py -q && python -m pytest -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 ruff format src/spreads/service.py scripts/run_spreads.py scripts/start.py tests/test_spreads_service.py tests/test_start_launcher.py

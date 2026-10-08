@@ -478,3 +478,27 @@ async def test_run_idles_when_disabled_and_refuses_live(monkeypatch) -> None:
     )
     monkeypatch.setattr(service, "get_config", lambda: live)
     await service.run(stop)
+
+
+# Tasks 4-5 note: the gamma-flip search is scipy-heavy, so a map refresh must not run on the
+# event loop thread (it would stall the ib_async heartbeat).
+async def test_the_gex_map_is_built_off_the_event_loop_thread(
+    tmp_path, spreads_db, monkeypatch
+) -> None:
+    import threading
+
+    import src.spreads.service as service
+
+    seen: list[int] = []
+    real = service.build_levels
+
+    def spy(*a, **k):
+        seen.append(threading.get_ident())
+        return real(*a, **k)
+
+    monkeypatch.setattr(service, "build_levels", spy)
+    clock = [T0945]
+    svc, _, _ = make(tmp_path, clock, ONE_A_DAY)
+    await svc.tick()
+    assert svc.levels is not None
+    assert seen and seen[0] != threading.get_ident()

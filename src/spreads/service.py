@@ -235,7 +235,8 @@ class SpreadsService:
         self.map_failed_at = None
         self.map_at = now
         self.gex_chain = gex_chain
-        self.levels = build_levels(gex_chain, traded, self.cfg, now)
+        # The gamma-flip search is scipy-heavy: keep it off the loop so the ib_async heartbeat runs.
+        self.levels = await asyncio.to_thread(build_levels, gex_chain, traded, self.cfg, now)
         store.record_map(self.levels)
         tape = self._tape_for(now)
         if tape.day_em is None:
