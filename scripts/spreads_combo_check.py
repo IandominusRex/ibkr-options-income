@@ -12,7 +12,9 @@ a DEBIT, the sign convention in src/spreads/orders.py is wrong — do not enable
 
 ``--fill``: opens a fillable one-lot at the natural credit, prints whether IBKR's
 ``avgFillPrice`` is NEGATIVE as the executor expects for a credit, then closes it at the
-natural debit and checks that average is POSITIVE. Pick strikes near enough the money to have
+natural debit and checks that average is POSITIVE. It also prints every execution IBKR
+reported (secType, conId, commission), which shows whether a combo fill arrives with a
+BAG-level execution and a commission on each leg. Pick strikes near enough the money to have
 a natural credit. If the close does not fill, it says so: close the SPY spread by hand.
 """
 
@@ -67,6 +69,18 @@ async def _wait_filled(trade: Any, seconds: float) -> bool:
     return trade.orderStatus.status == "Filled"
 
 
+def _print_fills(kind: str, trade: Any) -> None:
+    """Each execution IBKR reported, so the operator check also shows whether a combo fill
+    comes with a BAG-level execution and which fills carry a commission (review M5)."""
+    for f in trade.fills:
+        rep = getattr(f, "commissionReport", None)
+        print(
+            f"  {kind} fill: secType={f.contract.secType} conId={f.contract.conId} "
+            f"side={f.execution.side} qty={f.execution.shares} price={f.execution.price} "
+            f"commission={getattr(rep, 'commission', None)}"
+        )
+
+
 async def _fill_round_trip(ib: IB, sc: Any, legs: list[Any], cand: SpreadCandidate) -> None:
     short_q, long_q = await _quote(ib, legs)
     if short_q.bid is None or long_q.ask is None or short_q.ask is None:
@@ -79,8 +93,16 @@ async def _fill_round_trip(ib: IB, sc: Any, legs: list[Any], cand: SpreadCandida
     trade = ib.placeOrder(bag, order)
     if not await _wait_filled(trade, 30):
         ib.cancelOrder(order)
+        await asyncio.sleep(2)
+        if trade.orderStatus.filled:  # it filled between the check and the cancel
+            raise SystemExit(
+                f"!!! the opening one-lot filled ({trade.orderStatus.filled:g}) as it was "
+                "cancelled — close the SPY spread by hand in TWS now (SPY settles in shares)"
+            )
         raise SystemExit(f"the opening one-lot did not fill at {credit:.2f}; cancelled")
     print(fill_sign_verdict("open", float(trade.orderStatus.avgFillPrice)))
+    await asyncio.sleep(3)  # commission reports arrive after the fill
+    _print_fills("open", trade)
     pos = SpreadPosition(
         spread_id="combo-check",
         mode="paper",
@@ -106,6 +128,8 @@ async def _fill_round_trip(ib: IB, sc: Any, legs: list[Any], cand: SpreadCandida
         )
         return
     print(fill_sign_verdict("close", float(trade.orderStatus.avgFillPrice)))
+    await asyncio.sleep(3)
+    _print_fills("close", trade)
 
 
 async def _main(short: float, long_: float, wait: float, fill: bool) -> None:

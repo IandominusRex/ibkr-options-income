@@ -147,10 +147,7 @@ class SpreadsService:
             problems = reconcile(expected, self.broker.broker_legs())
         if problems:
             self.entries_blocked = "reconcile: " + "; ".join(problems)
-            await self.notifier.send(
-                "[SPREADS] entries blocked — broker and spreads.db disagree:\n"
-                + "\n".join(problems)
-            )
+            await self._alert_mismatch(problems)
         else:
             self.entries_blocked = None
         log.info("spreads service started (mode=%s, blocked=%s)", mode, self.entries_blocked)
@@ -198,22 +195,36 @@ class SpreadsService:
         if problems:
             self.entries_blocked = "reconcile: " + "; ".join(problems)
             self._mismatch_ticks += 1
-            if self._mismatch_ticks == 2:  # one tick of fill-to-position lag is normal
-                await self.alert_once(
-                    "reconcile",
-                    "[SPREADS] entries blocked — broker and spreads.db disagree:\n"
-                    + "\n".join(problems),
-                )
+            log.warning("spreads: entries blocked — %s", "; ".join(problems))
+            if self._mismatch_ticks >= 2:  # one tick of fill-to-position lag is normal
+                await self._alert_mismatch(problems)
             return
         self._mismatch_ticks = 0
         if self.entries_blocked is not None:
             log.info("spreads: broker and spreads.db agree again — entries unblocked")
             self.entries_blocked = None
 
+    async def _alert_mismatch(self, problems: list[str]) -> None:
+        """Once per day per distinct set of problems: a second, different mismatch the same day
+        is news, the same one seen again on every tick is not."""
+        await self.alert_once(
+            "reconcile:" + "|".join(sorted(problems)),
+            "[SPREADS] entries blocked — broker and spreads.db disagree:\n" + "\n".join(problems),
+        )
+
     def _broker_holdings(self, positions: list[SpreadPosition]) -> dict[str, int]:
-        """Contracts of each spread the broker still holds both legs of, allocated in DB order
-        so two spreads sharing a leg can't both claim it."""
-        remaining = dict(self.broker.broker_legs())
+        """Contracts of each spread the broker still holds, as a cap on what a close may send.
+
+        When the broker's legs match the book exactly, every spread is held in full. That has
+        to be decided on the whole book first: IBKR nets a conId two spreads share in opposite
+        directions (A short 679 / long 674, B short 674 / long 669 → no 674 line at all), so a
+        per-leg count would find neither spread held and never close either. Only when the book
+        and the broker disagree are legs allocated in DB order, which can under-allocate (and
+        alert) but never lets two spreads claim the same contracts."""
+        legs = self.broker.broker_legs()
+        if not reconcile(positions, legs):
+            return {p.spread_id: p.contracts for p in positions}
+        remaining = dict(legs)
         held: dict[str, int] = {}
         for p in positions:
             if p.short_con_id is None or p.long_con_id is None:
@@ -226,6 +237,22 @@ class SpreadsService:
             remaining[p.long_con_id] = remaining.get(p.long_con_id, 0.0) - n
             held[p.spread_id] = n
         return held
+
+    @staticmethod
+    def _not_held_text(p: SpreadPosition, qty: int, legs: dict[int, float]) -> str:
+        """The operator's next step depends on what the broker still shows: a leg that is
+        still there is live risk to close in TWS, not a spread to mark settled."""
+        shown = [c for c in (p.short_con_id, p.long_con_id) if c and legs.get(c, 0.0)]
+        if not shown:
+            return (
+                f"[SPREADS] the broker shows neither leg of {p.spread_id} — if it was closed or "
+                "settled outside the service, record that with python -m scripts.spreads_resolve"
+            )
+        return (
+            f"[SPREADS] the broker does not hold all of {p.spread_id}: closing {qty} of "
+            f"{p.contracts} contract(s). A leg is still at IBKR — check the position in TWS "
+            "and close the rest by hand; do not mark it settled while a leg is live"
+        )
 
     async def _after_order(self, spread_id: str, kind: str, result: FillResult) -> None:
         """Block entries on an order that may still be live; flag a fill whose price surprised."""
@@ -509,6 +536,7 @@ class SpreadsService:
             return
         paper = mode == "paper"
         held = self._broker_holdings(store.expiring_positions(mode) + positions) if paper else {}
+        legs_now = self.broker.broker_legs() if paper else {}
         working = self.broker.working_refs() if paper else set()
         legs: list[ChainOption] = []
         for p in positions:
@@ -546,9 +574,7 @@ class SpreadsService:
                 if qty < p.contracts:
                     await self.alert_once(
                         f"not_held:{p.spread_id}",
-                        f"[SPREADS] the broker holds {qty} of {p.contracts} contract(s) of "
-                        f"{p.spread_id} — closing only what it holds; settle the rest with "
-                        "python -m scripts.spreads_resolve",
+                        self._not_held_text(p, qty, legs_now),
                     )
                     if qty < 1:
                         continue
@@ -687,7 +713,7 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
     )
     ib: Any = IB()
 
-    async def connect() -> bool:
+    async def connect(retries: int | None = None) -> bool:
         try:
             await connect_with_retry(
                 ib,
@@ -696,6 +722,7 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
                 client_id,
                 timeout=cfg.ibkr.connect_timeout_seconds,
                 label="spreads",
+                retries=retries,
             )
         except Exception:
             log.exception("spreads: connect failed")
@@ -711,7 +738,9 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
     service = SpreadsService(
         broker, SpreadExecutor(ib, broker, sc), notifier, sc, halt_path=cfg.spreads_halt_path()
     )
-    while not await connect():
+    # One attempt per pass at startup: this loop is the retry, and the full backoff (about
+    # 105 s with the defaults) would hold off the open-spreads alert for that long.
+    while not await connect(retries=1):
         if stop.is_set():
             return
         await service.while_disconnected()

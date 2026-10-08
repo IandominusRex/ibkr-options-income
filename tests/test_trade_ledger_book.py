@@ -413,3 +413,25 @@ def test_spread_legs_are_paired_into_one_trade() -> None:
     assert summary.premium_this_month_usd == pytest.approx((0.60 + 0.52) * 100 * 21)
     (spy,) = tickers
     assert spy.win_rate == 1.0 and spy.option_premium_gross == pytest.approx((0.60 + 0.52) * 2100)
+
+
+# Fix-round review M4 — a winner in a currency with no FX rate converts to 0.0 USD; it must
+# still count as a win (win/loss is decided in the trade's own currency).
+def test_a_missing_fx_rate_never_turns_a_win_into_a_loss() -> None:
+    put = [
+        ex("D05 18JUL25 30 P", "2025-07-14, 10:00:00", -1, 0.50, comm=-1.0, currency="SGD"),
+        ex(
+            "D05 18JUL25 30 P",
+            "2025-07-18, 16:20:00",
+            1,
+            0.0,
+            comm=0.0,
+            codes="C;Ep",
+            currency="SGD",
+        ),
+    ]
+    _, _, _, _, summary = _book(put, date(2025, 7, 20))
+    assert summary.fx_incomplete is True
+    assert summary.win_rate == 1.0
+    (csp,) = summary.by_strategy
+    assert csp.win_rate == 1.0

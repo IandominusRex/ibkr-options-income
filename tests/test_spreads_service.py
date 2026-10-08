@@ -526,7 +526,9 @@ async def test_the_gex_map_is_built_off_the_event_loop_thread(
 PAPER = CFG.model_copy(update={"mode": "paper"})
 
 
-def _paper_spread(st, spread_id="p1", contracts=2, at=T0945, expiry=TODAY):
+def _paper_spread(
+    st, spread_id="p1", contracts=2, at=T0945, expiry=TODAY, short=679.0, long_=674.0
+):
     from src.common.schemas import SpreadCandidate
 
     return st.open_position(
@@ -534,11 +536,11 @@ def _paper_spread(st, spread_id="p1", contracts=2, at=T0945, expiry=TODAY):
             spread_id=spread_id,
             side="put",
             expiry=expiry,
-            short_strike=679,
-            long_strike=674,
-            width=5,
-            short_con_id=6790,
-            long_con_id=6740,
+            short_strike=short,
+            long_strike=long_,
+            width=short - long_,
+            short_con_id=int(short * 10),
+            long_con_id=int(long_ * 10),
             credit_mid=0.6,
             credit_natural=0.55,
             spot=690,
@@ -608,7 +610,7 @@ async def test_a_paper_close_never_exceeds_what_the_broker_holds(tmp_path, sprea
     broker.legs = {6790: -1.0, 6740: 1.0}  # one of the two already closed at IBKR
     await svc.tick()
     assert ex.closes == [1]
-    assert any("holds 1 of 2" in m for m in notifier.sent)
+    assert any("closing 1 of 2" in m and "TWS" in m for m in notifier.sent)
     (p,) = spreads_db.open_positions("paper")
     assert p.contracts == 1  # left for the operator to settle; never closed twice
 
@@ -623,7 +625,7 @@ async def test_a_paper_spread_the_broker_no_longer_holds_is_not_closed(
     broker.legs = {}
     await svc.tick()
     assert ex.closes == []  # a BUY combo now would open a reversed SPY spread nothing manages
-    assert any("holds 0 of 1" in m for m in notifier.sent)
+    assert any("neither leg" in m and "spreads_resolve" in m for m in notifier.sent)
 
 
 async def test_no_second_close_while_the_first_is_still_working(tmp_path, spreads_db) -> None:
@@ -734,3 +736,60 @@ async def test_a_failed_map_rebuild_drops_the_old_map(tmp_path, spreads_db, monk
     clock[0] = datetime(2026, 10, 7, 14, 46, tzinfo=UTC)  # 10:46, an hour later: refresh due
     await svc.tick()
     assert svc.levels is None and svc.map_failed_at == clock[0]
+
+
+T1550 = datetime(2026, 10, 7, 19, 50, tzinfo=UTC)
+
+
+# Fix-round review C-R1 — B's short strike is A's long strike, so IBKR nets that conId away
+# ({679P: -1, 669P: +1}). The book still matches the broker exactly, and both spreads must be
+# closed at the time stop — a per-leg count found neither held and sent nothing.
+async def test_two_spreads_chained_through_a_strike_are_both_closed(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, "a", contracts=1, short=679, long_=674)
+    _paper_spread(spreads_db, "b", contracts=1, short=674, long_=669, at=T1001)
+    clock = [T1550]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.leg_quotes[(669.0, "P")] = o(669, "P", 0.01, 0.02)
+    broker.legs = {6790: -1.0, 6690: 1.0}
+    await svc.start()
+    assert svc.entries_blocked is None
+    await svc.tick()
+    assert ex.closes == [1, 1]
+    assert spreads_db.open_positions("paper") == []
+    assert not any("disagree" in m or "neither leg" in m for m in notifier.sent)
+
+
+# Fix-round review M3 — a leg still at IBKR is live risk: the alert sends the operator to TWS,
+# never to spreads_resolve (which would mark a live spread settled).
+async def test_a_spread_with_a_leg_still_at_ibkr_is_not_called_settled(
+    tmp_path, spreads_db
+) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T1100]
+    ex = RecordingExecutor()
+    svc, broker, notifier = _paper(tmp_path, clock, ex)
+    broker.legs = {6790: -1.0}  # the long leg is gone, the short is still live
+    await svc.tick()
+    assert ex.closes == []
+    (alert,) = [m for m in notifier.sent if "6790" not in m and "p1" in m]
+    assert "TWS" in alert and "spreads_resolve" not in alert
+
+
+# Fix-round review M2 — a second, different mismatch the same day is alerted; the same one seen
+# again is not, and a mismatch found at start() is not repeated on the second tick.
+async def test_each_distinct_mismatch_is_alerted_once(tmp_path, spreads_db) -> None:
+    _paper_spread(spreads_db, contracts=1)
+    clock = [T0945]
+    svc, broker, notifier = _paper(tmp_path, clock, RecordingExecutor())
+    broker.legs = {6790: -1.0}
+    await svc.start()
+    assert sum("disagree" in m for m in notifier.sent) == 1
+    await svc.tick()
+    await svc.tick()
+    assert sum("disagree" in m for m in notifier.sent) == 1
+    broker.legs = {6740: 1.0}  # a different problem (and nothing the service can close)
+    await svc.tick()
+    assert sum("disagree" in m for m in notifier.sent) == 2
+    await svc.tick()
+    assert sum("disagree" in m for m in notifier.sent) == 2

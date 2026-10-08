@@ -47,10 +47,10 @@ def to_chain_option(contract: Any, ticker: Any) -> ChainOption:
     g = getattr(ticker, "modelGreeks", None)
     bid = _num(getattr(ticker, "bid", None))
     ask = _num(getattr(ticker, "ask", None))
-    if ask is not None and ask > 0 and (bid is None or bid < 0):
-        # ib_async NaNs a size-0 bid (wrapper.priceSizeTick): beside a live ask that is a
-        # no-bid market — worth 0 to a seller — not a missing quote.
-        bid = 0.0
+    # A missing bid stays None here even beside a live ask: ib_async writes NaN both for a
+    # size-0 bid (no buyers) and for one whose tick hasn't arrived, and can't say which. The
+    # exit math (manager.debit_to_close) reads a missing bid as a no-bid market; ``quote``
+    # gives a late bid a short grace first.
     oi = _num(getattr(ticker, "callOpenInterest" if right == "C" else "putOpenInterest", None))
     return ChainOption(
         strike=float(contract.strike),
@@ -109,6 +109,20 @@ def _all_asked(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
     return lambda: all(_num(getattr(t, "ask", None)) is not None for _, t in pairs)
 
 
+def _all_bid(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
+    """Every leg with a live ask also has its bid — the bid tick usually lands first, but not
+    always, and a late one would otherwise read as nobody bidding."""
+
+    def ready() -> bool:
+        for _, t in pairs:
+            ask, bid = _num(getattr(t, "ask", None)), _num(getattr(t, "bid", None))
+            if ask is not None and ask > 0 and (bid is None or bid < 0):
+                return False
+        return True
+
+    return ready
+
+
 def _contract_key(c: Any) -> Any:
     con_id = int(getattr(c, "conId", 0) or 0)
     return con_id or id(c)
@@ -122,6 +136,7 @@ class IbkrSpreadsBroker:
         account: str,
         *,
         quote_wait_seconds: float = 3.0,
+        bid_grace_seconds: float = 0.75,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.ib = ib
@@ -129,6 +144,7 @@ class IbkrSpreadsBroker:
         self.account = account
         self.max_lines = max(1, cfg.max_market_data_lines)
         self.quote_wait = quote_wait_seconds
+        self.bid_grace = bid_grace_seconds
         self.now = now
         self._indexes: dict[str, Any] = {}
 
@@ -229,6 +245,7 @@ class IbkrSpreadsBroker:
             pairs = [(c, req_fresh_mkt_data(self.ib, c, "101,106", False, False)) for c in batch]
             try:
                 await _wait(_all_asked(pairs), self.quote_wait)
+                await _wait(_all_bid(pairs), self.bid_grace)
                 for c, t in pairs:
                     quoted[_contract_key(c)] = to_chain_option(c, t)
             finally:

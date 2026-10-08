@@ -378,10 +378,44 @@ Each fix has a test named after its finding, for example `test_a_paper_close_nev
   - Docs: the `models.py` comment, `ibkr logs` usage, the README topic table, the SPY example in "How the scan
     works.md" (now QQQ), STATUS "index" wording.
 
-**Next: a fresh review of the fix round (`1f7b01c..3f77372`) before merging.** The handoff is
-`.superpowers/sdd/2026-10-07-daily-credit-spreads/review-handoff-1f7b01c..3f77372.md`, with the diff beside it
-(both git-ignored; rebuild the diff with `git diff 1f7b01c..3f77372`). It lists ten points the author is least
-sure of. The first is a possible premature `profit_take` if a short leg's bid tick arrives after its ask.
+**Fresh review of the fix round (`1f7b01c..3f77372`), 2026-10-08: verdict "ready after fixes". ALL FIXED the same
+day (the commit after `283d8ad`), except M5 (needs the live check) and M6 (recorded as a limitation).** The handoff
+was `.superpowers/sdd/2026-10-07-daily-credit-spreads/review-handoff-1f7b01c..3f77372.md`, with the diff beside it
+(both git-ignored; rebuild the diff with `git diff 1f7b01c..3f77372`). The reviewer re-ran the gate (numbers matched)
+and answered all ten doubt points; eight were fine, point 1 became M1 and point 4 became M2.
+- [x] **C-R1 (Critical, a regression from I1): two spreads chained through a strike were never closed.** B's short
+  674P is A's long 674P, IBKR nets that conId away, `reconcile` is consistent, but the per-leg `_broker_holdings`
+  gave both 0, so no close was sent even at the time stop. Fix: when the book matches the broker exactly, every
+  spread is held in full; the DB-order allocation is only the fallback for an inconsistent book.
+  `test_two_spreads_chained_through_a_strike_are_both_closed` (fails on the old code).
+- [x] **M1: a late bid tick read as "nobody bids".** The 0-bid rewrite is gone from `chain.to_chain_option` (it also
+  halved the GEX expected move on a late ATM bid); `quote` waits up to `bid_grace_seconds` (0.75 s, a constructor
+  argument, not config) for any leg with an ask but no bid; `manager.debit_to_close` still reads a missing bid as
+  no-bid, so C1 holds. `test_quote_waits_briefly_for_a_bid_that_lands_after_the_ask`,
+  `test_a_bid_that_never_comes_costs_only_the_grace`, `test_a_nan_bid_beside_a_live_ask_stays_missing`.
+- [x] **M2: a second, different mismatch the same day was blocked silently.** The alert key is the sorted problem
+  set, `start()` goes through the same `alert_once` (no repeat on tick 2), and every blocked tick logs a warning.
+  `test_each_distinct_mismatch_is_alerted_once`.
+- [x] **M3: "settle with spreads_resolve" for a live leg.** `_not_held_text`: a leg still at IBKR → "check TWS, do
+  not mark it settled"; `spreads_resolve` only when the broker shows neither leg.
+  `test_a_spread_with_a_leg_still_at_ibkr_is_not_called_settled`.
+- [x] **M4: a missing FX rate turned a win into a loss.** `trade_ledger._won` decides in the trade's own currency
+  (USD sum only for mixed currencies), for the summary and both bucket tables.
+  `test_a_missing_fx_rate_never_turns_a_win_into_a_loss` (fails on the old code).
+- [ ] **M5: a BAG-level execution or a $0 commission would always take the commission fallback.** Not changed in
+  the executor: `spreads_combo_check --fill` now prints every execution's secType and commission, so the Task 11
+  Step 9 run settles it. STATUS lists it under "Needs live verification".
+- [ ] **M6: uneven leg splits don't pair.** Recorded in STATUS as not handled.
+- [x] **Nits:** `executor.open` reads the spot before the requote (`test_the_spot_is_read_before_the_legs_are_requoted`);
+  `run()` makes one connect attempt per startup pass, so a down Gateway alerts within one timeout instead of ~105 s;
+  `--fill` re-checks an opening order after cancelling it and says so if it filled.
+
+**Rulings (fix-round review):**
+- **M1 took the reviewer's fix, not the handoff's "long leg only" idea.** A short leg that genuinely has no bid on a
+  winner should still profit-take; the grace handles the race at its source for every consumer.
+- **The grace is a constructor argument, not a YAML key**, like `quote_wait_seconds` beside it.
+- **An open-spreads alert after a fast restart** (the clientId still held by the Gateway for a few seconds) is
+  accepted: it is once a day and true at that moment.
 
 **Rulings (review fixes):**
 - **Naive timestamps (the core minor):** no code change. Every read returns aware UTC; the plan's own Task 9

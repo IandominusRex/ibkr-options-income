@@ -293,3 +293,23 @@ async def test_the_send_time_regate_sees_a_fresh_spot() -> None:
     ex = SpreadExecutor(FakeIB(None), FakeBroker(fresh, spot=684.5), PAPER, now=lambda: NOW)
     await ex.open(cand(), 1, spy)
     assert seen == [684.5]
+
+
+# Fix-round review nit — the spot is read before the legs, so the fresh candidate's quote_time
+# (stamped right after the requote) is never older than its quotes by a whole spot wait.
+async def test_the_spot_is_read_before_the_legs_are_requoted() -> None:
+    order: list[str] = []
+
+    class OrderedBroker(FakeBroker):
+        async def requote(self, legs):
+            order.append("requote")
+            return self.quotes
+
+        async def spot(self):
+            order.append("spot")
+            return self.spot_now
+
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(FakeIB(None), OrderedBroker(fresh, spot=690.0), PAPER, now=lambda: NOW)
+    await ex.open(cand(), 1, reject)
+    assert order == ["spot", "requote"]

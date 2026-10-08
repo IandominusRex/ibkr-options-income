@@ -44,14 +44,19 @@ def test_to_chain_option_cleans_sentinels_and_reads_put_oi() -> None:
     assert o.expiry == TODAY and o.right == "P"
 
 
-# Review C1 — ib_async sets bid to NaN when the bid size is 0 (wrapper.priceSizeTick): with a
-# live ask that is a no-bid market, worth 0 to a seller, not a missing quote.
-def test_a_nan_bid_beside_a_live_ask_is_a_zero_bid() -> None:
+# Review C1 / fix-round M1 — ib_async NaNs a size-0 bid (wrapper.priceSizeTick) and a bid
+# tick that hasn't arrived alike, so the quote layer can't call it "nobody bids": it stays
+# missing, and only the exit math (manager.debit_to_close) reads it as a no-bid market.
+def test_a_nan_bid_beside_a_live_ask_stays_missing() -> None:
+    from src.spreads.manager import debit_to_close
+
     ticker = SimpleNamespace(
         bid=math.nan, ask=0.01, modelGreeks=None, callOpenInterest=None, putOpenInterest=None
     )
     o = to_chain_option(_contract(650, "P"), ticker)
-    assert o.bid == 0.0 and o.ask == 0.01 and o.mid == pytest.approx(0.005)
+    assert o.bid is None and o.ask == 0.01 and o.mid is None
+    short = ChainOption(strike=660, right="P", expiry=TODAY, bid=0.04, ask=0.06)
+    assert debit_to_close(short, o) == (pytest.approx(0.045), pytest.approx(0.06))
 
 
 def test_to_chain_option_without_greeks() -> None:
@@ -345,3 +350,46 @@ def test_working_refs_lists_only_spreads_orders() -> None:
         SimpleNamespace(order=SimpleNamespace(orderRef="")),
     ]
     assert _broker(ib).working_refs() == {"CS:s1:X"}
+
+
+class LateBidIB(FakeIB):
+    """Options quote the ask at once and the bid only after *bid_after* seconds (None: never)."""
+
+    def __init__(self, bid_after: float | None) -> None:
+        super().__init__()
+        self.bid_after = bid_after
+
+    def reqMktData(self, contract, *args, **kwargs):
+        import asyncio
+
+        t = super().reqMktData(contract, *args, **kwargs)
+        if contract.secType == "OPT":
+            t.bid = math.nan
+            if self.bid_after is not None:
+                asyncio.get_running_loop().call_later(self.bid_after, setattr, t, "bid", 0.40)
+        return t
+
+
+# Fix-round M1 — a bid tick landing just after the ask must not read as a no-bid market (a
+# short leg marked at ask / 2 fires a profit-take too early, and the ATM straddle halves).
+async def test_quote_waits_briefly_for_a_bid_that_lands_after_the_ask() -> None:
+    from ib_async import Option
+
+    ib = LateBidIB(bid_after=0.1)
+    broker = IbkrSpreadsBroker(ib, CFG, "DU1", quote_wait_seconds=0.05, bid_grace_seconds=1.0)
+    (q,) = await broker.quote([Option("SPY", "20261007", 679, "P", "SMART", conId=7)])
+    assert q.bid == 0.40 and q.ask == 0.45
+
+
+async def test_a_bid_that_never_comes_costs_only_the_grace() -> None:
+    import time
+
+    from ib_async import Option
+
+    ib = LateBidIB(bid_after=None)
+    broker = IbkrSpreadsBroker(ib, CFG, "DU1", quote_wait_seconds=0.05, bid_grace_seconds=0.2)
+    started = time.monotonic()
+    (q,) = await broker.quote([Option("SPY", "20261007", 650, "P", "SMART", conId=8)])
+    assert q.bid is None and q.ask == 0.45
+    assert time.monotonic() - started < 1.0
+    assert ib.open == 0

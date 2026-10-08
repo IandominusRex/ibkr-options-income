@@ -761,15 +761,24 @@ def build_tickers(
 # --------------------------------------------------------------------------- #
 # Portfolio summary (spec §4.5; R5)
 # --------------------------------------------------------------------------- #
-def _bucket(label: str, items: list[tuple[float, bool]]) -> LedgerBucket:
-    """``items`` = (realized_usd, counts_for_win_rate)."""
-    stats = [v for v, counts in items if counts]
+def _bucket(label: str, items: list[tuple[float, bool, bool]]) -> LedgerBucket:
+    """``items`` = (realized_usd, counts_for_win_rate, won)."""
+    stats = [won for _, counts, won in items if counts]
     return LedgerBucket(
         label=label,
         n_closed=len(items),
-        realized_usd=sum(v for v, _ in items),
-        win_rate=sum(1 for v in stats if v > 0) / len(stats) if stats else None,
+        realized_usd=sum(v for v, _, _ in items),
+        win_rate=sum(stats) / len(stats) if stats else None,
     )
+
+
+def _won(legs: list[LedgerTrade], usd_value: float) -> bool:
+    """Win or loss in the trade's own currency — a missing FX rate must not turn a winner's
+    USD figure into 0 and count it as a loss. Legs in different currencies (never one spread)
+    fall back to the USD sum."""
+    if len({x.currency for x in legs}) == 1:
+        return sum(x.net_pnl or 0.0 for x in legs) > 0
+    return usd_value > 0
 
 
 def build_summary(
@@ -797,28 +806,30 @@ def build_summary(
         return value
 
     realized: list[tuple[date, float]] = []
-    strategy_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
-    book_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
+    strategy_items: dict[str, list[tuple[float, bool, bool]]] = defaultdict(list)
+    book_items: dict[str, list[tuple[float, bool, bool]]] = defaultdict(list)
     for t in trades:
         if t.net_pnl is not None and t.close_date is not None:
             realized.append((t.close_date, usd(t.net_pnl, t.currency, t.close_date)))
     pairs = spread_pairs(trades)
     units = _stat_units(trades, pairs)
-    unit_values: list[tuple[float, bool]] = []
+    unit_wins: list[bool] = []
     for legs, counts in units:
         v = sum(usd(x.net_pnl or 0.0, x.currency, x.close_date or today) for x in legs)
+        won = _won(legs, v)
         t = legs[0]
         if t.book == "spreads":
             label = "Spread"
         else:
             label = "Long" if t.side == "Buy" else "CSP" if t.right == "P" else "CC"
-        strategy_items[label].append((v, counts))
-        book_items[t.book].append((v, counts))
-        unit_values.append((v, counts))
+        strategy_items[label].append((v, counts, won))
+        book_items[t.book].append((v, counts, won))
+        if counts:
+            unit_wins.append(won)
     for disp in disposals:
         v = usd(disp.realized, disp.currency, disp.disposal_date)
         realized.append((disp.disposal_date, v))
-        strategy_items["Stock"].append((v, False))
+        strategy_items["Stock"].append((v, False, False))
     for c in cash:
         if c.event_type in ("dividend", "withholding"):
             realized.append((c.event_date, usd(c.amount, c.currency, c.event_date)))
@@ -874,7 +885,6 @@ def build_summary(
         running += by_day[d]
         curve.append(LedgerCurvePoint(point_date=d, cumulative_usd=running))
 
-    stats = [v for v, counts in unit_values if counts]
     open_trades = sorted((t for t in trades if t.close_date is None), key=lambda t: t.expiry)
     this_month = today.strftime("%Y-%m")
     return LedgerSummary(
@@ -884,7 +894,7 @@ def build_summary(
         capital_utilised_usd=utilised,
         available_usd=contributed + total - utilised if contributed is not None else None,
         unrealized_usd=unrealized,
-        win_rate=sum(1 for v in stats if v > 0) / len(stats) if stats else None,
+        win_rate=sum(unit_wins) / len(unit_wins) if unit_wins else None,
         n_trades=len(trades),
         n_open=len(open_trades),
         premium_this_month_usd=months[this_month][0] if this_month in months else 0.0,

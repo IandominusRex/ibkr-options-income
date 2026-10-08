@@ -125,8 +125,8 @@ class SpreadExecutor:
             ChainOption(strike=c.short_strike, right=right, expiry=c.expiry, con_id=c.short_con_id),  # type: ignore[arg-type]
             ChainOption(strike=c.long_strike, right=right, expiry=c.expiry, con_id=c.long_con_id),  # type: ignore[arg-type]
         ]
+        spot = await self.broker.spot()  # first, so the quotes are as fresh as their stamp
         quotes = await self.broker.requote(legs)
-        spot = await self.broker.spot()
         short_q, long_q = (
             _match(quotes, c.short_strike, right),
             _match(quotes, c.long_strike, right),
