@@ -52,7 +52,10 @@ def main() -> None:
         negative_gamma=a.negative_gamma,
     )
     client = ThetaDataClient(cfg.backtest.thetadata_url, ROOT / cfg.backtest.cache_dir)
-    trades = run_backtest(client, cfg, a.start, a.end)
+    skipped: list[tuple[date, str]] = []
+    trades = run_backtest(client, cfg, a.start, a.end, skipped)
+    for day, why in skipped:
+        print(f"  skipped {day}: {why}")
     print(
         f"settings: profit_take {cfg.exits.profit_take_pct:g}% · trigger {cfg.entry.trigger}"
         f" · negative gamma {cfg.gex.negative_gamma_action}"

@@ -77,3 +77,28 @@ def test_only_the_healthcheck_asks_for_spreads_positions() -> None:
         and str(p.relative_to(ROOT)) not in allowed
     ]
     assert offenders == []
+
+
+# Review I-L3 — a spreads fill whose order id collides with a stuck wheel order is never
+# recovered as that wheel order's fill (order ids are only unique per clientId).
+def test_wheel_fill_recovery_needs_the_underlying_not_just_the_order_id() -> None:
+    from datetime import date
+    from types import SimpleNamespace
+
+    from src.execution.reconciliation import _exec_matches_candidate
+
+    wheel = SimpleNamespace(underlying="UPRO", right="P", strike=90.0, expiry=date(2026, 10, 16))
+    spreads_fill = SimpleNamespace(
+        execution=SimpleNamespace(orderId=188, side="SLD"),
+        contract=SimpleNamespace(
+            symbol="SPY", right="P", strike=679.0, lastTradeDateOrContractMonth="20261007"
+        ),
+    )
+    assert not _exec_matches_candidate(spreads_fill, wheel, 188)  # type: ignore[arg-type]
+    wheel_fill = SimpleNamespace(
+        execution=SimpleNamespace(orderId=188, side="SLD"),
+        contract=SimpleNamespace(
+            symbol="UPRO", right="P", strike=90.0, lastTradeDateOrContractMonth="20261016"
+        ),
+    )
+    assert _exec_matches_candidate(wheel_fill, wheel, 188)  # type: ignore[arg-type]

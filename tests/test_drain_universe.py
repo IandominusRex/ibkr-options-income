@@ -664,3 +664,45 @@ def test_a_removed_non_base_symbol_still_appears_in_entries(client, yaml_univers
     assert entry["overridden"] is True
     assert entry["removed"] is True
     assert entry["created_by"] == "owner"
+
+
+# Review minor — a spreads-book underlying can't be added to the wheel from the web, at any layer.
+@pytest.mark.parametrize("symbol", ["SPY", "spx", "XSP"])
+def test_a_spreads_book_underlying_is_refused_at_the_api(client, count_commands, symbol) -> None:
+    before = count_commands()
+    r = client.post(f"/universe/watchlist/{symbol}", headers=AUTH)
+    assert r.status_code == 422
+    assert r.json()["detail"]["reason"] == "reserved_for_spreads_book"
+    r = client.post(
+        "/commands",
+        headers=AUTH,
+        json={"kind": "universe_add", "payload": {"symbol": symbol, "list_name": "would_own"}},
+    )
+    assert r.status_code == 422
+    assert count_commands() == before
+
+
+@pytest.mark.asyncio
+async def test_the_drain_refuses_a_spreads_book_underlying(drain_env) -> None:
+    from src.common.universe import effective_universe, invalidate_universe_cache
+    from src.notify.command_drain import drain_once
+
+    cid = drain_env.enqueue("universe_add", {"symbol": "SPY", "list_name": "watchlist"})
+    await drain_once(None, drain_env.bot, "chat")
+    assert drain_env.status(cid) == "failed"
+    assert drain_env.result(cid) is None or "reserved" in str(drain_env.result(cid))
+    invalidate_universe_cache()
+    assert "SPY" not in effective_universe()["watchlist"]
+
+
+def test_the_composer_drops_an_old_add_override_for_a_spreads_underlying() -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from src.common.universe import _compose_list
+
+    rows = [
+        SimpleNamespace(symbol="SPY", action="add", created_at=datetime(2026, 1, 1, tzinfo=UTC)),
+        SimpleNamespace(symbol="ZZZZ", action="add", created_at=datetime(2026, 1, 2, tzinfo=UTC)),
+    ]
+    assert _compose_list(["NVDA"], rows, remove_guard=frozenset()) == ["NVDA", "ZZZZ"]  # type: ignore[arg-type]

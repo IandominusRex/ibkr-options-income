@@ -34,6 +34,7 @@ from ib_async import IB
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.common.books import is_spreads_underlying
 from src.common.config import get_config
 from src.common.schemas import ApprovalStatus
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
@@ -595,8 +596,9 @@ def _set_autonomy(*, command: Any, bot: Any, chat_id: str, **_: Any) -> dict:
 # unknown symbol -> 404) already happened at the API boundary before this command could
 # ever be created — enforced at both entry points, src/api/routers/universe.py's thin
 # wrappers and (since the M7 final-review fix round) the generic POST /commands route in
-# src/api/routers/commands.py. A command that reaches this handler is always valid and
-# always applies: neither handler raises CommandFailed. Neither sends
+# src/api/routers/commands.py. The one exception kept here as defence in depth: an add for a
+# spreads-book underlying (reserved_for_spreads_book, also refused at the API) fails. Every
+# other command that reaches these handlers is valid and applies. Neither sends
 # a Telegram notification either (unlike halt/resume/set_autonomy) — a universe edit is
 # reversible, non-urgent config, not a safety-critical control.
 # ---------------------------------------------------------------------------
@@ -612,6 +614,8 @@ def _universe_add(*, command: Any, **_: Any) -> dict:
     from src.storage.universe_overrides import set_override
 
     payload = UniversePayload(**command.payload)
+    if is_spreads_underlying(payload.symbol):
+        raise CommandFailed("reserved_for_spreads_book")
     with session_scope() as s:
         set_override(
             s,

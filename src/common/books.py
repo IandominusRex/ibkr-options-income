@@ -14,10 +14,19 @@ from __future__ import annotations
 
 from src.common.config import get_config
 
+# Daily-option trading classes whose statement rows name the class, not the index: an Activity
+# Statement prints an SPX daily as "SPXW 07OCT26 6800 P", so its root parses as SPXW.
+_DAILY_ROOTS = {"SPX": ("SPXW",), "NDX": ("NDXP",), "RUT": ("RUTW",)}
+
 
 def spreads_underlyings() -> frozenset[str]:
     return frozenset(s.upper() for s in get_config().spreads.book_underlyings)
 
 
 def is_spreads_underlying(symbol: str | None) -> bool:
-    return symbol is not None and symbol.upper() in spreads_underlyings()
+    """True for a book underlying, or a daily trading-class root standing in for one."""
+    if symbol is None:
+        return False
+    book = spreads_underlyings()
+    sym = symbol.upper()
+    return sym in book or any(sym in _DAILY_ROOTS.get(b, ()) for b in book)

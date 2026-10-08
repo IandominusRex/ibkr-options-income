@@ -26,7 +26,6 @@ from typing import Any
 from src.common.config import get_config
 from src.common.market_hours import is_rth
 from src.common.schemas import LedgerContract, ParsedExecution, ParsedStatement
-from src.execution.reconciliation import _req_executions_bounded
 from src.ledger.contracts import parse_ibkr_date, stock_contract
 from src.ledger.ingest import ingest
 from src.ledger.state import ledger_account
@@ -131,6 +130,16 @@ def on_commission_report(trade: Any, fill: Any, report: Any) -> None:
         task.add_done_callback(_log_hook_result)
     except Exception:
         log.exception("ledger live hook failed — ignored (never affects order handling)")
+
+
+async def _req_executions_bounded(ib: Any, label: str) -> list[Any] | None:
+    """The exec process's bounded ``reqExecutions``, imported on first use: importing it at
+    module load would drag the execution layer (and, through it, the enrichment layer's
+    outcome memory) into every process that only attaches the commission-report hook — the
+    spreads service among them."""
+    from src.execution.reconciliation import _req_executions_bounded as bounded
+
+    return await bounded(ib, label)
 
 
 def attach_live_hook(ib: Any) -> None:

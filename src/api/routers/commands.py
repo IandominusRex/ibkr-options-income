@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.commands import clear_confirm_token, get_status, submit
-from src.api.deps import OwnerUser, assert_known_symbol
+from src.api.deps import OwnerUser, assert_known_symbol, assert_not_reserved
 from src.api.models.commands import (
     CommandKind,
     CommandStatus,
@@ -122,6 +122,8 @@ def post_commands(req: CommandRequest, user: OwnerUser) -> JSONResponse:
         # own guard (src/common/universe.py::_compose_list) makes that direction safe
         # regardless of which route the override row came in through.
         assert isinstance(payload, UniversePayload)
+        if kind == CommandKind.UNIVERSE_ADD:
+            assert_not_reserved(payload.symbol)
         with research_session() as s:
             assert_known_symbol(s, payload.symbol)
 

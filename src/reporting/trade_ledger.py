@@ -50,6 +50,8 @@ from src.storage.models import (
 
 _EPS = 1e-9
 _ROLL_WINDOW = timedelta(minutes=5)
+# The two legs of a spreads-book combo fill together; anything further apart is not one spread.
+_PAIR_WINDOW = timedelta(seconds=60)
 # F10: the outcome vocabulary is defined once, on the `LedgerOutcome` Literal (src/common/schemas.py).
 # Derived here rather than re-listed so the two can never drift apart.
 _VALID_OUTCOMES: frozenset[str] = frozenset(get_args(LedgerOutcome))
@@ -316,11 +318,11 @@ def _link_rolls(trades: list[LedgerTrade]) -> None:
     """A buy-to-close followed within the session by a same-underlying, same-right new short."""
     opens: dict[tuple[str, str, date], list[LedgerTrade]] = defaultdict(list)
     for t in trades:
-        if t.side == "Sell":
+        if t.side == "Sell" and t.book != "spreads":  # a spreads re-entry is never a roll
             opens[(t.underlying, t.right, t.order_date)].append(t)
     taken: set[str] = set()
     for t in sorted(trades, key=lambda x: x.open_time):
-        if t.computed_outcome != "Bought back" or not t.closes:
+        if t.computed_outcome != "Bought back" or not t.closes or t.book == "spreads":
             continue
         last = max(t.closes, key=lambda x: x.close_time)
         candidates = [
@@ -337,6 +339,77 @@ def _link_rolls(trades: list[LedgerTrade]) -> None:
         t.outcome = t.computed_outcome = "Rolled"
         t.rolled_to = nxt.order_key
         nxt.rolled_from = t.order_key
+
+
+def spread_pairs(trades: list[LedgerTrade]) -> dict[str, str]:
+    """Short-leg ``order_key`` → long-leg ``order_key`` for every spreads-book vertical.
+
+    The spreads book trades two-legged combos, so the ledger sees two option trades per spread:
+    a short leg that usually wins and a long hedge that usually loses. They are paired here —
+    same underlying, right, expiry and size, opened within ``_PAIR_WINDOW`` — so win rate,
+    capital and premium are judged per spread, not per leg.
+    """
+    longs = sorted(
+        (t for t in trades if t.book == "spreads" and t.side == "Buy"), key=lambda t: t.open_time
+    )
+    taken: set[str] = set()
+    pairs: dict[str, str] = {}
+    for s in sorted(
+        (t for t in trades if t.book == "spreads" and t.side == "Sell"), key=lambda t: t.open_time
+    ):
+        candidates = [
+            lg
+            for lg in longs
+            if lg.order_key not in taken
+            and (lg.underlying, lg.right, lg.expiry) == (s.underlying, s.right, s.expiry)
+            and abs(lg.lots - s.lots) < _EPS
+            and abs(lg.open_time - s.open_time) <= _PAIR_WINDOW
+        ]
+        if not candidates:
+            continue
+        lg = min(candidates, key=lambda x: abs((x.open_time - s.open_time).total_seconds()))
+        taken.add(lg.order_key)
+        pairs[s.order_key] = lg.order_key
+    return pairs
+
+
+def _price_spreads(trades: list[LedgerTrade]) -> None:
+    """A paired spread's capital is its width (the margin IBKR holds), carried on the short
+    leg; its returns are the spread's, on the short leg. The long leg is the hedge: capital 0
+    and no return of its own. Each leg keeps its own premium and net P&L (the accounting)."""
+    by_key = {t.order_key: t for t in trades}
+    for s_key, l_key in spread_pairs(trades).items():
+        s, lg = by_key[s_key], by_key[l_key]
+        capital = abs(s.strike - lg.strike) * s.multiplier * s.lots
+        credit = s.premium + lg.premium
+        s.capital, lg.capital = capital, 0.0
+        s.pct_profit = credit / capital * 365 / s.dte * 100 if capital else None
+        lg.pct_profit = None
+        net = s.net_pnl + lg.net_pnl if s.net_pnl is not None and lg.net_pnl is not None else None
+        days = max(s.days_held, lg.days_held)
+        s.return_pct = net / capital * 100 if net is not None and capital else None
+        s.annualised_net_pct = (
+            net / capital * 365 / days * 100 if net is not None and capital else None
+        )
+        lg.return_pct = lg.annualised_net_pct = None
+
+
+def _stat_units(
+    trades: list[LedgerTrade], pairs: dict[str, str]
+) -> list[tuple[list[LedgerTrade], bool]]:
+    """What a win rate counts: one unit per closed trade, except that a paired spread is one
+    unit of both legs once both are closed. ``(legs, counts_for_win_rate)``."""
+    by_key = {t.order_key: t for t in trades}
+    longs = set(pairs.values())
+    units: list[tuple[list[LedgerTrade], bool]] = []
+    for t in trades:
+        if t.order_key in longs:
+            continue
+        legs = [t, by_key[pairs[t.order_key]]] if t.order_key in pairs else [t]
+        if any(x.net_pnl is None or x.close_date is None for x in legs):
+            continue
+        units.append((legs, not any(x.exclude_from_stats for x in legs)))
+    return units
 
 
 def _orphan(order: LedgerOrder, qty: float) -> LedgerOrphan:
@@ -373,6 +446,7 @@ def build_option_trades(
         trades.extend(_trade_from_opening(op, today=today) for op in openings)
         orphans.extend(_orphan(o, q) for o, q in orphan_slices)
     _link_rolls(trades)
+    _price_spreads(trades)
     trades.sort(key=lambda t: (t.open_time, t.order_key))
     return trades, orphans
 
@@ -621,11 +695,16 @@ def build_tickers(
         | {lot.underlying for lot in lots}
         | {c.underlying for c in income if c.underlying}
     )
+    pairs = spread_pairs(trades)
     out: list[LedgerTicker] = []
     for sym in symbols:
         ts = [t for t in trades if t.underlying == sym]
         closed = [t for t in ts if t.net_pnl is not None]
         stats = [t for t in closed if not t.exclude_from_stats]
+        # Per-trade figures count a paired spread once (both legs), not leg by leg.
+        units = [legs for legs, counts in _stat_units(ts, pairs) if counts]
+        unit_net = [sum(x.net_pnl or 0.0 for x in legs) for legs in units]
+        unit_premium = [sum(x.premium for x in legs) for legs in units]
         sym_lots = [lot for lot in lots if lot.underlying == sym]
         open_lots = [lot for lot in sym_lots if abs(lot.remaining) > _EPS]
         shares = sum(lot.remaining for lot in open_lots)
@@ -647,7 +726,9 @@ def build_tickers(
             LedgerTicker(
                 symbol=sym,
                 currency=currency,
-                option_premium_gross=sum(t.premium for t in ts if t.side == "Sell"),
+                option_premium_gross=sum(
+                    t.premium for t in ts if t.side == "Sell" or t.order_key in pairs.values()
+                ),
                 option_net_pnl=option_net,
                 stock_realized=stock_realized,
                 dividends_net=dividends,
@@ -656,10 +737,10 @@ def build_tickers(
                 n_trades=len(ts),
                 n_open=len(open_trades),
                 n_closed=len(closed),
-                win_rate=sum(1 for v in stats_net if v > 0) / len(stats_net) if stats_net else None,
-                avg_premium=(sum(t.premium for t in stats) / len(stats)) if stats else None,
-                best_trade=max(stats_net) if stats_net else None,
-                worst_trade=min(stats_net) if stats_net else None,
+                win_rate=sum(1 for v in unit_net if v > 0) / len(unit_net) if unit_net else None,
+                avg_premium=(sum(unit_premium) / len(unit_premium)) if unit_premium else None,
+                best_trade=max(unit_net) if unit_net else None,
+                worst_trade=min(unit_net) if unit_net else None,
                 annualised_return_pct=(sum(stats_net) / capital_days * 365 * 100)
                 if capital_days
                 else None,
@@ -719,16 +800,21 @@ def build_summary(
     strategy_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
     book_items: dict[str, list[tuple[float, bool]]] = defaultdict(list)
     for t in trades:
-        if t.net_pnl is None or t.close_date is None:
-            continue
-        v = usd(t.net_pnl, t.currency, t.close_date)
-        realized.append((t.close_date, v))
+        if t.net_pnl is not None and t.close_date is not None:
+            realized.append((t.close_date, usd(t.net_pnl, t.currency, t.close_date)))
+    pairs = spread_pairs(trades)
+    units = _stat_units(trades, pairs)
+    unit_values: list[tuple[float, bool]] = []
+    for legs, counts in units:
+        v = sum(usd(x.net_pnl or 0.0, x.currency, x.close_date or today) for x in legs)
+        t = legs[0]
         if t.book == "spreads":
             label = "Spread"
         else:
             label = "Long" if t.side == "Buy" else "CSP" if t.right == "P" else "CC"
-        strategy_items[label].append((v, not t.exclude_from_stats))
-        book_items[t.book].append((v, not t.exclude_from_stats))
+        strategy_items[label].append((v, counts))
+        book_items[t.book].append((v, counts))
+        unit_values.append((v, counts))
     for disp in disposals:
         v = usd(disp.realized, disp.currency, disp.disposal_date)
         realized.append((disp.disposal_date, v))
@@ -746,10 +832,18 @@ def build_summary(
 
     flows = [c for c in cash if c.event_type in ("deposit", "withdrawal")]
     contributed = sum(usd(c.amount, c.currency, c.event_date) for c in flows) if flows else None
+    # A CSP ties up its strike; a paired spread only its width (its short leg's capital). An
+    # unpaired spreads leg has no honest figure and is left out rather than counted as a CSP.
     utilised = sum(
-        usd(t.strike * t.multiplier * t.lots, t.currency, today)
+        usd(
+            t.capital if t.book == "spreads" else t.strike * t.multiplier * t.lots,
+            t.currency,
+            today,
+        )
         for t in trades
-        if t.side == "Sell" and t.right == "P" and t.close_date is None
+        if t.side == "Sell"
+        and t.close_date is None
+        and (t.order_key in pairs if t.book == "spreads" else t.right == "P")
     ) + sum(
         usd(lot.remaining * lot.cost_per_share, lot.currency, lot.acquired_date)
         for lot in lots
@@ -764,8 +858,10 @@ def build_summary(
     )
 
     months: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+    hedges = set(pairs.values())
     for t in trades:
-        if t.side == "Sell":
+        # A spread's premium is its net credit: the short leg's plus its (negative) hedge's.
+        if t.side == "Sell" or t.order_key in hedges:
             months[t.order_date.strftime("%Y-%m")][0] += usd(t.premium, t.currency, t.order_date)
     for d, v in realized:
         months[d.strftime("%Y-%m")][1] += v
@@ -778,7 +874,7 @@ def build_summary(
         running += by_day[d]
         curve.append(LedgerCurvePoint(point_date=d, cumulative_usd=running))
 
-    stats = [t.net_pnl for t in trades if t.net_pnl is not None and not t.exclude_from_stats]
+    stats = [v for v, counts in unit_values if counts]
     open_trades = sorted((t for t in trades if t.close_date is None), key=lambda t: t.expiry)
     this_month = today.strftime("%Y-%m")
     return LedgerSummary(

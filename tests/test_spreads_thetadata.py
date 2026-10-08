@@ -10,11 +10,12 @@ from src.spreads.backtest.thetadata import ThetaDataClient
 DAY = date(2026, 10, 7)
 
 
-def _client(tmp_path, handler) -> ThetaDataClient:
+def _client(tmp_path, handler, today: date = date(2026, 10, 9)) -> ThetaDataClient:
     return ThetaDataClient(
         "http://127.0.0.1:25503",
         tmp_path,
         http=httpx.Client(transport=httpx.MockTransport(handler)),
+        today=lambda: today,
     )
 
 
@@ -80,3 +81,17 @@ def test_http_errors_are_raised_and_never_cached(tmp_path) -> None:
         c.index_prices("SPX", DAY)
     assert c.index_prices("SPX", DAY) == []
     assert calls["n"] == 2
+
+
+# Review minor — a day still in progress is never cached (its partial data would stick).
+def test_today_is_never_cached(tmp_path) -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, text="timestamp,price\n")
+
+    c = _client(tmp_path, handler, today=DAY)
+    c.index_prices("SPX", DAY)
+    c.index_prices("SPX", DAY)
+    assert calls["n"] == 2 and list(tmp_path.glob("*.csv")) == []

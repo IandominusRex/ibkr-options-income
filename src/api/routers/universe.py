@@ -28,7 +28,13 @@ from sqlalchemy.orm import Session
 
 from src.api.auth import User
 from src.api.commands import get_status, submit
-from src.api.deps import CurrentUser, OwnerUser, ResearchDb, assert_known_symbol
+from src.api.deps import (
+    CurrentUser,
+    OwnerUser,
+    ResearchDb,
+    assert_known_symbol,
+    assert_not_reserved,
+)
 from src.api.models.commands import CommandKind, UniversePayload, dedupe_key_for
 from src.api.models.common import Envelope, as_utc
 from src.api.routers.commands import CommandResponse
@@ -237,6 +243,8 @@ def _apply_universe_command(
     `Literal["would_own", "watchlist"]` by the caller's path-parameter type — FastAPI
     returns 422 for anything else before the route body (and this function) ever runs.
     """
+    if kind == CommandKind.UNIVERSE_ADD:
+        assert_not_reserved(symbol)
     upper = assert_known_symbol(research, symbol)
 
     if kind == CommandKind.UNIVERSE_REMOVE and list_name == "would_own":

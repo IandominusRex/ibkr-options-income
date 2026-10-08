@@ -92,6 +92,16 @@ def test_enabled_spreads_must_fit_the_line_budget() -> None:
         _config(spreads=spreads)
 
 
+# Review minor — the budget is the configured cap, and the wheel monitor's standing lines count.
+def test_the_line_budget_counts_the_monitor_against_the_configured_cap() -> None:
+    base = get_config()
+    fits = base.spreads.model_copy(update={"enabled": True})
+    _config(spreads=fits)  # 40 + 30 + 20 = 90, the shipped max_concurrent_lines
+    over = fits.model_copy(update={"reserved_monitor_lines": 21})
+    with pytest.raises(ValidationError, match="max_concurrent_lines"):
+        _config(spreads=over)
+
+
 def test_enabled_spreads_need_a_client_id() -> None:
     base = get_config()
     ids = {k: v for k, v in base.ibkr.client_ids.items() if k != "spreads"}

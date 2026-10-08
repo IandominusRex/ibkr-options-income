@@ -32,6 +32,7 @@ import logging
 import time
 from typing import Any
 
+from src.common.books import is_spreads_underlying
 from src.common.config import get_config
 from src.storage.db import session_scope
 from src.storage.models import UniverseOverrideRow
@@ -77,8 +78,11 @@ def _compose_list(
     removed = {
         row.symbol for row in overrides if row.action == "remove" and row.symbol not in remove_guard
     }
+    # An add for a spreads-book underlying (refused at the API since the spreads review, but
+    # an older row may exist) never reaches the wheel's lists.
     added = sorted(
-        (row for row in overrides if row.action == "add"), key=lambda row: row.created_at
+        (row for row in overrides if row.action == "add" and not is_spreads_underlying(row.symbol)),
+        key=lambda row: row.created_at,
     )
 
     composed = [symbol for symbol in base_list if symbol not in removed]

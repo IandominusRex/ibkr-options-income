@@ -13,6 +13,7 @@ trade carries the same tags as the live trade log, so ``report.tag_breakdowns`` 
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -35,6 +36,8 @@ from src.spreads.pricing import ET, day_schedule, delta, implied_vol, years_to_c
 from src.spreads.risk import validate
 from src.spreads.selector import select_candidates
 from src.spreads.tape import SessionTape, trigger
+
+log = logging.getLogger(__name__)
 
 
 class HistorySource(Protocol):
@@ -347,7 +350,9 @@ def run_day(
                 trades_today=len(sides_today),
                 realized_pnl_today_usd=realized_scaled,
                 excess_liquidity_usd=1e12,
-                capital_usd=capital * k,  # SPX-scale dollars, like every other amount here
+                # SPX-scale dollars, like every other amount here; and, as live, the capital
+                # moves with every spread closed earlier the same day.
+                capital_usd=capital * k + realized_scaled,
                 sides_today=list(sides_today),
             )
             v = validate(c, ctx, bcfg)
@@ -382,25 +387,64 @@ def run_day(
             sides_today.append(c.side)
 
     end = minutes[-1] if minutes else None
-    for held in expiring + open_:
+    for held in expiring:  # left to expire on purpose (let_expire): settles at intrinsic
         debit = intrinsic_debit(held.pos, last_spot) if last_spot is not None else held.pos.width
         trades.append(book(held, end or held.opened, debit, "expired", 0))
+    for held in open_:
+        # The data stopped before the time stop could run: close at the last quote, as the
+        # time stop would have, commissions included — never a free expiry at intrinsic.
+        pos = held.pos
+        right = "P" if pos.side == "put" else "C"
+        last_mid: float | None = None
+        last_nat: float | None = None
+        if end is not None:
+            last_mid, last_nat = debit_to_close(
+                _leg(data, end, pos.short_strike, right), _leg(data, end, pos.long_strike, right)
+            )
+        last = last_mid if last_mid is not None else last_nat
+        if last is not None:
+            debit = min(pos.width, _fill(last, last_nat if last_nat is not None else last, h))
+        else:
+            debit = intrinsic_debit(pos, last_spot) if last_spot is not None else pos.width
+        trades.append(book(held, end or held.opened, debit, "data_end", 2))
     return trades
 
 
 def run_backtest(
-    client: HistorySource, cfg: SpreadsCfg, start: date, end: date
+    client: HistorySource,
+    cfg: SpreadsCfg,
+    start: date,
+    end: date,
+    skipped: list[tuple[date, str]] | None = None,
 ) -> list[BacktestTrade]:
-    """Every trading day in [start, end]; each day sizes off the capital the days before left."""
+    """Every trading day in [start, end]; each day sizes off the capital the days before left.
+
+    A day whose data can't be loaded (a 4xx for a missing day, a Terminal hiccup) is skipped
+    and listed in *skipped* instead of ending the run; if no day loads at all, the last error
+    is raised so a misconfigured Terminal is not mistaken for an empty month.
+    """
     trades: list[BacktestTrade] = []
     capital = cfg.risk.starting_capital_usd
     day = start
+    loaded = 0
+    last_error: Exception | None = None
     while day <= end:
         if is_trading_day(day):
-            data = load_day(client, cfg.backtest, day)
+            try:
+                data = load_day(client, cfg.backtest, day)
+            except Exception as exc:
+                log.warning("spreads backtest: skipping %s (%s)", day, exc)
+                last_error = exc
+                if skipped is not None:
+                    skipped.append((day, str(exc)))
+                day += timedelta(days=1)
+                continue
+            loaded += 1
             if data.quotes:
                 today = run_day(data, cfg, capital)
                 capital += sum(t.pnl_usd for t in today)
                 trades.extend(today)
         day += timedelta(days=1)
+    if loaded == 0 and last_error is not None:
+        raise last_error
     return trades

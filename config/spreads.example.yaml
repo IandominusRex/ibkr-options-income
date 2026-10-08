@@ -12,7 +12,9 @@ exchange: SMART
 book_underlyings: [SPY, SPX, XSP]  # all reserved for this book: none may appear in config/universe.yaml
 order_ref_prefix: "CS:"   # tag on every spreads order: audit, plus the service spotting its own still-working orders
 db_url: "sqlite:///data/spreads.db"
-max_market_data_lines: 30 # wheel chain_batch_size (40) + this must stay <= 95
+max_market_data_lines: 30 # wheel chain_batch_size (40) + this + reserved_monitor_lines
+                          # must stay <= market_data.max_concurrent_lines (90)
+reserved_monitor_lines: 20 # the wheel monitor's standing lines (one per watched short option)
 halt_file: "data/spreads.halt"  # touch this file to stop new entries; exits keep running
 
 schedule:                 # all ET, zero-padded HH:MM

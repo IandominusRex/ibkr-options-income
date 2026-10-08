@@ -59,6 +59,20 @@ def trading_db() -> Iterator[Session]:
 TradingDb = Annotated[Session, Depends(trading_db)]
 
 
+def assert_not_reserved(symbol: str) -> None:
+    """Raise 422 if ``symbol`` belongs to the daily credit-spread book (``spreads.
+    book_underlyings``). The wheel and that book never share an underlying; config load
+    enforces it for the YAML and the rules engine rejects such a trade, but a web override
+    adding one would still have the scan, research and buy-to-own recommender work on it."""
+    from src.common.books import is_spreads_underlying
+
+    if is_spreads_underlying(symbol):
+        raise HTTPException(
+            status_code=422,
+            detail={"reason": "reserved_for_spreads_book", "symbol": symbol.upper()},
+        )
+
+
 def assert_known_symbol(research: Session, symbol: str) -> str:
     """Raise 404 unless ``symbol`` (case-insensitive) is a known SEC filer in the research
     symbol directory. Returns the upper-cased symbol otherwise.

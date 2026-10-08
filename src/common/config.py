@@ -780,6 +780,9 @@ class SpreadsCfg(BaseModel):
     order_ref_prefix: str = "CS:"
     db_url: str = "sqlite:///data/spreads.db"
     max_market_data_lines: int = 30
+    # Lines the wheel's IntradayMonitor keeps open (one per short option it watches) while a
+    # scan batch and the spreads book are both quoting — counted against the login's cap.
+    reserved_monitor_lines: int = 20
     halt_file: str = "data/spreads.halt"
     schedule: SpreadsScheduleCfg = Field(default_factory=SpreadsScheduleCfg)
     entry: SpreadsEntryCfg = Field(default_factory=SpreadsEntryCfg)
@@ -884,11 +887,18 @@ class Config(BaseModel):
                 "wheel and the spreads book may never share an underlying"
             )
         if self.spreads.enabled:
-            budget = self.market_data.chain_batch_size + self.spreads.max_market_data_lines
-            if budget > 95:
+            budget = (
+                self.market_data.chain_batch_size
+                + self.spreads.max_market_data_lines
+                + self.spreads.reserved_monitor_lines
+            )
+            cap = self.market_data.max_concurrent_lines
+            if budget > cap:
                 raise ValueError(
-                    f"market_data.chain_batch_size + spreads.max_market_data_lines = {budget} "
-                    "exceeds the 95-line market-data budget shared by every clientId"
+                    f"market_data.chain_batch_size + spreads.max_market_data_lines + "
+                    f"spreads.reserved_monitor_lines = {budget} exceeds "
+                    f"market_data.max_concurrent_lines ({cap}), the market-data budget shared "
+                    "by every clientId on the login"
                 )
             if "spreads" not in self.ibkr.client_ids:
                 raise ValueError("ibkr.client_ids.spreads must be set when spreads.enabled is true")

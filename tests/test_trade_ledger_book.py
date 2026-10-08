@@ -369,3 +369,47 @@ def test_spreads_book_flows_through_and_is_labelled_spread() -> None:
     assert {t.book for t in trades if t.underlying == "AMZN"} == {"manual"}
     assert "Spread" in {b.label for b in summary.by_strategy}
     assert {"spreads", "manual"} <= {b.label for b in summary.by_book}
+
+
+def _vertical(short, long_, when, credit_legs, qty, perm, *, codes="O"):
+    """Both legs of a SPY put credit vertical, filled together as one combo (one perm id)."""
+    s_px, l_px = credit_legs
+    sign = -1 if codes == "O" else 1
+    return [
+        ex(short, when, sign * qty, s_px, codes=codes, perm=perm, book="spreads"),
+        ex(long_, when, -sign * qty, l_px, codes=codes, perm=perm, book="spreads"),
+    ]
+
+
+# Review I-L1 — a spread is one trade: its legs are paired for win rate, capital and premium.
+def test_spread_legs_are_paired_into_one_trade() -> None:
+    s679, l674 = "SPY 07OCT26 679 P", "SPY 07OCT26 674 P"
+    s678, l673 = "SPY 07OCT26 678 P", "SPY 07OCT26 673 P"
+    execs = [
+        *_vertical(s679, l674, "2026-10-07, 10:05:00", (0.80, 0.20), 21, 501),
+        *_vertical(s679, l674, "2026-10-07, 11:00:00", (0.30, 0.03), 21, 502, codes="C"),
+        # the same side again two minutes later: a fresh entry, not a roll
+        *_vertical(s678, l673, "2026-10-07, 11:02:00", (0.70, 0.18), 21, 503),
+    ]
+    trades, _, _, tickers, summary = _book(execs, date(2026, 10, 7))
+
+    closed_short = next(t for t in trades if t.strike == 679 and t.side == "Sell")
+    closed_long = next(t for t in trades if t.strike == 674)
+    assert closed_short.outcome == "Bought back" and closed_short.rolled_to is None
+    assert closed_short.capital == pytest.approx(5 * 100 * 21) and closed_long.capital == 0.0
+    net = closed_short.net_pnl + closed_long.net_pnl
+    assert net > 0 and closed_long.net_pnl < 0  # the hedge lost, the spread won
+    assert closed_short.return_pct == pytest.approx(net / 10_500 * 100)
+    assert closed_long.return_pct is None
+
+    (spreads,) = [b for b in summary.by_book if b.label == "spreads"]
+    assert (spreads.n_closed, spreads.win_rate) == (1, 1.0)
+    (spread,) = [b for b in summary.by_strategy if b.label == "Spread"]
+    assert (spread.n_closed, spread.win_rate) == (1, 1.0)
+    assert summary.win_rate == 1.0
+    # The open spread's margin is its width, not the short put's strike (CSP collateral).
+    assert summary.capital_utilised_usd == pytest.approx(5 * 100 * 21)
+    # Monthly premium is the net credit taken in, not the short legs' gross.
+    assert summary.premium_this_month_usd == pytest.approx((0.60 + 0.52) * 100 * 21)
+    (spy,) = tickers
+    assert spy.win_rate == 1.0 and spy.option_premium_gross == pytest.approx((0.60 + 0.52) * 2100)

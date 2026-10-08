@@ -258,3 +258,55 @@ def test_overrides_change_only_what_is_asked() -> None:
     )
     assert o.exits.stop_debit_multiple == CFG.exits.stop_debit_multiple
     assert with_overrides(CFG) == CFG
+
+
+# Review minor — data that ends before the time stop closes at the last quote, with commissions,
+# instead of a free "expiry" at intrinsic.
+def test_data_ending_before_the_time_stop_closes_at_the_last_quote() -> None:
+    later = {M1100: {(6790.0, "P"): (2.9, 3.1), (6740.0, "P"): (0.9, 1.1)}}
+    (t,) = run_day(_day(later), CFG)
+    assert t.exit_reason == "data_end" and t.exit_time == M1100
+    assert t.exit_debit == pytest.approx(2.1)  # mid 2.0, half-way to the 2.2 natural
+    assert t.pnl_usd == pytest.approx((2.95 - 2.1) * 100 / 10 - 4 * 0.65)
+
+
+# Review minor — as live, the capital moves with every spread closed earlier the same day.
+def test_capital_moves_with_trades_closed_earlier_the_same_day(monkeypatch) -> None:
+    import src.spreads.backtest.engine as engine
+
+    seen: list[float] = []
+    real = engine.validate
+
+    def spy(c, ctx, cfg):
+        seen.append(ctx.capital_usd)
+        return real(c, ctx, cfg)
+
+    monkeypatch.setattr(engine, "validate", spy)
+    m1105 = datetime(2026, 10, 7, 15, 5, tzinfo=UTC)
+    later = {
+        M1100: {(6790.0, "P"): (1.0, 1.2), (6740.0, "P"): (0.2, 0.3)},  # profit take
+        m1105: MORNING,  # the next entry check
+    }
+    first, *_ = run_day(_day(later), CFG)
+    assert seen[0] == pytest.approx(100_000.0 * 10)
+    assert seen[-1] == pytest.approx(100_000.0 * 10 + first.pnl_usd * 10)
+
+
+# Review minor — one bad day (a 4xx for missing data) is skipped, not the end of the run.
+def test_a_day_that_fails_to_load_is_skipped_not_fatal() -> None:
+    class Flaky(FakeClient):
+        def index_prices(self, symbol, day, interval="1m"):
+            if day == date(2026, 10, 12):
+                raise RuntimeError("404 no data")
+            return super().index_prices(symbol, day, interval)
+
+    skipped: list[tuple[date, str]] = []
+    run_backtest(Flaky(), CFG, date(2026, 10, 9), date(2026, 10, 12), skipped)
+    assert [d for d, _ in skipped] == [date(2026, 10, 12)]
+
+    class Down(FakeClient):
+        def index_prices(self, symbol, day, interval="1m"):
+            raise RuntimeError("connection refused")
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        run_backtest(Down(), CFG, date(2026, 10, 9), date(2026, 10, 12))

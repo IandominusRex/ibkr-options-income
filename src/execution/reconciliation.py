@@ -104,19 +104,21 @@ def _exec_matches_candidate(fill: object, candidate: CandidateRow, ib_order_id: 
     """True if an IBKR Fill corresponds to the opening (SELL) order for *candidate*.
 
     Primary match is the broker order id (stable within a clientId session); falls back to a
-    contract match (symbol / right / strike / expiry) so a fill is still recovered after an id
-    churn across a full restart.
+    contract match (right / strike / expiry) so a fill is still recovered after an id churn
+    across a full restart. Either way the underlying must match: order ids are only unique per
+    clientId, so an execution from another clientId on the same login — the spreads book's
+    clientId 30, trading SPY — can carry the same id as a stuck wheel order.
     """
     execution = getattr(fill, "execution", None)
     contract = getattr(fill, "contract", None)
     if execution is None or contract is None:
         return False
 
-    if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:
-        return True
-
     if getattr(contract, "symbol", None) != candidate.underlying:
         return False
+
+    if ib_order_id is not None and getattr(execution, "orderId", None) == ib_order_id:
+        return True
     right = str(getattr(contract, "right", "") or "")[:1].upper()
     if right and candidate.right and right != candidate.right[:1].upper():
         return False
