@@ -36,7 +36,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 11 Combo orders and executor | ✅ done (Step 9 is the operator's) | `e1e8d0b` (code), then docs + this log | 2026-10-08 | pytest 2870 passed, 1 skipped; ruff and mypy clean |
 | 12 Telegram notifier | ✅ done | `7cae8b3` (code), then docs + this log | 2026-10-08 | pytest 2873 passed, 1 skipped; ruff and mypy clean |
 | 13 Service, entrypoint, supervisor | ✅ done | `12bfa0c` (code + docs), then the off-loop map fix + this log | 2026-10-08 | pytest 2887 passed, 1 skipped; ruff and mypy clean |
-| 14 Performance report | ⬜ | | | |
+| 14 Performance report | ✅ done | `882e515` (code + this log) | 2026-10-08 | pytest 2891 passed, 1 skipped; ruff and mypy clean |
 | 15 ThetaData client | ⬜ | | | |
 | 16 Minute replay and backtest script | ⬜ | | | |
 | 17 Fences, docs, full gate | ⬜ | | | |
@@ -209,6 +209,16 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **Deferred minors carried:** `note_mark`/`mark_expiring`/`close_position` use `.one()`, but `_guard` now catches a
   stale `spread_id` and alerts once per phase instead of crashing the tick. Still open: the wheel's
   `reqExecutions` separation gap (see Notes) is the operator's Step 9 observation.
+
+**Rulings (Task 14):**
+- **No deviation in code.** The tests, `report.py` and `scripts/spreads_report.py` are the plan's text verbatim
+  (`ruff format` re-wrapped lines). Step 2's failure was the expected `ModuleNotFoundError: No module named
+  'src.spreads.report'`; Step 5 passed first time (4/4). The script was also run against the empty
+  `data/spreads.db` with `--csv`: it prints the zero-trade lines and writes a header-only CSV.
+- **Docs NOT moved forward for Tasks 14–16.** The operator asked for Tasks 14–17 in one run, so there is no
+  stopping point between them; `report.py`, `scripts/spreads_report.py`, the backtest package and
+  `scripts/spreads_backtest.py` get their ARCHITECTURE / SETUP / STATUS rows in Task 17, which owns the full
+  `src/spreads/` table. If the run stops before Task 17, those rows are still missing.
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -6868,7 +6878,7 @@ git commit -m "feat(spreads): service loop, reconcile/reconnect, ledger hook, su
   - `format_extras(trades) -> str` (average hold, average and worst MAE)
   - `scripts/spreads_report.py --mode {shadow,paper} [--csv PATH]` (CSV = every trade, open or closed, with every tag)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_report.py`:
 
@@ -6934,12 +6944,12 @@ def test_tag_breakdowns_split_negative_gamma_gap_days_and_sides() -> None:
     assert "avg hold n/a" in format_extras([_t(hold_minutes=None, mae_usd=None)])
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_report.py -q`
 Expected: FAIL with `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement `src/spreads/report.py`**
+- [x] **Step 3: Implement `src/spreads/report.py`**
 
 ```python
 """Shadow/paper/backtest performance — the numbers that decide whether this strategy lives.
@@ -7069,7 +7079,7 @@ def format_extras(trades: Sequence[TaggedTrade]) -> str:
     )
 ```
 
-- [ ] **Step 4: Create `scripts/spreads_report.py`**
+- [x] **Step 4: Create `scripts/spreads_report.py`**
 
 ```python
 """Print spreads performance from data/spreads.db, split by every trade tag.
@@ -7117,7 +7127,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Run the tests and the gate, then commit**
+- [x] **Step 5: Run the tests and the gate, then commit**
 
 Run: `python -m pytest tests/test_spreads_report.py -q && ruff check . && mypy src`
 Expected: PASS.
