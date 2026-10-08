@@ -366,11 +366,12 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–5 of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–7 of 17 built, 6A not yet)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
-schemas, the same-day pricing math and the GEX levels exist; nothing trades spreads yet.
+schemas, the same-day pricing math, the GEX levels, candidate selection and the rules gate exist;
+nothing trades spreads yet. Task 6A (the session tape and entry trigger) is still to do.
 
 - `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
   `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
@@ -397,6 +398,14 @@ schemas, the same-day pricing math and the GEX levels exist; nothing trades spre
   live SPY/SPX ratio. Pure functions over snapshots — nothing fetches a chain or reads it yet (Task 10).
   Open interest is the prior close's and intraday 0DTE flow is invisible, so the levels guide strike
   placement and tag trades; they are not a price target.
+- **Candidate selection (Task 6):** `src/spreads/selector.py` picks, per side, the closest short strike
+  beyond both the expected-move edge and the gamma wall (less a buffer) that clears the delta cap and the
+  minimum credit. Pure functions over a chain snapshot; it takes the entry trigger's side choice as a
+  plain list, so it does not wait on Task 6A.
+- **Rules gate (Task 7):** `src/spreads/risk.py` is the spreads book's only gate: `validate` approves or
+  names every reason it refuses (calendar, event and ex-dividend windows, gamma regime, quote quality,
+  book limits), and `size` sizes each trade to 10% of the book's own capital. Negative gamma is traded by
+  default (`negative_gamma_action: allow`) and only refused under `skip`. Nothing calls it yet.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 

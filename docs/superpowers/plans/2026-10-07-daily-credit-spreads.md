@@ -27,9 +27,9 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 3 Ledger `spreads` book | ✅ done | `dd471f8` (code), then docs + this log | 2026-10-08 | pytest 2752 passed, 1 skipped; ruff and mypy clean; web 487/487 |
 | 4 Schemas and same-day pricing | ✅ done | `1875ffc` (code), then docs + this log | 2026-10-08 | pytest 2761 passed, 1 skipped; ruff and mypy clean |
 | 5 GEX levels | ✅ done | `44ede26` (code), then docs + this log | 2026-10-08 | pytest 2771 passed, 1 skipped; ruff and mypy clean |
-| 6 Candidate selection | ⬜ | | | |
-| 6A Session tape and entry trigger | ⬜ | | | |
-| 7 Deterministic spreads gate | ⬜ | | | |
+| 6 Candidate selection | ✅ done | `d55b323` (code), then docs + this log | 2026-10-08 | pytest 2779 passed, 1 skipped; ruff and mypy clean |
+| 6A Session tape and entry trigger | ⬜ (skipped on purpose: not asked for in the 6–7 session; run it before Task 13) | | | |
+| 7 Deterministic spreads gate | ✅ done | `5100d27` (code), then docs + this log | 2026-10-08 | pytest 2811 passed, 1 skipped; ruff and mypy clean |
 | 8 Exit manager and reconciliation | ⬜ | | | |
 | 9 Spreads database | ⬜ | | | |
 | 10 IBKR I/O | ⬜ | | | |
@@ -98,6 +98,27 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **Pre-flight:** the three config fields Task 5 reads (`gex.scale_to_underlying`,
   `gex.flip_search_pct`, `selection.em_straddle_factor`) all exist in Task 1's `SpreadsCfg` and in
   `config/spreads.example.yaml`.
+
+**Rulings (Tasks 6–7):**
+- **Task 6A was not run.** The operator asked for Tasks 6 and 7. Neither consumes `tape.py`: Task 6
+  takes the trigger's choice as a plain `sides` list, and Task 7 reads `ctx.sides_today` from the
+  Task 4 schema. 6A stays ⬜ and must land before Task 13. The `sdd` brief tooling slices "Task 6" up
+  to `### Task 7`, so `task-6-brief.md` contains 6A's text too; Task 6 was executed from the plan
+  section only.
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the
+  `selector.py` and `risk.py` rows, and STATUS's "In progress" section two bullets (its heading now
+  reads "Tasks 1–7 of 17 built, 6A not yet"). Task 17 Step 3.3's full table replaces them.
+- **No deviation in code.** Both tests and implementations are the plan's text verbatim (`ruff
+  format` only re-wrapped lines). Step 2's failure in each was the expected `ModuleNotFoundError`
+  (`src.spreads.selector`, `src.spreads.risk`); Step 4 passed first time (8/8 and 32/32).
+- **Self-review of Tasks 6–7 (2026-10-08), no Critical/Important.** Checked the one input the
+  plan's tests don't pin: `risk.validate` measures `near_gamma_flip` from `ctx.levels.spot`, so a
+  stale map spot would let a trade through near the flip. Task 13 already refreshes it
+  (`levels.model_copy(update={"spot": chain.spot, "regime": regime_at(...)})`), so there is nothing
+  to change, but whoever wires Task 13 must keep passing the refreshed levels, never the 09:31 map.
+- **Deferred minor for Task 10:** `select_candidates` builds a `{strike: option}` dict per side, so
+  two options at the same strike, right and expiry (say from two trading classes) keep only the
+  last. Task 10's chain fetch must return one option per (strike, right, expiry).
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -2283,7 +2304,7 @@ git commit -m "feat(spreads): GEX levels — per-strike gamma, flip, walls, expe
   - `select_candidates(chain, levels, cfg, now, sides=None) -> list[SpreadCandidate]`, at most one per side; `sides` (from the entry trigger, Task 6A) limits the walk to those sides, `None` = `cfg.selection.sides`
   - `refresh_candidate(c, short_q, long_q, now) -> SpreadCandidate | None`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_selector.py`:
 
@@ -2450,12 +2471,12 @@ def test_refresh_reprices_on_fresh_quotes_and_keeps_the_id() -> None:
     assert refresh_candidate(c, q(679, "P", 0.70, 0.74), q(674, "P", 0.18, None), later) is None
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_selector.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.selector'`.
 
-- [ ] **Step 3: Implement `src/spreads/selector.py`**
+- [x] **Step 3: Implement `src/spreads/selector.py`**
 
 ```python
 """Candidate credit verticals placed beyond the day's action zone.
@@ -2589,12 +2610,12 @@ def refresh_candidate(
     return _build(c.spread_id, c.side, short_q, long_q, c.width, c.spot, now)
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_selector.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/selector.py tests/test_spreads_selector.py
@@ -2964,7 +2985,7 @@ git commit -m "feat(spreads): session tape and the move/stall/one-side entry tri
     - `account_unknown`
     - `excess_liquidity_floor`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_risk.py`:
 
@@ -3165,12 +3186,12 @@ def test_after_entry_end_is_outside_the_window() -> None:
 
 The `cand()` helper's `expiry` default uses `now.astimezone(UTC).date()`. That gives the same date as ET for every timestamp in these tests (all are between 13:34 and 17:31 UTC).
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_risk.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.risk'`.
 
-- [ ] **Step 3: Implement `src/spreads/risk.py`**
+- [x] **Step 3: Implement `src/spreads/risk.py`**
 
 ```python
 """The spreads rules engine — the only gate in front of a spreads order.
@@ -3284,12 +3305,12 @@ def validate(c: SpreadCandidate, ctx: SpreadRiskContext, cfg: SpreadsCfg) -> Spr
     )
 ```
 
-- [ ] **Step 4: Run the tests and the gate**
+- [x] **Step 4: Run the tests and the gate**
 
 Run: `python -m pytest tests/test_spreads_risk.py -q && ruff check . && mypy src`
 Expected: PASS. If `test_holiday_and_early_close_days_are_skipped` fails, check `src/common/market_hours._early_closes` for 2026. The day after Thanksgiving is an early close there, so a failure means the test date is wrong, not the gate.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 ruff format src/spreads/risk.py tests/test_spreads_risk.py
