@@ -33,7 +33,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 8 Exit manager and reconciliation | ✅ done | `1d32946` (code), then docs + this log | 2026-10-08 | pytest 2826 passed, 1 skipped; ruff and mypy clean |
 | 9 Spreads database | ✅ done | `78c3492` (code), then docs + this log | 2026-10-08 | pytest 2835 passed, 1 skipped; ruff and mypy clean |
 | 10 IBKR I/O | ✅ done | `5c2ffcf` (code), then docs + this log | 2026-10-08 | pytest 2858 passed, 1 skipped; ruff and mypy clean |
-| 11 Combo orders and executor | ⬜ | | | |
+| 11 Combo orders and executor | ✅ done (Step 9 is the operator's) | `e1e8d0b` (code), then docs + this log | 2026-10-08 | pytest 2870 passed, 1 skipped; ruff and mypy clean |
 | 12 Telegram notifier | ⬜ | | | |
 | 13 Service, entrypoint, supervisor | ⬜ | | | |
 | 14 Performance report | ⬜ | | | |
@@ -159,6 +159,21 @@ tracker; the copy on `main` stays unticked until the branch merges.
   option per key; no dedupe was added.
 - **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained the `chain.py` row;
   STATUS's section a bullet (heading "Tasks 1–10 and 6A"). Task 17 Step 3.3 replaces them.
+**Rulings (Task 11):**
+- **No deviation in code.** Both test files, `orders.py`, `executor.py` and `scripts/spreads_combo_check.py` are
+  the plan's text verbatim (`ruff format` re-wrapped lines). Step 3's failure was the expected
+  `ModuleNotFoundError` (`src.spreads.orders`, `src.spreads.executor`); Step 6 passed first time (12/12).
+  The script's `--help` runs and `mypy` accepts it; it was **not** run against a Gateway.
+- **Step 9 left unticked on purpose.** It is the operator's one-lot check that a BAG with a negative limit
+  shows as a credit in TWS. The sign convention stays **unverified**: do not set `mode: paper` before it.
+  It also carries the Task 13 note about the wheel's `reqExecutions` seeing clientId 30's fills (see the
+  Notes below).
+- **Docs moved forward again:** ARCHITECTURE's interim `src/spreads/` section gained `orders.py` and
+  `executor.py` rows, and its `scripts/` table an interim `spreads_combo_check.py` row; STATUS's section
+  a bullet plus the needs-live-verification item. **When you reach Task 17 Step 4 (the `scripts/` rows),
+  add only `run_spreads.py`, `spreads_report.py` and `spreads_backtest.py`: the `spreads_combo_check.py`
+  row already exists.** Task 17 Step 3.3's full table replaces the `src/spreads/` rows. SETUP's scripts
+  table is Task 17's (§16).
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -4917,7 +4932,7 @@ git commit -m "feat(spreads): line-budgeted IBKR chain, quote, spot, account and
     - `async open(c, contracts, recheck) -> FillResult`
     - `async close(pos, short_q, long_q, *, urgent) -> FillResult`
 
-- [ ] **Step 1: Write the failing order tests**
+- [x] **Step 1: Write the failing order tests**
 
 `tests/test_spreads_orders.py`:
 
@@ -4987,7 +5002,7 @@ def test_ladders() -> None:
     assert debit_ladder(0.30, 3, 0.01, 0.31) == [0.30, 0.31]
 ```
 
-- [ ] **Step 2: Write the failing executor tests**
+- [x] **Step 2: Write the failing executor tests**
 
 `tests/test_spreads_executor.py`:
 
@@ -5157,12 +5172,12 @@ async def test_urgent_close_ends_at_the_natural_debit() -> None:
     assert r.filled_qty == 1 and r.price == pytest.approx(0.34)
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_orders.py tests/test_spreads_executor.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.orders'`.
 
-- [ ] **Step 4: Implement `src/spreads/orders.py`**
+- [x] **Step 4: Implement `src/spreads/orders.py`**
 
 ```python
 """Combo (BAG) orders for a credit vertical, and the price ladders that work them.
@@ -5255,7 +5270,7 @@ def debit_ladder(mid: float, steps: int, tick: float, cap: float) -> list[float]
     return out or [round_tick(min(start, cap), tick)]
 ```
 
-- [ ] **Step 5: Implement `src/spreads/executor.py`**
+- [x] **Step 5: Implement `src/spreads/executor.py`**
 
 ```python
 """Turns an approved spread into a fill: simulated (shadow) or a laddered paper combo order.
@@ -5452,12 +5467,12 @@ class SpreadExecutor:
         return filled, avg, _commission(trade), perm, oid
 ```
 
-- [ ] **Step 6: Run the order and executor tests**
+- [x] **Step 6: Run the order and executor tests**
 
 Run: `python -m pytest tests/test_spreads_orders.py tests/test_spreads_executor.py -q && ruff check . && mypy src`
 Expected: PASS.
 
-- [ ] **Step 7: Create the operator check script `scripts/spreads_combo_check.py`**
+- [x] **Step 7: Create the operator check script `scripts/spreads_combo_check.py`**
 
 ```python
 """Operator check: does a spreads BAG order show in TWS as a CREDIT spread? (plan Task 11 Step 9)
@@ -5541,7 +5556,7 @@ if __name__ == "__main__":
 
 It uses the `healthcheck` clientId (19) deliberately, because it's a short-lived operator tool and never runs concurrently with the healthcheck.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 ruff format src/spreads/orders.py src/spreads/executor.py scripts/spreads_combo_check.py tests/test_spreads_orders.py tests/test_spreads_executor.py

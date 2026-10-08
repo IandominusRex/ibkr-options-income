@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–10 and 6A of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–11 and 6A of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
@@ -424,6 +424,13 @@ manager, the spreads database and the session tape / entry trigger exist; nothin
   session quote, account excess liquidity and the spreads-underlying legs the broker holds. It is the only
   spreads module that touches `ib_async`, and it never holds more than `max_market_data_lines` lines.
   Not exercised against a live Gateway yet (tests use a fake IB); nothing calls it yet.
+- **Combo orders and executor (Task 11):** `src/spreads/orders.py` builds the BAG order for a credit vertical and
+  the price ladders; `src/spreads/executor.py` fills an approved spread — simulated with slippage and
+  commission in `shadow`, a laddered limit order in `paper` that is repriced from fresh quotes and re-gated
+  immediately before it is sent. **Needs live verification:** the combo sign convention (order action `BUY`,
+  negative limit = credit) is unverified. Before ever setting `mode: paper`, run `python -m
+  scripts.spreads_combo_check --short K --long K` during RTH on the paper Gateway and confirm TWS shows a
+  credit; if it shows a debit, flip it in `orders.py` and its tests. Nothing calls the executor yet.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml`. The operator adds the same
   line to the private `config/settings.yaml` before the service exists (Task 13).
 
