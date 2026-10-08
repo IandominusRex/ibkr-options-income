@@ -38,7 +38,7 @@ tracker; the copy on `main` stays unticked until the branch merges.
 | 13 Service, entrypoint, supervisor | ✅ done | `12bfa0c` (code + docs), then the off-loop map fix + this log | 2026-10-08 | pytest 2887 passed, 1 skipped; ruff and mypy clean |
 | 14 Performance report | ✅ done | `882e515` (code + this log) | 2026-10-08 | pytest 2891 passed, 1 skipped; ruff and mypy clean |
 | 15 ThetaData client | ✅ done (Step 5 is the operator's) | `0fdeda3` (code + this log) | 2026-10-08 | pytest 2894 passed, 1 skipped; ruff and mypy clean |
-| 16 Minute replay and backtest script | ⬜ | | | |
+| 16 Minute replay and backtest script | ✅ done | `3e8ab7f` (code + this log) | 2026-10-08 | pytest 2904 passed, 1 skipped; ruff and mypy clean |
 | 17 Fences, docs, full gate | ⬜ | | | |
 
 **Rulings (Task 1):**
@@ -228,6 +228,18 @@ tracker; the copy on `main` stays unticked until the branch merges.
 - **Step 5 left unticked on purpose.** It is the operator's one-off `curl` against a running Theta Terminal to
   confirm `SPXW` vs `SPX` as the option symbol. The client was tested only against `httpx.MockTransport`, never
   against a real Terminal, so the v3 parameter names and CSV column names rest on the plan's 2026-10-07 docs check.
+
+**Rulings (Task 16):**
+- **No deviation in code.** The tests, `backtest/engine.py` and `scripts/spreads_backtest.py` are the plan's text
+  verbatim (`ruff format` re-wrapped lines). Step 2's failure was the expected `ModuleNotFoundError: No module
+  named 'src.spreads.backtest.engine'`; Step 5 passed first time (10/10). Pre-flight: every Task 5/6/6A/7/8 and
+  `pricing` signature the engine calls (`build_levels`, `expected_move`, `regime_at`, `select_candidates`,
+  `SessionTape.observe/gap_pct/move_em/day_em`, `trigger`, `validate`, `debit_to_close`, `evaluate_exit`,
+  `intrinsic_debit`, `implied_vol`, `delta`, `years_to_close`, `ET`, `previous_session`) exists as consumed, and
+  `BacktestTrade` satisfies `report.TaggedTrade` (mypy accepts `tag_breakdowns(trades)` in the script).
+- **Not run against ThetaData.** The tests use hand-built `DayData` and a fake client; `--help` was run, and the
+  script was type-checked, but no real Theta Terminal was reachable. The first real backtest is the operator's
+  (after Task 15 Step 5).
 
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
@@ -7371,7 +7383,7 @@ Record which symbol worked in `SETUP.md` §16.
   - `run_backtest(client, cfg, start, end) -> list[BacktestTrade]` (compounds each day's realized P&L into the next day's capital)
   - `scripts/spreads_backtest.py` flags `--profit-take PCT`, `--trigger {move,always}`, `--negative-gamma {allow,skip}`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_spreads_backtest.py`:
 
@@ -7583,12 +7595,12 @@ Check the numbers:
 - P&L = 2.025 × 100 / 10 − 2.60 = 17.65.
 - The short put's IV comes out near 0.47 and its delta near −0.10, which is under the 0.15 cap.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_spreads_backtest.py -q`
 Expected: FAIL with `ModuleNotFoundError: No module named 'src.spreads.backtest.engine'`.
 
-- [ ] **Step 3: Implement `src/spreads/backtest/engine.py`**
+- [x] **Step 3: Implement `src/spreads/backtest/engine.py`**
 
 ```python
 """Minute-by-minute replay of the live spreads rules over ThetaData history.
@@ -7949,7 +7961,7 @@ def run_backtest(client: HistorySource, cfg: SpreadsCfg, start: date, end: date)
     return trades
 ```
 
-- [ ] **Step 4: Create `scripts/spreads_backtest.py`**
+- [x] **Step 4: Create `scripts/spreads_backtest.py`**
 
 ```python
 """Backtest the daily credit-spread rules over ThetaData history (Theta Terminal must be running).
@@ -8020,7 +8032,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Run the tests and the gate, then commit**
+- [x] **Step 5: Run the tests and the gate, then commit**
 
 Run: `python -m pytest tests/test_spreads_backtest.py -q && ruff check . && mypy src`
 Expected: PASS.
