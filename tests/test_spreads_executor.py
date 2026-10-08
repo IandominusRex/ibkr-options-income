@@ -120,8 +120,20 @@ class FakeIB:
             self.trade.orderStatus.avgFillPrice = order.lmtPrice * self.report_sign
             self.trade.orderStatus.status = "Filled" if qty == order.totalQuantity else "Submitted"
             each = 0.65 * qty if self.commission_each is None else self.commission_each
+            # As IBKR reports a combo fill on paper (2026-10-08): the BAG itself, commission 0,
+            # then one execution per leg carrying the commission.
             self.trade.fills = [
-                SimpleNamespace(commissionReport=SimpleNamespace(commission=each)) for _ in range(2)
+                SimpleNamespace(
+                    contract=SimpleNamespace(secType="BAG"),
+                    commissionReport=SimpleNamespace(commission=0.0),
+                ),
+                *(
+                    SimpleNamespace(
+                        contract=SimpleNamespace(secType="OPT"),
+                        commissionReport=SimpleNamespace(commission=each),
+                    )
+                    for _ in range(2)
+                ),
             ]
         return self.trade
 
@@ -313,3 +325,25 @@ async def test_the_spot_is_read_before_the_legs_are_requoted() -> None:
     ex = SpreadExecutor(FakeIB(None), OrderedBroker(fresh, spot=690.0), PAPER, now=lambda: NOW)
     await ex.open(cand(), 1, reject)
     assert order == ["spot", "requote"]
+
+
+# Paper check 2026-10-08 (review M5) — the BAG-level execution always reports commission 0. It
+# must not count as a missing report: no wait, no fallback, the legs' real commissions booked.
+async def test_the_bag_level_execution_never_holds_up_the_commission() -> None:
+    import time
+
+    ib = FakeIB(fill_at=-0.61)
+    ib.commission_each = 0.869
+    fresh = [q(679, 0.80, 0.86, 111), q(674, 0.20, 0.24, 222)]
+    ex = SpreadExecutor(
+        ib,
+        FakeBroker(fresh),
+        PAPER,
+        now=lambda: NOW,
+        poll_seconds=0.01,
+        commission_wait_seconds=5.0,
+    )
+    started = time.monotonic()
+    r = await ex.open(cand(), 1, approve)
+    assert r.filled_qty == 1 and r.commission == pytest.approx(2 * 0.869)
+    assert time.monotonic() - started < 1.0

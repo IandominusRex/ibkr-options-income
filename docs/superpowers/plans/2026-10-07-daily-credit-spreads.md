@@ -402,9 +402,11 @@ and answered all ten doubt points; eight were fine, point 1 became M1 and point 
 - [x] **M4: a missing FX rate turned a win into a loss.** `trade_ledger._won` decides in the trade's own currency
   (USD sum only for mixed currencies), for the summary and both bucket tables.
   `test_a_missing_fx_rate_never_turns_a_win_into_a_loss` (fails on the old code).
-- [ ] **M5: a BAG-level execution or a $0 commission would always take the commission fallback.** Not changed in
-  the executor: `spreads_combo_check --fill` now prints every execution's secType and commission, so the Task 11
-  Step 9 run settles it. STATUS lists it under "Needs live verification".
+- [x] **M5: a BAG-level execution or a $0 commission would always take the commission fallback.** Settled by the
+  Task 11 Step 9 run (2026-10-08): IBKR does send a `secType=BAG` execution with commission 0 beside the two leg
+  executions. `_reported_commissions` now skips BAG executions
+  (`test_the_bag_level_execution_never_holds_up_the_commission`, fails on the old code; the executor tests' fake
+  fills now mirror the paper run).
 - [ ] **M6: uneven leg splits don't pair.** Recorded in STATUS as not handled.
 - [x] **Nits:** `executor.open` reads the spot before the requote (`test_the_spot_is_read_before_the_legs_are_requoted`);
   `run()` makes one connect attempt per startup pass, so a down Gateway alerts within one timeout instead of ~105 s;
@@ -471,7 +473,7 @@ and answered all ten doubt points; eight were fine, point 1 became M1 and point 
 - [ ] Add `TELEGRAM_THREAD_SPREADS=4308` to your private `.env`, next to the other `TELEGRAM_THREAD_*`
   lines. It is needed before Task 13's service sends its first message. The worktree-isolated session
   is refused writes to the main checkout, so this one is yours.
-- [ ] Task 11 Step 9: run `scripts.spreads_combo_check` during RTH on the paper Gateway and confirm TWS shows a
+- [x] Task 11 Step 9 (done 2026-10-08 by the operator, `--fill` at 770/765: open `-0.06`, close `+0.08`, both `OK`; the TWS display check was skipped because this setup runs IB Gateway, which has no order window): run `scripts.spreads_combo_check` during RTH on the paper Gateway and confirm TWS shows a
   **credit**, then run it again with `--fill` and confirm both lines print `OK` (IBKR's `avgFillPrice` sign).
   Do not set `mode: paper` before this. (The `reqExecutions` separation watch is no longer needed: I-L3 closed
   it in code.)

@@ -74,9 +74,15 @@ def _match(quotes: list[ChainOption], strike: float, right: str) -> ChainOption 
 
 
 def _reported_commissions(trade: Any) -> list[float]:
-    """One entry per fill: its reported commission (positive), or 0.0 while none has arrived."""
+    """One entry per leg fill: its reported commission (positive), or 0.0 while none has arrived.
+
+    IBKR also reports the combo itself as a ``secType="BAG"`` execution whose commission is
+    always 0 (the legs carry it — seen on paper, 2026-10-08); counting it would make every fill
+    wait out ``commission_wait_seconds`` and fall back to the estimate."""
     out: list[float] = []
     for f in getattr(trade, "fills", []) or []:
+        if getattr(getattr(f, "contract", None), "secType", "") == "BAG":
+            continue
         rep = getattr(f, "commissionReport", None)
         try:
             c = float(getattr(rep, "commission", 0.0) or 0.0)
