@@ -1,8 +1,8 @@
 """One-way mirror of the ledger into the operator's Google Sheet (spec §7).
 
 Two modes, chosen by ``ledger.sheets_tabs`` in settings.yaml. With a role -> gid map it writes
-into those existing tabs (options ledger, buy-and-hold holdings, tickers, dashboard summary) and
-touches nothing else; with no map it creates and owns three "(auto)" tabs. Either way each tab is
+into those existing tabs (options ledger, credit-spreads ledger, buy-and-hold holdings, tickers,
+dashboard summary) and touches nothing else; with no map it creates and owns three "(auto)" tabs. Either way each tab is
 a full rewrite each time, so corrections and outcome overrides always propagate, and a role (or
 tab) not listed is never read or written. Driven by the ledger generation counter (src/ledger/state.py):
 any ingest or annotation bumps it; the mirror syncs when it is ahead of the last synced value,
@@ -166,13 +166,23 @@ def default_writer() -> SheetsWriter | None:
 
 
 def sync_once(writer: SheetsWriter, book: LedgerBook) -> None:
-    ledger_rows: list[list[Any]] = [SHEET_HEADER, *(sheet_row(t) for t in book.trades)]
+    tabs = get_config().ledger.sheets_tabs
+    # A credit_spreads tab takes the spreads book's legs out of the options tab; unmapped, every
+    # trade stays in options as before.
+    split_spreads = "credit_spreads" in tabs
+    ledger_rows: list[list[Any]] = [
+        SHEET_HEADER,
+        *(sheet_row(t) for t in book.trades if not (split_spreads and t.book == "spreads")),
+    ]
+    spreads_rows: list[list[Any]] = [
+        SHEET_HEADER,
+        *(sheet_row(t) for t in book.trades if t.book == "spreads"),
+    ]
     ticker_rows: list[list[Any]] = [TICKER_HEADER, *(ticker_row(t) for t in book.tickers)]
     summary: list[list[Any]] = [
         *summary_rows(book.summary),
         ["Updated (UTC)", datetime.now(UTC).isoformat()],
     ]
-    tabs = get_config().ledger.sheets_tabs
     if not tabs:
         writer.write_tab(LEDGER_TAB, ledger_rows, outcome_column=_OUTCOME_COLUMN)
         writer.write_tab(TICKERS_TAB, ticker_rows)
@@ -180,6 +190,8 @@ def sync_once(writer: SheetsWriter, book: LedgerBook) -> None:
         return
     if "options" in tabs:
         writer.write_tab(tabs["options"], ledger_rows, outcome_column=_OUTCOME_COLUMN)
+    if split_spreads:
+        writer.write_tab(tabs["credit_spreads"], spreads_rows, outcome_column=_OUTCOME_COLUMN)
     if "buy_and_hold" in tabs:
         writer.write_tab(tabs["buy_and_hold"], buy_hold_rows(book))
     if "tickers" in tabs:

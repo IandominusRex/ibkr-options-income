@@ -182,13 +182,62 @@ def test_gid_mode_skips_roles_left_out(db, monkeypatch) -> None:
     assert set(w.tabs) == {1142}
 
 
+def _book_with_one_spreads_trade():
+    """The seeded wheel book with its first trade retagged as a spreads-book leg."""
+    from datetime import datetime
+
+    from src.ledger.contracts import ET
+    from src.reporting.trade_ledger import build_book
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        book = build_book(s, today=datetime.now(ET).date(), snapshot=None)
+    trades = list(book.trades)
+    trades[0] = trades[0].model_copy(update={"book": "spreads"})
+    return book.model_copy(update={"trades": trades})
+
+
+def test_spreads_fills_go_to_the_credit_spreads_tab_not_options(db, monkeypatch) -> None:
+    """With a credit_spreads gid mapped, spreads-book legs land only in that tab and the
+    options tab keeps just the wheel/manual trades (the bug: they all shared the options gid)."""
+    from src.common.config import get_config
+    from src.ledger.sheets_mirror import sync_once
+
+    monkeypatch.setattr(
+        get_config().ledger, "sheets_tabs", {"options": 1142, "credit_spreads": 528}
+    )
+    _seed()
+    book = _book_with_one_spreads_trade()
+    w = FakeWriter()
+    sync_once(w, book)
+    assert set(w.tabs) == {1142, 528}
+    book_col = w.tabs[528][0].index("Book") if "Book" in w.tabs[528][0] else -1
+    assert len(w.tabs[528]) == 1 + 1
+    assert len(w.tabs[1142]) == 1 + len(book.trades) - 1
+    assert w.tabs[528][0] == w.tabs[1142][0]
+    assert book_col == -1 or w.tabs[528][1][book_col] == "spreads"
+
+
+def test_without_a_credit_spreads_tab_every_trade_stays_in_options(db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from src.ledger.sheets_mirror import sync_once
+
+    monkeypatch.setattr(get_config().ledger, "sheets_tabs", {"options": 1142})
+    _seed()
+    book = _book_with_one_spreads_trade()
+    w = FakeWriter()
+    sync_once(w, book)
+    assert set(w.tabs) == {1142}
+    assert len(w.tabs[1142]) == 1 + len(book.trades)
+
+
 def test_sheets_tabs_rejects_unknown_roles_and_duplicate_gids() -> None:
     from pydantic import ValidationError
 
     from src.common.config import LedgerCfg
 
     with pytest.raises(ValidationError, match="unknown"):
-        LedgerCfg(sheets_tabs={"credit_spreads": 5})
+        LedgerCfg(sheets_tabs={"covered_straddles": 5})
     with pytest.raises(ValidationError, match="distinct"):
         LedgerCfg(sheets_tabs={"options": 5, "tickers": 5})
 

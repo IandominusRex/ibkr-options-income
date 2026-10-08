@@ -1595,13 +1595,13 @@ to a Google Sheet.
      in the sheet's URL, between `/d/` and `/edit`) in `.env`.
    - **Which tabs it writes** is set by `ledger.sheets_tabs` in `config/settings.yaml`, a map of
      role → tab **gid** (the number after `gid=` in the tab's URL — *not* the spreadsheet id):
-     `options` (one row per option trade), `buy_and_hold` (one row per ticker with open stock
+     `options` (one row per option trade), `credit_spreads` (optional: the spreads book's legs, which
+     then leave `options`; unmapped, they stay in `options`), `buy_and_hold` (one row per ticker with open stock
      lots: shares, avg cost, cost basis, source bought/assigned, dividends — native currency, so
      SGD/GBP lines stay SGD/GBP), `tickers` (per-ticker roll-up) and `summary` (portfolio
      summary + an `Updated (UTC)` row). Each listed tab is **fully rewritten** whenever the
      ledger changes (throttled to at most once per `ledger.sheets_min_interval_seconds`, default
-     60s), so don't hand-edit or add columns inside them. A role you leave out (e.g. a credit
-     spreads tab) and every other tab are never read or written. With `sheets_tabs: {}` the
+     60s), so don't hand-edit or add columns inside them. A role you leave out and every other tab are never read or written. With `sheets_tabs: {}` the
      mirror falls back to creating three tabs it owns: `Ledger (auto)`, `Tickers (auto)`,
      `Summary (auto)`. The mirror carries no unrealized P&L (no live marks in the sheet).
 4. **Optional: see manual TWS trades intraday, not just at the nightly Flex pull.** In TWS,

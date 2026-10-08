@@ -571,9 +571,11 @@ pre-system history too.
   annotation bumps a `system_settings` generation counter (`src/ledger/state.py`); the mirror
   loop only attempts a sync when the generation is ahead of the last-synced value, throttled to
   at most once per `ledger.sheets_min_interval_seconds` (default 60s). It writes the tabs named
-  in `ledger.sheets_tabs` (role → gid: `options`, `buy_and_hold`, `tickers`, `summary`) as a full
-  rewrite each time, and never reads or writes any tab not listed; with an empty map it falls
-  back to three tabs it owns — `Ledger (auto)`, `Tickers (auto)`, `Summary (auto)`.
+  in `ledger.sheets_tabs` (role → gid: `options`, `credit_spreads`, `buy_and_hold`, `tickers`,
+  `summary`) as a full rewrite each time, and never reads or writes any tab not listed; with an
+  empty map it falls back to three tabs it owns — `Ledger (auto)`, `Tickers (auto)`,
+  `Summary (auto)`. When `credit_spreads` is mapped, the spreads book's legs go to that tab and
+  leave `options`; unmapped, they stay in `options`.
 - **Read-only API** (`GET /ledger/summary`, `/tickers`, `/tickers/{symbol}`, `/trades`,
   `/trades.csv`, `/trades/{order_key}`, `/imports`) and three command kinds
   (`ledger_import`/`ledger_annotate`/`ledger_ca_reviewed`) applied by the drain, same intent-

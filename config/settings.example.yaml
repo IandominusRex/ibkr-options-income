@@ -448,6 +448,6 @@ ledger:
   flex_poll_interval_seconds: 10
   fx_max_gap_days: 7               # nearest FX rate may be at most this many days away
   # Google Sheet tab gids the mirror writes into (the number after gid= in a tab's URL), as
-  # role -> gid; roles: summary, buy_and_hold, options, tickers. Roles not listed are never
-  # written. Empty ({}) = legacy mode: create and own three "(auto)" tabs instead.
+  # role -> gid; roles: summary, buy_and_hold, options, credit_spreads, tickers. Roles not listed
+  # are never written; credit_spreads, when listed, takes the spreads book's legs out of options. Empty ({}) = legacy mode: create and own three "(auto)" tabs instead.
   sheets_tabs: {}
