@@ -52,6 +52,7 @@ row that matches:
 | **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
 | **New command kind registered** in `command_drain.py` | `docs/web/commands.md` |
 | **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
+| **New module under `src/spreads/`** or a new key in `config/spreads.example.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -219,6 +220,37 @@ and `::test_only_the_ledger_package_writes_the_ledger_tables` (only `src/ledger/
 six writer rows) — keep them green. The web `/ledger/*` pages are read-only over `GET /ledger/*`;
 their two edits (annotations, corporate-action reviewed) and the CSV upload are intents drained by
 `approval_service`, like every other web write.
+
+### The spreads fence — `src/spreads/` is a second system, not a wheel module
+
+`src/spreads/` (docs/superpowers/plans/2026-10-07-daily-credit-spreads.md) trades daily SPY
+credit spreads in the **same IBKR account and Gateway** as the wheel, with its own process
+(`scripts/run_spreads.py`, clientId 30), its own SQLite file (`data/spreads.db`, its own
+`SpreadsBase`), its own config (the operator's private `config/spreads.yaml`; the repo commits
+`config/spreads.example.yaml`) and its own Telegram thread. The rules:
+
+- **Book = underlying.** `config/spreads.yaml → book_underlyings` (SPY, SPX, XSP) must never appear in
+  `config/universe.yaml` — `Config._spreads_isolated` refuses the overlap at load. Positions
+  carry no order tag and IBKR nets same-contract positions across clientIds, so the underlying
+  is the only sound separator; order ids are unique per clientId only and are never used.
+- **The wheel learns about the spreads book only through `src/common/books.py`.** Three places:
+  `get_positions()` drops spreads contracts by default (only `scripts/healthcheck.py` passes
+  `include_spreads=True`), the rules engine rejects `reserved_for_spreads_book`, and ledger
+  ingest tags `book="spreads"`. No wheel layer imports `src.spreads`.
+- **`src/spreads/risk.py::validate` is the spreads system's only gate** — deterministic, no LLM,
+  run at decision time and again at send time on fresh quotes. The core invariant holds
+  unchanged: nothing an LLM produces reaches a spreads order (the package imports nothing from
+  `src.claude`). The entry trigger (`src/spreads/tape.py`) is deterministic too; it only decides
+  *when* the chain is fetched and *which side* is offered to the gate, never a size.
+- `src/spreads/` imports nothing from `src.claude`, `src.engine`, `src.execution`,
+  `src.strategies`, `src.orchestrator`, `src.monitor`, `src.notify`, `src.reporting`, `src.api`,
+  `src.research`; only `src/spreads/service.py` may import `src.ledger` / `src.storage`.
+- At most `max_market_data_lines` (30) open lines; `market_data.chain_batch_size + 30 ≤ 95`
+  is enforced at load. `req_fresh_mkt_data` only; `LimitOrder` only.
+- `run()` idles when `LIVE_TRADING=true` — shadow/paper only until a separate live plan exists.
+
+Enforced by `tests/test_spreads_fence.py`, `tests/test_wheel_spreads_isolation.py` and
+`tests/test_spreads_config.py` — keep them green.
 
 ## Reference documentation
 

@@ -1629,10 +1629,64 @@ Also update:
 
 ---
 
+## 16. Daily credit spreads (optional)
+
+A second, isolated system that trades same-day SPY credit spreads beside the wheel, in the same
+paper account and through the same IB Gateway. It ships **disabled** and, once enabled, in
+**shadow** mode: it records the trades it would have made (simulated fills with slippage and
+commission) and places no orders.
+
+### What it costs
+
+| Item | Needed for | Cost |
+|---|---|---|
+| IBKR **OPRA Top of Book** (US options L1) | Live SPY/SPX option quotes | USD 1.50/mo, waived above USD 20/mo commissions. You likely already have it for the wheel |
+| IBKR **Cboe index data** (SPX index value) | The SPX spot the GEX map is built around (SPY's own price comes from the stock quote the wheel already uses) | A few USD/mo. Check Client Portal → Settings → Market Data Subscriptions for the current package name and price. Without it the service logs "no index price" and builds no map |
+| **ThetaData Options Standard** | The backtest only (tick-level NBBO since 2016, SPX index since 2022) | USD 80/mo. Subscribe for one month, run the backtest (it caches to `data/spreads_bt/`), then cancel |
+
+### Enable it
+
+1. Add `TELEGRAM_THREAD_SPREADS=<topic id>` to `.env`, or leave it empty for the main chat.
+2. Copy the template: `cp config/spreads.example.yaml config/spreads.yaml` (your copy is git-ignored). Make sure your private `config/settings.yaml` has `spreads: 30` under `ibkr.client_ids`.
+   - **Sizing:** the book trades as if it had `risk.starting_capital_usd` ($100,000), plus whatever it has realized since. Each spread is sized so a full loss is `risk.max_loss_pct_of_capital` (10%) of that, about 21 SPY spreads at the start. Your account's own size (about $1M on paper) is not used.
+   - Fill in `risk.ex_dividend_dates` with SPY's upcoming ex-dividend dates (quarterly); no new call spreads go on those days or the day before.
+3. In `config/spreads.yaml`, set `enabled: true` and keep `mode: shadow`. Restart: `./ibkr restart` (the supervisor starts `scripts.run_spreads` with the other daemons; `--no-spreads` skips it).
+4. Each trading day you get, in the spreads thread: the 09:31 ET GEX map (spot, regime, expected move, put wall / flip / call wall), every entry and exit, and a 16:10 ET summary. Entries are rare by design: the system sells only after the market has moved at least half a day's expected move and stopped extending it for 10 minutes, and only on the side against that move. An entry message names its gamma regime; **NEGATIVE GAMMA** trades are taken on purpose and tagged so you can judge them later.
+5. Weekly: `python -m scripts.spreads_report --mode shadow`. Compare **win rate against break-even win rate**. A 90% win rate with a 95% break-even is a losing strategy. The report repeats the numbers for negative vs positive gamma, puts vs calls, gap days and each exit reason; `--csv data/spreads_trades.csv` exports every trade with its tags.
+6. Maintain `risk.events` yourself: `- {day: 2026-10-28, label: FOMC}` blocks a whole day; `- {day: 2026-08-28, until: "10:30", label: Fed chair speech}` blocks entries only until 10:30 ET. CPI and PPI print before the open, so they usually need no entry.
+7. **Stop new entries instantly:** `touch data/spreads.halt`. Exits keep running. Delete the file to resume.
+
+### Backtest before paper
+
+1. Install and start the Theta Terminal (v3, port 25503).
+2. Run the one-time symbol check: `curl "http://127.0.0.1:25503/v3/option/list/expirations?symbol=SPXW&format=csv" | head`. If that's empty, set `backtest.option_symbol: "SPX"`.
+3. Run `python -m scripts.spreads_backtest --start 2026-06-01 --end 2026-06-30 --csv data/spreads_bt/june.csv`.
+4. Compare one setting at a time (the cache makes reruns free):
+   - profit take: `--profit-take 50` vs `--profit-take 80`
+   - entry rule: `--trigger move` (sell after a stalled move) vs `--trigger always` (the original every-check rule)
+   - negative gamma: `--negative-gamma allow` vs `--negative-gamma skip`
+
+   Each run prints the settings it used, the totals, average hold and MAE, and the breakdown by regime, side, trigger, gap day and exit reason.
+
+### Moving to paper orders
+
+Only do this if shadow **and** backtest both show positive expectancy after costs.
+
+1. During RTH, run `python -m scripts.spreads_combo_check --short <spot−60> --long <short−5>`. TWS must show the BAG as a **credit**. If it shows a debit, stop: see STATUS.md.
+2. Make sure the trade ledger tracks the **paper** account: `config/settings.yaml → ledger.account: "<DU…>"`. Otherwise paper spread fills won't appear in `/ledger`; the service warns about this on startup.
+3. Set `mode: paper` and restart. Spread fills appear in the ledger under book **Spreads**.
+
+Live trading is not supported by this build. The service refuses to run with `LIVE_TRADING=true`.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Spreads thread says *"could not build the GEX map (no chain or no index price)"* | No Cboe index-data subscription for SPX, or the Gateway lost its data farm | Check Client Portal → Settings → Market Data Subscriptions, then run `python -m scripts.healthcheck` |
+| Shadow mode records no spreads for days | Expected on quiet days: the move trigger sells only after a move of at least half the day's expected move has stalled | Check that the SPY session stats arrive (`python -m scripts.healthcheck`), and run `python -m scripts.spreads_backtest ... --trigger always` to see what the original every-check rule would have done |
+| Spreads thread says *"entries blocked — broker and spreads.db disagree"* | A paper spread was closed or changed outside the system, or a fill was missed during a Gateway restart | Compare the TWS positions with `data/spreads.db → spread_positions`, fix the row or the position, then restart the spreads service |
 | Config load fails with *"spreads.book_underlyings [...] also appear in config/universe.yaml"* | SPY, XSP or SPX is in the wheel universe (the committed example used to list SPY). They are reserved for the daily credit-spread book | Remove it from `config/universe.yaml`: the two books may never share an underlying |
 | Every approved order fails at once with *"Live re-validation failed: delta drifted outside target band … live mid collapsed well below the approved premium"* | Before 2026-09-30, repeat scans read a re-subscribed contract's **cached** ib_async ticker, so candidates were priced from quotes 15–30 min old and the send-time re-gate (correctly) rejected them against a fresh quote | Fixed by `req_fresh_mkt_data` — restart the daemons (`./ibkr restart`) to pick it up. The failure message now shows *live mid vs approved* and *live Δ vs approved*: a small gap is a genuine market move (expected — the gate is working); a large, systematic gap on every order means stale data again |
 | `ConnectionRefusedError` on healthcheck | IB Gateway not running, API not enabled, or wrong port | Start IB Gateway and check API settings (Step 4). Confirm `config/settings.yaml → ibkr.paper_port` matches the Socket port set in Gateway (default `4002`). |

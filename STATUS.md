@@ -330,6 +330,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − net_premium/100` per share for share-acquiring (put) assignments. **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads it via `campaigns.adjusted_cost_basis_for(symbol)` and uses it — falling back to IBKR's raw `avg_cost` when no open assigned campaign exists — for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
 | **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
+| **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
 
@@ -366,85 +367,40 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–13 and 6A of 17 built)
+## Built (2026-10-08 — daily credit spreads: an isolated SPY 0DTE system beside the wheel)
 
-Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
-tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
-schemas, the same-day pricing math, the GEX levels, candidate selection, the rules gate, the exit
-manager, the spreads database and the session tape / entry trigger exist; nothing trades spreads yet.
+Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (branch `feat/daily-credit-spreads`; its
+**Progress log** has the per-task record and the rulings). Ships `enabled: false`, `mode: shadow`.
 
-- `config/spreads.example.yaml` and `SpreadsCfg` (`src/common/config.py`). The private
-  `config/spreads.yaml` is git-ignored and falls back to the example. Ships `enabled: false`.
-- `src/common/books.py`: SPY, SPX and XSP belong to the spreads book.
-- **Wheel behaviour change:** the rules engine rejects SPY/SPX/XSP candidates
-  (`reserved_for_spreads_book`), and config load refuses to start if any of them is in
-  `universe.yaml`. SPY left the committed example universe; three wheel tests moved to QQQ.
-- **The wheel never sees a spreads leg:** `get_positions()` drops SPY/SPX/XSP contracts by default,
-  so the monitor, profit-take, rolls, budget seeding, approval re-gate and EOD report ignore them.
-  Only `scripts/healthcheck.py` asks for both books (`include_spreads=True`).
-- **Trade ledger `spreads` book:** ingest tags SPY/SPX/XSP executions `book="spreads"` by
-  underlying (before, and never overridden by, the wheel's order-id `system` tagging). The
-  builder labels them `Spread` in the by-strategy breakdown, and `/ledger/trades?book=spreads`
-  plus the web ledger's Book filter show them. **Not handled:** rows already in the ledger keep
-  their book (a re-import retags an existing row only when it backfills the row's order id), so
-  SPY/SPX/XSP history imported before this change stays `manual`/`system`, while the same history
-  imported fresh would land as `spreads`.
-- **Schemas and pricing (Task 4):** the spreads Pydantic types (`ChainOption`, `ChainSnapshot`, `GexLevels`,
-  `SpreadCandidate`, `SpreadPosition`, the trigger and trade-log types …) are in `src/common/schemas.py`,
-  and `src/spreads/pricing.py` holds Black-Scholes with fractional-year time (the wheel's
-  `analytics/black_scholes.py` returns `None` at 0 DTE). Pure math and data shapes: no I/O, no behaviour change.
-- **GEX levels (Task 5):** `src/spreads/gex.py` turns an SPX chain snapshot (open interest + IV) into the
-  day's net gamma, gamma flip, call/put walls and the SPY expected move, scaled into SPY units by the
-  live SPY/SPX ratio. Pure functions over snapshots — nothing fetches a chain or reads it yet (Task 10).
-  Open interest is the prior close's and intraday 0DTE flow is invisible, so the levels guide strike
-  placement and tag trades; they are not a price target.
-- **Candidate selection (Task 6):** `src/spreads/selector.py` picks, per side, the closest short strike
-  beyond both the expected-move edge and the gamma wall (less a buffer) that clears the delta cap and the
-  minimum credit. Pure functions over a chain snapshot; it takes the entry trigger's side choice as a
-  plain list, so it does not wait on Task 6A.
-- **Session tape and entry trigger (Task 6A):** `src/spreads/tape.py` samples the index's price and session
-  high/low into a `SessionTape` and `trigger` picks the one side to sell: after a move of at least
-  0.5 × the day's expected move has stalled for 10 minutes, never against a move beyond 1.5 ×, never on
-  a missing or stale tape. `entry.trigger: always` restores the original both-sides rule. Pure; nothing
-  calls it yet.
-- **Rules gate (Task 7):** `src/spreads/risk.py` is the spreads book's only gate: `validate` approves or
-  names every reason it refuses (calendar, event and ex-dividend windows, gamma regime, quote quality,
-  book limits), and `size` sizes each trade to 10% of the book's own capital. Negative gamma is traded by
-  default (`negative_gamma_action: allow`) and only refused under `skip`. Nothing calls it yet.
-- **Exit manager (Task 8):** `src/spreads/manager.py` decides when an open spread closes: stop at 2× the
-  credit, profit-take at 50%, short-strike touch, a 150-minute maximum hold, and the 15:45 time stop, which
-  fires even when a leg has no quote. SPY spreads are never left to expire (`let_expire: false`); the
-  leave-to-expire branch exists only for a cash-settled XSP/SPX book. It also holds the settlement value and
-  the broker-reconciliation check. Pure functions; nothing calls them yet.
-- **Spreads database (Task 9):** `src/spreads/store.py` is `data/spreads.db`, a SQLite file on its own engine
-  that shares no table with the trading DB. It stores every GEX map, candidate and order attempt, and one
-  row per spread that doubles as the trade log (entry tags, worst mark, holding time, realized P&L), kept
-  separately for `shadow` and `paper`. The file is created on first use; nothing calls it yet.
-- **IBKR I/O (Task 10):** `src/spreads/chain.py` (`IbkrSpreadsBroker`) reads the chain, leg quotes, the SPY
-  session quote, account excess liquidity and the spreads-underlying legs the broker holds. It is the only
-  spreads module that touches `ib_async`, and it never holds more than `max_market_data_lines` lines.
-  Not exercised against a live Gateway yet (tests use a fake IB); nothing calls it yet.
-- **Combo orders and executor (Task 11):** `src/spreads/orders.py` builds the BAG order for a credit vertical and
-  the price ladders; `src/spreads/executor.py` fills an approved spread — simulated with slippage and
-  commission in `shadow`, a laddered limit order in `paper` that is repriced from fresh quotes and re-gated
-  immediately before it is sent. **Needs live verification:** the combo sign convention (order action `BUY`,
-  negative limit = credit) is unverified. Before ever setting `mode: paper`, run `python -m
-  scripts.spreads_combo_check --short K --long K` during RTH on the paper Gateway and confirm TWS shows a
-  credit; if it shows a debit, flip it in `orders.py` and its tests. Nothing calls the executor yet.
-- **Telegram notifier (Task 12):** `src/spreads/notify.py` posts the map, entries (tagged with the gamma regime and
-  the move it sold against), exits and the end-of-day summary to the spreads' own topic
-  (`TELEGRAM_THREAD_SPREADS`; empty means the General topic). Best effort: a send failure is logged and never
-  reaches trading code. Not sent to a real chat yet; the service (Task 13) is its only caller.
-- **Service and supervisor (Task 13):** `src/spreads/service.py` runs the whole day on the ET clock (map → tape
-  sample → exits → entries → end-of-day summary), `scripts/run_spreads.py` is the process entrypoint, and
-  `scripts.start` supervises it as the `spreads` service (`--no-spreads` opts out). It ships idle
-  (`spreads.enabled: false`) and refuses `LIVE_TRADING=true`. Not run against a Gateway yet: the tests drive it
-  with a fake broker. The one-lot BAG sign check (Task 11 Step 9) must still pass before `mode: paper`.
-- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml` and, since 2026-10-08, in the
-  operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308`
-  in `.env.example`; the operator's private `.env` needs the same line before the service exists (Task 13).
+- `src/spreads/`: SPX-sourced GEX map (net gamma, flip, walls) plus the SPY expected move (levels scaled by the live SPY/SPX ratio), then candidate verticals beyond the action zone, then a deterministic gate (`risk.validate`, run twice), then a shadow or laddered paper BAG executor, then exit rules. Separate `data/spreads.db`, clientId 30, Telegram thread, supervisor service `spreads`.
+- Entry rules borrowed from OPG's journal (2026-10-07 amendment): a session tape of the traded index and a deterministic trigger (sell only after a move of 0.5–1.5 × the day's expected move that has stalled 10 minutes, one side per day), entries from 09:35, event blocks with an optional `until` time, a 150-minute maximum hold. Negative gamma is traded by default and tagged.
+- Trade log: every spread carries its entry tags (trigger and move size, gap day, gamma regime and levels, minutes after the open) plus holding time and MAE; `scripts.spreads_report` splits results by tag and exports CSV; `scripts.spreads_backtest` compares settings with `--profit-take`, `--trigger`, `--negative-gamma`.
+- Sizing: every trade's max loss is 10% of the book's own capital ($100,000 plus its realized P&L, per mode), so size compounds both ways; open risk and the daily loss are capped at 10% too.
+- Wheel isolation: `get_positions()` drops SPY/SPX/XSP by default (SPY also left the committed example universe; three wheel tests moved to QQQ); the rules engine rejects `reserved_for_spreads_book`; config load refuses any wheel/spreads underlying overlap and a market-data line budget over 95. Enforced by `tests/test_spreads_fence.py` and `tests/test_wheel_spreads_isolation.py`.
+- Ledger: executions on spreads underlyings are tagged `book="spreads"` (labelled `Spread` in the strategy breakdown, filterable in `/ledger/trades` and the web ledger's Book filter). **Not handled:** rows already in the ledger keep their book (a re-import retags a row only when it backfills the row's order id), so SPY/SPX/XSP history imported before this change stays `manual`/`system`, while the same history imported fresh would land as `spreads`.
+- Reporting (`scripts.spreads_report`) and a ThetaData minute-replay backtest (`scripts.spreads_backtest`).
+- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml` and the operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308` in `.env.example`; the operator's private `.env` needs the same line before the service sends its first message.
 
-Task 17 replaces this section with the plan's "Built" section.
+**Needs live verification before `mode: paper`:**
+- The BAG credit sign convention (BUY the bag, negative limit = credit) via `scripts/spreads_combo_check.py` (Task 11 Step 9). Same convention as the unverified roll combo.
+- The SPX index price arriving on the paper login (the Cboe index entitlement), and the SPY session stats (open, high, low, prior close) the entry trigger reads. Without them the trigger reports `stale_tape` / `no_move` and never arms.
+- SPXW open interest (generic tick 101) populated at 09:31 ET.
+- `ExcessLiquidity` currency on this account (the code prefers `USD`, falls back to `BASE`).
+- The ThetaData option symbol for SPX dailies (`SPXW` vs `SPX`), and the v3 parameter and CSV column names `ThetaDataClient` uses: it has only run against a mock transport, never a real Theta Terminal.
+- The service itself has never run against a Gateway (the tests drive it with a fake broker), and the Telegram send path has never reached a real chat.
+- **Whether the wheel process receives the spreads fills.** `src/execution/reconciliation.py` matches a recovered fill to a stuck wheel `OrderRow` by `orderId` alone, and order ids are unique per clientId only. If the wheel's `reqExecutions` also returns clientId 30's executions, a spreads fill whose order id equals a stuck wheel order's `ib_order_id` could be recovered as that wheel order's fill. The ledger side is safe (it tags by underlying). During the combo check, see whether the wheel process receives the spreads fill; if it does, gate that order-id match on the contract too.
+
+**Known limitations:**
+- Account margin is shared: open spreads reduce the wheel's `ExcessLiquidity` budget. Both directions are conservative.
+- GEX uses prior-close open interest and the standard dealer-positioning assumption. Intraday 0DTE flow is invisible.
+- Shadow fills are modelled (mid − 2 × slippage); paper fills will differ.
+- The backtest trades SPX as a SPY proxy (dividend drift between SPY and SPX/10 ignored).
+- SPY settles in shares: every spread is closed by the 15:45 time stop, and a close that does not fill raises an "assignment" alert to close by hand before 16:00. `risk.ex_dividend_dates` (no new call spreads the day before or of SPY's ex-dividend date) is maintained by hand.
+- Expiring spreads are settled in `spreads.db` at the last observed spot. For paper mode the ledger is the source of truth.
+- `risk.events` is maintained by hand.
+- The entry trigger samples the index every 30 seconds, so a high or low printed between samples is seen only through IBKR's session high/low, timed to the next sample. After a restart the stall clock starts again, so a restart can delay an entry by up to `stall_minutes`.
+- The thresholds (`min_move_em` 0.5, `max_move_em` 1.5, `stall_minutes` 10, `max_hold_minutes` 150) are first guesses from OPG's journal, not fitted values. The backtest and the tagged trade log are how to check them.
+- The portfolio snapshot (`get_positions` default) excludes spreads legs, so an open spread has no mark in the trade ledger: the ledger summary's `unrealized_usd` reads n/a while one is open (only once the snapshot account matches the ledger account, i.e. live).
 
 ## Built (2026-10-07 — private operator config; examples committed)
 
