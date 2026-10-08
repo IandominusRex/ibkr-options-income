@@ -284,6 +284,56 @@ have one), and the fences.
   separation gap (operator's Step 9), Task 11 Step 9 (the BAG sign check), Task 15 Step 5, and the two Tasks 2–3
   minors above. The ThetaData client and the backtest have never touched a real Terminal.
 
+**Fresh-context review (2026-10-08), `0d2f848..1f7b01c`: verdict "with fixes", NOT yet fixed.** Two independent
+reviewers ran, one on the trading core and one on the wheel side, ledger and infra. Gate on their runs: pytest 2911
+passed, 1 skipped; ruff and mypy clean; spreads tests 173 passed. The coordinator confirmed C1, I-L2 and I-L3 against
+the code. Open findings:
+- **C1 (Critical), no-bid long leg = unquoted spread.** ib_async sets `bid` to NaN when the bid size is 0
+  (`wrapper.priceSizeTick`, ticks 1/66), which is normal for a far-OTM 0DTE long that is winning. `_num` turns that
+  into `None`, and then `manager.debit_to_close` gives `(None, None)`. So profit-take and max-hold never fire; at the
+  time stop the shadow close books `pos.width` (a full max loss on a winner), and the paper close returns `no_quote`
+  and sends nothing. Fix: value a missing bid as 0 when the ask exists (natural = short ask, long mid = ask/2); fall
+  back to width only when the short ask is missing; add tests in manager, executor and service. Discard any shadow
+  data recorded before the fix.
+- **I1, closes are not capped at the broker's position.** After a disconnect, a cancel race (an unconfirmed cancel,
+  or `ConnectionError` inside `_work`) or a DB write failure, a close can over-close and open a reversed SPY spread.
+  Fix: reconcile every tick in paper mode (`ib.positions()` is a local cache); cap each close at the broker's
+  short-leg quantity; skip a close while an open trade with the same `orderRef` is working; catch `ConnectionError`
+  in `_work`.
+- **I2, no alert while disconnected.** The "still open after 15:45" alert lives in `_manage`, which never runs while
+  disconnected. Fix: in the disconnected branch, `alert_once` when there are open positions, and send a stronger
+  message at or after `force_close`.
+- **I3, a contract repeated in one quote batch leaks a market-data line.** `startTicker` overwrites `ticker2ReqId`.
+  Fix: dedupe by conId in `quote()` and `requote()`.
+- **I4, the BAG fill-price sign is negated and never checked.** `executor.py:136-139` records `-avgFillPrice`, and
+  `spreads_combo_check` (an unfillable order on the healthcheck clientId) cannot observe it. Fix: use `abs()` plus a
+  range check; make Step 9 a fillable one-lot on clientId 30 that prints `avgFillPrice`.
+- **I5, paper commissions are understated.** The `CommissionReport` arrives after Filled. Fix: wait about 2 s, or
+  fall back to `commission_per_contract × legs × qty`.
+- **I6, early close.** With `skip_early_close_days: false`, `force_close` stays at 15:45 after a 13:00 close.
+  Latent, because the switch ships `true`. Fix: derive the close from the calendar, or refuse `false` at config load.
+- **I-L1, the trade ledger treats spread legs as independent trades.** Win rate is 0.5 by construction; the short
+  put is counted as CSP collateral (`capital_utilised_usd` about $1.4M for one 21-lot); the monthly premium is gross;
+  `_link_rolls` can mark a leg Rolled. A plan gap: Task 3 only tagged rows. Fix: exclude `spreads` from
+  `utilised`, the monthly premium and `_link_rolls`, and pair legs for win rate (or point to `spreads_report`).
+- **I-L2, SETUP §16 step 2 and the service's startup warning tell the operator to point `ledger.account` at the
+  paper account.** That breaks the real-account ledger (`account_mismatch`). The text comes from the plan, line
+  ~8332. Fix: keep the ledger on the real account, read paper results from `spreads_report --mode paper`, and make
+  the warning informational.
+- **I-L3, the wheel `reqExecutions` gap can't be observed in Step 9**, because the combo check never fills. Fix it
+  now in one line: in `reconciliation._exec_matches_candidate`, gate the order-id match on
+  `contract.symbol == candidate.underlying`.
+- **Minors:** see the review reports. In short: a never-failing decision-time `stale_quote` check; the send re-gate
+  reusing the old spot; a failed qualification cached forever (`conId=0`); `excess_liquidity` reading USD/BASE only;
+  `index_spot` falling back to the prior close; naive stored timestamps (a plan inconsistency); no resolve path for
+  an expired-but-open spread; a failed `build_levels` keeping the old map; string-match fence tests that only check
+  direct imports (`live.py` pulls `src.execution.reconciliation` and `src.claude.memory` into the spreads process,
+  which makes CLAUDE.md's ledger-fence note false); the web universe override not refusing SPY/SPX/XSP (only the
+  engine does); possible `SPXW` CSV roots; a hard-coded 95 line budget; backtest/ThetaData edge cases (data ending
+  before the time stop is booked "expired"; one 4xx aborts the run; a partial current day is cached); stale
+  docs/comments (`models.py:619`, `ibkr logs` usage, the README topic table, "How the scan works.md"'s SPY
+  example, STATUS "index" wording).
+
 **Notes for later tasks:**
 - **Task 17 Step 4:** SETUP's Troubleshooting table has three columns (Symptom | Likely cause |
   Fix), but the plan's rows have two. Split each row into cause and fix.
