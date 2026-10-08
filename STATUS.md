@@ -366,7 +366,7 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
-## In progress (2026-10-08 — daily credit spreads: Tasks 1–12 and 6A of 17 built)
+## In progress (2026-10-08 — daily credit spreads: Tasks 1–13 and 6A of 17 built)
 
 Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (its **Progress log** says which
 tasks are done). Branch `feat/daily-credit-spreads`. The config, the wheel-side guards, the
@@ -434,7 +434,12 @@ manager, the spreads database and the session tape / entry trigger exist; nothin
 - **Telegram notifier (Task 12):** `src/spreads/notify.py` posts the map, entries (tagged with the gamma regime and
   the move it sold against), exits and the end-of-day summary to the spreads' own topic
   (`TELEGRAM_THREAD_SPREADS`; empty means the General topic). Best effort: a send failure is logged and never
-  reaches trading code. Not sent to a real chat yet; nothing calls it.
+  reaches trading code. Not sent to a real chat yet; the service (Task 13) is its only caller.
+- **Service and supervisor (Task 13):** `src/spreads/service.py` runs the whole day on the ET clock (map → tape
+  sample → exits → entries → end-of-day summary), `scripts/run_spreads.py` is the process entrypoint, and
+  `scripts.start` supervises it as the `spreads` service (`--no-spreads` opts out). It ships idle
+  (`spreads.enabled: false`) and refuses `LIVE_TRADING=true`. Not run against a Gateway yet: the tests drive it
+  with a fake broker. The one-lot BAG sign check (Task 11 Step 9) must still pass before `mode: paper`.
 - `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml` and, since 2026-10-08, in the
   operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308`
   in `.env.example`; the operator's private `.env` needs the same line before the service exists (Task 13).

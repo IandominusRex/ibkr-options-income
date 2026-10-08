@@ -530,7 +530,7 @@ python -m scripts.start
 
 Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`, and
 `logs/research.log`. Stop with Ctrl-C (only when run in a terminal; under `./ibkr`, use `./ibkr stop`).
-Flags: `--no-monitor`, `--no-approval`, `--no-api`, `--no-research`, each skipping one
+Flags: `--no-monitor`, `--no-approval`, `--no-api`, `--no-research`, `--no-spreads`, each skipping one
 service (`--no-eod` skips the built-in EOD scheduler — see §7).
 
 > The web API and research worker need the `web` extra (`pip install -e ".[web,dev]"`, §6a)

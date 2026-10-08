@@ -41,3 +41,10 @@ def test_no_research_flag_excludes_only_research():
     active = start._active_services(args)
     assert "research" not in active
     assert "api" in active
+
+
+def test_spreads_service_is_supervised_and_can_be_skipped():
+    assert start.SERVICES["spreads"]["module"] == "scripts.run_spreads"
+    args = start._build_parser().parse_args(["--no-spreads"])
+    active = start._active_services(args)
+    assert "spreads" not in active and "approval" in active
