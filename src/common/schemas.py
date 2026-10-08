@@ -1121,3 +1121,201 @@ class LedgerBook(BaseModel):
     lots: list[LedgerStockLot]
     disposals: list[LedgerStockDisposal]
     cash: list[LedgerCashItem]
+
+
+# --------------------------------------------------------------------------- #
+# Daily credit spreads (docs/superpowers/plans/2026-10-07-daily-credit-spreads.md)
+# --------------------------------------------------------------------------- #
+
+SpreadSide = Literal["put", "call"]
+GammaRegime = Literal["positive", "negative", "unknown"]
+SpreadExitReason = Literal[
+    "profit_take", "stop_loss", "strike_touch", "max_hold", "time_stop", "expire_worthless"
+]
+EntryTrigger = Literal["move", "always"]
+
+
+class ChainOption(BaseModel):
+    """One option in a spreads chain snapshot (the SPX GEX source or the traded SPY chain)."""
+
+    strike: float
+    right: Literal["C", "P"]
+    expiry: date
+    bid: float | None = None
+    ask: float | None = None
+    iv: float | None = None  # decimal: 0.18 = 18%
+    delta: float | None = None
+    open_interest: int | None = None
+    con_id: int | None = None
+
+    @property
+    def mid(self) -> float | None:
+        """None for a missing/negative bid (IBKR's -1 sentinel), a missing ask, or a crossed quote.
+
+        A zero bid is a real quote on a far-OTM 0DTE option and yields ask / 2.
+        """
+        if self.bid is None or self.ask is None or self.bid < 0 or self.ask <= 0:
+            return None
+        if self.ask < self.bid:
+            return None
+        return (self.bid + self.ask) / 2
+
+    @property
+    def spread_pct(self) -> float | None:
+        m = self.mid
+        if m is None or m <= 0 or self.bid is None or self.ask is None:
+            return None
+        return (self.ask - self.bid) / m
+
+
+class ChainSnapshot(BaseModel):
+    symbol: str
+    spot: float
+    as_of: datetime  # timezone-aware UTC
+    options: list[ChainOption] = Field(default_factory=list)
+
+    def find(self, strike: float, right: str, expiry: date) -> ChainOption | None:
+        for o in self.options:
+            if o.right == right and o.expiry == expiry and abs(o.strike - strike) < 1e-6:
+                return o
+        return None
+
+
+class GexLevels(BaseModel):
+    """The day's action zones, in traded-underlying (SPY) units except ``net_gex``."""
+
+    as_of: datetime
+    spot: float
+    net_gex: float  # dealer $-gamma per 1% move, GEX-source units
+    regime: GammaRegime
+    flip: float | None = None
+    call_wall: float | None = None
+    put_wall: float | None = None
+    expected_move: float | None = None  # points
+    scale: float = 0.1  # GEX-source level × scale = traded level (live SPY/SPX ratio for SPY)
+
+
+class SpreadCandidate(BaseModel):
+    spread_id: str
+    side: SpreadSide
+    expiry: date
+    short_strike: float
+    long_strike: float
+    width: float
+    short_con_id: int | None = None
+    long_con_id: int | None = None
+    credit_mid: float  # per share
+    credit_natural: float  # short bid - long ask
+    short_delta: float | None = None
+    short_leg_spread_pct: float | None = None
+    long_leg_spread_pct: float | None = None
+    spot: float
+    quote_time: datetime
+
+    @property
+    def max_loss_per_contract(self) -> float:
+        return (self.width - self.credit_mid) * 100.0
+
+
+class SpreadRiskContext(BaseModel):
+    now: datetime
+    levels: GexLevels | None
+    open_spreads: int
+    open_risk_usd: float
+    trades_today: int
+    realized_pnl_today_usd: float
+    excess_liquidity_usd: float | None
+    capital_usd: float  # the book's capital: starting capital + realized P&L (sizing basis)
+    sides_today: list[SpreadSide] = Field(default_factory=list)  # sides opened this ET day
+
+
+class SpreadVerdict(BaseModel):
+    spread_id: str
+    approved: bool
+    contracts: int = 0
+    reasons: list[str] = Field(default_factory=list)
+
+
+class SpreadPosition(BaseModel):
+    spread_id: str
+    mode: Literal["shadow", "paper"]
+    side: SpreadSide
+    expiry: date
+    short_strike: float
+    long_strike: float
+    width: float
+    contracts: int  # still open
+    entry_credit: float  # per share
+    opened_at: datetime
+    short_con_id: int | None = None
+    long_con_id: int | None = None
+
+
+class SpreadExit(BaseModel):
+    spread_id: str
+    reason: SpreadExitReason
+    close: bool  # False = leave the cash-settled spread to expire
+
+
+class SessionSnapshot(BaseModel):
+    """One read of the traded index: the price now plus IBKR's session stats (ticks 14/6/7/9)."""
+
+    as_of: datetime
+    last: float
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    prior_close: float | None = None
+
+
+class SpreadTrigger(BaseModel):
+    """Which sides the entry trigger allows right now. ``reason`` is "armed" or "always" when it fires."""
+
+    sides: list[SpreadSide] = Field(default_factory=list)
+    reason: str
+    move_em: float | None = None  # the move that armed it, in units of the day's expected move
+
+
+class SpreadEntryContext(BaseModel):
+    """What the market looked like when a spread opened — stored with the position for analysis."""
+
+    trigger: EntryTrigger
+    move_em: float | None = None
+    gap_pct: float | None = None  # today's open / prior close − 1
+    gap_day: bool = False
+    regime: GammaRegime
+    net_gex: float
+    flip: float | None = None
+    call_wall: float | None = None
+    put_wall: float | None = None
+    expected_move: float | None = None
+    day_em: float | None = None
+    spot: float
+    minutes_after_open: int
+
+
+class SpreadTradeRecord(BaseModel):
+    """One spread in the trade log (open or closed), with its entry tags and its outcome so far."""
+
+    spread_id: str
+    mode: Literal["shadow", "paper"]
+    side: SpreadSide
+    status: str  # open | expiring | closed
+    opened_at: datetime
+    closed_at: datetime | None = None
+    short_strike: float
+    long_strike: float
+    width: float
+    contracts: int  # opened
+    entry_credit: float
+    exit_debit: float | None = None
+    exit_reason: str | None = None
+    pnl_usd: float  # realized so far, after commissions
+    regime: str
+    trigger: str
+    move_em: float | None = None
+    gap_pct: float | None = None
+    gap_day: bool = False
+    minutes_after_open: int | None = None
+    hold_minutes: float | None = None
+    mae_usd: float | None = None  # worst mark against the position while open, >= 0
