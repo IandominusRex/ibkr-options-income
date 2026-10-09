@@ -83,6 +83,29 @@ def heartbeat_check(name: str, iso: str | None, now: datetime, *, max_age_min: i
     return Check(name, True, "")
 
 
+def news_check(now: datetime, *, max_age_min: int) -> Check:
+    """The news service writes a heartbeat into data/news.db after every loop iteration.
+
+    Reads through the news store's read-only engine (``mode=ro``) — never the news process's
+    read-write one — and a missing file is a failed check, not an exception.
+    """
+    from src.news.store.queries import state_values
+    from src.news.store.readonly import read_only_session
+
+    with read_only_session() as s:
+        if s is None:
+            return Check("news", False, "news: data/news.db missing — news service never ran")
+        try:
+            hb = state_values(s, "heartbeat").get("heartbeat")
+        except Exception as exc:  # noqa: BLE001 — no schema yet, or locked: alert, never raise
+            return Check(
+                "news",
+                False,
+                f"news: cannot read heartbeat from data/news.db ({type(exc).__name__})",
+            )
+    return heartbeat_check("news", hb, now, max_age_min=max_age_min)
+
+
 def scan_loop_check(
     iso: str | None,
     now: datetime,
@@ -351,6 +374,9 @@ def run_checks(now: datetime, cfg: WatchdogCfg) -> list[Check]:
             max_age_min=cfg.heartbeat_max_age_minutes,
         ),
     ]
+
+    if full_cfg.news.enabled:
+        checks.append(news_check(now, max_age_min=cfg.news_max_age_minutes))
 
     if in_rth:
         checks.append(

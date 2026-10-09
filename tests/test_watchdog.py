@@ -230,7 +230,7 @@ def test_iv_history_check_ok_when_fresh(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_run_checks_composes_all_seven_checks_and_gates_monitor_outside_rth(monkeypatch):
+def test_run_checks_composes_all_eight_checks_and_gates_monitor_outside_rth(monkeypatch):
     from src.common.config import get_config
     from src.ops import watchdog
 
@@ -240,6 +240,7 @@ def test_run_checks_composes_all_seven_checks_and_gates_monitor_outside_rth(monk
     monkeypatch.setattr(watchdog, "is_rth", lambda now: False)
     monkeypatch.setattr(watchdog, "iv_history_check", lambda now, n: Check("iv_history", True, ""))
     monkeypatch.setattr(watchdog, "eod_check", lambda *a, **k: Check("eod", True, ""))
+    monkeypatch.setattr(watchdog, "news_check", lambda now, max_age_min: Check("news", True, ""))
 
     cfg = get_config().watchdog
     checks = watchdog.run_checks(NOW, cfg)
@@ -249,6 +250,7 @@ def test_run_checks_composes_all_seven_checks_and_gates_monitor_outside_rth(monk
         "supervisor",
         "gateway_port",
         "command_drain",
+        "news",
         "monitor",
         "scan_loop",
         "eod",

@@ -1,0 +1,264 @@
+"""Session-parameterised read helpers over data/news.db.
+
+Takes a Session and never opens one, so the news process (read-write engine), the API
+(src/api/news_db.py, read-only) and the read-only readers share one query implementation.
+Imports no engine module — src/api/ may import this file (spec §10.6).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime
+
+from sqlalchemy import String, cast, select
+from sqlalchemy.orm import Session
+
+from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView
+from src.news.store.models import (
+    EarningsEventRow,
+    EconEventRow,
+    NewsClusterRow,
+    NewsItemRow,
+    NewsPostRow,
+    NewsRequestRow,
+    NewsStateRow,
+)
+
+
+def naive_utc(dt: datetime) -> datetime:
+    """Aware → naive UTC for storage (the spreads-store convention). Naive input is assumed UTC."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(UTC).replace(tzinfo=None)
+
+
+def aware_utc(dt: datetime) -> datetime:
+    """Stored naive-UTC → aware UTC."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def _cluster(s: Session, c: NewsClusterRow, max_items: int) -> ClusterView:
+    items = s.scalars(
+        select(NewsItemRow)
+        .where(NewsItemRow.cluster_id == c.id)
+        .order_by(NewsItemRow.fetched_at)
+        .limit(max_items)
+    )
+    return ClusterView(
+        id=c.id,
+        headline=c.headline,
+        category=c.category,
+        first_seen=aware_utc(c.first_seen),
+        last_seen=aware_utc(c.last_seen),
+        source_count=c.source_count,
+        source_domains=list(c.source_domains or []),
+        tickers=list(c.tickers or []),
+        tags=list(c.tags or []),
+        topic_class=c.topic_class,
+        items=[
+            ItemView(
+                title=i.title,
+                url=i.url,
+                source=i.source,
+                source_domain=i.source_domain,
+                published_at=aware_utc(i.published_at) if i.published_at else None,
+                summary=i.summary,
+                image_url=i.image_url,
+                det_sentiment=i.det_sentiment,
+            )
+            for i in items
+        ],
+    )
+
+
+def cluster_view(s: Session, cid: int, *, max_items: int = 6) -> ClusterView | None:
+    c = s.get(NewsClusterRow, cid)
+    return None if c is None else _cluster(s, c, max_items)
+
+
+def clusters_since(
+    s: Session,
+    since: datetime,
+    *,
+    category: str | None = None,
+    symbol: str | None = None,
+    limit: int = 50,
+) -> list[ClusterView]:
+    q = select(NewsClusterRow).where(NewsClusterRow.last_seen >= naive_utc(since))
+    if category:
+        q = q.where(NewsClusterRow.category == category)
+    q = q.order_by(NewsClusterRow.source_count.desc(), NewsClusterRow.last_seen.desc())
+    if not symbol:
+        return [_cluster(s, r, 6) for r in s.scalars(q.limit(limit))]
+    # Filter BEFORE limiting: a ticker's single-source story ranks behind every busier macro
+    # cluster, so a LIMIT taken first never reaches it. The JSON text match narrows in SQL;
+    # the membership test below is the exact check.
+    sym = symbol.upper()
+    q = q.where(cast(NewsClusterRow.tickers, String).contains(f'"{sym}"', autoescape=True))
+    out: list[ClusterView] = []
+    for r in s.scalars(q):
+        if sym in (r.tickers or []):
+            out.append(_cluster(s, r, 6))
+            if len(out) >= limit:
+                break
+    return out
+
+
+def econ_view(r: EconEventRow) -> EconEventView:
+    return EconEventView(
+        event_key=r.event_key,
+        title=r.title,
+        playbook_key=r.playbook_key,
+        scheduled_at=aware_utc(r.scheduled_at),
+        impact=r.impact,
+        forecast=r.forecast,
+        previous=r.previous,
+        consensus=r.consensus,
+        actual=r.actual,
+        surprise_dir=r.surprise_dir,
+    )
+
+
+def econ_events_between(s: Session, start: datetime, end: datetime) -> list[EconEventView]:
+    rows = s.scalars(
+        select(EconEventRow)
+        .where(
+            EconEventRow.scheduled_at >= naive_utc(start),
+            EconEventRow.scheduled_at < naive_utc(end),
+        )
+        .order_by(EconEventRow.scheduled_at)
+    )
+    return [econ_view(r) for r in rows]
+
+
+def earnings_between(
+    s: Session, start: date, end: date, symbols: set[str] | None = None
+) -> list[EarningsView]:
+    rows = s.scalars(
+        select(EarningsEventRow)
+        .where(EarningsEventRow.report_date >= start, EarningsEventRow.report_date <= end)
+        .order_by(EarningsEventRow.report_date, EarningsEventRow.symbol)
+    )
+    return [
+        EarningsView(
+            symbol=r.symbol,
+            report_date=r.report_date,
+            timing=r.timing,
+            eps_est=r.eps_est,
+            eps_actual=r.eps_actual,
+            rev_est=r.rev_est,
+            rev_actual=r.rev_actual,
+            status=r.status,
+        )
+        for r in rows
+        if symbols is None or r.symbol in symbols
+    ]
+
+
+def ticker_sentiment_rows(
+    s: Session, symbol: str, since: datetime
+) -> list[tuple[float, datetime, int | None, str]]:
+    """Deterministic sentiment inputs only (spec §8 whitelist). Never reads news_posts."""
+    rows = s.execute(
+        select(
+            NewsItemRow.det_sentiment,
+            NewsItemRow.published_at,
+            NewsItemRow.fetched_at,
+            NewsItemRow.cluster_id,
+            NewsItemRow.title,
+            NewsItemRow.tickers,
+        ).where(NewsItemRow.fetched_at >= naive_utc(since), NewsItemRow.det_sentiment.is_not(None))
+    )
+    sym = symbol.upper()
+    out = []
+    for det, pub, fetched, cid, title, tickers in rows:
+        if sym in (tickers or []):
+            out.append((float(det), aware_utc(pub or fetched), cid, title))
+    return out
+
+
+def recent_items_for(s: Session, symbol: str, since: datetime, limit: int) -> list[ItemView]:
+    """Newest-first items tagged with *symbol*, one per cluster (spec §8).
+
+    An item not yet clustered (``cluster_id`` NULL) is its own story, so it is never collapsed
+    with another unclustered one.
+    """
+    rows = s.scalars(
+        select(NewsItemRow)
+        .where(NewsItemRow.fetched_at >= naive_utc(since))
+        .order_by(NewsItemRow.fetched_at.desc())
+        .limit(500)
+    )
+    sym = symbol.upper()
+    out: list[ItemView] = []
+    seen: set[int] = set()
+    for r in rows:
+        if sym not in (r.tickers or []):
+            continue
+        if r.cluster_id is not None:
+            if r.cluster_id in seen:
+                continue
+            seen.add(r.cluster_id)
+        out.append(
+            ItemView(
+                title=r.title,
+                url=r.url,
+                source=r.source,
+                source_domain=r.source_domain,
+                published_at=aware_utc(r.published_at) if r.published_at else None,
+                summary=r.summary,
+                image_url=r.image_url,
+                det_sentiment=r.det_sentiment,
+            )
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+# --- API readers (src/api/routers/news.py, spec §7.6) ---------------------------------------
+
+KIND_GROUPS: dict[str, tuple[str, ...]] = {
+    "macro": ("macro_print", "breaking"),
+    "market": ("market_move", "vix_spike", "digest_premarket", "digest_close", "digest_week"),
+    "tickers": ("ticker_move",),
+    "earnings": ("earnings",),
+    "briefs": ("brief",),
+}
+
+
+def recent_posts(
+    s: Session, *, group: str | None, symbol: str | None, limit: int, before_id: int | None
+) -> list[NewsPostRow]:
+    q = select(NewsPostRow)
+    if group:
+        q = q.where(NewsPostRow.kind.in_(KIND_GROUPS[group]))
+    if symbol:
+        q = q.where(NewsPostRow.subject == symbol.upper())
+    if before_id:
+        q = q.where(NewsPostRow.id < before_id)
+    return list(s.scalars(q.order_by(NewsPostRow.id.desc()).limit(limit)))
+
+
+def latest_brief(s: Session, symbol: str) -> NewsPostRow | None:
+    return s.scalar(
+        select(NewsPostRow)
+        .where(NewsPostRow.kind == "brief", NewsPostRow.subject == symbol.upper())
+        .order_by(NewsPostRow.id.desc())
+        .limit(1)
+    )
+
+
+def request_for(s: Session, symbol: str) -> NewsRequestRow | None:
+    return s.scalar(
+        select(NewsRequestRow)
+        .where(NewsRequestRow.symbol == symbol.upper())
+        .order_by(NewsRequestRow.id.desc())
+        .limit(1)
+    )
+
+
+def state_values(s: Session, prefix: str) -> dict[str, str]:
+    rows = s.scalars(
+        select(NewsStateRow).where(NewsStateRow.key.startswith(prefix, autoescape=True))
+    )
+    return {r.key: r.value for r in rows}

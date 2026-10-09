@@ -68,12 +68,13 @@ longer works — Reddit blocks it at the edge.)
 ## 2b. Create your own config files
 
 The repo ships **templates** — `config/settings.example.yaml`, `risk_limits.example.yaml`,
-`scoring_weights.example.yaml`, `universe.example.yaml` and `spreads.example.yaml` (the daily
-credit-spread system, off by default). Your own copies (the files without `.example`) are
+`scoring_weights.example.yaml`, `universe.example.yaml`, `spreads.example.yaml` (the daily
+credit-spread system, off by default) and `news.example.yaml` (the News thread, §17 — on by
+default). Your own copies (the files without `.example`) are
 **git-ignored**, so your account IDs, limits, weights and universe never reach GitHub:
 
 ```bash
-for f in settings risk_limits scoring_weights universe spreads; do
+for f in settings risk_limits scoring_weights universe spreads news; do
   cp config/$f.example.yaml config/$f.yaml
 done
 ```
@@ -84,8 +85,8 @@ update that adds new config keys**, the code defaults cover them; diff your file
 example (`diff config/settings.yaml config/settings.example.yaml`) to adopt any new setting
 explicitly. The test suite always reads the examples (`IBKR_CONFIG_USE_EXAMPLES=1`, set in
 `tests/conftest.py`), never your copies. The other files in `config/` (`research*.yaml`,
-`symbol_directory_overrides.yaml`, `universe_archive.yaml`) are shared reference data and stay
-committed.
+`symbol_directory_overrides.yaml`, `universe_archive.yaml`, `news_playbook.yaml`) are shared
+reference data and stay committed.
 
 ---
 
@@ -113,6 +114,8 @@ TELEGRAM_THREAD_CC=54      # Covered-call candidates
 TELEGRAM_THREAD_BUY=56     # Buy-to-own recommendations
 TELEGRAM_THREAD_ACCOUNT=58 # Account snapshot
 TELEGRAM_THREAD_SPREADS=4308 # Daily credit-spread system (src/spreads/)
+TELEGRAM_THREAD_NEWS=4409  # News thread (src/news/, §17)
+FINNHUB_API_KEY=           # Optional free Finnhub key (§17); empty = Finnhub dormant
 
 LIVE_TRADING=false              # Keep false until you are ready to go live
 ```
@@ -128,8 +131,9 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
    response — that number identifies the topic the message was sent in. Repeat this for each
    topic you want the bot to use, and set the corresponding `TELEGRAM_THREAD_*` variable
    (`TELEGRAM_THREAD_SCAN`, `TELEGRAM_THREAD_CSP`, `TELEGRAM_THREAD_CC`, `TELEGRAM_THREAD_BUY`,
-   `TELEGRAM_THREAD_ACCOUNT`, and `TELEGRAM_THREAD_SPREADS` for the optional daily credit-spread
-   system). Leave a variable unset for DMs or plain (non-forum) groups.
+   `TELEGRAM_THREAD_ACCOUNT`, `TELEGRAM_THREAD_SPREADS` for the optional daily credit-spread
+   system, and `TELEGRAM_THREAD_NEWS` for the News thread, §17). Leave a variable unset for DMs or
+   plain (non-forum) groups.
 
 ---
 
@@ -528,10 +532,12 @@ the approval service, the intraday monitor, the web API (§6a), and the research
 python -m scripts.start
 ```
 
-Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`, and
-`logs/research.log`. Stop with Ctrl-C (only when run in a terminal; under `./ibkr`, use `./ibkr stop`).
-Flags: `--no-monitor`, `--no-approval`, `--no-api`, `--no-research`, `--no-spreads`, each skipping one
-service (`--no-eod` skips the built-in EOD scheduler — see §7).
+Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`,
+`logs/research.log`, `logs/spreads.log` and `logs/news.log`. Stop with Ctrl-C (only when run in a
+terminal; under `./ibkr`, use `./ibkr stop`). Flags: `--no-monitor`, `--no-approval`, `--no-api`,
+`--no-research`, `--no-spreads`, `--no-news`, each skipping one service (`--no-eod` skips the
+built-in EOD scheduler — see §7). The news service (§17) holds no IBKR connection and starts by
+default; set `enabled: false` in `config/news.yaml` (it then idles) or pass `--no-news`.
 
 > The web API and research worker need the `web` extra (`pip install -e ".[web,dev]"`, §6a)
 > and `WEB_API_TOKEN`/`SEC_CONTACT_EMAIL` in `.env`. If you haven't set those up yet, pass
@@ -625,6 +631,8 @@ Once the approval service is running, you can interact with the system from your
 | `/calendar` | Per-day P&L calendar for the last 30 days — net premium cashflow per calendar day, with fill count and a running total. |
 | `/campaigns` | Wheel campaigns for all symbols: the CSP→assignment→CC→close chain per ticker, with cumulative net premium collected and adjusted cost basis after assignment. |
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only. |
+| `/news NVDA` | Queues an on-demand **news brief** for any ticker (universe or not) and replies `📰 Building NVDA brief → News thread` (or `📰 Queued NVDA brief. ⚠️ …` saying why when the news service is disabled or has no recent heartbeat; the request then waits for it). The news process (§17) fetches fresh headlines, builds the fact sheet, a chart and a 🧠 read, and posts the brief in the News thread, usually within a minute or two. A repeat request within `news.briefs.dedupe_minutes` (10) reuses the first. Nothing here can reach an order. |
+| `/news` | Replies with a link to the latest news digest (or "No digest posted yet"). |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
@@ -748,7 +756,9 @@ separately, by launchd or cron, so it keeps working when everything else has sto
 It checks: the `scripts.start` supervisor process is alive, the configured IBKR port accepts a
 connection, the command-drain and (during market hours) intraday-monitor heartbeats are fresh,
 the intraday scan loop has completed recently during RTH, the EOD report finished today after its
-scheduled time, and no universe/held symbol's IV history has gone stale. A failing check sends a
+scheduled time, no universe/held symbol's IV history has gone stale, and (while `news.enabled`)
+the news service's heartbeat in `data/news.db` is younger than `watchdog.news_max_age_minutes`
+(default 30; a missing `news.db` fails the check). A failing check sends a
 plain-text Telegram alert (re-sent every `watchdog.realert_minutes` while it stays failing, with a
 "recovered" notice once it clears); it has no IBKR connection and no clientId, and writes only
 `data/watchdog_state.json`.
@@ -1692,10 +1702,97 @@ Live trading is not supported by this build. The service refuses to run with `LI
 
 ---
 
+## 17. News thread
+
+A news service that posts short, number-grounded macro, market and ticker news with what it
+means for your book into its own Telegram topic, answers `/news TICKER`, and backs the web
+`/news` page. It is **enrichment only**: nothing it produces reaches ranking, the Rules Engine or
+sizing, and it holds **no IBKR connection and no clientId** (prices come from yfinance). It runs
+as its own process (`scripts/run_news.py`) with its own database (`data/news.db`), and ships
+**enabled**: after `./ibkr restart` it starts with the other daemons.
+
+### What it costs
+
+Nothing by default. Every source is free: RSS feeds, Google News search, yfinance headlines and
+quotes, the ForexFactory weekly calendar (schedule), and Nasdaq's calendar (economic actuals and
+earnings timing). [Finnhub](https://finnhub.io/register)'s free key is optional and adds company
+news with images, general market news and earnings actuals (personal use, 60 calls/min; the
+client stays under 50). **Earnings-release alerts need the Finnhub key**: it is the only source
+that reports EPS actuals. The 🧠 read uses the same LLM chain as the trade review (`claude -p`,
+then local Ollama), capped at `news.llm.max_calls_per_day` (40) calls per day.
+
+### Enable it
+
+1. In your Telegram group, create a forum topic (e.g. "News"), find its `message_thread_id`
+   (§3 "How to create a Telegram bot"), and set `TELEGRAM_THREAD_NEWS=<id>` in `.env`. Optionally
+   set `FINNHUB_API_KEY=<key>`.
+2. Reinstall to pick up the new chart dependency: `pip install -e ".[dev,sentiment]"`
+   (`matplotlib` is now a core dependency).
+3. `cp config/news.example.yaml config/news.yaml` (your copy is git-ignored). Every key has a code
+   default, so a missing file just runs the shipped settings.
+4. Probe the sources: `python -m scripts.news_probe`. It prints item counts per RSS feed, whether
+   Finnhub answers, and re-derives Nasdaq's economic-calendar date offset. Delete any feed that
+   returns `0 items` twice from `sources.rss_feeds`. If the probe prints
+   `nasdaq econ date offset: inferred 0 (configured 1)`, set
+   `sources.nasdaq_econ_date_offset_days: 0` (Nasdaq returned day D−1's US releases under
+   `date=D` when probed on 2026-10-09; the probe tells you if that changed).
+5. Choose the LLM: `llm.backend` is `cli_then_ollama` (ships), `cli` or `ollama`; `llm.model`
+   pins the CLI model, `llm.ollama_model` overrides `claude.ollama_model` (empty = the same model
+   the trade review uses).
+6. Quiet hours are **Singapore time**: `quiet_hours: {tz: "Asia/Singapore", start: "00:00",
+   end: "07:00"}`. Inside them non-critical posts arrive silently (nothing is held back);
+   critical ones (high-impact US releases, index drops of 2% or more, VIX spikes, a held name's
+   2σ move or earnings, breaking geopolitical news with a market reaction) still notify.
+7. `./ibkr restart`. The topic gets `📰 News service online (backend: cli_then_ollama)`.
+
+**Optional: FinBERT sentiment.** `pip install -e ".[finbert]"` (transformers + torch) and set
+`sentiment.model: finbert`. The first run downloads the ~440 MB `ProsusAI/finbert` model once. It
+scores each headline at ingest (classification, no text generation); if it cannot load, the
+service logs one warning and uses VADER. Both feed the same deterministic `det_sentiment` column
+the scan's news sentiment reads.
+
+### What you get
+
+| Post | When |
+|---|---|
+| 🗞️ Pre-market brief | 08:00 ET on US trading days: market tape and futures, overnight stories with a 🧠 read each, today's calendar |
+| 🗞️ Close recap | 16:30 ET: index moves, top stories, the day's biggest movers in your universe, tonight's and tomorrow's calendar |
+| 🗞️ Week ahead | Sunday 18:00 ET: the week's high-impact US releases and earnings, plus **held options with earnings before expiry** |
+| 📊 Macro print | A high-impact US release (CPI, NFP, FOMC, …) gains its actual: first the numbers and the 📘 textbook reaction, then about 15–20 minutes later the same message is edited with the 📈 measured reaction and the 🧠 read. Medium releases the playbook knows (jobless claims, ISM services, UoM) post non-critical cards (silent in quiet hours, inside the hourly cap) |
+| 📈/📉 Ticker move | A held name moves ≥ 2σ (a universe name ≥ 3σ) versus SPY, with its chart and your strike drawn on it; "no identifiable catalyst" when the store has no matching story |
+| Earnings | A held or universe name reports (needs the Finnhub key) |
+| 🔴/🟢 Market move, ⚠️ VIX | SPY/QQQ/DIA crossing −1/−2/−3% or +2/+3%, each level once a day; VIX +15% or crossing 25/30 |
+| 🌍 Breaking | A war/ceasefire/sanctions/tariff/Fed/fiscal/energy story from at least two publishers that moved ES/SPY ≥ 0.5% within 30 minutes of first appearing |
+| Brief | `/news TICKER` in Telegram or "Request fresh brief" on the web |
+
+At most `alerts.max_per_hour` (6) non-critical alerts per hour (the rest roll into the next digest
+under "Also flagged (alert cap)"); a second development on the same
+story edits the original card's tail (`🔄 Update …`) up to `alerts.max_edits` (3) times, then
+replies in-thread. The web console's `/news` page shows the same posts, a calendar column, and a
+per-ticker page at `/news/NVDA`; `GET /news/status` shows the service heartbeat, the last
+successful answer per source, the news process's breaker states and today's LLM calls against
+the cap. A digest whose time passed more than `digests.max_late_minutes` (120) ago while the
+service was down is skipped, not posted late. The watchdog (§6b) alerts when
+the heartbeat is older than `watchdog.news_max_age_minutes` (30).
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.run_news` | The news service. Normally started by `scripts.start` / `./ibkr restart`; `--no-news` skips it. Idles when `config/news.yaml → enabled` is false. Logs to `logs/news.log` (`./ibkr logs news`) |
+| `python -m scripts.news_probe` | Live probe of every news source (read-only, writes nothing): RSS item counts, Finnhub, and the inferred Nasdaq date offset against the configured one. Run before go-live and whenever a source looks dead |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| No posts in the News topic | The news service is not running, `TELEGRAM_THREAD_NEWS` is wrong, or every source is failing | `./ibkr logs news`; `GET /news/status` (heartbeat age, last successful poll per source); `python -m scripts.news_probe`. With `TELEGRAM_BOT_TOKEN`/`CHAT_ID` unset the service still stores posts (the web `/news` page shows them) but sends nothing |
+| News cards end with *"🧠 off (daily cap)"* | `news.llm.max_calls_per_day` (40) is used up for the ET day | Raise it in `config/news.yaml`, or accept deterministic cards until midnight ET. *"🧠 unavailable"* instead means both LLM backends failed or returned invalid JSON twice |
+| A macro card keeps *"📈 reaction pending (data delayed)"* | yfinance futures/intraday bars lag ~10 minutes; after `reaction.max_wait_min` (35) the card is finished with whatever bars exist | Raise `reaction.max_wait_min` if it happens on most releases |
+| Macro prints never arrive although the calendar shows the release | Nasdaq's date key moved (actuals found under the wrong day) | `python -m scripts.news_probe` and set `sources.nasdaq_econ_date_offset_days` to the inferred value |
+| `/news NVDA` replies "Building…" but no brief ever lands | The news service is off or `enabled: false` (the request waits in `news_requests` until it starts) | Start it (`./ibkr restart`, check `./ibkr logs news`); the queued request runs on start |
 | Spreads thread says *"could not build the GEX map (no chain or no index price)"* | No Cboe index-data subscription for SPX, or the Gateway lost its data farm | Check Client Portal → Settings → Market Data Subscriptions, then run `python -m scripts.healthcheck` |
 | Shadow mode records no spreads for days | Expected on quiet days: the move trigger sells only after a move of at least half the day's expected move has stalled | Check that the SPY session stats arrive (`python -m scripts.healthcheck`), and run `python -m scripts.spreads_backtest ... --trigger always` to see what the original every-check rule would have done |
 | Spreads thread says *"entries blocked — broker and spreads.db disagree"* | A paper spread was closed or changed outside the system, a fill was missed during a Gateway restart, or an opening order is still working at IBKR | Compare the TWS positions and open orders with `data/spreads.db → spread_positions`. Settle a spread the broker no longer holds with `python -m scripts.spreads_resolve`, or close a stray position by hand. The service re-checks every 30 s and unblocks entries by itself once they agree |

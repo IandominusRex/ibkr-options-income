@@ -10,6 +10,7 @@ config change (``config/settings.yaml → data.*``), not a rewrite of every anal
 from __future__ import annotations
 
 import logging
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import yfinance as yf
@@ -153,3 +154,37 @@ class YFinanceNewsProvider:
         if limit > 0:
             items = items[:limit]
         return items
+
+
+class YFinanceEarningsHistory:
+    """Past earnings report dates (for the 'last N post-earnings moves' fact, spec §6.1)."""
+
+    def past_report_dates(self, symbol: str, limit: int = 8) -> list[date]:
+        try:
+            df = yf.Ticker(symbol.upper()).get_earnings_dates(limit=limit + 4)
+        except Exception:
+            return []
+        if df is None or df.empty:
+            return []
+        today = datetime.now(UTC).date()
+        days = sorted({ts.date() for ts in df.index if ts.date() <= today}, reverse=True)
+        return days[:limit]
+
+
+class YFinanceIntradayProvider:
+    """``IntradayPriceProvider``: 1-minute bars incl. pre/post market. yfinance futures/index
+    quotes can lag ~10 min (spec §6.4) — callers window on bar timestamps, never wall clock."""
+
+    def get_intraday(self, symbol: str, *, interval: str = "1m", days: int = 1) -> pd.DataFrame:
+        breaker = get_breaker("yfinance_intraday")
+        if not breaker.allow():
+            return pd.DataFrame()
+        try:
+            df = yf.Ticker(symbol).history(
+                period=f"{max(1, days)}d", interval=interval, prepost=True
+            )
+        except Exception:
+            breaker.record_failure()
+            return pd.DataFrame()
+        breaker.record_success()
+        return df if df is not None else pd.DataFrame()

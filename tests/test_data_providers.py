@@ -489,3 +489,23 @@ def test_provider_layer_does_not_import_enrichment_or_engine():
                     if a.name.startswith(forbidden_prefixes):
                         offenders.append(f"{path.name}: {a.name}")
     assert not offenders, f"src/data/ imports forbidden tiers: {offenders}"
+
+
+def test_google_news_keeps_the_publisher_url(monkeypatch):
+    """Google's <link> is a news.google.com redirect; the publisher sits in <source url=…>.
+    The news store counts distinct publishers per story from it (final review)."""
+    from src.data import google_news_backend as g
+
+    rss = """<rss><channel><item><title>Oil jumps on strike - Reuters</title>
+      <link>https://news.google.com/rss/articles/abc</link>
+      <source url="https://www.reuters.com">Reuters</source></item></channel></rss>"""
+
+    class _R:
+        status_code = 200
+        text = rss
+
+        def raise_for_status(self): ...
+
+    monkeypatch.setattr(g.httpx, "get", lambda *a, **k: _R())
+    (item,) = g.GoogleNewsSearchProvider().search("oil", days=1)
+    assert item.source_url == "https://www.reuters.com"

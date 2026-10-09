@@ -14,7 +14,7 @@ every analytics module.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
@@ -91,6 +91,11 @@ class NewsItem(BaseModel):
     source: str | None = None
     published: datetime | None = None
     url: str | None = None
+    summary: str | None = None  # plain-text teaser (Finnhub/RSS); never HTML
+    image_url: str | None = None  # article image when the source supplies one
+    # The publisher's home page when the link is an aggregator redirect (Google News'
+    # <source url=…>), so the news store counts publishers, not news.google.com.
+    source_url: str | None = None
 
 
 @runtime_checkable
@@ -170,3 +175,86 @@ class BulkPriceProvider(Protocol):
         ``Open, High, Low, Close, Volume``. Empty frame when unavailable. Never raises.
         """
         ...
+
+
+class FeedFetch(BaseModel):
+    """One conditional-GET of a feed. ``not_modified`` = HTTP 304 (keep the stored validators)."""
+
+    items: list[NewsItem]
+    etag: str | None = None
+    last_modified: str | None = None
+    not_modified: bool = False
+
+
+@runtime_checkable
+class FeedProvider(Protocol):
+    """RSS/Atom feeds with HTTP conditional requests. Never raises."""
+
+    def fetch(
+        self,
+        url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        limit: int = 50,
+    ) -> FeedFetch: ...
+
+
+class EconScheduleItem(BaseModel):
+    """A scheduled economic release (ForexFactory). ``scheduled_at`` is tz-aware."""
+
+    title: str
+    country: str
+    scheduled_at: datetime
+    impact: str  # High | Medium | Low | Holiday | Non-Economic
+    forecast: str | None = None
+    previous: str | None = None
+
+
+class EconActualItem(BaseModel):
+    """A released (or scheduled) value from Nasdaq's economic calendar, US rows only.
+
+    ``et_day``/``et_time`` are the US Eastern date and HH:MM the release belongs to, after the
+    backend's D+1 correction (spec §5.1). ``et_time`` is None for untimed rows.
+    """
+
+    title: str
+    et_day: date
+    et_time: str | None = None
+    actual: str | None = None
+    consensus: str | None = None
+    previous: str | None = None
+
+
+@runtime_checkable
+class EconScheduleProvider(Protocol):
+    def this_week(self) -> list[EconScheduleItem]: ...
+
+
+@runtime_checkable
+class EconActualsProvider(Protocol):
+    def actuals(self, et_day: date) -> list[EconActualItem]: ...
+
+
+class EarningsItem(BaseModel):
+    symbol: str
+    report_date: date
+    timing: str = "unknown"  # bmo | amc | unknown
+    eps_est: float | None = None
+    eps_actual: float | None = None
+    rev_est: float | None = None
+    rev_actual: float | None = None
+    source: str = ""
+
+
+@runtime_checkable
+class EarningsCalendarProvider(Protocol):
+    def on(self, et_day: date) -> list[EarningsItem]: ...
+
+
+@runtime_checkable
+class IntradayPriceProvider(Protocol):
+    """Intraday bars incl. pre/post market. Index is tz-aware; columns Open/High/Low/Close/Volume.
+    Empty DataFrame when unavailable. Never raises."""
+
+    def get_intraday(self, symbol: str, *, interval: str = "1m", days: int = 1) -> pd.DataFrame: ...

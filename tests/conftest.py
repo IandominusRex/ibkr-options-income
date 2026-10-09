@@ -59,6 +59,21 @@ def _mock_telegram_sender(monkeypatch):
     monkeypatch.setattr("src.notify.sender.send_order_notification", AsyncMock())
 
 
+@pytest.fixture(autouse=True)
+def _no_real_telegram_for_news(monkeypatch):
+    """src.news.publish builds its own Bot from .env; never let a test talk to Telegram."""
+    from unittest.mock import MagicMock
+
+    fake = MagicMock()
+    fake.return_value.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    fake.return_value.edit_message_text = AsyncMock(return_value=True)
+    fake.return_value.send_photo = AsyncMock(return_value=MagicMock(message_id=2))
+    try:
+        monkeypatch.setattr("src.news.publish.Bot", fake)
+    except (ImportError, AttributeError):
+        pass  # before Task 17 exists
+
+
 # ---------------------------------------------------------------------------
 # Web API fixtures (P3-P4 M2 Task 2.1). Shared by the portfolio route tests
 # (2.1, 2.2, 2.4) and reused by M4's tests — one copy, per the milestone's own
@@ -924,3 +939,42 @@ def _blank_flex_secrets(monkeypatch):
     get_config.cache_clear()
     yield
     get_config.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_news_db(tmp_path, monkeypatch):
+    """Never let a test read or write the operator's real data/news.db.
+
+    src/analytics/sentiment.py reads the news store first (news plan Task 25), so without this
+    test_sentiment would score whatever the news service last collected. Both engines point at
+    a per-test path that does not exist; the read-only reader then yields None ("no news").
+    ``news_db`` re-points them at a created schema for tests that need a store.
+    """
+    import src.news.store.readonly as ro
+    import src.news.store.session as rw
+
+    absent = tmp_path / "no-news.db"
+    monkeypatch.setattr(rw, "_engine", None)
+    monkeypatch.setattr(rw, "_SessionLocal", None)
+    monkeypatch.setattr(rw, "_resolve_url", lambda: f"sqlite:///{absent}")
+    ro.reset_engine()
+    monkeypatch.setattr(ro, "_resolve_path", lambda: str(absent))
+    yield
+    ro.reset_engine()
+
+
+@pytest.fixture()
+def news_db(tmp_path, monkeypatch):
+    """An isolated data/news.db for src.news tests (both the rw and ro engines)."""
+    import src.news.store.readonly as ro
+    import src.news.store.session as rw
+
+    path = tmp_path / "news.db"
+    monkeypatch.setattr(rw, "_engine", None)
+    monkeypatch.setattr(rw, "_SessionLocal", None)
+    monkeypatch.setattr(rw, "_resolve_url", lambda: f"sqlite:///{path}")
+    ro.reset_engine()
+    monkeypatch.setattr(ro, "_resolve_path", lambda: str(path))
+    rw.init_news_db()
+    yield path
+    ro.reset_engine()

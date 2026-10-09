@@ -2415,6 +2415,281 @@
         ]
       }
     },
+    "/news/feed": {
+      "get": {
+        "tags": [
+          "news"
+        ],
+        "summary": "Feed",
+        "operationId": "feed_news_feed_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "macro",
+                    "market",
+                    "tickers",
+                    "earnings",
+                    "briefs"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsFeedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news/posts/{post_id}": {
+      "get": {
+        "tags": [
+          "news"
+        ],
+        "summary": "Post Detail",
+        "operationId": "post_detail_news_posts__post_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "post_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Post Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsPostDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news/calendar": {
+      "get": {
+        "tags": [
+          "news"
+        ],
+        "summary": "Calendar",
+        "operationId": "calendar_news_calendar_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 21,
+              "minimum": 1,
+              "default": 7,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsCalendarResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news/ticker/{symbol}": {
+      "get": {
+        "tags": [
+          "news"
+        ],
+        "summary": "Ticker",
+        "operationId": "ticker_news_ticker__symbol__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsTickerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/news/status": {
+      "get": {
+        "tags": [
+          "news"
+        ],
+        "summary": "Status",
+        "operationId": "status_news_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsStatusResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/universe": {
       "get": {
         "tags": [
@@ -4706,6 +4981,43 @@
         "title": "ClaudeReviewPayload",
         "description": "Claude's five review fields, surfaced separately \u2014 never one prose blob.\n\nTelegram renders these as one chat bubble; the console renders them as five\nlabelled sections beside the numbers they refer to. ``rolling_considerations``\nis the fifth and may be empty on the full-universe path."
       },
+      "ClusterOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "source_count": {
+            "type": "integer",
+            "title": "Source Count"
+          },
+          "last_seen": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Seen"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/SourceLinkOut"
+            },
+            "type": "array",
+            "title": "Links",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "headline",
+          "source_count",
+          "last_seen"
+        ],
+        "title": "ClusterOut"
+      },
       "CommandKind": {
         "type": "string",
         "enum": [
@@ -4721,7 +5033,8 @@
           "refresh",
           "ledger_import",
           "ledger_annotate",
-          "ledger_ca_reviewed"
+          "ledger_ca_reviewed",
+          "news_brief"
         ],
         "title": "CommandKind",
         "description": "Every intent the web layer can enqueue. Later milestones register handlers."
@@ -5002,6 +5315,136 @@
           "pending_commands"
         ],
         "title": "ControlsResponse"
+      },
+      "EarningsOut": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "report_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Report Date"
+          },
+          "timing": {
+            "type": "string",
+            "title": "Timing"
+          },
+          "eps_est": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eps Est"
+          },
+          "eps_actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eps Actual"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "held": {
+            "type": "boolean",
+            "title": "Held",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "report_date",
+          "timing",
+          "eps_est",
+          "eps_actual",
+          "status"
+        ],
+        "title": "EarningsOut"
+      },
+      "EconEventOut": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          },
+          "impact": {
+            "type": "string",
+            "title": "Impact"
+          },
+          "forecast": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
+          },
+          "surprise_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Surprise Dir"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "scheduled_at",
+          "impact",
+          "forecast",
+          "previous",
+          "actual",
+          "surprise_dir"
+        ],
+        "title": "EconEventOut"
       },
       "EquityCurve": {
         "properties": {
@@ -7154,6 +7597,68 @@
         ],
         "title": "NavSection"
       },
+      "NewsCalendarResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "econ": {
+            "items": {
+              "$ref": "#/components/schemas/EconEventOut"
+            },
+            "type": "array",
+            "title": "Econ",
+            "default": []
+          },
+          "earnings": {
+            "items": {
+              "$ref": "#/components/schemas/EarningsOut"
+            },
+            "type": "array",
+            "title": "Earnings",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available"
+        ],
+        "title": "NewsCalendarResponse"
+      },
+      "NewsFeedResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "posts": {
+            "items": {
+              "$ref": "#/components/schemas/NewsPostOut"
+            },
+            "type": "array",
+            "title": "Posts",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available"
+        ],
+        "title": "NewsFeedResponse"
+      },
       "NewsItem": {
         "properties": {
           "title": {
@@ -7212,6 +7717,281 @@
         ],
         "title": "NewsItem",
         "description": "One news headline with its per-item VADER sentiment.\n\n``sentiment`` is the VADER compound polarity in -1.0..+1.0 (0.0 = neutral/unavailable).\nThe frontend renders it as a labelled chip (label + tint, never colour-only)."
+      },
+      "NewsPostDetailResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "post": {
+            "$ref": "#/components/schemas/NewsPostOut"
+          },
+          "chart_data_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chart Data Uri"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "post"
+        ],
+        "title": "NewsPostDetailResponse"
+      },
+      "NewsPostOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "posted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Posted At"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "critical": {
+            "type": "boolean",
+            "title": "Critical"
+          },
+          "silent": {
+            "type": "boolean",
+            "title": "Silent"
+          },
+          "has_chart": {
+            "type": "boolean",
+            "title": "Has Chart"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "subject",
+          "posted_at",
+          "stage",
+          "critical",
+          "silent",
+          "has_chart",
+          "payload"
+        ],
+        "title": "NewsPostOut"
+      },
+      "NewsRequestOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Requested At"
+          },
+          "post_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Post Id"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "requested_at",
+          "post_id",
+          "error"
+        ],
+        "title": "NewsRequestOut"
+      },
+      "NewsStatusResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat At"
+          },
+          "heartbeat_age_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Age S"
+          },
+          "sources_ok": {
+            "additionalProperties": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": "object",
+            "title": "Sources Ok",
+            "default": {}
+          },
+          "breakers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Breakers",
+            "default": {}
+          },
+          "llm_calls_today": {
+            "type": "integer",
+            "title": "Llm Calls Today",
+            "default": 0
+          },
+          "llm_cap": {
+            "type": "integer",
+            "title": "Llm Cap",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available"
+        ],
+        "title": "NewsStatusResponse"
+      },
+      "NewsTickerResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "latest_brief": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NewsPostOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clusters": {
+            "items": {
+              "$ref": "#/components/schemas/ClusterOut"
+            },
+            "type": "array",
+            "title": "Clusters",
+            "default": []
+          },
+          "next_earnings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EarningsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NewsRequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "symbol"
+        ],
+        "title": "NewsTickerResponse"
       },
       "NormalizedFinancials": {
         "properties": {
@@ -8962,6 +9742,24 @@
         ],
         "title": "Source",
         "description": "Where a number came from. A Black-Scholes delta must not look like an IBKR one."
+      },
+      "SourceLinkOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "url"
+        ],
+        "title": "SourceLinkOut"
       },
       "Sourced_float_": {
         "properties": {

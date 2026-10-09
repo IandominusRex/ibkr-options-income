@@ -1,0 +1,9 @@
+{"data": {"headers": {"gmt": "Time", "country": "Country", "eventName": "Event", "actual": "Actual", "consensus": "Consensus", "previous": "Previous", "description": "Description"},
+ "rows": [
+  {"gmt": "00:30", "country": "India", "eventName": "Interest Rate Decision", "actual": "5.50%", "consensus": "5.50%", "previous": "5.25%", "description": ""},
+  {"gmt": "08:30", "country": "United States", "eventName": "Initial Jobless Claims", "actual": "197K", "consensus": "200K", "previous": "199K", "description": ""},
+  {"gmt": "08:30", "country": "United States", "eventName": "Continuing Jobless Claims", "actual": "1,716K", "consensus": "1,710K", "previous": "1,699K", "description": ""},
+  {"gmt": "04:30", "country": "United States", "eventName": "Fed Waller Speaks", "actual": "&nbsp;", "consensus": " ", "previous": "&nbsp;", "description": ""},
+  {"gmt": "All Day", "country": "United States", "eventName": "Synthetic untimed row", "actual": "", "consensus": "", "previous": "", "description": "synthetic"},
+  {"gmt": "Tentative", "country": "United States", "eventName": "Synthetic tentative row", "actual": "1.0%", "consensus": "", "previous": "", "description": "synthetic"}
+ ]}}

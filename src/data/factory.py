@@ -13,12 +13,18 @@ editing the YAML).
 from __future__ import annotations
 
 import functools
+from typing import TYPE_CHECKING
 
 from src.common.config import get_config
 from src.data.protocols import (
     BulkPriceProvider,
+    EarningsCalendarProvider,
+    EconActualsProvider,
+    EconScheduleProvider,
+    FeedProvider,
     FilingsProvider,
     FundamentalsProvider,
+    IntradayPriceProvider,
     NewsProvider,
     NewsSearchProvider,
     PriceProvider,
@@ -30,6 +36,10 @@ from src.data.yfinance_backend import (
     YFinanceNewsProvider,
     YFinancePriceProvider,
 )
+
+if TYPE_CHECKING:
+    from src.data.finnhub_backend import FinnhubClient
+    from src.data.yfinance_backend import YFinanceEarningsHistory
 
 
 def _make_price_provider(name: str) -> PriceProvider:
@@ -151,3 +161,72 @@ def get_bulk_price_provider() -> BulkPriceProvider:
     depends on, so a future bulk-OHLCV source is a config change, not a rewrite.
     """
     return _make_bulk_price_provider(get_config().data.bulk_price_provider)
+
+
+@functools.lru_cache(maxsize=1)
+def get_feed_provider() -> FeedProvider:
+    """RSS/Atom feeds for the news service (stdlib parser, conditional GET)."""
+    from src.data.rss_backend import RssFeedProvider
+
+    return RssFeedProvider()
+
+
+@functools.lru_cache(maxsize=1)
+def get_finnhub_client() -> FinnhubClient | None:
+    """Finnhub client, or None when FINNHUB_API_KEY is unset (the source is then dormant)."""
+    cfg = get_config()
+    key = cfg.secrets.finnhub_api_key
+    if not key:
+        return None
+    from src.data.finnhub_backend import FinnhubClient
+
+    return FinnhubClient(key, per_minute=cfg.news.sources.finnhub_per_minute)
+
+
+@functools.lru_cache(maxsize=1)
+def get_econ_schedule_provider() -> EconScheduleProvider:
+    name = get_config().data.econ_schedule_provider
+    if name == "forexfactory":
+        from src.data.forexfactory_backend import ForexFactoryScheduleProvider
+
+        return ForexFactoryScheduleProvider()
+    raise ValueError(f"Unknown data.econ_schedule_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_econ_actuals_provider() -> EconActualsProvider:
+    cfg = get_config()
+    name = cfg.data.econ_actuals_provider
+    if name == "nasdaq":
+        from src.data.nasdaq_backend import NasdaqEconActualsProvider
+
+        return NasdaqEconActualsProvider(cfg.news.sources.nasdaq_econ_date_offset_days)
+    raise ValueError(f"Unknown data.econ_actuals_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_earnings_calendar_provider() -> EarningsCalendarProvider:
+    cfg = get_config()
+    name = cfg.data.earnings_calendar_provider
+    if name == "nasdaq":
+        from src.data.nasdaq_backend import NasdaqEarningsProvider
+
+        return NasdaqEarningsProvider(cfg.news.sources.nasdaq_earnings_date_offset_days)
+    raise ValueError(f"Unknown data.earnings_calendar_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_earnings_history() -> YFinanceEarningsHistory:
+    from src.data.yfinance_backend import YFinanceEarningsHistory
+
+    return YFinanceEarningsHistory()
+
+
+@functools.lru_cache(maxsize=1)
+def get_intraday_price_provider() -> IntradayPriceProvider:
+    name = get_config().data.intraday_price_provider
+    if name == "yfinance":
+        from src.data.yfinance_backend import YFinanceIntradayProvider
+
+        return YFinanceIntradayProvider()
+    raise ValueError(f"Unknown data.intraday_price_provider backend: {name!r}")

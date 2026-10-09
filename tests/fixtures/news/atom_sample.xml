@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom sample</title>
+  <entry>
+    <title>Treasury announces new sanctions</title>
+    <link href="https://home.treasury.gov/news/press-releases/x1"/>
+    <updated>2026-10-09T15:30:00Z</updated>
+    <summary>Sanctions on…</summary>
+  </entry>
+</feed>

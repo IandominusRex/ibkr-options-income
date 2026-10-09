@@ -1,0 +1,6 @@
+{"data": {"headers": {"time": "Time", "symbol": "Symbol"}, "rows": [
+  {"lastYearRptDt": "10/15/2025", "lastYearEPS": "$1.06", "time": "time-pre-market", "symbol": "BAC", "name": "Bank of America Corporation", "marketCap": "$374,251,880,000", "fiscalQuarterEnding": "Sep/2026", "epsForecast": "$1.12", "noOfEsts": "6"},
+  {"lastYearRptDt": "10/15/2025", "lastYearEPS": "$6.41", "time": "time-pre-market", "symbol": "ASML", "name": "ASML Holding N.V.", "marketCap": "$695,663,460,000", "fiscalQuarterEnding": "Sep/2026", "epsForecast": "$12.47", "noOfEsts": "3"},
+  {"lastYearRptDt": "N/A", "lastYearEPS": "N/A", "time": "time-after-hours", "symbol": "LOSS", "name": "Synthetic loss maker", "marketCap": "N/A", "fiscalQuarterEnding": "Sep/2026", "epsForecast": "($0.12)", "noOfEsts": "2"},
+  {"time": "time-not-supplied", "symbol": "NOTIME", "epsForecast": "", "noOfEsts": ""}
+]}}

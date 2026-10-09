@@ -36,6 +36,7 @@ PRIVATE_CONFIG_FILES = (
     "scoring_weights.yaml",
     "universe.yaml",
     "spreads.yaml",
+    "news.yaml",
 )
 USE_EXAMPLES_ENV = "IBKR_CONFIG_USE_EXAMPLES"
 
@@ -74,6 +75,9 @@ class Secrets(BaseSettings):
     ledger_sheet_id: str = Field(default="", alias="LEDGER_SHEET_ID")
     # Daily credit spreads (docs/superpowers/plans/2026-10-07-daily-credit-spreads.md).
     telegram_thread_spreads: str = Field(default="", alias="TELEGRAM_THREAD_SPREADS")
+    # News thread (docs/superpowers/specs/2026-10-09-news-thread-design.md).
+    telegram_thread_news: str = Field(default="", alias="TELEGRAM_THREAD_NEWS")
+    finnhub_api_key: str = Field(default="", alias="FINNHUB_API_KEY")
 
 
 class ReconnectCfg(BaseModel):
@@ -380,6 +384,11 @@ class DataCfg(BaseModel):
     symbol_directory_provider: str = "edgar"
     filings_provider: str = "edgar"
     bulk_price_provider: str = "yfinance"
+    # News service sources (docs/superpowers/specs/2026-10-09-news-thread-design.md §5.1).
+    econ_schedule_provider: str = "forexfactory"
+    econ_actuals_provider: str = "nasdaq"
+    earnings_calendar_provider: str = "nasdaq"
+    intraday_price_provider: str = "yfinance"
 
 
 class ResearchDatabaseCfg(BaseModel):
@@ -565,6 +574,9 @@ class WatchdogCfg(BaseModel):
     iv_max_stale_trading_days: int = 3
     # scheduler.eod_report + this many minutes before `eod_completed` is checked.
     eod_grace_minutes: int = 90
+    # The news service (scripts/run_news.py) beats data/news.db's heartbeat every loop
+    # iteration; checked only while news.enabled.
+    news_max_age_minutes: int = 30
     realert_minutes: int = 60
     # Optional external dead-man switch (e.g. a healthchecks.io ping URL), GETed on every run
     # where every check passes — the only thing that can notice the Mac itself being off or
@@ -805,6 +817,206 @@ class SpreadsCfg(BaseModel):
         return self
 
 
+NewsCategory = Literal["government", "geopolitics", "macro", "markets", "ticker"]
+
+
+class NewsFeedCfg(BaseModel):
+    name: str
+    url: str
+    category: NewsCategory
+
+
+class NewsSourcesCfg(BaseModel):
+    rss_feeds: list[NewsFeedCfg] = Field(default_factory=list)
+    macro_queries: list[str] = Field(default_factory=list)
+    google_news_days: int = 3
+    rss_poll_minutes: int = 5
+    macro_poll_minutes: int = 10
+    ticker_round_robin_minutes: int = 30
+    econ_poll_minutes: int = 60
+    econ_fast_poll_seconds: int = 30
+    econ_fast_window_before_min: int = 2
+    econ_fast_window_after_min: int = 10
+    earnings_poll_hours: int = 6
+    finnhub_per_minute: int = 50
+    # Probed 2026-10-09: Nasdaq's economicevents?date=D returns ET day D-1's US releases.
+    # scripts/news_probe.py re-checks this; set to 0 if the probe says so.
+    nasdaq_econ_date_offset_days: int = 1
+    nasdaq_earnings_date_offset_days: int = 0
+
+
+class NewsClusterCfg(BaseModel):
+    similarity: float = 0.5
+    window_hours: int = 48
+
+
+class NewsTaggingCfg(BaseModel):
+    rumor_terms: list[str] = Field(default_factory=list)
+    forward_terms: list[str] = Field(default_factory=list)
+    topic_terms: dict[str, list[str]] = Field(default_factory=dict)
+    aliases: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class NewsAlertsCfg(BaseModel):
+    index_symbols: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "DIA"])
+    index_levels_down: list[float] = Field(default_factory=lambda: [-1.0, -2.0, -3.0])
+    index_levels_up: list[float] = Field(default_factory=lambda: [2.0, 3.0])
+    critical_index_level: float = -2.0
+    vix_jump_pct: float = 15.0
+    vix_levels: list[float] = Field(default_factory=lambda: [25.0, 30.0])
+    held_sigma: float = 2.0
+    universe_sigma: float = 3.0
+    ticker_scan_minutes: int = 5
+    geo_min_sources: int = 2
+    geo_reaction_pct: float = 0.5
+    geo_reaction_window_min: int = 30
+    geo_topics: list[str] = Field(
+        default_factory=lambda: [
+            "war",
+            "ceasefire",
+            "sanctions",
+            "tariff",
+            "fed",
+            "fiscal",
+            "energy",
+        ]
+    )
+    max_per_hour: int = 6
+    max_edits: int = 3
+
+
+class NewsReactionCfg(BaseModel):
+    window_min: int = 15
+    max_wait_min: int = 35
+    instruments_rth: dict[str, str] = Field(
+        default_factory=lambda: {
+            "stocks": "SPY",
+            "bonds": "^TNX",
+            "dollar": "UUP",
+            "gold": "GLD",
+            "oil": "USO",
+            "vol": "^VIX",
+        }
+    )
+    instruments_ext: dict[str, str] = Field(
+        default_factory=lambda: {
+            "stocks": "ES=F",
+            "bonds": "ZN=F",
+            "dollar": "DX-Y.NYB",
+            "gold": "GC=F",
+            "oil": "CL=F",
+        }
+    )
+
+
+class NewsQuietCfg(BaseModel):
+    tz: str = "Asia/Singapore"
+    start: str = "00:00"
+    end: str = "07:00"
+    critical_breaks_quiet: bool = True
+
+    @field_validator("start", "end")
+    @classmethod
+    def _valid_hhmm(cls, v: str) -> str:
+        return _hhmm(v)
+
+    @field_validator("tz")
+    @classmethod
+    def _valid_tz(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"news.quiet_hours.tz: unknown time zone {v!r}") from exc
+        return v
+
+
+class NewsDigestCfg(BaseModel):
+    premarket: str = "08:00"
+    close: str = "16:30"
+    week_ahead_weekday: int = 6  # Monday=0 … Sunday=6
+    week_ahead_time: str = "18:00"
+    max_threads: int = 6
+    max_movers: int = 5
+    # A digest whose time passed more than this long ago (the service was down) is skipped,
+    # not posted late: a pre-market brief at 15:00 ET reads as current and is not.
+    max_late_minutes: int = 120
+
+    @field_validator("premarket", "close", "week_ahead_time")
+    @classmethod
+    def _valid_hhmm(cls, v: str) -> str:
+        return _hhmm(v)
+
+
+class NewsLlmCfg(BaseModel):
+    backend: Literal["cli", "ollama", "cli_then_ollama"] = "cli_then_ollama"
+    model: str = "claude-sonnet-5-5"
+    ollama_model: str = ""  # empty = claude.ollama_model
+    timeout_seconds: float = 120.0
+    max_calls_per_day: int = 40
+
+
+class NewsSentimentCfg(BaseModel):
+    model: Literal["vader", "finbert"] = "vader"
+    lookback_hours: int = 72
+    half_life_hours: float = 24.0
+
+
+class NewsGroundingCfg(BaseModel):
+    rel_tol: float = 0.02
+
+
+class NewsFlagsCfg(BaseModel):
+    large_move_sigma: float = 2.0
+    oversold_rsi: float = 30.0
+    earnings_outsized: float = 1.5
+    earnings_muted: float = 0.5
+    sector_share: float = 1 / 3
+
+
+class NewsBriefsCfg(BaseModel):
+    poll_seconds: int = 5
+    dedupe_minutes: int = 10
+
+
+class NewsCfg(BaseModel):
+    """News service (config/news.yaml). See docs/superpowers/specs/2026-10-09-news-thread-design.md."""
+
+    enabled: bool = True
+    db_url: str = "sqlite:///data/news.db"
+    charts_dir: str = "data/news_charts"
+    retention_days: int = 30
+    lookback_hours: dict[str, int] = Field(
+        default_factory=lambda: {
+            "government": 168,
+            "geopolitics": 168,
+            "macro": 168,
+            "markets": 36,
+            "ticker": 72,
+        }
+    )
+    source_rank: list[str] = Field(default_factory=list)
+    tape_symbols_rth: list[str] = Field(
+        default_factory=lambda: ["SPY", "QQQ", "DIA", "IWM", "^VIX", "^TNX", "UUP", "GLD", "USO"]
+    )
+    tape_symbols_ext: list[str] = Field(
+        default_factory=lambda: ["ES=F", "NQ=F", "ZN=F", "DX-Y.NYB", "GC=F", "CL=F"]
+    )
+    sources: NewsSourcesCfg = Field(default_factory=NewsSourcesCfg)
+    cluster: NewsClusterCfg = Field(default_factory=NewsClusterCfg)
+    tagging: NewsTaggingCfg = Field(default_factory=NewsTaggingCfg)
+    alerts: NewsAlertsCfg = Field(default_factory=NewsAlertsCfg)
+    reaction: NewsReactionCfg = Field(default_factory=NewsReactionCfg)
+    quiet_hours: NewsQuietCfg = Field(default_factory=NewsQuietCfg)
+    digests: NewsDigestCfg = Field(default_factory=NewsDigestCfg)
+    llm: NewsLlmCfg = Field(default_factory=NewsLlmCfg)
+    sentiment: NewsSentimentCfg = Field(default_factory=NewsSentimentCfg)
+    grounding: NewsGroundingCfg = Field(default_factory=NewsGroundingCfg)
+    flags: NewsFlagsCfg = Field(default_factory=NewsFlagsCfg)
+    briefs: NewsBriefsCfg = Field(default_factory=NewsBriefsCfg)
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -824,6 +1036,7 @@ class Config(BaseModel):
     research: ResearchCfg = Field(default_factory=ResearchCfg)
     ledger: LedgerCfg = Field(default_factory=LedgerCfg)
     spreads: SpreadsCfg = Field(default_factory=SpreadsCfg)
+    news: NewsCfg = Field(default_factory=NewsCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -859,6 +1072,14 @@ class Config(BaseModel):
     def spreads_db_url_abs(self) -> str:
         """Resolve the relative spreads sqlite path against the project root."""
         url = self.spreads.db_url
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+            rel = url[len("sqlite:///") :]
+            return f"sqlite:///{(ROOT / rel).as_posix()}"
+        return url
+
+    def news_db_url_abs(self) -> str:
+        """Resolve the relative news sqlite path against the project root."""
+        url = self.news.db_url
         if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
             rel = url[len("sqlite:///") :]
             return f"sqlite:///{(ROOT / rel).as_posix()}"
@@ -963,6 +1184,7 @@ def get_config() -> Config:
         research=ResearchCfg(**_load_yaml("research.yaml")),
         ledger=LedgerCfg(**settings.get("ledger", {})),
         spreads=SpreadsCfg(**_load_yaml("spreads.yaml")),
+        news=NewsCfg(**_load_yaml("news.yaml")),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),

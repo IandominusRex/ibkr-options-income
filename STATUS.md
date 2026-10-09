@@ -330,6 +330,7 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − net_premium/100` per share for share-acquiring (put) assignments. **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads it via `campaigns.adjusted_cost_basis_for(symbol)` and uses it — falling back to IBKR's raw `avg_cost` when no open assigned campaign exists — for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
 | **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
+| **News thread: spreads-book impact, IBKR real-time reaction data** | **Deferred.** The news cards' "your book" lines cover the wheel only (spreads legs are excluded from the portfolio snapshot); real-time reaction data via IBKR is out because the news process deliberately holds no IBKR connection. No LLM-derived news signal will ever enter ranking, gating or sizing (spec D3, permanent). |
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
@@ -366,6 +367,91 @@ outside `src/api/commands.py` imports `get_command_engine`); the trading system 
 databases are separate `Base`/engine pairs so `create_all()` can never cross-build.
 
 ---
+
+## Built (2026-10-09 — the News thread: macro, market and ticker news with grounded implications)
+
+Plan: `docs/superpowers/plans/2026-10-09-news-thread.md` (branch `feat/news-thread`, Tasks 1–34;
+its Progress log carries every ruling). Spec: `docs/superpowers/specs/2026-10-09-news-thread-design.md`.
+Setup: `SETUP.md` §17. Layout: `ARCHITECTURE.md` "The news thread" and `src/news/`.
+
+- **M1 — store fills.** `src/news/` with its own `data/news.db` (ten tables, own `NewsBase`), RSS
+  (conditional GET), Google News, yfinance, Finnhub (optional key), ForexFactory schedule, Nasdaq
+  actuals and earnings timing, yfinance intraday; dedupe, deterministic tagging (tickers, aliases,
+  rumor / quantified / forward-looking / scheduled, topic), clustering; `scripts/run_news.py`
+  supervised by `scripts.start` (`--no-news`), `scripts/news_probe.py`.
+- **M2 — deterministic cards.** Fact sheet + flags, the 📘 playbook (`config/news_playbook.yaml`),
+  the 📈 measured reaction, Telegram HTML + charts, the publisher, quiet hours (SGT), triggers and
+  the alert gate, alert assembly (new / 🔄 update / threaded reply), the three digests.
+- **M3 — 🧠 explanations.** `claude -p` → Ollama → deterministic floor with a daily cap, editor +
+  writer passes, numeric/evidence grounding, the two-stage post-then-edit flow.
+- **M4 — sentiment and the reviewer read the store.** `sentiment.py` (deterministic headline
+  sentiment only, recency-weighted) and `news_context.py` prefer `news.db`; optional FinBERT.
+- **M5 — on demand.** `/news TICKER` / `/news`, the `news_brief` command kind, read-only
+  `GET /news/*`, web `/news` and `/news/[symbol]`.
+- **M6 — operable.** The watchdog's `news` heartbeat check (`watchdog.news_max_age_minutes`), docs.
+- **Final whole-branch review fixes (2026-10-09):** ticker stories were missed behind busier
+  clusters; briefs for non-universe tickers had no headlines and read 24 h instead of 72 h; an
+  alert sharing a story with a brief was folded into the brief as a silent edit; the 5-minute
+  earnings loop re-polled Nasdaq (~860 requests a day, no actuals there); every Medium US release
+  alerted critically (now High = critical, Medium only with a playbook entry, non-critical); a
+  digest headline stripped by grounding fell back to the same LLM text; Google News stories
+  counted `news.google.com` as their one source; the breaking trigger read the day's change
+  instead of the move after the story.
+
+**Fence:** nothing in `src/news/` reaches ranking, the Rules Engine or sizing (CLAUDE.md "The
+news fence"; `tests/test_news_fence.py`, `tests/test_eval_skills.py`, `tests/test_web_fence.py`).
+
+**Needs live verification:**
+- `python -m scripts.news_probe` on the operator machine before go-live: every feed answers, and the
+  inferred Nasdaq offset matches `news.sources.nasdaq_econ_date_offset_days`.
+- The first CPI / NFP end to end: the fact card within ~2 min of the release, the 📈 + 🧠 edit
+  within ~20 min, and how long after the release Nasdaq publishes the actual.
+- yfinance futures/intraday bar delay as actually seen by the reaction window.
+- Link-preview images rendering inside the forum topic.
+- `/news NVDA` round trip in Telegram and "Request fresh brief" on the web; the web pages' visual
+  check (Task 32 Step 5).
+- The digests and the deterministic posting loops have only run against fakes in tests.
+- FinBERT, if enabled (download, CPU cost per headline inside ingest).
+
+**Known limitations:**
+- ForexFactory's feed has no actuals; Nasdaq supplies them under a D+1 date key (probed 2026-10-09).
+  Both endpoints are unofficial and can change or vanish; breakers and the probe script are the
+  mitigation. Nasdaq's economic calendar is not wired as a fallback schedule.
+- Earnings-release alerts need `FINNHUB_API_KEY`: Finnhub is the only source of EPS actuals.
+  Finnhub's free tier is personal-use only and 60 calls/min (the client stays under 50).
+- yfinance futures and intraday quotes lag ~10 minutes, so 📈 can read "pending" until
+  `reaction.max_wait_min`, then the card is finished with what exists.
+- The scan's news sentiment reads the store once per symbol per day (`@daily_cached`).
+- A single message block longer than 4096 characters is hard-split (it can cut through markup);
+  an edit only rewrites the first chunk.
+- The 📘 playbook is a textbook prior, not a forecast.
+- The earnings "implied move" is IV30 scaled to one day: the news process holds no option chain,
+  so it is not the nearest-expiry straddle.
+- Ticker charts are daily only; the spec's optional intraday inset is not built.
+- The heartbeat beats only when a loop iteration completes without raising, and per-source
+  "last ok" only when the source answered with data. But the fast loops (briefs, follow-ups,
+  digests) keep the heartbeat fresh while ingest alone fails, so a dead source shows up in
+  `GET /news/status → sources_ok` and its breaker state, not as a watchdog alert.
+- `GET /news/status` breaker states are as of the news process's last heartbeat (breakers
+  live in that process's memory).
+- The ticker sweep runs 04:00–20:00 ET on trading days only (every `ticker_scan_minutes` in
+  RTH, every 30 min outside it): an overnight single-name move is seen at 04:00 ET.
+
+**Fixed 2026-10-09 (the deferred minor findings from the branch's final reviews):** alerts the
+hourly cap drops are held in `news_state` and roll into the next digest as "Also flagged (alert
+cap)", listed once (marked digested, pruned after a week), and released if they post after all; `/news/status` reports breaker states;
+the heartbeat skips iterations that raised; `source_ok` means "last good answer", not "last
+polled"; a digest more than `digests.max_late_minutes` (120) past its time is skipped instead of
+posted stale on restart; `/news TICKER` says the request is queued and why when the service is
+disabled or has no recent heartbeat; a brief whose 🧠 step fails after posting is `done`, left at
+the `fallback` stage, not `failed`, so a retry never posts a second card; a transient Telegram
+edit failure no longer re-posts the card (only a refused edit does, e.g. the message was
+deleted); FinBERT/VADER scoring and the first alias build run with no `news.db` write
+transaction open; service store reads/writes run in threads, never on the event loop; the ticker
+sweep reads each prior close once per day; Finnhub rows that are not objects (or carry non-string
+fields) are skipped instead of raising; `/news/status` reads a corrupt stored timestamp as missing
+instead of a 500; the web feed's symbol filter waits 300 ms after the last keystroke; and
+duplicate `🔄 Update` lines no longer trigger a React duplicate-key warning.
 
 ## Built (2026-10-08 — daily credit spreads: an isolated SPY 0DTE system beside the wheel)
 

@@ -1,0 +1,81 @@
+# News service — docs/superpowers/specs/2026-10-09-news-thread-design.md
+# Copy to config/news.yaml (git-ignored) to tune. Every key has a code default.
+enabled: true
+db_url: "sqlite:///data/news.db"
+charts_dir: "data/news_charts"
+retention_days: 30
+lookback_hours: {government: 168, geopolitics: 168, macro: 168, markets: 36, ticker: 72}
+# Preferred outlets for the card's primary link/preview, best first (matched on domain).
+source_rank: [reuters.com, bloomberg.com, wsj.com, cnbc.com, ft.com, apnews.com, marketwatch.com, finance.yahoo.com, barrons.com]
+sources:
+  rss_feeds:
+    - {name: "Federal Reserve press", url: "https://www.federalreserve.gov/feeds/press_all.xml", category: government}
+    - {name: "BLS releases", url: "https://www.bls.gov/feed/bls_latest.rss", category: government}
+    - {name: "BEA news", url: "https://apps.bea.gov/rss/rss.xml", category: government}
+    - {name: "CNBC Top News", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html", category: markets}
+    - {name: "CNBC Economy", url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", category: macro}
+    - {name: "MarketWatch Top", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", category: markets}
+  macro_queries:
+    - "CPI inflation report"
+    - "Federal Reserve rate decision"
+    - "jobs report nonfarm payrolls"
+    - "tariffs trade war"
+    - "ceasefire peace deal"
+    - "war escalation markets"
+    - "OPEC oil prices"
+    - "Treasury yields bond market"
+    - "stock market today"
+  google_news_days: 3
+  rss_poll_minutes: 5
+  macro_poll_minutes: 10
+  ticker_round_robin_minutes: 30
+  econ_poll_minutes: 60
+  econ_fast_poll_seconds: 30
+  econ_fast_window_before_min: 2
+  econ_fast_window_after_min: 10
+  earnings_poll_hours: 6
+  finnhub_per_minute: 50
+  nasdaq_econ_date_offset_days: 1   # probed 2026-10-09; re-check with python -m scripts.news_probe
+  nasdaq_earnings_date_offset_days: 0
+cluster: {similarity: 0.5, window_hours: 48}
+tagging:
+  rumor_terms: [reportedly, "sources say", "people familiar", "in talks", considering, weighs, "according to sources", rumor, rumour]
+  forward_terms: [guidance, outlook, forecast, expects, "raises", "cuts", "sees", projects]
+  topic_terms:
+    war: [war, invasion, missile, airstrike, strike on, troops, attack]
+    ceasefire: [ceasefire, truce, "peace deal", "peace talks", armistice]
+    sanctions: [sanction, sanctions, embargo, blacklist]
+    tariff: [tariff, tariffs, "trade war", "import duties"]
+    fed: [fed, fomc, powell, "rate cut", "rate hike", "federal reserve"]
+    fiscal: [shutdown, "debt ceiling", deficit, stimulus, "spending bill"]
+    energy: [opec, "oil price", crude, "natural gas", pipeline]
+  aliases:
+    GOOGL: [Alphabet, Google]
+    META: [Meta, Facebook]
+    BRK.B: [Berkshire]
+alerts:
+  index_symbols: [SPY, QQQ, DIA]
+  index_levels_down: [-1.0, -2.0, -3.0]
+  index_levels_up: [2.0, 3.0]
+  critical_index_level: -2.0
+  vix_jump_pct: 15.0
+  vix_levels: [25.0, 30.0]
+  held_sigma: 2.0
+  universe_sigma: 3.0
+  ticker_scan_minutes: 5
+  geo_min_sources: 2
+  geo_reaction_pct: 0.5
+  geo_reaction_window_min: 30
+  geo_topics: [war, ceasefire, sanctions, tariff, fed, fiscal, energy]
+  max_per_hour: 6
+  max_edits: 3
+reaction:
+  window_min: 15
+  max_wait_min: 35
+quiet_hours: {tz: "Asia/Singapore", start: "00:00", end: "07:00", critical_breaks_quiet: true}
+digests: {premarket: "08:00", close: "16:30", week_ahead_weekday: 6, week_ahead_time: "18:00", max_threads: 6, max_movers: 5, max_late_minutes: 120}
+llm: {backend: cli_then_ollama, model: "claude-sonnet-5-5", ollama_model: "", timeout_seconds: 120, max_calls_per_day: 40}
+sentiment: {model: vader, lookback_hours: 72, half_life_hours: 24}
+grounding: {rel_tol: 0.02}
+flags: {large_move_sigma: 2.0, oversold_rsi: 30, earnings_outsized: 1.5, earnings_muted: 0.5}
+briefs: {poll_seconds: 5, dedupe_minutes: 10}

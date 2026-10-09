@@ -21,7 +21,7 @@ means:
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/refresh/universe_add/universe_remove — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, and a `universe_add` of a spreads-book underlying (SPY/SPX/XSP) is `422` `reserved_for_spreads_book`, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
+| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/refresh/universe_add/universe_remove/news_brief — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, and a `universe_add` of a spreads-book underlying (SPY/SPX/XSP) is `422` `reserved_for_spreads_book`, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
 | `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
 | `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. `422` (`reserved_for_spreads_book`) for a spreads-book underlying (SPY/SPX/XSP). Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
@@ -506,6 +506,27 @@ to the new approval.
 - **Reachable from:** the corporate-actions list on `/ledger/import`
   (`components/ledger/ImportView.tsx`, fed by `GET /ledger/imports`), or `POST /commands` directly.
 - **Milestone:** Trade ledger (backend Tasks 1-12, web pages Tasks 13-16).
+
+### `news_brief` — ask for an on-demand news brief
+
+- **Payload:** `{ symbol: str }` — `^\$?[A-Za-z][A-Za-z0-9.\-]{0,9}$`, extra keys refused. A leading
+  `$` and lower case are accepted and normalised (`$nvda` → `NVDA`).
+- **Dedupe key:** `None` (may repeat). The news process dedupes instead: a symbol already
+  `pending`/`running`, or finished within `news.briefs.dedupe_minutes`, returns the existing request id.
+- **Applied by:** docs/superpowers/plans/2026-10-09-news-thread.md Task 30. The drain's
+  `_news_brief` handler makes one `news_requests` insert through
+  `src.news.briefs.enqueue_brief(symbol, "web")` — the only `src.news` module this process may import
+  (spec §10.7). The news process (`scripts/run_news.py`) claims the request, collects fresh headlines,
+  builds the card, posts it to the News thread and explains it. The drain creates no candidate,
+  approval or order and sends **no Telegram message**: the brief itself is the notification.
+- **Result:** `{"request_id": int, "symbol": str}`.
+- **Live mode:** No confirmation needed — it cannot reach an order.
+- **Failure modes:** `invalid_symbol` (the symbol fails `normalize_symbol`; the API's payload pattern
+  normally stops this first, so it only appears for a row written around the API).
+- **Reachable from:** the "Request fresh brief" action on `/news/[symbol]`, which then polls
+  `GET /news/ticker/{symbol}` for the brief, or `POST /commands` directly. Telegram's
+  `/news TICKER` enqueues the same request directly (`origin: "telegram"`), not through this kind.
+- **Milestone:** News thread (docs/superpowers/plans/2026-10-09-news-thread.md Tasks 28-30).
 
 ---
 

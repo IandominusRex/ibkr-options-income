@@ -7,6 +7,7 @@ const HREF: Record<string, string> = {
   portfolio: "/portfolio",
   pnl: "/pnl",
   ledger: "/ledger",
+  news: "/news",
   universe: "/universe",
   explain: "/explain",
 };

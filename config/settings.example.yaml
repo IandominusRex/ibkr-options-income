@@ -375,6 +375,7 @@ watchdog:
   scan_grace_minutes: 20         # ignore the first minutes after the open
   iv_max_stale_trading_days: 3
   eod_grace_minutes: 90          # scheduler.eod_report + this many minutes before eod_completed is checked
+  news_max_age_minutes: 30       # news service heartbeat in data/news.db (checked only while news.enabled)
   realert_minutes: 60
   deadman_url: ""                # optional: e.g. a healthchecks.io ping URL — catches the Mac being off
 
@@ -406,6 +407,11 @@ data:
   # stooq is not usable: see docs/web/data-sources.md (licence check, 2026-09-04) — the CSV
   # endpoint now sits behind a JS bot-verification challenge. yfinance is the only backend.
   bulk_price_provider: yfinance
+  # News service sources (config/news.example.yaml, SETUP.md §17). One backend each today.
+  econ_schedule_provider: forexfactory     # weekly US release schedule (no actuals)
+  econ_actuals_provider: nasdaq            # actuals; date key offset in news.sources
+  earnings_calendar_provider: nasdaq       # timing + consensus EPS (Finnhub adds actuals)
+  intraday_price_provider: yfinance        # 1-min bars incl. pre/post for the 📈 reaction
 
 monitor:
   # Short option delta drift: roll if |delta| exceeds this ceiling.

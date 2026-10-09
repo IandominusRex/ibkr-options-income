@@ -52,6 +52,7 @@ row that matches:
 | **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
 | **New command kind registered** in `command_drain.py` | `docs/web/commands.md` |
 | **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
+| **New module under `src/news/`** or a new key in `config/news.example.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
 | **New module under `src/spreads/`** or a new key in `config/spreads.example.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
@@ -261,6 +262,44 @@ engine`, relative imports and `importlib` count, plus a `sys.modules` check that
 process loads no wheel layer even transitively), `tests/test_wheel_spreads_isolation.py` and
 `tests/test_spreads_config.py` — keep them green.
 
+### The news fence — `src/news/` is enrichment with its own database
+
+`src/news/` (docs/superpowers/specs/2026-10-09-news-thread-design.md §10) runs as its own process
+(`scripts/run_news.py`, **no IBKR connection, no clientId**), with its own SQLite file
+(`data/news.db`, its own `NewsBase`), its own config (private `config/news.yaml`; the repo commits
+`config/news.example.yaml` and the reference playbook `config/news_playbook.yaml`) and its own
+Telegram thread (`TELEGRAM_THREAD_NEWS`). It explains news; it never trades. The rules:
+
+1. `src/engine/`, `src/execution/`, `src/strategies/` and `src/spreads/` never import `src.news`.
+2. `src/news/` imports nothing from `src.engine`, `src.execution`, `src.strategies`, `src.spreads`,
+   `src.orchestrator` or `src.notify.approval_service`. Reading the deterministic analytics tier
+   (technicals, IV, realized vol, price data, sector context, market conditions) is allowed —
+   enrichment may read deterministic, never the reverse.
+3. Only `src/news/` constructs `NewsBase` rows: `data/news.db` has one writer package.
+4. `src/analytics/sentiment.py` reads only the deterministic `news_items` columns
+   (`det_sentiment`, `published_at`, `fetched_at`, `tickers`, `cluster_id`, `title`) through
+   `src.news.store.readonly` — never `news_posts`, never an `Explanation`. **No LLM output reaches
+   `ScoreCard.sentiment_score`, the risk engine or sizing** (spec D3, permanent). FinBERT is
+   allowed because it is deterministic classification, not generation.
+5. `src.news` is on `tests/test_eval_skills.py`'s enrichment list.
+6. `src/api/` reaches `news.db` only through `src/api/news_db.py`'s read-only engine and the
+   Session-parameterised `src/news/store/queries.py`; it never imports `src.news.store.session`.
+   The API still writes exactly one table (`app_commands`).
+7. The only `src.news` module `src/notify/` may import is `src.news.briefs` (the `/news` command
+   and the `news_brief` drain handler) — import it as `import src.news.briefs as briefs`, since an
+   `ast` walk records `from src.news import briefs` as `src.news`. No LLM, ingest or publish code
+   loads into `approval_service`.
+
+Every number on a news card comes from deterministic code (the fact sheet, the playbook, the
+measured reaction); the LLM only writes the explanation, which `src/news/grounding.py` checks
+against those numbers before it posts. Enforced by `tests/test_news_fence.py`
+(`test_trading_path_never_imports_news`, `test_news_never_imports_the_trading_path`,
+`test_only_src_news_constructs_news_rows`, `test_notify_imports_only_the_brief_queue`,
+`test_api_never_imports_the_rw_engine`, `test_api_process_never_loads_the_rw_engine`,
+`test_sentiment_reads_only_deterministic_news_columns`, `test_brief_queue_stays_light`),
+`tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer` and
+`tests/test_web_fence.py` — keep them green.
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this
@@ -287,8 +326,9 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
 ## Conventions
 
 - Python ≥ 3.12. Config in `config/*.yaml`; **secrets only in `.env`** (gitignored) — never log or
-  commit them. `settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml` and `universe.yaml` are
-  the operator's **private, git-ignored** copies; the repo commits `config/<name>.example.yaml`.
+  commit them. `settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml`, `universe.yaml`,
+  `spreads.yaml` and `news.yaml` are the operator's **private, git-ignored** copies; the repo commits
+  `config/<name>.example.yaml` (`news_playbook.yaml` is committed reference data, not private).
   Never `git add` a private config file or anything holding an account number; tests read the
   examples (`IBKR_CONFIG_USE_EXAMPLES=1` in `tests/conftest.py`).
 - All tunables (deltas, DTE, IV thresholds, weights, concentration limits) live in

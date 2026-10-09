@@ -418,6 +418,42 @@ async def _notify_manual_scan_outcome(
         await _force_scan_reconnect(ib_scan)
 
 
+async def handle_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/news TICKER — queue an on-demand news brief (built and posted by the news process to the
+    News thread). /news — link to the latest digest. Only the brief queue is imported here
+    (spec §10.7)."""
+    if not _is_authorized(update) or update.message is None:
+        return
+    import src.news.briefs as briefs  # not `from src.news import briefs`: the fence sees `src.news`
+
+    cfg = get_config()
+    if not context.args:
+        link = await asyncio.to_thread(
+            briefs.latest_digest_link,
+            cfg.secrets.telegram_chat_id,
+            cfg.secrets.telegram_thread_news,
+        )
+        tail = f"\nLatest digest: {link}" if link else "\nNo digest posted yet."
+        await update.message.reply_text("Usage: /news TICKER (e.g. /news NVDA)" + tail)
+        return
+    raw = context.args[0]
+    try:
+        sym = briefs.normalize_symbol(raw)
+        await asyncio.to_thread(briefs.enqueue_brief, raw, "telegram")
+    except briefs.InvalidSymbol:
+        await update.message.reply_text(f"{raw!r} is not a ticker. Usage: /news NVDA")
+        return
+    try:
+        note = await asyncio.to_thread(briefs.service_note)
+    except Exception:
+        logger.debug("/news: service_note failed", exc_info=True)
+        note = None
+    if note:
+        await update.message.reply_text(f"📰 Queued {sym} brief. ⚠️ {note}")
+        return
+    await update.message.reply_text(f"📰 Building {sym} brief → News thread")
+
+
 async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Trigger a full live pipeline scan, or a single-ticker scan when a symbol is given.
 
@@ -1788,6 +1824,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     # Commands
     app.add_handler(CommandHandler("help", handle_help_command))
     app.add_handler(CommandHandler("scan", handle_scan_command))
+    app.add_handler(CommandHandler("news", handle_news_command))
     app.add_handler(CommandHandler("positions", handle_positions_command))
     app.add_handler(CommandHandler("account", handle_account_command))
     app.add_handler(CommandHandler("health", handle_health_command))
