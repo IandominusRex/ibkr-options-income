@@ -36,7 +36,7 @@
 | 20 Digests | done | (see git log) | pytest/ruff/mypy green (3094 passed) | 2026-10-09 | (a) Task 19 was skipped by request, but `digests.py` imports `src.news.links.links_for`: pulled forward ONLY `src/news/links.py` (`pick_primary`, `links_for`, verbatim from Task 19) + `tests/test_news_links.py`; `alerts.py`/`AlertContext`/`plan_alert` remain Task 19's, which must not recreate `links.py` (it re-exports from it). (b) `due_digests` typed with a `tuple[tuple[DigestName, str], ...]` and `_KIND`/`_TITLE` typed `dict[DigestName, ...]` instead of the plan's `type: ignore`s; `gather_inputs(an: Analytics)` per the Interfaces block (plan code said `object`). (c) Added `test_gather_inputs_reads_store_and_picks_tape_by_digest` (brief named no gather_inputs test), mutation-checked: swapped rth/ext tape sets, dropped the lone-ticker filter, and 72 h→16 h each fail it. |
 | 21 Service: deterministic posting loops | done (Step 5 live smoke pending) | (see git log) | pytest/ruff/mypy green (3124 passed) | 2026-10-09 | (a) `post_card` passes `reply_to` to `Publisher.send`, which gained a `reply_to` (first chunk only, `allow_sending_without_reply`): the plan code accepted `reply_to` and dropped it, so the spec §7.2 threaded reply after `max_edits` was a plain new post. Tests `test_reply_threads_under_the_existing_card`, `test_send_reply_threads_first_chunk_only`. (b) `_econ_actuals` skips rows already `alerted` (the plan only set the flag, which then guarded nothing); `test_econ_actuals_marks_alerted_and_never_redispatches`. (c) The `news_requests` reset of `running` rows is left to Task 28, which owns it. (d) `_breaking` guards a missing tape quote; `prune` reads `rowcount` via `getattr` (repo convention; mypy). (e) Added tests beyond the brief, each mutation-checked: update path edits instead of posting, smaller crossed levels are marked, digest posts once per day. (f) Step 5 live smoke NOT run: it posts to the operator's real thread 4409; deferred to the operator / Task 34. |
 | 22 LLM transport | done | (see git log) | pytest/ruff/mypy green (3103 passed) | 2026-10-09 | none to the plan code (only `ruff format`). Added 6 tests the brief did not name, each mutation-checked: a raising backend is swallowed, counted and falls through; `ollama` backend never runs the CLI; all backends failing returns `None` yet still counts both attempts; the cap stops the second backend inside one call; the cap key is the ET date (22:00 ET on the 14th is 02:00 UTC on the 15th); and the real `_ollama` passes the model override, schema and timeout through to `_generate` (falling back to `claude.ollama_model`). Docs (ARCHITECTURE/SETUP) stay deferred to Task 34 per the plan. |
-| 23 Prompts + explain + grounding | pending | | | | |
+| 23 Prompts + explain + grounding | done | (see git log) | pytest/ruff/mypy green (3138 passed) | 2026-10-09 | (a) `_validated[M: BaseModel]` bounded and its `type: ignore` dropped, as the brief's own note allows. (b) Added 5 tests the brief did not name: dollar/unit headline numbers ground, invalid twice falls back with `🧠 unavailable` and keeps the backend, an ungrounded `what_happened` falls back to the deterministic line, the editor drops unknown cluster ids (and empty input returns `None`), and the writer prompt carries facts, numbered headlines and the textbook/actual block. |
 | 24 Two-stage edit + digest editor wiring | pending | | | | |
 | 25 sentiment.py reads the store | pending | | | | |
 | 26 news_context.py reads the store | pending | | | | |
@@ -7045,7 +7045,7 @@ git commit -m "feat(news): LLM backend chain (claude -p → Ollama) with daily c
 
 **Grounding rule (spec §6.6, made precise here):** a number *must* be grounded when it carries a unit (`%`, `bp`, `bps`, `σ`, `x`, `×`, `$`, `K/M/B`), has a decimal point, or its absolute value is > 10. Bare integers 0–10 ("2nd month", "3 sources") are allowed as counts. A number is grounded when some reference value `r` (fact values, numbers in fact displays, numbers in the prompt's headlines) satisfies `|v − r| ≤ max(rel_tol·|r|, 10^−decimals)` **or** the same for `|v|` vs `|r|` (so "fell 6.2%" matches the fact `−6.2`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 # tests/test_news_grounding.py
@@ -7158,7 +7158,7 @@ def test_digest_reads_batch_one_call(news_db, monkeypatch) -> None:
     assert calls == [1] and reads[1].read == "Fewer cuts."
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/news/prompts.py`:
 
@@ -7452,7 +7452,7 @@ def digest_reads(threads: list[ClusterView], backdrop: FactSheet, *, now: dateti
 
 `_validated` uses PEP 695 generics (Python 3.12) like `runner._run_cli[T]`; if mypy complains about `model.model_validate` on a bare type var, bound it: `def _validated[M: BaseModel](model: type[M], …)`.
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/prompts.py src/news/grounding.py src/news/explain.py tests/test_news_grounding.py tests/test_news_explain.py docs/superpowers/plans/2026-10-09-news-thread.md
