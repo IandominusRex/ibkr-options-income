@@ -234,3 +234,23 @@ def test_thread_without_a_grounded_llm_headline_shows_the_source_headline() -> N
     p = D.build_digest("premarket", _inp(thread_order=[[1]], reads={1: e}))
     top = next(s for s in p.sections if s.title == "Overnight")
     assert top.items[0].text and top.items[0].read == "A read."
+
+
+def test_a_digest_missed_by_more_than_max_late_is_skipped_not_posted_stale() -> None:
+    # 08:00 ET premarket; max_late_minutes 120 -> due until 10:00 ET (14:00 UTC in October).
+    assert "premarket" in D.due_digests(datetime(2026, 10, 14, 13, 59, tzinfo=UTC), {}, C)
+    assert "premarket" not in D.due_digests(datetime(2026, 10, 14, 14, 1, tzinfo=UTC), {}, C)
+    assert "premarket" not in D.due_digests(datetime(2026, 10, 14, 19, 0, tzinfo=UTC), {}, C)
+    wide = NewsDigestCfg(max_late_minutes=8 * 60)
+    assert "premarket" in D.due_digests(datetime(2026, 10, 14, 19, 0, tzinfo=UTC), {}, wide)
+
+
+def test_held_back_alerts_get_their_own_digest_section() -> None:
+    inp = _inp()
+    inp.held_back = [("held_alert:k1", "MSFT · +4.1% · 3.2σ")]
+    p = D.build_digest("close", inp)
+    sec = next(s for s in p.sections if s.title == "Also flagged (alert cap)")
+    assert [i.text for i in sec.items] == ["MSFT · +4.1% · 3.2σ"]
+    assert "Also flagged (alert cap)" not in [
+        s.title for s in D.build_digest("close", _inp()).sections
+    ]

@@ -72,7 +72,7 @@ export function NewsCard({ post, chartUri }: { post: NewsPost; chartUri?: string
           </ul>
         </section>
       ))}
-      {p.updates.map((u) => <p key={u} className="text-xs text-muted">{u}</p>)}
+      {p.updates.map((u, i) => <p key={i} className="text-xs text-muted">{u}</p>)}
       {chartUri && (
         // A data: URI from GET /news/posts/{id}; next/image adds nothing for an inline PNG.
         // eslint-disable-next-line @next/next/no-img-element

@@ -73,7 +73,7 @@ reaction:
   window_min: 15
   max_wait_min: 35
 quiet_hours: {tz: "Asia/Singapore", start: "00:00", end: "07:00", critical_breaks_quiet: true}
-digests: {premarket: "08:00", close: "16:30", week_ahead_weekday: 6, week_ahead_time: "18:00", max_threads: 6, max_movers: 5}
+digests: {premarket: "08:00", close: "16:30", week_ahead_weekday: 6, week_ahead_time: "18:00", max_threads: 6, max_movers: 5, max_late_minutes: 120}
 llm: {backend: cli_then_ollama, model: "claude-sonnet-5-5", ollama_model: "", timeout_seconds: 120, max_calls_per_day: 40}
 sentiment: {model: vader, lookback_hours: 72, half_life_hours: 24}
 grounding: {rel_tol: 0.02}

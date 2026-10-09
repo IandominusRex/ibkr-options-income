@@ -939,6 +939,9 @@ class NewsDigestCfg(BaseModel):
     week_ahead_time: str = "18:00"
     max_threads: int = 6
     max_movers: int = 5
+    # A digest whose time passed more than this long ago (the service was down) is skipped,
+    # not posted late: a pre-market brief at 15:00 ET reads as current and is not.
+    max_late_minutes: int = 120
 
     @field_validator("premarket", "close", "week_ahead_time")
     @classmethod

@@ -16,6 +16,7 @@ from src.news.schemas import ClusterView, EarningsView, EconEventView
 from src.news.store.models import AlertStateRow, NewsPostRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import news_session
+from src.news.store.state import hold_for_digest, release_held
 from src.news.tape import Quote
 
 AlertKind = Literal[
@@ -236,6 +237,36 @@ class AlertGate:
         if c.subject in self.fired_subjects(c.kind, day):
             return False
         if not c.critical and self.hourly_noncritical(now) >= self.cfg.max_per_hour:
+            # Not recorded as fired (it may still post once the window empties), but held so
+            # the next digest carries it if it never does (spec §7.2: "roll into the next digest").
+            hold_for_digest(day, c.kind, c.subject, held_text(c), now=now)
             return False
         self.mark(c.kind, c.subject, day, now)
+        release_held(day, c.kind, c.subject)
         return True
+
+
+def _pct(v: float | str | None) -> str | None:
+    return f"{v:+.1f}%" if isinstance(v, int | float) else None
+
+
+def held_text(c: AlertCandidate) -> str:
+    """One deterministic digest line for an alert the hourly cap held back."""
+    d = c.detail
+    if c.kind == "macro_print":
+        return f"{d.get('primary') or c.subject} released"
+    if c.kind == "earnings":
+        return f"{c.subject} reported earnings"
+    if c.kind == "ticker_move":
+        sigma = d.get("sigma")
+        parts = [c.subject, _pct(d.get("change_pct"))]
+        parts.append(f"{sigma:.1f}σ" if isinstance(sigma, int | float) else None)
+        return " · ".join(p for p in parts if p)
+    if c.kind == "market_move":
+        head = " ".join(p for p in (c.subject.split(":", 1)[0], _pct(d.get("change_pct"))) if p)
+        lvl = _pct(d.get("level"))
+        return f"{head} (crossed {lvl})" if lvl else head
+    if c.kind == "vix_spike":
+        chg, last = _pct(d.get("change_pct")), d.get("last")
+        return "VIX " + (chg or (f"at {last:.1f}" if isinstance(last, int | float) else c.subject))
+    return c.subject

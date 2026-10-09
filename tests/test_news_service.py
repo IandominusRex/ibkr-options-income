@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import pytest
 
-async def test_loop_survives_exceptions_and_beats_heartbeat(news_db, monkeypatch) -> None:
+
+async def test_loop_survives_exceptions_and_never_beats_on_failure(news_db, monkeypatch) -> None:
+    """A loop whose body raises keeps running but must not beat: the watchdog would otherwise
+    read a process whose every loop fails as healthy."""
     from src.common.config import get_config
     from src.news.service import NewsService
     from src.news.store import state
@@ -22,7 +26,29 @@ async def test_loop_survives_exceptions_and_beats_heartbeat(news_db, monkeypatch
     stop.set()
     await task
     assert calls["n"] >= 2
-    assert state.get_state(state.HEARTBEAT_KEY) is not None
+    assert state.get_state(state.HEARTBEAT_KEY) is None
+
+
+async def test_successful_loop_beats_heartbeat_with_breaker_states(news_db, monkeypatch) -> None:
+    import json
+
+    import src.news.service as S
+    from src.common.config import get_config
+    from src.news.service import NewsService
+    from src.news.store import state
+
+    monkeypatch.setattr(S, "breaker_states", lambda: {"finnhub": "open", "nasdaq": "closed"})
+    svc = NewsService(get_config(), clock=lambda: datetime(2026, 10, 9, 12, tzinfo=UTC))
+    stop = asyncio.Event()
+    task = asyncio.create_task(svc._loop("ok", 0.01, lambda now: None, stop))
+    await asyncio.sleep(0.03)
+    stop.set()
+    await task
+    assert state.get_state(state.HEARTBEAT_KEY) == "2026-10-09T12:00:00+00:00"
+    assert json.loads(state.get_state(state.BREAKERS_KEY) or "{}") == {
+        "finnhub": "open",
+        "nasdaq": "closed",
+    }
 
 
 async def test_disabled_service_idles(news_db, monkeypatch) -> None:
@@ -396,3 +422,90 @@ async def test_breaking_loop_measures_each_story_from_first_seen(news_db, monkey
         )
         await svc._breaking(now)
     assert sent == [[c] for c in ("cluster:1",)]
+
+
+async def test_digest_carries_held_back_alerts_once(news_db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from src.news import service as S
+    from src.news.digests import gather_inputs
+    from src.news.store.models import NewsPostRow
+    from src.news.store.session import news_session
+    from src.news.store.state import held_alerts, hold_for_digest
+
+    svc = S.NewsService(get_config())
+    svc.publisher = None
+    now = datetime(2026, 10, 14, 12, 5, tzinfo=UTC)  # 08:05 ET premarket
+    hold_for_digest(now.date(), "ticker_move", "MSFT", "MSFT · +4.1% · 3.2σ", now=now)
+    monkeypatch.setattr("src.news.tape.tape", lambda syms: {})
+    monkeypatch.setattr("src.news.collectors.held_positions", lambda: [])
+    monkeypatch.setattr("src.news.collectors.held_underlyings", lambda: set())
+    monkeypatch.setattr(S, "gather_inputs", gather_inputs)
+    monkeypatch.setattr(svc, "_backdrop", lambda now: None)
+    monkeypatch.setattr(svc, "_rank_digest", lambda inp, now: asyncio.sleep(0))
+    await svc._digests(now)
+    with news_session() as s:
+        payload = s.query(NewsPostRow).one().payload
+    assert any(
+        sec["title"] == "Also flagged (alert cap)"
+        and [i["text"] for i in sec["items"]] == ["MSFT · +4.1% · 3.2σ"]
+        for sec in payload["sections"]
+    )
+    assert held_alerts() == []  # consumed: the next digest does not repeat it
+
+
+async def test_ticker_sweep_skips_overnight_and_caches_prior_closes(news_db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from src.news import service as S
+    from src.news.tape import Quote
+
+    svc = S.NewsService(get_config())
+    calls: list[object] = []
+
+    def fake_tape(syms, *, prev_cache=None):
+        calls.append(prev_cache)
+        return {s: Quote(symbol=s, change_pct=0.1) for s in syms}
+
+    monkeypatch.setattr(S, "tape", fake_tape)
+    monkeypatch.setattr(S, "watch_symbols", lambda: ["NVDA"])
+    monkeypatch.setattr(S, "held_underlyings", lambda: set())
+    monkeypatch.setattr(svc.an, "iv", lambda sym: None)
+
+    async def no_dispatch(cands, now, *, tape_now=None):
+        return []
+
+    monkeypatch.setattr(svc, "_dispatch", no_dispatch)
+    await svc._ticker_sweep(datetime(2026, 10, 14, 6, 0, tzinfo=UTC))  # 02:00 ET Wednesday
+    assert calls == []
+    await svc._ticker_sweep(datetime(2026, 10, 14, 15, 0, tzinfo=UTC))  # 11:00 ET
+    assert calls == [svc._prev_close]
+    assert svc._sweep_interval(datetime(2026, 10, 14, 15, 0, tzinfo=UTC)) == (
+        get_config().news.alerts.ticker_scan_minutes * 60
+    )
+    assert svc._sweep_interval(datetime(2026, 10, 14, 22, 0, tzinfo=UTC)) == 30 * 60
+
+
+def test_quote_reads_each_prior_close_once_per_day(monkeypatch) -> None:
+    from datetime import date
+
+    import pandas as pd
+
+    import src.news.tape as tape_mod
+
+    ohlcv = {"n": 0}
+
+    class P:
+        def get_last_price(self, s):
+            return 110.0
+
+        def get_ohlcv(self, s, lookback_days=10):
+            ohlcv["n"] += 1
+            return pd.DataFrame({"Close": [100.0]}, index=pd.to_datetime(["2026-10-13"]))
+
+    monkeypatch.setattr(tape_mod, "get_price_provider", lambda: P())
+    cache: dict = {}
+    day = date(2026, 10, 14)
+    q1 = tape_mod.quote("NVDA", today=day, prev_cache=cache)
+    q2 = tape_mod.quote("NVDA", today=day, prev_cache=cache)
+    assert ohlcv["n"] == 1 and q1.change_pct == q2.change_pct == pytest.approx(10.0)
+    tape_mod.quote("NVDA", today=day)  # no cache: always fetched
+    assert ohlcv["n"] == 2

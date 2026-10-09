@@ -182,3 +182,23 @@ def test_calendar_lists_the_window_and_flags_held_names(
         "TSM": False,
     }
     assert isinstance(date.fromisoformat(body["earnings"][0]["report_date"]), date)
+
+
+def test_status_survives_corrupt_state_and_shows_breakers(news_client) -> None:
+    """Only the news service writes news_state, but a hand-edited or truncated value must
+    read as missing, never a 500."""
+    from src.news.store.state import set_state
+
+    set_state("heartbeat", "not-a-time")
+    set_state("source_ok:rss", "garbage")
+    set_state("source_ok:macro", NOW.isoformat())
+    set_state("breakers", '{"finnhub": "open"}')
+    set_state(f"llm_calls:{NOW.date().isoformat()}", "x")
+    r = news_client.get("/news/status", headers=OWNER)
+    assert r.status_code == 200
+    st = r.json()
+    assert st["heartbeat_at"] is None and st["heartbeat_age_s"] is None
+    assert list(st["sources_ok"]) == ["macro"]
+    assert st["breakers"] == {"finnhub": "open"}
+    set_state("breakers", "[not json")
+    assert news_client.get("/news/status", headers=OWNER).json()["breakers"] == {}

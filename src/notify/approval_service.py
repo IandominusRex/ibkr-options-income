@@ -443,6 +443,14 @@ async def handle_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except briefs.InvalidSymbol:
         await update.message.reply_text(f"{raw!r} is not a ticker. Usage: /news NVDA")
         return
+    try:
+        note = await asyncio.to_thread(briefs.service_note)
+    except Exception:
+        logger.debug("/news: service_note failed", exc_info=True)
+        note = None
+    if note:
+        await update.message.reply_text(f"📰 Queued {sym} brief. ⚠️ {note}")
+        return
     await update.message.reply_text(f"📰 Building {sym} brief → News thread")
 
 

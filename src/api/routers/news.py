@@ -9,6 +9,7 @@ A missing or unopenable news.db answers `available: false`, never a 500.
 from __future__ import annotations
 
 import base64
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -213,6 +214,24 @@ def ticker(symbol: str, _: OwnerUser) -> NewsTickerResponse:
         )
 
 
+def _parse_at(raw: str | None) -> datetime | None:
+    """A stored ISO timestamp, or None when absent or unparseable (never a 500)."""
+    if not raw:
+        return None
+    try:
+        return aware_utc(datetime.fromisoformat(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_breakers(raw: str | None) -> dict[str, str]:
+    try:
+        d = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+
+
 @router.get("/status", response_model=NewsStatusResponse)
 def status(_: OwnerUser) -> NewsStatusResponse:
     now = _now()
@@ -222,17 +241,18 @@ def status(_: OwnerUser) -> NewsStatusResponse:
         if s is None:
             return NewsStatusResponse(as_of=now, available=False, llm_cap=cap)
         hb = queries.state_values(s, "heartbeat").get("heartbeat")
+        breakers = queries.state_values(s, "breakers").get("breakers")
         src_ok = queries.state_values(s, "source_ok:")
         calls = queries.state_values(s, llm_key).get(llm_key)
-    hb_at = aware_utc(datetime.fromisoformat(hb)) if hb else None
+    hb_at = _parse_at(hb)
+    sources = {k.split(":", 1)[1]: _parse_at(v) for k, v in src_ok.items()}
     return NewsStatusResponse(
         as_of=now,
         available=True,
         heartbeat_at=hb_at,
         heartbeat_age_s=(now - hb_at).total_seconds() if hb_at else None,
-        sources_ok={
-            k.split(":", 1)[1]: aware_utc(datetime.fromisoformat(v)) for k, v in src_ok.items()
-        },
-        llm_calls_today=int(calls) if calls else 0,
+        sources_ok={k: v for k, v in sources.items() if v is not None},
+        breakers=_parse_breakers(breakers),
+        llm_calls_today=int(calls) if calls and calls.isdigit() else 0,
         llm_cap=cap,
     )

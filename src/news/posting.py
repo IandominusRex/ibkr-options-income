@@ -3,6 +3,7 @@ reach Telegram is still recorded (the web page shows it)."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -39,6 +40,22 @@ async def post_card(
             show_above=msg.show_above,
             reply_to=reply_to,
         )
+    pid = await asyncio.to_thread(_insert_post, payload, mid, now, silent)
+    if chart:
+        charts_dir = Path(cfg.news.charts_dir)
+        path = await asyncio.to_thread(
+            save_chart, chart, charts_dir if charts_dir.is_absolute() else ROOT / charts_dir, pid
+        )
+        cmid = (
+            await publisher.send_photo(chart, reply_to=mid, silent=True)
+            if publisher is not None and mid
+            else None
+        )
+        await asyncio.to_thread(_set_chart, pid, path, cmid)
+    return pid
+
+
+def _insert_post(payload: CardPayload, mid: int | None, now: datetime, silent: bool) -> int:
     with news_session() as s:
         row = NewsPostRow(
             kind=payload.kind,
@@ -54,53 +71,31 @@ async def post_card(
         )
         s.add(row)
         s.flush()
-        pid = row.id
-    if chart:
-        path = save_chart(
-            chart,
-            ROOT / cfg.news.charts_dir
-            if not Path(cfg.news.charts_dir).is_absolute()
-            else Path(cfg.news.charts_dir),
-            pid,
-        )
-        cmid = (
-            await publisher.send_photo(chart, reply_to=mid, silent=True)
-            if publisher is not None and mid
-            else None
-        )
-        with news_session() as s:
-            row2 = s.get(NewsPostRow, pid)
-            assert row2 is not None
-            row2.chart_path, row2.chart_message_id = path, cmid
-    return pid
+        return row.id
 
 
-async def update_post(
+def _set_chart(post_id: int, path: str, chart_mid: int | None) -> None:
+    with news_session() as s:
+        row = s.get(NewsPostRow, post_id)
+        assert row is not None
+        row.chart_path, row.chart_message_id = path, chart_mid
+
+
+def _post_message_id(post_id: int) -> tuple[bool, int | None]:
+    with news_session() as s:
+        row = s.get(NewsPostRow, post_id)
+        return (False, None) if row is None else (True, row.telegram_message_id)
+
+
+def _write_update(
     post_id: int,
     payload: CardPayload,
     *,
-    publisher: Publisher | None,
-    stage: str | None = None,
-    llm_backend: str | None = None,
-    count_edit: bool = True,
-) -> bool:
-    with news_session() as s:
-        row = s.get(NewsPostRow, post_id)
-        if row is None:
-            return False
-        mid = row.telegram_message_id
-    ok = True
-    new_mid = None
-    if publisher is not None and mid:
-        msg = render_card(payload)
-        ok = await publisher.edit(
-            mid, msg.text, preview_url=msg.preview_url, show_above=msg.show_above
-        )
-        if not ok:  # the message is gone (deleted in Telegram): post a fresh card (spec §11)
-            new_mid = await publisher.send(
-                msg.text, silent=True, preview_url=msg.preview_url, show_above=msg.show_above
-            )
-            ok = new_mid is not None
+    new_mid: int | None,
+    stage: str | None,
+    llm_backend: str | None,
+    count_edit: bool,
+) -> None:
     with news_session() as s:
         row = s.get(NewsPostRow, post_id)
         assert row is not None
@@ -114,6 +109,47 @@ async def update_post(
             row.stage = stage
         if llm_backend:
             row.llm_backend = llm_backend
+
+
+async def update_post(
+    post_id: int,
+    payload: CardPayload,
+    *,
+    publisher: Publisher | None,
+    stage: str | None = None,
+    llm_backend: str | None = None,
+    count_edit: bool = True,
+) -> bool:
+    """Store the new payload and edit the Telegram message. Returns False when Telegram did
+    not take the change; the store (and so the web page) is updated either way."""
+    exists, mid = await asyncio.to_thread(_post_message_id, post_id)
+    if not exists:
+        return False
+    ok = True
+    new_mid = None
+    if publisher is not None and mid:
+        msg = render_card(payload)
+        edited = await publisher.edit(
+            mid, msg.text, preview_url=msg.preview_url, show_above=msg.show_above
+        )
+        if (
+            edited is False
+        ):  # the message is gone (deleted in Telegram): post a fresh card (spec §11)
+            new_mid = await publisher.send(
+                msg.text, silent=True, preview_url=msg.preview_url, show_above=msg.show_above
+            )
+            ok = new_mid is not None
+        elif edited is None:  # a transient failure: the card is still there, never duplicate it
+            ok = False
+    await asyncio.to_thread(
+        _write_update,
+        post_id,
+        payload,
+        new_mid=new_mid,
+        stage=stage,
+        llm_backend=llm_backend,
+        count_edit=count_edit,
+    )
     return ok
 
 

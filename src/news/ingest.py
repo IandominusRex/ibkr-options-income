@@ -19,6 +19,7 @@ from src.news.store.session import news_session
 class IngestResult:
     new_items: int = 0
     cluster_ids: set[int] = field(default_factory=set)
+    fetched: int = 0  # items the source handed in, before dedupe (0 = the source gave nothing)
 
 
 def _best_cluster(
@@ -32,6 +33,45 @@ def _best_cluster(
     return best if best is not None and best_score >= threshold else None
 
 
+def _score_new_titles(
+    items: list[NewsItem], cfg: NewsCfg, window_start: datetime
+) -> dict[str, float]:
+    """Score the titles not already stored BEFORE the write transaction opens: FinBERT costs
+    tens of ms a headline, and holding news.db's write lock that long blocks every other
+    writer. A re-polled feed is mostly duplicates, so those are filtered out first."""
+    keyed = {}
+    for item in items:
+        title = (item.title or "").strip()
+        if title:
+            keyed[title] = (
+                text.url_hash(item.url, title, item.source),
+                text.title_hash(title, item.source),
+            )
+    if not keyed:
+        return {}
+    with news_session() as s:
+        stored_urls = set(
+            s.scalars(
+                select(NewsItemRow.url_hash).where(
+                    NewsItemRow.url_hash.in_([u for u, _ in keyed.values()])
+                )
+            )
+        )
+        stored_titles = set(
+            s.scalars(
+                select(NewsItemRow.title_hash).where(
+                    NewsItemRow.title_hash.in_([t for _, t in keyed.values()]),
+                    NewsItemRow.fetched_at >= window_start,
+                )
+            )
+        )
+    return {
+        title: tagging.det_sentiment(title, cfg.sentiment.model)
+        for title, (uh, th) in keyed.items()
+        if uh not in stored_urls and th not in stored_titles
+    }
+
+
 def ingest(
     items: list[NewsItem],
     *,
@@ -43,9 +83,10 @@ def ingest(
     scheduled_symbols: frozenset[str] = frozenset(),
     scheduled_terms: tuple[str, ...] = (),
 ) -> IngestResult:
-    result = IngestResult()
+    result = IngestResult(fetched=len(items))
     now_n = naive_utc(now)
     window_start = now_n - timedelta(hours=cfg.cluster.window_hours)
+    scores = _score_new_titles(items, cfg, window_start)
     with news_session() as s:
         clusters = list(
             s.scalars(
@@ -133,7 +174,9 @@ def ingest(
                     fetched_at=now_n,
                     tickers=tickers,
                     tags=tags,
-                    det_sentiment=tagging.det_sentiment(title, cfg.sentiment.model),
+                    det_sentiment=scores[title]
+                    if title in scores
+                    else tagging.det_sentiment(title, cfg.sentiment.model),
                     summary=item.summary or None,
                     image_url=item.image_url or None,
                     cluster_id=cluster.id,

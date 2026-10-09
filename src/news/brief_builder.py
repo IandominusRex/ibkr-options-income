@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from src.news.alerts import ticker_card
 from src.news.followup import complete_post
-from src.news.posting import post_card, ticker_chart
+from src.news.posting import post_card, ticker_chart, update_post
 from src.news.triggers import AlertCandidate
 
 if TYPE_CHECKING:
     from src.news.service import NewsService
+
+log = logging.getLogger(__name__)
 
 
 async def build_brief(symbol: str, *, svc: NewsService, now: datetime) -> int:
@@ -27,5 +30,14 @@ async def build_brief(symbol: str, *, svc: NewsService, now: datetime) -> int:
             ticker_chart, symbol, payload.facts, ctx.an, ctx.positions, ctx.today
         )
     pid = await post_card(payload, publisher=svc.publisher, cfg=svc.cfg, now=now, chart=chart)
-    await complete_post(pid, payload, now=now, cfg=svc.cfg, publisher=svc.publisher)
+    try:
+        await complete_post(pid, payload, now=now, cfg=svc.cfg, publisher=svc.publisher)
+    except Exception:
+        # The card is already posted: the request is done, not failed (a retry would post a
+        # second card). Leave it at the deterministic facts stage, marked as a fallback.
+        log.exception("news brief %s: explanation failed after posting", symbol)
+        try:
+            await update_post(pid, payload, publisher=None, stage="fallback", count_edit=False)
+        except Exception:
+            log.debug("news brief %s: could not mark post %s", symbol, pid, exc_info=True)
     return pid

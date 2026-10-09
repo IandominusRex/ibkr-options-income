@@ -2861,6 +2861,13 @@ export interface components {
                 [key: string]: string;
             };
             /**
+             * Breakers
+             * @default {}
+             */
+            breakers: {
+                [key: string]: string;
+            };
+            /**
              * Llm Calls Today
              * @default 0
              */

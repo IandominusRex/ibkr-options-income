@@ -428,13 +428,30 @@ news fence"; `tests/test_news_fence.py`, `tests/test_eval_skills.py`, `tests/tes
 - The earnings "implied move" is IV30 scaled to one day: the news process holds no option chain,
   so it is not the nearest-expiry straddle.
 - Ticker charts are daily only; the spec's optional intraday inset is not built.
-- Non-critical alerts dropped by the hourly cap are dropped, not rolled into the next digest.
-- `/news/status` shows no breaker states (breakers are per-process).
-- The heartbeat says the process is alive, not that every source is answering; per-source
-  "last ok" is written after each poll even when that poll's requests failed.
-- A digest whose time passed while the service was down posts late on restart.
-- `/news TICKER` replies "Building…" even while the news service is down; the request runs when
-  it starts.
+- The heartbeat beats only when a loop iteration completes without raising, and per-source
+  "last ok" only when the source answered with data. But the fast loops (briefs, follow-ups,
+  digests) keep the heartbeat fresh while ingest alone fails, so a dead source shows up in
+  `GET /news/status → sources_ok` and its breaker state, not as a watchdog alert.
+- `GET /news/status` breaker states are as of the news process's last heartbeat (breakers
+  live in that process's memory).
+- The ticker sweep runs 04:00–20:00 ET on trading days only (every `ticker_scan_minutes` in
+  RTH, every 30 min outside it): an overnight single-name move is seen at 04:00 ET.
+
+**Fixed 2026-10-09 (the deferred minor findings from the branch's final reviews):** alerts the
+hourly cap drops are held in `news_state` and roll into the next digest as "Also flagged (alert
+cap)", then cleared, and released if they post after all; `/news/status` reports breaker states;
+the heartbeat skips iterations that raised; `source_ok` means "last good answer", not "last
+polled"; a digest more than `digests.max_late_minutes` (120) past its time is skipped instead of
+posted stale on restart; `/news TICKER` says the request is queued and why when the service is
+disabled or has no recent heartbeat; a brief whose 🧠 step fails after posting is `done`, left at
+the `fallback` stage, not `failed`, so a retry never posts a second card; a transient Telegram
+edit failure no longer re-posts the card (only a refused edit does, e.g. the message was
+deleted); FinBERT/VADER scoring and the first alias build run with no `news.db` write
+transaction open; service store reads/writes run in threads, never on the event loop; the ticker
+sweep reads each prior close once per day; Finnhub rows that are not objects (or carry non-string
+fields) are skipped instead of raising; `/news/status` reads a corrupt stored timestamp as missing
+instead of a 500; the web feed's symbol filter waits 300 ms after the last keystroke; and
+duplicate `🔄 Update` lines no longer trigger a React duplicate-key warning.
 
 ## Built (2026-10-08 — daily credit spreads: an isolated SPY 0DTE system beside the wheel)
 

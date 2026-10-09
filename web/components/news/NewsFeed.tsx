@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { CalendarColumn } from "./CalendarColumn";
@@ -15,9 +15,15 @@ const GROUPS: { key: string | null; label: string }[] = [
 export function NewsFeed() {
   const [group, setGroup] = useState<string | null>(null);
   const [symbol, setSymbol] = useState("");
+  // The query follows the box 300ms after the last keystroke, not on every one.
+  const [filter, setFilter] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setFilter(symbol.trim().toUpperCase()), 300);
+    return () => clearTimeout(id);
+  }, [symbol]);
   const params = new URLSearchParams();
   if (group) params.set("group", group);
-  if (symbol.trim()) params.set("symbol", symbol.trim().toUpperCase());
+  if (filter) params.set("symbol", filter);
   params.set("limit", "30");
   const path = `/news/feed?${params.toString()}`;
   const q = useQuery({ queryKey: ["news", "feed", path], queryFn: () => apiFetch<NewsFeedResponse>(path),

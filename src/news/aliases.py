@@ -27,25 +27,29 @@ def clean_company_name(name: str) -> str | None:
     return t if len(t) >= 3 else None
 
 
+def _fetch_aliases(symbol: str) -> list[str]:
+    info = get_fundamentals_provider().get_info(symbol) or {}
+    names = {clean_company_name(str(info.get(k) or "")) for k in ("shortName", "longName")}
+    return sorted(n for n in names if n)
+
+
 def load_aliases(
     symbols: list[str], *, overrides: dict[str, list[str]], now: datetime
 ) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
+    """Cached aliases per symbol; stale or missing ones are fetched from the fundamentals
+    provider with no transaction open (a first build is ~one get_info call per symbol, and
+    holding news.db's write lock across them would stall every other writer)."""
     now_n = naive_utc(now)
     with news_session() as s:
+        cached: dict[str, list[str]] = {}
         for sym in symbols:
             row = s.get(TickerAliasRow, sym)
-            if row is None or now_n - row.fetched_at > _TTL:
-                info = get_fundamentals_provider().get_info(sym) or {}
-                names = {
-                    clean_company_name(str(info.get(k) or "")) for k in ("shortName", "longName")
-                }
-                aliases = sorted(n for n in names if n)
-                if row is None:
-                    s.add(TickerAliasRow(symbol=sym, aliases=aliases, fetched_at=now_n))
-                else:
-                    row.aliases, row.fetched_at = aliases, now_n
-            else:
-                aliases = list(row.aliases or [])
-            out[sym] = sorted(set(aliases) | set(overrides.get(sym, [])))
-    return out
+            if row is not None and now_n - row.fetched_at <= _TTL:
+                cached[sym] = list(row.aliases or [])
+    fetched = {sym: _fetch_aliases(sym) for sym in symbols if sym not in cached}
+    if fetched:
+        with news_session() as s:
+            for sym, aliases in fetched.items():
+                s.merge(TickerAliasRow(symbol=sym, aliases=aliases, fetched_at=now_n))
+    found = {**cached, **fetched}
+    return {sym: sorted(set(found[sym]) | set(overrides.get(sym, []))) for sym in symbols}

@@ -1,4 +1,4 @@
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { NewsFeed } from "./NewsFeed";
@@ -20,6 +20,20 @@ describe("NewsFeed", () => {
     fireEvent.click(screen.getByRole("button", { name: "Earnings" }));
     expect(await screen.findByText("AAPL earnings")).toBeInTheDocument();
     expect(apiFetchMock.mock.calls.some((c) => String(c[0]).includes("group=earnings"))).toBe(true);
+  });
+
+  it("filters by symbol once typing pauses, not on every keystroke", async () => {
+    renderWithQuery(<NewsFeed />, {
+      "/news/feed?limit=30": { as_of: ISO, available: true, posts: [post(1, "macro_print", "CPI")] },
+      "/news/feed?symbol=NVDA&limit=30": { as_of: ISO, available: true, posts: [post(3, "ticker_move", "NVDA move")] },
+      "/news/calendar?days=7": { as_of: ISO, available: true, econ: [], earnings: [] },
+    });
+    expect(await screen.findByText("CPI")).toBeInTheDocument();
+    const box = screen.getByLabelText("Filter by symbol");
+    for (const v of ["n", "nv", "nvd", "nvda"]) fireEvent.change(box, { target: { value: v } });
+    expect(await screen.findByText("NVDA move")).toBeInTheDocument();
+    const symbolCalls = () => apiFetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.includes("symbol="));
+    await waitFor(() => expect(symbolCalls()).toEqual(["/news/feed?symbol=NVDA&limit=30"]));
   });
 
   it("says the news service has not run yet when unavailable", async () => {

@@ -1,7 +1,9 @@
 """The news process: asyncio loops over blocking source/LLM work run in threads.
 
 Every loop body is wrapped — an exception is logged and the loop continues (spec §11) —
-and every completed iteration beats the heartbeat the watchdog reads (Task 33).
+and every iteration that completes without raising beats the heartbeat the watchdog reads
+(Task 33), so a process whose every loop fails reads as stale, not alive. Store reads and
+writes run in threads like the source calls: the event loop never blocks on SQLite.
 """
 
 from __future__ import annotations
@@ -9,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
@@ -18,6 +20,7 @@ from src.analytics.market_conditions import get_market_conditions
 from src.common.config import Config
 from src.common.market_hours import is_rth, is_trading_day
 from src.common.schemas import MarketConditions
+from src.data.breaker import breaker_states
 from src.data.factory import get_intraday_price_provider
 from src.news import triggers as T
 from src.news.alerts import AlertContext, build_card, plan_alert
@@ -28,11 +31,12 @@ from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
 from src.news.publish import Publisher
 from src.news.reaction import move_after
+from src.news.schemas import ClusterView, EarningsView, EconEventView
 from src.news.store import queries
 from src.news.store.models import EarningsEventRow, EconEventRow, NewsPostRow, NewsRequestRow
 from src.news.store.prune import prune
 from src.news.store.session import init_news_db, news_session
-from src.news.store.state import get_state, set_state, touch_heartbeat
+from src.news.store.state import delete_state, get_state, set_state, touch_heartbeat
 from src.news.tape import Quote, tape
 
 log = logging.getLogger(__name__)
@@ -56,22 +60,28 @@ class NewsService:
         self.an = Analytics.live()
         self.last_movers: list[T.TickerMove] = []
         self._backdrop_cache: tuple[datetime, MarketConditions | None] | None = None
+        self._prev_close: dict[tuple[str, date], float] = {}  # the sweep's prior closes, per day
 
     async def _loop(
         self, name: str, interval_s: Interval, fn: Callable[[datetime], object], stop: asyncio.Event
     ) -> None:
         while not stop.is_set():
             now = self.clock()
+            ok = False
             try:
                 result = fn(now)
                 if asyncio.iscoroutine(result):
                     await result
+                ok = True
             except Exception:
                 log.exception("news loop %s failed", name)
-            try:
-                await asyncio.to_thread(touch_heartbeat, self.clock())
-            except Exception:
-                log.debug("heartbeat write failed", exc_info=True)
+            if ok:
+                try:
+                    await asyncio.to_thread(
+                        touch_heartbeat, self.clock(), breakers=breaker_states()
+                    )
+                except Exception:
+                    log.debug("heartbeat write failed", exc_info=True)
             wait = interval_s(self.clock()) if callable(interval_s) else interval_s
             try:
                 await asyncio.wait_for(stop.wait(), timeout=wait)
@@ -110,7 +120,7 @@ class NewsService:
             ),
             ("econ_actuals", self._econ_interval, self._econ_actuals),
             ("tape", 120, self._tape_alerts),
-            ("tickers_sweep", self.ncfg.alerts.ticker_scan_minutes * 60, self._ticker_sweep),
+            ("tickers_sweep", self._sweep_interval, self._ticker_sweep),
             ("earnings_alerts", 300, self._earnings_alerts),
             ("breaking", 120, self._breaking),
             ("digests", 60, self._digests),
@@ -178,9 +188,7 @@ class NewsService:
                 )
             reply_to = None
             if act.action == "reply" and act.post_id is not None:
-                with news_session() as s:
-                    row = s.get(NewsPostRow, act.post_id)
-                    reply_to = row.telegram_message_id if row else None
+                reply_to = await asyncio.to_thread(_message_id, act.post_id)
             ids.append(
                 await post_card(
                     act.payload,
@@ -203,18 +211,10 @@ class NewsService:
         keys = await asyncio.to_thread(self.collector.refresh_econ_actuals, now)
         if not keys:
             return
-        with news_session() as s:
-            evs = [
-                queries.econ_view(r)
-                for r in (s.get(EconEventRow, k) for k in keys)
-                if r is not None and not r.alerted
-            ]
+        evs = await asyncio.to_thread(_unalerted_econ, keys)
         await self._dispatch(T.group_macro_releases(evs, load_playbook()), now)
-        with news_session() as s:  # belt-and-braces beside the gate: a restart never re-alerts
-            for e in evs:
-                row = s.get(EconEventRow, e.event_key)
-                if row is not None:
-                    row.alerted = True
+        # belt-and-braces beside the gate: a restart never re-alerts
+        await asyncio.to_thread(_mark_econ_alerted, [e.event_key for e in evs])
 
     async def _tape_alerts(self, now: datetime) -> None:
         day = now.astimezone(ET).date()
@@ -232,11 +232,21 @@ class NewsService:
         vix_cands = T.detect_vix(vix, self.ncfg.alerts) if vix is not None else []
         await self._dispatch(new + vix_cands, now, tape_now=tp)
 
+    def _sweep_interval(self, now: datetime) -> float:
+        """Every ``ticker_scan_minutes`` in the regular session; every 30 min otherwise."""
+        if is_rth(now):
+            return float(self.ncfg.alerts.ticker_scan_minutes * 60)
+        return 30 * 60.0
+
     async def _ticker_sweep(self, now: datetime) -> None:
-        if not is_trading_day(now.astimezone(ET).date()):
+        et = now.astimezone(ET)
+        # Extended hours only (04:00-20:00 ET): overnight, last prices do not move, and each
+        # sweep is ~2 yfinance calls per watched symbol.
+        if not is_trading_day(et.date()) or not time(4) <= et.time() < time(20):
             return
         syms = await asyncio.to_thread(watch_symbols)
-        tp = await asyncio.to_thread(tape, [*syms, "SPY"])
+        self._prev_close = {k: v for k, v in self._prev_close.items() if k[1] == et.date()}
+        tp = await asyncio.to_thread(tape, [*syms, "SPY"], prev_cache=self._prev_close)
         spy = tp.get("SPY")
         moves: list[T.TickerMove] = []
         for sym in syms:
@@ -255,36 +265,24 @@ class NewsService:
                 )
             )
         self.last_movers = moves
-        cands = T.detect_ticker_moves(
-            moves, held=held_underlyings(), universe=set(syms), cfg=self.ncfg.alerts
-        )
+        held = await asyncio.to_thread(held_underlyings)
+        cands = T.detect_ticker_moves(moves, held=held, universe=set(syms), cfg=self.ncfg.alerts)
         await self._dispatch(cands, now, tape_now=tp)
 
     async def _earnings_alerts(self, now: datetime) -> None:
         released = await asyncio.to_thread(self.collector.refresh_earnings_actuals, now)
         if not released:
             return
-        with news_session() as s:
-            views = [v for sym, d in released for v in queries.earnings_between(s, d, d, {sym})]
-        cands = T.detect_earnings(views, held=held_underlyings(), universe=set(watch_symbols()))
+        views = await asyncio.to_thread(_earnings_views, released)
+        held, universe = await asyncio.to_thread(lambda: (held_underlyings(), set(watch_symbols())))
+        cands = T.detect_earnings(views, held=held, universe=universe)
         await self._dispatch(cands, now)
-        with news_session() as s:
-            for sym, d in released:
-                row = s.get(EarningsEventRow, (sym, d))
-                if row is not None:
-                    row.alerted = True
+        await asyncio.to_thread(_mark_earnings_alerted, released)
 
     async def _breaking(self, now: datetime) -> None:
         win_min = self.ncfg.alerts.geo_reaction_window_min
         win = timedelta(minutes=win_min)
-        with news_session() as s:
-            clusters = [
-                c
-                for cat in ("geopolitics", "macro", "government", "markets")
-                for c in queries.clusters_since(s, now - win, category=cat, limit=20)
-                # the reaction is measured within win of first_seen, so only young stories
-                if c.first_seen >= now - 2 * win
-            ]
+        clusters = await asyncio.to_thread(_young_clusters, now, win)
         if not clusters:
             return
         sym = "SPY" if is_rth(now) else "ES=F"
@@ -347,7 +345,9 @@ class NewsService:
             )
 
     async def _digests(self, now: datetime) -> None:
-        sent = {n: get_state(f"digest_sent:{n}") or "" for n in ("premarket", "close", "week")}
+        sent = await asyncio.to_thread(
+            lambda: {n: get_state(f"digest_sent:{n}") or "" for n in ("premarket", "close", "week")}
+        )
         for name in due_digests(now, sent, self.ncfg.digests):
             inp = await asyncio.to_thread(gather_inputs, name, now=now, cfg=self.cfg, an=self.an)
             if name == "close":
@@ -363,7 +363,11 @@ class NewsService:
                 stage="explained" if inp.reads else "fallback",
                 count_edit=False,
             )
-            set_state(f"digest_sent:{name}", now.astimezone(ET).date().isoformat())
+            await asyncio.to_thread(
+                set_state, f"digest_sent:{name}", now.astimezone(ET).date().isoformat()
+            )
+            if inp.held_back:  # posted in this digest: never again in the next one
+                await asyncio.to_thread(delete_state, [k for k, _ in inp.held_back])
 
     def run_once_ingest(self, now: datetime) -> None:
         self.collector.refresh_econ_schedule(now)
@@ -386,6 +390,56 @@ class NewsService:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# --- store helpers the loops run in threads ------------------------------------------------
+
+
+def _message_id(post_id: int) -> int | None:
+    with news_session() as s:
+        row = s.get(NewsPostRow, post_id)
+        return row.telegram_message_id if row else None
+
+
+def _unalerted_econ(keys: list[str]) -> list[EconEventView]:
+    with news_session() as s:
+        return [
+            queries.econ_view(r)
+            for r in (s.get(EconEventRow, k) for k in keys)
+            if r is not None and not r.alerted
+        ]
+
+
+def _mark_econ_alerted(keys: list[str]) -> None:
+    with news_session() as s:
+        for k in keys:
+            row = s.get(EconEventRow, k)
+            if row is not None:
+                row.alerted = True
+
+
+def _earnings_views(released: list[tuple[str, date]]) -> list[EarningsView]:
+    with news_session() as s:
+        return [v for sym, d in released for v in queries.earnings_between(s, d, d, {sym})]
+
+
+def _mark_earnings_alerted(released: list[tuple[str, date]]) -> None:
+    with news_session() as s:
+        for sym, d in released:
+            row = s.get(EarningsEventRow, (sym, d))
+            if row is not None:
+                row.alerted = True
+
+
+def _young_clusters(now: datetime, win: timedelta) -> list[ClusterView]:
+    with news_session() as s:
+        return [
+            c
+            for cat in ("geopolitics", "macro", "government", "markets")
+            for c in queries.clusters_since(s, now - win, category=cat, limit=20)
+            # the reaction is measured within win of first_seen, so only young stories
+            if c.first_seen >= now - 2 * win
+        ]
 
 
 async def run(stop: asyncio.Event) -> None:

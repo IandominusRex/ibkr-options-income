@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NewsCard } from "./NewsCard";
 import type { NewsPost } from "./types";
 
@@ -24,6 +24,15 @@ describe("NewsCard", () => {
     expect(screen.getByTestId("verdict")).toHaveTextContent("Further downside likely");
     expect(screen.getByText(/NVDA 165P 3.1% OTM/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "BLS" })).toHaveAttribute("href", "https://www.bls.gov/x");
+  });
+
+  it("renders two identical update lines without a duplicate-key warning", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const same = "🔄 Update: SPY -2.0%";
+    render(<NewsCard post={{ ...POST, payload: { ...POST.payload, updates: [same, same] } }} />);
+    expect(screen.getAllByText(same)).toHaveLength(2);
+    expect(err.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+    err.mockRestore();
   });
 
   it("never renders an em dash in UI copy", () => {

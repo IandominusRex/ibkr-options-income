@@ -1,14 +1,20 @@
-"""Small key/value state in news_state: heartbeat, LLM call counter, per-source last-ok."""
+"""Small key/value state in news_state: heartbeat, breaker states, LLM call counter,
+per-source last-ok, and alerts the hourly cap held back for the next digest."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
+
+from sqlalchemy import select
 
 from src.news.store.models import NewsStateRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import news_session
 
 HEARTBEAT_KEY = "heartbeat"
+BREAKERS_KEY = "breakers"
+HELD_PREFIX = "held_alert:"
 
 
 def _llm_key(day: date) -> str:
@@ -32,12 +38,63 @@ def get_state(key: str) -> str | None:
         return None if row is None else row.value
 
 
-def touch_heartbeat(now: datetime) -> None:
+def delete_state(keys: list[str]) -> None:
+    with news_session() as s:
+        for key in keys:
+            row = s.get(NewsStateRow, key)
+            if row is not None:
+                s.delete(row)
+
+
+def touch_heartbeat(now: datetime, *, breakers: dict[str, str] | None = None) -> None:
+    """Beat the watchdog's heartbeat. ``breakers`` (src.data.breaker.breaker_states()) is
+    stored beside it: breakers live in the news process's memory, so this is the only way
+    ``GET /news/status`` can show them (spec §7.6)."""
     set_state(HEARTBEAT_KEY, now.astimezone(UTC).isoformat(), now=now)
+    if breakers is not None:
+        set_state(BREAKERS_KEY, json.dumps(breakers, sort_keys=True), now=now)
 
 
 def record_source_ok(source: str, now: datetime) -> None:
+    """Call only when the source answered with data (or an HTTP 304): ``source_ok`` means
+    "last good response", not "last polled"."""
     set_state(f"source_ok:{source}", now.astimezone(UTC).isoformat(), now=now)
+
+
+def _held_key(day: date, kind: str, subject: str) -> str:
+    return f"{HELD_PREFIX}{day.isoformat()}|{kind}|{subject}"
+
+
+def hold_for_digest(day: date, kind: str, subject: str, text: str, *, now: datetime) -> None:
+    """A non-critical alert the hourly cap dropped rolls into the next digest (spec §7.2).
+    Keyed per (day, kind, subject), so a candidate re-detected every loop is held once."""
+    key = _held_key(day, kind, subject)
+    if get_state(key) is None:
+        set_state(key, json.dumps({"at": now.astimezone(UTC).isoformat(), "text": text}), now=now)
+
+
+def release_held(day: date, kind: str, subject: str) -> None:
+    """The alert posted after all (the cap window emptied): it no longer needs the digest."""
+    delete_state([_held_key(day, kind, subject)])
+
+
+def held_alerts() -> list[tuple[str, datetime, str]]:
+    """Every held alert as (key, held_at, text), oldest first. Unparseable rows are skipped."""
+    with news_session() as s:
+        rows = s.scalars(
+            select(NewsStateRow).where(NewsStateRow.key.startswith(HELD_PREFIX, autoescape=True))
+        )
+        raw = [(r.key, r.value) for r in rows]
+    out: list[tuple[str, datetime, str]] = []
+    for key, value in raw:
+        try:
+            d = json.loads(value)
+            at = datetime.fromisoformat(d["at"])
+            text = str(d["text"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        out.append((key, at if at.tzinfo else at.replace(tzinfo=UTC), text))
+    return sorted(out, key=lambda t: t[1])
 
 
 def llm_calls(day: date) -> int:

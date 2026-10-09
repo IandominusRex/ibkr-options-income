@@ -631,7 +631,7 @@ Once the approval service is running, you can interact with the system from your
 | `/calendar` | Per-day P&L calendar for the last 30 days — net premium cashflow per calendar day, with fill count and a running total. |
 | `/campaigns` | Wheel campaigns for all symbols: the CSP→assignment→CC→close chain per ticker, with cumulative net premium collected and adjusted cost basis after assignment. |
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only. |
-| `/news NVDA` | Queues an on-demand **news brief** for any ticker (universe or not) and replies `📰 Building NVDA brief → News thread`. The news process (§17) fetches fresh headlines, builds the fact sheet, a chart and a 🧠 read, and posts the brief in the News thread, usually within a minute or two. A repeat request within `news.briefs.dedupe_minutes` (10) reuses the first. Nothing here can reach an order. |
+| `/news NVDA` | Queues an on-demand **news brief** for any ticker (universe or not) and replies `📰 Building NVDA brief → News thread` (or `📰 Queued NVDA brief. ⚠️ …` saying why when the news service is disabled or has no recent heartbeat; the request then waits for it). The news process (§17) fetches fresh headlines, builds the fact sheet, a chart and a 🧠 read, and posts the brief in the News thread, usually within a minute or two. A repeat request within `news.briefs.dedupe_minutes` (10) reuses the first. Nothing here can reach an order. |
 | `/news` | Replies with a link to the latest news digest (or "No digest posted yet"). |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
@@ -1765,11 +1765,14 @@ the scan's news sentiment reads.
 | 🌍 Breaking | A war/ceasefire/sanctions/tariff/Fed/fiscal/energy story from at least two publishers that moved ES/SPY ≥ 0.5% within 30 minutes of first appearing |
 | Brief | `/news TICKER` in Telegram or "Request fresh brief" on the web |
 
-At most `alerts.max_per_hour` (6) non-critical alerts per hour; a second development on the same
+At most `alerts.max_per_hour` (6) non-critical alerts per hour (the rest roll into the next digest
+under "Also flagged (alert cap)"); a second development on the same
 story edits the original card's tail (`🔄 Update …`) up to `alerts.max_edits` (3) times, then
 replies in-thread. The web console's `/news` page shows the same posts, a calendar column, and a
 per-ticker page at `/news/NVDA`; `GET /news/status` shows the service heartbeat, the last
-successful poll per source and today's LLM calls against the cap. The watchdog (§6b) alerts when
+successful answer per source, the news process's breaker states and today's LLM calls against
+the cap. A digest whose time passed more than `digests.max_late_minutes` (120) ago while the
+service was down is skipped, not posted late. The watchdog (§6b) alerts when
 the heartbeat is older than `watchdog.news_max_age_minutes` (30).
 
 ### Commands

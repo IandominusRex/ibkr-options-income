@@ -207,3 +207,58 @@ def test_macro_alerts_only_for_high_impact_or_playbook_releases() -> None:
     cpi = _ev("CPI m/m", at)
     (c,) = T.group_macro_releases([claims, cpi, crude], load_playbook())
     assert c.critical and set(c.event_keys) == {claims.event_key, cpi.event_key}
+
+
+def test_capped_alert_is_held_for_the_digest_and_released_if_it_posts(news_db) -> None:
+    """Spec §7.2: a non-critical alert the hourly cap drops rolls into the next digest."""
+    from src.news.store.models import NewsPostRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+    from src.news.store.state import held_alerts
+
+    with news_session() as s:
+        for i in range(A.max_per_hour):
+            s.add(
+                NewsPostRow(
+                    kind="ticker_move",
+                    posted_at=naive_utc(NOW - timedelta(minutes=i)),
+                    critical=False,
+                    payload={},
+                    cluster_ids=[],
+                    silent=False,
+                    edits=0,
+                    stage="facts",
+                )
+            )
+    g = T.AlertGate(A)
+    msft = T.AlertCandidate(
+        kind="ticker_move",
+        subject="MSFT",
+        critical=False,
+        detail={"change_pct": 4.1, "abnormal_pct": 3.9, "sigma": 3.2},
+    )
+    assert not g.admit(msft, now=NOW, day=DAY)
+    assert not g.admit(msft, now=NOW + timedelta(minutes=1), day=DAY)  # re-detected: held once
+    held = held_alerts()
+    assert [t for _, _, t in held] == ["MSFT · +4.1% · 3.2σ"]
+    assert held[0][1] == NOW
+    # The window empties and the alert posts after all: the digest no longer needs it.
+    assert g.admit(msft, now=NOW + timedelta(hours=2), day=DAY)
+    assert held_alerts() == []
+
+
+def test_held_text_for_every_non_breaking_kind() -> None:
+    mk = lambda kind, subject, **d: T.AlertCandidate(  # noqa: E731
+        kind=kind, subject=subject, critical=False, detail=d
+    )
+    assert (
+        T.held_text(mk("macro_print", "x", primary="ISM Services PMI"))
+        == "ISM Services PMI released"
+    )
+    assert T.held_text(mk("earnings", "ORCL")) == "ORCL reported earnings"
+    assert (
+        T.held_text(mk("market_move", "QQQ:-2", level=-2.0, change_pct=-2.4))
+        == "QQQ -2.4% (crossed -2.0%)"
+    )
+    assert T.held_text(mk("vix_spike", "VIX:jump", change_pct=21.0)) == "VIX +21.0%"
+    assert T.held_text(mk("vix_spike", "VIX:30", level=30.0, last=31.2)) == "VIX at 31.2"

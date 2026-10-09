@@ -16,7 +16,7 @@ from src.news.playbook import load_playbook, prior_for
 from src.news.posting import update_post
 from src.news.publish import Publisher
 from src.news.reaction import Reaction, measure_reaction, waited_too_long
-from src.news.schemas import CardPayload, GridRow, ItemView
+from src.news.schemas import CardPayload, EconEventView, GridRow, ItemView
 from src.news.store import queries
 from src.news.store.models import EconEventRow, NewsPostRow
 from src.news.store.queries import naive_utc
@@ -64,6 +64,13 @@ def _headlines(p: CardPayload) -> list[ItemView]:
     return out
 
 
+def _econ_views(keys: list[str]) -> list[EconEventView]:
+    with news_session() as s:
+        return [
+            queries.econ_view(r) for r in (s.get(EconEventRow, k) for k in keys) if r is not None
+        ]
+
+
 def _concurrent_fields(post_id: int) -> dict[str, object]:
     """Fields another loop may have changed while the LLM call ran: a second trigger on the same
     story appends 🔄 updates and cluster ids (alerts.apply_update). Re-read them so stage 2's
@@ -91,12 +98,7 @@ async def complete_post(
         reaction = await asyncio.to_thread(measure, payload.when, cfg.news.reaction)
         if not reaction.complete and not waited_too_long(payload.when, now, cfg.news.reaction):
             return False
-        with news_session() as s:
-            evs = [
-                queries.econ_view(r)
-                for r in (s.get(EconEventRow, k) for k in payload.event_keys)
-                if r is not None
-            ]
+        evs = await asyncio.to_thread(_econ_views, payload.event_keys)
         pb = load_playbook()
         entry = pb.match(evs[0].title) if evs else None
         prior = prior_for(entry, evs[0].surprise_dir) if entry and evs else None  # type: ignore[arg-type]
@@ -113,22 +115,24 @@ async def complete_post(
         from src.news.schemas import FactSheet
 
         facts = FactSheet()
+    headlines = await asyncio.to_thread(_headlines, payload)
     outcome = await asyncio.to_thread(
         explain_card,
         payload.kind,
-        headlines=_headlines(payload),
+        headlines=headlines,
         facts=facts,
         prior=prior,
         reaction=reaction,
         now=now,
         fallback_what=fallback_what(payload),
     )
+    concurrent = await asyncio.to_thread(_concurrent_fields, post_id)
     payload = payload.model_copy(
         update={
             "explanation": outcome.explanation,
             "trimmed": outcome.trimmed,
             "llm_note": outcome.note,
-            **_concurrent_fields(post_id),
+            **concurrent,
         }
     )
     await update_post(

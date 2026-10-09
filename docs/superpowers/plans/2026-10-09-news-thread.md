@@ -1,6 +1,6 @@
 # News Thread Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** A news service that posts succinct, number-grounded macro / market / ticker news with implications (playbook prior, measured reaction, LLM read, book impact) to Telegram thread 4409, answers `/news TICKER`, and backs a web `/news` page — without any LLM output reaching ranking, gating, or sizing.
 
@@ -48,6 +48,7 @@
 | 32 Web `/news` pages | done (Step 5 visual check pending) | (see git log) | vitest 494/494, lint clean, `tsc` 9 errors = the known baseline (none in news files), `next build` green | 2026-10-09 | (a) `NewsFeed.test.tsx` used `apiFetchMock().mock.calls`; `apiFetchMock` is the exported mock object, not a function (TypeError), so the test reads `apiFetchMock.mock.calls`. (b) The two `<img>`s (chart data URI, third-party `image_url` thumbnail) carry `eslint-disable-next-line @next/next/no-img-element` with the reason (next/image would need every news host in `remotePatterns`); the thumbnail also gets `referrerPolicy="no-referrer"` and `loading="lazy"` so a news site never learns which page showed it. (c) `web/CLAUDE.md` has no `ledger/` Layout entry to sit beside, so `news/` went in before `explain/` under both `app/` and `components/` (the brief named only `app/`). (d) Added tests the brief did not name: "Request fresh brief" POSTs `/commands` with `{kind: news_brief, payload: {symbol: TSM}}` and then disables while pending (mutation-checked), and the ticker page's `available: false` copy. (e) Step 5 (manual visual check with the API and the news service up) not done in this session: left for the operator, like Tasks 21/24's live checks. |
 | 33 Watchdog check | done | (see git log) | pytest/ruff/mypy green (3198 passed) | 2026-10-09 | (a) `news_check` also catches a failing heartbeat query (news.db present but no schema yet, or locked) and returns a failed `news` check naming the exception type: the brief's code let it raise out of `run_checks`, losing every other check (Review Focus 5). `test_news_check_when_db_unreadable` (RED first). (b) `tests/test_watchdog.py`'s composition test pinned the exact check list: it now stubs `news_check` and expects `news` after `command_drain` (renamed `..._all_eight_checks_...`). (c) Added tests the brief did not name: `run_checks` reads the stored heartbeat with `watchdog.news_max_age_minutes` ("limit 30"), and skips `news` entirely when `news.enabled` is false. (d) ARCHITECTURE/STATUS watchdog docs for the new check and key left to Task 34, which lists `watchdog.news_max_age_minutes`. |
 | 34 Docs + final gate + live verification | done (Step 7.2–7.6 live checks pending, operator) | 666bcbe, 9186ee3 (final-review fixes), 675c14e + this commit (docs) | pytest 3212 passed, ruff check clean, mypy clean, vitest 494/494, web lint clean, `tsc` 9 errors = known baseline (none in news files); `ruff format --check` fails only on main's pre-existing portfolio.py/system.py | 2026-10-09 | (a) The whole-branch review ran before the docs so they describe the fixed behaviour; 8 Important findings fixed RED→GREEN: ticker clusters missed behind busier stories; non-universe briefs untagged + 24 h→72 h; alerts never fold into briefs/digests; Finnhub-only 5-min earnings poll; High = critical macro alerts, Medium only with a playbook entry; digest headline never falls back to ungrounded LLM text; Google News publisher domains (`NewsItem.source_url`); breaking reaction measured from first_seen. (b) Docs: ARCHITECTURE (pipeline stage, `src/news/` folder guide, config/data/analytics/claude/notify/api/scripts/process rows, watchdog `news` check, web `/news`, data flow, invariant 10), SETUP (§2b, §3, launcher, /news commands, §6b, new §17, troubleshooting), STATUS (Built 2026-10-09, live verification, known limitations, deferred row), README (commands, topic 4409, how-it-works), CLAUDE.md (news fence, private configs, trigger row), spec status → Implemented. (c) Also added the four `data.*` news provider keys to `config/settings.example.yaml` (Task 1 gave them code defaults only; CLAUDE.md requires them in the example). (d) Step 7.1 run: `news_probe` — ForexFactory 83 events, Nasdaq offset inferred 1 = configured 1, Finnhub 100 general items, 6 feeds answer; Treasury press (`ofac.xml`, HTTP 403) and Yahoo Finance (`rssindex`, HTTP 404) are dead and were removed from `config/news.example.yaml`. (e) Steps 7.2–7.6 (restart + posts in 4409, `/news NVDA`, web pages, first high-impact release, watchdog) not run: they restart the operator's stack and post to the real Telegram thread — operator. |
+| Fix pass: deferred review findings | done | (this commit) | pytest 3230 passed / 1 skipped, ruff check clean, mypy clean, vitest 496/496, web lint clean, `tsc` 9 = known baseline (none in news files); `ruff format --check` fails only on main's pre-existing portfolio.py/system.py | 2026-10-09 | Fixed every "minor (deferred)" finding the per-session and whole-branch final reviews recorded, each with a test that failed on the old code (19 new tests, all RED before the fix): (1) heartbeat beats only after an iteration that did not raise, and stores `breaker_states()` beside it; (2) `GET /news/status` returns `breakers` and reads a corrupt stored timestamp/count as missing instead of a 500; (3) `record_source_ok` only when the source answered (any feed item or 304, any search hit, a non-empty schedule/calendar); (4) the hourly cap holds a dropped non-critical alert in `news_state` (`held_alert:` keys, once per day/kind/subject), the next digest lists it under "Also flagged (alert cap)" and clears it, an alert that posts later releases it, prune drops week-old ones (spec §7.2); (5) new key `news.digests.max_late_minutes` (120): a digest missed by more than that is skipped, not posted stale; (6) `Publisher.edit` returns `None` for a transient failure and `update_post` re-posts only on `False` (refused edit, e.g. deleted message); (7) `/news TICKER` replies "Queued … ⚠️ <why>" via `briefs.service_note` when the service is disabled or has no heartbeat within `watchdog.news_max_age_minutes`; (8) a brief whose `complete_post` raises after posting is `done` at stage `fallback`, never `failed` (a retry would post a second card); (9) ingest scores sentiment for not-yet-stored titles before the write transaction opens, and duplicates are never re-scored; (10) `load_aliases` fetches from yfinance with no transaction open; (11) service/posting/follow-up store reads and writes moved off the event loop into threads; (12) the ticker sweep runs 04:00-20:00 ET on trading days (RTH every `ticker_scan_minutes`, else every 30 min) and caches prior closes per ET day (`tape(prev_cache=)`); (13) Finnhub `_news` skips non-object rows and non-string fields; (14) web: the feed's symbol filter is debounced 300 ms, `🔄 Update` lines are keyed by index. Rulings: `ruff format` of main's unformatted portfolio.py/system.py reverted (unrelated churn, as before); `npm run gen:api` reads the *running* API on :8787 (the operator's, on old code, and it dropped 443 lines), so `web/lib/api-types.ts` was generated from the checked-in `docs/web/openapi.json` instead. Not fixable here: the baseline `tsc` errors are in unrelated web tests on main. The five manual/live steps (Task 12/21/24/32 Step 5, Task 34 Step 7.2-7.6) stay unticked: they restart the operator's stack or post to the real thread 4409. All other step boxes ticked (the executors had not ticked them). |
 
 Update this table after every task (status, commit SHAs, gate result, date, every deviation from the task text and why) and commit it with the task (CLAUDE.md "Change workflow" rule 4).
 
@@ -158,7 +159,7 @@ Update this table after every task (status, commit SHAs, gate result, date, ever
 **Interfaces:**
 - Produces: `get_config().news: NewsCfg` with the sub-models below; `Config.news_db_url_abs() -> str`; `Secrets.telegram_thread_news: str`, `Secrets.finnhub_api_key: str`; `DataCfg.econ_schedule_provider = "forexfactory"`, `econ_actuals_provider = "nasdaq"`, `earnings_calendar_provider = "nasdaq"`, `intraday_price_provider = "yfinance"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_news_config.py
@@ -210,12 +211,12 @@ def test_new_secrets_and_data_keys_have_defaults() -> None:
     assert cfg.data.intraday_price_provider == "yfinance"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_config.py -v`
 Expected: FAIL — `ImportError: cannot import name 'NewsCfg'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/common/config.py`:
 
@@ -527,12 +528,12 @@ FINNHUB_API_KEY=
 
 In `pyproject.toml` `dependencies`, add `"matplotlib>=3.8",`; in `[project.optional-dependencies]` add `finbert = ["transformers>=4.40", "torch>=2.2"]`. Then install: `.venv/bin/pip install "matplotlib>=3.8"`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_news_config.py tests/test_spreads_config.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 Run: `.venv/bin/python -m pytest -q && ruff check . && mypy src`
 
@@ -559,7 +560,7 @@ git commit -m "feat(news): NewsCfg, news.example.yaml, news secrets and data-pro
   - `src.news.store.queries`: `naive_utc(dt: datetime) -> datetime`, `aware_utc(dt: datetime) -> datetime` (more helpers added in Tasks 31/25).
   - Fixture `news_db` (returns the tmp `Path`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_news_store.py
@@ -644,12 +645,12 @@ def news_db(tmp_path, monkeypatch):
     ro.reset_engine()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_store.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'src.news'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/news/__init__.py`:
 
@@ -1068,12 +1069,12 @@ def aware_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_news_store.py -v`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 Run: `.venv/bin/python -m pytest -q && ruff check . && mypy src`
 
@@ -1096,7 +1097,7 @@ git commit -m "feat(news): data/news.db store — models, rw/ro engines, key-val
 - Produces (`src.news.text`): `canonical_url(url: str) -> str`, `sha1(s: str) -> str`, `url_hash(url: str | None, title: str) -> str` (falls back to `"t:" + title_hash` when no URL), `normalize_title(title: str, source: str | None = None) -> str`, `title_hash(title: str, source: str | None = None) -> str`, `title_tokens(title: str) -> frozenset[str]`, `jaccard(a: Iterable[str], b: Iterable[str]) -> float`, `domain_of(url: str | None) -> str | None`.
 - Produces (`src.news.tagging`): `AliasIndex = dict[str, re.Pattern[str]]`, `build_alias_index(symbols: Iterable[str], aliases: dict[str, list[str]]) -> AliasIndex`, `tag_tickers(title: str, index: AliasIndex) -> list[str]`, `tag_events(title: str, *, scheduled: bool, cfg: NewsTaggingCfg) -> list[str]`, `topic_class(title: str, cfg: NewsTaggingCfg) -> str`, `det_sentiment(text: str) -> float` (−1..+1; Task 27 adds the FinBERT branch).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_news_text_tagging.py
@@ -1168,12 +1169,12 @@ def test_newsitem_new_fields_default_none() -> None:
     assert NewsItem(title="x", summary="s", image_url="u").image_url == "u"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_text_tagging.py -v`
 Expected: FAIL — `ImportError: cannot import name 'tagging'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/data/protocols.py`, add to `NewsItem` (after `url`):
 
@@ -1327,12 +1328,12 @@ def det_sentiment(text: str) -> float:
 
 Note `tag_tickers` returns sorted symbols; the first test's expected `["GOOGL", "NVDA"]` is that sort order.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_news_text_tagging.py -v`
 Expected: PASS. (If `vaderSentiment` is not installed in the venv, `det_sentiment` still returns a keyword bias ≤ 0 for "crash"; the range test holds either way.)
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/data/protocols.py src/news/text.py src/news/tagging.py tests/test_news_text_tagging.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -1351,7 +1352,7 @@ git commit -m "feat(news): text normalisation, ticker/event/topic tagging"
 - Consumes: `NewsItem` (with Task 3's `summary`/`image_url`), `text.*`, `tagging.*`, `news_session`, models.
 - Produces: `IngestResult(new_items: int, cluster_ids: set[int])` dataclass; `ingest(items: list[NewsItem], *, category: str, origin: str, alias_index: AliasIndex, cfg: NewsCfg, now: datetime, scheduled_symbols: frozenset[str] = frozenset(), scheduled_terms: tuple[str, ...] = ()) -> IngestResult`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_news_ingest.py
@@ -1435,12 +1436,12 @@ def test_ticker_query_item_without_match_is_background(news_db) -> None:
         assert s.query(NewsItemRow).one().tickers == []
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_ingest.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'src.news.ingest'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/news/ingest.py`:
 
@@ -1582,12 +1583,12 @@ def ingest(
     return result
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_news_ingest.py -v`
 Expected: PASS (5 tests).
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/news/ingest.py tests/test_news_ingest.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -1611,7 +1612,7 @@ git commit -m "feat(news): ingest — URL/title dedupe, Jaccard clustering, tag 
 - Produces (`src.data.rss_backend`): `RssFeedProvider`, `parse_feed(xml_text: str, limit: int) -> list[NewsItem]`.
 - Produces (`src.data.factory`): `get_feed_provider() -> FeedProvider`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/fixtures/news/rss_sample.xml`:
 
@@ -1713,12 +1714,12 @@ def test_conditional_get_304_and_failure(monkeypatch) -> None:
     assert RssFeedProvider().fetch("https://other.example/rss").items == []
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_rss.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'src.data.rss_backend'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/data/protocols.py`, add `from datetime import date` to the imports and append:
 
@@ -1948,12 +1949,12 @@ def get_feed_provider() -> FeedProvider:
     return RssFeedProvider()
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `.venv/bin/python -m pytest tests/test_news_rss.py tests/test_news_ingest.py tests/test_news_context.py -v`
 Expected: PASS (the existing `test_news_context.py` proves `NewsItem`'s new defaults broke nothing).
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/data/protocols.py src/data/rss_backend.py src/data/factory.py tests/fixtures/news tests/test_news_rss.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -1972,7 +1973,7 @@ git commit -m "feat(data): news source protocols, NewsItem summary/image, RSS ba
 **Interfaces:**
 - Produces: `FinnhubClient(api_key: str, *, per_minute: int = 50)` with `company_news(symbol: str, *, days: int = 3, today: date | None = None) -> list[NewsItem]`, `general_news() -> list[NewsItem]`, `earnings_calendar(start: date, end: date, symbol: str | None = None) -> list[EarningsItem]`; `get_finnhub_client() -> FinnhubClient | None` (None when `FINNHUB_API_KEY` is empty).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/fixtures/news/finnhub_company_news.json` (trimmed from the 2026-10-09 probe):
 
@@ -2058,12 +2059,12 @@ def test_factory_returns_none_without_key(monkeypatch) -> None:
     factory.get_finnhub_client.cache_clear()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_news_finnhub.py -v`
 Expected: FAIL — module missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/data/finnhub_backend.py`:
 
@@ -2207,9 +2208,9 @@ def get_finnhub_client():  # -> FinnhubClient | None
 
 Annotate the return as `"FinnhubClient | None"` with `from __future__ import annotations` already present and a `TYPE_CHECKING` import of `FinnhubClient` so mypy is happy.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_finnhub.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_finnhub.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/data/finnhub_backend.py src/data/factory.py tests/fixtures/news/finnhub_*.json tests/test_news_finnhub.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -2229,7 +2230,7 @@ git commit -m "feat(data): Finnhub backend — company/general news with images,
 
 **Facts this task pins (probed live 2026-10-09):** ForexFactory's weekly JSON has keys `title, country, date, impact, forecast, previous` and **no `actual`**. Nasdaq's `economicevents?date=D` returns all countries; the US rows for ET day D−1 come back under `date=D`, and the column named `gmt` holds **ET** `HH:MM`. Non-values appear as `"&nbsp;"`, `" "`, or `""`.
 
-- [ ] **Step 1: Write fixtures and the failing test**
+- [x] **Step 1: Write fixtures and the failing test**
 
 `tests/fixtures/news/ff_thisweek.json` (verbatim subset of the 2026-10-09 probe):
 
@@ -2322,9 +2323,9 @@ def test_probe_infers_offset() -> None:
     assert infer_offset({}, {}, synonyms={}) is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails** — `.venv/bin/python -m pytest tests/test_news_econ_sources.py -v` → FAIL (modules missing).
+- [x] **Step 2: Run test to verify it fails** — `.venv/bin/python -m pytest tests/test_news_econ_sources.py -v` → FAIL (modules missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `NewsSourcesCfg` (Task 1) and to `config/news.example.yaml` under `sources:`:
 
@@ -2623,9 +2624,9 @@ if __name__ == "__main__":
 
 `main()` imports `src.news.playbook`, built in Task 10; the probe's `main` is run only manually after Task 10, while `infer_offset` (tested here) has no such dependency.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_econ_sources.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_econ_sources.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/data/forexfactory_backend.py src/data/nasdaq_backend.py src/data/factory.py src/common/config.py config/news.example.yaml scripts/news_probe.py tests/fixtures/news/ff_thisweek.json tests/fixtures/news/nasdaq_econ_2026-10-09.json tests/test_news_econ_sources.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -2644,7 +2645,7 @@ git commit -m "feat(data): ForexFactory schedule + Nasdaq econ actuals (D+1 rule
 **Interfaces:**
 - Produces: `parse_nasdaq_earnings(body: dict, et_day: date) -> list[EarningsItem]`, `NasdaqEarningsProvider(date_offset_days: int).on(et_day)`; `YFinanceEarningsHistory.past_report_dates(symbol: str, limit: int = 8) -> list[date]`; factory `get_earnings_calendar_provider()`, `get_earnings_history()`; `src.news.earnings.merge_earnings(nasdaq: list[EarningsItem], finnhub: list[EarningsItem], yf_next: dict[str, date]) -> list[EarningsItem]`, `upsert_earnings(items: list[EarningsItem], *, now: datetime) -> list[tuple[str, date]]` (returns newly released `(symbol, report_date)`).
 
-- [ ] **Step 1: Fixture + failing test**
+- [x] **Step 1: Fixture + failing test**
 
 `tests/fixtures/news/nasdaq_earnings_2026-10-14.json` (subset of the probe):
 
@@ -2700,9 +2701,9 @@ def test_upsert_reports_each_release_once(news_db) -> None:
     assert upsert_earnings([released], now=NOW) == []
 ```
 
-- [ ] **Step 2: Run to fail** — `.venv/bin/python -m pytest tests/test_news_earnings.py -v` → FAIL.
+- [x] **Step 2: Run to fail** — `.venv/bin/python -m pytest tests/test_news_earnings.py -v` → FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to `src/data/nasdaq_backend.py`:
 
@@ -2862,9 +2863,9 @@ def upsert_earnings(items: list[EarningsItem], *, now: datetime) -> list[tuple[s
 
 Note: `EarningsEventRow`'s `timing`/`status` defaults are applied by SQLAlchemy at flush, so set them explicitly when constructing: `EarningsEventRow(symbol=…, report_date=…, timing="unknown", status="scheduled", alerted=False)`.
 
-- [ ] **Step 4: Run tests** → PASS.
+- [x] **Step 4: Run tests** → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/data/nasdaq_backend.py src/data/yfinance_backend.py src/data/factory.py src/news/earnings.py tests/fixtures/news/nasdaq_earnings_2026-10-14.json tests/test_news_earnings.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -2884,7 +2885,7 @@ git commit -m "feat(news): earnings calendar — Nasdaq timing, Finnhub actuals,
 - Produces: `YFinanceIntradayProvider.get_intraday(symbol, *, interval="1m", days=1) -> pd.DataFrame` (tz-aware index, includes pre/post); factory `get_intraday_price_provider()`.
 - Produces (`src.news.tape`): `Quote(BaseModel)`: `symbol: str`, `last: float | None`, `prev_close: float | None`, `change_pct: float | None`; `prev_close_from(df: pd.DataFrame, today: date) -> float | None`; `quote(symbol: str, *, today: date | None = None) -> Quote`; `tape(symbols: list[str], *, today: date | None = None) -> dict[str, Quote]`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_tape.py
@@ -2934,9 +2935,9 @@ def test_quote_degrades_to_none(monkeypatch) -> None:
     assert q.last is None and q.change_pct is None
 ```
 
-- [ ] **Step 2: Run to fail.**
+- [x] **Step 2: Run to fail.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Append to `src/data/yfinance_backend.py`:
 
@@ -3025,7 +3026,7 @@ def tape(symbols: list[str], *, today: date | None = None) -> dict[str, Quote]:
     return {s: quote(s, today=today) for s in symbols}
 ```
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/data/yfinance_backend.py src/data/factory.py src/news/tape.py tests/test_news_tape.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -3043,7 +3044,7 @@ git commit -m "feat(news): intraday price provider and tape quotes"
 **Interfaces:**
 - Produces: `ASSETS = ("stocks", "bonds", "dollar", "gold", "oil", "vol")`; `Direction = Literal["up", "down", "flat"]`; `PlaybookEntry(BaseModel)`: `key`, `aliases: list[str]`, `tolerance: float`, `inverse: bool = False`, `hot: dict[str, Direction]`, `cold: dict[str, Direction]`, `rationale_hot: str`, `rationale_cold: str`; `Playbook(entries: list[PlaybookEntry])` with `.match(title: str) -> PlaybookEntry | None`, `.priority(key: str) -> int` (lower = more important); `load_playbook(path: Path | None = None) -> Playbook` (cached); `norm_event_title(title: str) -> str`; `parse_value(s: str | None) -> float | None`; `surprise_dir(entry, actual: str | None, expected: str | None) -> Literal["hot", "cold", "inline"] | None`; `PlaybookPrior(BaseModel)`: `key`, `direction`, `arrows: dict[str, str]` (emoji), `rationale: str`; `prior_for(entry, direction) -> PlaybookPrior | None` (None for `inline`); `ARROW = {"up": "🟢", "down": "🔴", "flat": "⚪"}`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_playbook.py
@@ -3104,9 +3105,9 @@ def test_every_entry_is_complete() -> None:
         assert e.tolerance > 0 and e.aliases and e.rationale_hot and e.rationale_cold
 ```
 
-- [ ] **Step 2: Run to fail.**
+- [x] **Step 2: Run to fail.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `config/news_playbook.yaml` (committed reference data — order = priority; bonds are **price**: yields up ⇒ `down`):
 
@@ -3351,7 +3352,7 @@ def prior_for(entry: PlaybookEntry, direction: Surprise | None) -> PlaybookPrior
 
 Note on the `(0.2)%` case: `t.startswith("(")` handles it after `$`/`,` stripping; the `%` sits outside the parentheses, so remove parentheses before stripping `%` (the code does).
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add config/news_playbook.yaml src/news/playbook.py tests/test_news_playbook.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -6183,7 +6184,7 @@ git commit -m "feat(news): alert cards and new/update/reply planning"
 **Interfaces:**
 - Produces: `due_digests(now: datetime, sent: dict[str, str], cfg: NewsDigestCfg) -> list[Literal["premarket", "close", "week"]]` (pure; `sent[name]` is the ET date ISO it last went out); `DigestInputs` dataclass (`now`, `tape: dict[str, Quote]`, `clusters: list[ClusterView]`, `econ: list[EconEventView]`, `earnings: list[EarningsView]`, `held: set[str]`, `positions: list[PositionSnapshot]`, `movers: list[TickerMove]`, `regime: str | None = None`, `thread_order: list[list[int]] | None = None`, `reads: dict[int, DigestRead] = {}`, `rank: list[str] = []`, `max_threads: int = 6`, `max_movers: int = 5`); `build_digest(name, inp) -> CardPayload`; `gather_inputs(name, *, now, cfg: Config, an: Analytics) -> DigestInputs` (reads store + tape; used by the service).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_digests.py
@@ -6255,7 +6256,7 @@ def test_week_ahead_flags_earnings_before_expiry() -> None:
     assert "NVDA" in risk.items[0].text
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/digests.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/digests.py`:
 
 ```python
 """Scheduled digests (spec §7.3): pre-market, close recap, week ahead. ET wall-clock schedule,
@@ -6420,7 +6421,7 @@ def gather_inputs(name: DigestName, *, now: datetime, cfg: Config, an: object) -
     )
 ```
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/digests.py tests/test_news_digests.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -6891,7 +6892,7 @@ git commit -m "feat(news): deterministic alert and digest posting loops"
 - Consumes: `src.claude.runner._build_cmd`, `src.claude.runner._run_cli`, `src.claude.parser._unwrap_cli`, `src.claude.ollama_runner._generate` (reused, never copied — spec §6.5), `state.llm_calls/incr_llm_calls`.
 - Produces: `LlmResult(text: str, backend: Literal["cli", "ollama"])` NamedTuple; `cap_reached(now: datetime) -> bool`; `call_llm(prompt: str, *, schema: dict, prefix: str, now: datetime) -> LlmResult | None` — tries backends in `news.llm.backend` order, counts **every attempt** against `news.llm.max_calls_per_day` (keyed by the ET date), returns `None` when the cap is hit or every backend fails.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_llm.py
@@ -6945,7 +6946,7 @@ def test_cli_command_pins_news_model(monkeypatch) -> None:
     assert "--disallowedTools" in seen["cmd"]
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/llm.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/llm.py`:
 
 ```python
 """Backend chain for news explanations: claude -p → Ollama, with a daily call cap (spec §6.5).
@@ -7023,7 +7024,7 @@ def call_llm(prompt: str, *, schema: dict, prefix: str, now: datetime) -> LlmRes
 
 Note the third test patches `src.claude.runner._run_cli` and `_cli` resolves it through the module attribute (`runner._run_cli`), which is why `_cli` imports the module, not the function.
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/llm.py tests/test_news_llm.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -7844,7 +7845,7 @@ git commit -m "feat(sentiment): read deduped, recency-weighted deterministic hea
 - Produces (`queries`): `recent_items_for(s, symbol: str, since: datetime, limit: int) -> list[ItemView]` (newest first, one item per cluster).
 - Changes (`news_context`): `_fetch(query, days, limit)` — for a ticker-shaped query, first `_from_store(query, days, limit)`; if it returns items, use them and skip the live providers.
 
-- [ ] **Step 1: Failing test** (append to `tests/test_news_context.py`):
+- [x] **Step 1: Failing test** (append to `tests/test_news_context.py`):
 
 ```python
 def test_ticker_query_uses_store_first(news_db, monkeypatch) -> None:
@@ -7877,7 +7878,7 @@ def test_market_query_still_goes_live(news_db, monkeypatch) -> None:
     assert [i.title for i in news_context._fetch("stock market today", 7, 3)] == ["Stocks rally"]
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `queries.py`:
 
@@ -7929,9 +7930,9 @@ and in `_fetch`, as the first statement:
             return stored
 ```
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_context.py tests/test_eval_skills.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_context.py tests/test_eval_skills.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/claude/news_context.py src/news/store/queries.py tests/test_news_context.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -7949,7 +7950,7 @@ git commit -m "feat(news_context): prefer the news store's deduped clusters for 
 **Interfaces:**
 - Changes: `det_sentiment(text: str, model: Literal["vader", "finbert"] = "vader") -> float`; `ingest` passes `cfg.sentiment.model`. Adds `_finbert_pipeline()` (lazy, cached; `None` when `transformers` is unavailable or the model cannot load — logged once).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_finbert.py
@@ -7970,7 +7971,7 @@ def test_finbert_unavailable_falls_back_to_vader(monkeypatch) -> None:
     assert tagging.det_sentiment("Stocks crash", model="finbert") == tagging.det_sentiment("Stocks crash", model="vader")
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** in `src/news/tagging.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** in `src/news/tagging.py`:
 
 ```python
 import functools
@@ -8016,7 +8017,7 @@ def det_sentiment(text: str, model: Literal["vader", "finbert"] = "vader") -> fl
 
 FinBERT's model download (~440 MB) happens on first use inside the news process; document in SETUP (Task 34) that enabling it means `pip install -e ".[finbert]"` and a one-time download.
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/tagging.py src/news/ingest.py tests/test_news_finbert.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -8039,7 +8040,7 @@ git commit -m "feat(news): optional FinBERT headline sentiment (falls back to VA
 - Produces (`brief_builder`): `async build_brief(symbol: str, *, svc: NewsService, now: datetime) -> int` (fresh `collect_symbol` → `ticker_card(kind="brief")` with `critical=True` (the operator asked, so it notifies) → chart → `post_card` → `complete_post` (explains immediately) → returns post id).
 - Note: `followup._ALERT_KINDS` (Task 24) already excludes `"brief"` — the builder explains briefs itself, so the followup loop must never double-call the LLM. Changes: `NewsService` loop `("briefs", news.briefs.poll_seconds, self._briefs)`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_briefs.py
@@ -8131,7 +8132,7 @@ def test_brief_queue_stays_light() -> None:
     assert not bad, f"src/news/briefs.py imports {bad}"
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/news/briefs.py`:
 
@@ -8275,9 +8276,9 @@ In `src/news/service.py`:
 
 and the loop entry `("briefs", self.ncfg.briefs.poll_seconds, self._briefs)`. On service start, reset requests left `running` by a crash back to `pending` (one `UPDATE` in `run()` before the loops start).
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_briefs.py tests/test_news_fence.py tests/test_news_followup.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_briefs.py tests/test_news_fence.py tests/test_news_followup.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/news/briefs.py src/news/brief_builder.py src/news/alerts.py src/news/service.py tests/test_news_briefs.py tests/test_news_fence.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -8296,7 +8297,7 @@ git commit -m "feat(news): brief request queue and on-demand ticker brief builde
 - Consumes: `src.news.briefs.enqueue_brief`, `normalize_symbol`, `InvalidSymbol`, `latest_digest_link`.
 - Produces: `async handle_news_command(update, context) -> None`; `CommandHandler("news", handle_news_command)` registered next to `/scan`; help lines `"/news TICKER — News brief with implications \\(posts in the News thread\\)"` and `"/news — Link to the latest news digest"` under a new `*News*` heading.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_command.py
@@ -8349,7 +8350,7 @@ def test_help_lists_news() -> None:
     assert "/news TICKER" in format_help()
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** in `src/notify/approval_service.py` (beside `handle_scan_command`):
+- [x] **Step 2: Run to fail.** **Step 3: Implement** in `src/notify/approval_service.py` (beside `handle_scan_command`):
 
 ```python
 async def handle_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -8386,9 +8387,9 @@ Registration: `app.add_handler(CommandHandler("news", handle_news_command))` aft
 
 The first test patches `src.news.briefs.enqueue_brief` with a two-positional-arg lambda; the handler calls `enqueue_brief(raw, "telegram")` positionally, so it matches. `normalize_symbol` is not patched and accepts `"nvda"`.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_command.py tests/test_news_fence.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_command.py tests/test_news_fence.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/notify/approval_service.py src/notify/formatters.py tests/test_news_command.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -8406,7 +8407,7 @@ git commit -m "feat(notify): /news TICKER command queues a news brief; /news lin
 **Interfaces:**
 - Produces: `CommandKind.NEWS_BRIEF = "news_brief"`; `NewsBriefPayload(symbol: str)` with `model_config = ConfigDict(extra="forbid")` and `symbol: str = Field(pattern=r"^\$?[A-Za-z][A-Za-z0-9.\-]{0,9}$")`; repeatable (`dedupe_key_for` returns `None`; the news process dedupes); drain handler `@register("news_brief") _news_brief(*, payload, **_) -> {"request_id": int, "symbol": str}`. Not in `_LIVE_CONFIRM_KINDS` (it cannot reach an order). No Telegram notification from the drain (the brief itself is the notification).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_drain_news_brief.py
@@ -8442,7 +8443,7 @@ def test_post_commands_accepts_news_brief(client) -> None:
     assert r.status_code in (200, 201) and r.json()["kind"] == "news_brief"
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/api/models/commands.py`: add `NEWS_BRIEF = "news_brief"` to `CommandKind`; add
 
@@ -8482,9 +8483,9 @@ def _news_brief(*, payload: dict, **_: Any) -> dict:
 
 `docs/web/commands.md`: add a `### \`news_brief\` — ask for an on-demand news brief` entry under "Every kind", matching the neighbours' layout: payload `{"symbol": "NVDA"}`, repeatable (no dedupe key), no confirmation, what the drain does (one `news_requests` insert via `src.news.briefs.enqueue_brief`), result `{"request_id": int, "symbol": str}`, failure reason `invalid_symbol`, and that the page polls `GET /news/ticker/{symbol}` for the brief.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_drain_news_brief.py tests/test_command_schemas.py tests/test_api_commands.py tests/test_write_path_invariants.py tests/test_web_fence.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_drain_news_brief.py tests/test_command_schemas.py tests/test_api_commands.py tests/test_write_path_invariants.py tests/test_web_fence.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/api/models/commands.py src/notify/command_drain.py docs/web/commands.md tests/test_drain_news_brief.py docs/superpowers/plans/2026-10-09-news-thread.md
@@ -9624,9 +9625,9 @@ cd web && npm run test && npm run lint && npx tsc --noEmit && cd ..
 Expected: all green. Record the test counts in the progress log.
 
 - [ ] **Step 7: Live verification (operator machine, networked)** — record each result in the progress log:
-  1. `python -m scripts.news_probe` — every source answers; inferred Nasdaq offset matches config.
+  1. `python -m scripts.news_probe` — every source answers; inferred Nasdaq offset matches config. **Done 2026-10-09** (see Task 34 row (d)).
   2. `./ibkr restart` (or `python -m scripts.start`) — `news_service` appears in the supervisor; `logs/news.log` shows loops starting; "📰" posts appear in thread 4409 within one digest window.
-  3. `/news NVDA` in Telegram → reply "Building NVDA brief → News thread" → brief with chart and 🧠 within ~2 min.
+  3. `/news NVDA` in Telegram → reply "Building NVDA brief → News thread" (or "Queued NVDA brief. ⚠️ …" if the service is down) → brief with chart and 🧠 within ~2 min.
   4. Web `/news` and `/news/NVDA` render; "Request fresh brief" round-trips.
   5. Next scheduled high-impact US release (check `/news/calendar`): fact card within ~2 min of release, 📈 + 🧠 edit within ~20 min.
   6. `python -m scripts.watchdog` shows the `news` check passing.

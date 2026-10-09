@@ -120,3 +120,8 @@ async def test_send_reply_threads_first_chunk_only() -> None:
     first, second = bot.send_message.await_args_list
     assert first.kwargs["reply_parameters"].message_id == 99
     assert second.kwargs["reply_parameters"] is None
+
+
+async def test_edit_that_never_gets_through_is_none_not_false() -> None:
+    bot = SimpleNamespace(edit_message_text=AsyncMock(side_effect=NetworkError("timed out")))
+    assert await Publisher(bot, "-100", None, backoff=(0,)).edit(5, "x") is None

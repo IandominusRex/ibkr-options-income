@@ -67,3 +67,17 @@ def test_factory_returns_none_without_key(monkeypatch) -> None:
     factory.get_finnhub_client.cache_clear()
     assert factory.get_finnhub_client() is None
     factory.get_finnhub_client.cache_clear()
+
+
+def test_garbage_news_rows_are_skipped_never_raised() -> None:
+    rows = [
+        1,
+        "x",
+        None,
+        ["headline"],
+        {"headline": "Real story", "source": 5, "url": {"a": 1}, "datetime": 10**20},
+        {"headline": None},
+    ]
+    items = FinnhubClient._news(rows)
+    assert [i.title for i in items] == ["Real story"]
+    assert items[0].source is None and items[0].url is None and items[0].published is None

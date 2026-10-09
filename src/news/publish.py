@@ -110,7 +110,10 @@ class Publisher:
         *,
         preview_url: str | None = None,
         show_above: bool = False,
-    ) -> bool:
+    ) -> bool | None:
+        """True: edited (or already identical). False: Telegram refused the edit, e.g. the
+        message was deleted. None: it never got through (network/5xx after every retry) —
+        the message is probably still there, so the caller must not re-post it."""
         chunk = split_message(text)[0]
         try:
             res = await self._retry(
@@ -128,7 +131,7 @@ class Publisher:
                 return True
             log.info("news: edit of %s failed: %s", message_id, exc)
             return False
-        return res is not None
+        return True if res is not None else None
 
     async def send_photo(
         self, png: bytes, *, reply_to: int | None, silent: bool, caption: str | None = None

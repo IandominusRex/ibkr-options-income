@@ -1229,8 +1229,10 @@ can show a requested brief as pending, running, done or failed.
 
 ### `GET /news/status`
 
-The news service's health, from `news_state`: the heartbeat every completed loop iteration
-writes, each source's last successful poll, and today's (ET) LLM call count against
-`news.llm.max_calls_per_day`.
+The news service's health, from `news_state`: the heartbeat every loop iteration that completes
+without raising writes, the news process's circuit-breaker states stored beside it (as of that
+heartbeat), each source's last *successful* answer (a poll where every request failed records
+nothing), and today's (ET) LLM call count against `news.llm.max_calls_per_day`. A corrupt stored
+value reads as missing, never a 500.
 
-**Response — `NewsStatusResponse`:** `{ as_of, available, heartbeat_at, heartbeat_age_s, sources_ok: {source: datetime}, llm_calls_today, llm_cap }`.
+**Response — `NewsStatusResponse`:** `{ as_of, available, heartbeat_at, heartbeat_age_s, sources_ok: {source: datetime}, breakers: {name: "closed" | "open" | "half_open"}, llm_calls_today, llm_cap }`.

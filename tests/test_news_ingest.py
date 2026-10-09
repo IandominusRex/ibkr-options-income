@@ -136,3 +136,39 @@ def test_google_items_count_publishers_not_the_aggregator(news_db) -> None:
     with news_session() as s:
         (c,) = s.query(NewsClusterRow).all()
     assert c.source_count == 2 and set(c.source_domains) == {"reuters.com", "cnbc.com"}
+
+
+def test_sentiment_is_scored_outside_the_write_transaction_and_only_for_new_titles(
+    news_db, monkeypatch
+) -> None:
+    """FinBERT is tens of ms a headline: scoring inside ingest's transaction held news.db's
+    write lock for the whole batch. A re-polled duplicate is never scored again."""
+    from contextlib import contextmanager
+
+    import src.news.ingest as I
+    import src.news.tagging as tagging
+
+    real = I.news_session
+    state = {"open": False}
+    scored: list[str] = []
+
+    @contextmanager
+    def tracked():
+        with real() as s:
+            state["open"] = True
+            try:
+                yield s
+            finally:
+                state["open"] = False
+
+    def score(title, model="vader"):
+        assert not state["open"], "scored with a news.db session open"
+        scored.append(title)
+        return 0.5
+
+    monkeypatch.setattr(I, "news_session", tracked)
+    monkeypatch.setattr(tagging, "det_sentiment", score)
+    a = NewsItem(title="Nvidia beats estimates", url="https://x.com/a", source="Reuters")
+    assert _ingest([a]).new_items == 1
+    assert _ingest([a]).new_items == 0
+    assert scored == ["Nvidia beats estimates"]

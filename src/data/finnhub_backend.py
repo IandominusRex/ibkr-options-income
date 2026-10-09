@@ -26,6 +26,11 @@ _TIMEOUT = 10.0
 _HOUR = {"bmo": "bmo", "amc": "amc", "dmh": "unknown", "": "unknown"}
 
 
+def _text(v: object) -> str | None:
+    """A stripped non-empty string, or None for anything else (garbage-body tolerant)."""
+    return v.strip() or None if isinstance(v, str) else None
+
+
 class _Bucket:
     def __init__(self, per_minute: int) -> None:
         self._interval = 60.0 / max(1, per_minute)
@@ -71,22 +76,27 @@ class FinnhubClient:
     def _news(rows: object) -> list[NewsItem]:
         out: list[NewsItem] = []
         for r in rows if isinstance(rows, list) else []:
-            title = (r.get("headline") or "").strip()
+            if not isinstance(r, dict):  # a garbage body: skip the row, never raise
+                continue
+            title = str(r.get("headline") or "").strip()
             if not title:
                 continue
             ts = r.get("datetime")
-            out.append(
-                NewsItem(
-                    title=title,
-                    source=r.get("source") or None,
-                    url=r.get("url") or None,
-                    published=datetime.fromtimestamp(ts, UTC)
-                    if isinstance(ts, int | float) and ts > 0
-                    else None,
-                    summary=(r.get("summary") or "").strip()[:1000] or None,
-                    image_url=r.get("image") or None,
+            try:
+                out.append(
+                    NewsItem(
+                        title=title,
+                        source=_text(r.get("source")),
+                        url=_text(r.get("url")),
+                        published=datetime.fromtimestamp(ts, UTC)
+                        if isinstance(ts, int | float) and 0 < ts < 1e11
+                        else None,
+                        summary=(_text(r.get("summary")) or "")[:1000] or None,
+                        image_url=_text(r.get("image")),
+                    )
                 )
-            )
+            except (ValueError, TypeError, OverflowError, OSError):
+                continue
         return out
 
     def company_news(

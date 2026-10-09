@@ -209,3 +209,70 @@ def test_earnings_actuals_poll_skips_the_nasdaq_calendar(news_db, monkeypatch) -
     ]
     monkeypatch.setattr(c, "get_finnhub_client", lambda: None)
     assert Collector(get_config().news).refresh_earnings_actuals(NOW) == []
+
+
+def test_source_ok_means_last_good_answer_not_last_poll(news_db, monkeypatch) -> None:
+    import src.news.collectors as c
+    from src.common.config import get_config
+    from src.news.collectors import Collector
+    from src.news.store.state import get_state
+
+    _patch(monkeypatch)
+    monkeypatch.setattr(
+        c,
+        "get_feed_provider",
+        lambda: type("F", (), {"fetch": lambda self, url, **k: FeedFetch(items=[])})(),
+    )
+    monkeypatch.setattr(
+        c,
+        "get_news_search_provider",
+        lambda: type("G", (), {"search": lambda self, q, **k: []})(),
+    )
+    col = Collector(get_config().news)
+    col.collect_rss(NOW)
+    col.collect_macro(NOW)
+    col.collect_ticker_batch(NOW, batch=2)
+    col.refresh_econ_schedule(NOW)
+    for src in ("rss", "macro", "tickers", "econ_schedule"):
+        assert get_state(f"source_ok:{src}") is None, src
+
+    _patch(monkeypatch)  # the real fakes answer
+    col.collect_rss(NOW)
+    col.collect_macro(NOW)
+    assert get_state("source_ok:rss") == NOW.isoformat()
+    assert get_state("source_ok:macro") == NOW.isoformat()
+
+
+def test_aliases_are_fetched_with_no_news_db_transaction_open(news_db, monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    import src.news.aliases as AL
+
+    real = AL.news_session
+    state = {"open": False}
+    fetched: list[str] = []
+
+    @contextmanager
+    def tracked():
+        with real() as s:
+            state["open"] = True
+            try:
+                yield s
+            finally:
+                state["open"] = False
+
+    class F:
+        def get_info(self, sym):
+            assert not state["open"], "get_info called inside a news.db transaction"
+            fetched.append(sym)
+            return {"shortName": {"NVDA": "NVIDIA Corporation", "AAPL": "Apple Inc."}[sym]}
+
+    monkeypatch.setattr(AL, "news_session", tracked)
+    monkeypatch.setattr(AL, "get_fundamentals_provider", lambda: F())
+    out = AL.load_aliases(["NVDA", "AAPL"], overrides={"NVDA": ["Jensen"]}, now=NOW)
+    assert out == {"NVDA": ["Jensen", "NVIDIA"], "AAPL": ["Apple"]}
+    assert AL.load_aliases(["NVDA", "AAPL"], overrides={}, now=NOW) == {
+        "NVDA": ["NVIDIA"],
+        "AAPL": ["Apple"],
+    }
+    assert fetched == ["NVDA", "AAPL"]  # cached on the second call

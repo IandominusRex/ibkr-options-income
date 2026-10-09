@@ -30,20 +30,36 @@ def prev_close_from(df: pd.DataFrame, today: date) -> float | None:
     return float(closes.iloc[-1])
 
 
-def quote(symbol: str, *, today: date | None = None) -> Quote:
+def quote(
+    symbol: str,
+    *,
+    today: date | None = None,
+    prev_cache: dict[tuple[str, date], float] | None = None,
+) -> Quote:
+    """``prev_cache`` (keyed (symbol, ET day)) lets a caller that quotes the same names all
+    day fetch each prior close once per day instead of once per quote."""
     p = get_price_provider()
     day = today or today_et()
     try:
         last = p.get_last_price(symbol)
     except Exception:
         last = None
-    try:
-        prev = prev_close_from(p.get_ohlcv(symbol, lookback_days=10), day)
-    except Exception:
-        prev = None
+    prev = prev_cache.get((symbol, day)) if prev_cache is not None else None
+    if prev is None:
+        try:
+            prev = prev_close_from(p.get_ohlcv(symbol, lookback_days=10), day)
+        except Exception:
+            prev = None
+        if prev is not None and prev_cache is not None:
+            prev_cache[(symbol, day)] = prev
     chg = (last / prev - 1) * 100 if last is not None and prev else None
     return Quote(symbol=symbol, last=last, prev_close=prev, change_pct=chg)
 
 
-def tape(symbols: list[str], *, today: date | None = None) -> dict[str, Quote]:
-    return {s: quote(s, today=today) for s in symbols}
+def tape(
+    symbols: list[str],
+    *,
+    today: date | None = None,
+    prev_cache: dict[tuple[str, date], float] | None = None,
+) -> dict[str, Quote]:
+    return {s: quote(s, today=today, prev_cache=prev_cache) for s in symbols}

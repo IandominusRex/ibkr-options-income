@@ -143,6 +143,7 @@ class Collector:
     # -- sources -----------------------------------------------------------------------
     def collect_rss(self, now: datetime) -> int:
         total = 0
+        answered = False
         provider = get_feed_provider()
         for feed in self.cfg.sources.rss_feeds:
             with news_session() as s:
@@ -153,6 +154,7 @@ class Collector:
                 st = s.get(FeedStateRow, feed.url) or FeedStateRow(feed_url=feed.url)
                 st.last_polled = naive_utc(now)
                 if res.items or res.not_modified:
+                    answered = True
                     st.etag, st.last_modified, st.last_ok = (
                         res.etag,
                         res.last_modified,
@@ -162,21 +164,25 @@ class Collector:
             total += self._ingest(
                 res.items, category=feed.category, origin="rss", now=now
             ).new_items
-        record_source_ok("rss", now)
+        if answered:  # at least one feed answered: source_ok means "last good", not "last polled"
+            record_source_ok("rss", now)
         return total
 
     def collect_macro(self, now: datetime) -> int:
         total = 0
+        answered = False
         search = get_news_search_provider()
         for q in self.cfg.sources.macro_queries:
             items = search.search(q, days=self.cfg.sources.google_news_days, limit=15)
+            answered |= bool(items)
             total += self._ingest(items, category="macro", origin="google", now=now).new_items
         fh = get_finnhub_client()
         if fh is not None:
-            total += self._ingest(
-                fh.general_news(), category="markets", origin="finnhub", now=now
-            ).new_items
-        record_source_ok("macro", now)
+            general = fh.general_news()
+            answered |= bool(general)
+            total += self._ingest(general, category="markets", origin="finnhub", now=now).new_items
+        if answered:
+            record_source_ok("macro", now)
         return total
 
     def collect_symbol(self, symbol: str, now: datetime) -> IngestResult:
@@ -200,11 +206,15 @@ class Collector:
         if not syms:
             return 0
         total = 0
+        answered = False
         for _ in range(min(batch, len(syms))):
             sym = syms[self._cursor % len(syms)]
             self._cursor += 1
-            total += self.collect_symbol(sym, now).new_items
-        record_source_ok("tickers", now)
+            res = self.collect_symbol(sym, now)
+            answered |= res.fetched > 0
+            total += res.new_items
+        if answered:
+            record_source_ok("tickers", now)
         return total
 
     def ticker_batch_size(self, loop_minutes: float) -> int:
@@ -214,8 +224,9 @@ class Collector:
     def refresh_econ_schedule(self, now: datetime) -> int:
         pb = load_playbook()
         n = 0
+        week = get_econ_schedule_provider().this_week()
         with news_session() as s:
-            for e in get_econ_schedule_provider().this_week():
+            for e in week:
                 if e.country != "USD" or e.impact not in ("High", "Medium"):
                     continue
                 key = _event_key(e.scheduled_at, e.title)
@@ -237,7 +248,8 @@ class Collector:
                     n += 1
                 else:
                     row.forecast, row.previous, row.impact = e.forecast, e.previous, e.impact
-        record_source_ok("econ_schedule", now)
+        if week:
+            record_source_ok("econ_schedule", now)
         return n
 
     def refresh_econ_actuals(self, now: datetime) -> list[str]:
@@ -278,7 +290,8 @@ class Collector:
                         r.surprise_dir = surprise_dir(entry, a.actual, r.forecast or a.consensus)
                     released.append(r.event_key)
                     break
-        record_source_ok("econ_actuals", now)
+        if any(rows_by_day.values()):
+            record_source_ok("econ_actuals", now)
         return released
 
     def in_fast_econ_window(self, now: datetime) -> bool:
@@ -305,11 +318,10 @@ class Collector:
             return []
         syms = set(watch_symbols())
         start = now.astimezone(ET).date() - timedelta(days=1)
-        rows = [
-            e for e in fh.earnings_calendar(start, start + timedelta(days=2)) if e.symbol in syms
-        ]
-        released = upsert_earnings(rows, now=now)
-        record_source_ok("earnings_actuals", now)
+        cal = fh.earnings_calendar(start, start + timedelta(days=2))
+        released = upsert_earnings([e for e in cal if e.symbol in syms], now=now)
+        if cal:
+            record_source_ok("earnings_actuals", now)
         return released
 
     def refresh_earnings(self, now: datetime, *, days: int = 14) -> list[tuple[str, date]]:
@@ -338,5 +350,6 @@ class Collector:
             if nxt and start <= nxt <= end:
                 yf_next[sym] = nxt
         released = upsert_earnings(merge_earnings(nd, fh_rows, yf_next), now=now)
-        record_source_ok("earnings", now)
+        if nd or fh_rows or yf_next:
+            record_source_ok("earnings", now)
         return released

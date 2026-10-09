@@ -7905,6 +7905,14 @@
             "title": "Sources Ok",
             "default": {}
           },
+          "breakers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Breakers",
+            "default": {}
+          },
           "llm_calls_today": {
             "type": "integer",
             "title": "Llm Calls Today",

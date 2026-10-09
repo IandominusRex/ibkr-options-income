@@ -47,8 +47,17 @@ def _hhmm(s: str) -> tuple[int, int]:
 
 
 def due_digests(now: datetime, sent: dict[str, str], cfg: NewsDigestCfg) -> list[DigestName]:
+    """Digests whose ET wall-clock time has passed today and are unsent — but no later than
+    ``max_late_minutes`` past it: after a restart, a missed digest is skipped, not posted stale."""
     et = now.astimezone(ET)
     today = et.date().isoformat()
+    late = timedelta(minutes=cfg.max_late_minutes)
+
+    def on_time(at: str) -> bool:
+        h, m = _hhmm(at)
+        due = et.replace(hour=h, minute=m, second=0, microsecond=0)
+        return due <= et <= due + late
+
     out: list[DigestName] = []
     if is_trading_day(et.date()):
         daily: tuple[tuple[DigestName, str], ...] = (
@@ -56,13 +65,11 @@ def due_digests(now: datetime, sent: dict[str, str], cfg: NewsDigestCfg) -> list
             ("close", cfg.close),
         )
         for name, at in daily:
-            h, m = _hhmm(at)
-            if (et.hour, et.minute) >= (h, m) and sent.get(name) != today:
+            if on_time(at) and sent.get(name) != today:
                 out.append(name)
-    h, m = _hhmm(cfg.week_ahead_time)
     if (
         et.weekday() == cfg.week_ahead_weekday
-        and (et.hour, et.minute) >= (h, m)
+        and on_time(cfg.week_ahead_time)
         and sent.get("week") != today
     ):
         out.append("week")
@@ -85,6 +92,8 @@ class DigestInputs:
     rank: list[str] = field(default_factory=list)
     max_threads: int = 6
     max_movers: int = 5
+    # Non-critical alerts the hourly cap held back (spec §7.2), as (news_state key, line).
+    held_back: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _market(inp: DigestInputs) -> DigestSection:
@@ -167,6 +176,12 @@ def _expiry_risk(inp: DigestInputs) -> DigestSection:
     return DigestSection(title="Earnings before your expiries", items=items)
 
 
+def _held_back(inp: DigestInputs) -> DigestSection:
+    return DigestSection(
+        title="Also flagged (alert cap)", items=[DigestItem(text=t) for _, t in inp.held_back]
+    )
+
+
 def build_digest(name: DigestName, inp: DigestInputs) -> CardPayload:
     today = inp.now.astimezone(ET).date()
     if name == "premarket":
@@ -185,6 +200,7 @@ def build_digest(name: DigestName, inp: DigestInputs) -> CardPayload:
             _expiry_risk(inp),
             _stories(inp, "Weekend stories"),
         ]
+    sections.append(_held_back(inp))
     return CardPayload(
         kind=_KIND[name],
         title=_TITLE[name],
@@ -200,6 +216,7 @@ def gather_inputs(name: DigestName, *, now: datetime, cfg: Config, an: Analytics
     from src.news.collectors import held_positions, held_underlyings
     from src.news.store import queries
     from src.news.store.session import news_session
+    from src.news.store.state import held_alerts
     from src.news.tape import tape
 
     since = now - timedelta(hours=16 if name != "week" else 72)
@@ -221,4 +238,5 @@ def gather_inputs(name: DigestName, *, now: datetime, cfg: Config, an: Analytics
         rank=cfg.news.source_rank,
         max_threads=cfg.news.digests.max_threads,
         max_movers=cfg.news.digests.max_movers,
+        held_back=[(key, text) for key, _, text in held_alerts()],
     )

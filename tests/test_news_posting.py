@@ -89,3 +89,22 @@ async def test_reply_threads_under_the_existing_card(news_db) -> None:
     p = CardPayload(kind="breaking", title="x", emoji="•", when=NOW, critical=True)
     await post_card(p, publisher=pub, cfg=get_config(), now=NOW, reply_to=77)
     assert pub.send.await_args.kwargs["reply_to"] == 77
+
+
+async def test_update_never_reposts_on_a_transient_edit_failure(news_db) -> None:
+    """Publisher.edit -> None means the edit never got through (network, 5xx): the card is
+    probably still there, so a fresh copy would duplicate it."""
+    from src.news.store.models import NewsPostRow
+    from src.news.store.session import news_session
+
+    pub = FakePub()
+    p = CardPayload(kind="breaking", title="x", emoji="•", when=NOW, critical=True)
+    pid = await post_card(p, publisher=pub, cfg=get_config(), now=NOW)
+    pub.edit = AsyncMock(return_value=None)
+    pub.send = AsyncMock(return_value=555)
+    p2 = p.model_copy(update={"title": "y"})
+    assert await update_post(pid, p2, publisher=pub) is False
+    pub.send.assert_not_awaited()
+    with news_session() as s:
+        row = s.get(NewsPostRow, pid)
+        assert row.telegram_message_id == 101 and row.payload["title"] == "y"

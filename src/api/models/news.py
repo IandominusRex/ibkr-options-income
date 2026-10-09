@@ -94,5 +94,7 @@ class NewsStatusResponse(Envelope):
     heartbeat_at: datetime | None = None
     heartbeat_age_s: float | None = None
     sources_ok: dict[str, datetime] = {}
+    # The news process's circuit breakers (closed/open/half_open), as of its last heartbeat.
+    breakers: dict[str, str] = {}
     llm_calls_today: int = 0
     llm_cap: int = 0
