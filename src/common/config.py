@@ -141,8 +141,14 @@ class MarketDataCfg(BaseModel):
     # Per-batch ceiling on the option-chain quote wait (event-driven: a batch returns as soon as
     # every line has bid/ask + OI). Was a hard-coded 2s until 2026-10-09, when a live probe on
     # real-time data showed a 30-line batch's quotes landing at ~2.5-3s (6/30 by 2s, 30/30 by
-    # 3s) — so ~94% of quotes were cancelled empty and rejected as `illiquid_no_quote`.
-    chain_quote_ceiling_seconds: float = 4.0
+    # 3s) — so ~94% of quotes were cancelled empty and rejected as `illiquid_no_quote`. 8s, not
+    # 4s: ib_async sends at most 45 requests/s, so a later batch's 40 cancels + 40 new requests
+    # push its last ticks to 4-6.4s (AMD live: 153/363 quoted at 4s, 363/363 at 8s+).
+    chain_quote_ceiling_seconds: float = 8.0
+    # A batch whose quotes have stopped arriving for this long (with at least one in) returns:
+    # the rest are strikes with no market, and waiting out the ceiling on every such batch would
+    # cost the whole ceiling per batch on illiquid symbols.
+    chain_quote_settle_seconds: float = 2.5
     # Once every line in a batch has a bid/ask, wait at most this much longer for the remaining
     # open-interest ticks (tick 101). Some OI ticks never arrive (4/30 in the same probe), and
     # without this every batch would burn the full ceiling waiting for them.

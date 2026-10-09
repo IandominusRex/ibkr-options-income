@@ -647,6 +647,77 @@ async def test_batch_quotes_async_stops_waiting_for_missing_oi_after_grace(monke
     assert grace_polls <= sleeps.await_count <= grace_polls + 1 < ceiling_polls
 
 
+class _ScriptedTickers:
+    """Fake poll clock: each ``asyncio.sleep`` is one 0.1s poll; ``arrivals`` maps a poll
+    number to the tickers that receive a bid/ask (and OI) on it."""
+
+    def __init__(self, n: int, arrivals: dict[int, list[int]]) -> None:
+        self.tickers = [_make_ticker(bid=None, ask=None, call_oi=None) for _ in range(n)]
+        self.arrivals = arrivals
+        self.polls = 0
+
+    async def sleep(self, _):
+        self.polls += 1
+        for i in self.arrivals.get(self.polls, []):
+            t = self.tickers[i]
+            t.bid, t.ask, t.callOpenInterest = 2.0, 2.4, 500.0
+
+
+async def test_batch_quotes_async_waits_out_the_throttled_send_of_a_later_batch(monkeypatch):
+    """Live 2026-10-09 (AMD, 10 batches of 40): ib_async sends at most 45 requests/s, so a
+    later batch's 40 cancels + 40 new requests push its first tick to ~1.6-2.9s and its last to
+    4-6.4s. A 4s ceiling cut most of those batches off (AMD 153/363 quoted); 8s got 363/363."""
+    from src.ibkr.market_data import _batch_quotes_async
+
+    # First tick at 3.0s, then a steady stream to the last at 6.0s.
+    script = _ScriptedTickers(4, {30: [0], 40: [1], 50: [2], 60: [3]})
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", script.sleep)
+    ib = MagicMock()
+    ib.reqMktData.side_effect = script.tickers
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=7000 + i) for i in range(4)]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert all(q.bid == pytest.approx(2.0) for q in quotes)
+
+
+async def test_batch_quotes_async_stops_once_quotes_stall(monkeypatch):
+    """A strike with no market never quotes. Once the rest of the batch has quoted and nothing
+    new arrives for `chain_quote_settle_seconds`, the batch returns instead of burning the
+    whole ceiling — every illiquid symbol would otherwise pay the full ceiling per batch."""
+    from src.common.config import get_config
+    from src.ibkr.market_data import _POLL_INTERVAL_SECONDS, _batch_quotes_async
+
+    script = _ScriptedTickers(3, {20: [0], 25: [1]})  # ticker 2 never quotes
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", script.sleep)
+    ib = MagicMock()
+    ib.reqMktData.side_effect = script.tickers
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=7100 + i) for i in range(3)]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    md = get_config().market_data
+    settle_polls = int(md.chain_quote_settle_seconds / _POLL_INTERVAL_SECONDS)
+    assert quotes[0].bid is not None and quotes[1].bid is not None and quotes[2].bid is None
+    assert script.polls <= 25 + settle_polls + 1
+    assert script.polls < int(md.chain_quote_ceiling_seconds / _POLL_INTERVAL_SECONDS)
+
+
+async def test_batch_quotes_async_does_not_stall_out_on_a_steady_trickle(monkeypatch):
+    """Quotes trickling in (gaps shorter than the settle window) keep the batch waiting."""
+    from src.ibkr.market_data import _batch_quotes_async
+
+    script = _ScriptedTickers(3, {10: [0], 20: [1], 30: [2]})  # 1.0s gaps
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", script.sleep)
+    ib = MagicMock()
+    ib.reqMktData.side_effect = script.tickers
+    contracts = [_make_option_contract(strike=400.0 + i, con_id=7200 + i) for i in range(3)]
+
+    quotes = await _batch_quotes_async(ib, contracts, batch_size=40, throttle=0.0)
+
+    assert all(q.bid is not None for q in quotes)
+
+
 async def test_batch_quotes_async_leaves_no_open_lines(monkeypatch):
     """The happy path must register and then deregister every line — no leak after a clean batch."""
     from src.ibkr import market_data as md
