@@ -107,3 +107,16 @@ async def test_send_photo_replies_in_thread_and_swallows_rejection() -> None:
 
     bot.send_photo = AsyncMock(side_effect=BadRequest("wrong file"))
     assert await pub.send_photo(b"x", reply_to=None, silent=False) is None
+
+
+async def test_send_reply_threads_first_chunk_only() -> None:
+    bot = SimpleNamespace(
+        send_message=AsyncMock(
+            side_effect=[SimpleNamespace(message_id=11), SimpleNamespace(message_id=12)]
+        )
+    )
+    pub = Publisher(bot, "-100", 4409)
+    await pub.send("A" * 3000 + "\n\n" + "B" * 3000, reply_to=99)
+    first, second = bot.send_message.await_args_list
+    assert first.kwargs["reply_parameters"].message_id == 99
+    assert second.kwargs["reply_parameters"] is None

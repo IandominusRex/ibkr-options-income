@@ -34,7 +34,7 @@
 | 18 Triggers + alert gate | done | (see git log) | pytest/ruff/mypy green (3086 passed) | 2026-10-09 | none to the plan code. Added two gate tests the brief did not name, both mutation-checked: `mark` is idempotent on the unique key, and a candidate dropped by the hourly cap is not recorded as fired (so it can retry once the window empties). |
 | 19 Alert assembly | done | (see git log) | pytest/ruff/mypy green (3112 passed) | 2026-10-09 | (a) `links.py` was already pulled forward by Task 20, verbatim: not recreated, `alerts` re-exports it. (b) `plan_alert` also matches a same-day post on (`kind`, `subject`), which the Interfaces block names but the plan code omitted; added `test_same_kind_and_subject_becomes_update` (mutation-checked). (c) mypy: dropped one now-unused `type: ignore` in `build_card`, bound `sheet.get("Move today")` once (union-attr). (d) Added 4 tests the brief did not name: stale/unrelated post gives `new`, market-move card, breaking card primary-by-rank, ticker move without a cluster says "no identifiable catalyst". |
 | 20 Digests | done | (see git log) | pytest/ruff/mypy green (3094 passed) | 2026-10-09 | (a) Task 19 was skipped by request, but `digests.py` imports `src.news.links.links_for`: pulled forward ONLY `src/news/links.py` (`pick_primary`, `links_for`, verbatim from Task 19) + `tests/test_news_links.py`; `alerts.py`/`AlertContext`/`plan_alert` remain Task 19's, which must not recreate `links.py` (it re-exports from it). (b) `due_digests` typed with a `tuple[tuple[DigestName, str], ...]` and `_KIND`/`_TITLE` typed `dict[DigestName, ...]` instead of the plan's `type: ignore`s; `gather_inputs(an: Analytics)` per the Interfaces block (plan code said `object`). (c) Added `test_gather_inputs_reads_store_and_picks_tape_by_digest` (brief named no gather_inputs test), mutation-checked: swapped rth/ext tape sets, dropped the lone-ticker filter, and 72 h→16 h each fail it. |
-| 21 Service: deterministic posting loops | pending | | | | |
+| 21 Service: deterministic posting loops | done (Step 5 live smoke pending) | (see git log) | pytest/ruff/mypy green (3124 passed) | 2026-10-09 | (a) `post_card` passes `reply_to` to `Publisher.send`, which gained a `reply_to` (first chunk only, `allow_sending_without_reply`): the plan code accepted `reply_to` and dropped it, so the spec §7.2 threaded reply after `max_edits` was a plain new post. Tests `test_reply_threads_under_the_existing_card`, `test_send_reply_threads_first_chunk_only`. (b) `_econ_actuals` skips rows already `alerted` (the plan only set the flag, which then guarded nothing); `test_econ_actuals_marks_alerted_and_never_redispatches`. (c) The `news_requests` reset of `running` rows is left to Task 28, which owns it. (d) `_breaking` guards a missing tape quote; `prune` reads `rowcount` via `getattr` (repo convention; mypy). (e) Added tests beyond the brief, each mutation-checked: update path edits instead of posting, smaller crossed levels are marked, digest posts once per day. (f) Step 5 live smoke NOT run: it posts to the operator's real thread 4409; deferred to the operator / Task 34. |
 | 22 LLM transport | done | (see git log) | pytest/ruff/mypy green (3103 passed) | 2026-10-09 | none to the plan code (only `ruff format`). Added 6 tests the brief did not name, each mutation-checked: a raising backend is swallowed, counted and falls through; `ollama` backend never runs the CLI; all backends failing returns `None` yet still counts both attempts; the cap stops the second backend inside one call; the cap key is the ET date (22:00 ET on the 14th is 02:00 UTC on the 15th); and the real `_ollama` passes the model override, schema and timeout through to `_generate` (falling back to `claude.ollama_model`). Docs (ARCHITECTURE/SETUP) stay deferred to Task 34 per the plan. |
 | 23 Prompts + explain + grounding | pending | | | | |
 | 24 Two-stage edit + digest editor wiring | pending | | | | |
@@ -6440,7 +6440,7 @@ git commit -m "feat(news): digest schedule (ET, trading days, DST-safe) and dige
 - Produces (`src.news.posting`): `async post_card(payload: CardPayload, *, publisher: Publisher | None, cfg: Config, now: datetime, chart: bytes | None = None, reply_to: int | None = None) -> int` (renders, sends with `silent_for(...)`, stores `NewsPostRow` with `payload`, `silent`, `critical`, `stage="facts"`, saves the chart under `news.charts_dir/<post_id>.png` and sends it as a reply; returns the post id); `async update_post(post_id: int, payload: CardPayload, *, publisher, stage: str | None = None, llm_backend: str | None = None, count_edit: bool = True) -> bool` (re-renders, edits the Telegram message, persists payload/edits/stage); `ticker_chart(symbol: str, sheet: FactSheet, an: Analytics, positions, today) -> bytes | None`.
 - Produces (`NewsService`): new loops `econ_actuals` (interval 30 s inside the fast window, else `econ_poll_minutes`), `tape` (every 120 s), `tickers_sweep` (every `alerts.ticker_scan_minutes`), `earnings_alerts` (every 5 min), `breaking` (every 2 min), `digests` (every 60 s); `self.publisher`, `self.gate`, `self.last_movers: list[TickerMove]`; `_alert_ctx(now) -> AlertContext`; `async _dispatch(cands: list[AlertCandidate], now) -> list[int]`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_posting.py
@@ -6520,7 +6520,7 @@ async def test_update_reposts_when_message_gone(news_db) -> None:
         assert s.get(NewsPostRow, pid).telegram_message_id == 555
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/news/posting.py`:
 
@@ -6866,11 +6866,11 @@ async def test_dispatch_posts_admitted_candidates_once(news_db, monkeypatch) -> 
     assert await svc._dispatch([c], now) == []
 ```
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_posting.py tests/test_news_service.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_posting.py tests/test_news_service.py -v` → PASS.
 
 - [ ] **Step 5: Live smoke (manual, before go-live):** with `TELEGRAM_THREAD_NEWS=4409` set, run the service for one premarket window (or temporarily set `digests.premarket` to a minute from now in the private `config/news.yaml`) and confirm a "Pre-market brief" lands in thread 4409 and in `news_posts`. Record the result in the progress log.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 ```bash
 git add src/news/posting.py src/news/service.py src/news/store/prune.py tests/test_news_posting.py tests/test_news_service.py docs/superpowers/plans/2026-10-09-news-thread.md

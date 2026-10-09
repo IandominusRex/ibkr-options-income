@@ -73,10 +73,16 @@ class Publisher:
         silent: bool = False,
         preview_url: str | None = None,
         show_above: bool = False,
+        reply_to: int | None = None,
     ) -> int | None:
         first_id: int | None = None
         for i, chunk in enumerate(split_message(text)):
             preview = self._preview(preview_url if i == 0 else None, show_above)
+            reply = (
+                ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)
+                if reply_to and i == 0
+                else None
+            )
             try:
                 msg = await self._retry(
                     partial(
@@ -87,6 +93,7 @@ class Publisher:
                         message_thread_id=self.thread_id,
                         disable_notification=silent,
                         link_preview_options=preview,
+                        reply_parameters=reply,
                     )
                 )
             except BadRequest as exc:
