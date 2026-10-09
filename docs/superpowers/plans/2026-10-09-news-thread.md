@@ -16,7 +16,7 @@
 |---|---|---|---|---|---|
 | 1 Config + secrets | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Added `config/news.yaml` to `.gitignore` (plan omitted it; `test_private_config_files_are_gitignored` requires it). Docs (ARCHITECTURE/SETUP) deferred to Task 34 per plan. |
 | 2 News store | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Dropped an unused `# type: ignore[no-untyped-def]` in `session.py` (mypy `unused-ignore`). |
-| 3 Text utils + tagging | pending | | | | |
+| 3 Text utils + tagging | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none |
 | 4 Ingest + clustering | pending | | | | |
 | 5 Data protocols + RSS | pending | | | | |
 | 6 Finnhub backend | pending | | | | |

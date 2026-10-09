@@ -91,6 +91,8 @@ class NewsItem(BaseModel):
     source: str | None = None
     published: datetime | None = None
     url: str | None = None
+    summary: str | None = None  # plain-text teaser (Finnhub/RSS); never HTML
+    image_url: str | None = None  # article image when the source supplies one
 
 
 @runtime_checkable
