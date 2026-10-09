@@ -1,7 +1,7 @@
 # Design — News Thread (macro, market, and ticker news with grounded implications)
 
 **Date:** 2026-10-09
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design; amended 2026-10-09 (source probes, `/news TICKER`, web `/news`) — plan: `docs/superpowers/plans/2026-10-09-news-thread.md`
 **Telegram:** forum topic `4409` ("News") in the existing group
 
 ---
@@ -77,8 +77,8 @@ system's own technical and volatility analytics.
  ┌───────────────────────────────────────────────────────────────────────────────────────┐
  │  src/data/ (sources, never raise, breakers)                                           │
  │   rss_backend · google_news_backend (exists) · yfinance news (exists)                 │
- │   econ_calendar_backend (ForexFactory) · earnings_calendar_backend (yfinance+Nasdaq)  │
- │   finnhub_backend (optional, dormant without key) · price_data (exists, tape)         │
+ │   forexfactory_backend (schedule) · nasdaq_backend (econ actuals, earnings timing)   │
+ │   finnhub_backend (company/general news, earnings) · price_data + intraday (tape)    │
  │                      │                                                                │
  │                      ▼                                                                │
  │  src/news/ingest.py ── normalise · dedupe · tag tickers · tag events · cluster        │
@@ -129,10 +129,11 @@ Every source implements a small protocol in `src/data/protocols.py`, is built by
 | RSS feeds | `src/data/rss_backend.py` (new) | Category-tagged feed list from `config/news.yaml` (Fed press releases, BLS, BEA, Treasury, CNBC Markets, MarketWatch, Yahoo Finance, …). Conditional GET with stored `ETag`/`Last-Modified`; stdlib XML parsing (same approach as `google_news_backend.py`, no `feedparser` dependency) | 5 min |
 | Google News search | `google_news_backend.py` (exists) | Per-ticker queries (universe ∪ held) + configurable macro topic queries | ticker: 30 min round-robin; macro: 10 min |
 | yfinance headlines | existing `NewsProvider` | Per-ticker | 30 min round-robin |
-| Economic calendar | `src/data/econ_calendar_backend.py` (new) | ForexFactory weekly JSON (`ff_calendar_thisweek.json`), USD, high + medium impact: title, time, forecast, previous, actual | 1 h normally; **30 s within −2/+10 min of a scheduled high-impact event** |
-| Earnings calendar | `src/data/earnings_calendar_backend.py` (new) | Primary: yfinance dates (as `fundamentals.py`); cross-check + timing (BMO/AMC) + consensus EPS: Nasdaq calendar endpoint; post-release actuals/surprise | 6 h; 5 min around a universe name's release window |
-| Market tape | existing `price_data` provider | SPY QQQ DIA IWM ^VIX ^TNX UUP GLD USO (+ ES=F NQ=F ZN=F DX-Y.NYB GC=F CL=F outside RTH — the §6.4 reaction set) | 2 min during RTH; 5 min pre-market |
-| Finnhub (optional) | `src/data/finnhub_backend.py` (new) | Company news + earnings calendar; **dormant unless `FINNHUB_API_KEY` is set** (Reddit pattern) | 30 min |
+| Economic schedule | `src/data/forexfactory_backend.py` (new) | ForexFactory weekly JSON (`ff_calendar_thisweek.json`), USD, high + medium impact: title, ET time, forecast, previous. **Probed 2026-10-09: the feed has no `actual` field**, so it is the schedule and impact source only | 1 h |
+| Economic actuals | `src/data/nasdaq_backend.py` (new) | Nasdaq `api.nasdaq.com/api/calendar/economicevents?date=D`: per-event `actual`, `consensus`, `previous` for every country (filter `United States`). **Probed 2026-10-09: the rows returned for `date=D` are the US releases of ET day D−1, and the column labelled `gmt` is ET** (jobless claims 08:30 appeared under `date=2026-10-09` while ForexFactory lists them on 2026-10-08). The backend therefore requests `ET-day + 1` and matches events to the schedule by playbook key + ET time | 1 h normally; **30 s within −2/+10 min of a scheduled high/medium event** |
+| Earnings calendar | `src/data/nasdaq_backend.py` + `src/data/finnhub_backend.py` (new) | Nasdaq `calendar/earnings?date=D`: timing (`time-pre-market`/`time-after-hours`), consensus EPS. Finnhub `calendar/earnings` (symbol-filtered): date, `hour`, EPS/revenue estimate **and actual** once reported. yfinance `next_earnings` (already in `fundamentals.py`) is the fallback date | 6 h; 5 min around a universe/held name's release window |
+| Market tape | `price_data` provider + a new `IntradayPriceProvider` (yfinance 1-min bars with pre/post) | SPY QQQ DIA IWM ^VIX ^TNX UUP GLD USO (+ ES=F NQ=F ZN=F DX-Y.NYB GC=F CL=F outside RTH — the §6.4 reaction set) | 2 min during RTH; 5 min pre-market |
+| Finnhub | `src/data/finnhub_backend.py` (new) | `company-news` per ticker (headline, **summary, image URL**, source, URL), `news?category=general` (macro/business), `calendar/earnings`, `stock/earnings` (EPS surprise history). **Probed 2026-10-09 with the operator's free key: all four return 200; `calendar/economic` returns 403 (premium) and is not used.** Dormant if `FINNHUB_API_KEY` is unset (Reddit pattern); 60 calls/min budget | company news 30 min round-robin; general 10 min |
 
 Per-category lookback (MarketBrief): `government`/`geopolitics` → 7 d, never truncated by the
 per-run cap; `macro` → 7 d; `markets` → 36 h; `ticker` → 72 h. All in `config/news.yaml`.
@@ -323,9 +324,11 @@ Gold      🔴            ⚪ +0.1%
 ```
 
 - The textbook/actual grid is rendered in a `<pre>` block so columns align.
-- **Link preview** (python-telegram-bot 22.7 `LinkPreviewOptions`): the primary source article
-  (highest-ranked domain in the cluster per `news.source_rank`), `prefer_large_media=True`,
-  `show_above_text=False` — the article's own image appears with the card.
+- **Link preview** (python-telegram-bot 22.7 `LinkPreviewOptions`): when the cluster's primary
+  item carries an `image_url` (Finnhub supplies one), the preview URL is that image
+  (`prefer_large_media=True`, `show_above_text=True`) so the picture renders inline above the
+  card; otherwise the primary source article URL (highest-ranked domain in the cluster per
+  `news.source_rank`) so Telegram renders the article's own preview image.
 - **Chart** (`src/news/charts.py`, `matplotlib` with the `Agg` backend — new dependency): for
   ticker moves, earnings and the close recap, a PNG posted directly beneath the card
   (`reply_to_message_id` = the card) showing ~6 months of daily closes, SMA50/SMA200, nearest
@@ -380,6 +383,59 @@ Digest sections use the editor pass's thread ranking; each thread renders as a c
 No digests or market/ticker alerts on US market holidays; macro-print alerts still fire if the
 calendar has a release (rare). Weekend: week-ahead only, plus breaking macro/geo alerts.
 
+### 7.5 `/news TICKER` — on-demand ticker brief (added 2026-10-09 at the operator's request)
+
+Telegram long-polling for the bot token lives in `approval_service` (one `getUpdates` poller
+per token — a second poller in the news process would steal its updates), so the command is
+registered there, but **all work happens in the news process**:
+
+1. `approval_service` registers `CommandHandler("news", handle_news_command)`. `/news NVDA`
+   validates the symbol (`^[A-Z][A-Z0-9.\-]{0,9}$`), calls
+   `src.news.briefs.enqueue_brief(symbol, origin="telegram")` — a single insert into
+   `news_requests` in `news.db` — and replies `📰 Building NVDA brief → News thread`.
+   `/news` with no argument replies with the most recent digest's link (the
+   `news_posts` row's `telegram_message_id`) or a usage line.
+2. The news process polls `news_requests` every `news.briefs.poll_seconds` (default 5), claims
+   pending rows, and builds a **ticker brief**: a fresh fetch for that symbol (Google News,
+   yfinance, Finnhub company news — bypassing the round-robin), ingest, the §6.1 fact sheet,
+   the matching clusters of the last 72 h, the earnings row, and the writer pass (§6.5) on the
+   top threads — posted to thread 4409 with a chart, stored in `news_posts` (`kind =
+   "brief"`), and the request row marked `done` with the post id.
+3. Briefs bypass the hourly alert cap but count toward `news.llm.max_calls_per_day`. The same
+   symbol requested again within `news.briefs.dedupe_minutes` (default 10) reuses the pending
+   or just-finished request instead of building twice.
+4. Works for any ticker, not only universe names (a non-universe name gets no "book" or
+   "setup" section and is marked `not in universe`).
+
+### 7.6 Web `/news` page (added 2026-10-09 at the operator's request)
+
+**API** (`src/api/routers/news.py`, owner-only like the other book-exposing routes). Reads
+`data/news.db` through a new read-only engine `src/api/news_db.py` (`mode=ro` URI, the
+`trading_db.read_only_url` pattern) — the API still writes exactly one table (`app_commands`):
+
+| Route | Returns |
+|---|---|
+| `GET /news/feed?kind=&symbol=&limit=&before=` | Posted digests/alerts/briefs, newest first, with their structured payload (headline, facts, 📘/📈 grid, 🧠 explanation, verdict, links, image URL) — rendered by the web from structure, never from Telegram HTML |
+| `GET /news/posts/{id}` | One post + its chart as a `data:image/png;base64,…` string (the web proxy reads upstream bodies as text, so binary routes are avoided) |
+| `GET /news/calendar?days=7` | Upcoming high/medium US econ events (schedule + forecast + actual if released) and earnings for universe ∪ held names |
+| `GET /news/ticker/{symbol}` | Latest brief for the symbol (if any), its recent clusters, next earnings, and any open request's status |
+| `GET /news/status` | News service heartbeat age, last ingest per source, breaker states, LLM calls used today vs cap |
+
+**Request a brief from the web:** `POST /commands` with a new kind `news_brief`
+(`{"symbol": "NVDA"}`), repeatable (no dedupe key — the news process dedupes, §7.5.3). The
+drain handler in `approval_service` calls the same `enqueue_brief(symbol, origin="web")` and
+returns `{"request_id": …}`; the page polls `GET /news/ticker/{symbol}` until the brief lands.
+
+**Pages** (`web/app/news/`): `/news` — a feed (filter chips: All · Macro · Market · Tickers ·
+Earnings · Briefs; a symbol search), each post a card mirroring the Telegram layout
+(📘/📈 grid as a small table, 🎯 verdict pill, 💼 book line, inline source links, image) plus a
+right-hand **calendar** column (today and the week: econ events with SGT/ET times, earnings
+with BMO/AMC). `/news/[symbol]` — the latest brief, the chart, the recent clusters, and a
+**Request fresh brief** button (`submitCommand("news_brief", …)` with a `<CommandReceipt/>`).
+The rail gains a `News` section. Follows `web/CLAUDE.md`: dark tokens only, IBM Plex Mono +
+`.tabular` for numbers, verdict state never colour-only (pill text + icon), no em dashes in
+UI copy.
+
 ## 8. Integration with existing sentiment and the reviewer
 
 - **`sentiment.py`**: `_fetch_news` reads recent (`news.sentiment.lookback_hours`, default 72)
@@ -396,7 +452,8 @@ calendar has a release (rare). Weekend: week-ahead only, plus breaking macro/geo
   underlyings (already deduped, source-counted), falling back to the live Google News +
   yfinance fetch when the store has nothing — cutting the review's NEWS fetch latency.
 - **LLM fields are unreachable from ranking**: `sentiment.py` may read only `news_items`
-  columns `det_sentiment`, `published_at`, `tickers`, `cluster_id`; it never reads
+  columns `det_sentiment`, `published_at`, `fetched_at`, `tickers`, `cluster_id`, `title` (the
+  source headline, for `top_headline`); it never reads
   `news_posts` or any `Explanation` content. Asserted by test (§10).
 
 ## 9. Process, config, operations
@@ -410,7 +467,7 @@ calendar has a release (rare). Weekend: week-ahead only, plus breaking macro/geo
   `config/news_playbook.yaml` (not private — it is reference data, not operator tuning).
   Loaded through `src/common/config.py` with validation at load (unknown playbook keys, bad
   times, quiet-hours tz).
-- **`.env`:** `TELEGRAM_THREAD_NEWS=4409`, optional `FINNHUB_API_KEY`.
+- **`.env`:** `TELEGRAM_THREAD_NEWS=4409`, `FINNHUB_API_KEY` (set on the operator's machine 2026-10-09; empty = Finnhub dormant).
 - **Watchdog:** `scripts/watchdog.py` gains a "news service stale" check (no successful
   ingest cycle in 30 min during US hours), reported to the ops (scan) thread.
 - **Startup message:** the news process posts a one-line "📰 News service online (backend:
@@ -426,6 +483,12 @@ calendar has a release (rare). Weekend: week-ahead only, plus breaking macro/geo
    `news_posts`/`Explanation`.
 5. `src.news` is added to `tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer`'s
    enrichment list.
+6. `src/api/` reaches `news.db` only through `src/api/news_db.py`'s read-only engine; the
+   existing `test_the_api_still_writes_exactly_one_table` stays green, and a new test asserts
+   no `src/api/` module imports `src.news.store.session` (the read-write engine).
+7. The only `src.news` symbol `src/notify/` may import is `src.news.briefs.enqueue_brief`
+   (the `/news` command and the `news_brief` drain handler) — no LLM, ingest, or publish code
+   is loaded into `approval_service`.
 
 Reading the deterministic tier (`technicals`, `iv`, `realized_vol`, `price_data`,
 `sector_context`, `market_conditions`) from `src/news/` is allowed — enrichment may read
@@ -466,13 +529,11 @@ deterministic, never the reverse.
 | M2 | Facts, flags, playbook, reaction, render + charts, publish, triggers, digests — **deterministic cards only** | Working News thread with numbers, 📘 and 📈 |
 | M3 | Explain (editor + writer), grounding, fallback chain, two-stage edit flow | 🧠 explanations, verdicts, book impact |
 | M4 | `sentiment.py` + `news_context.py` read the store; optional FinBERT | Better ranking input and reviewer context |
-| M5 | `start.py` registration, watchdog check, docs (ARCHITECTURE, SETUP, STATUS, README Telegram section, CLAUDE.md fence entry), `config/*.example.yaml` | Operable, documented |
+| M5 | `/news TICKER` (§7.5), `news_brief` command kind, read-only `/news/*` API, web `/news` + `/news/[symbol]` pages (§7.6) | On-demand briefs in Telegram and on the web |
+| M6 | `start.py` registration polish, watchdog check, docs (ARCHITECTURE, SETUP, STATUS, README Telegram section, CLAUDE.md fence entry, `docs/web/commands.md`, `docs/web/api.md`), `config/*.example.yaml` | Operable, documented |
 
 ## 14. Out of scope (deferred)
 
-- `/news TICKER` on-demand command (needs an `approval_service` → news-process request path,
-  e.g. an `app_commands`-style intent).
-- A web `/news` page.
 - Spreads-book (SPY 0DTE) position impact in "your book".
 - Real-time (non-delayed) reaction data via IBKR — the news process deliberately holds no
   IBKR connection.
@@ -482,8 +543,9 @@ deterministic, never the reverse.
 
 | Risk | Mitigation |
 |---|---|
-| ForexFactory JSON feed is unofficial and may change or vanish | Breaker + fixture tests; Finnhub economic calendar as a later swap target behind the same protocol; STATUS.md notes it |
-| Nasdaq earnings endpoint undocumented, needs browser-like headers | Cross-check only; yfinance remains primary |
+| ForexFactory JSON feed is unofficial and may change or vanish | Breaker + fixture tests; Nasdaq's economic calendar carries the same schedule (without an impact rating) and is the fallback schedule source behind the same protocol; STATUS.md notes it |
+| Nasdaq endpoints undocumented, need browser-like headers, and use a D+1 date key | Live-probed fixtures pin the shape and the D+1 rule; a probe script (`scripts/news_probe.py`) re-checks both before go-live; breaker; Finnhub/yfinance are the earnings fallbacks |
+| Finnhub free tier is personal-use only and 60 calls/min | Single-operator personal use; client-side token bucket at 50/min |
 | yfinance futures/intraday quotes delayed ~10 min | Bar-timestamp windowing (§6.4); "pending" render; documented |
 | Google News query volume (~55 tickers + macro topics) | 30-min round-robin + existing 15-min cache + breaker |
 | `claude -p` subscription rate limits | Daily cap 40; Ollama fallback; deterministic floor |
