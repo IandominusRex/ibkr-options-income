@@ -176,3 +176,14 @@ async def test_start_requeues_briefs_a_crash_left_running(news_db) -> None:
     await svc.run(stop)
     assert _status(a)[0] == "pending"
     assert claim_next(NOW) == (a, "NVDA")
+
+
+def test_latest_digest_link_when_db_absent(tmp_path, monkeypatch) -> None:
+    """`/news` before the news service ever ran: no schema yet must read as "no digest", not raise."""
+    import src.news.store.session as rw
+    from src.news.briefs import latest_digest_link
+
+    monkeypatch.setattr(rw, "_engine", None)
+    monkeypatch.setattr(rw, "_SessionLocal", None)
+    monkeypatch.setattr(rw, "_resolve_url", lambda: f"sqlite:///{tmp_path / 'fresh.db'}")
+    assert latest_digest_link("-1001234567890", "4409") is None

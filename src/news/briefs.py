@@ -80,6 +80,7 @@ def finish(
 
 
 def latest_digest_link(chat_id: str, thread: str) -> str | None:
+    init_news_db()  # `/news` may run before the news process ever created the schema
     with news_session() as s:
         mid = s.scalar(
             select(NewsPostRow.telegram_message_id)
