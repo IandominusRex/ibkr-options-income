@@ -231,6 +231,19 @@ app/                App Router pages and the root layout
                     `pearson_r`/half-splits render n/a), and the Claude-vs-
                     baseline agreement block - no control anywhere on the tab can
                     change a scoring weight, only the two date-window inputs.
+  news/             News thread (docs/superpowers/specs/2026-10-09-news-thread-design.md
+                    §7.6). `/news` mounts <NewsFeed/>: group chips (All / Macro /
+                    Market / Tickers / Earnings / Briefs, `aria-pressed`) and a symbol
+                    filter over GET /news/feed, each post a <NewsCard/>, with
+                    <CalendarColumn/> (GET /news/calendar?days=7: economic events and
+                    earnings, held names marked "held" in words) beside it.
+                    `news/[symbol]` mounts <NewsTicker/>: the latest brief (its chart
+                    inlined from GET /news/posts/{id}), the last 72 h of story clusters,
+                    the next earnings date, and <BriefRequest/>, which POSTs a
+                    `news_brief` command and shows a <CommandReceipt/> (polls the ticker
+                    every 3 s while the request is pending or running). A missing
+                    news.db (`available: false`) reads "The news service has not written
+                    anything yet", never an error. Read-only otherwise.
   explain/          System Explanation console. Static content - no react-query, no
                     fetch anywhere on the page - a plain-English walkthrough of how the
                     pipeline works, adapted from ARCHITECTURE.md's "The pipeline, stage by
@@ -652,6 +665,16 @@ components/
                     fabricated correlation or average). No second Money
                     component here - pnl/ reuses portfolio/Money, adding a
                     prop if a variant is needed.
+  news/             NewsCard (title, SGT+ET time, headline line with up to 3 inline
+                    source links opening in a new tab, the textbook-vs-actual grid,
+                    the 🧠 read with bull/bear, <VerdictPill/> - verdict as text plus an
+                    icon, never colour alone - book and setup impact, digest sections,
+                    update lines, optional chart), NewsFeed, CalendarColumn,
+                    NewsTicker, BriefRequest (mirrors RefreshControl), `types.ts`
+                    (mirrors src/api/models/news.py and the CardPayload schema) and
+                    `format.ts` (SGT/ET time labels, verdict labels). Plain <img> for
+                    the chart data URI and third-party thumbnails (`no-referrer`):
+                    next/image would need every news host in remotePatterns.
   explain/          PipelineMap (the "you are here" diagram every subtab mounts at its
                     top: the five straight-line pipeline stages - data/ideas/gate/claude/
                     execution - as clickable boxes with the active one aria-current, plus

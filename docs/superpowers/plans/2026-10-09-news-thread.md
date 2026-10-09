@@ -45,7 +45,7 @@
 | 29 `/news` Telegram command | done | (see git log) | pytest/ruff/mypy green (3178 passed) | 2026-10-09 | (a) The handler does `import src.news.briefs as briefs` instead of the brief's `from src.news import briefs`: an `ast` import walk records the latter as `src.news` too, and Task 12's `test_notify_imports_only_the_brief_queue` (which allows only `src.news.briefs`) rejected it; the fence test is untouched and the module attribute is still resolved at call time, so the tests' monkeypatches apply. (b) The `*News*` help block sits between *Automation* and *System* (the brief names no position). Docs (ARCHITECTURE/SETUP/README command tables) stay deferred to Task 34, whose Steps 1, 2 and 4 name `/news TICKER` and `/news`. |
 | 30 `news_brief` command kind | done | (see git log) | pytest/ruff/mypy green (3184 passed) | 2026-10-09 | (a) The drain handler does `import src.news.briefs as briefs` (same fence reason as Task 29). (b) `docs/web/openapi.json` regenerated and `web/lib/api-types.ts` regenerated with `openapi-typescript` (a one-line `CommandKind` change): `tests/test_openapi_current.py` fails on a stale spec, and neither file was in the brief's list. (c) No test enumerated the kinds, so none needed updating. (d) Added tests the brief did not name, mutation-checked: a real `drain_once` round trip inserts exactly one `pending` `origin="web"` request and nothing else; a repeat click reuses the pending request; an unusable symbol fails with `invalid_symbol` rather than a generic `handler_error`. (e) `docs/web/commands.md` also lists `news_brief` among the kinds that always get `201`. Observed, not mine: `tsc --noEmit` already reports 9 errors in unrelated web test files, identical with and without this change. |
 | 31 Read-only `/news/*` API | done | (see git log) | pytest/ruff/mypy green (3193 passed) | 2026-10-09 | (a) `ClusterOut.links` is a typed `SourceLinkOut{name, url}` list instead of the brief's bare `list[dict]`, and `NewsPostOut.payload` is `dict[str, Any]`: the generated `web/lib/api-types.ts` gets a concrete link shape for Task 32 (`SourceLink` has `name`, not `label`). (b) `state_values` uses `key.startswith(prefix, autoescape=True)`: the brief's `like(f"{prefix}%")` treats the `_` in `source_ok:`/`llm_calls:` as a wildcard. `/news/status` reads today's LLM count by its exact key and normalises stored timestamps through `aware_utc`. (c) `latest_brief`/`request_for` add `.limit(1)`. `news_read_session` logs the open failure at debug (the brief's bare `except`). (d) `docs/web/api.md` has no ledger route table to copy, so the five routes got a `## News` section in the doc's per-route style plus a summary table. `docs/web/openapi.json` and `web/lib/api-types.ts` regenerated (FastAPI also reordered `CommandKind` in the components; no content change). (e) Added `test_calendar_lists_the_window_and_flags_held_names` (the brief names no calendar test with data): econ window, earnings window, and `held` from a stock and an option underlying; it and `test_chart_outside_charts_dir_is_refused` were both mutation-checked. `test_api_process_never_loads_the_rw_engine` passed before the router existed (it guards against regressions, nothing to make RED). |
-| 32 Web `/news` pages | pending | | | | |
+| 32 Web `/news` pages | done (Step 5 visual check pending) | (see git log) | vitest 494/494, lint clean, `tsc` 9 errors = the known baseline (none in news files), `next build` green | 2026-10-09 | (a) `NewsFeed.test.tsx` used `apiFetchMock().mock.calls`; `apiFetchMock` is the exported mock object, not a function (TypeError), so the test reads `apiFetchMock.mock.calls`. (b) The two `<img>`s (chart data URI, third-party `image_url` thumbnail) carry `eslint-disable-next-line @next/next/no-img-element` with the reason (next/image would need every news host in `remotePatterns`); the thumbnail also gets `referrerPolicy="no-referrer"` and `loading="lazy"` so a news site never learns which page showed it. (c) `web/CLAUDE.md` has no `ledger/` Layout entry to sit beside, so `news/` went in before `explain/` under both `app/` and `components/` (the brief named only `app/`). (d) Added tests the brief did not name: "Request fresh brief" POSTs `/commands` with `{kind: news_brief, payload: {symbol: TSM}}` and then disables while pending (mutation-checked), and the ticker page's `available: false` copy. (e) Step 5 (manual visual check with the API and the news service up) not done in this session: left for the operator, like Tasks 21/24's live checks. |
 | 33 Watchdog check | pending | | | | |
 | 34 Docs + final gate + live verification | pending | | | | |
 
@@ -8999,7 +8999,7 @@ git commit -m "feat(api): read-only /news feed, post, calendar, ticker and statu
 - Consumes: `GET /news/feed|posts/{id}|calendar|ticker/{symbol}|status` (Task 31), `submitCommand("news_brief", {symbol})`, `useCommandStatus`, `CommandReceipt` (existing), `apiFetch`, `renderWithQuery` test helper.
 - Produces: React components; types mirror `src/api/models/news.py` and `CardPayload` (`web/components/news/types.ts`).
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```tsx
 // web/components/news/NewsCard.test.tsx
@@ -9104,9 +9104,9 @@ describe("NewsTicker", () => {
 });
 ```
 
-- [ ] **Step 2: Run to fail** — `cd web && npm run test -- news` → FAIL (modules missing).
+- [x] **Step 2: Run to fail** — `cd web && npm run test -- news` → FAIL (modules missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `web/components/news/types.ts`:
 
@@ -9502,11 +9502,11 @@ export default function NewsTickerPage({ params }: { params: Promise<{ symbol: s
 
 `NewsTicker.test.tsx`'s mock map keys are full paths; confirm `renderWithQuery`'s matching rule (exact path vs prefix) in `web/lib/test-query.tsx` and adjust keys (`/news/ticker/TSM`) if it needs the encoded form.
 
-- [ ] **Step 4: Run tests** — `cd web && npm run test && npm run lint && npx tsc --noEmit` → PASS.
+- [x] **Step 4: Run tests** — `cd web && npm run test && npm run lint && npx tsc --noEmit` → PASS.
 
 - [ ] **Step 5: Visual check (manual):** `cd web && npm run dev` with the API up; open `/news` and `/news/NVDA`; confirm dark tokens, mono numbers, verdict pill text, inline links open in a new tab, the chart renders, and "Request fresh brief" produces a receipt and (with the news service running) a brief within ~1–2 min. Record in the progress log.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 ```bash
 git add web/app/news web/components/news web/components/shell/RailSection.tsx web/CLAUDE.md docs/superpowers/plans/2026-10-09-news-thread.md
