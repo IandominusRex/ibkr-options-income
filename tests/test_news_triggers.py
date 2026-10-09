@@ -92,15 +92,43 @@ def test_breaking_needs_sources_topic_and_reaction() -> None:
         source_count=3,
         topic_class="ceasefire",
     )
-    assert T.detect_breaking([c], reaction_pct=0.7, cfg=A)[0].cluster_ids == [1]
-    assert T.detect_breaking([c], reaction_pct=0.2, cfg=A) == []
+    assert T.detect_breaking([c], reactions={1: 0.7}, cfg=A)[0].cluster_ids == [1]
+    assert T.detect_breaking([c], reactions={1: -0.7}, cfg=A)[0].detail["reaction_pct"] == -0.7
+    assert T.detect_breaking([c], reactions={1: 0.2}, cfg=A) == []
+    assert T.detect_breaking([c], reactions={}, cfg=A) == []
     assert (
-        T.detect_breaking([c.model_copy(update={"source_count": 1})], reaction_pct=0.9, cfg=A) == []
-    )
-    assert (
-        T.detect_breaking([c.model_copy(update={"topic_class": "other"})], reaction_pct=0.9, cfg=A)
+        T.detect_breaking([c.model_copy(update={"source_count": 1})], reactions={1: 0.9}, cfg=A)
         == []
     )
+    assert (
+        T.detect_breaking(
+            [c.model_copy(update={"topic_class": "other"})], reactions={1: 0.9}, cfg=A
+        )
+        == []
+    )
+
+
+def test_breaking_reaction_is_measured_from_the_story_not_the_day() -> None:
+    """Spec §7.2: |ES/SPY move| ≥ 0.5 % within 30 min of first_seen. The day's change is not a
+    reaction: on a −1 % day every two-source fed/energy story would otherwise fire critically."""
+    import pandas as pd
+
+    from src.news.reaction import move_after
+
+    first = datetime(2026, 10, 14, 15, 0, tzinfo=UTC)
+    idx = pd.date_range(first - timedelta(minutes=5), periods=60, freq="1min", tz=UTC)
+    flat = pd.DataFrame({"Close": [99.0] * 60}, index=idx)  # already −1 % on the day, no reaction
+    assert move_after(flat, first, window_min=30, now=first + timedelta(minutes=40)) == 0.0
+    jump = pd.DataFrame(
+        {"Close": [100.0 if t < first + timedelta(minutes=10) else 100.8 for t in idx]}, index=idx
+    )
+    mv = move_after(jump, first, window_min=30, now=first + timedelta(minutes=12))
+    assert mv is not None and round(mv, 2) == 0.8
+    late = pd.DataFrame(
+        {"Close": [100.0 if t < first + timedelta(minutes=45) else 102.0 for t in idx]}, index=idx
+    )
+    assert move_after(late, first, window_min=30, now=first + timedelta(minutes=50)) == 0.0
+    assert move_after(pd.DataFrame(), first, window_min=30, now=first) is None
 
 
 def test_gate_once_per_day_and_hourly_cap(news_db) -> None:

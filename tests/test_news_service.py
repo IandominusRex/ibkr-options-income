@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 
 async def test_loop_survives_exceptions_and_beats_heartbeat(news_db, monkeypatch) -> None:
@@ -346,3 +346,53 @@ async def test_earnings_alert_loop_polls_only_the_actuals_source(news_db, monkey
     monkeypatch.setattr(svc.collector, "refresh_earnings", slow_refresh)
     monkeypatch.setattr(svc.collector, "refresh_earnings_actuals", lambda now: [])
     await svc._earnings_alerts(datetime(2026, 10, 14, 21, tzinfo=UTC))
+
+
+async def test_breaking_loop_measures_each_story_from_first_seen(news_db, monkeypatch) -> None:
+    import pandas as pd
+
+    from src.common.config import get_config
+    from src.news import service as S
+    from src.news.store.models import NewsClusterRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+    from src.news.tape import Quote
+
+    now = datetime(2026, 10, 14, 15, 20, tzinfo=UTC)  # 11:20 ET, RTH
+    first = now - timedelta(minutes=15)
+    with news_session() as s:
+        s.add(
+            NewsClusterRow(
+                headline="Ceasefire agreed",
+                category="geopolitics",
+                first_seen=naive_utc(first),
+                last_seen=naive_utc(now),
+                source_domains=["reuters.com", "cnbc.com"],
+                source_count=2,
+                tickers=[],
+                tags=[],
+                topic_class="ceasefire",
+                title_tokens=[],
+            )
+        )
+    idx = pd.date_range(first - timedelta(minutes=5), now, freq="1min", tz=UTC)
+    closes = {"flat": [99.0] * len(idx), "jump": [100.0 if t < first else 100.9 for t in idx]}
+    svc = S.NewsService(get_config())
+    svc.publisher = None
+    sent: list[list[str]] = []
+
+    async def fake_dispatch(cands, now, *, tape_now=None):
+        sent.append([c.subject for c in cands])
+        return []
+
+    monkeypatch.setattr(svc, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(S, "tape", lambda syms: {s: Quote(symbol=s, change_pct=-1.0) for s in syms})
+    for shape in ("flat", "jump"):
+        frame = pd.DataFrame({"Close": closes[shape]}, index=idx)
+        monkeypatch.setattr(
+            S,
+            "get_intraday_price_provider",
+            lambda frame=frame: type("P", (), {"get_intraday": lambda self, *a, **k: frame})(),
+        )
+        await svc._breaking(now)
+    assert sent == [[c] for c in ("cluster:1",)]

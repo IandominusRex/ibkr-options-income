@@ -171,21 +171,26 @@ def detect_ticker_moves(
 
 
 def detect_breaking(
-    clusters: list[ClusterView], *, reaction_pct: float | None, cfg: NewsAlertsCfg
+    clusters: list[ClusterView], *, reactions: dict[int, float | None], cfg: NewsAlertsCfg
 ) -> list[AlertCandidate]:
-    if reaction_pct is None or abs(reaction_pct) < cfg.geo_reaction_pct:
-        return []
-    return [
-        AlertCandidate(
-            kind="breaking",
-            subject=f"cluster:{c.id}",
-            critical=True,
-            cluster_ids=[c.id],
-            detail={"reaction_pct": reaction_pct},
-        )
-        for c in clusters
-        if c.source_count >= cfg.geo_min_sources and c.topic_class in cfg.geo_topics
-    ]
+    """*reactions* maps a cluster id to the ES/SPY % move within
+    ``geo_reaction_window_min`` of that cluster's first_seen (``reaction.move_after``)."""
+    out = []
+    for c in clusters:
+        mv = reactions.get(c.id)
+        if mv is None or abs(mv) < cfg.geo_reaction_pct:
+            continue
+        if c.source_count >= cfg.geo_min_sources and c.topic_class in cfg.geo_topics:
+            out.append(
+                AlertCandidate(
+                    kind="breaking",
+                    subject=f"cluster:{c.id}",
+                    critical=True,
+                    cluster_ids=[c.id],
+                    detail={"reaction_pct": mv},
+                )
+            )
+    return out
 
 
 class AlertGate:

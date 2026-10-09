@@ -107,3 +107,32 @@ def test_ticker_query_item_without_match_is_background(news_db) -> None:
     _ingest([NewsItem(title="Chipmakers rally as AI demand grows", url="https://x.com/2")])
     with news_session() as s:
         assert s.query(NewsItemRow).one().tickers == []
+
+
+def test_google_items_count_publishers_not_the_aggregator(news_db) -> None:
+    """Final review: every Google News link is on news.google.com, so a story carried by Reuters
+    and CNBC counted ONE source — the ≥2-source breaking trigger and source ranking never saw
+    the publishers."""
+    from src.news.store.models import NewsClusterRow
+    from src.news.store.session import news_session
+
+    _ingest(
+        [
+            NewsItem(
+                title="Oil jumps after strike on Gulf refinery",
+                source="Reuters",
+                url="https://news.google.com/rss/articles/1",
+                source_url="https://www.reuters.com",
+            ),
+            NewsItem(
+                title="Oil jumps after a strike on Gulf refinery",
+                source="CNBC",
+                url="https://news.google.com/rss/articles/2",
+                source_url="https://www.cnbc.com",
+            ),
+        ],
+        category="geopolitics",
+    )
+    with news_session() as s:
+        (c,) = s.query(NewsClusterRow).all()
+    assert c.source_count == 2 and set(c.source_domains) == {"reuters.com", "cnbc.com"}

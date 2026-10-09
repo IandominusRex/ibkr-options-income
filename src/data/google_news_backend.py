@@ -77,7 +77,8 @@ def _parse_rss(xml_text: str, limit: int) -> list[NewsItem]:
         if not title:
             continue
         link = elem.findtext("link")
-        source = elem.findtext("source")
+        source_el = elem.find("source")
+        source = source_el.text if source_el is not None else None
         published = _parse_pub_date(elem.findtext("pubDate"))
         items.append(
             NewsItem(
@@ -86,6 +87,7 @@ def _parse_rss(xml_text: str, limit: int) -> list[NewsItem]:
                 source=source.strip() if source else None,
                 published=published,
                 url=link.strip() if link else None,
+                source_url=(source_el.get("url") or None) if source_el is not None else None,
             )
         )
         if len(items) >= limit:

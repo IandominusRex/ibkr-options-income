@@ -18,6 +18,7 @@ from src.analytics.market_conditions import get_market_conditions
 from src.common.config import Config
 from src.common.market_hours import is_rth, is_trading_day
 from src.common.schemas import MarketConditions
+from src.data.factory import get_intraday_price_provider
 from src.news import triggers as T
 from src.news.alerts import AlertContext, build_card, plan_alert
 from src.news.collectors import Collector, held_positions, held_underlyings, watch_symbols
@@ -26,6 +27,7 @@ from src.news.facts import Analytics, build_market_facts, sigma_move
 from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
 from src.news.publish import Publisher
+from src.news.reaction import move_after
 from src.news.store import queries
 from src.news.store.models import EarningsEventRow, EconEventRow, NewsPostRow, NewsRequestRow
 from src.news.store.prune import prune
@@ -273,19 +275,29 @@ class NewsService:
                     row.alerted = True
 
     async def _breaking(self, now: datetime) -> None:
-        win = timedelta(minutes=self.ncfg.alerts.geo_reaction_window_min)
+        win_min = self.ncfg.alerts.geo_reaction_window_min
+        win = timedelta(minutes=win_min)
         with news_session() as s:
             clusters = [
                 c
                 for cat in ("geopolitics", "macro", "government", "markets")
                 for c in queries.clusters_since(s, now - win, category=cat, limit=20)
+                # the reaction is measured within win of first_seen, so only young stories
+                if c.first_seen >= now - 2 * win
             ]
         if not clusters:
             return
         sym = "SPY" if is_rth(now) else "ES=F"
+        bars = await asyncio.to_thread(
+            get_intraday_price_provider().get_intraday, sym, interval="1m", days=2
+        )
+        reactions = {
+            c.id: move_after(bars, c.first_seen, window_min=win_min, now=now) for c in clusters
+        }
+        cands = T.detect_breaking(clusters, reactions=reactions, cfg=self.ncfg.alerts)
+        if not cands:
+            return
         q = await asyncio.to_thread(tape, [sym])
-        reaction = q[sym].change_pct if sym in q else None
-        cands = T.detect_breaking(clusters, reaction_pct=reaction, cfg=self.ncfg.alerts)
         await self._dispatch(cands, now, tape_now=q)
 
     async def _rank_digest(self, inp: DigestInputs, now: datetime) -> None:

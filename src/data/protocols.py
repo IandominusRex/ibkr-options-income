@@ -93,6 +93,9 @@ class NewsItem(BaseModel):
     url: str | None = None
     summary: str | None = None  # plain-text teaser (Finnhub/RSS); never HTML
     image_url: str | None = None  # article image when the source supplies one
+    # The publisher's home page when the link is an aggregator redirect (Google News'
+    # <source url=…>), so the news store counts publishers, not news.google.com.
+    source_url: str | None = None
 
 
 @runtime_checkable

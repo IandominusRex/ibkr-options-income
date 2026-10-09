@@ -103,5 +103,23 @@ def measure_reaction(
     return Reaction(release_at=rel, window_min=cfg.window_min, complete=complete, moves=moves)
 
 
+def move_after(
+    df: pd.DataFrame, start: datetime, *, window_min: int, now: datetime
+) -> float | None:
+    """% move from the last bar before *start* to the latest bar inside ``[start, start +
+    window_min]`` (and not after *now*) — the reaction to a story first seen at *start*
+    (spec §7.2). None when either side has no bar."""
+    bars = _utc_index(df)
+    if bars.empty:
+        return None
+    s = start.astimezone(UTC)
+    end = min(s + timedelta(minutes=window_min), now.astimezone(UTC))
+    before = bars[bars.index < s]["Close"].dropna()
+    inside = bars[(bars.index >= s) & (bars.index <= end)]["Close"].dropna()
+    if before.empty or inside.empty or not float(before.iloc[-1]):
+        return None
+    return (float(inside.iloc[-1]) / float(before.iloc[-1]) - 1) * 100
+
+
 def waited_too_long(release_at: datetime, now: datetime, cfg: NewsReactionCfg) -> bool:
     return now >= release_at + timedelta(minutes=cfg.max_wait_min)

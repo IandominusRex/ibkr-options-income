@@ -82,7 +82,14 @@ def ingest(
                 t in low for t in scheduled_terms
             )
             tags = tagging.tag_events(title, scheduled=scheduled, cfg=cfg.tagging)
-            domain = text.domain_of(item.url) or (item.source or "").lower() or None
+            # The publisher, not an aggregator's redirect host (every Google News link is on
+            # news.google.com): source_count and source ranking count publishers.
+            domain = (
+                text.domain_of(item.source_url)
+                or text.domain_of(item.url)
+                or (item.source or "").lower()
+                or None
+            )
             tokens = text.title_tokens(title)
 
             cluster = _best_cluster(clusters, tokens, cfg.cluster.similarity)
