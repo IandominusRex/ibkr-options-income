@@ -380,6 +380,67 @@ can actually place a trade.
 
 ---
 
+### The news thread — what happened and what it means
+
+A separate process (`scripts/run_news.py`, no IBKR connection, no clientId) that tells you *what
+happened and what it means for your book*, in its own Telegram topic (`TELEGRAM_THREAD_NEWS`),
+on the web `/news` page, and on demand via `/news TICKER`. It is **enrichment**: nothing it
+produces reaches ranking, the Rules Engine, or sizing. It has its own database, `data/news.db`,
+written only by `src/news/`.
+
+```
+                        scripts/run_news.py  (own process, supervised by scripts/start.py)
+ ┌──────────────────────────────────────────────────────────────────────────────────────┐
+ │  src/data/  RSS · Google News · yfinance headlines · Finnhub · ForexFactory schedule │
+ │             Nasdaq actuals + earnings timing · yfinance quotes and 1-min bars        │
+ │                      │                                                               │
+ │                      ▼                                                               │
+ │  ingest.py ── normalise · dedupe (URL, title) · tag tickers/events/topic · cluster   │
+ │                      │                                                               │
+ │                      ▼                                                               │
+ │               data/news.db  (NewsBase — written ONLY by src/news/)                   │
+ │        ┌─────────────┴──────────────┐                                                │
+ │        ▼                            ▼                                                │
+ │  triggers.py (alerts, gate)    digests.py (pre-market / close / week ahead)          │
+ │        └─────────────┬──────────────┘                                                │
+ │                      ▼                                                               │
+ │  facts.py (F# fact sheet + flags) · playbook.py (📘) · reaction.py (📈)               │
+ │                      ▼                                                               │
+ │  explain.py (🧠 LLM) → grounding.py → deterministic fallback                          │
+ │                      ▼                                                               │
+ │  render.py + charts.py → publish.py → Telegram thread; news_posts → web /news        │
+ └──────────────────────────────────────────────────────────────────────────────────────┘
+   reads: PortfolioSnapshotRow (held names), effective_universe(), deterministic analytics
+   read by (read-only engine): analytics/sentiment.py, claude/news_context.py, watchdog, API
+```
+
+**From an event to a card.** Every number on a card comes from deterministic code. The **fact
+sheet** (`facts.py`) numbers each fact `F1…Fk`: the move today, the move in σ of implied vol,
+the move versus SPY and the sector ETF, RSI, distance to SMA200 and the nearest
+support/resistance, IV rank, the IV-implied one-day move, EPS and revenue against estimates, the
+average post-earnings move, and for held names each strike's DTE, % OTM and distance in expected
+moves. It also raises **flags** (`large_move_no_hard_news`, `rumor_driven`, `sector_move`,
+`oversold_at_support`, `trend_break`, `earnings_outsized`/`earnings_muted`) with the facts that
+support them. For a US release, the **📘 playbook** (`config/news_playbook.yaml`) turns actual
+versus forecast into hot / cold / in-line and gives the textbook first reaction of stocks, bonds,
+dollar, gold, oil and vol; the **📈 reaction** (`reaction.py`) then measures the real one 15
+minutes after the release on bar timestamps (futures outside RTH; yfinance can lag ~10 minutes,
+so it may read "pending" until `reaction.max_wait_min`). Only then does the **🧠 LLM** (`claude -p`,
+then Ollama, then nothing; capped at `news.llm.max_calls_per_day`) write a short read, bull/bear
+lines, a verdict and the book impact, citing fact and headline ids. **Grounding** (`grounding.py`)
+strips any sentence whose number is not in the facts or headlines, drops unknown evidence ids,
+and downgrades a verdict with no valid evidence to "unclear"; when the LLM is unavailable the
+card stays deterministic (`🧠 unavailable` / `🧠 off (daily cap)`).
+
+**Two-stage alerts.** An alert posts at once with the facts and 📘; the follow-up loop edits the
+same message with 📈 and 🧠 once the reaction window closes. A second trigger on the same story
+(shared cluster, event or subject, within 18 h) edits the original alert's tail (`🔄 Update`) up
+to `alerts.max_edits`, then replies in-thread; it never folds into a brief or a digest. Alerts
+fire once per subject per day, at most `alerts.max_per_hour` non-critical ones per hour, and
+quiet hours (Singapore time) make non-critical posts silent without holding them.
+
+---
+
 ## Folder-by-folder guide
 
 ### `config/` — Tunable settings
@@ -404,7 +465,7 @@ what ships) and given a code default. The table below names the files by their p
 | `settings.yaml → ledger:` | **Trade ledger tunables** (docs/superpowers/plans/2026-10-05-trade-ledger.md, Tasks 1-12; `LedgerCfg`, `src/common/config.py`). `account` (default `""`) pins the IBKR account the ledger tracks; empty locks it to the first CSV/Flex import's account (R8 — see `CLAUDE.md`'s account-lock note; the spec's original R8 named `IBKR_ACCOUNT`, amended because that's the paper account in v1, not the real one). `live_sweep_minutes` (default 5) is the RTH-only `reqExecutions` sweep cadence inside the approval service (the `commissionReportEvent` hook itself is unaffected by RTH). `sheets_min_interval_seconds` (default 60) throttles the Google Sheet full-tab rewrite. `sheets_tabs` (default `{}`) maps the roles `options`/`credit_spreads`/`buy_and_hold`/`tickers`/`summary` to the operator's existing tab gids (validated: known roles, distinct gids); empty keeps the legacy three `(auto)` tabs. `upload_max_bytes` (default 5 MiB) is the server-side cap on a `ledger_import` CSV payload, read fresh on every validation (`LedgerImportPayload._enforce_upload_limit`) — lowering it actually narrows what `POST /commands` accepts. `flex_poll_timeout_seconds`/`flex_poll_interval_seconds` (default 600/10) bound `fetch_statement`'s SendRequest→GetStatement poll loop. `fx_max_gap_days` (default 7) is the nearest-FX-rate lookup window for the USD summary. Secrets live in `.env`, never here: `IBKR_FLEX_TOKEN`/`IBKR_FLEX_QUERY_ID` (the Flex Web Service), `GOOGLE_SHEETS_CREDENTIALS_PATH`/`LEDGER_SHEET_ID` (the Sheets mirror) — all four optional; the ledger degrades to CSV/live-only ingestion with no Flex pull and no Sheets mirror when unset, never an error. |
 | `spreads.yaml` (private) / `spreads.example.yaml` (committed) | **Daily credit spreads** (docs/superpowers/plans/2026-10-07-daily-credit-spreads.md), typed as `SpreadsCfg` in `src/common/config.py`. `enabled` (ships `false`), `mode` (`shadow` records simulated, cost-realistic fills; `paper` places real combo orders on the paper account), the traded underlying (`SPY`, read as a stock) and GEX source (`gex.symbol: SPX`, `SPXW` dailies, × the live SPY/SPX ratio when `scale_to_underlying` is `null`), `book_underlyings` (must not appear in `universe.yaml` — refused at load), `max_market_data_lines` (30), `reserved_monitor_lines` (20), `order_ref_prefix` (`CS:`; the service also spots its own still-working orders by it), the ET `schedule` (map 09:31, entries 09:35–13:30, time stop 15:45), `entry` (the trigger: `move` = sell only after a move of 0.5–1.5 × the day's expected move that has stalled 10 minutes, one side; `always` = the original every-check rule; `gap_day_pct` tag), `gex.negative_gamma_action` (`allow` = traded and tagged; `skip`), `selection` (width, delta cap, expected-move multiple, wall buffer, minimum credit), `risk` (sizing from the book's own capital: `starting_capital_usd` plus realized P&L, with per-trade/total/daily loss as shares of it, a `max_contracts` ceiling; trades per day, `one_side_per_day`, excess-liquidity floor, `events` with an optional `until` time, `ex_dividend_dates`), `exits` (profit take, stop, strike touch, `max_hold_minutes`, `let_expire` off for SPY), `execution` (price ladder, shadow slippage, commission) and `backtest` (ThetaData). The isolation checks run at every config load: `book_underlyings` may never appear in `universe.yaml`, and with `enabled: true` `market_data.chain_batch_size + max_market_data_lines + reserved_monitor_lines` (40 + 30 + 20) must stay ≤ `market_data.max_concurrent_lines` (90) — `reserved_monitor_lines` is the wheel monitor's standing lines — and `ibkr.client_ids.spreads` (30) must exist. A missing private file falls back to the example. |
 | `news.yaml` (private) / `news.example.yaml` (committed) | **The News thread** (docs/superpowers/specs/2026-10-09-news-thread-design.md, SETUP.md §17), typed as `NewsCfg` in `src/common/config.py`. `enabled` (ships `true`; the service idles when false), `db_url` (`data/news.db`), `charts_dir`, `retention_days` (30), per-category `lookback_hours`, `source_rank` (preferred outlets for a card's primary link), tape symbol lists; `sources` (RSS feed list with a category each, Google News macro queries, poll cadences, the Nasdaq date-key offsets `nasdaq_econ_date_offset_days` (1, re-derived by `scripts.news_probe`) / `nasdaq_earnings_date_offset_days`, `finnhub_per_minute`); `cluster` (Jaccard `similarity` 0.5 within `window_hours` 48); `tagging` (rumor / forward-looking term lists, topic keyword lists, manual ticker `aliases`); `alerts` (index levels, VIX jump/levels, held/universe σ thresholds, breaking-news `geo_min_sources`/`geo_reaction_pct`/`geo_reaction_window_min`/`geo_topics`, `max_per_hour` 6, `max_edits` 3); `reaction` (`window_min` 15, `max_wait_min` 35, RTH and extended-hours instrument maps); `quiet_hours` (Asia/Singapore 00:00–07:00, validated tz and HH:MM); `digests` (ET times, validated); `llm` (`backend` `cli`/`ollama`/`cli_then_ollama`, `model`, `ollama_model`, `timeout_seconds`, `max_calls_per_day` 40); `sentiment` (`model` `vader`/`finbert`, `lookback_hours`, `half_life_hours`); `grounding.rel_tol`; `flags` thresholds; `briefs` (`poll_seconds`, `dedupe_minutes`). Nothing in it reaches the risk engine, scoring or sizing. |
-| `news_playbook.yaml` (committed reference data) | The 📘 playbook: per US release (FOMC, CPI, core CPI, NFP, PCE, unemployment, earnings, PPI, GDP, retail sales, ISM, claims, JOLTS, UoM) its title `aliases`, `tolerance` for in-line, `inverse` (a lower print is "hot"), and the textbook first-reaction direction of stocks/bonds/dollar/gold/oil/vol on a hot and on a cold print, with a one-line rationale each. Loaded by `src/news/playbook.py`; not operator tuning, so not private. |
+| `news_playbook.yaml` (committed reference data) | The 📘 playbook: per US release (FOMC, CPI, core CPI, NFP, core PCE, PCE, unemployment, average hourly earnings, PPI, GDP, retail sales, ISM, claims, JOLTS, UoM) its title `aliases`, `tolerance` for in-line, `inverse` (a lower print is "hot"), and the textbook first-reaction direction of stocks/bonds/dollar/gold/oil/vol on a hot and on a cold print, with a one-line rationale each. Loaded by `src/news/playbook.py`; not operator tuning, so not private. |
 | `symbol_directory_overrides.yaml` | **2026-09-13.** A hand-maintained `overrides:` list of `{symbol, name, exchange, is_etf}` for tickers SEC EDGAR's directory omits entirely — verified directly against both `company_tickers.json` and `company_tickers_exchange.json`, neither lists `TQQQ`/`SOXL`/`UPRO` (share classes of a shared trust CIK, not individually-registered filers), which is why the web research console's `GET /research/search` couldn't find them despite all three being part of the live scan universe (`universe.yaml → leveraged_etfs`). No `cik` field — there isn't one to give them. Loaded by `src/research/ingest/symbols.py::refresh_symbol_directory`, which seeds a row only when the symbol has no directory row yet (never overwrites EDGAR-sourced data). Read directly with `yaml.safe_load`, not through `get_config()` — it's a data supplement, not a tunable. |
 
 **Rule:** Secrets (passwords, tokens) never go in these files. They go in `.env`.
@@ -901,6 +962,53 @@ CLAUDE.md "The spreads fence". Built from
 
 ---
 
+### `src/news/` — The News thread (enrichment, its own database)
+
+Built from `docs/superpowers/plans/2026-10-09-news-thread.md` (spec
+`docs/superpowers/specs/2026-10-09-news-thread-design.md`); see "The news thread" above for the
+flow and CLAUDE.md "The news fence" for the rules. The process holds no IBKR connection and no
+clientId.
+
+| File | What it does |
+|---|---|
+| `__init__.py` | Package docstring stating the fence. |
+| `store/models.py` | `NewsBase` (separate from the trading `Base`) and its ten tables: `news_items` (one headline: URL/title hashes, source domain, category, origin, tickers, tags, deterministic sentiment, summary, image, cluster), `news_clusters` (one story: headline, publishers, `source_count`, tickers, tags, `topic_class`), `econ_events`, `earnings_events`, `feed_state` (ETag/Last-Modified per feed), `news_posts` (every card: kind, subject, Telegram ids, stage `facts`/`explained`/`fallback`, `critical`, `silent`, `edits`, the `CardPayload` JSON, chart path), `alert_state` (once-per-day bookkeeping), `news_requests` (the brief queue), `news_state` (key/value), `ticker_aliases`. Naive-UTC timestamps. |
+| `store/session.py` | The read-write engine (WAL) and `news_session()`; imported only by the news process and `briefs.py`. Never by `src/api/`. |
+| `store/readonly.py` | `read_only_session()` (`mode=ro`) for `sentiment.py`, `news_context.py` and the watchdog; yields `None` when `news.db` is missing or unopenable, so readers fall back. |
+| `store/state.py` | Heartbeat, per-source last-ok, and the per-ET-day LLM call counter. |
+| `store/queries.py` | Session-parameterised readers shared by the news process and the API (cluster/econ/earnings views, `ticker_sentiment_rows` — deterministic columns only, `recent_items_for`, feed/brief/status readers). `clusters_since(symbol=)` filters by ticker before limiting. |
+| `store/prune.py` | Deletes headlines older than `retention_days`, their empty clusters and week-old alert bookkeeping; posts are kept. |
+| `text.py` | URL canonicalisation (tracking params stripped), title normalisation, hashes, tokens, Jaccard. |
+| `tagging.py` | Ticker tags (`$SYM`, the bare upper-case symbol, company aliases), event tags (`scheduled`, `rumor`, `quantified`, `forward_looking`), topic class, and `det_sentiment` (VADER + keyword bias, or FinBERT with a VADER fallback). |
+| `ingest.py` | Dedupe by URL and title, tag, join a cluster (Jaccard ≥ `cluster.similarity` within `window_hours`) or open one; `source_count` counts distinct publishers (the `source_url` publisher for Google News links). |
+| `aliases.py` | Ticker → company-name aliases from yfinance names (cached 30 days) plus `tagging.aliases` overrides. |
+| `collectors.py` | One method per source: RSS (conditional GET), macro Google News queries + Finnhub general news, the ticker round-robin (Google, yfinance, Finnhub company news), `collect_symbol` (also tags a non-universe ticker, for briefs), the econ schedule (USD High/Medium), econ actuals (matched by playbook key or title at the same ET time), the full earnings refresh (Nasdaq + Finnhub + yfinance, slow cadence) and `refresh_earnings_actuals` (Finnhub only, the 5-minute release poll); plus `held_positions`/`held_underlyings`/`watch_symbols`. |
+| `earnings.py` | Merges the three earnings sources (Nasdaq timing/consensus, Finnhub actuals/revenue, yfinance date fallback) and reports each release once. |
+| `tape.py` | `Quote` (last, previous close, change %) through the price provider. |
+| `playbook.py` | Loads the playbook, matches release titles, parses values (`8.28B`, `(0.12)`, `&nbsp;`), classifies hot/cold/in-line, builds the 📘 prior. |
+| `facts.py` | The fact sheet and flags (ticker, macro, market), from the deterministic analytics tier only. |
+| `reaction.py` | The 📈 measured reaction on bar timestamps, and `move_after` (the ES/SPY move within N minutes of a story's first appearance, for the breaking trigger). |
+| `schemas.py` | Views (`ItemView`, `ClusterView`, `EconEventView`, `EarningsView`), `Fact`/`FactSheet`, the LLM outputs (`Explanation`, `DigestRead(s)`, `EditorOutput`) with length budgets, and `CardPayload`. |
+| `render.py` | Telegram HTML for cards and digests (every dynamic string escaped; the 📘/📈 grid in `<pre>`), and `split_message` at block boundaries under 4096 chars. |
+| `charts.py` | Headless matplotlib PNG: ~6 months of closes, SMA50/200, support/resistance, the event day, and held strikes as dashed lines labelled with DTE. |
+| `publish.py` | Its own Telegram `Bot` (no `src.notify` import): send with retry/backoff, link previews (article image above the text when known), edit, photo replies. |
+| `quiet.py` | Quiet hours in the configured tz: non-critical posts silent, critical ones notify. |
+| `triggers.py` | Pure detectors (macro releases grouped by time — High critical, Medium only with a playbook entry; earnings; index levels; VIX; ticker σ moves; breaking stories with ≥ 2 publishers, a geo topic and a measured reaction) and `AlertGate` (once per day, hourly cap for non-critical). |
+| `alerts.py` | Candidate → `CardPayload`, and new / update / reply against earlier alert cards. |
+| `links.py` | Primary source by `source_rank` and inline links (schemas only, so the API can use it). |
+| `digests.py` | Due-time logic (ET wall clock, US trading days; week-ahead on its weekday) and the three digest payloads. |
+| `posting.py` | Store first, then publish (a post that cannot reach Telegram is still on the web), charts, edits (a deleted message gets a fresh card). |
+| `followup.py` | Stage 2: measured reaction + 🧠 edit of the same message. |
+| `llm.py` | The backend chain (`cli` → `ollama`) reusing the trade review's hardened CLI and Ollama calls, with the daily cap counted per attempt. |
+| `prompts.py` | Editor, writer and digest prompts and their JSON schemas: facts (F#) and headlines (N#) only. |
+| `grounding.py` | Numeric and evidence grounding of the LLM output. |
+| `explain.py` | Writer and editor passes with one validation retry and the deterministic fallback. |
+| `briefs.py` | The brief request queue: `enqueue_brief`, `claim_next`, `finish`, `latest_digest_link`. The only `src.news` module `approval_service` imports. |
+| `brief_builder.py` | Builds a `/news TICKER` brief: fresh fetch, 72 h of the ticker's clusters, facts, chart, 🧠. |
+| `service.py` | `NewsService`: asyncio loops (sources, econ actuals with a 30 s fast window around releases, tape, ticker sweep, earnings, breaking, digests, follow-ups, briefs, prune), each wrapped so an exception logs and the loop continues, each beating the heartbeat; startup re-queues briefs left `running` and posts "📰 News service online". |
+
+---
+
 ### `src/ops/` — The out-of-process watchdog and the Gateway restarter
 
 **Scan-loop remediation Task 5.** Everything else in this repo that watches for trouble —
@@ -917,7 +1025,7 @@ macOS, **Task 6**'s `./ibkr install` schedules it as its own `com.ibkr.watchdog`
 
 Every check is a pure function over its inputs (an ISO timestamp, a fixed `now`, RTH/trading-day
 booleans, thresholds) — testable without a DB or a live stack. `run_checks(now, cfg)` composes
-seven of them:
+eight of them:
 
 | Check | Fails when |
 |---|---|
@@ -928,6 +1036,7 @@ seven of them:
 | `scan_loop` | During RTH, `scan_grace_minutes` past the open, `intraday_scan_completed` older than `scan_max_age_minutes` — **quiet while halted (`is_halted()`) or past `scheduler.entry_cutoff`** (final review M1: the loop skips its new-entry scan in both, so the marker goes stale by design; read from the DB flag and config, no IBKR) |
 | `eod` | On a trading day, `scheduler.eod_report` + `watchdog.eod_grace_minutes` past, `eod_completed` isn't dated today in ET. Means the EOD run *reached its end*, not that every step inside it (the IV backfill, the Telegram send) succeeded — `iv_history` below covers IV staleness on its own |
 | `iv_history` | Any universe ∪ held symbol's newest `iv_history` observation is more than `watchdog.iv_max_stale_trading_days` trading sessions old (or missing) — reported as one message listing every offending symbol |
+| `news` | Only while `news.enabled`: the news service's heartbeat in `data/news.db` is older than `watchdog.news_max_age_minutes` (30), or `news.db` is missing or unreadable (read through the read-only engine; never raises) |
 
 `decide_alerts(checks, state, now, realert_minutes=...)` is the alert state machine (pure — it
 makes no Telegram call itself). It sends on an ok→fail transition, re-sends every
@@ -1042,6 +1151,13 @@ dividends, and a `TradesView` pinned to the symbol) and `import/page.tsx` (`Impo
 picker submitting `ledger_import`, feed status incl. the Google Sheet mirror line, corporate
 actions with a mark-reviewed button submitting `ledger_ca_reviewed`, import history).
 `LedgerNav` is the shared tab strip; `format.ts`/`types.ts` hold display helpers and response types.
+
+`app/news/` + `components/news/` is the News console (reads `GET /news/*`): `page.tsx` is the feed
+(`NewsFeed` with group chips and a symbol filter, each post a `NewsCard` rendered from the stored
+`CardPayload` — 📘/📈 grid as a table, `VerdictPill` with text and icon, book line, links,
+image — beside `CalendarColumn`), and `[symbol]/page.tsx` (`NewsTicker`: latest brief and chart,
+the ticker's recent stories, next earnings, and `BriefRequest`, which submits `news_brief` through
+the command queue). The rail's `News` section comes from `GET /nav`.
 
 `app/explain/page.tsx` + `components/explain/` is the System Explanation console — a static,
 plain-English walkthrough of how the whole pipeline works (adapted from "The pipeline, stage by
@@ -1204,6 +1320,12 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
 
 (The complete, authoritative list is the set of classes in `src/common/schemas.py`.)
 
+The News thread keeps its own schemas in `src/news/schemas.py` (`ClusterView`, `EconEventView`,
+`EarningsView`, `FactSheet`, `Explanation`, `CardPayload`, …) and its source schemas in
+`src/data/protocols.py` (`NewsItem`, `FeedFetch`, `EconScheduleItem`, `EconActualItem`,
+`EarningsItem`); `CardPayload` is stored as JSON in `news_posts.payload` and is what both the
+Telegram renderer and the web page draw from.
+
 ---
 
 ## Key invariants (things that must never change)
@@ -1227,6 +1349,11 @@ All modules exchange data through the Pydantic schemas in `src/common/schemas.py
    `book="spreads"`). `src/spreads/` has its own gate (`risk.validate`), its own process, database
    and Telegram thread, and imports none of the wheel layers. Enforced by
    `tests/test_spreads_fence.py` and `tests/test_wheel_spreads_isolation.py`.
+10. **The news thread is enrichment with its own database.** `src/news/` writes only
+    `data/news.db`; the engine, execution, strategies and spreads never import it; the scan's
+    sentiment reads only deterministic headline sentiment from it, never an LLM field; the trading
+    bot imports only the brief queue; the API reads it through a read-only engine. Enforced by
+    `tests/test_news_fence.py`, `tests/test_eval_skills.py` and `tests/test_web_fence.py`.
 
 ---
 

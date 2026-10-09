@@ -12,11 +12,9 @@ sources:
     - {name: "Federal Reserve press", url: "https://www.federalreserve.gov/feeds/press_all.xml", category: government}
     - {name: "BLS releases", url: "https://www.bls.gov/feed/bls_latest.rss", category: government}
     - {name: "BEA news", url: "https://apps.bea.gov/rss/rss.xml", category: government}
-    - {name: "Treasury press", url: "https://home.treasury.gov/system/files/126/ofac.xml", category: government}
     - {name: "CNBC Top News", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html", category: markets}
     - {name: "CNBC Economy", url: "https://www.cnbc.com/id/20910258/device/rss/rss.html", category: macro}
     - {name: "MarketWatch Top", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories", category: markets}
-    - {name: "Yahoo Finance", url: "https://finance.yahoo.com/news/rssindex", category: markets}
   macro_queries:
     - "CPI inflation report"
     - "Federal Reserve rate decision"

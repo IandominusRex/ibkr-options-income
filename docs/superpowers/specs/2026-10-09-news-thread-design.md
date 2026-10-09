@@ -1,7 +1,7 @@
 # Design — News Thread (macro, market, and ticker news with grounded implications)
 
 **Date:** 2026-10-09
-**Status:** Approved design; amended 2026-10-09 (source probes, `/news TICKER`, web `/news`) — plan: `docs/superpowers/plans/2026-10-09-news-thread.md`
+**Status:** Implemented 2026-10-09 on `feat/news-thread` (Tasks 1–34; live verification items in `STATUS.md`). Approved design; amended 2026-10-09 (source probes, `/news TICKER`, web `/news`) — plan: `docs/superpowers/plans/2026-10-09-news-thread.md`
 **Telegram:** forum topic `4409` ("News") in the existing group
 
 ---
