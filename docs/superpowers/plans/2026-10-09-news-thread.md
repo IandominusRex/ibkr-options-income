@@ -27,7 +27,7 @@
 | 11 Aliases + views + collectors | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Test fixture forecast `200K`→`210K`: the plan's 197K vs 200K is a 3K beat, inside the committed playbook's 8K `jobless_claims` tolerance, so it is correctly `inline`, never `hot`. Playbook untouched. |
 | 12 Service skeleton + entrypoint + fence | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `test_only_src_news_constructs_news_rows` only scans files importing `src.news`: `src/research/store/models.py` has its own unrelated `NewsItemRow` (research.db), which the plan's plain-string check flagged. (b) Spreads enumerations found: `scripts/start.py` `--no-spreads` (added `--no-news` + docstring line + `test_news_service_is_supervised_and_can_be_skipped`) and `ibkr logs` usage (added `news`); `scripts/launchd.py` enumerates none. (c) Step 5 networked smoke run not done: deferred to Task 34 live verification (it writes the operator's real `data/news.db`). |
 | 13 Fact sheet + flags | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `post_earnings_moves` measures a **1-day** move (spec §6.1): the larger of pre-report→report-day and report-day→next close, since report dates carry no BMO/AMC timing. The plan's two-session window gave −9.0% against its own pinned −9.9%. Added `test_post_earnings_moves_before_open_report`. (b) `Analytics.live().daily` no longer does `_safe(...) or pd.DataFrame()`, which raises on any non-empty frame. Added `test_live_daily_returns_a_non_empty_frame`. (c) `_safe` made generic (`_safe[T]`) and the `type: ignore`s dropped, earnings ratio local renamed `r`→`ratio_f` (mypy: clashed with the float `r`), `import re` merged into the schemas import block. |
-| 14 Reaction | pending | | | | |
+| 14 Reaction | done | (see git log) | pytest/ruff/mypy green (3057 passed) | 2026-10-09 | none |
 | 15 Card schemas + render | pending | | | | |
 | 16 Charts | pending | | | | |
 | 17 Publisher + quiet hours | pending | | | | |
@@ -4691,7 +4691,7 @@ git commit -m "feat(news): deterministic fact sheet and overreaction/continuatio
 **Interfaces:**
 - Produces: `AssetMove(asset, symbol, move: float | None, unit: Literal["%", "bp"], arrow: str)`; `Reaction(release_at: datetime, window_min: int, complete: bool, moves: list[AssetMove])` with `.display(asset) -> str | None`; `instruments_for(release_at, cfg) -> dict[str, str]`; `measure_reaction(release_at, *, cfg: NewsReactionCfg, provider: IntradayPriceProvider | None = None) -> Reaction`; `waited_too_long(release_at, now, cfg) -> bool`. Yield symbols `{"^TNX", "^FVX", "^TYX", "^IRX"}` are reported in bp (quote ×10 ⇒ bp, matching `market_conditions`' `^TNX / 10` convention) and their arrow is inverted (yield up ⇒ bond price 🔴).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_reaction.py
@@ -4756,7 +4756,7 @@ def test_waited_too_long() -> None:
     assert R.waited_too_long(REL, REL + timedelta(minutes=36), cfg)
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/reaction.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/reaction.py`:
 
 ```python
 """📈 Measured post-release reaction (spec §6.4). Deterministic.
@@ -4858,7 +4858,7 @@ def waited_too_long(release_at: datetime, now: datetime, cfg: NewsReactionCfg) -
 
 Check `is_rth`'s signature in `src/common/market_hours.py` (line 192: `is_rth(now: datetime | None = None) -> bool`) — it accepts an aware datetime; verify it converts to ET internally, and convert with `.astimezone(ZoneInfo("America/New_York"))` before calling if it does not.
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/reaction.py tests/test_news_reaction.py docs/superpowers/plans/2026-10-09-news-thread.md
