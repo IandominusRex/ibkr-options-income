@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from tests.test_spreads_fence import imported_modules
@@ -80,6 +83,19 @@ def test_api_never_imports_the_rw_engine() -> None:
     for path in _pkg_files("src", "api"):
         bad = [m for m in imported_modules(path) if m.startswith("src.news.store.session")]
         assert not bad, f"{path.relative_to(ROOT)} imports {bad}"
+
+
+def test_api_process_never_loads_the_rw_engine() -> None:
+    """Transitively too: the API reaches news.db only through src/api/news_db.py (spec §10.6)."""
+    code = "import src.api.main, sys; print('src.news.store.session' in sys.modules)"
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env={**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"},
+    )
+    assert out.stdout.strip() == "False", out.stderr
 
 
 def test_sentiment_reads_only_deterministic_news_columns() -> None:

@@ -53,6 +53,7 @@ def test_nav_lists_every_section_with_availability(client) -> None:
         "portfolio",
         "pnl",
         "ledger",
+        "news",
         "universe",
         "explain",
     }
@@ -69,6 +70,9 @@ def test_nav_lists_every_section_with_availability(client) -> None:
     # The trade ledger ships its read surfaces from day one too.
     assert sections["ledger"]["available"] is True
     assert sections["ledger"]["note"] is None
+    # The news thread ships its read surfaces from day one too.
+    assert sections["news"]["available"] is True
+    assert sections["news"]["note"] is None
     # System Explanation is a static walkthrough, not a data surface — ships available
     # from day one, same as every other section.
     assert sections["explain"]["available"] is True

@@ -1162,3 +1162,75 @@ sentence on the page, and not the UI's to paraphrase.
 closed rows in the window, never `0.0`, matching every other rate in this phase. With no
 closed trades, the response is the report's own empty case (`n_closed: 0` plus its own
 "nothing to correlate yet" note) — never a `404` or a hand-written empty message. Owner-only.
+
+## News (news thread, spec §7.6)
+
+Read-only views over `data/news.db`, the news process's own SQLite file
+(`docs/superpowers/specs/2026-10-09-news-thread-design.md`). The router
+(`src/api/routers/news.py`) opens it through `src/api/news_db.py` with SQLite `mode=ro` and
+never imports the news process's read-write engine (`src.news.store.session`), directly or
+transitively (`tests/test_news_fence.py::test_api_process_never_loads_the_rw_engine`). The one
+web write is the `news_brief` command (`POST /commands`, see `docs/web/commands.md`), which the
+drain turns into a `news_requests` row the news process picks up.
+
+Every response carries `available: bool`. **A missing or unopenable `news.db`** (fresh
+install, news service never started) **answers `200` with `available: false`** and empty
+lists, never a `500`; only `GET /news/posts/{id}` answers `404` instead, since there is no
+post to return. Owner-only.
+
+| Route | Query | Response model |
+|---|---|---|
+| `GET /news/feed` | `group?` (`macro` \| `market` \| `tickers` \| `earnings` \| `briefs`, anything else `422`), `symbol?` (case-insensitive), `limit` (1-100, default 30), `before?` (post id, for paging) | `NewsFeedResponse` |
+| `GET /news/posts/{id}` | | `NewsPostDetailResponse` |
+| `GET /news/calendar` | `days` (1-21, default 7) | `NewsCalendarResponse` |
+| `GET /news/ticker/{symbol}` | | `NewsTickerResponse` |
+| `GET /news/status` | | `NewsStatusResponse` |
+
+### `GET /news/feed`
+
+Posts newest first (`id` descending). `group` maps to post kinds through
+`src/news/store/queries.py::KIND_GROUPS`: `macro` = `macro_print`, `breaking`; `market` =
+`market_move`, `vix_spike`, `digest_premarket`, `digest_close`, `digest_week`; `tickers` =
+`ticker_move`; `earnings` = `earnings`; `briefs` = `brief`. Page with `before=<smallest id
+seen>`.
+
+**Response — `NewsFeedResponse`:** `{ as_of, available, posts: NewsPostOut[] }`.
+`NewsPostOut`: `{ id, kind, subject, posted_at, stage, critical, silent, has_chart, payload }`,
+where `payload` is the post's stored `CardPayload` (`src/news/schemas.py`) as JSON and `stage`
+is `facts` \| `explained` \| `fallback`.
+
+### `GET /news/posts/{id}`
+
+**Response — `NewsPostDetailResponse`:** `{ as_of, available, post: NewsPostOut, chart_data_uri }`.
+`chart_data_uri` is the post's PNG inlined as `data:image/png;base64,…`, or `null` when the
+post has no chart, the file is gone, or its stored path resolves **outside
+`news.charts_dir`** (a stored path is never trusted to read an arbitrary file).
+
+### `GET /news/calendar`
+
+Economic events from 12 hours ago to `days` ahead, and earnings from today (ET) to `days`
+ahead. `held` is `true` when the symbol is a held underlying in the trading DB's freshest
+portfolio reading (`read_portfolio`, the same chain as `/portfolio/*`).
+
+**Response — `NewsCalendarResponse`:** `{ as_of, available, econ: EconEventOut[], earnings: EarningsOut[] }`.
+`EconEventOut`: `{ title, scheduled_at, impact, forecast, previous, actual, surprise_dir }`.
+`EarningsOut`: `{ symbol, report_date, timing, eps_est, eps_actual, status, held }`.
+
+### `GET /news/ticker/{symbol}`
+
+Everything the web `/news/[symbol]` page needs: the latest `brief` post, story clusters tagged
+with the symbol over the last 72 hours (at most 10, each with its ranked source links), the
+next earnings date (yesterday to 60 days ahead), and the newest `news_requests` row so the page
+can show a requested brief as pending, running, done or failed.
+
+**Response — `NewsTickerResponse`:** `{ as_of, available, symbol, latest_brief: NewsPostOut | null, clusters: ClusterOut[], next_earnings: EarningsOut | null, request: NewsRequestOut | null }`.
+`ClusterOut`: `{ id, headline, source_count, last_seen, links: {name, url}[] }`.
+`NewsRequestOut`: `{ id, status, requested_at, post_id, error }`.
+
+### `GET /news/status`
+
+The news service's health, from `news_state`: the heartbeat every completed loop iteration
+writes, each source's last successful poll, and today's (ET) LLM call count against
+`news.llm.max_calls_per_day`.
+
+**Response — `NewsStatusResponse`:** `{ as_of, available, heartbeat_at, heartbeat_age_s, sources_ok: {source: datetime}, llm_calls_today, llm_cap }`.

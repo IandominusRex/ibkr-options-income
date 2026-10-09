@@ -810,6 +810,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/news/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Feed */
+        get: operations["feed_news_feed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/news/posts/{post_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Post Detail */
+        get: operations["post_detail_news_posts__post_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/news/calendar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Calendar */
+        get: operations["calendar_news_calendar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/news/ticker/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ticker */
+        get: operations["ticker_news_ticker__symbol__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/news/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_news_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -1685,6 +1770,25 @@ export interface components {
             /** Evidence */
             evidence?: string[];
         };
+        /** ClusterOut */
+        ClusterOut: {
+            /** Id */
+            id: number;
+            /** Headline */
+            headline: string;
+            /** Source Count */
+            source_count: number;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+            /**
+             * Links
+             * @default []
+             */
+            links: components["schemas"]["SourceLinkOut"][];
+        };
         /**
          * CommandKind
          * @description Every intent the web layer can enqueue. Later milestones register handlers.
@@ -1816,6 +1920,49 @@ export interface components {
             drain_last_seen?: string | null;
             /** Pending Commands */
             pending_commands: number;
+        };
+        /** EarningsOut */
+        EarningsOut: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * Report Date
+             * Format: date
+             */
+            report_date: string;
+            /** Timing */
+            timing: string;
+            /** Eps Est */
+            eps_est: number | null;
+            /** Eps Actual */
+            eps_actual: number | null;
+            /** Status */
+            status: string;
+            /**
+             * Held
+             * @default false
+             */
+            held: boolean;
+        };
+        /** EconEventOut */
+        EconEventOut: {
+            /** Title */
+            title: string;
+            /**
+             * Scheduled At
+             * Format: date-time
+             */
+            scheduled_at: string;
+            /** Impact */
+            impact: string;
+            /** Forecast */
+            forecast: string | null;
+            /** Previous */
+            previous: string | null;
+            /** Actual */
+            actual: string | null;
+            /** Surprise Dir */
+            surprise_dir: string | null;
         };
         /**
          * EquityCurve
@@ -2584,6 +2731,41 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /** NewsCalendarResponse */
+        NewsCalendarResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /**
+             * Econ
+             * @default []
+             */
+            econ: components["schemas"]["EconEventOut"][];
+            /**
+             * Earnings
+             * @default []
+             */
+            earnings: components["schemas"]["EarningsOut"][];
+        };
+        /** NewsFeedResponse */
+        NewsFeedResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /**
+             * Posts
+             * @default []
+             */
+            posts: components["schemas"]["NewsPostOut"][];
+        };
         /**
          * NewsItem
          * @description One news headline with its per-item VADER sentiment.
@@ -2602,6 +2784,112 @@ export interface components {
             source?: string | null;
             /** Sentiment */
             sentiment?: number | null;
+        };
+        /** NewsPostDetailResponse */
+        NewsPostDetailResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            post: components["schemas"]["NewsPostOut"];
+            /** Chart Data Uri */
+            chart_data_uri?: string | null;
+        };
+        /** NewsPostOut */
+        NewsPostOut: {
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Subject */
+            subject: string | null;
+            /**
+             * Posted At
+             * Format: date-time
+             */
+            posted_at: string;
+            /** Stage */
+            stage: string;
+            /** Critical */
+            critical: boolean;
+            /** Silent */
+            silent: boolean;
+            /** Has Chart */
+            has_chart: boolean;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        /** NewsRequestOut */
+        NewsRequestOut: {
+            /** Id */
+            id: number;
+            /** Status */
+            status: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Post Id */
+            post_id: number | null;
+            /** Error */
+            error: string | null;
+        };
+        /** NewsStatusResponse */
+        NewsStatusResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Heartbeat At */
+            heartbeat_at?: string | null;
+            /** Heartbeat Age S */
+            heartbeat_age_s?: number | null;
+            /**
+             * Sources Ok
+             * @default {}
+             */
+            sources_ok: {
+                [key: string]: string;
+            };
+            /**
+             * Llm Calls Today
+             * @default 0
+             */
+            llm_calls_today: number;
+            /**
+             * Llm Cap
+             * @default 0
+             */
+            llm_cap: number;
+        };
+        /** NewsTickerResponse */
+        NewsTickerResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Symbol */
+            symbol: string;
+            latest_brief?: components["schemas"]["NewsPostOut"] | null;
+            /**
+             * Clusters
+             * @default []
+             */
+            clusters: components["schemas"]["ClusterOut"][];
+            next_earnings?: components["schemas"]["EarningsOut"] | null;
+            request?: components["schemas"]["NewsRequestOut"] | null;
         };
         /** NormalizedFinancials */
         NormalizedFinancials: {
@@ -3272,6 +3560,13 @@ export interface components {
          * @enum {string}
          */
         Source: "edgar" | "yfinance" | "stooq" | "ibkr" | "computed";
+        /** SourceLinkOut */
+        SourceLinkOut: {
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+        };
         /** Sourced[float] */
         Sourced_float_: {
             /** Value */
@@ -4714,6 +5009,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LedgerImportsResponse"];
+                };
+            };
+        };
+    };
+    feed_news_feed_get: {
+        parameters: {
+            query?: {
+                group?: ("macro" | "market" | "tickers" | "earnings" | "briefs") | null;
+                symbol?: string | null;
+                limit?: number;
+                before?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsFeedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_detail_news_posts__post_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                post_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsPostDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calendar_news_calendar_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsCalendarResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ticker_news_ticker__symbol__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsTickerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_news_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewsStatusResponse"];
                 };
             };
         };

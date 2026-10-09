@@ -54,6 +54,8 @@ _SECTIONS: list[tuple[str, str, bool, str | None]] = [
     ("portfolio", "Portfolio", True, None),
     ("pnl", "P&L", True, None),
     ("ledger", "Ledger", True, None),
+    # "news" added with the news thread (docs/superpowers/specs/2026-10-09-news-thread-design.md §7.6).
+    ("news", "News", True, None),
     ("universe", "Universe", True, None),
     ("explain", "System Explanation", True, None),
 ]

@@ -13,7 +13,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView
-from src.news.store.models import EarningsEventRow, EconEventRow, NewsClusterRow, NewsItemRow
+from src.news.store.models import (
+    EarningsEventRow,
+    EconEventRow,
+    NewsClusterRow,
+    NewsItemRow,
+    NewsPostRow,
+    NewsRequestRow,
+    NewsStateRow,
+)
 
 
 def naive_utc(dt: datetime) -> datetime:
@@ -200,3 +208,52 @@ def recent_items_for(s: Session, symbol: str, since: datetime, limit: int) -> li
         if len(out) >= limit:
             break
     return out
+
+
+# --- API readers (src/api/routers/news.py, spec §7.6) ---------------------------------------
+
+KIND_GROUPS: dict[str, tuple[str, ...]] = {
+    "macro": ("macro_print", "breaking"),
+    "market": ("market_move", "vix_spike", "digest_premarket", "digest_close", "digest_week"),
+    "tickers": ("ticker_move",),
+    "earnings": ("earnings",),
+    "briefs": ("brief",),
+}
+
+
+def recent_posts(
+    s: Session, *, group: str | None, symbol: str | None, limit: int, before_id: int | None
+) -> list[NewsPostRow]:
+    q = select(NewsPostRow)
+    if group:
+        q = q.where(NewsPostRow.kind.in_(KIND_GROUPS[group]))
+    if symbol:
+        q = q.where(NewsPostRow.subject == symbol.upper())
+    if before_id:
+        q = q.where(NewsPostRow.id < before_id)
+    return list(s.scalars(q.order_by(NewsPostRow.id.desc()).limit(limit)))
+
+
+def latest_brief(s: Session, symbol: str) -> NewsPostRow | None:
+    return s.scalar(
+        select(NewsPostRow)
+        .where(NewsPostRow.kind == "brief", NewsPostRow.subject == symbol.upper())
+        .order_by(NewsPostRow.id.desc())
+        .limit(1)
+    )
+
+
+def request_for(s: Session, symbol: str) -> NewsRequestRow | None:
+    return s.scalar(
+        select(NewsRequestRow)
+        .where(NewsRequestRow.symbol == symbol.upper())
+        .order_by(NewsRequestRow.id.desc())
+        .limit(1)
+    )
+
+
+def state_values(s: Session, prefix: str) -> dict[str, str]:
+    rows = s.scalars(
+        select(NewsStateRow).where(NewsStateRow.key.startswith(prefix, autoescape=True))
+    )
+    return {r.key: r.value for r in rows}

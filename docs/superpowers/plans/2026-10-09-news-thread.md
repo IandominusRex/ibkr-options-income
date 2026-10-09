@@ -44,7 +44,7 @@
 | 28 Brief queue + builder | done | (see git log) | pytest/ruff/mypy green (3174 passed) | 2026-10-09 | (a) `finish` writes `error[:300] if error else None` (the plan's `(error or None) and error[:300]` reads as a mypy `str | None` mess). (b) The crash-requeue of `running` requests is `NewsService._requeue_running_briefs`, called from `run()` after `init_news_db`; the brief said only "one UPDATE in run()". (c) Added tests the brief did not name, each RED before the service change: the service has a `briefs` loop on `news.briefs.poll_seconds`; one tick drains the queue oldest-first and marks each `done` with its post id; a raising build is marked `failed` with the message and the next request still runs; a request left `running` by a crash is `pending` again after `run()` starts. (d) Final self-review fix: `latest_digest_link` calls the idempotent `init_news_db()` like `enqueue_brief` does, so `/news` before the news process ever ran reads as "no digest yet" instead of raising `no such table: news_posts` (Review Focus 5); `test_latest_digest_link_when_db_absent` RED→GREEN, suite 3185 passed. Docs (ARCHITECTURE/SETUP/README) stay deferred to Task 34 per the plan. |
 | 29 `/news` Telegram command | done | (see git log) | pytest/ruff/mypy green (3178 passed) | 2026-10-09 | (a) The handler does `import src.news.briefs as briefs` instead of the brief's `from src.news import briefs`: an `ast` import walk records the latter as `src.news` too, and Task 12's `test_notify_imports_only_the_brief_queue` (which allows only `src.news.briefs`) rejected it; the fence test is untouched and the module attribute is still resolved at call time, so the tests' monkeypatches apply. (b) The `*News*` help block sits between *Automation* and *System* (the brief names no position). Docs (ARCHITECTURE/SETUP/README command tables) stay deferred to Task 34, whose Steps 1, 2 and 4 name `/news TICKER` and `/news`. |
 | 30 `news_brief` command kind | done | (see git log) | pytest/ruff/mypy green (3184 passed) | 2026-10-09 | (a) The drain handler does `import src.news.briefs as briefs` (same fence reason as Task 29). (b) `docs/web/openapi.json` regenerated and `web/lib/api-types.ts` regenerated with `openapi-typescript` (a one-line `CommandKind` change): `tests/test_openapi_current.py` fails on a stale spec, and neither file was in the brief's list. (c) No test enumerated the kinds, so none needed updating. (d) Added tests the brief did not name, mutation-checked: a real `drain_once` round trip inserts exactly one `pending` `origin="web"` request and nothing else; a repeat click reuses the pending request; an unusable symbol fails with `invalid_symbol` rather than a generic `handler_error`. (e) `docs/web/commands.md` also lists `news_brief` among the kinds that always get `201`. Observed, not mine: `tsc --noEmit` already reports 9 errors in unrelated web test files, identical with and without this change. |
-| 31 Read-only `/news/*` API | pending | | | | |
+| 31 Read-only `/news/*` API | done | (see git log) | pytest/ruff/mypy green (3193 passed) | 2026-10-09 | (a) `ClusterOut.links` is a typed `SourceLinkOut{name, url}` list instead of the brief's bare `list[dict]`, and `NewsPostOut.payload` is `dict[str, Any]`: the generated `web/lib/api-types.ts` gets a concrete link shape for Task 32 (`SourceLink` has `name`, not `label`). (b) `state_values` uses `key.startswith(prefix, autoescape=True)`: the brief's `like(f"{prefix}%")` treats the `_` in `source_ok:`/`llm_calls:` as a wildcard. `/news/status` reads today's LLM count by its exact key and normalises stored timestamps through `aware_utc`. (c) `latest_brief`/`request_for` add `.limit(1)`. `news_read_session` logs the open failure at debug (the brief's bare `except`). (d) `docs/web/api.md` has no ledger route table to copy, so the five routes got a `## News` section in the doc's per-route style plus a summary table. `docs/web/openapi.json` and `web/lib/api-types.ts` regenerated (FastAPI also reordered `CommandKind` in the components; no content change). (e) Added `test_calendar_lists_the_window_and_flags_held_names` (the brief names no calendar test with data): econ window, earnings window, and `held` from a stock and an option underlying; it and `test_chart_outside_charts_dir_is_refused` were both mutation-checked. `test_api_process_never_loads_the_rw_engine` passed before the router existed (it guards against regressions, nothing to make RED). |
 | 32 Web `/news` pages | pending | | | | |
 | 33 Watchdog check | pending | | | | |
 | 34 Docs + final gate + live verification | pending | | | | |
@@ -8505,7 +8505,7 @@ git commit -m "feat(web): news_brief command kind drained into the news brief qu
 - Produces (`queries`): `KIND_GROUPS = {"macro": ("macro_print", "breaking"), "market": ("market_move", "vix_spike", "digest_premarket", "digest_close", "digest_week"), "tickers": ("ticker_move",), "earnings": ("earnings",), "briefs": ("brief",)}`; `recent_posts(s, *, group: str | None, symbol: str | None, limit: int, before_id: int | None) -> list[NewsPostRow]`; `latest_brief(s, symbol) -> NewsPostRow | None`; `request_for(s, symbol) -> NewsRequestRow | None`; `state_values(s, prefix: str) -> dict[str, str]`.
 - Produces (routes, owner-only): `GET /news/feed`, `GET /news/posts/{id}`, `GET /news/calendar?days=7`, `GET /news/ticker/{symbol}`, `GET /news/status` with response models in `src/api/models/news.py` (all subclass `Envelope`, all carry `available: bool`).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_api_news.py
@@ -8609,7 +8609,7 @@ def test_news_routes_when_db_missing(client, tmp_path, monkeypatch) -> None:
         assert r.status_code == 200 and r.json()["available"] is False, path
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/api/news_db.py`:
 
@@ -8977,9 +8977,9 @@ def test_api_process_never_loads_the_rw_engine() -> None:
 
 Register: in `src/api/main.py` import `news` with the other routers and `app.include_router(news.router)`. In `meta.py` add `("news", "News", True, None)` after `ledger` (comment: `# "news" added with the news thread (docs/superpowers/specs/2026-10-09-news-thread-design.md §7.6).`) and add `"news"` to `tests/test_api_meta.py`'s expected set. Document the five routes in `docs/web/api.md` (same table layout as the ledger routes). Then regenerate `docs/web/openapi.json` the way the repo does it (check `docs/web/api.md` for the command; the web `npm run gen:api` needs the API up).
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_api_news.py tests/test_api_meta.py tests/test_web_fence.py tests/test_news_fence.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_api_news.py tests/test_api_meta.py tests/test_web_fence.py tests/test_news_fence.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/api/news_db.py src/api/models/news.py src/api/routers/news.py src/api/main.py src/api/routers/meta.py src/news/store/queries.py tests/test_api_news.py tests/test_api_meta.py tests/test_news_fence.py docs/web/api.md docs/web/openapi.json docs/superpowers/plans/2026-10-09-news-thread.md
