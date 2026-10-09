@@ -28,7 +28,7 @@
 | 12 Service skeleton + entrypoint + fence | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `test_only_src_news_constructs_news_rows` only scans files importing `src.news`: `src/research/store/models.py` has its own unrelated `NewsItemRow` (research.db), which the plan's plain-string check flagged. (b) Spreads enumerations found: `scripts/start.py` `--no-spreads` (added `--no-news` + docstring line + `test_news_service_is_supervised_and_can_be_skipped`) and `ibkr logs` usage (added `news`); `scripts/launchd.py` enumerates none. (c) Step 5 networked smoke run not done: deferred to Task 34 live verification (it writes the operator's real `data/news.db`). |
 | 13 Fact sheet + flags | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `post_earnings_moves` measures a **1-day** move (spec §6.1): the larger of pre-report→report-day and report-day→next close, since report dates carry no BMO/AMC timing. The plan's two-session window gave −9.0% against its own pinned −9.9%. Added `test_post_earnings_moves_before_open_report`. (b) `Analytics.live().daily` no longer does `_safe(...) or pd.DataFrame()`, which raises on any non-empty frame. Added `test_live_daily_returns_a_non_empty_frame`. (c) `_safe` made generic (`_safe[T]`) and the `type: ignore`s dropped, earnings ratio local renamed `r`→`ratio_f` (mypy: clashed with the float `r`), `import re` merged into the schemas import block. |
 | 14 Reaction | done | (see git log) | pytest/ruff/mypy green (3057 passed) | 2026-10-09 | none |
-| 15 Card schemas + render | pending | | | | |
+| 15 Card schemas + render | done | (see git log) | pytest/ruff/mypy green (3064 passed) | 2026-10-09 | `fmt_when` treats a naive datetime as UTC: the plan's bare `astimezone()` reads naive as host-local, and the store keeps naive-UTC, so a card built from a DB row would show a wrong SGT/ET time. Added `test_naive_when_is_read_as_utc_not_local`. Local `l`→`lk` (ruff E741). |
 | 16 Charts | pending | | | | |
 | 17 Publisher + quiet hours | pending | | | | |
 | 18 Triggers + alert gate | pending | | | | |
@@ -4878,7 +4878,7 @@ git commit -m "feat(news): 📈 measured reaction windowed on bar timestamps"
 - Produces (`schemas`): `Verdict = Literal["further_downside_likely", "further_upside_likely", "overreaction_likely", "priced_in", "unclear"]`; `Confidence = Literal["low", "medium", "high"]`; `Explanation` (fields and `max_length` budgets exactly as spec §6.5: `headline` 80, `what_happened` 180, `read` 240, `bull` 100, `bear` 100, `verdict`, `confidence`, `book_impact` 200 default `""`, `setup_impact` 160 default `""`, `evidence: list[str]`); `DigestRead(cluster_id, headline ≤80, read ≤200, verdict, evidence)`, `DigestReads(items ≤10)`, `EditorThread(cluster_ids, title ≤80)`, `EditorOutput(regime, threads ≤10, dropped)`; `SourceLink(name, url)`; `GridRow(asset, textbook: str | None, actual: str | None)`; `DigestItem(text, read: str | None, verdict: Verdict | None, links: list[SourceLink])`; `DigestSection(title, items)`; `CardKind` literal; `CardPayload` (fields below).
 - Produces (`render`): `RenderedMessage(text: str, preview_url: str | None, show_above: bool)` dataclass; `fmt_when(dt) -> str`; `render_card(p: CardPayload) -> RenderedMessage`; `split_message(text, limit=4096) -> list[str]`; `VERDICT_LABEL: dict[str, str]`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_render.py
@@ -4952,7 +4952,7 @@ def test_split_respects_limit_and_blocks() -> None:
     assert parts[0] == "A" * 3000 and parts[1] == "B" * 3000
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 Append to `src/news/schemas.py` (add `from typing import Literal`):
 
@@ -5193,7 +5193,7 @@ def split_message(text: str, limit: int = LIMIT) -> list[str]:
 
 A hard split inside a `<pre>`/`<a>` could leave unbalanced tags; sections are short by construction (budgets), so only digest text with many sections reaches the limit and splits on `\n\n`. Record in STATUS (Task 34) that a single block > 4096 chars is hard-split.
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/schemas.py src/news/render.py tests/test_news_render.py docs/superpowers/plans/2026-10-09-news-thread.md

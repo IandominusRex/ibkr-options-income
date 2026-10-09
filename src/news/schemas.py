@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -104,3 +105,117 @@ class FactSheet(BaseModel):
         lines = [f"{f.id} {f.label}: {f.display}" for f in self.facts]
         lines += [f"FLAG {name} ← {', '.join(ev) or '-'}" for name, ev in self.flags.items()]
         return "\n".join(lines)
+
+
+Verdict = Literal[
+    "further_downside_likely",
+    "further_upside_likely",
+    "overreaction_likely",
+    "priced_in",
+    "unclear",
+]
+Confidence = Literal["low", "medium", "high"]
+CardKind = Literal[
+    "macro_print",
+    "earnings",
+    "market_move",
+    "vix_spike",
+    "ticker_move",
+    "breaking",
+    "brief",
+    "digest_premarket",
+    "digest_close",
+    "digest_week",
+]
+
+
+class Explanation(BaseModel):
+    """The writer pass's output (spec §6.5). Budgets are enforced here, not by asking nicely."""
+
+    headline: str = Field(max_length=80)
+    what_happened: str = Field(max_length=180)
+    read: str = Field(max_length=240)
+    bull: str = Field(max_length=100)
+    bear: str = Field(max_length=100)
+    verdict: Verdict
+    confidence: Confidence
+    book_impact: str = Field(default="", max_length=200)
+    setup_impact: str = Field(default="", max_length=160)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class DigestRead(BaseModel):
+    """One thread's read inside a digest — produced by ONE batched writer call per digest (Task 24)."""
+
+    cluster_id: int
+    headline: str = Field(max_length=80)
+    read: str = Field(max_length=200)
+    verdict: Verdict
+    evidence: list[str] = Field(default_factory=list)
+
+
+class DigestReads(BaseModel):
+    items: list[DigestRead] = Field(default_factory=list, max_length=10)
+
+
+class EditorThread(BaseModel):
+    cluster_ids: list[int] = Field(min_length=1)
+    title: str = Field(max_length=80)
+
+
+class EditorOutput(BaseModel):
+    """The editor pass (spec §6.5 pass 1): regime, ranked threads, dropped noise."""
+
+    regime: Literal["risk_on", "risk_off", "rotation", "mixed"]
+    threads: list[EditorThread] = Field(default_factory=list, max_length=10)
+    dropped: list[int] = Field(default_factory=list)
+
+
+class SourceLink(BaseModel):
+    name: str
+    url: str
+
+
+class GridRow(BaseModel):
+    asset: str
+    textbook: str | None = None
+    actual: str | None = None
+
+
+class DigestItem(BaseModel):
+    text: str
+    read: str | None = None
+    verdict: Verdict | None = None
+    links: list[SourceLink] = Field(default_factory=list)
+
+
+class DigestSection(BaseModel):
+    title: str
+    items: list[DigestItem] = Field(default_factory=list)
+
+
+class CardPayload(BaseModel):
+    """Everything a post shows — rendered to Telegram HTML here and to React on the web (§7.6)."""
+
+    kind: CardKind
+    subject: str | None = None
+    title: str
+    emoji: str
+    when: datetime
+    headline_line: str | None = None
+    facts_line: str | None = None
+    grid: list[GridRow] = Field(default_factory=list)
+    grid_note: str | None = None
+    facts: FactSheet | None = None
+    explanation: Explanation | None = None
+    trimmed: bool = False
+    llm_note: str | None = None
+    regime: str | None = None
+    sections: list[DigestSection] = Field(default_factory=list)
+    links: list[SourceLink] = Field(default_factory=list)
+    image_url: str | None = None
+    preview_url: str | None = None
+    critical: bool = False
+    updates: list[str] = Field(default_factory=list)
+    cluster_ids: list[int] = Field(default_factory=list)
+    event_keys: list[str] = Field(default_factory=list)
