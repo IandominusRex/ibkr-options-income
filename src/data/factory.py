@@ -24,6 +24,7 @@ from src.data.protocols import (
     FeedProvider,
     FilingsProvider,
     FundamentalsProvider,
+    IntradayPriceProvider,
     NewsProvider,
     NewsSearchProvider,
     PriceProvider,
@@ -219,3 +220,13 @@ def get_earnings_history() -> YFinanceEarningsHistory:
     from src.data.yfinance_backend import YFinanceEarningsHistory
 
     return YFinanceEarningsHistory()
+
+
+@functools.lru_cache(maxsize=1)
+def get_intraday_price_provider() -> IntradayPriceProvider:
+    name = get_config().data.intraday_price_provider
+    if name == "yfinance":
+        from src.data.yfinance_backend import YFinanceIntradayProvider
+
+        return YFinanceIntradayProvider()
+    raise ValueError(f"Unknown data.intraday_price_provider backend: {name!r}")

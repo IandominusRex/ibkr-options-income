@@ -22,7 +22,7 @@
 | 6 Finnhub backend | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | `_get(**params: Any)` instead of `object` (mypy vs httpx `QueryParamTypes`). |
 | 7 Econ schedule + actuals + probe script | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none (`news_probe.main()` imports `src.news.playbook`, which lands in Task 10; only `infer_offset` is tested here, as the brief states). |
 | 8 Earnings sources + merge | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none (`EarningsEventRow` constructed with explicit defaults, per the brief's note). |
-| 9 Intraday provider + tape | pending | | | | |
+| 9 Intraday provider + tape | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none |
 | 10 Playbook | pending | | | | |
 | 11 Aliases + views + collectors | pending | | | | |
 | 12 Service skeleton + entrypoint + fence | pending | | | | |

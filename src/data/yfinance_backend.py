@@ -169,3 +169,22 @@ class YFinanceEarningsHistory:
         today = datetime.now(UTC).date()
         days = sorted({ts.date() for ts in df.index if ts.date() <= today}, reverse=True)
         return days[:limit]
+
+
+class YFinanceIntradayProvider:
+    """``IntradayPriceProvider``: 1-minute bars incl. pre/post market. yfinance futures/index
+    quotes can lag ~10 min (spec §6.4) — callers window on bar timestamps, never wall clock."""
+
+    def get_intraday(self, symbol: str, *, interval: str = "1m", days: int = 1) -> pd.DataFrame:
+        breaker = get_breaker("yfinance_intraday")
+        if not breaker.allow():
+            return pd.DataFrame()
+        try:
+            df = yf.Ticker(symbol).history(
+                period=f"{max(1, days)}d", interval=interval, prepost=True
+            )
+        except Exception:
+            breaker.record_failure()
+            return pd.DataFrame()
+        breaker.record_success()
+        return df if df is not None else pd.DataFrame()
