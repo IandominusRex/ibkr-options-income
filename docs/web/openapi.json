@@ -4721,7 +4721,8 @@
           "refresh",
           "ledger_import",
           "ledger_annotate",
-          "ledger_ca_reviewed"
+          "ledger_ca_reviewed",
+          "news_brief"
         ],
         "title": "CommandKind",
         "description": "Every intent the web layer can enqueue. Later milestones register handlers."

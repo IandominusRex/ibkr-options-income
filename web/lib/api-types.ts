@@ -1690,7 +1690,7 @@ export interface components {
          * @description Every intent the web layer can enqueue. Later milestones register handlers.
          * @enum {string}
          */
-        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "universe_add" | "universe_remove" | "refresh" | "ledger_import" | "ledger_annotate" | "ledger_ca_reviewed";
+        CommandKind: "approve" | "reject" | "promote" | "roll_request" | "halt" | "resume" | "set_autonomy" | "universe_add" | "universe_remove" | "refresh" | "ledger_import" | "ledger_annotate" | "ledger_ca_reviewed" | "news_brief";
         /** CommandRequest */
         CommandRequest: {
             kind: components["schemas"]["CommandKind"];

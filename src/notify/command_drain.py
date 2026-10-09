@@ -822,3 +822,24 @@ def _ledger_ca_reviewed(*, command: Any, **_: Any) -> dict:
         if not mark_corporate_action_reviewed(s, payload.corporate_action_id):
             raise CommandFailed("not_found")
     return {"corporate_action_id": payload.corporate_action_id}
+
+
+# ---------------------------------------------------------------------------
+# News thread (docs/superpowers/specs/2026-10-09-news-thread-design.md §7.6) — news_brief.
+#
+# Inserts one news_requests row through src.news.briefs (the only src.news module this process
+# may import, spec §10.7). Creates no candidate, approval or order; no live confirm token; no
+# Telegram message from here — the brief itself lands in the News thread.
+# ---------------------------------------------------------------------------
+
+
+@register("news_brief")
+def _news_brief(*, payload: dict, **_: Any) -> dict:
+    import src.news.briefs as briefs  # not `from src.news import briefs`: the fence sees `src.news`
+
+    try:
+        sym = briefs.normalize_symbol(str(payload.get("symbol", "")))
+        req = briefs.enqueue_brief(sym, "web")
+    except briefs.InvalidSymbol as exc:
+        raise CommandFailed("invalid_symbol") from exc
+    return {"request_id": req, "symbol": sym}

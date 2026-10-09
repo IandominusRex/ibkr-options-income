@@ -37,6 +37,7 @@ class CommandKind(StrEnum):
     LEDGER_IMPORT = "ledger_import"
     LEDGER_ANNOTATE = "ledger_annotate"
     LEDGER_CA_REVIEWED = "ledger_ca_reviewed"
+    NEWS_BRIEF = "news_brief"
 
 
 # --- Payloads ---------------------------------------------------------------
@@ -144,6 +145,13 @@ class LedgerCaReviewedPayload(BaseModel):
     corporate_action_id: int
 
 
+class NewsBriefPayload(BaseModel):
+    """Ask the news process for an on-demand ticker brief (spec §7.6). Cannot reach an order."""
+
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(pattern=r"^\$?[A-Za-z][A-Za-z0-9.\-]{0,9}$")
+
+
 PAYLOAD_FOR: dict[CommandKind, type[BaseModel]] = {
     CommandKind.APPROVE: ApprovePayload,
     CommandKind.REJECT: RejectPayload,
@@ -158,6 +166,7 @@ PAYLOAD_FOR: dict[CommandKind, type[BaseModel]] = {
     CommandKind.LEDGER_IMPORT: LedgerImportPayload,
     CommandKind.LEDGER_ANNOTATE: LedgerAnnotatePayload,
     CommandKind.LEDGER_CA_REVIEWED: LedgerCaReviewedPayload,
+    CommandKind.NEWS_BRIEF: NewsBriefPayload,
 }
 
 
@@ -169,8 +178,9 @@ def validate_payload(kind: CommandKind, raw: dict) -> BaseModel:
 def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     """The ``f"{kind}:{target}"`` convention from Task 1.1.
 
-    ``None`` for the nine repeatable kinds (halt, resume, set_autonomy, refresh,
-    universe_add, universe_remove, ledger_import, ledger_annotate, ledger_ca_reviewed) —
+    ``None`` for the ten repeatable kinds (halt, resume, set_autonomy, refresh,
+    universe_add, universe_remove, ledger_import, ledger_annotate, ledger_ca_reviewed,
+    news_brief) —
     repeating them is harmless, so they are never deduped. The universe kinds joined this
     set in the M7 final-review fix round: both drain handlers
     (``_universe_add``/``_universe_remove``) upsert a ``UniverseOverrideRow`` via
@@ -186,7 +196,8 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     repeatable too — imports are idempotent upserts (``src.ledger.ingest.ingest`` dedupes
     by row) and annotations are last-write-wins (``src.ledger.annotations.annotate``
     overwrites only the fields sent), so a dedupe key would only ever reject a second,
-    possibly different, legitimate request.
+    possibly different, legitimate request. ``news_brief`` is repeatable — the news process
+    dedupes a symbol within ``news.briefs.dedupe_minutes``.
     """
     if kind in (
         CommandKind.HALT,
@@ -198,6 +209,7 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
         CommandKind.LEDGER_IMPORT,
         CommandKind.LEDGER_ANNOTATE,
         CommandKind.LEDGER_CA_REVIEWED,
+        CommandKind.NEWS_BRIEF,
     ):
         return None
     if kind in (CommandKind.APPROVE, CommandKind.REJECT):
