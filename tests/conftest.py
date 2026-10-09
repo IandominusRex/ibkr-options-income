@@ -978,3 +978,14 @@ def news_db(tmp_path, monkeypatch):
     rw.init_news_db()
     yield path
     ro.reset_engine()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_contract_cache(monkeypatch):
+    """No test may read or write data/contracts.db: the process-wide cache starts "failed", so
+    get_contract_cache() returns None. Tests that exercise the cache build a ContractCache on
+    tmp_path and pass it explicitly (or reset these two attributes themselves)."""
+    import src.ibkr.contract_cache as cc
+
+    monkeypatch.setattr(cc, "_CACHE", None)
+    monkeypatch.setattr(cc, "_CACHE_FAILED", True)
