@@ -59,6 +59,21 @@ def _mock_telegram_sender(monkeypatch):
     monkeypatch.setattr("src.notify.sender.send_order_notification", AsyncMock())
 
 
+@pytest.fixture(autouse=True)
+def _no_real_telegram_for_news(monkeypatch):
+    """src.news.publish builds its own Bot from .env; never let a test talk to Telegram."""
+    from unittest.mock import MagicMock
+
+    fake = MagicMock()
+    fake.return_value.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+    fake.return_value.edit_message_text = AsyncMock(return_value=True)
+    fake.return_value.send_photo = AsyncMock(return_value=MagicMock(message_id=2))
+    try:
+        monkeypatch.setattr("src.news.publish.Bot", fake)
+    except (ImportError, AttributeError):
+        pass  # before Task 17 exists
+
+
 # ---------------------------------------------------------------------------
 # Web API fixtures (P3-P4 M2 Task 2.1). Shared by the portfolio route tests
 # (2.1, 2.2, 2.4) and reused by M4's tests — one copy, per the milestone's own

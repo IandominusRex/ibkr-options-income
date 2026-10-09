@@ -30,7 +30,7 @@
 | 14 Reaction | done | (see git log) | pytest/ruff/mypy green (3057 passed) | 2026-10-09 | none |
 | 15 Card schemas + render | done | (see git log) | pytest/ruff/mypy green (3064 passed) | 2026-10-09 | `fmt_when` treats a naive datetime as UTC: the plan's bare `astimezone()` reads naive as host-local, and the store keeps naive-UTC, so a card built from a DB row would show a wrong SGT/ET time. Added `test_naive_when_is_read_as_utc_not_local`. Local `l`→`lk` (ruff E741). |
 | 16 Charts | done | (see git log) | pytest/ruff/mypy green (3066 passed) | 2026-10-09 | none (probed a tz-aware daily index and a NaN close: both render) |
-| 17 Publisher + quiet hours | pending | | | | |
+| 17 Publisher + quiet hours | done | (see git log) | pytest/ruff/mypy green (3077 passed) | 2026-10-09 | `send` builds its retry op with `functools.partial` instead of the plan's default-arg lambda (mypy: cannot infer lambda type; same loop-variable binding). Added tests the brief did not name: `from_config` (unset secrets, and that the conftest guard really swaps `Bot`) and `send_photo`; both mutation-checked. |
 | 18 Triggers + alert gate | pending | | | | |
 | 19 Alert assembly | pending | | | | |
 | 20 Digests | pending | | | | |
@@ -5346,7 +5346,7 @@ git commit -m "feat(news): matplotlib price chart with levels and short-strike l
 - Produces (`quiet`): `is_quiet(now: datetime, cfg: NewsQuietCfg) -> bool`; `silent_for(now, *, critical: bool, cfg) -> bool`.
 - Produces (`publish`): `class Publisher(bot, chat_id: str, thread_id: int | None)` with `from_config(cfg: Config) -> Publisher | None`; `async send(text, *, silent=False, preview_url=None, show_above=False) -> int | None` (returns the first chunk's message id; later chunks are sent without preview); `async edit(message_id, text, *, preview_url=None, show_above=False) -> bool` (False when the message is gone); `async send_photo(png: bytes, *, reply_to: int | None, silent: bool, caption: str | None = None) -> int | None`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_publish.py
@@ -5428,7 +5428,7 @@ def _no_real_telegram_for_news(monkeypatch):
         pass  # before Task 17 exists
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 `src/news/quiet.py`:
 
@@ -5575,7 +5575,7 @@ class Publisher:
         return None if msg is None else msg.message_id
 ```
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/publish.py src/news/quiet.py tests/test_news_publish.py tests/conftest.py docs/superpowers/plans/2026-10-09-news-thread.md
