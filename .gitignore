@@ -86,3 +86,4 @@ web/.next
 web/.env.local
 web/.env*.local
 web/out
+data/news_charts/
