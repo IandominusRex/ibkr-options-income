@@ -17,6 +17,7 @@ import functools
 from src.common.config import get_config
 from src.data.protocols import (
     BulkPriceProvider,
+    FeedProvider,
     FilingsProvider,
     FundamentalsProvider,
     NewsProvider,
@@ -151,3 +152,11 @@ def get_bulk_price_provider() -> BulkPriceProvider:
     depends on, so a future bulk-OHLCV source is a config change, not a rewrite.
     """
     return _make_bulk_price_provider(get_config().data.bulk_price_provider)
+
+
+@functools.lru_cache(maxsize=1)
+def get_feed_provider() -> FeedProvider:
+    """RSS/Atom feeds for the news service (stdlib parser, conditional GET)."""
+    from src.data.rss_backend import RssFeedProvider
+
+    return RssFeedProvider()

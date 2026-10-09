@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>Sample</title>
+    <item>
+      <title>Fed holds rates steady, signals patience</title>
+      <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary20261009a.htm</link>
+      <pubDate>Thu, 09 Oct 2026 18:00:00 GMT</pubDate>
+      <description>&lt;p&gt;The Federal Open Market Committee decided…&lt;/p&gt;</description>
+      <media:content url="https://img.example.com/fed.jpg" medium="image"/>
+    </item>
+    <item>
+      <title></title>
+      <link>https://example.com/empty</link>
+    </item>
+    <item>
+      <title>CPI rises 0.4% in September</title>
+      <link>https://www.bls.gov/news.release/cpi.nr0.htm</link>
+      <pubDate>not a date</pubDate>
+      <enclosure url="https://img.example.com/cpi.png" type="image/png"/>
+    </item>
+  </channel>
+</rss>
