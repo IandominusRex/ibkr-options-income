@@ -1337,13 +1337,18 @@ deterministic gates.
 
 ## 14. Local-LLM (Ollama) backend for Claude review
 
-Since June 15, 2026, `claude -p` (the headless CLI this system shells out to ~26+×/day) draws from
-a separate monthly **Agent SDK credit** pool billed at API rates, with no rollover. If you'd rather
-not depend on that credit — or don't have `claude -p` access at all — you can run the
-strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.com) instead.
+`claude -p` (the headless CLI this system shells out to for every review) draws from your Claude
+**subscription limits** on every plan, Pro included. The Agent SDK credit split announced for
+June 15, 2026 was paused that day, and since October 7, 2026 Max and Team plans also get monthly
+API credits that cover `claude -p`
+([Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/17154008)).
+The reviews therefore share a budget with your own interactive Claude use. If you'd rather keep
+that budget for yourself, or don't have `claude -p` at all, you can run the strategist/roll/EOD
+reviews against a local model via [Ollama](https://ollama.com) instead.
 
-**This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
-access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
+**This was the active configuration until 2026-10-09** (`backend: "ollama"`; the deployment now
+runs `backend: "cli"`, see "Headless-subprocess hardening" in §13): every review
+(`review_candidates`, `review_roll`, `write_journal_narrative`) runs
 against a local `qwen3.5:4b` model (Task 10, 2026-09-29 — see "Model choice" below). The verdict
 learning loop (§13 — ledger, reconciliation, score-vs-outcome analysis) is unaffected since it
 doesn't call Claude at all.
@@ -1369,12 +1374,13 @@ claude:
   ollama_temperature: 0.2     # low = disciplined JSON
 ```
 
-- **`"cli"`** — `claude -p` only. Requires CLI access; not usable in this deployment.
-- **`"ollama"`** (**active here**) — every review (`review_candidates`, `review_roll`,
-  `write_journal_narrative`) runs against the local model only. No `claude -p` calls, no Agent
-  SDK credit usage.
+- **`"cli"`** (**active here since 2026-10-09**) — `claude -p` only. On CLI failure the
+  deterministic Rules-Engine list ships unreviewed.
+- **`"ollama"`** — every review (`review_candidates`, `review_roll`,
+  `write_journal_narrative`) runs against the local model only. No `claude -p` calls, nothing
+  drawn from your subscription limits.
 - **`"cli_then_ollama"`** — tries `claude -p` first; if it's unavailable, times out, or returns
-  unparseable output (including a hit Agent SDK credit limit), falls back to the local model
+  unparseable output (including a hit subscription usage limit), falls back to the local model
   automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
   Claude to be the primary reviewer again.
 
