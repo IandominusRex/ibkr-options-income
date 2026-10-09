@@ -421,6 +421,14 @@ Found by reading the first RTH session after the news merge; each fix has a regr
   is a per-day conId cache that also remembers non-existent strikes, so each contract is qualified
   once a day rather than every 15 minutes. The GEX build also got Error 354 (not subscribed) on
   some SPXW options.
+- **Changed 2026-10-10: the forced full sweep is once per ET trading day, not once per process
+  start** (Task 4 of docs/superpowers/plans/2026-10-10-contract-cache.md). Every restart used to
+  force-fetch the option chain of all 20 actively-wheeled/held names, though `scan_state` is
+  persisted and the normal materiality gate (with its 120-min `force_full_scan_minutes` timer) is
+  correct right after a restart. The day is stored in `system_settings`
+  (`intraday_full_sweep_et_date`); a manual `/scan` marks it too. The retry queue of symbols a
+  cut-short cycle never reached is now persisted (`intraday_pending_retry_symbols`) so a restart
+  doesn't drop it — the forced sweep used to cover for that.
 - `src/news/aliases.py::load_aliases` can race at startup (two loops inserting the same
   `ticker_aliases` row → `UNIQUE constraint failed`); it self-heals on the next cycle.
 - `logs/approval.log` has no rotation (159 MB), mostly `Unknown contract` strike-grid noise.

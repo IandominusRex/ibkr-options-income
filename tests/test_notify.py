@@ -2041,7 +2041,7 @@ async def test_notify_manual_scan_outcome_swallows_send_failure():
     ib_scan.disconnect.assert_called_once()
 
 
-async def test_run_intraday_scan_success_clears_lease_and_updates_pending_orders():
+async def test_run_intraday_scan_success_clears_lease_and_updates_pending_orders(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 
@@ -2063,7 +2063,7 @@ async def test_run_intraday_scan_success_clears_lease_and_updates_pending_orders
     mock_update.assert_called_once_with(ib_scan)
 
 
-async def test_run_intraday_scan_forwards_pending_retry_as_must_include(monkeypatch):
+async def test_run_intraday_scan_forwards_pending_retry_as_must_include(db, monkeypatch):
     """A symbol queued from a prior cycle's aborted sweep must be forced through this cycle's
     gate — not left to chance based on price movement (2026-08-28)."""
     from src.notify.approval_service import _run_intraday_scan
@@ -2084,7 +2084,7 @@ async def test_run_intraday_scan_forwards_pending_retry_as_must_include(monkeypa
     assert mock_run_scan.call_args.kwargs["must_include_symbols"] == {"V", "WMT"}
 
 
-async def test_run_intraday_scan_replaces_pending_retry_with_new_unreached_symbols():
+async def test_run_intraday_scan_replaces_pending_retry_with_new_unreached_symbols(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 
@@ -2106,7 +2106,7 @@ async def test_run_intraday_scan_replaces_pending_retry_with_new_unreached_symbo
     assert bot_data["pending_retry_symbols"] == {"XLE", "XLF"}
 
 
-async def test_run_intraday_scan_clears_pending_retry_on_clean_run():
+async def test_run_intraday_scan_clears_pending_retry_on_clean_run(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 
@@ -2143,7 +2143,7 @@ async def test_run_intraday_scan_lease_skipped_does_not_touch_pending_retry():
     assert bot_data["pending_retry_symbols"] == {"V", "WMT"}
 
 
-async def test_run_intraday_scan_aborted_notifies_with_retry_symbols():
+async def test_run_intraday_scan_aborted_notifies_with_retry_symbols(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 
@@ -2163,7 +2163,7 @@ async def test_run_intraday_scan_aborted_notifies_with_retry_symbols():
     assert mock_notify.call_args.kwargs["retry_symbols"] == ["XLE", "XLF"]
 
 
-async def test_run_intraday_scan_sends_and_edits_a_live_progress_message():
+async def test_run_intraday_scan_sends_and_edits_a_live_progress_message(db):
     """The operator should see which symbol is currently being scanned, not silence until
     the whole cycle finishes (2026-08-28)."""
     from src.notify.approval_service import _run_intraday_scan
@@ -2211,7 +2211,7 @@ async def test_run_intraday_scan_clears_lease_on_exception():
     assert bot_data["scan_running"] is False
 
 
-async def test_run_intraday_scan_forwards_force_full_sweep():
+async def test_run_intraday_scan_forwards_force_full_sweep(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 
@@ -2279,13 +2279,14 @@ async def test_intraday_loop_runs_periodic_fill_reconciliation_when_exec_is_conn
     assert reconcile_fills.call_args.args[0] is ib_exec
 
 
-async def test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle():
-    """2026-08-21: the first cycle this process actually gets to spawn a scan must force a full
-    sweep (force_full_sweep=True) regardless of the staleness timer, since the timer only
-    incidentally covers a restart. The next cycle must not force it again."""
+async def test_intraday_loop_forces_full_sweep_once_per_et_day(db, monkeypatch):
+    """2026-10-10: the full sweep is once per ET trading day (persisted), not once per process
+    start — scan_state is persisted, so a mid-session restart resumes the normal gate."""
     from types import SimpleNamespace
 
     import src.notify.approval_service as approval_service
+
+    monkeypatch.setattr(approval_service, "_et_today", lambda: date(2026, 10, 12))
 
     ib_scan = MagicMock()
     ib_scan.isConnected.return_value = True
@@ -2300,34 +2301,41 @@ async def test_intraday_loop_forces_full_sweep_only_on_first_spawned_cycle():
         force_flags.append(kwargs.get("force_full_sweep", False))
         return ScanResult()
 
-    with (
-        patch.object(approval_service, "is_rth", return_value=True),
-        patch.object(approval_service, "is_halted", return_value=False),
-        patch.object(approval_service, "is_new_entry_window", return_value=True),
-        patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
-        patch.object(approval_service, "_check_profit_takes", AsyncMock()),
-        patch.object(approval_service, "_check_loss_exits", AsyncMock()),
-        patch.object(approval_service, "_update_pending_order_notifications", AsyncMock()),
-        patch("src.ibkr.market_data.probe_market_data_health", AsyncMock(return_value=True)),
-        patch("src.orchestrator.scan.run_scan", _capture_run_scan),
-    ):
-        loop_task = asyncio.create_task(
-            approval_service._intraday_scan_loop(app, ib_scan, None, "123")
-        )
-        try:
-            for _ in range(200):
-                if len(force_flags) >= 2:
-                    break
-                await asyncio.sleep(0.01)
-        finally:
-            loop_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await loop_task
+    async def _run_loop(the_app, cycles: int) -> None:
+        with (
+            patch.object(approval_service, "is_rth", return_value=True),
+            patch.object(approval_service, "is_halted", return_value=False),
+            patch.object(approval_service, "is_new_entry_window", return_value=True),
+            patch.object(approval_service, "seconds_until_next_aligned_mark", return_value=0.01),
+            patch.object(approval_service, "_check_profit_takes", AsyncMock()),
+            patch.object(approval_service, "_check_loss_exits", AsyncMock()),
+            patch.object(approval_service, "_update_pending_order_notifications", AsyncMock()),
+            patch("src.ibkr.market_data.probe_market_data_health", AsyncMock(return_value=True)),
+            patch("src.orchestrator.scan.run_scan", _capture_run_scan),
+        ):
+            loop_task = asyncio.create_task(
+                approval_service._intraday_scan_loop(the_app, ib_scan, None, "123")
+            )
+            try:
+                for _ in range(200):
+                    if len(force_flags) >= cycles:
+                        break
+                    await asyncio.sleep(0.01)
+            finally:
+                loop_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await loop_task
 
+    await _run_loop(app, 2)
     assert len(force_flags) >= 2, "loop did not spawn two scan cycles in time"
-    assert force_flags[0] is True
-    assert force_flags[1] is False
-    assert app.bot_data.get("startup_full_sweep_done") is True
+    assert force_flags[:2] == [True, False]
+
+    # A restart (fresh bot_data, same ET day) does not force it again.
+    app2 = SimpleNamespace(bot=bot, bot_data={})
+    del force_flags[2:]
+    await _run_loop(app2, 3)
+    assert len(force_flags) >= 3, "restarted loop did not spawn a scan cycle in time"
+    assert force_flags[2] is False
 
 
 async def test_intraday_loop_probe_block_reports_diagnosis_and_codes():
@@ -2399,7 +2407,7 @@ async def test_intraday_loop_probe_block_reports_diagnosis_and_codes():
     ib_scan.disconnect.assert_called_once()
 
 
-async def test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running():
+async def test_intraday_loop_reaches_next_aligned_mark_while_scan_still_running(db):
     """Regression for 2026-08-13: a full, legitimately slow sweep (e.g. right after a restart,
     before any symbol has a scan_state baseline) used to be `await`ed inline, so the loop could
     not return to check the *next* aligned mark until it finished — profit-take/loss-exit checks

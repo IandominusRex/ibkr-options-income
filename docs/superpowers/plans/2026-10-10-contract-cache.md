@@ -17,7 +17,7 @@
 | 1. Cache store | done | (this commit) | pytest 3255 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `prune()` reads `rowcount` via `getattr` (repo idiom, mypy sees ORM `Result`); docs rows deferred to Task 2, which owns them; plan file itself first committed here |
 | 2. Cache in `qualify_options_async` | done | (this commit) | pytest 3263 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `src/ibkr/market_data.py` added to the commit (the step's `git add` list omitted it); ARCHITECTURE `settings.yaml` config row also gained the two Task 1 keys (doc-update rule for new config keys) |
 | 3. Cross-process lookup lock | done | (this commit) | pytest 3267 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | — |
-| 4. Full sweep once per ET day; persisted retry queue | not started | | | | |
+| 4. Full sweep once per ET day; persisted retry queue | done | (this commit) | pytest 3269 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | Step 4's mtime check was confounded by the live services writing the same DB; a throwaway pytest spy found 9 existing tests (8 in test_notify.py, 1 in test_buy_list_cadence.py) writing the new keys to the real `data/income_system.db` — they now take the `db` fixture (re-run: zero real-DB writes). Also reworded the remaining "at startup" full-sweep phrasing in `How the scan works.md` and the `_run_intraday_scan` docstring |
 | 5. Live verification + docs close-out | not started | | | | |
 
 ---
@@ -1117,7 +1117,7 @@ Update Progress log row 3, commit with the task.
 - Consumes: `src.storage.system_settings.get_setting` / `set_setting`
 - Produces (module-level in `approval_service.py`): `_FULL_SWEEP_DATE_KEY = "intraday_full_sweep_et_date"`, `_RETRY_QUEUE_KEY = "intraday_pending_retry_symbols"`, `_et_today() -> date`, `_full_sweep_due() -> bool`, `_mark_full_sweep_done() -> None`, `_load_retry_queue(bot_data) -> set[str]`, `_save_retry_queue(bot_data, symbols) -> None`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_daily_full_sweep.py`:
 
@@ -1187,12 +1187,12 @@ async def test_intraday_loop_forces_full_sweep_once_per_et_day(db, monkeypatch):
 
 Keep the old test's patch list and loop-driving code verbatim; only the fixture, the date pin, the assertions and the second app change. Delete the old `assert app.bot_data.get("startup_full_sweep_done") is True`.
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_daily_full_sweep.py "tests/test_notify.py::test_intraday_loop_forces_full_sweep_once_per_et_day" -q`
 Expected: FAIL — `AttributeError: module 'src.notify.approval_service' has no attribute '_et_today'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Module level in `src/notify/approval_service.py`, beside `_BUY_LIST_SENT_DATE_KEY`:
 
@@ -1238,12 +1238,12 @@ Then:
 - Manual `/scan` (~524): replace `context.bot_data["startup_full_sweep_done"] = True` with `_mark_full_sweep_done()`, and update its comment.
 - `_run_intraday_scan`: `pending_retry = _load_retry_queue(bot_data)` (~1321), and `_save_retry_queue(bot_data, set(result.unreached_symbols))` (~1338).
 
-- [ ] **Step 4: Run them and the existing retry-queue tests**
+- [x] **Step 4: Run them and the existing retry-queue tests**
 
 Run: `python -m pytest tests/test_daily_full_sweep.py tests/test_notify.py -q`
 Expected: all PASS. The four existing `pending_retry_symbols` tests (~lines 2065-2140) pre-seed `bot_data`, so `_load_retry_queue` uses that; their `set_setting` calls fail softly when no DB is configured (`set_setting` logs and returns). If any of them now writes the real `data/income_system.db`, add the `db` fixture to it. **Check:** run `ls -la data/income_system.db` before and after the test run; the mtime must not change.
 
-- [ ] **Step 5: Docs, gate, commit**
+- [x] **Step 5: Docs, gate, commit**
 
 `How the scan works.md`:
 - "Two overrides" list: replace the "First eligible cycle after the process starts (`startup_full_sweep_done`)" bullet with "**First eligible cycle of the ET trading day** (persisted in `system_settings` as `intraday_full_sweep_et_date`, 2026-10-10). A restart later the same day resumes the normal gate: `scan_state` is persisted and `force_full_scan_minutes` still re-fetches anything older than 120 min. A manual `/scan` also marks the day swept."

@@ -24,9 +24,9 @@ clocks** and **two very different costs**, and the numbers you've seen quoted (1
 
 ---
 In my own words:
-1. At startup, all tickers in actively_wheeling PLUS any stock I currently hold (whether or not
+1. At the first cycle of each ET trading day (since 2026-10-10; it used to be every process start), all tickers in actively_wheeling PLUS any stock I currently hold (whether or not
 it's in would_own) get a FULL IBKR options chain fetch. Dip_watch names (would_own − actively_wheeling,
-currently 15) are NOT chain-fetched unconditionally at startup: each gets a cheap yfinance probe,
+currently 15) are NOT chain-fetched unconditionally at that sweep: each gets a cheap yfinance probe,
 and only ones that gapped ≥3% overnight (in either direction — a gap-up is a legitimate CSP setup
 at the open via IV expansion / news; a gap-down is the dip rule) get a chain fetch. Dip_watch names
 that didn't gap get a yfinance-seeded baseline (no chain fetch) — the 3% drop gate works from
@@ -58,10 +58,10 @@ Two more rules fire on top of the price ones:
   regardless of price movement, until a fetch finds nothing. This is usually the most common
   reason a symbol gets fetched
 - Anything with no baseline price yet, or whose probe failed, gets fetched once to establish one
-  — **except** dip_watch names at a full-sweep cycle (startup / manual `/scan`), which get
+  — **except** dip_watch names at a full-sweep cycle (first cycle of the ET day / manual `/scan`), which get
   seed-only instead (a yfinance baseline persisted without a chain fetch). At a normal intraday
   cycle this rule still fetches a no-baseline dip_watch name, but that only happens if the
-  startup sweep somehow left it without one (a probe failure, or a brand-new ticker added to
+  day's full sweep somehow left it without one (a probe failure, or a brand-new ticker added to
   `would_own` mid-session).
 
 3. If a symbol under actively_wheeling or held doesn't receive an options chain fetch after 120
@@ -303,7 +303,7 @@ That is the entire scan set. `indexes:` and `watchlist:` are **not read by the s
 
 | List in `universe.yaml` | Count | Read by the scan loop? | What it's actually for |
 |---|---|---|---|
-| `indexes:` + `watchlist:` | 14 + 25 | **No** | The documented universe. Feeds nightly IV-history and price-history appends (EOD, 16:15 ET) and the `/health` IV-staleness check. Nothing else. |
+| `indexes:` + `watchlist:` | 14 + 25 | **No** | The documented universe. Feeds nightly IV-history and price-history appends (EOD, 16:15 ET) and the `/health` IV-staleness check — plus display-only uses (news-thread ticker tagging, web Universe/Research pages). Nothing that selects a trade. |
 | `would_own:` | **31** | **Yes — this is the scan set** | The CSP allowlist. A cash-secured put can only ever be recommended on a name in here. |
 | `actively_wheeling:` | **23** | Yes — a subset of `would_own` | The core rotation. The only names on the sensitive 0.5% gate and the only ones the 120-min net covers. |
 | *(derived)* dip-watch = `would_own` − `actively_wheeling` | **8** | Yes, but cheaply | Names you'd accept assignment on, but don't need checked constantly. Chain-fetched only on a real drop. |
@@ -367,12 +367,14 @@ buckets is tested against both and any one firing is enough.
 Two overrides sweep **everything** unconditionally:
 
 - **Cold start** — no `scan_state` rows at all. At a normal intraday cycle this fetches everyone
-  once to seed baselines. At a full-sweep cycle (startup / manual `/scan`) the path is different:
+  once to seed baselines. At a full-sweep cycle (first cycle of the ET day / manual `/scan`) the path is different:
   `actively_wheeling` ∪ held names are fetched unconditionally, but dip_watch names get seed-only
   (yfinance baseline persisted, no chain fetch) unless they gapped ≥3% overnight — see point 1.
-- **First eligible cycle after the process starts** (`startup_full_sweep_done`). A manual `/scan`
-  also counts and sets the same flag, so a restart followed by a manual scan doesn't sweep twice.
-  Same dip_watch seed-only behavior as a cold start.
+- **First eligible cycle of the ET trading day** (persisted in `system_settings` as
+  `intraday_full_sweep_et_date`, 2026-10-10). A restart later the same day resumes the normal
+  gate: `scan_state` is persisted and `force_full_scan_minutes` still re-fetches anything older
+  than 120 min. A manual `/scan` also marks the day swept. Same dip_watch seed-only behavior as a
+  cold start.
 
 A third override sweeps **only specific named symbols**, regardless of movement:
 
@@ -381,12 +383,12 @@ A third override sweeps **only specific named symbols**, regardless of movement:
   `market_data.max_consecutive_chain_timeouts` — the scan bails rather than grind the rest of
   the universe one `symbol_timeout_seconds` at a time; see `SETUP.md`'s troubleshooting table
   for the full "Scan blocked" story), everything from the start of the failing run onward is
-  never reached that cycle. Those symbols carry forward as `bot_data["pending_retry_symbols"]`
+  never reached that cycle. Those symbols carry forward as the retry queue
   and get forced through the gate on the *next* intraday cycle — a targeted retry, not a second
   full sweep, since everything else that cycle already fetched is fresh in `scan_state`. If that
   retry also gets cut short, the still-unreached subset carries forward again; symbols that make
-  it through drop out of the queue. A restart clears the queue in effect (the next eligible cycle
-  is a forced full sweep anyway, per the override above). The queue is intraday-loop state only
+  it through drop out of the queue. The queue is persisted in `system_settings`
+  (`intraday_pending_retry_symbols`), so a restart doesn't drop it. The queue is intraday-loop state only
   — a manual `/scan` doesn't read or clear it, though a clean full sweep naturally refreshes
   `scan_state` for whatever was pending anyway, so the next intraday cycle's forced retry just
   ends up re-confirming already-fresh data rather than finding anything stale.
@@ -474,7 +476,7 @@ The daemon started at 09:12 this morning.
 
 ### 09:30 — first eligible cycle → forced full sweep
 
-Nothing to gate against, and the startup flag is unset. NVDA, HOOD, and QQQ (actively_wheeling
+Nothing to gate against, and today isn't marked swept yet. NVDA, HOOD, and QQQ (actively_wheeling
 ∪ held — QQQ is both) get a chain fetch unconditionally. AAPL and MSFT are dip_watch: each gets a
 yfinance probe instead. Say neither gapped ≥3% overnight → both are seed-only (yfinance baseline
 persisted, no chain fetch). TSLL is not in `all_symbols` and is not touched.
@@ -564,7 +566,7 @@ price gets *easier* to trip as the day goes on, not harder.
 
 | Cycle | Chain fetches | Why |
 |---|---|---|
-| 09:30 | **3** | forced full sweep (first cycle after process start) — aw ∪ held only; AAPL, MSFT seed-only |
+| 09:30 | **3** | forced full sweep (first cycle of the ET day) — aw ∪ held only; AAPL, MSFT seed-only |
 | 09:45 | 2 | NVDA, HOOD — cleared floor |
 | 10:00 | 2 | NVDA (0.5% move), HOOD (cleared floor) |
 | 10:15–10:30 | 1–2 | HOOD, occasional NVDA |
@@ -720,7 +722,7 @@ per-fetch cost (`max_strikes_per_symbol`, or the wide `strike_bands` overrides o
 |---|---|
 | **`/scan`** (manual, no ticker) | **Full sweep — `actively_wheeling` ∪ held names chain-fetched unconditionally; dip_watch names seed-only unless they gapped ≥3% overnight.** Faster than the old "fetch every symbol" sweep. Also sets the startup flag so the next 15-min cycle doesn't repeat it. |
 | **`/scan TICKER`** | Single ticker, chain + analytics + screens + risk gate, **ignoring universe membership entirely** — any ticker that qualifies as an IBKR stock works, in `would_own` or not. |
-| **Daemon restart** | The next eligible cycle is a forced full sweep, regardless of the 120-min timer. |
+| **Daemon restart** | The next cycle uses the normal gate; the forced full sweep is once per ET day. |
 | **EOD report (16:15 ET)** | Appends today's ATM IV and closing price for `indexes ∪ watchlist ∪ would_own` (~60 names) to the history tables. Not a scan — no chains, no candidates. |
 | **`src/monitor/intraday.py`** | Continuous, event-driven, on your open short options. Roll alerts, delta drift, assignment risk. **Completely independent of every threshold above.** |
 
