@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Literal, get_args
 
 from sqlalchemy import select
 
@@ -20,7 +20,7 @@ from src.news.store.models import EconEventRow, NewsPostRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import news_session
 from src.news.tape import Quote
-from src.news.triggers import AlertCandidate
+from src.news.triggers import AlertCandidate, AlertKind
 
 _SURPRISE_WORD = {
     "hot": "hotter than expected",
@@ -28,6 +28,7 @@ _SURPRISE_WORD = {
     "inline": "in line",
 }
 _SURPRISE_EMOJI = {"hot": "🔴", "cold": "🟢", "inline": "⚪"}
+_ALERT_KINDS = get_args(AlertKind)
 
 
 @dataclass
@@ -80,15 +81,15 @@ def _macro_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
         grid=[GridRow(asset=a, textbook=prior.arrows[a] if prior else None) for a in ASSETS],
         grid_note=f"📈 reaction in ~{ctx.cfg.news.reaction.window_min} min",
         facts=build_macro_facts(evs, reaction=None, backdrop=ctx.backdrop),
-        critical=True,
+        critical=c.critical,
         event_keys=c.event_keys,
         llm_note=None if prior else (f"Expected {exp}" if exp else None),
     )
 
 
-def _ticker_clusters(symbol: str, now: datetime) -> list[ClusterView]:
+def _ticker_clusters(symbol: str, now: datetime, *, hours: int) -> list[ClusterView]:
     with news_session() as s:
-        return queries.clusters_since(s, now - timedelta(hours=24), symbol=symbol, limit=5)
+        return queries.clusters_since(s, now - timedelta(hours=hours), symbol=symbol, limit=5)
 
 
 def _earnings_view(symbol: str, today: date) -> EarningsView | None:
@@ -103,7 +104,8 @@ def ticker_card(
     from src.news.collectors import universe_lists
 
     sym = c.symbols[0]
-    clusters = _ticker_clusters(sym, ctx.now)
+    # A brief reads the last 72 h (spec §7.5.2); an alert explains today's move.
+    clusters = _ticker_clusters(sym, ctx.now, hours=72 if kind == "brief" else 24)
     tags = {t for cl in clusters for t in cl.tags}
     earn = _earnings_view(sym, ctx.today) if kind != "ticker_move" else None
     sheet = build_ticker_facts(
@@ -248,7 +250,9 @@ def plan_alert(
         posts = list(
             s.scalars(
                 select(NewsPostRow)
-                .where(NewsPostRow.posted_at >= start)
+                # Only an earlier ALERT card takes the update: a brief or digest sharing a
+                # cluster would swallow a critical alert as a silent edit.
+                .where(NewsPostRow.posted_at >= start, NewsPostRow.kind.in_(_ALERT_KINDS))
                 .order_by(NewsPostRow.posted_at)
             )
         )

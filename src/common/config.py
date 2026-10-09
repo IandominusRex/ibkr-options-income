@@ -871,7 +871,15 @@ class NewsAlertsCfg(BaseModel):
     geo_reaction_pct: float = 0.5
     geo_reaction_window_min: int = 30
     geo_topics: list[str] = Field(
-        default_factory=lambda: ["war", "ceasefire", "sanctions", "tariff", "fed", "fiscal", "energy"]
+        default_factory=lambda: [
+            "war",
+            "ceasefire",
+            "sanctions",
+            "tariff",
+            "fed",
+            "fiscal",
+            "energy",
+        ]
     )
     max_per_hour: int = 6
     max_edits: int = 3
@@ -882,14 +890,21 @@ class NewsReactionCfg(BaseModel):
     max_wait_min: int = 35
     instruments_rth: dict[str, str] = Field(
         default_factory=lambda: {
-            "stocks": "SPY", "bonds": "^TNX", "dollar": "UUP",
-            "gold": "GLD", "oil": "USO", "vol": "^VIX",
+            "stocks": "SPY",
+            "bonds": "^TNX",
+            "dollar": "UUP",
+            "gold": "GLD",
+            "oil": "USO",
+            "vol": "^VIX",
         }
     )
     instruments_ext: dict[str, str] = Field(
         default_factory=lambda: {
-            "stocks": "ES=F", "bonds": "ZN=F", "dollar": "DX-Y.NYB",
-            "gold": "GC=F", "oil": "CL=F",
+            "stocks": "ES=F",
+            "bonds": "ZN=F",
+            "dollar": "DX-Y.NYB",
+            "gold": "GC=F",
+            "oil": "CL=F",
         }
     )
 
@@ -971,7 +986,11 @@ class NewsCfg(BaseModel):
     retention_days: int = 30
     lookback_hours: dict[str, int] = Field(
         default_factory=lambda: {
-            "government": 168, "geopolitics": 168, "macro": 168, "markets": 36, "ticker": 72,
+            "government": 168,
+            "geopolitics": 168,
+            "macro": 168,
+            "markets": 36,
+            "ticker": 72,
         }
     )
     source_rank: list[str] = Field(default_factory=list)

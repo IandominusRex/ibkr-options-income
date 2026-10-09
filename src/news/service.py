@@ -259,7 +259,7 @@ class NewsService:
         await self._dispatch(cands, now, tape_now=tp)
 
     async def _earnings_alerts(self, now: datetime) -> None:
-        released = await asyncio.to_thread(self.collector.refresh_earnings, now, days=2)
+        released = await asyncio.to_thread(self.collector.refresh_earnings_actuals, now)
         if not released:
             return
         with news_session() as s:

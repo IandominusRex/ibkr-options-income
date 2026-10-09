@@ -160,3 +160,52 @@ def test_clean_company_name() -> None:
     assert clean_company_name("NVIDIA Corporation") == "NVIDIA"
     assert clean_company_name("Alphabet Inc. Class A") == "Alphabet"
     assert clean_company_name("ProShares UltraPro QQQ") is None  # fund names are not useful aliases
+
+
+def test_collect_symbol_tags_a_ticker_outside_the_universe(news_db, monkeypatch) -> None:
+    """Spec §7.5.4: /news works for any ticker. The alias index held only universe ∪ held names,
+    so a brief's fresh fetch for a non-universe ticker was stored untagged and found nothing."""
+    from src.common.config import get_config
+    from src.news.collectors import Collector
+    from src.news.store.models import NewsItemRow
+    from src.news.store.session import news_session
+
+    _patch(monkeypatch)
+    Collector(get_config().news).collect_symbol("TSM", NOW)
+    with news_session() as s:
+        row = s.query(NewsItemRow).filter(NewsItemRow.title == "TSM headline").one()
+    assert row.tickers == ["TSM"]
+
+
+def test_earnings_actuals_poll_skips_the_nasdaq_calendar(news_db, monkeypatch) -> None:
+    """Final review: the 5-minute release poll re-fetched Nasdaq's calendar (which carries no
+    actuals) ~860 times a day — the same unofficial host, behind the same breaker, that serves
+    the CPI/NFP actuals. Releases come from Finnhub's eps actual only."""
+    import src.news.collectors as c
+    from src.common.config import get_config
+    from src.data.protocols import EarningsItem
+    from src.news.collectors import Collector
+
+    _patch(monkeypatch)
+
+    def boom():
+        raise AssertionError("nasdaq calendar must not be polled for actuals")
+
+    monkeypatch.setattr(c, "get_earnings_calendar_provider", boom)
+    fh = type(
+        "F",
+        (),
+        {
+            "earnings_calendar": lambda self, a, b, symbol=None: [
+                EarningsItem(
+                    symbol="NVDA", report_date=date(2026, 10, 8), eps_est=1.0, eps_actual=1.2
+                )
+            ]
+        },
+    )()
+    monkeypatch.setattr(c, "get_finnhub_client", lambda: fh)
+    assert Collector(get_config().news).refresh_earnings_actuals(NOW) == [
+        ("NVDA", date(2026, 10, 8))
+    ]
+    monkeypatch.setattr(c, "get_finnhub_client", lambda: None)
+    assert Collector(get_config().news).refresh_earnings_actuals(NOW) == []

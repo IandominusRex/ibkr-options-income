@@ -329,3 +329,20 @@ async def test_followup_loop_completes_each_pending_post(news_db, monkeypatch) -
     monkeypatch.setattr(FU, "complete_post", fake_complete)
     await svc._followup(now)
     assert done == [1, 2]
+
+
+async def test_earnings_alert_loop_polls_only_the_actuals_source(news_db, monkeypatch) -> None:
+    """The 5-minute earnings loop asks Finnhub for actuals; the Nasdaq/yfinance calendar refresh
+    stays on news.sources.earnings_poll_hours (final review)."""
+    from src.common.config import get_config
+    from src.news import service as S
+
+    svc = S.NewsService(get_config())
+    svc.publisher = None
+
+    def slow_refresh(*a, **k):
+        raise AssertionError("the full calendar refresh must not run every 5 minutes")
+
+    monkeypatch.setattr(svc.collector, "refresh_earnings", slow_refresh)
+    monkeypatch.setattr(svc.collector, "refresh_earnings_actuals", lambda now: [])
+    await svc._earnings_alerts(datetime(2026, 10, 14, 21, tzinfo=UTC))

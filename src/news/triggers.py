@@ -41,9 +41,13 @@ class TickerMove(BaseModel):
 
 
 def group_macro_releases(events: list[EconEventView], pb: Playbook) -> list[AlertCandidate]:
+    """One card per release time (spec §7.2). A high-impact release alerts and is critical; a
+    medium one alerts only when the playbook knows it (claims, ISM services, UoM), and never
+    critically. Other medium releases stay on the calendar and in digests."""
     groups: dict[datetime, list[EconEventView]] = {}
     for e in events:
-        groups.setdefault(e.scheduled_at, []).append(e)
+        if e.impact == "High" or pb.match(e.title) is not None:
+            groups.setdefault(e.scheduled_at, []).append(e)
     out = []
     for at, evs in sorted(groups.items()):
         ranked = sorted(evs, key=lambda e: pb.priority(m.key) if (m := pb.match(e.title)) else 999)
@@ -51,7 +55,7 @@ def group_macro_releases(events: list[EconEventView], pb: Playbook) -> list[Aler
             AlertCandidate(
                 kind="macro_print",
                 subject=f"{at:%Y-%m-%dT%H:%M}",
-                critical=True,
+                critical=any(e.impact == "High" for e in evs),
                 event_keys=[e.event_key for e in ranked],
                 detail={"primary": ranked[0].title},
             )

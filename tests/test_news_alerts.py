@@ -287,3 +287,85 @@ def test_ticker_move_without_cluster_says_no_catalyst(news_db) -> None:
     p = AL.build_card(c, _ctx())
     assert p.title == "NVDA -2.0% · no identifiable catalyst" and p.emoji == "📉"
     assert p.facts is not None and p.facts.get("Move today") is not None
+
+
+def test_alert_sharing_a_cluster_with_a_brief_is_a_new_card(news_db) -> None:
+    """Final review: a brief (or digest) is not an alert card. A held-name alert sharing a
+    cluster with an earlier /news brief was folded into the brief as a silent edit."""
+    from src.news.store.session import news_session
+
+    brief = AL.CardPayload(
+        kind="brief", subject="NVDA", title="NVDA brief", emoji="📈", when=NOW, cluster_ids=[11]
+    )
+    with news_session() as s:
+        _post(s, kind="brief", subject="NVDA", cluster_ids=[11], payload=brief)
+    new = AL.CardPayload(
+        kind="ticker_move",
+        subject="NVDA",
+        title="NVDA -6.0%",
+        emoji="📉",
+        when=NOW,
+        cluster_ids=[11],
+    )
+    act = AL.plan_alert(
+        AlertCandidate(
+            kind="ticker_move", subject="NVDA", critical=True, symbols=["NVDA"], cluster_ids=[11]
+        ),
+        new,
+        now=NOW,
+        max_edits=3,
+    )
+    assert act.action == "new"
+
+
+def test_brief_reads_72h_of_clusters_but_an_alert_only_24h(news_db) -> None:
+    """Spec §7.5.2: a brief carries the matching clusters of the last 72 h."""
+    from datetime import timedelta
+
+    from src.news.store.models import NewsClusterRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add(
+            NewsClusterRow(
+                headline="Nvidia story from two days ago",
+                category="ticker",
+                first_seen=naive_utc(NOW - timedelta(hours=40)),
+                last_seen=naive_utc(NOW - timedelta(hours=40)),
+                source_domains=["x.com"],
+                source_count=1,
+                tickers=["NVDA"],
+                tags=[],
+                title_tokens=[],
+            )
+        )
+    c = AlertCandidate(kind="ticker_move", subject="NVDA", critical=True, symbols=["NVDA"])
+    assert AL.ticker_card(c, _ctx(), kind="brief").cluster_ids != []
+    assert AL.ticker_card(c, _ctx(), kind="ticker_move").cluster_ids == []
+
+
+def test_macro_card_carries_the_candidates_criticality(news_db) -> None:
+    """A medium playbook release is a non-critical candidate; the card must not re-promote it
+    (quiet hours read payload.critical)."""
+    from src.news.store.models import EconEventRow
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add(
+            EconEventRow(
+                event_key="k2",
+                title="Unemployment Claims",
+                playbook_key="jobless_claims",
+                scheduled_at=datetime(2026, 10, 14, 12, 30),
+                impact="Medium",
+                forecast="210K",
+                actual="230K",
+                surprise_dir="hot",
+                alerted=False,
+            )
+        )
+    c = AlertCandidate(
+        kind="macro_print", subject="2026-10-14T12:30", critical=False, event_keys=["k2"]
+    )
+    assert AL.build_card(c, _ctx()).critical is False

@@ -110,3 +110,15 @@ def test_headline_numbers_ground_and_unit_prefix_dollar() -> None:
     assert (
         not trimmed and out.what_happened == "Deal valued at $12B." and out.verdict == "priced_in"
     )
+
+
+def test_ground_digest_never_falls_back_to_the_ungrounded_llm_headline() -> None:
+    """Final review: a digest headline stripped for an invented number fell back to the same
+    LLM headline (`head or it.headline[:80]`), so the invented number was posted anyway."""
+    r = DigestReads(
+        items=[
+            DigestRead(cluster_id=1, headline="Oil +14%", read="", verdict="unclear", evidence=[])
+        ]
+    )
+    out = G.ground_digest(r, refs=[9.0], valid_ids=set(), rel_tol=0.02)
+    assert "14" not in out.items[0].headline

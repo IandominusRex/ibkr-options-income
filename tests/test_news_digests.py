@@ -227,3 +227,10 @@ def test_gather_inputs_reads_store_and_picks_tape_by_digest(news_db, monkeypatch
     assert "Yesterday macro" in {
         c.headline for c in week.clusters
     }  # the week-ahead looks back 72 h, not 16
+
+
+def test_thread_without_a_grounded_llm_headline_shows_the_source_headline() -> None:
+    e = DigestRead(cluster_id=1, headline="", read="A read.", verdict="unclear", evidence=[])
+    p = D.build_digest("premarket", _inp(thread_order=[[1]], reads={1: e}))
+    top = next(s for s in p.sections if s.title == "Overnight")
+    assert top.items[0].text and top.items[0].read == "A read."

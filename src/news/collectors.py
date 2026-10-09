@@ -118,7 +118,13 @@ class Collector:
         return syms, terms
 
     def _ingest(
-        self, items: list[NewsItem], *, category: str, origin: str, now: datetime
+        self,
+        items: list[NewsItem],
+        *,
+        category: str,
+        origin: str,
+        now: datetime,
+        alias_index: AliasIndex | None = None,
     ) -> IngestResult:
         if not items:
             return IngestResult()
@@ -127,7 +133,7 @@ class Collector:
             items,
             category=category,
             origin=origin,
-            alias_index=self.alias_index(now),
+            alias_index=alias_index if alias_index is not None else self.alias_index(now),
             cfg=self.cfg,
             now=now,
             scheduled_symbols=syms,
@@ -182,7 +188,12 @@ class Collector:
         fh = get_finnhub_client()
         if fh is not None:
             items += fh.company_news(symbol, days=self.cfg.sources.google_news_days)
-        return self._ingest(items, category="ticker", origin="mixed", now=now)
+        index = self.alias_index(now)
+        sym = symbol.upper()
+        if sym not in index:  # a /news brief for a name outside universe ∪ held (spec §7.5.4)
+            extra = load_aliases([sym], overrides=self.cfg.tagging.aliases, now=now)
+            index = {**index, **build_alias_index([sym], extra)}
+        return self._ingest(items, category="ticker", origin="mixed", now=now, alias_index=index)
 
     def collect_ticker_batch(self, now: datetime, *, batch: int) -> int:
         syms = watch_symbols()
@@ -283,6 +294,23 @@ class Collector:
                 )
             )
         return hit is not None
+
+    def refresh_earnings_actuals(self, now: datetime) -> list[tuple[str, date]]:
+        """The fast (5-min) release poll: Finnhub's calendar is the only source carrying EPS
+        actuals, so it is the only one asked. Nasdaq (timing, consensus) and yfinance (dates)
+        stay on the slow refresh_earnings cadence: polling Nasdaq every 5 minutes gained nothing
+        and shares a host and breaker with the CPI/NFP actuals."""
+        fh = get_finnhub_client()
+        if fh is None:
+            return []
+        syms = set(watch_symbols())
+        start = now.astimezone(ET).date() - timedelta(days=1)
+        rows = [
+            e for e in fh.earnings_calendar(start, start + timedelta(days=2)) if e.symbol in syms
+        ]
+        released = upsert_earnings(rows, now=now)
+        record_source_ok("earnings_actuals", now)
+        return released
 
     def refresh_earnings(self, now: datetime, *, days: int = 14) -> list[tuple[str, date]]:
         syms = set(watch_symbols())

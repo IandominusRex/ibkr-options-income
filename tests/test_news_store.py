@@ -65,3 +65,47 @@ def test_readonly_session_cannot_write(news_db) -> None:
         s.add(NewsStateRow(key="x", value="y", updated_at=datetime(2026, 1, 1)))
         with pytest.raises(OperationalError):
             s.flush()
+
+
+def test_clusters_since_finds_a_low_source_ticker_cluster_behind_busier_ones(news_db) -> None:
+    """Final review: the symbol filter ran after a source_count-ordered LIMIT, so a ticker's own
+    single-source story behind 20+ busier macro clusters was never found (cards said "no
+    identifiable catalyst", briefs had no headlines)."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.news.store.models import NewsClusterRow
+    from src.news.store.queries import clusters_since, naive_utc
+    from src.news.store.session import news_session
+
+    now = datetime(2026, 10, 14, 15, tzinfo=UTC)
+    with news_session() as s:
+        for i in range(30):
+            s.add(
+                NewsClusterRow(
+                    headline=f"macro story {i}",
+                    category="macro",
+                    first_seen=naive_utc(now - timedelta(hours=1)),
+                    last_seen=naive_utc(now - timedelta(hours=1)),
+                    source_domains=["a.com", "b.com", "c.com"],
+                    source_count=3,
+                    tickers=[],
+                    tags=[],
+                    title_tokens=[],
+                )
+            )
+        s.add(
+            NewsClusterRow(
+                headline="Nvidia wins a contract",
+                category="ticker",
+                first_seen=naive_utc(now - timedelta(hours=2)),
+                last_seen=naive_utc(now - timedelta(hours=2)),
+                source_domains=["x.com"],
+                source_count=1,
+                tickers=["NVDA"],
+                tags=[],
+                title_tokens=[],
+            )
+        )
+    with news_session() as s:
+        got = clusters_since(s, now - timedelta(hours=24), symbol="nvda", limit=5)
+    assert [c.headline for c in got] == ["Nvidia wins a contract"]

@@ -164,3 +164,18 @@ def test_capped_alert_is_not_marked_fired_so_it_can_retry(news_db) -> None:
     assert "MSFT" not in g.fired_subjects("ticker_move", DAY)
     # An hour later the window has emptied and the same alert is admitted.
     assert g.admit(msft, now=NOW + timedelta(hours=2), day=DAY)
+
+
+def test_macro_alerts_only_for_high_impact_or_playbook_releases() -> None:
+    """Spec §7.2: the macro-print alert is for high-impact releases. Medium releases alert only
+    when the playbook knows them (claims, ISM services, UoM), and never as critical; a medium
+    release with no playbook entry (e.g. crude inventories) does not alert at all."""
+    at = datetime(2026, 10, 14, 14, 30, tzinfo=UTC)
+    crude = _ev("Crude Oil Inventories", at).model_copy(update={"impact": "Medium"})
+    assert T.group_macro_releases([crude], load_playbook()) == []
+    claims = _ev("Unemployment Claims", at).model_copy(update={"impact": "Medium"})
+    (c,) = T.group_macro_releases([claims, crude], load_playbook())
+    assert not c.critical and c.event_keys == [claims.event_key]
+    cpi = _ev("CPI m/m", at)
+    (c,) = T.group_macro_releases([claims, cpi, crude], load_playbook())
+    assert c.critical and set(c.event_keys) == {claims.event_key, cpi.event_key}

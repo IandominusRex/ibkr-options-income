@@ -89,7 +89,9 @@ def ground_digest(
             it.model_copy(
                 update={
                     "read": read,
-                    "headline": head or it.headline[:80],
+                    # Never fall back to the LLM's own (ungrounded) headline: an empty one
+                    # makes the digest show the source cluster headline instead.
+                    "headline": head,
                     "evidence": ev,
                     "verdict": it.verdict if ev else "unclear",
                 }

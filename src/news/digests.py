@@ -103,7 +103,7 @@ def _stories(inp: DigestInputs, title: str) -> DigestSection:
         e = inp.reads.get(ids[0])
         items.append(
             DigestItem(
-                text=e.headline if e else cl.headline,
+                text=e.headline if e and e.headline else cl.headline,
                 read=e.read if e else None,
                 verdict=e.verdict if e else None,
                 links=links_for(cl, inp.rank)[:2],

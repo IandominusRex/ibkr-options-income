@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session
 
 from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView
@@ -86,16 +86,21 @@ def clusters_since(
     q = select(NewsClusterRow).where(NewsClusterRow.last_seen >= naive_utc(since))
     if category:
         q = q.where(NewsClusterRow.category == category)
-    rows = list(
-        s.scalars(
-            q.order_by(NewsClusterRow.source_count.desc(), NewsClusterRow.last_seen.desc()).limit(
-                limit * 4
-            )
-        )
-    )
-    if symbol:
-        rows = [r for r in rows if symbol.upper() in (r.tickers or [])]
-    return [_cluster(s, r, 6) for r in rows[:limit]]
+    q = q.order_by(NewsClusterRow.source_count.desc(), NewsClusterRow.last_seen.desc())
+    if not symbol:
+        return [_cluster(s, r, 6) for r in s.scalars(q.limit(limit))]
+    # Filter BEFORE limiting: a ticker's single-source story ranks behind every busier macro
+    # cluster, so a LIMIT taken first never reaches it. The JSON text match narrows in SQL;
+    # the membership test below is the exact check.
+    sym = symbol.upper()
+    q = q.where(cast(NewsClusterRow.tickers, String).contains(f'"{sym}"', autoescape=True))
+    out: list[ClusterView] = []
+    for r in s.scalars(q):
+        if sym in (r.tickers or []):
+            out.append(_cluster(s, r, 6))
+            if len(out) >= limit:
+                break
+    return out
 
 
 def econ_view(r: EconEventRow) -> EconEventView:
