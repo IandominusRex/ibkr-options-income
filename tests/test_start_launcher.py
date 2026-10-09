@@ -48,3 +48,10 @@ def test_spreads_service_is_supervised_and_can_be_skipped():
     args = start._build_parser().parse_args(["--no-spreads"])
     active = start._active_services(args)
     assert "spreads" not in active and "approval" in active
+
+
+def test_news_service_is_supervised_and_can_be_skipped():
+    assert start.SERVICES["news"]["module"] == "scripts.run_news"
+    args = start._build_parser().parse_args(["--no-news"])
+    active = start._active_services(args)
+    assert "news" not in active and "spreads" in active

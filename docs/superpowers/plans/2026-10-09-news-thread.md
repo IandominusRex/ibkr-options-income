@@ -25,7 +25,7 @@
 | 9 Intraday provider + tape | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none |
 | 10 Playbook | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | `parse_value` multiplies via `Decimal` instead of float: the plan's `float(t) * 1e9` gives 8279999999.999999 for `8.28B`, failing its own pinned test. |
 | 11 Aliases + views + collectors | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Test fixture forecast `200K`→`210K`: the plan's 197K vs 200K is a 3K beat, inside the committed playbook's 8K `jobless_claims` tolerance, so it is correctly `inline`, never `hot`. Playbook untouched. |
-| 12 Service skeleton + entrypoint + fence | pending | | | | |
+| 12 Service skeleton + entrypoint + fence | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `test_only_src_news_constructs_news_rows` only scans files importing `src.news`: `src/research/store/models.py` has its own unrelated `NewsItemRow` (research.db), which the plan's plain-string check flagged. (b) Spreads enumerations found: `scripts/start.py` `--no-spreads` (added `--no-news` + docstring line + `test_news_service_is_supervised_and_can_be_skipped`) and `ibkr logs` usage (added `news`); `scripts/launchd.py` enumerates none. (c) Step 5 networked smoke run not done: deferred to Task 34 live verification (it writes the operator's real `data/news.db`). |
 | 13 Fact sheet + flags | pending | | | | |
 | 14 Reaction | pending | | | | |
 | 15 Card schemas + render | pending | | | | |
@@ -3987,7 +3987,7 @@ git commit -m "feat(news): collectors — RSS (conditional GET), macro + ticker 
 **Interfaces:**
 - Produces: `class NewsService(cfg: Config, *, clock: Callable[[], datetime] = utcnow)` with `async run(stop: asyncio.Event) -> None`, `async _loop(name: str, interval_s: float, fn: Callable[[datetime], object], stop: asyncio.Event) -> None`, `run_once_ingest(now) -> None` (one pass of every source; used by tests and by `/news` briefs warm-up); module `async run(stop)` entry used by the script. Later tasks add loops to `NewsService.loops()`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 # tests/test_news_service.py
@@ -4089,9 +4089,9 @@ def test_api_never_imports_the_rw_engine() -> None:
 
 In `tests/test_eval_skills.py` add `"src.news",` to `_ENRICHMENT_ONLY` (with a comment `# News service (2026-10-09 spec §10.5)`).
 
-- [ ] **Step 2: Run to fail** — service module missing.
+- [x] **Step 2: Run to fail** — service module missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/news/service.py`:
 
@@ -4241,11 +4241,11 @@ In `scripts/start.py` `SERVICES`, after `"spreads"`:
 
 Then check `scripts/launchd.py` and `tests/test_start*.py` for any hard-coded list of service names (`grep -rn '"spreads"' scripts tests | grep -i service`) and add `"news"` wherever the spreads service is enumerated; record what was found in the progress log.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_service.py tests/test_news_fence.py tests/test_eval_skills.py tests/test_spreads_fence.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_service.py tests/test_news_fence.py tests/test_eval_skills.py tests/test_spreads_fence.py -v` → PASS.
 
 - [ ] **Step 5: Smoke run (manual, networked — optional for the executor, required before go-live):** `timeout 90 .venv/bin/python -m scripts.run_news` then `sqlite3 data/news.db "select category, count(*) from news_items group by 1;"` shows rows. Record the counts in the progress log.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 ```bash
 git add src/news/service.py scripts/run_news.py scripts/start.py tests/test_news_service.py tests/test_news_fence.py tests/test_eval_skills.py docs/superpowers/plans/2026-10-09-news-thread.md

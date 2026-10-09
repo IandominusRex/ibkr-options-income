@@ -123,6 +123,8 @@ _ENRICHMENT_ONLY = (
     # `from src.data.factory import get_news_search_provider` names none of the modules above.
     "get_news_search_provider",
     "NewsSearchProvider",
+    # News service (2026-10-09 spec §10.5)
+    "src.news",
 )
 
 

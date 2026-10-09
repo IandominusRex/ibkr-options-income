@@ -18,6 +18,7 @@ Usage:
     python -m scripts.start --no-api       # skip the web API
     python -m scripts.start --no-research  # skip the research worker
     python -m scripts.start --no-spreads   # skip the daily credit-spread service
+    python -m scripts.start --no-news      # skip the news service
     python -m scripts.start --no-eod       # skip the built-in EOD scheduler
 
 The EOD report fires at ``scheduler.eod_report`` (config/settings.yaml, default
@@ -86,6 +87,11 @@ SERVICES = {
         "label": "spreads_service",
         "module": "scripts.run_spreads",
         "log": PROJECT_ROOT / "logs" / "spreads.log",
+    },
+    "news": {
+        "label": "news_service",
+        "module": "scripts.run_news",
+        "log": PROJECT_ROOT / "logs" / "news.log",
     },
 }
 
@@ -412,6 +418,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-spreads", action="store_true", help="Skip the daily credit-spread service"
     )
+    parser.add_argument("--no-news", action="store_true", help="Skip the news service")
     parser.add_argument("--no-eod", action="store_true", help="Skip the built-in EOD scheduler")
     return parser
 
