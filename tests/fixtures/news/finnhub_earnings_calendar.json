@@ -1,0 +1,5 @@
+{"earningsCalendar": [
+  {"symbol": "BAC", "date": "2026-10-14", "hour": "bmo", "quarter": 3, "year": 2026, "epsEstimate": 1.12, "epsActual": null, "revenueEstimate": 27100000000, "revenueActual": null},
+  {"symbol": "NFLX", "date": "2026-10-15", "hour": "amc", "quarter": 3, "year": 2026, "epsEstimate": 5.1, "epsActual": 5.4, "revenueEstimate": 11000000000, "revenueActual": 11200000000},
+  {"symbol": "ZZZ", "date": "2026-10-16", "hour": "", "quarter": 3, "year": 2026, "epsEstimate": null, "epsActual": null, "revenueEstimate": null, "revenueActual": null}
+]}

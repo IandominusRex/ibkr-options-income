@@ -13,6 +13,7 @@ editing the YAML).
 from __future__ import annotations
 
 import functools
+from typing import TYPE_CHECKING
 
 from src.common.config import get_config
 from src.data.protocols import (
@@ -31,6 +32,9 @@ from src.data.yfinance_backend import (
     YFinanceNewsProvider,
     YFinancePriceProvider,
 )
+
+if TYPE_CHECKING:
+    from src.data.finnhub_backend import FinnhubClient
 
 
 def _make_price_provider(name: str) -> PriceProvider:
@@ -160,3 +164,15 @@ def get_feed_provider() -> FeedProvider:
     from src.data.rss_backend import RssFeedProvider
 
     return RssFeedProvider()
+
+
+@functools.lru_cache(maxsize=1)
+def get_finnhub_client() -> FinnhubClient | None:
+    """Finnhub client, or None when FINNHUB_API_KEY is unset (the source is then dormant)."""
+    cfg = get_config()
+    key = cfg.secrets.finnhub_api_key
+    if not key:
+        return None
+    from src.data.finnhub_backend import FinnhubClient
+
+    return FinnhubClient(key, per_minute=cfg.news.sources.finnhub_per_minute)
