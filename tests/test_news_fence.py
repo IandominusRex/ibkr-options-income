@@ -80,3 +80,20 @@ def test_api_never_imports_the_rw_engine() -> None:
     for path in _pkg_files("src", "api"):
         bad = [m for m in imported_modules(path) if m.startswith("src.news.store.session")]
         assert not bad, f"{path.relative_to(ROOT)} imports {bad}"
+
+
+def test_sentiment_reads_only_deterministic_news_columns() -> None:
+    text = (ROOT / "src" / "analytics" / "sentiment.py").read_text(encoding="utf-8")
+    # "payload" is not banned in sentiment.py: its own disk cache (SentimentCacheRow) uses the
+    # word. The post payload is reachable only through NewsPostRow / news_posts, banned here.
+    for forbidden in (
+        "NewsPostRow",
+        "news_posts",
+        "Explanation",
+        "explain",
+        "src.news.llm",
+    ):
+        assert forbidden not in text, f"sentiment.py must not touch {forbidden}"
+    q = (ROOT / "src" / "news" / "store" / "queries.py").read_text(encoding="utf-8")
+    body = q[q.index("def ticker_sentiment_rows") :].split("\ndef ", 1)[0]
+    assert "NewsPostRow" not in body and "payload" not in body

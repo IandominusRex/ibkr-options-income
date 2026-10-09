@@ -224,13 +224,54 @@ def _fetch_stocktwits(symbol: str) -> tuple[float | None, int]:
 # --------------------------------------------------------------------------- #
 # Source: News headlines (yfinance, no key)
 # --------------------------------------------------------------------------- #
+def _news_from_store(
+    symbol: str, *, now: datetime | None = None
+) -> tuple[float | None, int, str | None] | None:
+    """Recency-weighted mean of the news store's deterministic per-headline sentiment for *symbol*
+    (spec §8). None when the store is missing, unreadable, or has nothing for the symbol, and
+    the caller then uses the yfinance-only path unchanged. LLM output is never read here."""
+    try:
+        from src.common.config import get_config
+        from src.news.store.queries import ticker_sentiment_rows
+        from src.news.store.readonly import read_only_session
+    except Exception:
+        return None
+    cfg = get_config().news.sentiment
+    now = now or datetime.now(UTC)
+    try:
+        with read_only_session() as s:
+            if s is None:
+                return None
+            rows = ticker_sentiment_rows(s, symbol, now - timedelta(hours=cfg.lookback_hours))
+    except Exception as exc:
+        logger.debug("news store sentiment read failed for %s: %s", symbol, exc)
+        return None
+    if not rows:
+        return None
+    num = den = 0.0
+    for det, when, _cid, _title in rows:
+        age_h = max(0.0, (now - when).total_seconds() / 3600)
+        w = 0.5 ** (age_h / cfg.half_life_hours)
+        num += w * det
+        den += w
+    newest = max(rows, key=lambda r: r[1])
+    clusters = {cid for _d, _w, cid, _t in rows if cid is not None}
+    return _bias_to_score(num / den if den else 0.0), len(clusters) or len(rows), newest[3]
+
+
 @daily_cached
 def _fetch_news(symbol: str) -> tuple[float | None, int, str | None]:
     """Return (0-100 score, headline_count, top_headline) from yfinance news, or (None, 0, None).
 
     Implements a persistent disk cache (``SentimentCacheRow``) with a fixed 1-day TTL on top
-    of the original news fetch logic.
+    of the original news fetch logic. The news store (deduped, recency-weighted deterministic
+    headline sentiment) is tried first; when it answers, the disk cache is neither read nor
+    written.
     """
+    from_store = _news_from_store(symbol)
+    if from_store is not None:
+        return from_store
+
     cached = _load_sentiment_cache(symbol, "news")
     if cached is not None:
         return cached.get("score"), cached.get("count", 0), cached.get("top_headline")

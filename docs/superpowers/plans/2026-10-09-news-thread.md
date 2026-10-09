@@ -38,7 +38,7 @@
 | 22 LLM transport | done | (see git log) | pytest/ruff/mypy green (3103 passed) | 2026-10-09 | none to the plan code (only `ruff format`). Added 6 tests the brief did not name, each mutation-checked: a raising backend is swallowed, counted and falls through; `ollama` backend never runs the CLI; all backends failing returns `None` yet still counts both attempts; the cap stops the second backend inside one call; the cap key is the ET date (22:00 ET on the 14th is 02:00 UTC on the 15th); and the real `_ollama` passes the model override, schema and timeout through to `_generate` (falling back to `claude.ollama_model`). Docs (ARCHITECTURE/SETUP) stay deferred to Task 34 per the plan. |
 | 23 Prompts + explain + grounding | done | (see git log) | pytest/ruff/mypy green (3138 passed) | 2026-10-09 | (a) `_validated[M: BaseModel]` bounded and its `type: ignore` dropped, as the brief's own note allows. (b) Added 5 tests the brief did not name: dollar/unit headline numbers ground, invalid twice falls back with `🧠 unavailable` and keeps the backend, an ungrounded `what_happened` falls back to the deterministic line, the editor drops unknown cluster ids (and empty input returns `None`), and the writer prompt carries facts, numbered headlines and the textbook/actual block. |
 | 24 Two-stage edit + digest editor wiring | done (Step 5 live check pending) | (see git log) | pytest/ruff/mypy green (3144 passed) | 2026-10-09 | (a) The digest editor/reads wiring lives in a `_rank_digest` helper called from `_digests` (same code as the brief, testable alone). (b) Added tests the brief did not name: non-macro posts explain at once with the cluster headlines and `fallback_what`; the digest uses the editor order + reads and records `explained`, else falls back to deterministic order and `fallback`; one failing follow-up does not stop the rest. Task 21's digest test now stubs `_backdrop` (it would otherwise reach yfinance via `get_market_conditions`). (c) Step 5 live check NOT run: needs a live alert in the operator's thread; deferred to the operator / Task 34. |
-| 25 sentiment.py reads the store | pending | | | | |
+| 25 sentiment.py reads the store | done | (see git log) | pytest/ruff/mypy green (3150 passed) | 2026-10-09 | (a) The fence test's sentiment.py ban list drops `"payload"`: `sentiment.py`'s own disk cache (`_save_sentiment_cache(..., payload)`) already uses the word, so the plan's test failed on unrelated existing code. `NewsPostRow`/`news_posts`/`Explanation`/`explain`/`src.news.llm` stay banned, and `payload` stays banned inside `ticker_sentiment_rows`. (b) New autouse `_isolate_news_db` in `tests/conftest.py` points both news engines at a per-test absent path: `_fetch_news` now reads the store first, so without it `test_sentiment` would score the operator's real `data/news.db` once the service runs. Pinned by `test_tests_never_read_the_operators_news_db` (RED before the fixture). (c) Added 2 tests the brief did not name: a store answer skips the yfinance path and the disk cache; a symbol with no store rows is `None`. STATUS note (score stable within a day via `@daily_cached`) stays for Task 34. |
 | 26 news_context.py reads the store | pending | | | | |
 | 27 FinBERT option | pending | | | | |
 | 28 Brief queue + builder | pending | | | | |
@@ -7697,7 +7697,7 @@ git commit -m "feat(news): two-stage alerts (facts now, 📈+🧠 edit later) an
 - Produces (`queries`): `ticker_sentiment_rows(s: Session, symbol: str, since: datetime) -> list[tuple[float, datetime, int | None, str]]` — `(det_sentiment, published_at or fetched_at (aware), cluster_id, title)`; selects only `NewsItemRow.det_sentiment, published_at, fetched_at, cluster_id, title, tickers`.
 - Produces (`sentiment`): `_news_from_store(symbol: str, *, now: datetime | None = None) -> tuple[float | None, int, str | None] | None` (None = store unavailable/empty → caller falls back); `_fetch_news` tries it first.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_sentiment_integration.py
@@ -7756,7 +7756,7 @@ def test_sentiment_reads_only_deterministic_news_columns() -> None:
     assert "NewsPostRow" not in body and "payload" not in body
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement**
+- [x] **Step 2: Run to fail.** **Step 3: Implement**
 
 Append to `src/news/store/queries.py`:
 
@@ -7823,9 +7823,9 @@ and at the top of `_fetch_news` (before the disk-cache lookup, and without writi
 
 `_fetch_news` stays `@daily_cached`, so the scan reads the store at most once per symbol per day; the score is stable within a day (record this in STATUS, Task 34). The 0.05 ranking weight and the blend weights are unchanged.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_sentiment_integration.py tests/test_news_fence.py tests/test_sentiment*.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_sentiment_integration.py tests/test_news_fence.py tests/test_sentiment*.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/analytics/sentiment.py src/news/store/queries.py tests/test_news_sentiment_integration.py tests/test_news_fence.py docs/superpowers/plans/2026-10-09-news-thread.md

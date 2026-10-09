@@ -139,3 +139,25 @@ def earnings_between(
         for r in rows
         if symbols is None or r.symbol in symbols
     ]
+
+
+def ticker_sentiment_rows(
+    s: Session, symbol: str, since: datetime
+) -> list[tuple[float, datetime, int | None, str]]:
+    """Deterministic sentiment inputs only (spec §8 whitelist). Never reads news_posts."""
+    rows = s.execute(
+        select(
+            NewsItemRow.det_sentiment,
+            NewsItemRow.published_at,
+            NewsItemRow.fetched_at,
+            NewsItemRow.cluster_id,
+            NewsItemRow.title,
+            NewsItemRow.tickers,
+        ).where(NewsItemRow.fetched_at >= naive_utc(since), NewsItemRow.det_sentiment.is_not(None))
+    )
+    sym = symbol.upper()
+    out = []
+    for det, pub, fetched, cid, title, tickers in rows:
+        if sym in (tickers or []):
+            out.append((float(det), aware_utc(pub or fetched), cid, title))
+    return out

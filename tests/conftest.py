@@ -941,6 +941,28 @@ def _blank_flex_secrets(monkeypatch):
     get_config.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_news_db(tmp_path, monkeypatch):
+    """Never let a test read or write the operator's real data/news.db.
+
+    src/analytics/sentiment.py reads the news store first (news plan Task 25), so without this
+    test_sentiment would score whatever the news service last collected. Both engines point at
+    a per-test path that does not exist; the read-only reader then yields None ("no news").
+    ``news_db`` re-points them at a created schema for tests that need a store.
+    """
+    import src.news.store.readonly as ro
+    import src.news.store.session as rw
+
+    absent = tmp_path / "no-news.db"
+    monkeypatch.setattr(rw, "_engine", None)
+    monkeypatch.setattr(rw, "_SessionLocal", None)
+    monkeypatch.setattr(rw, "_resolve_url", lambda: f"sqlite:///{absent}")
+    ro.reset_engine()
+    monkeypatch.setattr(ro, "_resolve_path", lambda: str(absent))
+    yield
+    ro.reset_engine()
+
+
 @pytest.fixture()
 def news_db(tmp_path, monkeypatch):
     """An isolated data/news.db for src.news tests (both the rw and ro engines)."""
