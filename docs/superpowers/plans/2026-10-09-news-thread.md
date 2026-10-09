@@ -37,7 +37,7 @@
 | 21 Service: deterministic posting loops | done (Step 5 live smoke pending) | (see git log) | pytest/ruff/mypy green (3124 passed) | 2026-10-09 | (a) `post_card` passes `reply_to` to `Publisher.send`, which gained a `reply_to` (first chunk only, `allow_sending_without_reply`): the plan code accepted `reply_to` and dropped it, so the spec §7.2 threaded reply after `max_edits` was a plain new post. Tests `test_reply_threads_under_the_existing_card`, `test_send_reply_threads_first_chunk_only`. (b) `_econ_actuals` skips rows already `alerted` (the plan only set the flag, which then guarded nothing); `test_econ_actuals_marks_alerted_and_never_redispatches`. (c) The `news_requests` reset of `running` rows is left to Task 28, which owns it. (d) `_breaking` guards a missing tape quote; `prune` reads `rowcount` via `getattr` (repo convention; mypy). (e) Added tests beyond the brief, each mutation-checked: update path edits instead of posting, smaller crossed levels are marked, digest posts once per day. (f) Step 5 live smoke NOT run: it posts to the operator's real thread 4409; deferred to the operator / Task 34. |
 | 22 LLM transport | done | (see git log) | pytest/ruff/mypy green (3103 passed) | 2026-10-09 | none to the plan code (only `ruff format`). Added 6 tests the brief did not name, each mutation-checked: a raising backend is swallowed, counted and falls through; `ollama` backend never runs the CLI; all backends failing returns `None` yet still counts both attempts; the cap stops the second backend inside one call; the cap key is the ET date (22:00 ET on the 14th is 02:00 UTC on the 15th); and the real `_ollama` passes the model override, schema and timeout through to `_generate` (falling back to `claude.ollama_model`). Docs (ARCHITECTURE/SETUP) stay deferred to Task 34 per the plan. |
 | 23 Prompts + explain + grounding | done | (see git log) | pytest/ruff/mypy green (3138 passed) | 2026-10-09 | (a) `_validated[M: BaseModel]` bounded and its `type: ignore` dropped, as the brief's own note allows. (b) Added 5 tests the brief did not name: dollar/unit headline numbers ground, invalid twice falls back with `🧠 unavailable` and keeps the backend, an ungrounded `what_happened` falls back to the deterministic line, the editor drops unknown cluster ids (and empty input returns `None`), and the writer prompt carries facts, numbered headlines and the textbook/actual block. |
-| 24 Two-stage edit + digest editor wiring | pending | | | | |
+| 24 Two-stage edit + digest editor wiring | done (Step 5 live check pending) | (see git log) | pytest/ruff/mypy green (3144 passed) | 2026-10-09 | (a) The digest editor/reads wiring lives in a `_rank_digest` helper called from `_digests` (same code as the brief, testable alone). (b) Added tests the brief did not name: non-macro posts explain at once with the cluster headlines and `fallback_what`; the digest uses the editor order + reads and records `explained`, else falls back to deterministic order and `fallback`; one failing follow-up does not stop the rest. Task 21's digest test now stubs `_backdrop` (it would otherwise reach yfinance via `get_market_conditions`). (c) Step 5 live check NOT run: needs a live alert in the operator's thread; deferred to the operator / Task 34. |
 | 25 sentiment.py reads the store | pending | | | | |
 | 26 news_context.py reads the store | pending | | | | |
 | 27 FinBERT option | pending | | | | |
@@ -7472,7 +7472,7 @@ git commit -m "feat(news): writer/editor/digest LLM passes with numeric + eviden
 - Produces (`src.news.followup`): `pending_posts(now: datetime, *, horizon_h: int = 3) -> list[tuple[int, CardPayload]]` (posts with `stage == "facts"`, alert kinds, posted within the horizon); `async complete_post(post_id: int, payload: CardPayload, *, now: datetime, cfg: Config, publisher: Publisher | None, measure: Callable = measure_reaction) -> bool` (macro: waits for the reaction window — returns False to retry later unless complete or `waited_too_long`; fills 📈 grid + reaction facts; then `explain_card`; then `update_post(..., count_edit=False, stage=…)`); `fallback_what(payload) -> str | None`.
 - Changes (`NewsService`): new loop `followup` (every 30 s) calling `complete_post` for each pending post; `_digests` runs `edit_digest` + `digest_reads` before `build_digest` (sets `inp.regime`, `inp.thread_order`, `inp.reads`; falls back to deterministic ordering when either returns nothing).
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_followup.py
@@ -7544,7 +7544,7 @@ async def test_pending_posts_lists_only_alert_facts(news_db) -> None:
     assert [p for p, _ in FU.pending_posts(REL + timedelta(minutes=1))] == [pid]
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/followup.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/followup.py`:
 
 ```python
 """Stage 2 of every alert (spec §7.2): once the reaction window has closed, fill 📈 and 🧠
@@ -7672,11 +7672,11 @@ and the loop `("followup", 30, self._followup)`. In `_digests`, before `build_di
 
 Digests are posted once, complete (no two-stage), with `stage` left `"facts"` — so mark them: after `post_card`, call `update_post(pid, payload, publisher=None, stage="explained" if inp.reads else "fallback", count_edit=False)`; `pending_posts` ignores digest kinds anyway.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_followup.py tests/test_news_service.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_followup.py tests/test_news_service.py -v` → PASS.
 
 - [ ] **Step 5: Live check (manual, before go-live):** with `news.llm.backend: cli_then_ollama`, wait for one ticker or macro alert (or run `/news NVDA` once Task 29 lands) and confirm the card is edited with 🧠/🎯 within ~1 minute of the reaction window. Record timings in the progress log.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 ```bash
 git add src/news/followup.py src/news/service.py tests/test_news_followup.py docs/superpowers/plans/2026-10-09-news-thread.md

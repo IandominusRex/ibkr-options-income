@@ -19,8 +19,8 @@ from src.common.schemas import MarketConditions
 from src.news import triggers as T
 from src.news.alerts import AlertContext, build_card, plan_alert
 from src.news.collectors import Collector, held_positions, held_underlyings, watch_symbols
-from src.news.digests import build_digest, due_digests, gather_inputs
-from src.news.facts import Analytics, sigma_move
+from src.news.digests import DigestInputs, build_digest, due_digests, gather_inputs
+from src.news.facts import Analytics, build_market_facts, sigma_move
 from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
 from src.news.publish import Publisher
@@ -110,6 +110,7 @@ class NewsService:
             ("earnings_alerts", 300, self._earnings_alerts),
             ("breaking", 120, self._breaking),
             ("digests", 60, self._digests),
+            ("followup", 30, self._followup),
             (
                 "prune",
                 24 * 3600,
@@ -284,14 +285,47 @@ class NewsService:
         cands = T.detect_breaking(clusters, reaction_pct=reaction, cfg=self.ncfg.alerts)
         await self._dispatch(cands, now, tape_now=q)
 
+    async def _rank_digest(self, inp: DigestInputs, now: datetime) -> None:
+        """Editor pass orders the threads, one batched writer call reads them (spec §6.5).
+        Either returning nothing leaves the deterministic ordering / no reads."""
+        from src.news.explain import digest_reads, edit_digest
+
+        backdrop = build_market_facts(inp.tape, self._backdrop(now))
+        editor = await asyncio.to_thread(edit_digest, inp.clusters[:25], backdrop, now=now)
+        if editor is not None:
+            inp.regime = editor.regime
+            inp.thread_order = [t.cluster_ids for t in editor.threads]
+        order = inp.thread_order or [[c.id] for c in inp.clusters]
+        by_id = {c.id: c for c in inp.clusters}
+        threads = [by_id[ids[0]] for ids in order[: inp.max_threads] if ids[0] in by_id]
+        inp.reads = await asyncio.to_thread(digest_reads, threads, backdrop, now=now)
+
+    async def _followup(self, now: datetime) -> None:
+        from src.news.followup import complete_post, pending_posts
+
+        for pid, payload in await asyncio.to_thread(pending_posts, now):
+            try:
+                await complete_post(pid, payload, now=now, cfg=self.cfg, publisher=self.publisher)
+            except Exception:
+                log.exception("news followup failed for post %s", pid)
+
     async def _digests(self, now: datetime) -> None:
         sent = {n: get_state(f"digest_sent:{n}") or "" for n in ("premarket", "close", "week")}
         for name in due_digests(now, sent, self.ncfg.digests):
             inp = await asyncio.to_thread(gather_inputs, name, now=now, cfg=self.cfg, an=self.an)
             if name == "close":
                 inp.movers = list(self.last_movers)
+            await self._rank_digest(inp, now)
             payload = build_digest(name, inp)
-            await post_card(payload, publisher=self.publisher, cfg=self.cfg, now=now)
+            pid = await post_card(payload, publisher=self.publisher, cfg=self.cfg, now=now)
+            # Digests post once, complete (no two-stage): record whether the 🧠 reads landed.
+            await update_post(
+                pid,
+                payload,
+                publisher=None,
+                stage="explained" if inp.reads else "fallback",
+                count_edit=False,
+            )
             set_state(f"digest_sent:{name}", now.astimezone(ET).date().isoformat())
 
     def run_once_ingest(self, now: datetime) -> None:

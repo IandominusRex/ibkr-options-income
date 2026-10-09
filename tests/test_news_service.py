@@ -171,6 +171,7 @@ async def test_digest_loop_posts_once_per_day(news_db, monkeypatch) -> None:
             now=now, tape={}, clusters=[], econ=[], earnings=[], held=set(), positions=[], movers=[]
         ),
     )
+    monkeypatch.setattr(svc, "_backdrop", lambda now: None)
     await svc._digests(now)
     await svc._digests(now)
     from src.news.store.models import NewsPostRow
@@ -218,3 +219,113 @@ async def test_econ_actuals_marks_alerted_and_never_redispatches(news_db, monkey
     assert sent == [["k1"], []]
     with news_session() as s:
         assert s.get(EconEventRow, "k1").alerted is True
+
+
+async def test_digest_uses_editor_order_and_reads_or_falls_back(news_db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from src.news import explain as X
+    from src.news import service as S
+    from src.news.digests import DigestInputs
+    from src.news.schemas import ClusterView, DigestRead, EditorOutput, EditorThread
+
+    svc = S.NewsService(get_config())
+    svc.publisher = None
+    monkeypatch.setattr(svc, "_backdrop", lambda now: None)
+    now = datetime(2026, 10, 14, 12, 5, tzinfo=UTC)
+    cls = [
+        ClusterView(
+            id=i,
+            headline=f"story {i}",
+            category="macro",
+            first_seen=now,
+            last_seen=now,
+            source_count=2,
+        )
+        for i in (1, 2)
+    ]
+    captured: list[DigestInputs] = []
+
+    def fake_build(name, inp):
+        captured.append(inp)
+        from src.news.schemas import CardPayload
+
+        return CardPayload(kind="digest_premarket", title="Pre-market", emoji="🗞️", when=now)
+
+    monkeypatch.setattr(
+        S,
+        "gather_inputs",
+        lambda name, **kw: DigestInputs(
+            now=now,
+            tape={},
+            clusters=list(cls),
+            econ=[],
+            earnings=[],
+            held=set(),
+            positions=[],
+            movers=[],
+        ),
+    )
+    monkeypatch.setattr(S, "build_digest", fake_build)
+    monkeypatch.setattr(
+        X,
+        "edit_digest",
+        lambda c, b, now: EditorOutput(
+            regime="risk_off",
+            threads=[
+                EditorThread(cluster_ids=[2], title="two"),
+                EditorThread(cluster_ids=[1], title="one"),
+            ],
+        ),
+    )
+    asked: list[list[int]] = []
+
+    def fake_reads(threads, b, now):
+        asked.append([t.id for t in threads])
+        return {2: DigestRead(cluster_id=2, headline="h", read="r", verdict="priced_in")}
+
+    monkeypatch.setattr(X, "digest_reads", fake_reads)
+    await svc._digests(now)
+    assert (
+        asked == [[2, 1]]
+        and captured[0].regime == "risk_off"
+        and captured[0].thread_order == [[2], [1]]
+    )
+    assert set(captured[0].reads) == {2}
+
+    from src.news.store import state
+    from src.news.store.models import NewsPostRow
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        assert [r.stage for r in s.query(NewsPostRow)] == ["explained"]
+    state.set_state("digest_sent:premarket", "")
+    monkeypatch.setattr(X, "edit_digest", lambda c, b, now: None)
+    monkeypatch.setattr(X, "digest_reads", lambda t, b, now: asked.append([x.id for x in t]) or {})
+    await svc._digests(now)
+    assert asked[-1] == [1, 2] and captured[-1].regime is None
+    with news_session() as s:
+        assert sorted(r.stage for r in s.query(NewsPostRow)) == ["explained", "fallback"]
+
+
+async def test_followup_loop_completes_each_pending_post(news_db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from src.news import followup as FU
+    from src.news import service as S
+    from src.news.schemas import CardPayload
+
+    svc = S.NewsService(get_config())
+    svc.publisher = None
+    now = datetime(2026, 10, 14, 15, tzinfo=UTC)
+    card = CardPayload(kind="ticker_move", title="x", emoji="•", when=now)
+    monkeypatch.setattr(FU, "pending_posts", lambda now: [(1, card), (2, card)])
+    done: list[int] = []
+
+    async def fake_complete(pid, payload, **kw):
+        done.append(pid)
+        if pid == 1:
+            raise RuntimeError("one bad post must not stop the rest")
+        return True
+
+    monkeypatch.setattr(FU, "complete_post", fake_complete)
+    await svc._followup(now)
+    assert done == [1, 2]
