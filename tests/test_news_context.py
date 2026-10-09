@@ -151,3 +151,143 @@ def test_news_block_for_candidates_passes_the_deadline_through(monkeypatch):
     monkeypatch.setattr(news_context, "build_news_block", _fake_build)
     news_context.news_block_for_candidates([], per_symbol=5, days=7, max_items=25, deadline=42.0)
     assert seen["deadline"] == 42.0
+
+
+# --- news plan Task 26: a ticker query prefers the news service's deduped store (spec §8) ---
+
+
+def _store_item(
+    url_hash: str, title: str, tickers: list[str], cluster_id: int | None, age_h: float = 1.0
+):
+    from datetime import UTC, datetime, timedelta
+
+    from src.news.store.models import NewsItemRow
+    from src.news.store.queries import naive_utc
+
+    return NewsItemRow(
+        url_hash=url_hash,
+        title_hash=url_hash,
+        title=title,
+        url=f"https://r.com/{url_hash}",
+        source="Reuters",
+        category="ticker",
+        origin="google",
+        fetched_at=naive_utc(datetime.now(UTC) - timedelta(hours=age_h)),
+        tickers=tickers,
+        tags=[],
+        det_sentiment=0.5,
+        cluster_id=cluster_id,
+    )
+
+
+def test_ticker_query_uses_store_first(news_db, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    from src.news.store.models import NewsItemRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add(
+            NewsItemRow(
+                url_hash="u",
+                title_hash="t",
+                title="NVDA wins big contract",
+                url="https://r.com/a",
+                source="Reuters",
+                category="ticker",
+                origin="google",
+                fetched_at=naive_utc(datetime.now(UTC)),
+                tickers=["NVDA"],
+                tags=[],
+                det_sentiment=0.5,
+                cluster_id=1,
+            )
+        )
+
+    def boom():
+        raise AssertionError("live provider must not be called when the store has items")
+
+    monkeypatch.setattr("src.data.factory.get_news_search_provider", boom)
+    items = news_context._fetch("NVDA", 7, 5)
+    assert [i.title for i in items] == ["NVDA wins big contract"]
+
+
+def test_market_query_still_goes_live(news_db, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.data.factory.get_news_search_provider",
+        lambda: type(
+            "S", (), {"search": lambda self, q, days=7, limit=10: [NewsItem(title="Stocks rally")]}
+        )(),
+    )
+    assert [i.title for i in news_context._fetch("stock market today", 7, 3)] == ["Stocks rally"]
+
+
+def test_store_returns_one_item_per_cluster_for_that_ticker_only_newest_first(news_db) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from src.news.store.queries import recent_items_for
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add_all(
+            [
+                _store_item("a", "NVDA older syndication", ["NVDA"], 7, age_h=5),
+                _store_item("b", "NVDA newest take", ["NVDA"], 7, age_h=1),
+                _store_item("c", "AAPL unrelated", ["AAPL"], 8, age_h=0.5),
+                _store_item("d", "NVDA second story", ["NVDA", "AMD"], 9, age_h=3),
+                _store_item("e", "NVDA too old", ["NVDA"], 10, age_h=24 * 30),
+            ]
+        )
+    with news_session() as s:
+        got = recent_items_for(s, "nvda", datetime.now(UTC) - timedelta(days=7), 10)
+        capped = recent_items_for(s, "NVDA", datetime.now(UTC) - timedelta(days=7), 1)
+    assert [i.title for i in got] == ["NVDA newest take", "NVDA second story"]
+    assert [i.title for i in capped] == ["NVDA newest take"]
+
+
+def test_store_keeps_every_unclustered_item(news_db) -> None:
+    """cluster_id is nullable: items not yet clustered are distinct stories, not one."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.news.store.queries import recent_items_for
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add_all(
+            [
+                _store_item("a", "NVDA one", ["NVDA"], None, age_h=2),
+                _store_item("b", "NVDA two", ["NVDA"], None, age_h=1),
+            ]
+        )
+    with news_session() as s:
+        got = recent_items_for(s, "NVDA", datetime.now(UTC) - timedelta(days=7), 10)
+    assert [i.title for i in got] == ["NVDA two", "NVDA one"]
+
+
+def test_ticker_with_no_stored_items_falls_back_to_live(news_db, monkeypatch) -> None:
+    class _Search:
+        def search(self, q, days=7, limit=10):
+            return [NewsItem(title="Live headline")]
+
+    monkeypatch.setattr("src.data.factory.get_news_search_provider", lambda: _Search())
+    monkeypatch.setattr(
+        "src.data.factory.get_news_provider",
+        lambda: type("P", (), {"get_headlines": lambda self, sym, limit=5: []})(),
+    )
+    assert [i.title for i in news_context._fetch("NVDA", 7, 5)] == ["Live headline"]
+
+
+def test_store_missing_falls_back_to_live(monkeypatch) -> None:
+    """No news.db yet (fresh install, service not started): the live path answers (Review Focus 5)."""
+
+    class _Search:
+        def search(self, q, days=7, limit=10):
+            return [NewsItem(title="Live headline")]
+
+    monkeypatch.setattr("src.data.factory.get_news_search_provider", lambda: _Search())
+    monkeypatch.setattr(
+        "src.data.factory.get_news_provider",
+        lambda: type("P", (), {"get_headlines": lambda self, sym, limit=5: []})(),
+    )
+    assert [i.title for i in news_context._fetch("NVDA", 7, 5)] == ["Live headline"]

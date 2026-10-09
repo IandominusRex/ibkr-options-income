@@ -161,3 +161,42 @@ def ticker_sentiment_rows(
         if sym in (tickers or []):
             out.append((float(det), aware_utc(pub or fetched), cid, title))
     return out
+
+
+def recent_items_for(s: Session, symbol: str, since: datetime, limit: int) -> list[ItemView]:
+    """Newest-first items tagged with *symbol*, one per cluster (spec §8).
+
+    An item not yet clustered (``cluster_id`` NULL) is its own story, so it is never collapsed
+    with another unclustered one.
+    """
+    rows = s.scalars(
+        select(NewsItemRow)
+        .where(NewsItemRow.fetched_at >= naive_utc(since))
+        .order_by(NewsItemRow.fetched_at.desc())
+        .limit(500)
+    )
+    sym = symbol.upper()
+    out: list[ItemView] = []
+    seen: set[int] = set()
+    for r in rows:
+        if sym not in (r.tickers or []):
+            continue
+        if r.cluster_id is not None:
+            if r.cluster_id in seen:
+                continue
+            seen.add(r.cluster_id)
+        out.append(
+            ItemView(
+                title=r.title,
+                url=r.url,
+                source=r.source,
+                source_domain=r.source_domain,
+                published_at=aware_utc(r.published_at) if r.published_at else None,
+                summary=r.summary,
+                image_url=r.image_url,
+                det_sentiment=r.det_sentiment,
+            )
+        )
+        if len(out) >= limit:
+            break
+    return out

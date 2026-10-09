@@ -71,14 +71,41 @@ def _news_item_from_yfinance(raw: dict) -> NewsItem | None:
     return NewsItem(id="", title=str(title), source=source, published=None, url=url)
 
 
+def _from_store(symbol: str, days: int, limit: int) -> list[NewsItem]:
+    """The news service's deduped store first (spec §8) — read-only, never raises."""
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from src.news.store.queries import recent_items_for
+        from src.news.store.readonly import read_only_session
+
+        with read_only_session() as s:
+            if s is None:
+                return []
+            views = recent_items_for(s, symbol, datetime.now(UTC) - timedelta(days=days), limit)
+    except Exception as exc:  # noqa: BLE001 — a store problem must not break the prompt
+        log.debug("news_context: store read failed for %s: %s", symbol, exc)
+        return []
+    return [
+        NewsItem(id="", title=v.title, source=v.source, published=v.published_at, url=v.url)
+        for v in views
+    ]
+
+
 def _fetch(query: str, days: int, limit: int) -> list[NewsItem]:
-    """Combine Google News RSS search with (for an actual ticker) yfinance headlines.
+    """The store's deduped clusters for a ticker, else Google News RSS search plus (for an
+    actual ticker) yfinance headlines.
 
     Never raises: each source degrades independently to an empty contribution so a single
     provider's outage never drops the whole NEWS block. Monkeypatched wholesale in
     ``tests/test_news_context.py`` to isolate `build_news_block`'s numbering/dedupe logic from
     any provider.
     """
+    if _looks_like_ticker(query):
+        stored = _from_store(query, days, limit)
+        if stored:
+            return stored
+
     items: list[NewsItem] = []
     try:
         from src.data.factory import get_news_search_provider
