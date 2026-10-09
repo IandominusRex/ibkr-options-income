@@ -46,7 +46,18 @@ fi
 # IBC / Gateway install locations — override via env if you installed elsewhere.
 IBC_PATH="${IBC_PATH:-$HOME/Applications/ibc}"
 TWS_PATH="${TWS_PATH:-$HOME/Applications}"
-TWS_MAJOR_VRSN="${TWS_MAJOR_VRSN:-10.47}"
+# IBC finds Gateway by its versioned install folder ("IB Gateway 10.51"). Unless
+# TWS_MAJOR_VRSN is exported, use the newest one installed, so an upgrade is just "run the
+# new installer, restart Gateway" — the old folder can stay as a rollback until removed.
+if [[ -z "${TWS_MAJOR_VRSN:-}" ]]; then
+    TWS_MAJOR_VRSN="$(find "$TWS_PATH" -maxdepth 1 -type d -name 'IB Gateway [0-9]*.[0-9]*' \
+        | sed -E 's/.*IB Gateway //' | sort -t. -k1,1n -k2,2n | tail -1)"
+fi
+if [[ -z "$TWS_MAJOR_VRSN" || ! -d "${TWS_PATH}/IB Gateway ${TWS_MAJOR_VRSN}" ]]; then
+    echo "Error: no IB Gateway install found in ${TWS_PATH} (looked for 'IB Gateway <version>')." >&2
+    exit 1
+fi
+echo "Using IB Gateway ${TWS_MAJOR_VRSN} from ${TWS_PATH}"
 
 if [[ ! -x "${IBC_PATH}/scripts/displaybannerandlaunch.sh" ]]; then
     echo "Error: IBC not found at ${IBC_PATH}. Set IBC_PATH or re-check the install." >&2

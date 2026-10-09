@@ -401,6 +401,26 @@ Found by reading the first RTH session after the news merge; each fix has a regr
 - The Mac clamshell-slept on battery 03:09–13:10 SGT on 2026-10-09 (`caffeinate -s` holds only
   on AC), so the 2026-10-08 EOD never completed and wrote no journal row. `_supervise_eod`'s
   60-minute guard uses `time.monotonic()`, which pauses while the machine sleeps.
+- ~~Gateway auto-restarts mid-session~~ **Fixed 2026-10-10:** IBC's `AutoRestartTime` was blank, so Gateway
+  kept its default 11:45 PM *machine-local* — 11:45 ET on this Singapore machine, killing the 23:45
+  scan every trading day. Now `AutoRestartTime=10:00 AM` (22:00 ET) in `~/Applications/ibc/config.ini`.
+  Same day, `scripts/ibc/start_gateway.sh` stopped pinning Gateway 10.47 and launches the newest
+  installed `IB Gateway <version>` (10.47 is desupported 2026-12-15; minimum then 1050.1).
+- **IB Gateway 10.51 since 2026-10-10** (10.47 removed). Verified live: IBC login, the 10:00 AM
+  auto-restart applied, every clientId reconnected, quotes flow, and the account stream still sends
+  `$LEDGER-ExchangeRate` (10.51 adds a `$LEDGER-` per-currency option, off by default on upgrade; the
+  code reads both tag forms). 10.51's other API changes don't touch this code: `reqOpenOrders` now
+  returns de-activated orders, but ib_async counts `Inactive` as done so `openTrades()` excludes them;
+  `reqFundamentalData` was removed, and nothing here calls it (fundamentals come from yfinance).
+- **Open: contract qualification is slow and erratic, and the spreads GEX build competes for it.**
+  Since the evening of 2026-10-09 (on 10.47 and 10.51 alike) `reqContractDetails` latency swings
+  from ~0.1 s to ~0.5 s per contract, and occasionally a batch doesn't return within 60 s. The
+  scan's 20 s qualify chunks time out, and the 2026-10-10 01:00 scan reached only 3 of 20 symbols
+  (GOOGL 0 qualified; AMD and AMZN hit `symbol_timeout_seconds`). The spreads service's startup
+  GEX map was qualifying SPX chains at the same time, and its chunks timed out too. The likely fix
+  is a per-day conId cache that also remembers non-existent strikes, so each contract is qualified
+  once a day rather than every 15 minutes. The GEX build also got Error 354 (not subscribed) on
+  some SPXW options.
 - `src/news/aliases.py::load_aliases` can race at startup (two loops inserting the same
   `ticker_aliases` row → `UNIQUE constraint failed`); it self-heals on the next cycle.
 - `logs/approval.log` has no rotation (159 MB), mostly `Unknown contract` strike-grid noise.

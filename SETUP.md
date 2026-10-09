@@ -211,9 +211,11 @@ steps below are for a fresh machine):
    execute bit, and `start_gateway.sh` refuses to launch ("IBC not found") without it:
    `chmod u+x ~/Applications/ibc/*.sh ~/Applications/ibc/scripts/*.sh`.
 2. The repo ships a pre-configured `config.ini` you copy over the extracted one — see below for
-   what's set and why. Version-pin note: `scripts/ibc/start_gateway.sh` defaults
-   `TWS_MAJOR_VRSN=10.47` — update it (or export `TWS_MAJOR_VRSN` before running) if your
-   installed Gateway version differs (**Help → About IB Gateway** in the app).
+   what's set and why. Version note: `scripts/ibc/start_gateway.sh` launches the **newest**
+   `~/Applications/IB Gateway <version>` folder it finds (since 2026-10-10; it was pinned to
+   10.47), so upgrading is: run the new Gateway installer, then restart Gateway (`./ibkr stop`
+   then `./ibkr start`, outside market hours). Keep the old folder until the new version has
+   logged in once — it is the rollback (`export TWS_MAJOR_VRSN=10.47` pins it).
 
 **`~/Applications/ibc/config.ini` — settings changed from the shipped defaults**, all
 login/session-flow only; nothing order- or trade-related was touched (`AllowBlindTrading`,
@@ -228,11 +230,12 @@ login/session-flow only; nothing order- or trade-related was touched (`AllowBlin
 | `AcceptIncomingConnectionAction` | `reject` | IBC's own recommended setting — matches this system's existing behavior, since local (127.0.0.1) API connections already don't trigger this dialog on this setup |
 | `ReloginAfterSecondFactorAuthenticationTimeout` | `yes` | Auto-retries the login sequence on a missed 2FA push instead of exiting |
 | `SecondFactorAuthenticationExitInterval` | `60` | Seconds IBC waits for login to finish after you tap approve |
-| `AutoRestartTime` | *(blank — see step below)* | Left to Gateway's own GUI-configured value; more reliable than guessing a time blind |
+| `AutoRestartTime` | `10:00 AM` | **Machine-local time.** Left blank until 2026-10-10, which left Gateway on its default 11:45 PM — on a Singapore machine that is 11:45 ET, mid-session, and it knocked out a scan every trading day. 10:00 AM SGT is 22:00 ET: after the EOD report, before the evening pre-market digest. Applied (and persisted into Gateway's own config) when IBC next starts Gateway |
 
 **One-time GUI step:** open Gateway → **Configure → Settings → Lock and Exit**, and set **Auto
 restart** (not *Auto logoff*) to a time a little before your account's nightly forced-restart
-window (commonly ~23:45–00:45 ET, but this varies — watch the first day's `logs/system.log` for
+window (commonly ~23:45–00:45 ET, but this varies; the box is in the **machine's local time**, not
+ET — or set `AutoRestartTime` in IBC's `config.ini`, which overrides it — watch the first day's `logs/system.log` for
 `Error 1100` timing if you're not sure, and adjust). This is what lets the daily restart skip
 2FA. If you ever see a "Trusted IPs" dialog block a local connection, add `127.0.0.1` under
 **Configure → Settings → API → Settings** — not needed on this setup today, but the fallback if
