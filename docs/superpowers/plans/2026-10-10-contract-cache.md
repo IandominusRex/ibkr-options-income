@@ -15,7 +15,7 @@
 | Task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | 1. Cache store | done | (this commit) | pytest 3255 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `prune()` reads `rowcount` via `getattr` (repo idiom, mypy sees ORM `Result`); docs rows deferred to Task 2, which owns them; plan file itself first committed here |
-| 2. Cache in `qualify_options_async` | not started | | | | |
+| 2. Cache in `qualify_options_async` | done | (this commit) | pytest 3263 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `src/ibkr/market_data.py` added to the commit (the step's `git add` list omitted it); ARCHITECTURE `settings.yaml` config row also gained the two Task 1 keys (doc-update rule for new config keys) |
 | 3. Cross-process lookup lock | not started | | | | |
 | 4. Full sweep once per ET day; persisted retry queue | not started | | | | |
 | 5. Live verification + docs close-out | not started | | | | |
@@ -603,7 +603,7 @@ Then update this plan's Progress log row 1 (status, commit, gate result, date, a
 - Consumes (Task 1): `ContractCache`, `Lookup`, `contract_key`, `confirmed_missing`, `get_contract_cache`
 - Produces: `qualify_options_async(ib, contracts, *, chunk_size=40, throttle_seconds=0.25, chunk_timeout_seconds=20.0, cache: ContractCache | None | _UseDefault = USE_DEFAULT) -> list[Option]`. It still returns the qualified contracts **in input order**, still fills each input contract in place (`src/spreads/chain.py` and `src/ibkr/portfolio.py` rely on in-place filling), and still drops the unqualified.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_qualify_cache.py`:
 
@@ -757,12 +757,12 @@ async def test_default_cache_comes_from_the_process_factory(monkeypatch, tmp_pat
     assert cache.lookup([_opt(600.0)]).hits != []
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_qualify_cache.py -q`
 Expected: FAIL — `TypeError: qualify_options_async() got an unexpected keyword argument 'cache'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/ibkr/contracts.py`, add imports:
 
@@ -876,12 +876,12 @@ In `src/ibkr/market_data.py::get_option_chain_quotes_async`, directly after
 
 Why `id(c) in asked_keys` on `fresh`: ib_async fills and returns the *input* object, so `id()` matches. A mock returning different objects simply records nothing (safe).
 
-- [ ] **Step 4: Run the new and the existing qualification tests**
+- [x] **Step 4: Run the new and the existing qualification tests**
 
 Run: `python -m pytest tests/test_qualify_cache.py tests/test_market_data.py tests/test_monitor.py tests/test_spreads_chain.py tests/test_ibkr_portfolio.py -q`
 Expected: all PASS. The existing tests run with the default cache disabled (conftest), so their behaviour is unchanged.
 
-- [ ] **Step 5: Docs**
+- [x] **Step 5: Docs**
 
 `ARCHITECTURE.md`, `src/ibkr/` folder guide: add a row
 
@@ -891,7 +891,7 @@ Expected: all PASS. The existing tests run with the default cache disabled (conf
 
 …and on the `contracts.py` row append: "`qualify_options_async` consults `contract_cache.py` first (2026-10-10)." In `STATUS.md`, change the "Open: contract qualification is slow…" bullet's opening to "**Mitigated 2026-10-10 (contract cache, Tasks 1-2 of docs/superpowers/plans/2026-10-10-contract-cache.md)…**", leaving the measurements in place.
 
-- [ ] **Step 6: Gate and commit**
+- [x] **Step 6: Gate and commit**
 
 ```bash
 ruff format src/ibkr/contracts.py tests/test_qualify_cache.py && ruff check . && mypy src && python -m pytest -q

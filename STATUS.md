@@ -412,7 +412,7 @@ Found by reading the first RTH session after the news merge; each fix has a regr
   code reads both tag forms). 10.51's other API changes don't touch this code: `reqOpenOrders` now
   returns de-activated orders, but ib_async counts `Inactive` as done so `openTrades()` excludes them;
   `reqFundamentalData` was removed, and nothing here calls it (fundamentals come from yfinance).
-- **Open: contract qualification is slow and erratic, and the spreads GEX build competes for it.**
+- **Mitigated 2026-10-10 (contract cache, Tasks 1-2 of docs/superpowers/plans/2026-10-10-contract-cache.md): contract qualification is slow and erratic, and the spreads GEX build competes for it.** Each option contract is now looked up once and remembered in `data/contracts.db` (`src/ibkr/contract_cache.py`); non-existent strikes are remembered for the ET day. Original finding:
   Since the evening of 2026-10-09 (on 10.47 and 10.51 alike) `reqContractDetails` latency swings
   from ~0.1 s to ~0.5 s per contract, and occasionally a batch doesn't return within 60 s. The
   scan's 20 s qualify chunks time out, and the 2026-10-10 01:00 scan reached only 3 of 20 symbols
