@@ -41,7 +41,7 @@ row that matches:
 |---|---|
 | New file or module added | `ARCHITECTURE.md` folder guide (always) · `README.md` layout table only if it's a new top-level directory |
 | Existing module renamed, moved, or deleted | Both above |
-| New config key added to any YAML | Add it to the committed `config/<name>.example.yaml` (the private copy is git-ignored) · `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
+| New config key added to any YAML | Add it to the committed `config/examples/<name>.yaml` (the private copy is git-ignored) · `ARCHITECTURE.md` config/ section · `SETUP.md` if it affects setup |
 | New script entrypoint added | `SETUP.md` scripts table · `ARCHITECTURE.md` `scripts/` folder-guide entry |
 | **New Telegram command registered** in `approval_service.py` | `ARCHITECTURE.md` commands table (src/notify/ section) · `SETUP.md` "Using the Telegram bot" commands table · `README.md` Telegram commands table |
 | **New formatter function added** to `formatters.py` | `ARCHITECTURE.md` src/notify/ table description |
@@ -52,8 +52,8 @@ row that matches:
 | **Ticker added/removed from `universe.yaml`** | `UNIVERSE_RESEARCH.md` — add/remove ticker section · `src/claude/prompts/strategist.py` `_UNIVERSE_CONTEXT` table |
 | **New command kind registered** in `command_drain.py` | `docs/web/commands.md` |
 | **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
-| **New module under `src/news/`** or a new key in `config/news.example.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
-| **New module under `src/spreads/`** or a new key in `config/spreads.example.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
+| **New module under `src/news/`** or a new key in `config/examples/news.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
+| **New module under `src/spreads/`** or a new key in `config/examples/spreads.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -228,7 +228,7 @@ their two edits (annotations, corporate-action reviewed) and the CSV upload are 
 credit spreads in the **same IBKR account and Gateway** as the wheel, with its own process
 (`scripts/run_spreads.py`, clientId 30), its own SQLite file (`data/spreads.db`, its own
 `SpreadsBase`), its own config (the operator's private `config/spreads.yaml`; the repo commits
-`config/spreads.example.yaml`) and its own Telegram thread. The rules:
+`config/examples/spreads.yaml`) and its own Telegram thread. The rules:
 
 - **Book = underlying.** `config/spreads.yaml → book_underlyings` (SPY, SPX, XSP) must never appear in
   `config/universe.yaml` — `Config._spreads_isolated` refuses the overlap at load. Positions
@@ -267,7 +267,7 @@ process loads no wheel layer even transitively), `tests/test_wheel_spreads_isola
 `src/news/` (docs/superpowers/specs/2026-10-09-news-thread-design.md §10) runs as its own process
 (`scripts/run_news.py`, **no IBKR connection, no clientId**), with its own SQLite file
 (`data/news.db`, its own `NewsBase`), its own config (private `config/news.yaml`; the repo commits
-`config/news.example.yaml` and the reference playbook `config/news_playbook.yaml`) and its own
+`config/examples/news.yaml` and the reference playbook `config/news_playbook.yaml`) and its own
 Telegram thread (`TELEGRAM_THREAD_NEWS`). It explains news; it never trades. The rules:
 
 1. `src/engine/`, `src/execution/`, `src/strategies/` and `src/spreads/` never import `src.news`.
@@ -328,7 +328,8 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
 - Python ≥ 3.12. Config in `config/*.yaml`; **secrets only in `.env`** (gitignored) — never log or
   commit them. `settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml`, `universe.yaml`,
   `spreads.yaml` and `news.yaml` are the operator's **private, git-ignored** copies; the repo commits
-  `config/<name>.example.yaml` (`news_playbook.yaml` is committed reference data, not private).
+  a template of each in `config/examples/<name>.yaml` (`news_playbook.yaml` is committed reference
+  data, not private).
   Never `git add` a private config file or anything holding an account number; tests read the
   examples (`IBKR_CONFIG_USE_EXAMPLES=1` in `tests/conftest.py`).
 - All tunables (deltas, DTE, IV thresholds, weights, concentration limits) live in

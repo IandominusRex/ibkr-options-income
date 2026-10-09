@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-# Tests read the committed config/*.example.yaml, never the operator's private config/*.yaml
+# Tests read the committed config/examples/*.yaml, never the operator's private config/*.yaml
 # (set before anything imports src.common.config and caches a Config).
 os.environ["IBKR_CONFIG_USE_EXAMPLES"] = "1"
 

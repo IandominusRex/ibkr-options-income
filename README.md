@@ -174,7 +174,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env          # fill in Telegram token/chat-id and IBKR account
-for f in settings risk_limits scoring_weights universe; do cp config/$f.example.yaml config/$f.yaml; done
+for f in settings risk_limits scoring_weights universe spreads news; do cp config/examples/$f.yaml config/$f.yaml; done
                               # your own config: git-ignored, edit freely
 # Start IB Gateway (paper account, API enabled, port 4002)
 
@@ -255,7 +255,7 @@ soft to a page with no summary — enrichment, never a dependency.
 
 | Path | Purpose |
 |---|---|
-| `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights |
+| `config/` | Tunable YAML: connection settings, risk limits, watchlist, scoring weights. Your copies are git-ignored; the committed templates live in `config/examples/` |
 | `src/` | All application code — analytics, strategies, the risk engine, execution, Telegram, the web API, research pipeline, and more. Full folder-by-folder breakdown: **[ARCHITECTURE.md](ARCHITECTURE.md#folder-by-folder-guide)** |
 | `web/` | Next.js research/portfolio/P&L console (optional; see "Running the web app" above) |
 | `scripts/` | Command-line entrypoints: healthcheck, watchdog, backfills, the EOD report, and more |

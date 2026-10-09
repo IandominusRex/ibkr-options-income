@@ -51,7 +51,7 @@ def test_returns_every_list_unmodified_in_file_order(client) -> None:
     assert _symbols(_list(body, "watchlist")) == list(u["watchlist"])
     assert _symbols(_list(body, "would_own")) == list(u["would_own"])
     assert _symbols(_list(body, "actively_wheeling")) == list(u["actively_wheeling"])
-    # file order is preserved — the first index in universe.example.yaml is QQQ (SPY is reserved
+    # file order is preserved — the first index in config/examples/universe.yaml is QQQ (SPY is reserved
     # for the daily credit-spread book).
     assert _symbols(_list(body, "indexes"))[0] == "QQQ"
 

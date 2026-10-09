@@ -368,6 +368,16 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Changed (2026-10-09 — config templates moved to `config/examples/`)
+
+The six committed templates (`settings`, `risk_limits`, `scoring_weights`, `universe`, `spreads`,
+`news`) moved from `config/<name>.example.yaml` to `config/examples/<name>.yaml`, so `config/`
+itself holds only the operator's git-ignored copies and the committed reference data
+(`research*.yaml`, `news_playbook.yaml`, `symbol_directory_overrides.yaml`,
+`universe_archive.yaml`). `src/common/config.py::example_path` is the one place that maps a
+private file to its template; the fallback and `IBKR_CONFIG_USE_EXAMPLES=1` behave as before.
+Older entries below (and archived plans) still name the old `*.example.yaml` paths.
+
 ## Built (2026-10-09 — the News thread: macro, market and ticker news with grounded implications)
 
 Plan: `docs/superpowers/plans/2026-10-09-news-thread.md` (branch `feat/news-thread`, Tasks 1–34;
@@ -467,7 +477,7 @@ Plan: `docs/superpowers/plans/2026-10-07-daily-credit-spreads.md` (branch `feat/
 - Reporting (`scripts.spreads_report`), a ThetaData minute-replay backtest (`scripts.spreads_backtest`), and `scripts.spreads_resolve` to settle by hand a spread the service can no longer close.
 - **Fresh-context review fixes (2026-10-08):** a long leg nobody bids is worth 0, not unquoted (it used to block profit-takes and book a winner as a full max loss at the time stop); paper closes are capped at what the broker holds and wait out a still-working close; every paper tick re-reconciles; an order lost to a dropped socket or an unconfirmed cancel blocks entries; alerts keep coming while the Gateway is down; early-close sessions move the time stop with the close; one subscription per contract (a repeated leg leaked a line); commissions that arrive late are waited for or charged at the configured rate; the combo fill sign is checked. The plan's Progress log lists each one.
 - **Fix-round review fixes (2026-10-08):** two spreads chained through a strike (B's short is A's long, which IBKR nets away) are closed in full while the broker matches `spreads.db`; the previous per-leg cap closed neither, not even at the time stop. A missing bid is no longer turned into a 0 bid in the quote layer (a bid tick that lands after its ask could fire an early profit-take and halve the expected move); `quote` waits a short grace for late bids, and only the exit math treats a missing bid as no-bid. A second, different broker mismatch the same day is alerted; a leg still at IBKR is never called settled; the ledger's win rate is decided in each trade's own currency, so a missing FX rate can't turn a win into a loss; `run()` alerts on a down Gateway after one connect attempt at startup.
-- `ibkr.client_ids.spreads: 30` is in `config/settings.example.yaml` and the operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308` in `.env.example`; the operator's private `.env` needs the same line before the service sends its first message.
+- `ibkr.client_ids.spreads: 30` is in `config/examples/settings.yaml` and the operator's private `config/settings.yaml`. The spreads Telegram topic is `TELEGRAM_THREAD_SPREADS=4308` in `.env.example`; the operator's private `.env` needs the same line before the service sends its first message.
 
 **Needs live verification before `mode: paper`:**
 - ~~The BAG credit sign convention~~ **Verified on paper 2026-10-08** (Task 11 Step 9) with `scripts.spreads_combo_check --short 770 --long 765 --fill`: the opening BUY of the bag at a negative limit filled with `avgFillPrice -0.06` (a credit) and the close with `+0.08` (a debit), as the executor expects. The display-only check was skipped: this setup runs IB Gateway, which has no order window, and the fill check proves the same convention. The same run showed IBKR reporting the combo as a `secType=BAG` execution with commission 0 beside the two leg executions that carry the commission (about $0.87 per leg to open, $0.68 to close); the executor now ignores the BAG execution when it waits for commissions (review M5, fixed). The wheel's roll combo (`monitor.roll_execution_enabled`) uses its own order and is still unverified.

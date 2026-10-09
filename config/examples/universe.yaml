@@ -48,7 +48,7 @@
 
 # safe_bets — core ETF backbone
 indexes:
-  # SPY is reserved for the daily credit-spread book (config/spreads.example.yaml → book_underlyings)
+  # SPY is reserved for the daily credit-spread book (config/spreads.yaml → book_underlyings)
   - QQQ          # Nasdaq-100; slightly higher IV than SPY
   - IWM          # Russell 2000; better premiums, higher vol
   - SMH          # Semiconductor sector proxy; good OI

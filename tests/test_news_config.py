@@ -1,4 +1,4 @@
-"""config/news.example.yaml loads into NewsCfg and its validators bite."""
+"""config/examples/news.yaml loads into NewsCfg and its validators bite."""
 
 from __future__ import annotations
 

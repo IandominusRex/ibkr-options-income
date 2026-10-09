@@ -42,10 +42,9 @@ def infer_offset(
 
 
 def main() -> None:
-    from src.news.playbook import load_playbook
-
     from src.data import factory
     from src.data.nasdaq_backend import _get, parse_nasdaq_econ
+    from src.news.playbook import load_playbook
 
     cfg = get_config()
     pb = load_playbook()

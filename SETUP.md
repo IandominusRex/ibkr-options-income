@@ -67,24 +67,24 @@ longer works — Reddit blocks it at the edge.)
 
 ## 2b. Create your own config files
 
-The repo ships **templates** — `config/settings.example.yaml`, `risk_limits.example.yaml`,
-`scoring_weights.example.yaml`, `universe.example.yaml`, `spreads.example.yaml` (the daily
-credit-spread system, off by default) and `news.example.yaml` (the News thread, §17 — on by
-default). Your own copies (the files without `.example`) are
-**git-ignored**, so your account IDs, limits, weights and universe never reach GitHub:
+The repo ships **templates** in their own folder, `config/examples/`: `settings.yaml`,
+`risk_limits.yaml`, `scoring_weights.yaml`, `universe.yaml`, `spreads.yaml` (the daily
+credit-spread system, off by default) and `news.yaml` (the News thread, §17 — on by default).
+Your own copies sit directly in `config/` under the same names and are **git-ignored**, so your
+account IDs, limits, weights and universe never reach GitHub:
 
 ```bash
 for f in settings risk_limits scoring_weights universe spreads news; do
-  cp config/$f.example.yaml config/$f.yaml
+  cp config/examples/$f.yaml config/$f.yaml
 done
 ```
 
 Edit `config/settings.yaml` and friends from then on. If one of your files is missing, the system
 falls back to the example and logs a warning, so a fresh clone still runs. **When you pull an
 update that adds new config keys**, the code defaults cover them; diff your file against the
-example (`diff config/settings.yaml config/settings.example.yaml`) to adopt any new setting
+example (`diff config/settings.yaml config/examples/settings.yaml`) to adopt any new setting
 explicitly. The test suite always reads the examples (`IBKR_CONFIG_USE_EXAMPLES=1`, set in
-`tests/conftest.py`), never your copies. The other files in `config/` (`research*.yaml`,
+`tests/conftest.py`), never your copies. The other files directly in `config/` (`research*.yaml`,
 `symbol_directory_overrides.yaml`, `universe_archive.yaml`, `news_playbook.yaml`) are shared
 reference data and stay committed.
 
@@ -1657,7 +1657,7 @@ commission) and places no orders.
 ### Enable it
 
 1. Add `TELEGRAM_THREAD_SPREADS=<topic id>` to `.env`, or leave it empty for the main chat.
-2. Copy the template: `cp config/spreads.example.yaml config/spreads.yaml` (your copy is git-ignored). Make sure your private `config/settings.yaml` has `spreads: 30` under `ibkr.client_ids`.
+2. Copy the template: `cp config/examples/spreads.yaml config/spreads.yaml` (your copy is git-ignored). Make sure your private `config/settings.yaml` has `spreads: 30` under `ibkr.client_ids`.
    - **Sizing:** the book trades as if it had `risk.starting_capital_usd` ($100,000), plus whatever it has realized since. Each spread is sized so a full loss is `risk.max_loss_pct_of_capital` (10%) of that, about 21 SPY spreads at the start. Your account's own size (about $1M on paper) is not used.
    - Fill in `risk.ex_dividend_dates` with SPY's upcoming ex-dividend dates (quarterly); no new call spreads go on those days or the day before.
 3. In `config/spreads.yaml`, set `enabled: true` and keep `mode: shadow`. Restart: `./ibkr restart` (the supervisor starts `scripts.run_spreads` with the other daemons; `--no-spreads` skips it).
@@ -1728,7 +1728,7 @@ then local Ollama), capped at `news.llm.max_calls_per_day` (40) calls per day.
    set `FINNHUB_API_KEY=<key>`.
 2. Reinstall to pick up the new chart dependency: `pip install -e ".[dev,sentiment]"`
    (`matplotlib` is now a core dependency).
-3. `cp config/news.example.yaml config/news.yaml` (your copy is git-ignored). Every key has a code
+3. `cp config/examples/news.yaml config/news.yaml` (your copy is git-ignored). Every key has a code
    default, so a missing file just runs the shipped settings.
 4. Probe the sources: `python -m scripts.news_probe`. It prints item counts per RSS feed, whether
    Finnhub answers, and re-derives Nasdaq's economic-calendar date offset. Delete any feed that
