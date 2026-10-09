@@ -12,6 +12,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import update
+
 from src.analytics.market_conditions import get_market_conditions
 from src.common.config import Config
 from src.common.market_hours import is_rth, is_trading_day
@@ -25,7 +27,7 @@ from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
 from src.news.publish import Publisher
 from src.news.store import queries
-from src.news.store.models import EarningsEventRow, EconEventRow, NewsPostRow
+from src.news.store.models import EarningsEventRow, EconEventRow, NewsPostRow, NewsRequestRow
 from src.news.store.prune import prune
 from src.news.store.session import init_news_db, news_session
 from src.news.store.state import get_state, set_state, touch_heartbeat
@@ -111,6 +113,7 @@ class NewsService:
             ("breaking", 120, self._breaking),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
+            ("briefs", self.ncfg.briefs.poll_seconds, self._briefs),
             (
                 "prune",
                 24 * 3600,
@@ -309,6 +312,28 @@ class NewsService:
             except Exception:
                 log.exception("news followup failed for post %s", pid)
 
+    async def _briefs(self, now: datetime) -> None:
+        from src.news.brief_builder import build_brief
+        from src.news.briefs import claim_next, finish
+
+        while (job := await asyncio.to_thread(claim_next, now)) is not None:
+            req_id, symbol = job
+            try:
+                pid = await build_brief(symbol, svc=self, now=self.clock())
+                await asyncio.to_thread(finish, req_id, now=self.clock(), post_id=pid)
+            except Exception as exc:
+                log.exception("news brief %s failed", symbol)
+                await asyncio.to_thread(finish, req_id, now=self.clock(), error=str(exc))
+
+    def _requeue_running_briefs(self) -> None:
+        """A crash mid-brief leaves its request `running` forever; put it back in the queue."""
+        with news_session() as s:
+            s.execute(
+                update(NewsRequestRow)
+                .where(NewsRequestRow.status == "running")
+                .values(status="pending", started_at=None)
+            )
+
     async def _digests(self, now: datetime) -> None:
         sent = {n: get_state(f"digest_sent:{n}") or "" for n in ("premarket", "close", "week")}
         for name in due_digests(now, sent, self.ncfg.digests):
@@ -339,6 +364,7 @@ class NewsService:
             await stop.wait()
             return
         await asyncio.to_thread(init_news_db)
+        await asyncio.to_thread(self._requeue_running_briefs)
         if self.publisher is not None:
             await self.publisher.send(
                 f"📰 News service online (backend: {self.ncfg.llm.backend})", silent=True

@@ -97,7 +97,7 @@ def _earnings_view(symbol: str, today: date) -> EarningsView | None:
         return rows[-1] if rows else None
 
 
-def _ticker_card(
+def ticker_card(
     c: AlertCandidate, ctx: AlertContext, *, kind: Literal["ticker_move", "earnings", "brief"]
 ) -> CardPayload:
     from src.news.collectors import universe_lists
@@ -222,7 +222,7 @@ def build_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
     if c.kind == "macro_print":
         return _macro_card(c, ctx)
     if c.kind in ("ticker_move", "earnings"):
-        return _ticker_card(c, ctx, kind=c.kind)
+        return ticker_card(c, ctx, kind=c.kind)
     if c.kind == "breaking":
         return _breaking_card(c, ctx)
     return _market_card(c, ctx)

@@ -97,3 +97,20 @@ def test_sentiment_reads_only_deterministic_news_columns() -> None:
     q = (ROOT / "src" / "news" / "store" / "queries.py").read_text(encoding="utf-8")
     body = q[q.index("def ticker_sentiment_rows") :].split("\ndef ", 1)[0]
     assert "NewsPostRow" not in body and "payload" not in body
+
+
+def test_brief_queue_stays_light() -> None:
+    """approval_service imports src.news.briefs; it must not drag LLM/ingest/publish code in (spec §10.7)."""
+    heavy = (
+        "src.news.llm",
+        "src.news.explain",
+        "src.news.collectors",
+        "src.news.publish",
+        "src.news.brief_builder",
+        "src.news.service",
+        "src.claude",
+        "src.analytics",
+    )
+    mods = imported_modules(ROOT / "src" / "news" / "briefs.py")
+    bad = [m for m in mods if any(m == h or m.startswith(h + ".") for h in heavy)]
+    assert not bad, f"src/news/briefs.py imports {bad}"
