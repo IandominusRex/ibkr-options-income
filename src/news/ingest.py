@@ -126,7 +126,7 @@ def ingest(
                     fetched_at=now_n,
                     tickers=tickers,
                     tags=tags,
-                    det_sentiment=tagging.det_sentiment(title),
+                    det_sentiment=tagging.det_sentiment(title, cfg.sentiment.model),
                     summary=item.summary or None,
                     image_url=item.image_url or None,
                     cluster_id=cluster.id,

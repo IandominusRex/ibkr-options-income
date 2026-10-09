@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import re
 from collections.abc import Iterable
+from typing import Any, Literal
 
 from src.common.config import NewsTaggingCfg
+
+log = logging.getLogger(__name__)
+_FINBERT_MODEL = "ProsusAI/finbert"
 
 AliasIndex = dict[str, re.Pattern[str]]
 
@@ -61,11 +67,35 @@ def topic_class(title: str, cfg: NewsTaggingCfg) -> str:
     return "other"
 
 
-def det_sentiment(text: str) -> float:
+@functools.lru_cache(maxsize=1)
+def _finbert_pipeline() -> Any:
+    """FinBERT text-classification pipeline, or None (optional extra `finbert`; deterministic
+    inference, no generation — spec §8). Loaded once per process; a failure is cached, so the
+    warning is logged once."""
+    try:
+        from transformers import pipeline
+
+        return pipeline("text-classification", model=_FINBERT_MODEL)
+    except Exception as exc:  # noqa: BLE001 — optional dependency / model download
+        log.warning("FinBERT unavailable (%s) — using VADER for news sentiment", exc)
+        return None
+
+
+def det_sentiment(text: str, model: Literal["vader", "finbert"] = "vader") -> float:
     """−1..+1 polarity. VADER (+ the existing keyword bias) — reuses src.analytics.sentiment's
-    helpers so the news store and the scan score with one lexicon."""
+    helpers so the news store and the scan score with one lexicon. ``model="finbert"`` scores
+    with FinBERT instead and falls back to VADER when it is unavailable or errors."""
     if not text:
         return 0.0
+    if model == "finbert":
+        pipe = _finbert_pipeline()
+        if pipe is not None:
+            try:
+                res = pipe(text[:512], truncation=True)[0]
+                label, score = str(res["label"]).lower(), float(res["score"])
+                return score if label == "positive" else -score if label == "negative" else 0.0
+            except Exception as exc:  # noqa: BLE001 — never lose an item over a scoring error
+                log.debug("FinBERT scoring failed (%s) — using VADER", exc)
     from src.analytics.sentiment import _keyword_bias, _vader_compound
 
     kb = _keyword_bias(text)
