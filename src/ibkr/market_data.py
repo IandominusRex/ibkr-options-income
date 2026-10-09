@@ -20,6 +20,7 @@ from typing import Any
 import yfinance as yf
 from ib_async import IB, Option
 
+import src.ibkr.contract_cache as contract_cache
 from src.analytics.black_scholes import bs_delta, bs_gamma, bs_theta, bs_vega
 from src.analytics.price_data import get_ohlcv
 from src.common.config import get_config
@@ -1082,6 +1083,12 @@ async def get_option_chain_quotes_async(ib: IB, symbol: str) -> list[OptionQuote
     log.info("get_option_chain_quotes_async: symbol=%s spot=%.2f", symbol, spot)
 
     chains = await ib.reqSecDefOptParamsAsync(stock.symbol, "", stock.secType, stock.conId)
+    store = contract_cache.get_contract_cache()
+    if store is not None:
+        try:
+            store.note_trading_classes(symbol, (getattr(c, "tradingClass", "") for c in chains))
+        except Exception:
+            log.warning("contract cache: trading-class check failed for %s", symbol, exc_info=True)
     chain = _select_chain(chains, symbol)
     if chain is None:
         log.warning("No option chain params returned for %s", symbol)

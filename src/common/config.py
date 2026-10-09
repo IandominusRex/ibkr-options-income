@@ -182,6 +182,18 @@ class MarketDataCfg(BaseModel):
     # outer symbol_timeout (the cancellation is what wedged the ib_async session on 2026-06-22).
     qualify_timeout_seconds: float = 20.0
 
+    # Contract lookup cache (2026-10-10, docs/superpowers/plans/2026-10-10-contract-cache.md).
+    # Every IBKR process records each option contract's conId — or "IBKR has no such contract" —
+    # in one shared SQLite file and asks IBKR only for contracts it hasn't seen today. Prices are
+    # never cached; only identity, which can't change before expiry.
+    contract_cache_enabled: bool = True
+    contract_cache_db_url: str = "sqlite:///data/contracts.db"
+    # Every process qualifies contracts one chunk at a time through one shared file lock, so the
+    # spreads GEX build and the wheel scan interleave chunks instead of timing each other out.
+    # A chunk's qualify_timeout_seconds starts AFTER the lock is acquired. Waiting longer than
+    # this proceeds unlocked (logged) — the lock can slow a scan, never stop it.
+    qualify_lock_wait_seconds: float = 30.0
+
     # Hard ceiling on a single symbol's option-chain fetch during /scan. Without this, a
     # qualifyContractsAsync/reqMktData call that never gets a response (IBKR pacing
     # violation, competing-session lockout, or a hung TWS) stalls the whole scan
@@ -1099,6 +1111,14 @@ class Config(BaseModel):
     def news_db_url_abs(self) -> str:
         """Resolve the relative news sqlite path against the project root."""
         url = self.news.db_url
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+            rel = url[len("sqlite:///") :]
+            return f"sqlite:///{(ROOT / rel).as_posix()}"
+        return url
+
+    def contract_cache_url_abs(self) -> str:
+        """Resolve the relative contract-cache sqlite path against the project root."""
+        url = self.market_data.contract_cache_db_url
         if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
             rel = url[len("sqlite:///") :]
             return f"sqlite:///{(ROOT / rel).as_posix()}"

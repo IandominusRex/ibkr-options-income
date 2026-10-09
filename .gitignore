@@ -44,6 +44,7 @@ data/*.db.bak*
 data/*.bak*
 data/*.db-shm
 data/*.db-wal
+data/*.lock
 data/*.parquet
 data/*.sqlite
 data/eod_scheduler_state.json

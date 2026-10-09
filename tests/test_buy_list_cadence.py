@@ -126,7 +126,7 @@ async def test_send_scan_results_sends_buy_list_by_default(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-async def test_run_intraday_scan_forwards_include_buy_list():
+async def test_run_intraday_scan_forwards_include_buy_list(db):
     from src.notify.approval_service import _run_intraday_scan
     from src.orchestrator.scan import ScanResult
 

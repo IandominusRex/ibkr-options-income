@@ -87,6 +87,12 @@ market_data:
   # hanging the whole symbol and being killed mid-flight by symbol_timeout (that cancellation
   # is what wedged the ib_async session on 2026-06-22).
   qualify_timeout_seconds: 20
+  # Contract lookup cache: each option contract is looked up at IBKR once a day (and survives
+  # restarts) instead of every 15-min cycle. Only identity is cached, never prices.
+  contract_cache_enabled: true
+  contract_cache_db_url: "sqlite:///data/contracts.db"
+  # Max wait for the cross-process contract-lookup lock before qualifying without it.
+  qualify_lock_wait_seconds: 30
   # Max time to spend fetching one symbol's option chain during /scan. If IBKR never
   # responds (pacing violation, competing-session lockout), the symbol is skipped and the
   # scan moves on instead of hanging indefinitely. SPY/QQQ have large chains where all

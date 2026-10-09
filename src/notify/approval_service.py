@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import signal
 from collections.abc import Awaitable, Callable
@@ -111,6 +112,39 @@ _IV_STALE_DAYS = 5
 # The buy screen is scored every cycle (cheap), but only sent once per day — on whichever
 # cycle first completes that day — instead of every 15 minutes (2026-08-28).
 _BUY_LIST_SENT_DATE_KEY = "buy_list_gate_last_sent_date"
+
+# The forced full sweep runs once per ET trading day (2026-10-10), not once per process start:
+# scan_state is persisted, so after a mid-session restart the normal materiality gate (plus its
+# force_full_scan_minutes staleness timer) is correct. The retry queue is persisted for the same
+# reason — the forced sweep used to cover for losing it on restart.
+_FULL_SWEEP_DATE_KEY = "intraday_full_sweep_et_date"
+_RETRY_QUEUE_KEY = "intraday_pending_retry_symbols"
+
+
+def _et_today() -> date:
+    return datetime.now(_ET).date()
+
+
+def _full_sweep_due() -> bool:
+    return get_setting(_FULL_SWEEP_DATE_KEY) != _et_today().isoformat()
+
+
+def _mark_full_sweep_done() -> None:
+    set_setting(_FULL_SWEEP_DATE_KEY, _et_today().isoformat())
+
+
+def _load_retry_queue(bot_data: dict) -> set[str]:
+    if "pending_retry_symbols" not in bot_data:
+        try:
+            bot_data["pending_retry_symbols"] = set(json.loads(get_setting(_RETRY_QUEUE_KEY, "[]")))
+        except (ValueError, TypeError):
+            bot_data["pending_retry_symbols"] = set()
+    return set(bot_data["pending_retry_symbols"])
+
+
+def _save_retry_queue(bot_data: dict, symbols: set[str]) -> None:
+    bot_data["pending_retry_symbols"] = set(symbols)
+    set_setting(_RETRY_QUEUE_KEY, json.dumps(sorted(symbols)))
 
 
 # ---------------------------------------------------------------------------
@@ -518,10 +552,10 @@ async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Manual /scan runs the full-sweep path — actively_wheeling ∪ held names get an
             # unconditional chain fetch, and dip_watch names get seed-only unless they gapped
             # ≥3% overnight (see _compute_material_symbols' force_full_sweep branch, 2026-08-28).
-            # It satisfies the intraday loop's "one full sweep since process start" requirement,
-            # so mark it done here too (same bot_data flag) to spare the next 15-min cycle a
-            # redundant forced full sweep.
-            context.bot_data["startup_full_sweep_done"] = True
+            # It satisfies the intraday loop's "one full sweep per ET trading day" requirement,
+            # so mark today swept here too (same persisted system_settings key) to spare the
+            # next 15-min cycle a redundant forced full sweep.
+            _mark_full_sweep_done()
             await _notify_manual_scan_outcome(context.bot, chat_id, prog_msg_id, result, ib_scan)
         except Exception:
             logger.exception("Scan failed")
@@ -1292,7 +1326,9 @@ async def _run_intraday_scan(
       else this cycle fetched is already fresh in ``scan_state``. The set is fully replaced
       (not merged) from this cycle's own ``result.unreached_symbols`` afterward: symbols that
       got through drop out, any newly-missed ones take their place. A ``lease_skipped`` cycle
-      produced no real result and leaves the queue untouched rather than clearing it.
+      produced no real result and leaves the queue untouched rather than clearing it. The queue
+      is persisted in ``system_settings`` (``_RETRY_QUEUE_KEY``, 2026-10-10) and re-loaded when
+      ``bot_data`` lacks it, so a restart doesn't drop it.
 
     ``include_buy_list`` (set by ``_intraday_scan_loop`` — 2026-08-28) forwards straight to
     ``run_scan``, gating only the buy-to-own Telegram send. On a cycle that completes cleanly
@@ -1318,7 +1354,7 @@ async def _run_intraday_scan(
     try:
         from src.orchestrator.scan import run_scan
 
-        pending_retry = set(bot_data.get("pending_retry_symbols", ()))
+        pending_retry = _load_retry_queue(bot_data)
         result = await run_scan(
             ib_scan,
             bot,
@@ -1335,7 +1371,7 @@ async def _run_intraday_scan(
                 bot_data, bot, chat_id, "another process holds the scan lease"
             )
         else:
-            bot_data["pending_retry_symbols"] = set(result.unreached_symbols)
+            _save_retry_queue(bot_data, set(result.unreached_symbols))
             if result.aborted_unhealthy:
                 # Circuit breaker fired mid-sweep: the socket went half-dead after the
                 # pre-scan probe passed. Notify and force a reconnect (same recovery path).
@@ -1520,20 +1556,18 @@ async def _intraday_scan_loop(
                 )
                 continue
 
-            # Force an unconditional full sweep on the first cycle this process actually gets to
-            # spawn a scan (2026-08-21): `market_data.force_full_scan_minutes` is a staleness
-            # *timer* that happens to usually cover a restart (the overnight/multi-day gap
-            # exceeds it), but that's incidental, not guaranteed — a same-day restart shortly
-            # after a full sweep would otherwise fall through to a narrow materiality-gated scan
-            # with no fresh full picture since the restart. `startup_full_sweep_done` is in
-            # `bot_data` (not persisted) so it resets on every process start and is set only here,
-            # at the point a scan is actually spawned — a cycle that `continue`s above (halted,
-            # past entry cutoff, unhealthy probe, or a still-running previous scan) never reaches
-            # this line, so the flag stays unset and the *next* eligible cycle forces the sweep
-            # instead. A manual `/scan` already sweeps everything and sets the same flag (see the
-            # `/scan` command handler), so a full sweep right after a restart isn't repeated twice.
-            force_full_sweep = not bot_data.get("startup_full_sweep_done", False)
-            bot_data["startup_full_sweep_done"] = True
+            # Force an unconditional full sweep on the first cycle of the ET trading day
+            # (persisted in system_settings, 2026-10-10 — it was once per process start from
+            # 2026-08-21). scan_state is persisted, so after a mid-session restart the normal
+            # materiality gate is correct and its force_full_scan_minutes staleness timer still
+            # re-fetches anything older than 120 min; forcing a sweep on every restart re-fetched
+            # every chain for nothing. The day is marked only here, at the point a scan is
+            # actually spawned — a cycle that `continue`s above (halted, past entry cutoff,
+            # unhealthy probe, or a still-running previous scan) never reaches this line, so the
+            # *next* eligible cycle forces the sweep instead. A manual `/scan` already sweeps
+            # everything and marks the day too (see the `/scan` command handler).
+            force_full_sweep = _full_sweep_due()
+            _mark_full_sweep_done()
 
             # Buy-to-own is scored every cycle regardless (cheap — reuses analytics already
             # fetched for CC/CSP) but only *sent* once per ET calendar day (2026-08-28): whichever
