@@ -12,7 +12,7 @@ secrets/
 *credentials*.json
 client_secret*.json
 
-# Operator config: the repo ships config/<name>.example.yaml; your own copies stay local
+# Operator config: the repo ships config/examples/<name>.yaml; your own copies stay local
 # (src/common/config.py falls back to the example when a private file is missing).
 config/settings.yaml
 config/risk_limits.yaml

@@ -25,10 +25,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Project root = two levels up from this file (src/common/config.py -> root).
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "config"
+EXAMPLES_DIRNAME = "examples"  # config/examples/<name>.yaml: the committed templates
 
 # The operator's own tuning (accounts, limits, weights, universe) lives in these files, which are
-# git-ignored; the repo ships ``<name>.example.yaml`` beside each. A missing private file falls
-# back to its example (loudly), and ``IBKR_CONFIG_USE_EXAMPLES=1`` forces the examples (the test
+# git-ignored; the repo ships a template of each under ``config/examples/`` (same file name). A
+# missing private file falls back to its example (loudly), and ``IBKR_CONFIG_USE_EXAMPLES=1`` forces the examples (the test
 # suite sets it, so tests never depend on one operator's settings).
 PRIVATE_CONFIG_FILES = (
     "settings.yaml",
@@ -1129,9 +1130,8 @@ class Config(BaseModel):
 
 
 def example_path(name: str) -> Path:
-    """``config/settings.yaml`` → ``config/settings.example.yaml``."""
-    path = CONFIG_DIR / name
-    return path.with_name(f"{path.stem}.example{path.suffix}")
+    """``config/settings.yaml`` → ``config/examples/settings.yaml``."""
+    return CONFIG_DIR / EXAMPLES_DIRNAME / name
 
 
 def config_path(name: str) -> Path:
@@ -1145,10 +1145,11 @@ def config_path(name: str) -> Path:
     if path.exists() or not example.exists():
         return path
     log.warning(
-        "config/%s not found; using the shipped defaults in %s. Copy it to config/%s to "
-        "keep your own settings (see SETUP.md §2).",
+        "config/%s not found; using the shipped defaults in config/%s/%s. Copy it to config/%s "
+        "to keep your own settings (see SETUP.md §2).",
         name,
-        example.name,
+        EXAMPLES_DIRNAME,
+        name,
         name,
     )
     return example

@@ -407,7 +407,7 @@ data:
   # stooq is not usable: see docs/web/data-sources.md (licence check, 2026-09-04) — the CSV
   # endpoint now sits behind a JS bot-verification challenge. yfinance is the only backend.
   bulk_price_provider: yfinance
-  # News service sources (config/news.example.yaml, SETUP.md §17). One backend each today.
+  # News service sources (config/news.yaml, SETUP.md §17). One backend each today.
   econ_schedule_provider: forexfactory     # weekly US release schedule (no actuals)
   econ_actuals_provider: nasdaq            # actuals; date key offset in news.sources
   earnings_calendar_provider: nasdaq       # timing + consensus EPS (Finnhub adds actuals)
