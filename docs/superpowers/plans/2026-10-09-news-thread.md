@@ -29,7 +29,7 @@
 | 13 Fact sheet + flags | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | (a) `post_earnings_moves` measures a **1-day** move (spec §6.1): the larger of pre-report→report-day and report-day→next close, since report dates carry no BMO/AMC timing. The plan's two-session window gave −9.0% against its own pinned −9.9%. Added `test_post_earnings_moves_before_open_report`. (b) `Analytics.live().daily` no longer does `_safe(...) or pd.DataFrame()`, which raises on any non-empty frame. Added `test_live_daily_returns_a_non_empty_frame`. (c) `_safe` made generic (`_safe[T]`) and the `type: ignore`s dropped, earnings ratio local renamed `r`→`ratio_f` (mypy: clashed with the float `r`), `import re` merged into the schemas import block. |
 | 14 Reaction | done | (see git log) | pytest/ruff/mypy green (3057 passed) | 2026-10-09 | none |
 | 15 Card schemas + render | done | (see git log) | pytest/ruff/mypy green (3064 passed) | 2026-10-09 | `fmt_when` treats a naive datetime as UTC: the plan's bare `astimezone()` reads naive as host-local, and the store keeps naive-UTC, so a card built from a DB row would show a wrong SGT/ET time. Added `test_naive_when_is_read_as_utc_not_local`. Local `l`→`lk` (ruff E741). |
-| 16 Charts | pending | | | | |
+| 16 Charts | done | (see git log) | pytest/ruff/mypy green (3066 passed) | 2026-10-09 | none (probed a tz-aware daily index and a NaN close: both render) |
 | 17 Publisher + quiet hours | pending | | | | |
 | 18 Triggers + alert gate | pending | | | | |
 | 19 Alert assembly | pending | | | | |
@@ -5211,7 +5211,7 @@ git commit -m "feat(news): card payload schema and escaped Telegram HTML rendere
 **Interfaces:**
 - Produces: `build_figure(daily: pd.DataFrame, *, title: str, support: list[float], resistance: list[float], strikes: list[tuple[float, str]], event_day: date | None) -> Figure | None`; `to_png(fig: Figure) -> bytes`; `price_chart(...) -> bytes | None` (same args as `build_figure`); `save_chart(png: bytes, charts_dir: Path, post_id: int) -> str`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_charts.py
@@ -5247,7 +5247,7 @@ def test_empty_data_returns_none(tmp_path) -> None:
     assert path.endswith("7.png")
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/charts.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/charts.py`:
 
 ```python
 """Static price charts for ticker/earnings/close-recap cards (spec §7.1). Headless (Agg)."""
@@ -5327,7 +5327,7 @@ def save_chart(png: bytes, charts_dir: Path, post_id: int) -> str:
     return str(path)
 ```
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/charts.py tests/test_news_charts.py docs/superpowers/plans/2026-10-09-news-thread.md
