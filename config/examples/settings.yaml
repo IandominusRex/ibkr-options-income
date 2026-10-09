@@ -62,7 +62,12 @@ market_data:
   # Per-batch ceiling on the option-chain quote wait (event-driven — returns early once every
   # line has bid/ask + OI). Hard-coded 2s until 2026-10-09: on real-time data a 30-40-line batch
   # lands at ~2.5-3s, so most quotes were cancelled empty (`illiquid_no_quote`, 0 candidates).
-  chain_quote_ceiling_seconds: 4.0
+  # 8s, not 4s: ib_async sends <=45 requests/s, so a later batch's 40 cancels + 40 new requests
+  # push its last ticks to 4-6.4s (AMD live 2026-10-09: 153/363 quoted at 4s, 363/363 at 8s+).
+  chain_quote_ceiling_seconds: 8.0
+  # Return a batch once its quotes stop arriving for this long (the rest have no market), so
+  # illiquid strikes don't cost the full ceiling per batch.
+  chain_quote_settle_seconds: 2.5
   # Once every line has a bid/ask, wait at most this long for straggling OI ticks (some never come).
   chain_oi_grace_seconds: 0.75
   # Strike band (N6): scan strikes within ±band of spot, where

@@ -381,21 +381,34 @@ def _quote_ready(ticker: Any, right: str | None = None) -> bool:
 
 
 async def _await_batch_quotes(
-    contracts: list[Option], tickers: list[Any], ceiling: float, oi_grace: float
+    contracts: list[Option],
+    tickers: list[Any],
+    ceiling: float,
+    oi_grace: float,
+    settle: float,
 ) -> None:
     """Await a chain batch: return once every line has bid/ask *and* OI; or once every line has
-    a bid/ask and ``oi_grace`` more seconds have passed (some OI ticks never arrive); or at
-    ``ceiling``. Poll-count bounded like ``_await_ready``, so a patched sleep can't spin."""
+    a bid/ask and ``oi_grace`` more seconds have passed (some OI ticks never arrive); or once at
+    least one line has quoted and no new one has for ``settle`` seconds (the rest are strikes
+    with no market); or at ``ceiling``. Poll-count bounded like ``_await_ready``, so a patched
+    sleep can't spin."""
     pairs = list(zip(contracts, tickers, strict=True))
     polls = max(1, int(ceiling / _POLL_INTERVAL_SECONDS))
     grace_polls = int(oi_grace / _POLL_INTERVAL_SECONDS)
+    settle_polls = max(1, int(settle / _POLL_INTERVAL_SECONDS))
     quoted_at: int | None = None
+    last_count, last_change = 0, 0
     for i in range(polls):
         if all(_quote_ready(t, right=c.right) for c, t in pairs):
             return
-        if quoted_at is None and all(_quote_ready(t) for _c, t in pairs):
+        count = sum(1 for _c, t in pairs if _quote_ready(t))
+        if count > last_count:
+            last_count, last_change = count, i
+        if quoted_at is None and count == len(pairs):
             quoted_at = i
         if quoted_at is not None and i - quoted_at >= grace_polls:
+            return
+        if quoted_at is None and count and i - last_change >= settle_polls:
             return
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
@@ -946,7 +959,8 @@ async def _batch_quotes_async(
     carries a usable bid/ask *and* its open-interest tick, bounded by
     ``market_data.chain_quote_ceiling_seconds`` (S7; a hard-coded 2s until 2026-10-09, which cut
     off most real-time quotes). A well-behaved batch still returns early once both arrive, and
-    once every line has a bid/ask it waits only ``chain_oi_grace_seconds`` more for OI stragglers. Greeks are not
+    once every line has a bid/ask it waits only ``chain_oi_grace_seconds`` more for OI stragglers;
+    a batch whose quotes stop arriving for ``chain_quote_settle_seconds`` returns early too. Greeks are not
     waited on — they're absent on delayed/paper data and the yfinance Black-Scholes fallback
     fills them; blocking on them would forfeit the speedup on exactly the target account.
     Same batching + cancel discipline as the sync version.
@@ -963,6 +977,7 @@ async def _batch_quotes_async(
     md = get_config().market_data
     ceiling = max(throttle, md.chain_quote_ceiling_seconds)
     oi_grace = md.chain_oi_grace_seconds
+    settle = md.chain_quote_settle_seconds
 
     for i in range(0, len(contracts), batch_size):
         batch = contracts[i : i + batch_size]
@@ -973,7 +988,7 @@ async def _batch_quotes_async(
             for c in batch
         ]
         try:
-            await _await_batch_quotes(batch, tickers, ceiling, oi_grace)
+            await _await_batch_quotes(batch, tickers, ceiling, oi_grace, settle)
             for c, ticker in zip(batch, tickers, strict=True):
                 quotes.append(_ticker_to_quote(c, ticker))
         finally:
