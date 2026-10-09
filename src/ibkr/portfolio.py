@@ -8,10 +8,10 @@ and an account snapshot for the healthcheck.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Sequence
 from datetime import date
 
-from ib_async import IB
+from ib_async import IB, AccountValue
 
 from src.common.books import is_spreads_underlying
 from src.common.config import get_config
@@ -153,10 +153,51 @@ def get_positions(ib: IB, *, include_spreads: bool = False) -> list[PositionSnap
     return out
 
 
-def _build_account_snapshot(account: str, rows: Mapping[str, object]) -> AccountSnapshot:
+# The account stream's USD exchange rate (base-currency units per USD). A plain account-update
+# stream sends ``ExchangeRate``; the SGD-base paper account sends it only as
+# ``$LEDGER-ExchangeRate`` (seen live 2026-10-09).
+_FX_TAGS = frozenset({"ExchangeRate", "$LEDGER-ExchangeRate"})
+# Last USD rate this process saw, per account — stands in when the stream briefly has none.
+_LAST_USD_RATE: dict[str, float] = {}
+
+
+class AccountCurrencyError(RuntimeError):
+    """A non-USD account summary with no USD exchange rate to convert it by."""
+
+
+def _usd_rate(ib: IB, account: str) -> float | None:
+    for v in ib.accountValues(account):
+        if getattr(v, "account", account) != account:
+            continue
+        rate = _safe_num(v.value) if v.tag in _FX_TAGS and v.currency == "USD" else None
+        if rate is not None and rate > 0:
+            _LAST_USD_RATE[account] = rate
+            return rate
+    return _LAST_USD_RATE.get(account)
+
+
+def _build_account_snapshot(
+    ib: IB, account: str, summary: Sequence[AccountValue]
+) -> AccountSnapshot:
+    """Every figure in USD. ``accountSummary`` reports in the account's base currency (SGD
+    here), while strikes, premiums and collateral are USD — so a non-USD base is converted by
+    the account stream's USD exchange rate. Without one this raises rather than pass a base
+    figure off as USD; every caller already skips its pass on a snapshot failure."""
+    rows = {row.tag: row.value for row in summary}
+    currencies = {row.currency for row in summary if row.tag == "NetLiquidation"}
+    base = next(iter(currencies), "USD") or "USD"
+    rate = 1.0
+    if base != "USD":
+        found = _usd_rate(ib, account)
+        if found is None:
+            raise AccountCurrencyError(
+                f"account {account} reports in {base} and no USD exchange rate is available"
+            )
+        rate = found
+
     def f(tag: str) -> float:
         try:
-            return float(str(rows.get(tag) or 0.0))
+            return float(str(rows.get(tag) or 0.0)) / rate
         except (TypeError, ValueError):
             return 0.0
 
@@ -171,22 +212,21 @@ def _build_account_snapshot(account: str, rows: Mapping[str, object]) -> Account
         excess_liquidity=f("ExcessLiquidity"),
     )
     log.info(
-        "Account %s — NetLiq=%.2f AvailFunds=%.2f ExcessLiq=%.2f",
+        "Account %s — NetLiq=%.2f AvailFunds=%.2f ExcessLiq=%.2f USD%s",
         account,
         snap.net_liquidation,
         snap.buying_power,
         snap.excess_liquidity,
+        f" (from {base} at {rate:g} {base}/USD)" if base != "USD" else "",
     )
     return snap
 
 
 async def get_account_snapshot_async(ib: IB, account: str) -> AccountSnapshot:
-    """Pull key account values into a typed snapshot (async — use inside an event loop)."""
-    rows = {row.tag: row.value for row in await ib.accountSummaryAsync(account)}
-    return _build_account_snapshot(account, rows)
+    """Pull key account values into a typed USD snapshot (async — use inside an event loop)."""
+    return _build_account_snapshot(ib, account, await ib.accountSummaryAsync(account))
 
 
 def get_account_snapshot(ib: IB, account: str) -> AccountSnapshot:
-    """Pull key account values into a typed snapshot (sync — only for standalone scripts)."""
-    rows = {row.tag: row.value for row in ib.accountSummary(account)}
-    return _build_account_snapshot(account, rows)
+    """Pull key account values into a typed USD snapshot (sync — only for standalone scripts)."""
+    return _build_account_snapshot(ib, account, ib.accountSummary(account))

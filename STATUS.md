@@ -391,9 +391,13 @@ Found by reading the first RTH session after the news merge; each fix has a regr
   missing CLI; `cli_command` is now the absolute path.
 
 **Found, not fixed (operator or separate change):**
-- The wheel reads `NetLiquidation`/`AvailableFunds`/`ExcessLiquidity` from `accountSummary`
-  without currency handling; on this SGD-base account its %-of-net-liq limits are measured
-  against S$ figures as if they were US$ (~28% looser than configured).
+- ~~The wheel read `accountSummary` without currency handling~~ **Fixed the same day:** on this
+  SGD-base account every %-of-net-liq limit (and the circuit breaker's mark-loss %) was measured
+  against S$ figures as if they were US$ — ~28% looser than configured. `AccountSnapshot` is now
+  USD (`src/ibkr/portfolio.py`); live check: NetLiq US$795,856 vs IBKR's own
+  `$LEDGER-NetLiquidationByCurrency` US$795,820. **Expect a one-time ~22% step down** in the
+  stored net-liq history (`portfolio_snapshots`, the EOD journal's account) from 2026-10-09:
+  earlier rows are S$ and were not rewritten.
 - The Mac clamshell-slept on battery 03:09–13:10 SGT on 2026-10-09 (`caffeinate -s` holds only
   on AC), so the 2026-10-08 EOD never completed and wrote no journal row. `_supervise_eod`'s
   60-minute guard uses `time.monotonic()`, which pauses while the machine sleeps.
