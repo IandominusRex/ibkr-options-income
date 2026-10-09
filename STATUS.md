@@ -412,7 +412,14 @@ Found by reading the first RTH session after the news merge; each fix has a regr
   code reads both tag forms). 10.51's other API changes don't touch this code: `reqOpenOrders` now
   returns de-activated orders, but ib_async counts `Inactive` as done so `openTrades()` excludes them;
   `reqFundamentalData` was removed, and nothing here calls it (fundamentals come from yfinance).
-- **Mitigated 2026-10-10 (contract cache, Tasks 1-2 of docs/superpowers/plans/2026-10-10-contract-cache.md): contract qualification is slow and erratic, and the spreads GEX build competes for it.** Each option contract is now looked up once and remembered in `data/contracts.db` (`src/ibkr/contract_cache.py`); non-existent strikes are remembered for the ET day. Original finding:
+- **Mitigated 2026-10-10 (contract cache, Tasks 1-2 of docs/superpowers/plans/2026-10-10-contract-cache.md): contract qualification is slow and erratic, and the spreads GEX build competes for it.** Each option contract is now looked up once and remembered in `data/contracts.db` (`src/ibkr/contract_cache.py`); non-existent strikes are remembered for the ET day. First live session (2026-10-09 ET, merged and
+  restarted 14:11 ET): spreads re-quotes went fully cached (92 cached / 0 asked), and the cache reached
+  1,650 contracts across 16 symbols within 40 minutes. Not yet fixed: chunks still time out when
+  Gateway is slow (14:15 ET: 0 of 416 qualified; 14:45 ET: PLTR 13/136), and **a timed-out chunk
+  discards every answer that did arrive inside it**, because ib_async's `qualifyContractsAsync`
+  gathers the whole chunk and `wait_for` cancels it as a unit. Next step: qualify each contract as
+  its own task and keep what finished by the timeout. Measure the first warm session (Monday) before
+  marking this fixed. Original finding:
   Since the evening of 2026-10-09 (on 10.47 and 10.51 alike) `reqContractDetails` latency swings
   from ~0.1 s to ~0.5 s per contract, and occasionally a batch doesn't return within 60 s. The
   scan's 20 s qualify chunks time out, and the 2026-10-10 01:00 scan reached only 3 of 20 symbols
