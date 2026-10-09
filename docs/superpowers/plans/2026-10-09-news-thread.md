@@ -31,7 +31,7 @@
 | 15 Card schemas + render | done | (see git log) | pytest/ruff/mypy green (3064 passed) | 2026-10-09 | `fmt_when` treats a naive datetime as UTC: the plan's bare `astimezone()` reads naive as host-local, and the store keeps naive-UTC, so a card built from a DB row would show a wrong SGT/ET time. Added `test_naive_when_is_read_as_utc_not_local`. Local `l`→`lk` (ruff E741). |
 | 16 Charts | done | (see git log) | pytest/ruff/mypy green (3066 passed) | 2026-10-09 | none (probed a tz-aware daily index and a NaN close: both render) |
 | 17 Publisher + quiet hours | done | (see git log) | pytest/ruff/mypy green (3077 passed) | 2026-10-09 | `send` builds its retry op with `functools.partial` instead of the plan's default-arg lambda (mypy: cannot infer lambda type; same loop-variable binding). Added tests the brief did not name: `from_config` (unset secrets, and that the conftest guard really swaps `Bot`) and `send_photo`; both mutation-checked. |
-| 18 Triggers + alert gate | pending | | | | |
+| 18 Triggers + alert gate | done | (see git log) | pytest/ruff/mypy green (3086 passed) | 2026-10-09 | none to the plan code. Added two gate tests the brief did not name, both mutation-checked: `mark` is idempotent on the unique key, and a candidate dropped by the hourly cap is not recorded as fired (so it can retry once the window empties). |
 | 19 Alert assembly | pending | | | | |
 | 20 Digests | pending | | | | |
 | 21 Service: deterministic posting loops | pending | | | | |
@@ -5593,7 +5593,7 @@ git commit -m "feat(news): Telegram publisher (split, preview, retry, edit) and 
 **Interfaces:**
 - Produces: `AlertKind` literal (`macro_print, earnings, market_move, vix_spike, ticker_move, breaking`); `AlertCandidate(kind, subject: str, critical: bool, symbols: list[str] = [], event_keys: list[str] = [], cluster_ids: list[int] = [], detail: dict[str, float | str | None] = {})`; `TickerMove(symbol, change_pct: float | None, abnormal_pct: float | None, sigma: float | None)`; pure detectors `group_macro_releases(events: list[EconEventView], pb: Playbook) -> list[AlertCandidate]`, `detect_earnings(released: list[EarningsView], *, held: set[str], universe: set[str]) -> list[AlertCandidate]`, `detect_index_levels(tape: dict[str, Quote], cfg: NewsAlertsCfg) -> list[AlertCandidate]` (all crossed levels), `pick_new_levels(cands: list[AlertCandidate], fired: set[str]) -> list[AlertCandidate]`, `detect_vix(q: Quote, cfg) -> list[AlertCandidate]`, `detect_ticker_moves(moves: list[TickerMove], *, held, universe, cfg) -> list[AlertCandidate]`, `detect_breaking(clusters: list[ClusterView], *, reaction_pct: float | None, cfg) -> list[AlertCandidate]`; `class AlertGate(cfg: NewsAlertsCfg)` with `fired_subjects(trigger: str, day: date) -> set[str]`, `mark(trigger, subject, day, now) -> None`, `hourly_noncritical(now) -> int`, `admit(c: AlertCandidate, *, now: datetime, day: date) -> bool`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_triggers.py
@@ -5680,7 +5680,7 @@ def test_gate_once_per_day_and_hourly_cap(news_db) -> None:
     assert g.admit(other.model_copy(update={"critical": True}), now=NOW, day=DAY)
 ```
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** `src/news/triggers.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** `src/news/triggers.py`:
 
 ```python
 """Alert detection (spec §7.2). Detectors are pure; AlertGate holds the once-per-day and
@@ -5849,7 +5849,7 @@ class AlertGate:
 
 (`detect_index_levels` subjects use `f"{lvl:+.0f}"` → `"-1"`, `"-2"`, `"+2"`; the test asserts `"SPY:-1"`.)
 
-- [ ] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
+- [x] **Step 4: Run tests** → PASS. **Step 5: Gate + commit**
 
 ```bash
 git add src/news/triggers.py tests/test_news_triggers.py docs/superpowers/plans/2026-10-09-news-thread.md
