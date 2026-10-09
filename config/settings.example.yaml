@@ -375,6 +375,7 @@ watchdog:
   scan_grace_minutes: 20         # ignore the first minutes after the open
   iv_max_stale_trading_days: 3
   eod_grace_minutes: 90          # scheduler.eod_report + this many minutes before eod_completed is checked
+  news_max_age_minutes: 30       # news service heartbeat in data/news.db (checked only while news.enabled)
   realert_minutes: 60
   deadman_url: ""                # optional: e.g. a healthchecks.io ping URL — catches the Mac being off
 

@@ -46,7 +46,7 @@
 | 30 `news_brief` command kind | done | (see git log) | pytest/ruff/mypy green (3184 passed) | 2026-10-09 | (a) The drain handler does `import src.news.briefs as briefs` (same fence reason as Task 29). (b) `docs/web/openapi.json` regenerated and `web/lib/api-types.ts` regenerated with `openapi-typescript` (a one-line `CommandKind` change): `tests/test_openapi_current.py` fails on a stale spec, and neither file was in the brief's list. (c) No test enumerated the kinds, so none needed updating. (d) Added tests the brief did not name, mutation-checked: a real `drain_once` round trip inserts exactly one `pending` `origin="web"` request and nothing else; a repeat click reuses the pending request; an unusable symbol fails with `invalid_symbol` rather than a generic `handler_error`. (e) `docs/web/commands.md` also lists `news_brief` among the kinds that always get `201`. Observed, not mine: `tsc --noEmit` already reports 9 errors in unrelated web test files, identical with and without this change. |
 | 31 Read-only `/news/*` API | done | (see git log) | pytest/ruff/mypy green (3193 passed) | 2026-10-09 | (a) `ClusterOut.links` is a typed `SourceLinkOut{name, url}` list instead of the brief's bare `list[dict]`, and `NewsPostOut.payload` is `dict[str, Any]`: the generated `web/lib/api-types.ts` gets a concrete link shape for Task 32 (`SourceLink` has `name`, not `label`). (b) `state_values` uses `key.startswith(prefix, autoescape=True)`: the brief's `like(f"{prefix}%")` treats the `_` in `source_ok:`/`llm_calls:` as a wildcard. `/news/status` reads today's LLM count by its exact key and normalises stored timestamps through `aware_utc`. (c) `latest_brief`/`request_for` add `.limit(1)`. `news_read_session` logs the open failure at debug (the brief's bare `except`). (d) `docs/web/api.md` has no ledger route table to copy, so the five routes got a `## News` section in the doc's per-route style plus a summary table. `docs/web/openapi.json` and `web/lib/api-types.ts` regenerated (FastAPI also reordered `CommandKind` in the components; no content change). (e) Added `test_calendar_lists_the_window_and_flags_held_names` (the brief names no calendar test with data): econ window, earnings window, and `held` from a stock and an option underlying; it and `test_chart_outside_charts_dir_is_refused` were both mutation-checked. `test_api_process_never_loads_the_rw_engine` passed before the router existed (it guards against regressions, nothing to make RED). |
 | 32 Web `/news` pages | done (Step 5 visual check pending) | (see git log) | vitest 494/494, lint clean, `tsc` 9 errors = the known baseline (none in news files), `next build` green | 2026-10-09 | (a) `NewsFeed.test.tsx` used `apiFetchMock().mock.calls`; `apiFetchMock` is the exported mock object, not a function (TypeError), so the test reads `apiFetchMock.mock.calls`. (b) The two `<img>`s (chart data URI, third-party `image_url` thumbnail) carry `eslint-disable-next-line @next/next/no-img-element` with the reason (next/image would need every news host in `remotePatterns`); the thumbnail also gets `referrerPolicy="no-referrer"` and `loading="lazy"` so a news site never learns which page showed it. (c) `web/CLAUDE.md` has no `ledger/` Layout entry to sit beside, so `news/` went in before `explain/` under both `app/` and `components/` (the brief named only `app/`). (d) Added tests the brief did not name: "Request fresh brief" POSTs `/commands` with `{kind: news_brief, payload: {symbol: TSM}}` and then disables while pending (mutation-checked), and the ticker page's `available: false` copy. (e) Step 5 (manual visual check with the API and the news service up) not done in this session: left for the operator, like Tasks 21/24's live checks. |
-| 33 Watchdog check | pending | | | | |
+| 33 Watchdog check | done | (see git log) | pytest/ruff/mypy green (3198 passed) | 2026-10-09 | (a) `news_check` also catches a failing heartbeat query (news.db present but no schema yet, or locked) and returns a failed `news` check naming the exception type: the brief's code let it raise out of `run_checks`, losing every other check (Review Focus 5). `test_news_check_when_db_unreadable` (RED first). (b) `tests/test_watchdog.py`'s composition test pinned the exact check list: it now stubs `news_check` and expects `news` after `command_drain` (renamed `..._all_eight_checks_...`). (c) Added tests the brief did not name: `run_checks` reads the stored heartbeat with `watchdog.news_max_age_minutes` ("limit 30"), and skips `news` entirely when `news.enabled` is false. (d) ARCHITECTURE/STATUS watchdog docs for the new check and key left to Task 34, which lists `watchdog.news_max_age_minutes`. |
 | 34 Docs + final gate + live verification | pending | | | | |
 
 Update this table after every task (status, commit SHAs, gate result, date, every deviation from the task text and why) and commit it with the task (CLAUDE.md "Change workflow" rule 4).
@@ -9526,7 +9526,7 @@ git commit -m "feat(web): /news feed with calendar and /news/[symbol] brief page
 **Interfaces:**
 - Produces: `news_check(now: datetime, *, max_age_min: int) -> Check` (reads the heartbeat through `src.news.store.readonly`; `Check("news", False, "news: data/news.db missing — news service never ran")` when absent); `run_checks` appends it when `get_config().news.enabled`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_watchdog.py
@@ -9560,7 +9560,7 @@ def test_news_check_when_db_missing(tmp_path, monkeypatch) -> None:
 
 `Check` is `NamedTuple(name, ok, detail)` (`src/ops/watchdog.py:62`, verified 2026-10-09).
 
-- [ ] **Step 2: Run to fail.** **Step 3: Implement** in `src/ops/watchdog.py`:
+- [x] **Step 2: Run to fail.** **Step 3: Implement** in `src/ops/watchdog.py`:
 
 ```python
 def news_check(now: datetime, *, max_age_min: int) -> Check:
@@ -9584,9 +9584,9 @@ and in `run_checks`, after the `command_drain` heartbeat:
 
 (`heartbeat_check` already produces "last heartbeat N min ago (limit M)".)
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_watchdog.py tests/test_watchdog*.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_watchdog.py tests/test_watchdog*.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/ops/watchdog.py src/common/config.py config/settings.example.yaml tests/test_news_watchdog.py docs/superpowers/plans/2026-10-09-news-thread.md

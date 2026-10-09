@@ -574,6 +574,9 @@ class WatchdogCfg(BaseModel):
     iv_max_stale_trading_days: int = 3
     # scheduler.eod_report + this many minutes before `eod_completed` is checked.
     eod_grace_minutes: int = 90
+    # The news service (scripts/run_news.py) beats data/news.db's heartbeat every loop
+    # iteration; checked only while news.enabled.
+    news_max_age_minutes: int = 30
     realert_minutes: int = 60
     # Optional external dead-man switch (e.g. a healthchecks.io ping URL), GETed on every run
     # where every check passes — the only thing that can notice the Mac itself being off or
