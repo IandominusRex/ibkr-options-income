@@ -924,3 +924,20 @@ def _blank_flex_secrets(monkeypatch):
     get_config.cache_clear()
     yield
     get_config.cache_clear()
+
+
+@pytest.fixture()
+def news_db(tmp_path, monkeypatch):
+    """An isolated data/news.db for src.news tests (both the rw and ro engines)."""
+    import src.news.store.readonly as ro
+    import src.news.store.session as rw
+
+    path = tmp_path / "news.db"
+    monkeypatch.setattr(rw, "_engine", None)
+    monkeypatch.setattr(rw, "_SessionLocal", None)
+    monkeypatch.setattr(rw, "_resolve_url", lambda: f"sqlite:///{path}")
+    ro.reset_engine()
+    monkeypatch.setattr(ro, "_resolve_path", lambda: str(path))
+    rw.init_news_db()
+    yield path
+    ro.reset_engine()
