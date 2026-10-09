@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from src.common.config import get_config
 from src.data.protocols import (
     BulkPriceProvider,
+    EarningsCalendarProvider,
     EconActualsProvider,
     EconScheduleProvider,
     FeedProvider,
@@ -37,6 +38,7 @@ from src.data.yfinance_backend import (
 
 if TYPE_CHECKING:
     from src.data.finnhub_backend import FinnhubClient
+    from src.data.yfinance_backend import YFinanceEarningsHistory
 
 
 def _make_price_provider(name: str) -> PriceProvider:
@@ -199,3 +201,21 @@ def get_econ_actuals_provider() -> EconActualsProvider:
 
         return NasdaqEconActualsProvider(cfg.news.sources.nasdaq_econ_date_offset_days)
     raise ValueError(f"Unknown data.econ_actuals_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_earnings_calendar_provider() -> EarningsCalendarProvider:
+    cfg = get_config()
+    name = cfg.data.earnings_calendar_provider
+    if name == "nasdaq":
+        from src.data.nasdaq_backend import NasdaqEarningsProvider
+
+        return NasdaqEarningsProvider(cfg.news.sources.nasdaq_earnings_date_offset_days)
+    raise ValueError(f"Unknown data.earnings_calendar_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_earnings_history() -> YFinanceEarningsHistory:
+    from src.data.yfinance_backend import YFinanceEarningsHistory
+
+    return YFinanceEarningsHistory()

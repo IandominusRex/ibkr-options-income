@@ -16,7 +16,7 @@ from datetime import date, timedelta
 import httpx
 
 from src.data.breaker import get_breaker
-from src.data.protocols import EconActualItem
+from src.data.protocols import EarningsItem, EconActualItem
 
 log = logging.getLogger(__name__)
 
@@ -93,3 +93,46 @@ class NasdaqEconActualsProvider:
     def actuals(self, et_day: date) -> list[EconActualItem]:
         body = _get("economicevents", et_day + timedelta(days=self._offset))
         return parse_nasdaq_econ(body, et_day) if body else []
+
+
+_TIMING = {"time-pre-market": "bmo", "time-after-hours": "amc"}
+
+
+def _money(v: object) -> float | None:
+    s = clean_value(v)
+    if s is None:
+        return None
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.strip("()").replace("$", "").replace(",", "")
+    try:
+        x = float(s)
+    except ValueError:
+        return None
+    return -x if neg else x
+
+
+def parse_nasdaq_earnings(body: dict, et_day: date) -> list[EarningsItem]:
+    out: list[EarningsItem] = []
+    for r in _rows(body):
+        sym = clean_value(r.get("symbol"))
+        if not sym:
+            continue
+        out.append(
+            EarningsItem(
+                symbol=sym.upper(),
+                report_date=et_day,
+                timing=_TIMING.get(str(r.get("time") or ""), "unknown"),
+                eps_est=_money(r.get("epsForecast")),
+                source="nasdaq",
+            )
+        )
+    return out
+
+
+class NasdaqEarningsProvider:
+    def __init__(self, date_offset_days: int = 0) -> None:
+        self._offset = date_offset_days
+
+    def on(self, et_day: date) -> list[EarningsItem]:
+        body = _get("earnings", et_day + timedelta(days=self._offset))
+        return parse_nasdaq_earnings(body, et_day) if body else []

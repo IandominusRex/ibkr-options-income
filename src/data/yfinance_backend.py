@@ -10,6 +10,7 @@ config change (``config/settings.yaml → data.*``), not a rewrite of every anal
 from __future__ import annotations
 
 import logging
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import yfinance as yf
@@ -153,3 +154,18 @@ class YFinanceNewsProvider:
         if limit > 0:
             items = items[:limit]
         return items
+
+
+class YFinanceEarningsHistory:
+    """Past earnings report dates (for the 'last N post-earnings moves' fact, spec §6.1)."""
+
+    def past_report_dates(self, symbol: str, limit: int = 8) -> list[date]:
+        try:
+            df = yf.Ticker(symbol.upper()).get_earnings_dates(limit=limit + 4)
+        except Exception:
+            return []
+        if df is None or df.empty:
+            return []
+        today = datetime.now(UTC).date()
+        days = sorted({ts.date() for ts in df.index if ts.date() <= today}, reverse=True)
+        return days[:limit]
