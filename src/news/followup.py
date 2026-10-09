@@ -64,6 +64,18 @@ def _headlines(p: CardPayload) -> list[ItemView]:
     return out
 
 
+def _concurrent_fields(post_id: int) -> dict[str, object]:
+    """Fields another loop may have changed while the LLM call ran: a second trigger on the same
+    story appends 🔄 updates and cluster ids (alerts.apply_update). Re-read them so stage 2's
+    write-back never drops an update that landed mid-call (Review Focus 4)."""
+    with news_session() as s:
+        row = s.get(NewsPostRow, post_id)
+        if row is None:
+            return {}
+        cur = CardPayload.model_validate(row.payload)
+    return {"updates": cur.updates, "cluster_ids": cur.cluster_ids}
+
+
 async def complete_post(
     post_id: int,
     payload: CardPayload,
@@ -116,6 +128,7 @@ async def complete_post(
             "explanation": outcome.explanation,
             "trimmed": outcome.trimmed,
             "llm_note": outcome.note,
+            **_concurrent_fields(post_id),
         }
     )
     await update_post(

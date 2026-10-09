@@ -174,3 +174,48 @@ async def test_non_macro_explains_immediately_with_cluster_headlines(news_db, mo
     ]
     assert seen["fallback_what"] == "-6.2%"
     assert FU.pending_posts(REL + timedelta(minutes=1)) == []
+
+
+async def test_update_landing_during_the_llm_call_is_kept(news_db, monkeypatch) -> None:
+    # Review Focus 4: a second trigger edits the card (🔄 Update) while stage 2's LLM call is in
+    # flight. Stage 2 must not write back its stale snapshot over that update.
+    from src.news.schemas import FactSheet
+    from src.news.store.models import NewsPostRow
+    from src.news.store.session import news_session
+
+    sheet = FactSheet()
+    sheet.add("Move today", -6.2, "-6.2%")
+    card = CardPayload(
+        kind="breaking", title="Ceasefire", emoji="🕊️", when=REL, facts=sheet, cluster_ids=[7]
+    )
+    pid = await _seed(card)
+    e = Explanation(
+        headline="h",
+        what_happened="w",
+        read="r",
+        bull="b",
+        bear="c",
+        verdict="priced_in",
+        confidence="low",
+        evidence=["F1"],
+    )
+
+    def explain_while_update_lands(*a, **k):
+        with news_session() as s:
+            row = s.get(NewsPostRow, pid)
+            row.payload = card.model_copy(
+                update={"updates": ["🔄 Update 20:45 SGT · SPY +2%"], "cluster_ids": [7, 9]}
+            ).model_dump(mode="json")
+            row.edits = 1
+        return ExplainOutcome(e, "cli", False, "explained", None)
+
+    monkeypatch.setattr(FU, "explain_card", explain_while_update_lands)
+    assert await FU.complete_post(
+        pid, card, now=REL, cfg=get_config(), publisher=None, measure=lambda rel, cfg: None
+    )
+    with news_session() as s:
+        row = s.get(NewsPostRow, pid)
+    assert row.payload["updates"] == ["🔄 Update 20:45 SGT · SPY +2%"] and row.payload[
+        "cluster_ids"
+    ] == [7, 9]
+    assert row.payload["explanation"]["verdict"] == "priced_in" and row.edits == 1
