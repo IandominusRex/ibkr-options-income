@@ -4,7 +4,10 @@ Deep-research findings (June 2026) on every ticker in `config/universe.yaml`.
 Used by Claude Code when analysing the codebase and injected (in compact form) into the
 trade-review prompt in `src/claude/prompts/strategist.py`.
 
-**Last updated:** 2026-09-29 (operator-confirmed) — AMD un-archived back into `watchlist:` as
+**Last updated:** 2026-10-10 (operator-confirmed) — AVGO, VST and BE added to `watchlist:` +
+`would_own` + `actively_wheeling`; CRWD promoted from dip-watch to `actively_wheeling`;
+JPM/WMT/UBER/TSLA/IWM (all dip-watch) archived to `config/universe_archive.yaml` — see
+"Additions — 2026-10-10" and "Archived — 2026-10-10" below. Prior update, 2026-09-29 — AMD un-archived back into `watchlist:` as
 **CC-only** against the held 300-share position (not added to `would_own`); BAC added to
 `watchlist:` + `would_own` + `actively_wheeling` (held 1000 sh, CC + CSP); DPST moved from the
 CC-only leveraged set into the deliberate `would_own` exception, joining TQQQ/UPRO/SOXL — see the
@@ -66,7 +69,11 @@ are dip-watch._
 - **Assignment:** Comfortable — tech-heavy index, no single-company earnings risk  
 - **Notes:** Higher IV than SPY due to tech concentration; premium is notably better.
 
-### IWM — Russell 2000 ETF
+### IWM — Russell 2000 ETF — ARCHIVED 2026-10-10
+
+Removed from `config/universe.yaml` 2026-10-10 (was dip-watch). See `config/universe_archive.yaml`
+and the "Archived — 2026-10-10" section below. Research retained here for reference only:
+
 - **Price (June 2026):** ~$200  
 - **IV rank typical range:** 20–45  
 - **Monthly premium at 0.30Δ:** ~1.5–3%  
@@ -119,7 +126,11 @@ below. Research retained here for reference only:
 - **Assignment:** Comfortable — diversified revenue, search + cloud + AI  
 - **Notes:** Better premium-per-dollar than MSFT. IV rank ~39 in recent data.
 
-### JPM — JPMorgan Chase
+### JPM — JPMorgan Chase — ARCHIVED 2026-10-10
+
+Removed from `config/universe.yaml` 2026-10-10 (was dip-watch). See `config/universe_archive.yaml`
+and the "Archived — 2026-10-10" section below. Research retained here for reference only:
+
 - **Price (June 2026):** ~$280  
 - **IV rank typical range:** 20–40  
 - **Monthly premium at 0.30Δ:** ~1–2%  
@@ -302,7 +313,11 @@ in the prior list). See `config/universe_archive.yaml` for the archive entry and
 
 ---
 
-## TSLA — Tesla (moderate, added 2026-06-12)
+## TSLA — Tesla (moderate, added 2026-06-12) — ARCHIVED 2026-10-10
+
+Removed from `config/universe.yaml` 2026-10-10 (was dip-watch). See `config/universe_archive.yaml`
+and the "Archived — 2026-10-10" section below. Research retained here for reference only:
+
 
 - **Price (June 2026):** ~$395–436  
 - **IV:** structurally high absolute IV (40–70%), but IV *rank* was compressed (~22) in mid-2026 — high premium in dollar terms, low relative to TSLA's own history.  
@@ -333,12 +348,12 @@ were archived 2026-08-28 — see the "Archived — 2026-08-28" section below:**
 **Quality stocks added to `would_own`:**
 
 - **V (~$324)** — payments-network moat; LOW IV (~12–28), large collateral; CC+CSP but expect modest yield. Dip-watch as of 2026-08-27. (MA was also added here but archived 2026-08-28 — user only wants one payments-network name.)
-- **WMT (~$120)** — defensive consumer; liquid chain; moderate IV. Dip-watch as of 2026-08-27. (HD was also added here but archived 2026-08-28 — user will not trade it.)
+- ~~**WMT (~$120)**~~ — **archived 2026-10-10**, see below. Was: defensive consumer; liquid chain; moderate IV. Dip-watch as of 2026-08-27. (HD was also added here but archived 2026-08-28 — user will not trade it.)
 - ~~**COIN (~$162)**~~ — **archived 2026-08-27**, see below. Was: liquid crypto-equity; high IV (60–100%); the cleanest crypto expression (far better liquidity than small miners). Crypto-correlated gap risk.
 
 **Watchlist-only (CC-focused or CC-only):**
 
-- **NBIS, CRWD, TEM, ASTS, IONQ** — high-IV software/AI/space/quantum names for CC (and CSP where in `would_own`). Note overlaps: CRWD/HACK (cybersecurity), IONQ/RGTI (quantum) are correlated theses. NBIS and ASTS moved into `actively_wheeling` 2026-08-27 (see below); CRM was archived the same day. NET/SNOW/TTD/DDOG were also here but archived 2026-08-28 — user isn't familiar enough with those names to trade them.
+- **NBIS, CRWD, TEM, ASTS, IONQ** — high-IV software/AI/space/quantum names for CC (and CSP where in `would_own`). Note overlaps: CRWD/HACK (cybersecurity), IONQ/RGTI (quantum) are correlated theses. NBIS and ASTS moved into `actively_wheeling` 2026-08-27 (see below), CRWD on 2026-10-10; CRM was archived the same day. NET/SNOW/TTD/DDOG were also here but archived 2026-08-28 — user isn't familiar enough with those names to trade them.
 
 **Removed 2026-06-12:**
 
@@ -405,6 +420,51 @@ doc-update table.
 
 ---
 
+## Additions — 2026-10-10 (operator-confirmed)
+
+All four go straight into `actively_wheeling` (and therefore `would_own`): CSP-eligible, on the
+±0.5% materiality gate and the 120-min staleness net. Prices are **not** researched here —
+the IV ranges are qualitative anchors only; verify IV **rank** on Barchart before relying on
+them (see Data quality warning).
+
+- **AVGO — Broadcom** (`watchlist:`, sector `semis`, safe bets). AI networking and custom
+  accelerator silicon plus VMware software; deep, liquid chains. IV typically ~30–50%. CC ✅ |
+  CSP ✅. **Large per-share price → large CSP collateral** — check it against
+  `max_pct_per_ticker`. Overlaps the existing semis bucket (NVDA, AMD, SMH, SOXL), which will
+  hit the 25% sector cap sooner.
+- **CRWD — CrowdStrike** (already in `watchlist:`/`would_own`, sector `tech`; moderate).
+  **Promoted from dip-watch to `actively_wheeling`.** Cybersecurity leader; IV typically
+  ~35–55%, earnings moves are large. CC ✅ | CSP ✅. Large CSP collateral. Correlated with HACK.
+- **VST — Vistra** (`watchlist:`, sector `utilities`; moderate). Merchant power generator
+  (gas + nuclear) trading as an AI-datacenter power-demand name rather than a sleepy utility;
+  IV typically ~45–65%. CC ✅ | CSP ✅. Reintroduces the `utilities` sector, archived 2026-08-28
+  with XLU.
+- **BE — Bloom Energy** (`watchlist:`, sector `energy`; risky). Solid-oxide fuel cells sold as
+  on-site datacenter power; violent momentum swings, IV typically ~70–110%. CC ✅ | CSP ✅*
+  (*speculative — cap sizing). Gets a `strike_bands: 0.45` override, like ASTS/RGTI, so the
+  ~0.25Δ strike is in scope before its IV history is backfilled. Reintroduces the `energy`
+  sector.
+
+**VST + BE are one thesis** (AI power demand) in two different sector tags, so the
+concentration cap will *not* catch them together — flag the correlation when both are open.
+
+---
+
+## Archived — 2026-10-10
+
+Dip-watch trim, same reference-only treatment as above — moved to
+`config/universe_archive.yaml`. None were held at the time.
+
+- **JPM, IWM, TSLA** — see their dedicated (now-archived) sections above.
+- **WMT** — was a `would_own` quality stock in the 2026-06-12 batch above.
+- **UBER** — was a dip-watch mobility/delivery name in `watchlist:`.
+
+To bring one back: reverse the process in `config/universe_archive.yaml`'s header comment, and
+update this file plus `src/claude/prompts/strategist.py`'s `_UNIVERSE_CONTEXT` per CLAUDE.md's
+doc-update table.
+
+---
+
 ## Key trading rules derived from research
 
 1. **Do not sell premium when IVR < 30.** The risk engine enforces this, but Claude should flag candidates near the floor as marginal.
@@ -415,7 +475,7 @@ doc-update table.
    on assignment for these four specifically — they're in `would_own` and `actively_wheeling`.
    The NAV-decay reasoning is unchanged; the risk is accepted, not absent.
 4. **BABA:** Size conservatively (< `max_pct_per_ticker`). Flag ADR risk in every review.
-5. **MARA, RGTI:** The `max_pct_per_ticker: 5%` cap limits damage. Flag as speculative in every review.
+5. **MARA, RGTI, BE:** The `max_pct_per_ticker: 5%` cap limits damage. Flag as speculative in every review.
 6. **Earnings blackout:** The system enforces a 14-day blackout. Claude should call out if the DTE window is close to an expected earnings date that yfinance missed.
 7. **Monthly premium reality check:** AAPL/MSFT rarely exceed 1.2%/month. Claims of 2–3%/month across all large-caps are marketing. Flag yield claims that seem too high.
 
@@ -446,17 +506,19 @@ The risk engine caps sector exposure at 25% of net liquidation. Sector assignmen
 
 | Sector | Tickers |
 |---|---|
-| `index` | SPY, QQQ, IWM, TQQQ, UPRO |
-| `semis` | NVDA, AMD, SMH, SOXL |
+| `index` | QQQ, TQQQ, UPRO |
+| `semis` | NVDA, AMD, AVGO, SMH, SOXL |
 | `tech` | AAPL, MSFT, GOOGL, AMZN, MAGS, META, PLTR, RGTI, BABA, NBIS, CRWD, IONQ, HACK, IGV |
-| `financials` | JPM, BAC, SOFI, HOOD, DPST, V |
-| `consumer` | TSLA, TSLL, WMT, UBER, XLP |
+| `financials` | BAC, SOFI, HOOD, DPST, V |
+| `consumer` | TSLL, XLP |
 | `healthcare` | HIMS, TEM, XLV |
 | `crypto` | MARA |
 | `bonds` | TLT |
 | `biotech` | LABU |
 | `aerospace` | RKLB |
 | `telecom` | ASTS |
+| `utilities` | VST |
+| `energy` | BE |
 
 **Watch:** `tech` is still the largest bucket (~14 tickers, including MAGS) and will hit the
 25% cap first on a strong tech morning — correct behaviour, and MAGS specifically double-counts
@@ -466,4 +528,7 @@ this bucket. The 2026-06-12 diversification batch deliberately grew the non-tech
 fall back on once the tech cap binds; the 2026-08-27 archive pass shrank `crypto` down to just
 MARA (CRCL/COIN/MSTR/BITO archived), and the 2026-08-28 trim removed the `commodities`,
 `energy`, `utilities`, and `industrials` sectors entirely (GLD/SLV, XLE, XLU, XLI archived) —
-one fewer decorrelation lever if the tech cap ever binds hard.
+one fewer decorrelation lever if the tech cap ever binds hard. The 2026-10-10 change brought
+`utilities` (VST) and `energy` (BE) back, but as a single correlated AI-power bet, not a
+defensive one; it also thinned `consumer` to TSLL/XLP (TSLA/WMT/UBER archived) and grew `semis`
+with AVGO.

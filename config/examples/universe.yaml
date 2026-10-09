@@ -28,7 +28,7 @@
 #   that the CC-oriented held rule alone cannot see.
 #
 # Risk tiers (for reference — organizational only, all tiers scan for CCs):
-#   safe_bets — core income: liquid, stable, fund-manager grade (SPY/QQQ/GOOGL/NVDA/JPM)
+#   safe_bets — core income: liquid, stable, fund-manager grade (SPY/QQQ/GOOGL/NVDA/BAC)
 #   moderate  — active income: elevated IV, real fundamentals (META/PLTR/HOOD/SOFI/HIMS)
 #   risky     — speculative / high-IV: premium income only, assignment is a risk event
 #             Leveraged ETFs (LABU/TSLL) — CC-only, NEVER in would_own (daily-reset decay)
@@ -50,7 +50,6 @@
 indexes:
   # SPY is reserved for the daily credit-spread book (config/spreads.yaml → book_underlyings)
   - QQQ          # Nasdaq-100; slightly higher IV than SPY
-  - IWM          # Russell 2000; better premiums, higher vol
   - SMH          # Semiconductor sector proxy; good OI
   - MAGS         # Roundhill Magnificent Seven ETF; equal-weight AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA
                  # NOTE: heavily overlaps GOOGL/NVDA/AMZN below — same tech-sector bucket
@@ -86,14 +85,12 @@ watchlist:
   - MSFT         # Solid fundamentals; consistent premium; IV 22–32; dip-watch only
   - GOOGL        # Liquid chains; search + AI moat; IV 25–38; actively_wheeling
   - AMZN         # Strong FCF; ~$205/sh; IV 28–42; actively_wheeling
-  - JPM          # Best-in-class bank; financials diversifier; IV 22–35; dip-watch only
   - V            # Visa; payments network moat; liquid options; lower IV (~20–28); dip-watch only
-  - WMT          # Walmart; defensive consumer staple; ~$120/sh; liquid options; dip-watch only
   - AMD          # Held (300 sh); semis; liquid chains; CC-eligible while held; dip-watch only if added to would_own
   - BAC          # Held (1000 sh); money-centre bank; liquid chains; CC-eligible while held
+  - AVGO         # Broadcom; AI networking/custom silicon + VMware; liquid chains; actively_wheeling (2026-10-10)
 
   # moderate — elevated IV, real fundamentals, assignment acceptable
-  - TSLA         # Top single-stock income name; deepest liquidity after AAPL; IV 40–70; dip-watch only
   - META         # Exceptional premiums since 2023 recovery; IV 30–50; actively_wheeling
   - PLTR         # AI/defense; real revenue; IV rank ~47; ~$158/sh; actively_wheeling
   - SOFI         # Fintech turnaround; up 32% in 2026; ~$18/sh; IV 55–80; actively_wheeling
@@ -101,8 +98,8 @@ watchlist:
   - HIMS         # Telehealth growth; ±16% implied earnings move; IV 60–90; actively_wheeling
   - BABA         # Alibaba ADR; IV 40–55; NOTE: ADR delisting risk — size conservatively; dip-watch only
   - NBIS         # Nebius Group; AI infrastructure/cloud; elevated IV; actively_wheeling
-  - UBER         # Mobility + delivery platform; liquid options; dip-watch only
-  - CRWD         # CrowdStrike; cybersecurity leader; dip-watch only
+  - CRWD         # CrowdStrike; cybersecurity leader; actively_wheeling (promoted from dip-watch 2026-10-10)
+  - VST          # Vistra; power generation / AI-datacenter power demand; actively_wheeling (2026-10-10)
   - TEM          # Tempus AI; healthcare AI platform; CC-only (not in would_own)
 
   # risky — speculative / high-IV; position size controlled by risk engine limits
@@ -110,6 +107,7 @@ watchlist:
   - RGTI         # Quantum computing; speculative; IV mean ~86; early stage; actively_wheeling
   - RKLB         # Rocket Lab; space launch and satellite systems; actively_wheeling
   - ASTS         # AST SpaceMobile; satellite communications; actively_wheeling
+  - BE           # Bloom Energy; fuel-cell on-site power for datacenters; very high IV; actively_wheeling (2026-10-10)
   - IONQ         # Quantum computing; CC-only (not in would_own)
 
 # ── The core wheel rotation (subset of would_own below) ───────────────────────
@@ -124,6 +122,7 @@ actively_wheeling:
   - AMZN
   - MAGS
   - BAC
+  - AVGO         # added 2026-10-10
   # moderate
   - META
   - PLTR
@@ -131,8 +130,11 @@ actively_wheeling:
   - SOFI
   - HIMS
   - NBIS
+  - CRWD         # promoted from dip-watch 2026-10-10
+  - VST          # added 2026-10-10
   # risky
   - ASTS
+  - BE           # added 2026-10-10
   - RKLB
   - RGTI
   - MARA
@@ -159,13 +161,17 @@ would_own:
   - AMZN
   - MAGS
   - BAC
+  - AVGO
   - META
   - PLTR
   - HOOD
   - SOFI
   - HIMS
   - NBIS
+  - CRWD
+  - VST
   - ASTS
+  - BE
   - RKLB
   - RGTI
   - MARA
@@ -176,19 +182,13 @@ would_own:
 
   # dip-watch — would_own-eligible, but only scanned on a ≥3% drop (market_data.dip_pull_in_pct)
   - QQQ
-  - IWM
   - SMH
   - HACK
   - IGV
   - AAPL
   - MSFT
-  - JPM
   - V
-  - WMT
-  - TSLA
   - BABA
-  - UBER
-  - CRWD
 
 # ── Sector tags (for concentration limits in risk_engine.py) ─────────────────
 
@@ -198,7 +198,6 @@ would_own:
 sectors:
   # Indexes
   QQQ: index
-  IWM: index
   SMH: semis
   MAGS: tech
   TQQQ: index
@@ -224,13 +223,11 @@ sectors:
   MSFT: tech
   GOOGL: tech
   AMZN: tech
-  JPM: financials
   BAC: financials
   V: financials
-  WMT: consumer
+  AVGO: semis
 
   # moderate stocks
-  TSLA: consumer
   META: tech
   PLTR: tech
   SOFI: financials
@@ -238,8 +235,8 @@ sectors:
   HIMS: healthcare
   BABA: tech
   NBIS: tech
-  UBER: consumer
   CRWD: tech
+  VST: utilities
   TEM: healthcare
 
   # risky stocks
@@ -247,6 +244,7 @@ sectors:
   RGTI: tech
   RKLB: aerospace
   ASTS: telecom
+  BE: energy
   IONQ: tech
 
 # ---------------------------------------------------------------------------
@@ -267,6 +265,7 @@ strike_bands:
   RGTI: 0.45
   IONQ: 0.45
   ASTS: 0.45
+  BE: 0.45
 
 # ---------------------------------------------------------------------------
 # Leveraged ETFs (2026-08-27; DPST moved into the exception set 2026-09-29).

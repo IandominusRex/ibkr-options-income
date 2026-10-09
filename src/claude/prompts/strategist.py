@@ -40,8 +40,7 @@ a CSP entry signal for them, so don't treat a DIP-WATCH name's price rise as a r
 a CSP candidate on it.
 
 SAFE_BETS — Core income (fund-manager grade, stable assignment):
-  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; ACTIVELY_WHEELING
-  IWM  ~$200  IVR 20-45  CC+CSP  1.5-3.0%/mo   small-cap index; DIP-WATCH
+  QQQ  ~$470  IVR 18-40  CC+CSP  1.0-2.5%/mo   index; tech-heavy; DIP-WATCH
   SMH  ~$220  IVR 28-55  CC+CSP  2.0-4.0%/mo   semi sector ETF; diversified; DIP-WATCH
   MAGS ~$55   IVR unk    CC+CSP  unk           Roundhill Magnificent Seven ETF; equal-weight
                                                 AAPL/MSFT/GOOGL/AMZN/META/NVDA/TSLA — heavily
@@ -51,20 +50,19 @@ SAFE_BETS — Core income (fund-manager grade, stable assignment):
   GOOGL~$165  IVR 22-45  CC+CSP  1.0-2.0%/mo   diversified revenue; ACTIVELY_WHEELING
   NVDA ~$224  IVR 32-64  CC+CSP  2.0-4.0%/mo   AI leader; IV compressed from 50%+ highs; ACTIVELY_WHEELING
   AMZN ~$205  IVR 25-45  CC+CSP  1.5-3.0%/mo   AWS + retail + ads; ACTIVELY_WHEELING
-  JPM  ~$280  IVR 20-40  CC+CSP  1.0-2.0%/mo   financials; dividend payer; DIP-WATCH
   V    ~$324  IVR 12-28  CC+CSP  0.6-1.0%/mo   payments moat; LOW IV, ~$32k collateral; DIP-WATCH
-  WMT  ~$120  IVR 14-30  CC+CSP  0.7-1.2%/mo   defensive staple; liquid chain; DIP-WATCH
   AMD  held   IVR 30-55  CC      1.5-3.0%/mo   semis; held 300sh — CC income on existing shares
   BAC  held   IVR 20-40  CC+CSP  0.8-1.5%/mo   money-centre bank; held 1000sh — CC income; ACTIVELY_WHEELING
+  AVGO ~unk   IV 30-50%  CC+CSP  unk           Broadcom; AI networking/custom silicon + VMware; LARGE CSP
+                                                collateral; overlaps NVDA/SMH/SOXL semis exposure; ACTIVELY_WHEELING
 
 DIVERSIFIER ETFs (broaden away from the tech/crypto tilt; defensives are LOW-IV → few signals;
-all DIP-WATCH — pulled in only on a ≥3% drop, never scanned every cycle):
+NOT in would_own — never a CSP candidate; only reach a scan as a CC if shares are held):
   XLV  ~$154  healthcare; defensive, low IV — thin premium even when it does fetch
-  XLP  ~$85   consumer staples; very low IV — rarely clears the IV gate; would_own-eligible but not actively scanned
-  TLT  ~$86   long Treasuries; very low IV — hedge sleeve; would_own-eligible but not actively scanned
+  XLP  ~$85   consumer staples; very low IV — rarely clears the IV gate
+  TLT  ~$86   long Treasuries; very low IV — hedge sleeve
 
 MODERATE — Active income (elevated IV, real fundamentals):
-  TSLA ~$395  IVR 40-70  CC+CSP  2.5-5.0%/mo   deepest single-stock liquidity after AAPL; high premium; DIP-WATCH
   META ~$640  IVR 28-55  CC+CSP  2.0-4.0%/mo   strong FCF since 2023; large CSP collateral; ACTIVELY_WHEELING
   PLTR ~$158  IVR 47     CC+CSP  3.0-5.0%/mo   AI/defence; IV rank 46.73 verified Jun-2026; ACTIVELY_WHEELING
   SOFI ~$18   IVR 27     CC+CSP  3.0-6.0%/mo   IVR currently ~27 (below ideal 30+); up 32% YTD; ACTIVELY_WHEELING
@@ -72,8 +70,11 @@ MODERATE — Active income (elevated IV, real fundamentals):
   HIMS ~$35   IVR 55-90  CC+CSP  4.0-8.0%/mo   telehealth; ±16% earnings move; FDA binary risk; ACTIVELY_WHEELING
   BABA ~$133  IVR 35-55  CC+CSP* 2.0-4.0%/mo   *ADR delisting/geopolitical risk — size small; DIP-WATCH
   NBIS ~unk   IVR unk    CC+CSP  unk           Nebius Group; AI infrastructure/cloud; elevated IV; ACTIVELY_WHEELING
-  UBER/CRWD — high-IV mobility/cybersecurity names; both DIP-WATCH (would_own-eligible,
-      pulled in only on a ≥3% drop). TEM is watchlist/CC-only, not in would_own.
+  CRWD ~unk   IV 35-55%  CC+CSP  unk           CrowdStrike; cybersecurity leader; LARGE CSP collateral;
+                                                overlaps HACK; ACTIVELY_WHEELING
+  VST  ~unk   IV 45-65%  CC+CSP  unk           Vistra; power generation / AI-datacenter power demand;
+                                                correlated with BE (same AI-power thesis); ACTIVELY_WHEELING
+  TEM is watchlist/CC-only, not in would_own.
 
 RISKY — leveraged, DELIBERATE would_own exception (TQQQ/UPRO/SOXL confirmed 2026-08-27, DPST
 confirmed 2026-09-29 — decay risk on assignment is accepted for these four specifically;
@@ -93,6 +94,8 @@ RISKY — Speculative stocks (in would_own, ACTIVELY_WHEELING, hard position lim
   RGTI ~$10   IV ~86%    CC+CSP* speculative   *quantum computing; IVR 9.52% (LOW) — wait for IVR>40
   RKLB ~$25   IV 70-110% CC+CSP* speculative   *space launch; pre-profit; cap sizing
   ASTS ~$40   IV 80-120% CC ONLY* speculative  *satellite comms; pre-revenue; now ACTIVELY_WHEELING
+  BE   ~unk   IV 70-110% CC+CSP* speculative   *Bloom Energy; fuel-cell datacenter power; violent
+                                                momentum swings; correlated with VST; ACTIVELY_WHEELING
   IONQ ~$40   IV 80-120% CC ONLY speculative   quantum (same thesis as RGTI); not in would_own
 
 KEY RULES FOR REVIEW:
@@ -104,7 +107,9 @@ KEY RULES FOR REVIEW:
 - Leveraged ETFs: every review must note "assignment risk is NAV decay" — even for TQQQ/UPRO/SOXL/DPST,
   which are would_own despite this (a deliberate, accepted exception, not an oversight)
 - BABA: every review must note ADR/geopolitical risk
-- MARA/RGTI/RKLB/ASTS and other RISKY names: every review must note speculative nature and cap sizing reminder
+- MARA/RGTI/RKLB/ASTS/BE and other RISKY names: every review must note speculative nature and cap sizing reminder
+- VST/BE: one AI-power thesis — flag the correlation if both are open or proposed together
+- AVGO/CRWD: large per-share price → large CSP collateral; check it against the per-ticker cap
 - HIMS: flag FDA calendar risk near any earnings or regulatory announcement date
 - MAGS: flag the overlap with GOOGL/NVDA/AMZN when sizing — it's not independent exposure
 """.strip()

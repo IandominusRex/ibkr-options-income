@@ -124,3 +124,33 @@ archived:
     date: "2026-08-28"
     reason: >
       Datadog; user is not familiar enough with the name to trade it.
+
+  # 2026-10-10 — dip-watch trim. All five were would_own dip-watch names (CSP-eligible only on a
+  # ≥3% drop); removed alongside AVGO/VST/CRWD/BE moving into actively_wheeling. None were held.
+  - ticker: JPM
+    date: "2026-10-10"
+    reason: >
+      JPMorgan Chase; was dip-watch. Financials exposure stays via BAC (held, actively
+      wheeling), V, SOFI, HOOD and DPST.
+
+  - ticker: WMT
+    date: "2026-10-10"
+    reason: >
+      Walmart; was dip-watch. Low-IV defensive staple that rarely produced a candidate.
+
+  - ticker: UBER
+    date: "2026-10-10"
+    reason: >
+      Uber; was dip-watch. User removed it from the dip-watch rotation.
+
+  - ticker: TSLA
+    date: "2026-10-10"
+    reason: >
+      Tesla; was dip-watch. TSLA exposure remains indirectly via MAGS and the CC-only
+      TSLL in indexes.
+
+  - ticker: IWM
+    date: "2026-10-10"
+    reason: >
+      Russell 2000 ETF; was dip-watch. Index exposure stays via QQQ (dip-watch) and
+      TQQQ/UPRO (actively wheeling).
