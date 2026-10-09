@@ -24,7 +24,7 @@
 | 8 Earnings sources + merge | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none (`EarningsEventRow` constructed with explicit defaults, per the brief's note). |
 | 9 Intraday provider + tape | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none |
 | 10 Playbook | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | `parse_value` multiplies via `Decimal` instead of float: the plan's `float(t) * 1e9` gives 8279999999.999999 for `8.28B`, failing its own pinned test. |
-| 11 Aliases + views + collectors | pending | | | | |
+| 11 Aliases + views + collectors | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Test fixture forecast `200K`→`210K`: the plan's 197K vs 200K is a 3K beat, inside the committed playbook's 8K `jobless_claims` tolerance, so it is correctly `inline`, never `hot`. Playbook untouched. |
 | 12 Service skeleton + entrypoint + fence | pending | | | | |
 | 13 Fact sheet + flags | pending | | | | |
 | 14 Reaction | pending | | | | |
@@ -3377,7 +3377,7 @@ git commit -m "feat(news): 📘 playbook — release aliases, value parser, surp
 - Produces (`src.news.aliases`): `load_aliases(symbols: list[str], *, overrides: dict[str, list[str]], now: datetime) -> dict[str, list[str]]`, `clean_company_name(name: str) -> str | None`.
 - Produces (`src.news.collectors`): `watch_symbols() -> list[str]`, `held_positions() -> list[PositionSnapshot]`, `held_underlyings() -> set[str]`, `universe_lists(symbol: str) -> list[str]`, `class Collector` with `alias_index(now) -> AliasIndex`, `collect_rss(now) -> int`, `collect_macro(now) -> int`, `collect_ticker_batch(now, *, batch: int) -> int`, `collect_symbol(symbol, now) -> IngestResult`, `refresh_econ_schedule(now) -> int`, `refresh_econ_actuals(now) -> list[str]` (event keys newly released), `refresh_earnings(now, *, days: int = 14) -> list[tuple[str, date]]`, `in_fast_econ_window(now) -> bool`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 ```python
 # tests/test_news_collectors.py
@@ -3489,9 +3489,9 @@ def test_clean_company_name() -> None:
     assert clean_company_name("ProShares UltraPro QQQ") is None  # fund names are not useful aliases
 ```
 
-- [ ] **Step 2: Run to fail.**
+- [x] **Step 2: Run to fail.**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/news/schemas.py` (initial content):
 
@@ -3966,9 +3966,9 @@ class Collector:
 
 `src.analytics.fundamentals.get_fundamental_stats(symbol) -> FundamentalStats` is the accessor (verified 2026-10-09). Remove `get_fundamentals_provider` from `collectors.py`'s import list (only `aliases.py` uses it) so ruff passes.
 
-- [ ] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_collectors.py -v` → PASS.
+- [x] **Step 4: Run tests** — `.venv/bin/python -m pytest tests/test_news_collectors.py -v` → PASS.
 
-- [ ] **Step 5: Gate + commit**
+- [x] **Step 5: Gate + commit**
 
 ```bash
 git add src/news/aliases.py src/news/schemas.py src/news/collectors.py src/news/store/queries.py tests/test_news_collectors.py docs/superpowers/plans/2026-10-09-news-thread.md
