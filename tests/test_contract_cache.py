@@ -132,3 +132,27 @@ def test_unusable_cache_path_disables_the_cache(monkeypatch, tmp_path) -> None:
 
     assert cc.get_contract_cache() is None
     assert cc.get_contract_cache() is None  # remembered: no retry storm, one warning
+
+
+def test_losing_the_create_tables_race_still_opens_the_cache(monkeypatch, tmp_path) -> None:
+    """Review finding (2026-10-10): `./ibkr restart` starts every process at once against a
+    brand-new data/contracts.db. A process whose create_all races another's CREATE TABLE gets
+    'table already exists'; it must still open the cache, not run the day without it."""
+    from sqlalchemy.exc import OperationalError
+
+    import src.ibkr.contract_cache as cc
+
+    real = cc.ContractCacheBase.metadata.create_all
+    calls = {"n": 0}
+
+    def _racy(bind, *a, **kw):
+        calls["n"] += 1
+        real(bind, *a, **kw)  # the other process won: the tables now exist
+        if calls["n"] == 1:
+            raise OperationalError("CREATE TABLE option_contracts", {}, Exception("already exists"))
+
+    monkeypatch.setattr(cc.ContractCacheBase.metadata, "create_all", _racy)
+
+    cache = _cache(tmp_path)
+    cache.record([(contract_key(_opt(600.0)), _qualified(600.0, 1))])
+    assert cache.lookup([_opt(600.0)]).hits != []

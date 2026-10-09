@@ -14,11 +14,18 @@
 
 | Task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
-| 1. Cache store | done | (this commit) | pytest 3255 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `prune()` reads `rowcount` via `getattr` (repo idiom, mypy sees ORM `Result`); docs rows deferred to Task 2, which owns them; plan file itself first committed here |
-| 2. Cache in `qualify_options_async` | done | (this commit) | pytest 3263 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `src/ibkr/market_data.py` added to the commit (the step's `git add` list omitted it); ARCHITECTURE `settings.yaml` config row also gained the two Task 1 keys (doc-update rule for new config keys) |
-| 3. Cross-process lookup lock | done | (this commit) | pytest 3267 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | — |
-| 4. Full sweep once per ET day; persisted retry queue | done | (this commit) | pytest 3269 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | Step 4's mtime check was confounded by the live services writing the same DB; a throwaway pytest spy found 9 existing tests (8 in test_notify.py, 1 in test_buy_list_cadence.py) writing the new keys to the real `data/income_system.db` — they now take the `db` fixture (re-run: zero real-DB writes). Also reworded the remaining "at startup" full-sweep phrasing in `How the scan works.md` and the `_run_intraday_scan` docstring |
-| 5. Live verification + docs close-out | not started | | | | |
+| 1. Cache store | done | 0148284 | pytest 3255 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `prune()` reads `rowcount` via `getattr` (repo idiom, mypy sees ORM `Result`); docs rows deferred to Task 2, which owns them; plan file itself first committed here |
+| 2. Cache in `qualify_options_async` | done | 4a2d3c8 | pytest 3263 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `src/ibkr/market_data.py` added to the commit (the step's `git add` list omitted it); ARCHITECTURE `settings.yaml` config row also gained the two Task 1 keys (doc-update rule for new config keys) |
+| 3. Cross-process lookup lock | done | f1f7052, ae4d228 | pytest 3267 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `data/contracts.lock` was not git-ignored → `data/*.lock` added (ae4d228) |
+| 4. Full sweep once per ET day; persisted retry queue | done | c9c1f36 | pytest 3269 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | Step 4's mtime check was confounded by the live services writing the same DB; a throwaway pytest spy found 9 existing tests (8 in test_notify.py, 1 in test_buy_list_cadence.py) writing the new keys to the real `data/income_system.db` — they now take the `db` fixture (re-run: zero real-DB writes). Also reworded the remaining "at startup" full-sweep phrasing in `How the scan works.md` and the `_run_intraday_scan` docstring |
+| 5. Live verification + docs close-out | pending — operator | | | | Needs the merge to `main` and a live restart; not run by the executor |
+
+
+**Final review (2026-10-10, fresh reviewer over 447352a..c9c1f36): "with fixes".** Fixed in one pass, each RED→GREEN:
+- A `None` slot is remembered as missing only when IBKR answered **Error 200** for that contract (`errorEvent`), on top of the sibling rule. ib_async turns *every* failed request into `None`, and once an expiry has cached hits the sibling rule alone would remember a transient failure for the day. (Dropping cached siblings from the rule instead, as first suggested, would re-ask every non-existent strike every cycle from day 2.) `test_failed_request_beside_a_cached_sibling_is_not_cached`, `test_no_security_definition_beside_a_cached_sibling_is_cached`.
+- Answers are recorded after every chunk, so a symbol cancelled by `symbol_timeout_seconds` keeps them. `test_answers_are_kept_when_the_symbol_is_cancelled_mid_qualification`.
+- Losing the create-tables race on a brand-new `contracts.db` (every process starts at once) no longer disables the cache for the process. `test_losing_the_create_tables_race_still_opens_the_cache`.
+- The operator's in-progress universe doc edits, swept into f1f7052/c9c1f36 by `git add`, were backed out of the branch (6db353d) and left in the working tree.
 
 ---
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
+from eventkit import Event
 from ib_async import Option
 
 from src.ibkr.contract_cache import ContractCache
@@ -19,23 +21,30 @@ def _opt(strike: float, expiry: str = "20261023") -> Option:
     return Option("AMD", expiry, strike, "P", "SMART", tradingClass="AMD")
 
 
-def _ib(missing: set[float] = frozenset(), *, raise_timeout: bool = False) -> MagicMock:
+def _ib(
+    missing: set[float] = frozenset(), *, raise_timeout: bool = False, error_code: int = 200
+) -> MagicMock:
     """Fake IBKR: qualifies every strike except *missing* (returns None in its slot, as
-    ib_async does for an unknown contract). conId = strike * 10."""
+    ib_async does for an unknown contract). conId = strike * 10. Like the real wrapper, each
+    failed request fires errorEvent(reqId, code, msg, contract) with the request's own
+    contract before the call returns — 200 = "No security definition", anything else is a
+    request failure that says nothing about whether the contract exists."""
+    ib = MagicMock()
+    ib.errorEvent = Event("errorEvent")
 
     async def _qualify(*cs):
         if raise_timeout:
             raise TimeoutError
         out = []
-        for c in cs:
+        for n, c in enumerate(cs):
             if c.strike in missing:
+                ib.errorEvent.emit(n, error_code, "request failed", c)
                 out.append(None)
             else:
                 c.conId = int(c.strike * 10)
                 out.append(c)
         return out
 
-    ib = MagicMock()
     ib.qualifyContractsAsync = AsyncMock(side_effect=_qualify)
     return ib
 
@@ -149,5 +158,67 @@ async def test_default_cache_comes_from_the_process_factory(monkeypatch, tmp_pat
     cache = _cache(tmp_path)
     monkeypatch.setattr(cc, "get_contract_cache", lambda: cache)
     await qualify_options_async(_ib(), [_opt(600.0)], throttle_seconds=0)
+
+    assert cache.lookup([_opt(600.0)]).hits != []
+
+
+async def test_failed_request_beside_a_cached_sibling_is_not_cached(tmp_path) -> None:
+    """Review finding (2026-10-10): once a symbol's expiry has cached hits, a None slot for a
+    NEW strike must not be remembered as missing unless IBKR said Error 200 for it. Any other
+    request error (not connected, pacing, a farm blip) leaves it to be asked again."""
+    cache = _cache(tmp_path)
+    await qualify_options_async(_ib(), [_opt(600.0)], cache=cache, throttle_seconds=0)
+
+    await qualify_options_async(
+        _ib(missing={605.0}, error_code=504),
+        [_opt(600.0), _opt(605.0)],
+        cache=cache,
+        throttle_seconds=0,
+    )
+
+    assert cache.lookup([_opt(605.0)]).misses != []
+
+
+async def test_no_security_definition_beside_a_cached_sibling_is_cached(tmp_path) -> None:
+    """The steady state: tomorrow's re-ask of yesterday's non-existent strikes has only cached
+    siblings; IBKR's Error 200 is the proof, so they are remembered again for the day."""
+    cache = _cache(tmp_path)
+    await qualify_options_async(_ib(), [_opt(600.0)], cache=cache, throttle_seconds=0)
+
+    await qualify_options_async(
+        _ib(missing={605.0}), [_opt(600.0), _opt(605.0)], cache=cache, throttle_seconds=0
+    )
+
+    assert cache.lookup([_opt(605.0)]).known_missing == 1
+
+
+async def test_answers_are_kept_when_the_symbol_is_cancelled_mid_qualification(tmp_path) -> None:
+    """Review finding (2026-10-10): the scan wraps a symbol's chain fetch in
+    symbol_timeout_seconds. A cold symbol cancelled after some chunks must keep those chunks'
+    answers, or a slow symbol never warms its cache and pays the full cost every cycle."""
+    import asyncio
+
+    cache = _cache(tmp_path)
+    calls = 0
+
+    async def _first_answers_then_hangs(*cs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            await asyncio.sleep(10)
+        for c in cs:
+            c.conId = int(c.strike * 10)
+        return list(cs)
+
+    ib = MagicMock()
+    ib.errorEvent = Event("errorEvent")
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_first_answers_then_hangs)
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(
+            qualify_options_async(
+                ib, [_opt(600.0), _opt(605.0)], cache=cache, chunk_size=1, throttle_seconds=0
+            ),
+            timeout=0.3,
+        )
 
     assert cache.lookup([_opt(600.0)]).hits != []

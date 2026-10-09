@@ -64,6 +64,15 @@ async def qualify_stock_async(ib: IB, symbol: str) -> Stock:
     return cast(Stock, first)
 
 
+def _record(store: ContractCache, entries: list[tuple[Key, Any | None]]) -> None:
+    if not entries:
+        return
+    try:
+        store.record(entries)
+    except Exception:
+        log.warning("contract cache write failed — answers not remembered", exc_info=True)
+
+
 class _UseDefault:
     pass
 
@@ -118,46 +127,72 @@ async def qualify_options_async(
     asked_keys: dict[int, Key] = (
         {id(c): contract_key(c) for c in to_ask} if store is not None else {}
     )
+    good: list[Key] = [contract_key(c) for c in hits] if store is not None else []
+    # Contracts IBKR answered Error 200 ("No security definition") for. ib_async turns EVERY
+    # failed request into a None slot (not connected, pacing, a farm blip), so a None alone
+    # proves nothing; only a 200 for that very contract object does (review, 2026-10-10).
+    # The wrapper emits errorEvent with the request's own contract before the call returns.
+    no_definition: set[int] = set()
+
+    def _on_error(_req_id: int, code: int, _msg: str, contract: Any) -> None:
+        if code == 200 and contract is not None:
+            no_definition.add(id(contract))
+
     fresh: list[Option] = []
     missing: list[Option] = []
-    for i in range(0, len(to_ask), chunk_size):
-        chunk = to_ask[i : i + chunk_size]
-        lock_path = store.lock_path if store is not None else None
-        wait = get_config().market_data.qualify_lock_wait_seconds
-        try:
-            async with contract_cache.contract_details_slot(lock_path, wait):
-                result = await asyncio.wait_for(
-                    ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
+    unconfirmed: list[Key] = []  # Error-200 answers still waiting for a qualified sibling
+    # No errorEvent (a bare test double) = no 200s seen = nothing remembered as missing.
+    error_event = getattr(ib, "errorEvent", None)
+    if error_event is not None:
+        error_event += _on_error
+    try:
+        for i in range(0, len(to_ask), chunk_size):
+            chunk = to_ask[i : i + chunk_size]
+            lock_path = store.lock_path if store is not None else None
+            wait = get_config().market_data.qualify_lock_wait_seconds
+            try:
+                async with contract_cache.contract_details_slot(lock_path, wait):
+                    result = await asyncio.wait_for(
+                        ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
+                    )
+            except TimeoutError:
+                log.warning(
+                    "qualify_options_async: chunk %d-%d timed out after %.0fs — skipping chunk",
+                    i,
+                    i + len(chunk),
+                    chunk_timeout_seconds,
                 )
-        except TimeoutError:
-            log.warning(
-                "qualify_options_async: chunk %d-%d timed out after %.0fs — skipping chunk",
-                i,
-                i + len(chunk),
-                chunk_timeout_seconds,
-            )
-            continue
-        items = result if isinstance(result, list) else [result]
-        for item in items:
-            if item is not None and getattr(item, "conId", None):
-                fresh.append(cast(Option, item))
-        if len(items) == len(chunk):  # aligned slots: a None slot is IBKR's "no such contract"
-            missing.extend(c for c, item in zip(chunk, items, strict=True) if item is None)
-        if throttle_seconds > 0 and i + chunk_size < len(to_ask):
-            await asyncio.sleep(throttle_seconds)
+                continue
+            items = result if isinstance(result, list) else [result]
+            chunk_fresh = [
+                cast(Option, item)
+                for item in items
+                if item is not None and getattr(item, "conId", None)
+            ]
+            fresh.extend(chunk_fresh)
+            chunk_missing: list[Option] = []
+            if len(items) == len(chunk):  # aligned slots: a None slot is a failed lookup
+                chunk_missing = [c for c, item in zip(chunk, items, strict=True) if item is None]
+                missing.extend(chunk_missing)
+            if store is not None:
+                # Recorded per chunk, not once at the end: the scan bounds a whole symbol with
+                # symbol_timeout_seconds, and a cancelled symbol must keep what IBKR answered.
+                answered = [(asked_keys[id(c)], c) for c in chunk_fresh if id(c) in asked_keys]
+                good.extend(k for k, _ in answered)
+                unconfirmed.extend(
+                    asked_keys[id(c)]
+                    for c in chunk_missing
+                    if id(c) in no_definition and id(c) in asked_keys
+                )
+                keep = confirmed_missing(unconfirmed, good)
+                unconfirmed = [k for k in unconfirmed if k not in set(keep)]
+                _record(store, [*answered, *((k, None) for k in keep)])
+            if throttle_seconds > 0 and i + chunk_size < len(to_ask):
+                await asyncio.sleep(throttle_seconds)
+    finally:
+        if error_event is not None:
+            error_event -= _on_error
 
-    if store is not None and (fresh or missing):
-        good = [contract_key(c) for c in hits] + [
-            asked_keys[id(c)] for c in fresh if id(c) in asked_keys
-        ]
-        keep = set(confirmed_missing([asked_keys[id(c)] for c in missing], good))
-        entries: list[tuple[Key, Any | None]] = [
-            (asked_keys[id(c)], c) for c in fresh if id(c) in asked_keys
-        ] + [(k, None) for k in keep]
-        try:
-            store.record(entries)
-        except Exception:
-            log.warning("contract cache write failed — answers not remembered", exc_info=True)
     if store is not None:
         log.info(
             "qualify: %d cached, %d known-missing skipped, %d asked IBKR (%d qualified, %d missing)",

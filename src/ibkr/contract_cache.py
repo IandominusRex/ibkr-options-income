@@ -35,6 +35,7 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from src.common.config import get_config
@@ -134,7 +135,12 @@ class ContractCache:
             cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
 
-        ContractCacheBase.metadata.create_all(self._engine)
+        try:
+            ContractCacheBase.metadata.create_all(self._engine)
+        except OperationalError:
+            # Every process starts at once on `./ibkr restart`: losing the CREATE TABLE race to
+            # another process is "table already exists". The second pass sees the tables.
+            ContractCacheBase.metadata.create_all(self._engine)
         self._session = sessionmaker(bind=self._engine, future=True, expire_on_commit=False)
         self._today = today
         self.lock_path = Path(url[len("sqlite:///") :]).with_suffix(".lock")
