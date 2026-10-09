@@ -1,0 +1,119 @@
+# 📘 Textbook first-reaction priors per US release (spec §6.3). A PRIOR, never the outcome:
+# cards always show it beside the measured 📈 reaction, and the 🧠 read explains gaps.
+# hot = stronger/hotter than expected (for `inverse: true` keys, a LOWER number is "hot").
+# Directions per asset: up | down | flat. Bonds = bond PRICE (yields up => down).
+entries:
+  - key: fomc_rate
+    aliases: ["Federal Funds Rate", "Fed Interest Rate Decision", "FOMC Statement", "Interest Rate Decision"]
+    tolerance: 0.01
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: down, oil: down, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: up,   oil: up,   vol: down}
+    rationale_hot: "Tighter-than-expected Fed: higher discount rates weigh on equities and bonds."
+    rationale_cold: "Easier-than-expected Fed: lower rates lift risk assets and bonds."
+  - key: cpi
+    aliases: ["CPI", "Consumer Price Index", "Inflation Rate"]
+    tolerance: 0.05
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "Hotter inflation pushes rate-cut odds out and yields up."
+    rationale_cold: "Cooler inflation pulls rate-cut odds in and yields down."
+  - key: core_cpi
+    aliases: ["Core CPI", "Core Inflation Rate"]
+    tolerance: 0.05
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "Sticky core inflation is what the Fed targets; fewer cuts priced."
+    rationale_cold: "Core cooling gives the Fed room to ease."
+  - key: nfp
+    aliases: ["Non-Farm Employment Change", "Nonfarm Payrolls", "Non Farm Payrolls"]
+    tolerance: 25000
+    hot:  {stocks: flat, bonds: down, dollar: up,   gold: down, oil: up,   vol: flat}
+    cold: {stocks: flat, bonds: up,   dollar: down, gold: up,   oil: down, vol: up}
+    rationale_hot: "Strong hiring: growth is fine but fewer cuts; stocks pulled both ways."
+    rationale_cold: "Weak hiring: cuts come sooner but growth fears rise."
+  - key: core_pce
+    aliases: ["Core PCE Price Index", "Core PCE Prices"]
+    tolerance: 0.05
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "The Fed's preferred gauge running hot keeps policy tight."
+    rationale_cold: "The Fed's preferred gauge cooling supports easing."
+  - key: pce
+    aliases: ["PCE Price Index", "PCE Prices"]
+    tolerance: 0.05
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "Headline PCE hot: inflation pressure persists."
+    rationale_cold: "Headline PCE cool: inflation pressure easing."
+  - key: unemployment
+    aliases: ["Unemployment Rate"]
+    tolerance: 0.05
+    inverse: true
+    hot:  {stocks: flat, bonds: down, dollar: up,   gold: down, oil: up,   vol: flat}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: up,   oil: down, vol: up}
+    rationale_hot: "Lower unemployment: tight labour market, fewer cuts."
+    rationale_cold: "Rising unemployment: slowdown risk, cuts sooner."
+  - key: avg_hourly_earnings
+    aliases: ["Average Hourly Earnings"]
+    tolerance: 0.05
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "Wage growth hot: services inflation risk."
+    rationale_cold: "Wage growth cooling: less inflation pressure."
+  - key: ppi
+    aliases: ["PPI", "Producer Price Index", "Core PPI"]
+    tolerance: 0.1
+    hot:  {stocks: down, bonds: down, dollar: up,   gold: flat, oil: flat, vol: up}
+    cold: {stocks: up,   bonds: up,   dollar: down, gold: flat, oil: flat, vol: down}
+    rationale_hot: "Pipeline inflation building at producers."
+    rationale_cold: "Pipeline inflation easing at producers."
+  - key: gdp
+    aliases: ["Advance GDP", "Prelim GDP", "Final GDP", "GDP", "GDP Growth Rate"]
+    tolerance: 0.2
+    hot:  {stocks: up,   bonds: down, dollar: up,   gold: flat, oil: up,   vol: down}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: flat, oil: down, vol: up}
+    rationale_hot: "Faster growth supports earnings; yields drift up."
+    rationale_cold: "Slower growth raises recession odds."
+  - key: retail_sales
+    aliases: ["Retail Sales", "Core Retail Sales"]
+    tolerance: 0.2
+    hot:  {stocks: up,   bonds: down, dollar: up,   gold: flat, oil: up,   vol: down}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: flat, oil: down, vol: up}
+    rationale_hot: "Consumer spending strong."
+    rationale_cold: "Consumer spending weakening."
+  - key: ism_manufacturing
+    aliases: ["ISM Manufacturing PMI"]
+    tolerance: 0.5
+    hot:  {stocks: up,   bonds: down, dollar: up,   gold: flat, oil: up,   vol: down}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: flat, oil: down, vol: up}
+    rationale_hot: "Factory activity expanding faster than expected."
+    rationale_cold: "Factory activity softer than expected."
+  - key: ism_services
+    aliases: ["ISM Services PMI", "ISM Non-Manufacturing PMI"]
+    tolerance: 0.5
+    hot:  {stocks: up,   bonds: down, dollar: up,   gold: flat, oil: flat, vol: down}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: flat, oil: flat, vol: up}
+    rationale_hot: "Services (most of the economy) running hot."
+    rationale_cold: "Services activity cooling."
+  - key: jobless_claims
+    aliases: ["Unemployment Claims", "Initial Jobless Claims"]
+    tolerance: 8000
+    inverse: true
+    hot:  {stocks: flat, bonds: down, dollar: up,   gold: flat, oil: flat, vol: flat}
+    cold: {stocks: down, bonds: up,   dollar: down, gold: up,   oil: flat, vol: up}
+    rationale_hot: "Fewer layoffs than expected: labour market holding."
+    rationale_cold: "Layoffs picking up: early slowdown signal."
+  - key: jolts
+    aliases: ["JOLTS Job Openings", "JOLTs Job Openings"]
+    tolerance: 150000
+    hot:  {stocks: flat, bonds: down, dollar: up,   gold: flat, oil: flat, vol: flat}
+    cold: {stocks: flat, bonds: up,   dollar: down, gold: flat, oil: flat, vol: flat}
+    rationale_hot: "Labour demand firm."
+    rationale_cold: "Labour demand cooling."
+  - key: umich_sentiment
+    aliases: ["Prelim UoM Consumer Sentiment", "Revised UoM Consumer Sentiment", "Michigan Consumer Sentiment"]
+    tolerance: 1.5
+    hot:  {stocks: up,   bonds: flat, dollar: flat, gold: flat, oil: flat, vol: down}
+    cold: {stocks: down, bonds: flat, dollar: flat, gold: flat, oil: flat, vol: up}
+    rationale_hot: "Consumers more upbeat than expected."
+    rationale_cold: "Consumers gloomier than expected."
