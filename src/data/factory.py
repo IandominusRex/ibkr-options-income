@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from src.common.config import get_config
 from src.data.protocols import (
     BulkPriceProvider,
+    EconActualsProvider,
+    EconScheduleProvider,
     FeedProvider,
     FilingsProvider,
     FundamentalsProvider,
@@ -176,3 +178,24 @@ def get_finnhub_client() -> FinnhubClient | None:
     from src.data.finnhub_backend import FinnhubClient
 
     return FinnhubClient(key, per_minute=cfg.news.sources.finnhub_per_minute)
+
+
+@functools.lru_cache(maxsize=1)
+def get_econ_schedule_provider() -> EconScheduleProvider:
+    name = get_config().data.econ_schedule_provider
+    if name == "forexfactory":
+        from src.data.forexfactory_backend import ForexFactoryScheduleProvider
+
+        return ForexFactoryScheduleProvider()
+    raise ValueError(f"Unknown data.econ_schedule_provider backend: {name!r}")
+
+
+@functools.lru_cache(maxsize=1)
+def get_econ_actuals_provider() -> EconActualsProvider:
+    cfg = get_config()
+    name = cfg.data.econ_actuals_provider
+    if name == "nasdaq":
+        from src.data.nasdaq_backend import NasdaqEconActualsProvider
+
+        return NasdaqEconActualsProvider(cfg.news.sources.nasdaq_econ_date_offset_days)
+    raise ValueError(f"Unknown data.econ_actuals_provider backend: {name!r}")

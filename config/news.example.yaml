@@ -37,6 +37,8 @@ sources:
   econ_fast_window_after_min: 10
   earnings_poll_hours: 6
   finnhub_per_minute: 50
+  nasdaq_econ_date_offset_days: 1   # probed 2026-10-09; re-check with python -m scripts.news_probe
+  nasdaq_earnings_date_offset_days: 0
 cluster: {similarity: 0.5, window_hours: 48}
 tagging:
   rumor_terms: [reportedly, "sources say", "people familiar", "in talks", considering, weighs, "according to sources", rumor, rumour]

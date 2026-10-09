@@ -836,6 +836,10 @@ class NewsSourcesCfg(BaseModel):
     econ_fast_window_after_min: int = 10
     earnings_poll_hours: int = 6
     finnhub_per_minute: int = 50
+    # Probed 2026-10-09: Nasdaq's economicevents?date=D returns ET day D-1's US releases.
+    # scripts/news_probe.py re-checks this; set to 0 if the probe says so.
+    nasdaq_econ_date_offset_days: int = 1
+    nasdaq_earnings_date_offset_days: int = 0
 
 
 class NewsClusterCfg(BaseModel):

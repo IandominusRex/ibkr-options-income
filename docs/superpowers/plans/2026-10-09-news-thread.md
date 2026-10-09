@@ -20,7 +20,7 @@
 | 4 Ingest + clustering | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Test fixture headline reworded: the plan's pair ("shares fall after new" / "stock falls on fresh") scores Jaccard 0.44 < the spec's 0.5 default, so it never clustered. Spec default and `text.py` untouched. |
 | 5 Data protocols + RSS | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | Renamed RSS-branch local `link`→`href` (mypy reused-variable type clash with the Atom branch). `NewsItem` summary/image_url already existed. |
 | 6 Finnhub backend | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | `_get(**params: Any)` instead of `object` (mypy vs httpx `QueryParamTypes`). |
-| 7 Econ schedule + actuals + probe script | pending | | | | |
+| 7 Econ schedule + actuals + probe script | done | (see git log) | pytest/ruff/mypy green | 2026-10-09 | none (`news_probe.main()` imports `src.news.playbook`, which lands in Task 10; only `infer_offset` is tested here, as the brief states). |
 | 8 Earnings sources + merge | pending | | | | |
 | 9 Intraday provider + tape | pending | | | | |
 | 10 Playbook | pending | | | | |
