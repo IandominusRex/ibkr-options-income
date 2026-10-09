@@ -439,7 +439,7 @@ news fence"; `tests/test_news_fence.py`, `tests/test_eval_skills.py`, `tests/tes
 
 **Fixed 2026-10-09 (the deferred minor findings from the branch's final reviews):** alerts the
 hourly cap drops are held in `news_state` and roll into the next digest as "Also flagged (alert
-cap)", then cleared, and released if they post after all; `/news/status` reports breaker states;
+cap)", listed once (marked digested, pruned after a week), and released if they post after all; `/news/status` reports breaker states;
 the heartbeat skips iterations that raised; `source_ok` means "last good answer", not "last
 polled"; a digest more than `digests.max_late_minutes` (120) past its time is skipped instead of
 posted stale on restart; `/news TICKER` says the request is queued and why when the service is

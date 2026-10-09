@@ -67,7 +67,8 @@ def _held_key(day: date, kind: str, subject: str) -> str:
 
 def hold_for_digest(day: date, kind: str, subject: str, text: str, *, now: datetime) -> None:
     """A non-critical alert the hourly cap dropped rolls into the next digest (spec §7.2).
-    Keyed per (day, kind, subject), so a candidate re-detected every loop is held once."""
+    Keyed per (day, kind, subject), so a candidate re-detected every loop is held once — and,
+    since a digested entry is kept (marked) rather than deleted, listed in one digest only."""
     key = _held_key(day, kind, subject)
     if get_state(key) is None:
         set_state(key, json.dumps({"at": now.astimezone(UTC).isoformat(), "text": text}), now=now)
@@ -78,8 +79,25 @@ def release_held(day: date, kind: str, subject: str) -> None:
     delete_state([_held_key(day, kind, subject)])
 
 
+def mark_digested(keys: list[str], *, now: datetime) -> None:
+    """A digest listed these: keep the rows (so a re-detection the same day is not held
+    again) but never list them again. Prune deletes them after a week."""
+    with news_session() as s:
+        for key in keys:
+            row = s.get(NewsStateRow, key)
+            if row is None:
+                continue
+            try:
+                d = json.loads(row.value)
+            except ValueError:
+                d = {}
+            row.value = json.dumps({**(d if isinstance(d, dict) else {}), "digested": True})
+            row.updated_at = naive_utc(now)
+
+
 def held_alerts() -> list[tuple[str, datetime, str]]:
-    """Every held alert as (key, held_at, text), oldest first. Unparseable rows are skipped."""
+    """Every held alert no digest has listed yet, as (key, held_at, text), oldest first.
+    Unparseable rows are skipped."""
     with news_session() as s:
         rows = s.scalars(
             select(NewsStateRow).where(NewsStateRow.key.startswith(HELD_PREFIX, autoescape=True))
@@ -89,9 +107,11 @@ def held_alerts() -> list[tuple[str, datetime, str]]:
     for key, value in raw:
         try:
             d = json.loads(value)
+            if d.get("digested"):
+                continue
             at = datetime.fromisoformat(d["at"])
             text = str(d["text"])
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, AttributeError):
             continue
         out.append((key, at if at.tzinfo else at.replace(tzinfo=UTC), text))
     return sorted(out, key=lambda t: t[1])

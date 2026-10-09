@@ -36,7 +36,7 @@ from src.news.store import queries
 from src.news.store.models import EarningsEventRow, EconEventRow, NewsPostRow, NewsRequestRow
 from src.news.store.prune import prune
 from src.news.store.session import init_news_db, news_session
-from src.news.store.state import delete_state, get_state, set_state, touch_heartbeat
+from src.news.store.state import get_state, mark_digested, set_state, touch_heartbeat
 from src.news.tape import Quote, tape
 
 log = logging.getLogger(__name__)
@@ -366,8 +366,8 @@ class NewsService:
             await asyncio.to_thread(
                 set_state, f"digest_sent:{name}", now.astimezone(ET).date().isoformat()
             )
-            if inp.held_back:  # posted in this digest: never again in the next one
-                await asyncio.to_thread(delete_state, [k for k, _ in inp.held_back])
+            if inp.held_back:  # listed in this digest: never again in the next one
+                await asyncio.to_thread(mark_digested, [k for k, _ in inp.held_back], now=now)
 
     def run_once_ingest(self, now: datetime) -> None:
         self.collector.refresh_econ_schedule(now)

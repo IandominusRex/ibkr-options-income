@@ -132,14 +132,14 @@ async def update_post(
         edited = await publisher.edit(
             mid, msg.text, preview_url=msg.preview_url, show_above=msg.show_above
         )
-        if (
-            edited is False
-        ):  # the message is gone (deleted in Telegram): post a fresh card (spec §11)
+        if edited is False:
+            # Telegram refused the edit (the message was deleted): post a fresh card (spec §11).
             new_mid = await publisher.send(
                 msg.text, silent=True, preview_url=msg.preview_url, show_above=msg.show_above
             )
             ok = new_mid is not None
-        elif edited is None:  # a transient failure: the card is still there, never duplicate it
+        elif edited is None:
+            # The edit never got through (network/5xx): the card is still there, never duplicate it.
             ok = False
     await asyncio.to_thread(
         _write_update,

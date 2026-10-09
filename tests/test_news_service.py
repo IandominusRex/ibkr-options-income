@@ -451,6 +451,9 @@ async def test_digest_carries_held_back_alerts_once(news_db, monkeypatch) -> Non
         for sec in payload["sections"]
     )
     assert held_alerts() == []  # consumed: the next digest does not repeat it
+    # Re-detected later the same day while still capped: not held again, so not re-listed.
+    hold_for_digest(now.date(), "ticker_move", "MSFT", "MSFT · +5.0% · 3.5σ", now=now)
+    assert held_alerts() == []
 
 
 async def test_ticker_sweep_skips_overnight_and_caches_prior_closes(news_db, monkeypatch) -> None:
