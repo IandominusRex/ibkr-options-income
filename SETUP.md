@@ -1276,9 +1276,17 @@ this produced.
 
 **Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
 unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
-`disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), and `model` (pins the
-enrichment model, default `claude-sonnet-4-6`). Set `max_turns: 0` / `disallowed_tools: ""` /
-`model: ""` to omit the corresponding flag. These bound the subprocess itself; the fence already
+`disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), `model` (pins the
+enrichment model; the example ships `claude-sonnet-5-5`), and `effort` (the CLI's `--effort`; the
+example ships `medium` — measured 2026-10-09 on a real 3-candidate review: 16 s, ~1.5K output
+tokens, 3/3 reviews parsed, versus 60-130 s and ~5K output, mostly thinking, for `claude-sonnet-4-6`
+at the CLI default). Set `max_turns: 0` / `disallowed_tools: ""` / `model: ""` / `effort: ""` to
+omit the corresponding flag.
+
+**Running under launchd:** the supervisor's `PATH` (`~/Library/LaunchAgents/com.ibkr.supervisor.plist`)
+does not include `~/.local/bin`, where the Claude Code installer puts `claude`, so a bare
+`cli_command: "claude"` fails in every daemon with `claude: CLI not found`. Set `cli_command` to the
+absolute path (`which claude`), or add that directory to the plist's `PATH`. These bound the subprocess itself; the fence already
 keeps Claude's output out of the execution path.
 
 ---
@@ -1788,6 +1796,10 @@ the heartbeat is older than `watchdog.news_max_age_minutes` (30).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Scans complete but propose no CSP/CC; logs show `data-feed outage suspected for X: none of N call quotes had a live bid/ask` for liquid names (NVDA, META) during market hours, and most rejections are `illiquid_no_quote` | The per-batch quote wait is shorter than the time IBKR takes to fill a 40-line batch (fixed 2026-10-09: it was a hard 2 s; real-time quotes land at ~2.5-3 s) | Raise `market_data.chain_quote_ceiling_seconds` (default 4) in `config/settings.yaml`. Each extra second costs about one second per 40 quotes, so watch for `chain-fetch budget ... exhausted` |
+| `claude: CLI not found` in the logs (trade reviews and news explanations fall back or go missing) though `claude` works in your terminal | The launchd supervisor's `PATH` has no `~/.local/bin` | Set `claude.cli_command` to the absolute path from `which claude` |
+| Spreads candidates always rejected with `account_unknown` | The account's base currency is not USD and the service could not find a USD exchange rate in the account stream | Fixed 2026-10-09 (it now also reads `$LEDGER-ExchangeRate`). If it recurs, check `ib.accountValues()` for the tag your account sends |
+| News: a scheduled US release (CPI, UoM…) posts long after the print | Fixed 2026-10-09: the econ-actuals loop could sleep its full `econ_poll_minutes` past a release's fast window | If it recurs, check `./ibkr logs news` around the release for the `econ_actuals` loop and `GET /news/status` |
 | No posts in the News topic | The news service is not running, `TELEGRAM_THREAD_NEWS` is wrong, or every source is failing | `./ibkr logs news`; `GET /news/status` (heartbeat age, last successful poll per source); `python -m scripts.news_probe`. With `TELEGRAM_BOT_TOKEN`/`CHAT_ID` unset the service still stores posts (the web `/news` page shows them) but sends nothing |
 | News cards end with *"🧠 off (daily cap)"* | `news.llm.max_calls_per_day` (40) is used up for the ET day | Raise it in `config/news.yaml`, or accept deterministic cards until midnight ET. *"🧠 unavailable"* instead means both LLM backends failed or returned invalid JSON twice |
 | A macro card keeps *"📈 reaction pending (data delayed)"* | yfinance futures/intraday bars lag ~10 minutes; after `reaction.max_wait_min` (35) the card is finished with whatever bars exist | Raise `reaction.max_wait_min` if it happens on most releases |

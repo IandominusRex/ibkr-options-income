@@ -8,7 +8,7 @@ import math
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.common.books import is_spreads_underlying
 from src.common.config import NewsCfg
@@ -293,6 +293,23 @@ class Collector:
         if any(rows_by_day.values()):
             record_source_ok("econ_actuals", now)
         return released
+
+    def seconds_to_next_fast_window(self, now: datetime) -> float | None:
+        """Seconds until the next pending release's fast window opens (0 if it already has),
+        or None when nothing is pending ahead. The slow econ-actuals poll caps its sleep at this
+        so it can never sleep straight past a release (2026-10-09: a 60-min sleep from 13:22 UTC
+        skipped the 14:00 UoM print's whole fast window)."""
+        before = timedelta(minutes=self.cfg.sources.econ_fast_window_before_min)
+        with news_session() as s:
+            nxt = s.scalar(
+                select(func.min(EconEventRow.scheduled_at)).where(
+                    EconEventRow.actual.is_(None),
+                    EconEventRow.scheduled_at > naive_utc(now),
+                )
+            )
+        if nxt is None:
+            return None
+        return max(0.0, (nxt.replace(tzinfo=UTC) - before - now).total_seconds())
 
     def in_fast_econ_window(self, now: datetime) -> bool:
         before = timedelta(minutes=self.cfg.sources.econ_fast_window_before_min)

@@ -380,6 +380,26 @@ def _quote_ready(ticker: Any, right: str | None = None) -> bool:
     return _safe(oi) is not None
 
 
+async def _await_batch_quotes(
+    contracts: list[Option], tickers: list[Any], ceiling: float, oi_grace: float
+) -> None:
+    """Await a chain batch: return once every line has bid/ask *and* OI; or once every line has
+    a bid/ask and ``oi_grace`` more seconds have passed (some OI ticks never arrive); or at
+    ``ceiling``. Poll-count bounded like ``_await_ready``, so a patched sleep can't spin."""
+    pairs = list(zip(contracts, tickers, strict=True))
+    polls = max(1, int(ceiling / _POLL_INTERVAL_SECONDS))
+    grace_polls = int(oi_grace / _POLL_INTERVAL_SECONDS)
+    quoted_at: int | None = None
+    for i in range(polls):
+        if all(_quote_ready(t, right=c.right) for c, t in pairs):
+            return
+        if quoted_at is None and all(_quote_ready(t) for _c, t in pairs):
+            quoted_at = i
+        if quoted_at is not None and i - quoted_at >= grace_polls:
+            return
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+
+
 def _spot_ready(ticker: Any) -> bool:
     """True once a stock ticker exposes a usable price (live mark or prior close)."""
     mark = _safe(ticker.marketPrice()) if hasattr(ticker, "marketPrice") else None
@@ -877,10 +897,11 @@ def _batch_quotes(
 
     Synchronous variant (used by the standalone backfill/healthcheck paths and tests).
     Always cancels every market-data line before opening the next batch.
-    Waits at least 2 s per batch (regardless of throttle) so modelGreeks populate.
+    Waits ``market_data.chain_quote_ceiling_seconds`` per batch (regardless of throttle) so
+    quotes and modelGreeks populate.
     """
     quotes: list[OptionQuote] = []
-    wait = max(throttle, 2.0)
+    wait = max(throttle, get_config().market_data.chain_quote_ceiling_seconds)
 
     for i in range(0, len(contracts), batch_size):
         batch = contracts[i : i + batch_size]
@@ -922,8 +943,10 @@ async def _batch_quotes_async(
 
     Uses an event-driven wait instead of ``ib.sleep``/a fixed floor: ``reqMktData`` is
     non-blocking and ticks populate via the loop, so we await until every ticker in the batch
-    carries a usable bid/ask *and* its open-interest tick, bounded by the old 2s as a
-    *ceiling* (S7). A well-behaved batch still returns early once both arrive. Greeks are not
+    carries a usable bid/ask *and* its open-interest tick, bounded by
+    ``market_data.chain_quote_ceiling_seconds`` (S7; a hard-coded 2s until 2026-10-09, which cut
+    off most real-time quotes). A well-behaved batch still returns early once both arrive, and
+    once every line has a bid/ask it waits only ``chain_oi_grace_seconds`` more for OI stragglers. Greeks are not
     waited on — they're absent on delayed/paper data and the yfinance Black-Scholes fallback
     fills them; blocking on them would forfeit the speedup on exactly the target account.
     Same batching + cancel discipline as the sync version.
@@ -937,7 +960,9 @@ async def _batch_quotes_async(
     returning at ~0.2-0.5s.
     """
     quotes: list[OptionQuote] = []
-    ceiling = max(throttle, 2.0)
+    md = get_config().market_data
+    ceiling = max(throttle, md.chain_quote_ceiling_seconds)
+    oi_grace = md.chain_oi_grace_seconds
 
     for i in range(0, len(contracts), batch_size):
         batch = contracts[i : i + batch_size]
@@ -948,12 +973,7 @@ async def _batch_quotes_async(
             for c in batch
         ]
         try:
-            # Bind the current batch's contracts/tickers (not the loop variables) for the
-            # readiness check — each contract's `right` picks which OI field to wait on.
-            def _batch_ready(cs: list[Option] = batch, ts: list[Any] = tickers) -> bool:
-                return all(_quote_ready(t, right=c.right) for c, t in zip(cs, ts, strict=True))
-
-            await _await_ready(_batch_ready, ceiling)
+            await _await_batch_quotes(batch, tickers, ceiling, oi_grace)
             for c, ticker in zip(batch, tickers, strict=True):
                 quotes.append(_ticker_to_quote(c, ticker))
         finally:

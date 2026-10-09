@@ -719,6 +719,21 @@ def test_build_cmd_omits_disabled_flags():
     assert _build_cmd(cfg) == ["claude", "--output-format", "json"]
 
 
+def test_build_cmd_passes_effort_when_configured():
+    """`claude.effort` (2026-10-09) bounds thinking on the review call — measured on Sonnet 4.6,
+    thinking was ~60% of a review's output tokens. Empty = CLI default (no flag)."""
+    from types import SimpleNamespace
+
+    from src.claude.runner import _build_cmd
+
+    base = dict(
+        cli_command="claude", output_format="json", max_turns=0, model="", disallowed_tools=""
+    )
+    cmd = _build_cmd(SimpleNamespace(**base, effort="medium"))
+    assert cmd[cmd.index("--effort") + 1] == "medium"
+    assert "--effort" not in _build_cmd(SimpleNamespace(**base, effort=""))
+
+
 def test_review_candidates_passes_hardened_cmd():
     """The live review path must invoke the CLI with the hardening flags, not bare."""
     account = _make_account()
