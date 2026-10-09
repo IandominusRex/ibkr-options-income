@@ -13,6 +13,7 @@ from typing import Any, Final, cast
 from ib_async import IB, Option, Stock
 
 import src.ibkr.contract_cache as contract_cache
+from src.common.config import get_config
 from src.common.logging import get_logger
 from src.ibkr.contract_cache import ContractCache, Key, confirmed_missing, contract_key
 
@@ -121,10 +122,13 @@ async def qualify_options_async(
     missing: list[Option] = []
     for i in range(0, len(to_ask), chunk_size):
         chunk = to_ask[i : i + chunk_size]
+        lock_path = store.lock_path if store is not None else None
+        wait = get_config().market_data.qualify_lock_wait_seconds
         try:
-            result = await asyncio.wait_for(
-                ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
-            )
+            async with contract_cache.contract_details_slot(lock_path, wait):
+                result = await asyncio.wait_for(
+                    ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
+                )
         except TimeoutError:
             log.warning(
                 "qualify_options_async: chunk %d-%d timed out after %.0fs — skipping chunk",

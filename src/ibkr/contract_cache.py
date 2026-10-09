@@ -12,7 +12,10 @@ fence. It owns ``data/contracts.db``; nothing else writes it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+import asyncio
+import contextlib
+import fcntl
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -263,3 +266,36 @@ def get_contract_cache() -> ContractCache | None:
         except Exception:
             log.warning("contract cache prune failed", exc_info=True)
     return _CACHE
+
+
+@contextlib.asynccontextmanager
+async def contract_details_slot(lock_path: Path | None, wait_seconds: float) -> AsyncIterator[bool]:
+    """Hold the cross-process contract-lookup lock for one chunk. Yields True when held, False
+    when there is no lock (cache disabled) or the wait ran out — the caller proceeds either way.
+    flock locks belong to the open file, so two opens in one process exclude each other too."""
+    if lock_path is None:
+        yield False
+        return
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a+")  # noqa: SIM115 — closed in finally
+    held = False
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_seconds
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except BlockingIOError:
+                if loop.time() >= deadline:
+                    log.warning(
+                        "contract lookup lock busy for %.0fs — qualifying without it", wait_seconds
+                    )
+                    break
+                await asyncio.sleep(0.05)
+        yield held
+    finally:
+        if held:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        fh.close()

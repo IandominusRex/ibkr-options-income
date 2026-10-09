@@ -16,7 +16,7 @@
 |---|---|---|---|---|---|
 | 1. Cache store | done | (this commit) | pytest 3255 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `prune()` reads `rowcount` via `getattr` (repo idiom, mypy sees ORM `Result`); docs rows deferred to Task 2, which owns them; plan file itself first committed here |
 | 2. Cache in `qualify_options_async` | done | (this commit) | pytest 3263 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | `src/ibkr/market_data.py` added to the commit (the step's `git add` list omitted it); ARCHITECTURE `settings.yaml` config row also gained the two Task 1 keys (doc-update rule for new config keys) |
-| 3. Cross-process lookup lock | not started | | | | |
+| 3. Cross-process lookup lock | done | (this commit) | pytest 3267 passed/1 skipped · ruff ✓ · mypy ✓ | 2026-10-10 | — |
 | 4. Full sweep once per ET day; persisted retry queue | not started | | | | |
 | 5. Live verification + docs close-out | not started | | | | |
 
@@ -918,7 +918,7 @@ Update Progress log row 2, commit with the task.
 - Consumes: `ContractCache.lock_path` (Task 1), `qualify_options_async` (Task 2)
 - Produces: `contract_details_slot(lock_path: Path | None, wait_seconds: float) -> AsyncContextManager[bool]`, which yields whether the lock was acquired (False = waited out, proceeding unlocked)
 
-- [ ] **Step 1: Config key**
+- [x] **Step 1: Config key**
 
 `MarketDataCfg`, after `contract_cache_db_url`:
 
@@ -932,7 +932,7 @@ Update Progress log row 2, commit with the task.
 
 Same key, with a one-line comment, in both settings YAMLs.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `tests/test_contract_lock.py`:
 
@@ -1017,12 +1017,12 @@ async def test_chunk_timeout_starts_after_the_lock_is_acquired(tmp_path) -> None
     assert len(result) == 1
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_contract_lock.py -q`
 Expected: FAIL — `ImportError: cannot import name 'contract_details_slot'`
 
-- [ ] **Step 4: Implement the slot** (append to `src/ibkr/contract_cache.py`; add `import asyncio, contextlib, fcntl` and `from collections.abc import AsyncIterator`)
+- [x] **Step 4: Implement the slot** (append to `src/ibkr/contract_cache.py`; add `import asyncio, contextlib, fcntl` and `from collections.abc import AsyncIterator`)
 
 ```python
 @contextlib.asynccontextmanager
@@ -1058,7 +1058,7 @@ async def contract_details_slot(lock_path: Path | None, wait_seconds: float) -> 
         fh.close()
 ```
 
-- [ ] **Step 5: Hold it per chunk in `qualify_options_async`**
+- [x] **Step 5: Hold it per chunk in `qualify_options_async`**
 
 In the chunk loop of `src/ibkr/contracts.py`, wrap only the IBKR call:
 
@@ -1076,12 +1076,12 @@ In the chunk loop of `src/ibkr/contracts.py`, wrap only the IBKR call:
 
 (add `from src.common.config import get_config` to the imports). The `wait_for` sits inside the `async with`, so the timeout clock starts after acquisition. The throttle sleep stays outside the lock, which lets the other process take a turn between chunks.
 
-- [ ] **Step 6: Run the lock tests and the full qualification suite**
+- [x] **Step 6: Run the lock tests and the full qualification suite**
 
 Run: `python -m pytest tests/test_contract_lock.py tests/test_qualify_cache.py tests/test_market_data.py tests/test_spreads_chain.py -q`
 Expected: all PASS.
 
-- [ ] **Step 7: Docs, gate, commit**
+- [x] **Step 7: Docs, gate, commit**
 
 `How the scan works.md`, in the chain-fetch budget section, add:
 

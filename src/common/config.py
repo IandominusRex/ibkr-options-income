@@ -188,6 +188,11 @@ class MarketDataCfg(BaseModel):
     # never cached; only identity, which can't change before expiry.
     contract_cache_enabled: bool = True
     contract_cache_db_url: str = "sqlite:///data/contracts.db"
+    # Every process qualifies contracts one chunk at a time through one shared file lock, so the
+    # spreads GEX build and the wheel scan interleave chunks instead of timing each other out.
+    # A chunk's qualify_timeout_seconds starts AFTER the lock is acquired. Waiting longer than
+    # this proceeds unlocked (logged) — the lock can slow a scan, never stop it.
+    qualify_lock_wait_seconds: float = 30.0
 
     # Hard ceiling on a single symbol's option-chain fetch during /scan. Without this, a
     # qualifyContractsAsync/reqMktData call that never gets a response (IBKR pacing
