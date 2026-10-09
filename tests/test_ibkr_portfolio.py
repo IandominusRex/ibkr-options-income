@@ -79,3 +79,92 @@ async def test_enrich_positions_with_greeks_qualifies_before_subscribing(monkeyp
 
     assert len(ib.qualify_calls) == 1
     assert result[0].symbol == position.symbol
+
+
+# --------------------------------------------------------------------------------------------
+# Account snapshot currency (2026-10-09): the paper account is SGD-base, and accountSummary
+# reports NetLiquidation/AvailableFunds/ExcessLiquidity in SGD. The wheel read them as USD, so
+# every %-of-net-liq limit was measured against S$1.02M as if it were US$1.02M (~28% loose).
+# --------------------------------------------------------------------------------------------
+
+
+class _AcctIB:
+    def __init__(self, summary: list[tuple[str, str, str]], stream: list[tuple[str, str, str]]):
+        from ib_async import AccountValue
+
+        self._summary = [AccountValue("DU1", t, v, c, "") for t, v, c in summary]
+        self._stream = [AccountValue("DU1", t, v, c, "") for t, v, c in stream]
+
+    async def accountSummaryAsync(self, account: str = "") -> list[Any]:
+        return self._summary
+
+    def accountSummary(self, account: str = "") -> list[Any]:
+        return self._summary
+
+    def accountValues(self, account: str = "") -> list[Any]:
+        return self._stream
+
+
+_SGD_SUMMARY = [
+    ("NetLiquidation", "1020570.54", "SGD"),
+    ("TotalCashValue", "336300.55", "SGD"),
+    ("AvailableFunds", "742655.86", "SGD"),
+    ("MaintMarginReq", "232286.15", "SGD"),
+    ("ExcessLiquidity", "788284.39", "SGD"),
+]
+_LIVE_RATE = [("$LEDGER-ExchangeRate", "1.00", "BASE"), ("$LEDGER-ExchangeRate", "1.281252", "USD")]
+
+
+async def test_account_snapshot_converts_a_non_usd_base_account_to_usd() -> None:
+    import pytest
+
+    from src.ibkr.portfolio import get_account_snapshot_async
+
+    snap = await get_account_snapshot_async(_AcctIB(_SGD_SUMMARY, _LIVE_RATE), "DU1")
+    assert snap.net_liquidation == pytest.approx(1020570.54 / 1.281252)
+    assert snap.total_cash == pytest.approx(336300.55 / 1.281252)
+    assert snap.buying_power == pytest.approx(742655.86 / 1.281252)
+    assert snap.maintenance_margin == pytest.approx(232286.15 / 1.281252)
+    assert snap.excess_liquidity == pytest.approx(788284.39 / 1.281252)
+
+
+def test_sync_account_snapshot_converts_too() -> None:
+    import pytest
+
+    from src.ibkr.portfolio import get_account_snapshot
+
+    snap = get_account_snapshot(_AcctIB(_SGD_SUMMARY, [("ExchangeRate", "1.281252", "USD")]), "DU1")
+    assert snap.net_liquidation == pytest.approx(1020570.54 / 1.281252)
+
+
+async def test_usd_base_account_is_left_unchanged() -> None:
+    from src.ibkr.portfolio import get_account_snapshot_async
+
+    usd = [(t, v, "USD") for t, v, _ in _SGD_SUMMARY]
+    snap = await get_account_snapshot_async(_AcctIB(usd, []), "DU1")
+    assert snap.net_liquidation == 1020570.54
+
+
+async def test_missing_rate_reuses_the_last_known_rate(monkeypatch) -> None:
+    """A brief gap in the account stream must not hand the risk engine base-currency figures
+    as USD — the last rate this process saw stands in until the stream refills."""
+    import pytest
+
+    import src.ibkr.portfolio as P
+
+    monkeypatch.setattr(P, "_LAST_USD_RATE", {})
+    await P.get_account_snapshot_async(_AcctIB(_SGD_SUMMARY, _LIVE_RATE), "DU1")
+    snap = await P.get_account_snapshot_async(_AcctIB(_SGD_SUMMARY, []), "DU1")
+    assert snap.net_liquidation == pytest.approx(1020570.54 / 1.281252)
+
+
+async def test_no_rate_ever_seen_raises_rather_than_mislabelling(monkeypatch) -> None:
+    """With no rate at all, a base-currency figure must never be passed off as USD: raise, and
+    every caller's existing account-snapshot failure handling takes over."""
+    import pytest
+
+    import src.ibkr.portfolio as P
+
+    monkeypatch.setattr(P, "_LAST_USD_RATE", {})
+    with pytest.raises(P.AccountCurrencyError):
+        await P.get_account_snapshot_async(_AcctIB(_SGD_SUMMARY, []), "DU1")

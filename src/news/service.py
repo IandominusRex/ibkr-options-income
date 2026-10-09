@@ -205,7 +205,9 @@ class NewsService:
         s = self.ncfg.sources
         if self.collector.in_fast_econ_window(now):
             return float(s.econ_fast_poll_seconds)
-        return float(s.econ_poll_minutes * 60)
+        slow = float(s.econ_poll_minutes * 60)
+        until_window = self.collector.seconds_to_next_fast_window(now)
+        return slow if until_window is None else min(slow, until_window)
 
     async def _econ_actuals(self, now: datetime) -> None:
         keys = await asyncio.to_thread(self.collector.refresh_econ_actuals, now)

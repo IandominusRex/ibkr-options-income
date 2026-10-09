@@ -1276,9 +1276,17 @@ this produced.
 
 **Headless-subprocess hardening.** The `claude` block in `config/settings.yaml` constrains the
 unattended CLI (it runs ~26+×/day): `max_turns` (default `1` — a single agentic turn),
-`disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), and `model` (pins the
-enrichment model, default `claude-sonnet-4-6`). Set `max_turns: 0` / `disallowed_tools: ""` /
-`model: ""` to omit the corresponding flag. These bound the subprocess itself; the fence already
+`disallowed_tools` (the `--disallowedTools` denylist; defaults to all tools), `model` (pins the
+enrichment model; the example ships `claude-sonnet-5-5`), and `effort` (the CLI's `--effort`; the
+example ships `medium` — measured 2026-10-09 on a real 3-candidate review: 16 s, ~1.5K output
+tokens, 3/3 reviews parsed, versus 60-130 s and ~5K output, mostly thinking, for `claude-sonnet-4-6`
+at the CLI default). Set `max_turns: 0` / `disallowed_tools: ""` / `model: ""` / `effort: ""` to
+omit the corresponding flag.
+
+**Running under launchd:** the supervisor's `PATH` (`~/Library/LaunchAgents/com.ibkr.supervisor.plist`)
+does not include `~/.local/bin`, where the Claude Code installer puts `claude`, so a bare
+`cli_command: "claude"` fails in every daemon with `claude: CLI not found`. Set `cli_command` to the
+absolute path (`which claude`), or add that directory to the plist's `PATH`. These bound the subprocess itself; the fence already
 keeps Claude's output out of the execution path.
 
 ---
@@ -1329,13 +1337,18 @@ deterministic gates.
 
 ## 14. Local-LLM (Ollama) backend for Claude review
 
-Since June 15, 2026, `claude -p` (the headless CLI this system shells out to ~26+×/day) draws from
-a separate monthly **Agent SDK credit** pool billed at API rates, with no rollover. If you'd rather
-not depend on that credit — or don't have `claude -p` access at all — you can run the
-strategist/roll/EOD reviews against a local model via [Ollama](https://ollama.com) instead.
+`claude -p` (the headless CLI this system shells out to for every review) draws from your Claude
+**subscription limits** on every plan, Pro included. The Agent SDK credit split announced for
+June 15, 2026 was paused that day, and since October 7, 2026 Max and Team plans also get monthly
+API credits that cover `claude -p`
+([Use the Claude Agent SDK with your Claude plan](https://support.claude.com/en/articles/17154008)).
+The reviews therefore share a budget with your own interactive Claude use. If you'd rather keep
+that budget for yourself, or don't have `claude -p` at all, you can run the strategist/roll/EOD
+reviews against a local model via [Ollama](https://ollama.com) instead.
 
-**This is the active configuration for this deployment** (`backend: "ollama"`, no `claude -p`
-access): every review (`review_candidates`, `review_roll`, `write_journal_narrative`) runs
+**This was the active configuration until 2026-10-09** (`backend: "ollama"`; the deployment now
+runs `backend: "cli"`, see "Headless-subprocess hardening" in §13): every review
+(`review_candidates`, `review_roll`, `write_journal_narrative`) runs
 against a local `qwen3.5:4b` model (Task 10, 2026-09-29 — see "Model choice" below). The verdict
 learning loop (§13 — ledger, reconciliation, score-vs-outcome analysis) is unaffected since it
 doesn't call Claude at all.
@@ -1361,12 +1374,13 @@ claude:
   ollama_temperature: 0.2     # low = disciplined JSON
 ```
 
-- **`"cli"`** — `claude -p` only. Requires CLI access; not usable in this deployment.
-- **`"ollama"`** (**active here**) — every review (`review_candidates`, `review_roll`,
-  `write_journal_narrative`) runs against the local model only. No `claude -p` calls, no Agent
-  SDK credit usage.
+- **`"cli"`** (**active here since 2026-10-09**) — `claude -p` only. On CLI failure the
+  deterministic Rules-Engine list ships unreviewed.
+- **`"ollama"`** — every review (`review_candidates`, `review_roll`,
+  `write_journal_narrative`) runs against the local model only. No `claude -p` calls, nothing
+  drawn from your subscription limits.
 - **`"cli_then_ollama"`** — tries `claude -p` first; if it's unavailable, times out, or returns
-  unparseable output (including a hit Agent SDK credit limit), falls back to the local model
+  unparseable output (including a hit subscription usage limit), falls back to the local model
   automatically. Switch to this (or `"cli"`) if `claude -p` access becomes available and you want
   Claude to be the primary reviewer again.
 
@@ -1788,6 +1802,10 @@ the heartbeat is older than `watchdog.news_max_age_minutes` (30).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| Scans complete but propose no CSP/CC; logs show `data-feed outage suspected for X: none of N call quotes had a live bid/ask` for liquid names (NVDA, META) during market hours, and most rejections are `illiquid_no_quote` | The per-batch quote wait is shorter than the time IBKR takes to fill a 40-line batch (fixed 2026-10-09: it was a hard 2 s; real-time quotes land at ~2.5-3 s) | Raise `market_data.chain_quote_ceiling_seconds` (default 4) in `config/settings.yaml`. Each extra second costs about one second per 40 quotes, so watch for `chain-fetch budget ... exhausted` |
+| `claude: CLI not found` in the logs (trade reviews and news explanations fall back or go missing) though `claude` works in your terminal | The launchd supervisor's `PATH` has no `~/.local/bin` | Set `claude.cli_command` to the absolute path from `which claude` |
+| Spreads candidates always rejected with `account_unknown` | The account's base currency is not USD and the service could not find a USD exchange rate in the account stream | Fixed 2026-10-09 (it now also reads `$LEDGER-ExchangeRate`). If it recurs, check `ib.accountValues()` for the tag your account sends |
+| News: a scheduled US release (CPI, UoM…) posts long after the print | Fixed 2026-10-09: the econ-actuals loop could sleep its full `econ_poll_minutes` past a release's fast window | If it recurs, check `./ibkr logs news` around the release for the `econ_actuals` loop and `GET /news/status` |
 | No posts in the News topic | The news service is not running, `TELEGRAM_THREAD_NEWS` is wrong, or every source is failing | `./ibkr logs news`; `GET /news/status` (heartbeat age, last successful poll per source); `python -m scripts.news_probe`. With `TELEGRAM_BOT_TOKEN`/`CHAT_ID` unset the service still stores posts (the web `/news` page shows them) but sends nothing |
 | News cards end with *"🧠 off (daily cap)"* | `news.llm.max_calls_per_day` (40) is used up for the ET day | Raise it in `config/news.yaml`, or accept deterministic cards until midnight ET. *"🧠 unavailable"* instead means both LLM backends failed or returned invalid JSON twice |
 | A macro card keeps *"📈 reaction pending (data delayed)"* | yfinance futures/intraday bars lag ~10 minutes; after `reaction.max_wait_min` (35) the card is finished with whatever bars exist | Raise `reaction.max_wait_min` if it happens on most releases |

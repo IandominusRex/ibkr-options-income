@@ -28,6 +28,8 @@ from src.spreads.pricing import ET
 
 log = logging.getLogger(__name__)
 
+_FX_TAGS = frozenset({"ExchangeRate", "$LEDGER-ExchangeRate"})
+
 _SENTINEL = 1e300  # IB reports "no value" as sys.float_info.max
 
 
@@ -123,6 +125,26 @@ def _all_bid(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
     return ready
 
 
+def _all_greeks(pairs: list[tuple[Any, Any]]) -> Callable[[], bool]:
+    """Every leg with a live ask also carries IBKR's model greeks. They land after bid/ask (SPY
+    0DTE, 2026-10-09: bid/ask/OI by ~2s, greeks at ~3-4s); reading before them left the gate
+    with ``no_delta`` and the GEX map with no IV to price gamma from."""
+
+    def ready() -> bool:
+        for _, t in pairs:
+            ask = _num(getattr(t, "ask", None))
+            g = getattr(t, "modelGreeks", None)
+            if (
+                ask is not None
+                and ask > 0
+                and (g is None or _num(getattr(g, "delta", None)) is None)
+            ):
+                return False
+        return True
+
+    return ready
+
+
 def _contract_key(c: Any) -> Any:
     con_id = int(getattr(c, "conId", 0) or 0)
     return con_id or id(c)
@@ -137,6 +159,7 @@ class IbkrSpreadsBroker:
         *,
         quote_wait_seconds: float = 3.0,
         bid_grace_seconds: float = 0.75,
+        greeks_grace_seconds: float = 3.0,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.ib = ib
@@ -145,6 +168,7 @@ class IbkrSpreadsBroker:
         self.max_lines = max(1, cfg.max_market_data_lines)
         self.quote_wait = quote_wait_seconds
         self.bid_grace = bid_grace_seconds
+        self.greeks_grace = greeks_grace_seconds
         self.now = now
         self._indexes: dict[str, Any] = {}
 
@@ -246,6 +270,7 @@ class IbkrSpreadsBroker:
             try:
                 await _wait(_all_asked(pairs), self.quote_wait)
                 await _wait(_all_bid(pairs), self.bid_grace)
+                await _wait(_all_greeks(pairs), self.greeks_grace)
                 for c, t in pairs:
                     quoted[_contract_key(c)] = to_chain_option(c, t)
             finally:
@@ -317,7 +342,8 @@ class IbkrSpreadsBroker:
     async def excess_liquidity(self) -> float | None:
         """In USD, from the account-update stream ib_async keeps (no reqAccountSummary: Error
         322). A non-USD base account reports it in its base currency; that is converted with
-        the stream's own ``ExchangeRate`` for USD (base units per USD). None if it can't be."""
+        the stream's own ``ExchangeRate`` (or ``$LEDGER-ExchangeRate``) for USD (base units per
+        USD). None if it can't be."""
         excess: dict[str, float] = {}
         usd_rate: float | None = None
         for v in self.ib.accountValues(self.account):
@@ -328,7 +354,9 @@ class IbkrSpreadsBroker:
                 continue
             if v.tag == "ExcessLiquidity":
                 excess[v.currency] = num
-            elif v.tag == "ExchangeRate" and v.currency == "USD" and num > 0:
+            # A plain account-update stream sends ``ExchangeRate``; this account's (SGD base,
+            # 2026-10-09) sends it only as ``$LEDGER-ExchangeRate``.
+            elif v.tag in _FX_TAGS and v.currency == "USD" and num > 0:
                 usd_rate = num
         if "USD" in excess:
             return excess["USD"]

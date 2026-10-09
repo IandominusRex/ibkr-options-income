@@ -512,3 +512,43 @@ def test_quote_reads_each_prior_close_once_per_day(monkeypatch) -> None:
     assert ohlcv["n"] == 1 and q1.change_pct == q2.change_pct == pytest.approx(10.0)
     tape_mod.quote("NVDA", today=day)  # no cache: always fetched
     assert ohlcv["n"] == 2
+
+
+def test_econ_poll_never_sleeps_past_the_next_release_window(news_db) -> None:
+    """Regression (2026-10-09): outside a fast window the econ-actuals loop slept a flat
+    `econ_poll_minutes` (60). Started at 13:22 UTC, it slept to 14:22 and skipped the whole
+    13:58-14:10 fast window for the 14:00 UoM print. The slow wait must end where the next
+    pending release's fast window opens."""
+    from src.common.config import get_config
+    from src.news import service as S
+    from src.news.store.models import EconEventRow
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        s.add(
+            EconEventRow(
+                event_key="2026-10-09T14:00|Prelim UoM Consumer Sentiment",
+                title="Prelim UoM Consumer Sentiment",
+                playbook_key="umich_sentiment",
+                scheduled_at=datetime(2026, 10, 9, 14, 0),
+                impact="Medium",
+                forecast="47.5",
+                alerted=False,
+            )
+        )
+    src_cfg = get_config().news.sources
+    svc = S.NewsService(get_config())
+    before = timedelta(minutes=src_cfg.econ_fast_window_before_min)
+
+    wait = svc._econ_interval(datetime(2026, 10, 9, 13, 22, tzinfo=UTC))
+    window_opens = datetime(2026, 10, 9, 14, 0, tzinfo=UTC) - before
+    assert wait == (window_opens - datetime(2026, 10, 9, 13, 22, tzinfo=UTC)).total_seconds()
+
+    # Inside the window: the fast cadence.
+    assert svc._econ_interval(datetime(2026, 10, 9, 13, 59, tzinfo=UTC)) == float(
+        src_cfg.econ_fast_poll_seconds
+    )
+    # Nothing pending ahead: the normal slow cadence.
+    assert svc._econ_interval(datetime(2026, 10, 9, 15, 0, tzinfo=UTC)) == float(
+        src_cfg.econ_poll_minutes * 60
+    )

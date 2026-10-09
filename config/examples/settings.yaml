@@ -59,6 +59,12 @@ market_data:
   chain_batch_size: 40
   request_throttle_seconds: 0.25   # pacing guard between requests
   quote_sleep_seconds: 2.0         # wait after reqMktData(snapshot=True) for tick to arrive
+  # Per-batch ceiling on the option-chain quote wait (event-driven — returns early once every
+  # line has bid/ask + OI). Hard-coded 2s until 2026-10-09: on real-time data a 30-40-line batch
+  # lands at ~2.5-3s, so most quotes were cancelled empty (`illiquid_no_quote`, 0 candidates).
+  chain_quote_ceiling_seconds: 4.0
+  # Once every line has a bid/ask, wait at most this long for straggling OI ticks (some never come).
+  chain_oi_grace_seconds: 0.75
   # Strike band (N6): scan strikes within ±band of spot, where
   #   band = max(strike_band_pct, strike_band_iv_mult · IV · √(DTE/365))
   # so high-IV names widen enough to include the ~0.25-delta strike. Per-symbol overrides
@@ -187,7 +193,11 @@ claude:
   # runaway/injection can't drive tools or the filesystem. The fence already isolates Claude's
   # output from execution; this isolates the subprocess itself.
   max_turns: 1                      # single agentic turn — no tool loops (0 disables the flag)
-  model: "claude-sonnet-4-6"        # pin the enrichment model (reproducible + cost-bounded)
+  model: "claude-sonnet-5-5"        # pin the enrichment model (reproducible + cost-bounded)
+  # --effort for the CLI call (low|medium|high|xhigh|max; "" = CLI default). Measured
+  # 2026-10-09 on a real 3-candidate review: sonnet-4-6 default ~60-130s, ~5K output (60%
+  # thinking); sonnet-5-5 medium 16s, 1.5K output, 3/3 parsed with fact-cited evidence.
+  effort: "medium"
   disallowed_tools: "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
   # Local-LLM (Ollama) backend. "cli" (default) | "ollama" | "cli_then_ollama" (try claude -p,
   # fall back to the local model on CLI failure/timeout/unparseable output). Requires

@@ -44,8 +44,8 @@ def _build_cmd(cfg: object) -> list[str]:
 
     Beyond `--output-format`, this constrains the unattended subprocess so a prompt-injection
     or runaway can't drive tools or the filesystem: a single agentic turn, an explicit tool
-    denylist, and an optional pinned model. All three are config-tunable (see ClaudeCfg); a
-    falsy value omits the corresponding flag. The flags don't change the JSON envelope, so the
+    denylist, an optional pinned model, and an optional effort level. All are config-tunable
+    (see ClaudeCfg); a falsy value omits the corresponding flag. The flags don't change the JSON envelope, so the
     parser path is unaffected.
     """
     cmd = [cfg.cli_command, "--output-format", cfg.output_format]  # type: ignore[attr-defined]
@@ -53,6 +53,8 @@ def _build_cmd(cfg: object) -> list[str]:
         cmd += ["--max-turns", str(cfg.max_turns)]  # type: ignore[attr-defined]
     if cfg.model:  # type: ignore[attr-defined]
         cmd += ["--model", cfg.model]  # type: ignore[attr-defined]
+    if getattr(cfg, "effort", ""):
+        cmd += ["--effort", cfg.effort]  # type: ignore[attr-defined]
     if cfg.disallowed_tools:  # type: ignore[attr-defined]
         cmd += ["--disallowedTools", cfg.disallowed_tools]  # type: ignore[attr-defined]
     return cmd

@@ -138,6 +138,15 @@ class MarketDataCfg(BaseModel):
     chain_batch_size: int = 40
     request_throttle_seconds: float = 0.25
     quote_sleep_seconds: float = 2.0  # wait after reqMktData(snapshot=True)
+    # Per-batch ceiling on the option-chain quote wait (event-driven: a batch returns as soon as
+    # every line has bid/ask + OI). Was a hard-coded 2s until 2026-10-09, when a live probe on
+    # real-time data showed a 30-line batch's quotes landing at ~2.5-3s (6/30 by 2s, 30/30 by
+    # 3s) — so ~94% of quotes were cancelled empty and rejected as `illiquid_no_quote`.
+    chain_quote_ceiling_seconds: float = 4.0
+    # Once every line in a batch has a bid/ask, wait at most this much longer for the remaining
+    # open-interest ticks (tick 101). Some OI ticks never arrive (4/30 in the same probe), and
+    # without this every batch would burn the full ceiling waiting for them.
+    chain_oi_grace_seconds: float = 0.75
     # N6 — strike band. The chain is scanned across strikes within ±band of spot. A fixed 15%
     # band excludes the ~0.25-delta strike on high-IV names (at IV≈100%/30DTE it sits 20–30%
     # OTM), so SOXL/LABU/TSLL/MARA etc. never produced candidates. The band now scales with the
@@ -308,6 +317,9 @@ class ClaudeCfg(BaseModel):
     # must be unable to use tools or touch the filesystem. These flags constrain it.
     max_turns: int = 1  # single agentic turn — no tool-use loops (0 = don't pass the flag)
     model: str = ""  # pin a model id (e.g. "claude-sonnet-4-6"); empty = CLI default
+    # --effort for the CLI call (low|medium|high|xhigh|max); empty = CLI default, no flag. Bounds
+    # thinking tokens — ~60% of a Sonnet 4.6 review's output when measured 2026-10-09.
+    effort: Literal["", "low", "medium", "high", "xhigh", "max"] = ""
     # Space-separated tool denylist passed to --disallowedTools. Empty = don't pass the flag.
     disallowed_tools: str = "Bash Edit Write Read Glob Grep WebFetch WebSearch NotebookEdit Task"
 

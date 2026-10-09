@@ -342,6 +342,21 @@ async def test_excess_liquidity_converts_a_non_usd_base_currency() -> None:
     assert await _broker(ib).excess_liquidity() is None
 
 
+async def test_excess_liquidity_reads_the_ledger_prefixed_exchange_rate() -> None:
+    """Regression (2026-10-09): on the live SGD-base paper account the account stream carries
+    the rate only as ``$LEDGER-ExchangeRate`` (USD 1.281252), never a bare ``ExchangeRate`` — so
+    excess_liquidity() was always None and the gate rejected every entry ``account_unknown``."""
+    ib = FakeIB()
+    ib.values = [
+        SimpleNamespace(account="DU1", tag="ExcessLiquidity", value="788284.39", currency="SGD"),
+        SimpleNamespace(account="DU1", tag="$LEDGER-ExchangeRate", value="1.00", currency="BASE"),
+        SimpleNamespace(
+            account="DU1", tag="$LEDGER-ExchangeRate", value="1.281252", currency="USD"
+        ),
+    ]
+    assert await _broker(ib).excess_liquidity() == pytest.approx(788284.39 / 1.281252)
+
+
 def test_working_refs_lists_only_spreads_orders() -> None:
     ib = FakeIB()
     ib.open_trades = [
@@ -391,5 +406,51 @@ async def test_a_bid_that_never_comes_costs_only_the_grace() -> None:
     started = time.monotonic()
     (q,) = await broker.quote([Option("SPY", "20261007", 650, "P", "SMART", conId=8)])
     assert q.bid is None and q.ask == 0.45
+    assert time.monotonic() - started < 1.0
+    assert ib.open == 0
+
+
+class LateGreeksIB(FakeIB):
+    """Options quote bid/ask at once and model greeks only after *greeks_after* seconds (None:
+    never) — the live shape on 2026-10-09: SPY 0DTE bid/ask/OI by ~2s, greeks at ~3-4s."""
+
+    def __init__(self, greeks_after: float | None) -> None:
+        super().__init__()
+        self.greeks_after = greeks_after
+
+    def reqMktData(self, contract, *args, **kwargs):
+        import asyncio
+
+        t = super().reqMktData(contract, *args, **kwargs)
+        if contract.secType == "OPT":
+            greeks, t.modelGreeks = t.modelGreeks, None
+            if self.greeks_after is not None:
+                asyncio.get_running_loop().call_later(
+                    self.greeks_after, setattr, t, "modelGreeks", greeks
+                )
+        return t
+
+
+# 2026-10-09: the quote returned as soon as bids landed, before IBKR's model greeks — so the
+# gate saw `no_delta` and the GEX map (built from each option's IV) came out empty.
+async def test_quote_waits_for_model_greeks_that_land_after_the_bid() -> None:
+    from ib_async import Option
+
+    ib = LateGreeksIB(greeks_after=0.1)
+    broker = IbkrSpreadsBroker(ib, CFG, "DU1", quote_wait_seconds=0.05, greeks_grace_seconds=1.0)
+    (q,) = await broker.quote([Option("SPY", "20261007", 679, "P", "SMART", conId=7)])
+    assert q.delta == -0.1 and q.iv == 0.18
+
+
+async def test_greeks_that_never_come_cost_only_the_grace() -> None:
+    import time
+
+    from ib_async import Option
+
+    ib = LateGreeksIB(greeks_after=None)
+    broker = IbkrSpreadsBroker(ib, CFG, "DU1", quote_wait_seconds=0.05, greeks_grace_seconds=0.2)
+    started = time.monotonic()
+    (q,) = await broker.quote([Option("SPY", "20261007", 650, "P", "SMART", conId=8)])
+    assert q.delta is None and q.ask == 0.45
     assert time.monotonic() - started < 1.0
     assert ib.open == 0

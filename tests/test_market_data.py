@@ -596,6 +596,57 @@ async def test_batch_quotes_async_times_out_when_oi_never_arrives(monkeypatch):
     assert ib.cancelMktData.call_count == 1
 
 
+async def test_batch_quotes_async_keeps_quotes_that_arrive_after_two_seconds(monkeypatch):
+    """Regression (2026-10-09): on real-time data a 30-40-line batch's bid/ask land at ~2.5-3s
+    (live probe: 6/30 NVDA quotes by 2s, 30/30 by 3s), but the batch ceiling was a hard 2s — so
+    ~94% of quotes were cancelled empty and rejected as `illiquid_no_quote`, producing zero
+    candidates. The ceiling is now `market_data.chain_quote_ceiling_seconds` (default 4s)."""
+    from src.ibkr.market_data import _batch_quotes_async
+
+    real_sleep = asyncio.sleep
+    ticker = _make_ticker(bid=None, ask=None, call_oi=None)
+    polls = {"n": 0}
+
+    async def _fast_sleep(_):
+        polls["n"] += 1
+        if polls["n"] == 25:  # 2.5s of 0.1s polls — past the old 2s ceiling
+            ticker.bid, ticker.ask, ticker.callOpenInterest = 2.0, 2.4, 500.0
+        await real_sleep(0)
+
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", _fast_sleep)
+    ib = MagicMock()
+    ib.reqMktData.return_value = ticker
+
+    quotes = await _batch_quotes_async(
+        ib, [_make_option_contract(strike=400.0, right="C")], batch_size=40, throttle=0.0
+    )
+
+    assert quotes[0].bid == pytest.approx(2.0)
+    assert quotes[0].open_interest == 500
+
+
+async def test_batch_quotes_async_stops_waiting_for_missing_oi_after_grace(monkeypatch):
+    """Some OI ticks never arrive (live probe 2026-10-09: 4/30). Once every line in the batch
+    has a bid/ask, the batch waits only `chain_oi_grace_seconds` more for the stragglers rather
+    than burning the whole ceiling on every batch."""
+    from src.common.config import get_config
+    from src.ibkr.market_data import _POLL_INTERVAL_SECONDS, _batch_quotes_async
+
+    sleeps = AsyncMock()
+    monkeypatch.setattr("src.ibkr.market_data.asyncio.sleep", sleeps)
+    ib = MagicMock()
+    ib.reqMktData.return_value = _make_ticker(bid=2.0, ask=2.4, call_oi=None, put_oi=None)
+
+    await _batch_quotes_async(
+        ib, [_make_option_contract(strike=400.0, right="C")], batch_size=40, throttle=0.0
+    )
+
+    md = get_config().market_data
+    grace_polls = int(md.chain_oi_grace_seconds / _POLL_INTERVAL_SECONDS)
+    ceiling_polls = int(md.chain_quote_ceiling_seconds / _POLL_INTERVAL_SECONDS)
+    assert grace_polls <= sleeps.await_count <= grace_polls + 1 < ceiling_polls
+
+
 async def test_batch_quotes_async_leaves_no_open_lines(monkeypatch):
     """The happy path must register and then deregister every line — no leak after a clean batch."""
     from src.ibkr import market_data as md
