@@ -41,6 +41,17 @@ class TickerMove(BaseModel):
     sigma: float | None = None
 
 
+def split_late_releases(
+    events: list[EconEventView], now: datetime, *, max_late_minutes: int
+) -> tuple[list[EconEventView], list[EconEventView]]:
+    """(fresh, stale): a release whose actual first arrives more than *max_late_minutes* after
+    its scheduled time is not news any more (2026-10-09: Thursday's claims print went out on
+    Friday when the service first started, with a "reaction" measured a day late)."""
+    cutoff = now - timedelta(minutes=max_late_minutes)
+    fresh = [e for e in events if e.scheduled_at >= cutoff]
+    return fresh, [e for e in events if e.scheduled_at < cutoff]
+
+
 def group_macro_releases(events: list[EconEventView], pb: Playbook) -> list[AlertCandidate]:
     """One card per release time (spec §7.2). A high-impact release alerts and is critical; a
     medium one alerts only when the playbook knows it (claims, ISM services, UoM), and never

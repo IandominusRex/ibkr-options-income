@@ -53,6 +53,8 @@ tagging:
     GOOGL: [Alphabet, Google]
     META: [Meta, Facebook]
     BRK.B: [Berkshire]
+  # Law-firm class-action solicitations: kept out of ticker cards, headlines and digests.
+  noise_terms: ["securities fraud lawsuit", "securities class action", "class action lawsuit", "lead plaintiff", "investors have opportunity to lead", "investors who lost", "shareholder alert", "investor alert", "reminds investors", "encourages investors", "deadline alert", "law firm"]
 alerts:
   index_symbols: [SPY, QQQ, DIA]
   index_levels_down: [-1.0, -2.0, -3.0]
@@ -63,6 +65,7 @@ alerts:
   held_sigma: 2.0
   universe_sigma: 3.0
   ticker_scan_minutes: 5
+  macro_max_late_minutes: 180   # a print first seen later than this after release is not alerted
   geo_min_sources: 2
   geo_reaction_pct: 0.5
   geo_reaction_window_min: 30

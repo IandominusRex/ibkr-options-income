@@ -276,3 +276,23 @@ def test_aliases_are_fetched_with_no_news_db_transaction_open(news_db, monkeypat
         "AAPL": ["Apple"],
     }
     assert fetched == ["NVDA", "AAPL"]  # cached on the second call
+
+
+def test_aliases_upsert_when_another_loop_wrote_the_row_first(news_db, monkeypatch) -> None:
+    """The rss and tickers loops both fetch a missing symbol; the second write must update the
+    row, not fail the poll with "UNIQUE constraint failed: ticker_aliases.symbol"."""
+    import src.news.aliases as AL
+    from src.news.store.models import TickerAliasRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+
+    class F:
+        def get_info(self, sym):
+            with news_session() as s:  # the other loop lands its write mid-fetch
+                s.add(TickerAliasRow(symbol=sym, aliases=["Other"], fetched_at=naive_utc(NOW)))
+            return {"shortName": "Apple Inc."}
+
+    monkeypatch.setattr(AL, "get_fundamentals_provider", lambda: F())
+    assert AL.load_aliases(["AAPL"], overrides={}, now=NOW) == {"AAPL": ["Apple"]}
+    with news_session() as s:
+        assert s.get(TickerAliasRow, "AAPL").aliases == ["Apple"]

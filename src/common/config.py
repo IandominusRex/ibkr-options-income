@@ -886,6 +886,24 @@ class NewsTaggingCfg(BaseModel):
     forward_terms: list[str] = Field(default_factory=list)
     topic_terms: dict[str, list[str]] = Field(default_factory=dict)
     aliases: dict[str, list[str]] = Field(default_factory=dict)
+    # Law-firm class-action solicitations: they name the ticker and look like stock news, but
+    # carry no information about the move. Kept out of ticker cards, headlines and digests.
+    noise_terms: list[str] = Field(
+        default_factory=lambda: [
+            "securities fraud lawsuit",
+            "securities class action",
+            "class action lawsuit",
+            "lead plaintiff",
+            "investors have opportunity to lead",
+            "investors who lost",
+            "shareholder alert",
+            "investor alert",
+            "reminds investors",
+            "encourages investors",
+            "deadline alert",
+            "law firm",
+        ]
+    )
 
 
 class NewsAlertsCfg(BaseModel):
@@ -898,6 +916,10 @@ class NewsAlertsCfg(BaseModel):
     held_sigma: float = 2.0
     universe_sigma: float = 3.0
     ticker_scan_minutes: int = 5
+    # A macro print whose actual first arrives more than this long after its release (the
+    # service was down, or the source was late) is not alerted: a day-old print posted as news
+    # reads as current and is not.
+    macro_max_late_minutes: int = 180
     geo_min_sources: int = 2
     geo_reaction_pct: float = 0.5
     geo_reaction_window_min: int = 30

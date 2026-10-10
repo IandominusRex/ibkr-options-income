@@ -1790,7 +1790,12 @@ per-ticker page at `/news/NVDA`; `GET /news/status` shows the service heartbeat,
 successful answer per source, the news process's breaker states and today's LLM calls against
 the cap. A digest whose time passed more than `digests.max_late_minutes` (120) ago while the
 service was down is skipped, not posted late. The watchdog (§6b) alerts when
-the heartbeat is older than `watchdog.news_max_age_minutes` (30).
+the heartbeat is older than `watchdog.news_max_age_minutes` (30). Likewise a macro print whose
+actual first arrives more than `alerts.macro_max_late_minutes` (180) after release (the service
+was down, or the source was slow) is not alerted. An in-line print's 📘 column reads ⚪ (no
+textbook move), not blank. Law-firm "investors have opportunity to lead … lawsuit" ads are kept
+out of cards and digests by `tagging.noise_terms`; a 🧠 read that cites nothing is withheld
+(`🧠 withheld (uncited)`) rather than posted.
 
 ### Commands
 

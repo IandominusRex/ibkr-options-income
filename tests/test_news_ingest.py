@@ -172,3 +172,18 @@ def test_sentiment_is_scored_outside_the_write_transaction_and_only_for_new_titl
     assert _ingest([a]).new_items == 1
     assert _ingest([a]).new_items == 0
     assert scored == ["Nvidia beats estimates"]
+
+
+def test_templated_headlines_about_different_companies_do_not_cluster(news_db) -> None:
+    """2026-10-09: "Why Is Arm Stock Falling Thursday?" absorbed the AST SpaceMobile one, and
+    the ASTS card shipped the Arm headline. The same company's next one still joins."""
+    r = _ingest(
+        [
+            NewsItem(title="Why Is Arm Stock Falling Thursday?", url="https://bz.com/1"),
+            NewsItem(
+                title="Why Is AST SpaceMobile Stock Falling Thursday?", url="https://bz.com/2"
+            ),
+            NewsItem(title="Why Is Arm Stock Falling on Friday?", url="https://bz.com/3"),
+        ]
+    )
+    assert r.new_items == 3 and len(r.cluster_ids) == 2

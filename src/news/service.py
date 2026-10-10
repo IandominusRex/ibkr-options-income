@@ -214,7 +214,17 @@ class NewsService:
         if not keys:
             return
         evs = await asyncio.to_thread(_unalerted_econ, keys)
-        await self._dispatch(T.group_macro_releases(evs, load_playbook()), now)
+        fresh, stale = T.split_late_releases(
+            evs, now, max_late_minutes=self.ncfg.alerts.macro_max_late_minutes
+        )
+        for e in stale:
+            log.info(
+                "news: %s released %s, first seen %s — too late to alert, skipped",
+                e.event_key,
+                e.scheduled_at,
+                now,
+            )
+        await self._dispatch(T.group_macro_releases(fresh, load_playbook()), now)
         # belt-and-braces beside the gate: a restart never re-alerts
         await asyncio.to_thread(_mark_econ_alerted, [e.event_key for e in evs])
 

@@ -26,8 +26,9 @@ def _best_cluster(
     clusters: list[NewsClusterRow], tokens: frozenset[str], threshold: float
 ) -> NewsClusterRow | None:
     best, best_score = None, 0.0
+    mine = text.cluster_tokens(tokens)
     for c in clusters:
-        score = text.jaccard(tokens, c.title_tokens)
+        score = text.jaccard(mine, text.cluster_tokens(c.title_tokens or []))
         if score > best_score:
             best, best_score = c, score
     return best if best is not None and best_score >= threshold else None

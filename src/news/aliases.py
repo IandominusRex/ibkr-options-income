@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from src.data.factory import get_fundamentals_provider
 from src.news.store.models import TickerAliasRow
 from src.news.store.queries import naive_utc
@@ -48,8 +50,19 @@ def load_aliases(
                 cached[sym] = list(row.aliases or [])
     fetched = {sym: _fetch_aliases(sym) for sym in symbols if sym not in cached}
     if fetched:
+        # An upsert, not session.merge: two loops (rss and tickers) can both find a symbol
+        # missing and fetch it, and merge's SELECT-then-INSERT lost that race with
+        # "UNIQUE constraint failed: ticker_aliases.symbol" (2026-10-09), failing a whole poll.
         with news_session() as s:
             for sym, aliases in fetched.items():
-                s.merge(TickerAliasRow(symbol=sym, aliases=aliases, fetched_at=now_n))
+                stmt = sqlite_insert(TickerAliasRow).values(
+                    symbol=sym, aliases=aliases, fetched_at=now_n
+                )
+                s.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=[TickerAliasRow.symbol],
+                        set_={"aliases": stmt.excluded.aliases, "fetched_at": now_n},
+                    )
+                )
     found = {**cached, **fetched}
     return {sym: sorted(set(found[sym]) | set(overrides.get(sym, []))) for sym in symbols}

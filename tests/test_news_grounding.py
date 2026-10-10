@@ -122,3 +122,49 @@ def test_ground_digest_never_falls_back_to_the_ungrounded_llm_headline() -> None
     )
     out = G.ground_digest(r, refs=[9.0], valid_ids=set(), rel_tol=0.02)
     assert "14" not in out.items[0].headline
+
+
+def test_prose_citing_ids_or_inputs_is_dropped() -> None:
+    out, trimmed = G.strip_meta_and_advice(
+        "No AVGO price fact supplied, so no move to judge. Market backdrop is firm."
+    )
+    assert out == "Market backdrop is firm." and trimmed
+    out, _ = G.strip_meta_and_advice("BABA lagged. N6 is about CrowdStrike, not BABA.")
+    assert out == "BABA lagged."
+    out, trimmed = G.strip_meta_and_advice("Headlines cite SpaceX debt plans (N2, N3).")
+    assert out == "Headlines cite SpaceX debt plans." and not trimmed
+
+
+def test_trading_instructions_are_dropped_but_prose_is_kept() -> None:
+    for advice in (
+        "Sell rallies on risk assets; buy protection.",
+        "Reduce long positions in equities and commodities.",
+        "Consider trimming the position.",
+    ):
+        assert G.strip_meta_and_advice(advice) == ("", True), advice
+    for prose in (
+        "Short interest is high.",
+        "Close above $50 would reclaim support.",
+        "Sell-side targets were cut.",
+        "Actively wheeling name: check open short puts against support.",
+    ):
+        assert G.strip_meta_and_advice(prose) == (prose, False), prose
+
+
+def test_ground_strips_advice_from_impact_fields() -> None:
+    e = Explanation(
+        headline="h",
+        what_happened="w",
+        read="r",
+        bull="b",
+        bear="c",
+        verdict="unclear",
+        confidence="low",
+        book_impact="Sell rallies on risk assets; buy protection.",
+        setup_impact="Reduce long positions in equities.",
+        evidence=["F1"],
+    )
+    out, trimmed = G.ground(
+        e, facts=_facts(), news_numbers=[], news_ids=set(), rel_tol=0.02, fallback_what=None
+    )
+    assert out.book_impact == "" and out.setup_impact == "" and trimmed

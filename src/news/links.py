@@ -14,10 +14,14 @@ def pick_primary(items: list[ItemView], rank: list[str]) -> ItemView | None:
 
 
 def links_for(cluster: ClusterView, rank: list[str]) -> list[SourceLink]:
+    return links_for_items(cluster.items, rank)
+
+
+def links_for_items(items: list[ItemView], rank: list[str]) -> list[SourceLink]:
     order = {d: i for i, d in enumerate(rank)}
     seen: set[str] = set()
     out: list[SourceLink] = []
-    for it in sorted(cluster.items, key=lambda it: order.get(it.source_domain or "", len(order))):
+    for it in sorted(items, key=lambda it: order.get(it.source_domain or "", len(order))):
         name = it.source or it.source_domain
         if it.url and name and name not in seen:
             seen.add(name)

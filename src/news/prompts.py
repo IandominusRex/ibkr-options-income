@@ -28,6 +28,10 @@ Rules:
   rumor_driven, oversold_at_support, earnings_outsized). Say "further downside" only when facts support it.
 - If 📘 TEXTBOOK and 📈 ACTUAL disagree, the "read" field must explain the gap.
 - Be terse and concrete. No trading advice, no hedging filler, no em dashes.
+- F#/N# ids belong ONLY in "evidence", never in prose. Never comment on which facts or headlines
+  were or were not supplied: write about the market, not the inputs.
+- book_impact / setup_impact say what the move means for the positions or premium; never tell
+  the reader to buy, sell, reduce, add, hedge or close anything.
 - Reply with ONE JSON object matching the schema. Nothing outside the JSON."""
 
 
@@ -37,7 +41,10 @@ def number_headlines(items: list[ItemView], start: int = 1) -> tuple[str, dict[s
     for i, it in enumerate(items, start):
         nid = f"N{i}"
         index[nid] = it
-        src = f"[{it.source}] " if it.source else ""
+        # The date lets the model tell yesterday's "why is X falling" from today's catalyst.
+        when = f"{it.published_at:%b %d}" if it.published_at else ""
+        tag = ", ".join(x for x in (it.source, when) if x)
+        src = f"[{tag}] " if tag else ""
         summ = f" — {it.summary[:200]}" if it.summary else ""
         lines.append(f"{nid} {src}{it.title}{summ}")
     return "\n".join(lines), index

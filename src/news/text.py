@@ -15,6 +15,16 @@ _STOP = frozenset(
     "amid into its it this that these those new says said report reports update live".split()
 )
 
+# Template words that carry no story identity. Benzinga runs "Why Is <Company> Stock Falling
+# Thursday?" for every name, and on those words alone "Arm" and "AST SpaceMobile" scored 4/7
+# Jaccard and merged into one cluster (2026-10-09: an ASTS card shipped an Arm headline).
+# Clustering ignores them; dedupe and the stored title do not.
+_BOILERPLATE = frozenset(
+    "why what how is stock stocks share shares today today's todays trading premarket midday "
+    "session falling rising falls rises fell rose moving moves higher lower up down jumps "
+    "drops slips gains monday tuesday wednesday thursday friday saturday sunday week".split()
+)
+
 
 def sha1(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()
@@ -50,6 +60,11 @@ def url_hash(url: str | None, title: str, source: str | None = None) -> str:
 
 def title_tokens(title: str) -> frozenset[str]:
     return frozenset(w for w in normalize_title(title).split() if len(w) >= 2 and w not in _STOP)
+
+
+def cluster_tokens(tokens: Iterable[str]) -> frozenset[str]:
+    """The tokens clustering compares: title tokens minus template boilerplate."""
+    return frozenset(t for t in tokens if t not in _BOILERPLATE)
 
 
 def jaccard(a: Iterable[str], b: Iterable[str]) -> float:

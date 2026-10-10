@@ -369,3 +369,118 @@ def test_macro_card_carries_the_candidates_criticality(news_db) -> None:
         kind="macro_print", subject="2026-10-14T12:30", critical=False, event_keys=["k2"]
     )
     assert AL.build_card(c, _ctx()).critical is False
+
+
+def _asts_story(s, *, headline, items, source_count=1):
+    """One cluster tagged ASTS; *items* are (title, tickers, published, url)."""
+    from src.news.store.models import NewsClusterRow, NewsItemRow
+    from src.news.store.queries import naive_utc
+
+    cl = NewsClusterRow(
+        headline=headline,
+        category="ticker",
+        first_seen=naive_utc(NOW),
+        last_seen=naive_utc(NOW),
+        source_count=source_count,
+        tickers=["ASTS"],
+    )
+    s.add(cl)
+    s.flush()
+    for title, tickers, published, url in items:
+        s.add(
+            NewsItemRow(
+                url_hash=url[-38:],
+                title_hash=title[:38],
+                title=title,
+                url=url,
+                source="Benzinga",
+                category="ticker",
+                origin="finnhub",
+                published_at=naive_utc(published),
+                fetched_at=naive_utc(published),
+                tickers=tickers,
+                image_url=f"{url}.jpg",
+                cluster_id=cl.id,
+            )
+        )
+    return cl.id
+
+
+def test_ticker_card_leads_with_the_newest_item_naming_the_symbol(news_db) -> None:
+    """2026-10-09 ASTS -14.4%: the card led with "Why Is Arm Stock Falling Thursday?" (the
+    first title of a cluster that had absorbed one ASTS item), linked the Arm article and
+    showed Arm's logo, ranked a law-firm lawsuit ad second, and buried the catalyst."""
+    from datetime import timedelta
+
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        absorbed = _asts_story(
+            s,
+            headline="Why Is Arm Stock Falling Thursday?",
+            items=[
+                ("Why Is Arm Stock Falling Thursday?", [], NOW - timedelta(hours=8), "u/arm"),
+                (
+                    "Why Is AST SpaceMobile Stock Falling Thursday?",
+                    ["ASTS"],
+                    NOW - timedelta(hours=6),
+                    "u/asts-thu",
+                ),
+            ],
+        )
+        lawsuit = _asts_story(
+            s,
+            headline="ASTS Investors Have Opportunity to Lead Securities Fraud Lawsuit",
+            items=[
+                (
+                    "ASTS Investors Have Opportunity to Lead Securities Fraud Lawsuit",
+                    ["ASTS"],
+                    NOW - timedelta(minutes=10),
+                    "u/law",
+                )
+            ],
+            source_count=2,
+        )
+        catalyst = _asts_story(
+            s,
+            headline="AST SpaceMobile Falls 6% as SpaceX Spectrum Deal Closes Off Option",
+            items=[
+                (
+                    "AST SpaceMobile Falls 6% as SpaceX Spectrum Deal Closes Off Option",
+                    ["ASTS", "RKLB"],
+                    NOW - timedelta(hours=1),
+                    "u/spectrum",
+                )
+            ],
+        )
+    c = AlertCandidate(kind="ticker_move", subject="ASTS", critical=True, symbols=["ASTS"])
+    p = AL.ticker_card(c, _ctx(), kind="ticker_move")
+    assert p.headline_line.startswith("AST SpaceMobile Falls 6%")
+    assert p.preview_url == "u/spectrum" and p.image_url == "u/spectrum.jpg"
+    assert [lk.url for lk in p.links] == ["u/spectrum"]
+    assert p.cluster_ids == [catalyst, absorbed] and lawsuit not in p.cluster_ids
+
+
+def test_an_absorbed_cluster_shows_its_symbol_item_not_its_first_title(news_db) -> None:
+    from datetime import timedelta
+
+    from src.news.store.session import news_session
+
+    with news_session() as s:
+        _asts_story(
+            s,
+            headline="Why Is Arm Stock Falling Thursday?",
+            items=[
+                ("Why Is Arm Stock Falling Thursday?", [], NOW - timedelta(hours=8), "u/arm"),
+                (
+                    "Why Is AST SpaceMobile Stock Falling Thursday?",
+                    ["ASTS"],
+                    NOW - timedelta(hours=6),
+                    "u/asts-thu",
+                ),
+            ],
+        )
+    c = AlertCandidate(kind="ticker_move", subject="ASTS", critical=True, symbols=["ASTS"])
+    p = AL.ticker_card(c, _ctx(), kind="ticker_move")
+    assert p.headline_line == "Why Is AST SpaceMobile Stock Falling Thursday?"
+    assert p.preview_url == "u/asts-thu" and [lk.url for lk in p.links] == ["u/asts-thu"]

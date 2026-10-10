@@ -59,6 +59,12 @@ def tag_events(title: str, *, scheduled: bool, cfg: NewsTaggingCfg) -> list[str]
     return tags
 
 
+def is_noise(title: str, terms: Iterable[str]) -> bool:
+    """A law-firm solicitation or similar item that names a ticker but says nothing about it
+    (``news.tagging.noise_terms``)."""
+    return _has_any(title.lower(), terms)
+
+
 def topic_class(title: str, cfg: NewsTaggingCfg) -> str:
     low = title.lower()
     for topic, terms in cfg.topic_terms.items():

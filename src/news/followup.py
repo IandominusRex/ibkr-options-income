@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from src.common.config import Config
+from src.news.alerts import items_about
 from src.news.explain import explain_card
 from src.news.facts import build_macro_facts
 from src.news.playbook import load_playbook, prior_for
@@ -21,6 +22,7 @@ from src.news.store import queries
 from src.news.store.models import EconEventRow, NewsPostRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import news_session
+from src.news.tagging import is_noise
 
 _ALERT_KINDS = (
     "macro_print",
@@ -54,14 +56,32 @@ def fallback_what(p: CardPayload) -> str | None:
     return None
 
 
-def _headlines(p: CardPayload) -> list[ItemView]:
+_TICKER_KINDS = ("ticker_move", "earnings", "brief")
+_MAX_HEADLINES = 8
+
+
+def _headlines(p: CardPayload, noise_terms: list[str]) -> list[ItemView]:
+    """The N# headlines the writer may cite. Law-firm solicitations never go in. A ticker card
+    sends only items that name its symbol, newest first: on 2026-10-09 an ASTS card sent an
+    Arm story and two lawsuit ads ahead of the one headline that explained the drop."""
+    ticker = p.kind in _TICKER_KINDS and p.subject
     out: list[ItemView] = []
     with news_session() as s:
-        for cid in p.cluster_ids[:3]:
-            cv = queries.cluster_view(s, cid, max_items=3)
+        for cid in p.cluster_ids[: 5 if ticker else 3]:
+            cv = queries.cluster_view(s, cid, max_items=6 if ticker else 3)
             if cv:
-                out += cv.items
-    return out
+                out += [it for it in cv.items if not is_noise(it.title, noise_terms)]
+    if ticker:
+        about = items_about(out, str(p.subject))
+        if about:
+            out = about
+    seen: set[str] = set()
+    uniq = []
+    for it in out:
+        if it.title not in seen:
+            seen.add(it.title)
+            uniq.append(it)
+    return uniq[:_MAX_HEADLINES]
 
 
 def _econ_views(keys: list[str]) -> list[EconEventView]:
@@ -115,7 +135,7 @@ async def complete_post(
         from src.news.schemas import FactSheet
 
         facts = FactSheet()
-    headlines = await asyncio.to_thread(_headlines, payload)
+    headlines = await asyncio.to_thread(_headlines, payload, cfg.news.tagging.noise_terms)
     outcome = await asyncio.to_thread(
         explain_card,
         payload.kind,

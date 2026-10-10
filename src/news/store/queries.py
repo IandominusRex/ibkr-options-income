@@ -64,6 +64,7 @@ def _cluster(s: Session, c: NewsClusterRow, max_items: int) -> ClusterView:
                 summary=i.summary,
                 image_url=i.image_url,
                 det_sentiment=i.det_sentiment,
+                tickers=list(i.tickers or []),
             )
             for i in items
         ],

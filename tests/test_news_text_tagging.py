@@ -75,3 +75,23 @@ def test_newsitem_new_fields_default_none() -> None:
     item = NewsItem(title="x")
     assert item.summary is None and item.image_url is None
     assert NewsItem(title="x", summary="s", image_url="u").image_url == "u"
+
+
+def test_cluster_tokens_drop_template_words() -> None:
+    """Benzinga's "Why Is X Stock Falling Thursday?" template must not join two companies."""
+    arm = text.title_tokens("Why Is Arm Stock Falling Thursday?")
+    asts = text.title_tokens("Why Is AST SpaceMobile Stock Falling Thursday?")
+    assert text.jaccard(arm, asts) >= 0.5  # the raw tokens DID clear the 0.5 threshold
+    assert text.cluster_tokens(arm) == {"arm"}
+    assert text.jaccard(text.cluster_tokens(arm), text.cluster_tokens(asts)) == 0.0
+
+
+def test_is_noise_flags_law_firm_solicitations() -> None:
+    terms = get_config().news.tagging.noise_terms
+    assert tagging.is_noise(
+        "ASTS Investors Have Opportunity to Lead AST SpaceMobile, Inc. Securities Fraud Lawsuit",
+        terms,
+    )
+    assert not tagging.is_noise(
+        "AST SpaceMobile Falls 6% as SpaceX Spectrum Deal Closes Off Low-Band Option", terms
+    )

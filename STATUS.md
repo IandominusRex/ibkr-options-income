@@ -372,6 +372,37 @@ databases are separate `Base`/engine pairs so `create_all()` can never cross-bui
 
 ---
 
+## Fixed (2026-10-11 — News thread card quality, from the first day's posts in thread 4409)
+
+- **Wrong-company headline.** The ASTS −14.4% card led with "Why Is Arm Stock Falling
+  Thursday?", linked the Arm article and previewed Arm's logo. Benzinga's per-company template
+  shared enough words that Arm and AST SpaceMobile cleared the 0.5 Jaccard and joined one
+  cluster, whose first title is its headline. Clustering now compares `text.cluster_tokens`
+  (template words like why/stock/falling/weekday removed), and a ticker card takes its
+  headline, link and preview from the newest item that names the ticker (`ItemView.tickers`),
+  ranking the cluster that holds it first (`alerts.rank_ticker_clusters`).
+- **No explanation of the move.** The writer got an Arm story, Planet Labs and two law-firm
+  lawsuit ads ahead of the spectrum-deal headline that explained it. Ticker cards now send
+  only items naming the ticker, newest first, each dated (`[Benzinga, Oct 08]`), and
+  `tagging.noise_terms` keeps class-action solicitations out of cards, headlines and digests.
+- **Day-old macro print.** Thursday's jobless claims posted on Friday when the service first
+  started (the actuals refresh looks back 2 days). A print first seen more than
+  `alerts.macro_max_late_minutes` (180) after release is now logged and skipped.
+- **Unanchored 🧠 reads.** That claims card's Ollama read ("Soft Jobs Data Triggers Risk-Off
+  Rally", "Sell rallies… buy protection", evidence `[]`) passed grounding. An explanation
+  citing no valid evidence is now withheld (`🧠 withheld (uncited)`), and grounding drops
+  sentences that give trading instructions, cite F#/N# ids in prose, or comment on the inputs
+  ("No AVGO price fact supplied", "N6 is about CrowdStrike"), in cards and digest reads alike.
+  The writer prompt says so too.
+- **Blank 📘 column.** An in-line print had no prior, so every textbook cell read "·". It now
+  reads ⚪ (no textbook move) with an "in line" rationale.
+- **Chart SMA200.** `Analytics.daily` fetched 260 days (yfinance `1y`, ~250 bars), so SMA200 drew
+  only the last ~50 of the 130 bars shown. It now fetches 400 days.
+- Not changed: the UMich card posting ~4 h after release. The poll-overshoot fix (87702c9) was
+  already in; the service restarted at 16:58 UTC and first saw the actual at 17:58 UTC, which
+  points at the source publishing late. With the new 180-minute cut, a print that late is now
+  skipped instead.
+
 ## Bugs fixed (2026-10-09 — RTH log review: empty scans, missed econ prints, spreads never trading)
 
 Found by reading the first RTH session after the news merge; each fix has a regression test.
@@ -438,8 +469,9 @@ Found by reading the first RTH session after the news merge; each fix has a regr
   (`intraday_full_sweep_et_date`); a manual `/scan` marks it too. The retry queue of symbols a
   cut-short cycle never reached is now persisted (`intraday_pending_retry_symbols`) so a restart
   doesn't drop it — the forced sweep used to cover for that.
-- `src/news/aliases.py::load_aliases` can race at startup (two loops inserting the same
-  `ticker_aliases` row → `UNIQUE constraint failed`); it self-heals on the next cycle.
+- ~~`src/news/aliases.py::load_aliases` can race at startup~~ **Fixed 2026-10-11:** the write is
+  an upsert (`INSERT … ON CONFLICT DO UPDATE`), so two loops fetching the same symbol no longer
+  fail a poll with `UNIQUE constraint failed: ticker_aliases.symbol`.
 - `logs/approval.log` has no rotation (159 MB), mostly `Unknown contract` strike-grid noise.
 
 ## Changed (2026-10-09 — config templates moved to `config/examples/`)

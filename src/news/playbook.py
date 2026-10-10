@@ -44,7 +44,7 @@ class PlaybookEntry(BaseModel):
 
 class PlaybookPrior(BaseModel):
     key: str
-    direction: Literal["hot", "cold"]
+    direction: Surprise
     arrows: dict[str, str]
     rationale: str
 
@@ -102,7 +102,19 @@ def surprise_dir(entry: PlaybookEntry, actual: str | None, expected: str | None)
     return "inline"
 
 
+_INLINE_RATIONALE = "In line with expectations: no textbook first reaction."
+
+
 def prior_for(entry: PlaybookEntry, direction: Surprise | None) -> PlaybookPrior | None:
+    """The textbook arrows for a surprise. An in-line print's textbook is ⚪ (flat) across the
+    board, so the grid shows that instead of a blank column. None when the surprise is unknown."""
+    if direction == "inline":
+        return PlaybookPrior(
+            key=entry.key,
+            direction="inline",
+            arrows={a: ARROW["flat"] for a in ASSETS},
+            rationale=_INLINE_RATIONALE,
+        )
     if direction not in ("hot", "cold"):
         return None
     dirs = entry.hot if direction == "hot" else entry.cold

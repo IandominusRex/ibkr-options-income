@@ -262,3 +262,10 @@ def test_held_text_for_every_non_breaking_kind() -> None:
     )
     assert T.held_text(mk("vix_spike", "VIX:jump", change_pct=21.0)) == "VIX +21.0%"
     assert T.held_text(mk("vix_spike", "VIX:30", level=30.0, last=31.2)) == "VIX at 31.2"
+
+
+def test_a_release_first_seen_too_late_is_not_alerted() -> None:
+    fresh_ev = _ev("CPI m/m", NOW - timedelta(minutes=20))
+    stale_ev = _ev("Unemployment Claims", NOW - timedelta(hours=25))
+    fresh, stale = T.split_late_releases([fresh_ev, stale_ev], NOW, max_late_minutes=180)
+    assert fresh == [fresh_ev] and stale == [stale_ev]

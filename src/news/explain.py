@@ -101,6 +101,11 @@ def explain_card(
         rel_tol=get_config().news.grounding.rel_tol,
         fallback_what=fallback_what,
     )
+    if not grounded_e.evidence:
+        # Nothing cited: the read is unanchored (2026-10-09: a claims beat explained as a "soft
+        # jobs data risk-off rally" with evidence []). Ship the facts card, not the prose.
+        log.info("news:%s: explanation cites no valid evidence — withheld", kind)
+        return ExplainOutcome(None, backend, False, "fallback", "🧠 withheld (uncited)")
     return ExplainOutcome(grounded_e, backend, trimmed, "explained", None)
 
 

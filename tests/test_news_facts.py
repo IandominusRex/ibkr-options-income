@@ -166,3 +166,23 @@ def test_live_daily_returns_a_non_empty_frame(monkeypatch) -> None:
     provider = type("P", (), {"get_ohlcv": lambda self, s, lookback_days=365: df})()
     monkeypatch.setattr(factory, "get_price_provider", lambda: provider)
     assert F.Analytics.live().daily("NVDA") is df
+
+
+def test_live_daily_fetches_enough_history_for_the_chart_sma200(monkeypatch) -> None:
+    """The chart shows 130 bars; SMA200 needs 200 more before the first. 260 days drew it for
+    only the last ~50 bars."""
+    import pandas as pd
+
+    import src.data.factory as factory
+    from src.news.facts import Analytics
+
+    asked: list[int] = []
+
+    class P:
+        def get_ohlcv(self, symbol, lookback_days=365):
+            asked.append(lookback_days)
+            return pd.DataFrame({"Close": [1.0]})
+
+    monkeypatch.setattr(factory, "get_price_provider", lambda: P())
+    Analytics.live().daily("ASTS")
+    assert asked and asked[0] >= 330

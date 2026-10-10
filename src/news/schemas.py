@@ -20,6 +20,7 @@ class ItemView(BaseModel):
     summary: str | None = None
     image_url: str | None = None
     det_sentiment: float | None = None
+    tickers: list[str] = Field(default_factory=list)  # the symbols THIS item names
 
 
 class ClusterView(BaseModel):

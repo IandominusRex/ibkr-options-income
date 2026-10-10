@@ -61,7 +61,14 @@ def test_prior_arrows() -> None:
         and prior.arrows["dollar"] == "🟢"
     )
     assert set(prior.arrows) == set(pb.ASSETS)
-    assert pb.prior_for(p.match("CPI m/m"), "inline") is None
+    assert pb.prior_for(p.match("CPI m/m"), None) is None
+
+
+def test_an_inline_print_has_a_flat_textbook_not_a_blank_one() -> None:
+    p = pb.load_playbook()
+    prior = pb.prior_for(p.match("Unemployment Claims"), "inline")
+    assert prior is not None and prior.direction == "inline"
+    assert prior.arrows == {a: "⚪" for a in pb.ASSETS}
 
 
 def test_every_entry_is_complete() -> None:

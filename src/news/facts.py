@@ -53,7 +53,9 @@ class Analytics:
 
         def daily(s: str) -> pd.DataFrame:
             # Not `_safe(...) or pd.DataFrame()`: a non-empty DataFrame has no truth value.
-            df = _safe(get_price_provider().get_ohlcv, s, 260)
+            # 400 days, not 260: the chart shows 130 bars and its SMA200 needs 200 more
+            # before the first of them (260 days drew SMA200 for only the last ~50 bars).
+            df = _safe(get_price_provider().get_ohlcv, s, 400)
             return df if df is not None else pd.DataFrame()
 
         return cls(

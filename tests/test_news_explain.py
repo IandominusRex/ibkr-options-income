@@ -157,3 +157,23 @@ def test_writer_prompt_carries_facts_prior_and_reaction_gap() -> None:
     assert "F1 Move today: -6.2%" in p and "N1 [Reuters] CPI hot" in p
     assert "stocks: textbook 🔴 | actual pending" in p and "textbook rationale: rates up" in p
     assert set(index) == {"N1"}
+
+
+def test_an_explanation_citing_nothing_is_withheld(news_db, monkeypatch) -> None:
+    """2026-10-09: the claims card shipped a "risk-off rally" read with evidence []."""
+    bad = {**GOOD, "verdict": "unclear", "evidence": []}
+    monkeypatch.setattr(X, "call_llm", lambda prompt, **kw: LlmResult(json.dumps(bad), "ollama"))
+    out = X.explain_card(
+        "macro_print", headlines=[], facts=_facts(), prior=None, reaction=None, now=NOW
+    )
+    assert out.explanation is None and out.stage == "fallback"
+    assert out.note == "🧠 withheld (uncited)" and out.backend == "ollama"
+
+
+def test_headlines_carry_their_date() -> None:
+    from src.news.prompts import number_headlines
+
+    block, _ = number_headlines(
+        [ItemView(title="Why Is ASTS Falling", source="Benzinga", published_at=NOW)]
+    )
+    assert block == "N1 [Benzinga, Oct 14] Why Is ASTS Falling"

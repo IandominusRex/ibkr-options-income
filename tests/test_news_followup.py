@@ -219,3 +219,53 @@ async def test_update_landing_during_the_llm_call_is_kept(news_db, monkeypatch) 
         "cluster_ids"
     ] == [7, 9]
     assert row.payload["explanation"]["verdict"] == "priced_in" and row.edits == 1
+
+
+def test_ticker_headlines_name_the_symbol_and_skip_lawsuit_ads(news_db) -> None:
+    """2026-10-09: the ASTS writer got an Arm story, Planet Labs and two law-firm ads ahead
+    of the one headline that explained the drop."""
+    from src.news.store.models import NewsClusterRow, NewsItemRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+
+    t = naive_utc(REL)
+    rows = [
+        ("Why Is Arm Stock Falling Thursday?", [], REL - timedelta(hours=8)),
+        ("Why Is AST SpaceMobile Stock Falling Thursday?", ["ASTS"], REL - timedelta(hours=6)),
+        ("ASTS Investors Have Opportunity to Lead Securities Fraud Lawsuit", ["ASTS"], REL),
+        ("AST SpaceMobile Falls 6% on SpaceX Spectrum Deal", ["ASTS"], REL - timedelta(hours=1)),
+    ]
+    with news_session() as s:
+        cl = NewsClusterRow(
+            headline=rows[0][0], category="ticker", first_seen=t, last_seen=t, tickers=["ASTS"]
+        )
+        s.add(cl)
+        s.flush()
+        cid = cl.id
+        for i, (title, tickers, published) in enumerate(rows):
+            s.add(
+                NewsItemRow(
+                    url_hash=f"u{i}",
+                    title_hash=f"t{i}",
+                    title=title,
+                    category="ticker",
+                    origin="finnhub",
+                    published_at=naive_utc(published),
+                    fetched_at=t,
+                    tickers=tickers,
+                    cluster_id=cid,
+                )
+            )
+    card = CardPayload(
+        kind="ticker_move",
+        subject="ASTS",
+        title="ASTS -14.4%",
+        emoji="📉",
+        when=REL,
+        cluster_ids=[cid],
+    )
+    got = [h.title for h in FU._headlines(card, get_config().news.tagging.noise_terms)]
+    assert got == [
+        "AST SpaceMobile Falls 6% on SpaceX Spectrum Deal",
+        "Why Is AST SpaceMobile Stock Falling Thursday?",
+    ]

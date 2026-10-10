@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal, get_args
 
 from sqlalchemy import select
@@ -11,14 +11,22 @@ from sqlalchemy import select
 from src.common.config import Config
 from src.common.schemas import MarketConditions, PositionSnapshot
 from src.news.facts import Analytics, build_macro_facts, build_market_facts, build_ticker_facts
-from src.news.links import links_for, pick_primary  # noqa: F401  (re-exported)
+from src.news.links import links_for, links_for_items, pick_primary  # noqa: F401  (re-exported)
 from src.news.playbook import ASSETS, Playbook, prior_for
 from src.news.render import SGT
-from src.news.schemas import CardPayload, ClusterView, EarningsView, EconEventView, GridRow
+from src.news.schemas import (
+    CardPayload,
+    ClusterView,
+    EarningsView,
+    EconEventView,
+    GridRow,
+    ItemView,
+)
 from src.news.store import queries
 from src.news.store.models import EconEventRow, NewsPostRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import news_session
+from src.news.tagging import is_noise
 from src.news.tape import Quote
 from src.news.triggers import AlertCandidate, AlertKind
 
@@ -89,7 +97,35 @@ def _macro_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
 
 def _ticker_clusters(symbol: str, now: datetime, *, hours: int) -> list[ClusterView]:
     with news_session() as s:
-        return queries.clusters_since(s, now - timedelta(hours=hours), symbol=symbol, limit=5)
+        return queries.clusters_since(s, now - timedelta(hours=hours), symbol=symbol, limit=10)
+
+
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+
+
+def items_about(items: list[ItemView], symbol: str) -> list[ItemView]:
+    """The items that name *symbol* themselves, newest first. A cluster's ticker tag is the
+    union over its items, so it can carry a symbol only one member mentions."""
+    about = [it for it in items if symbol in it.tickers]
+    return sorted(about, key=lambda it: it.published_at or _EPOCH, reverse=True)
+
+
+def rank_ticker_clusters(
+    clusters: list[ClusterView], symbol: str, noise_terms: list[str]
+) -> list[ClusterView]:
+    """Drop noise items (law-firm solicitations) and empty clusters, then put the cluster with
+    the newest item naming *symbol* first: today's catalyst outranks a busier, older story."""
+    kept = []
+    for cl in clusters:
+        items = [it for it in cl.items if not is_noise(it.title, noise_terms)]
+        if items or not cl.items:  # drop a cluster only when ALL its items were noise
+            kept.append(cl.model_copy(update={"items": items}))
+
+    def key(cl: ClusterView) -> tuple[bool, datetime]:
+        about = items_about(cl.items, symbol)
+        return bool(about), (about[0].published_at or _EPOCH) if about else _EPOCH
+
+    return sorted(kept, key=key, reverse=True)
 
 
 def _earnings_view(symbol: str, today: date) -> EarningsView | None:
@@ -105,7 +141,11 @@ def ticker_card(
 
     sym = c.symbols[0]
     # A brief reads the last 72 h (spec §7.5.2); an alert explains today's move.
-    clusters = _ticker_clusters(sym, ctx.now, hours=72 if kind == "brief" else 24)
+    clusters = rank_ticker_clusters(
+        _ticker_clusters(sym, ctx.now, hours=72 if kind == "brief" else 24),
+        sym,
+        ctx.cfg.news.tagging.noise_terms,
+    )[:5]
     tags = {t for cl in clusters for t in cl.tags}
     earn = _earnings_view(sym, ctx.today) if kind != "ticker_move" else None
     sheet = build_ticker_facts(
@@ -140,7 +180,11 @@ def ticker_card(
             if f
         ] + parts
     top = clusters[0] if clusters else None
-    primary = pick_primary(top.items, ctx.cfg.news.source_rank) if top else None
+    # Headline, link and preview come from an item that names the symbol, never the cluster's
+    # first title: that can be another company's story the cluster absorbed.
+    about = items_about(top.items, sym) if top else []
+    rank = ctx.cfg.news.source_rank
+    primary = about[0] if about else (pick_primary(top.items, rank) if top else None)
     move = sheet.get("Move today")
     chg = (move.value if move else None) or 0.0
     if kind == "earnings":
@@ -155,10 +199,10 @@ def ticker_card(
         title=title,
         emoji="📉" if chg < 0 else "📈",
         when=ctx.now,
-        headline_line=top.headline if top else None,
+        headline_line=(about[0].title if about else top.headline) if top else None,
         facts_line=" · ".join(parts) or None,
         facts=sheet,
-        links=links_for(top, ctx.cfg.news.source_rank) if top else [],
+        links=links_for_items(about or top.items, rank) if top else [],
         image_url=primary.image_url if primary else None,
         preview_url=primary.url if primary else None,
         critical=c.critical,
