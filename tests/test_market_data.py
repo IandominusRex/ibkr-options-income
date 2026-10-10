@@ -474,13 +474,24 @@ def test_qualify_options_empty_input():
 
 async def test_qualify_options_async_chunks_and_paces(monkeypatch):
     """A large batch is qualified in chunk_size chunks with a throttle between chunks —
-    never one monolithic burst (the SMH 768-contract wedge)."""
+    never one monolithic burst (the SMH 768-contract wedge). Each contract is its own request
+    (2026-10-10), so the chunk bounds how many are in flight at once."""
+    real_sleep = asyncio.sleep
     sleep = AsyncMock()
     monkeypatch.setattr("src.ibkr.contracts.asyncio.sleep", sleep)
 
+    in_flight = peak = 0
+
+    async def _echo(*cs):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await real_sleep(0)
+        in_flight -= 1
+        return list(cs)
+
     ib = MagicMock()
-    # Each chunk echoes its input contracts back, all qualified.
-    ib.qualifyContractsAsync = AsyncMock(side_effect=lambda *cs: list(cs))
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_echo)
     contracts = [_make_option_contract(strike=400.0 + i, con_id=1000 + i) for i in range(5)]
 
     result = await qualify_options_async(
@@ -488,18 +499,19 @@ async def test_qualify_options_async_chunks_and_paces(monkeypatch):
     )
 
     assert len(result) == 5
-    assert ib.qualifyContractsAsync.call_count == 3  # 2 + 2 + 1
+    assert ib.qualifyContractsAsync.call_count == 5  # one request per contract
+    assert peak == 2  # never more than chunk_size in flight
     assert sleep.await_count == 2  # paced between the 3 chunks, not after the last
 
 
 async def test_qualify_options_async_skips_timed_out_chunk():
-    """A chunk whose qualification hangs is dropped (returns partial) instead of hanging the
-    whole symbol — this is what prevents the outer symbol_timeout from killing it mid-flight.
-    The stuck chunk raises TimeoutError (as the real asyncio.wait_for would on a hung chunk)."""
+    """A contract whose qualification hangs is dropped instead of hanging the whole symbol —
+    this is what prevents the outer symbol_timeout from killing it mid-flight. Its chunk-mates
+    that answered are kept (2026-10-10); the stuck request raises TimeoutError."""
 
     async def _qualify(*cs):
         if any(c.strike == 401.0 for c in cs):
-            raise TimeoutError  # the real wait_for trips on a stuck chunk
+            raise TimeoutError  # a stuck request
         return list(cs)
 
     ib = MagicMock()
@@ -508,8 +520,8 @@ async def test_qualify_options_async_skips_timed_out_chunk():
     contracts = [_make_option_contract(strike=400.0 + i, con_id=2000 + i) for i in range(4)]
     result = await qualify_options_async(ib, contracts, chunk_size=2, throttle_seconds=0)
 
-    # First chunk (400,401) times out and is skipped; second chunk (402,403) qualifies.
-    assert {c.strike for c in result} == {402.0, 403.0}
+    # 401 times out and is skipped; 400 (its chunk-mate) and the second chunk qualify.
+    assert {c.strike for c in result} == {400.0, 402.0, 403.0}
 
 
 # ---------------------------------------------------------------------------

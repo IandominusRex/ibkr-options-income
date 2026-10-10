@@ -517,7 +517,7 @@ Two processes must stay running during market hours:
 > cartesian OTM-side-only per right (calls ≥ spot, puts ≤ spot) instead of both rights across the
 > whole band, roughly halving it before the cap even applies. The cap keeps only the N strikes
 > nearest spot, and qualification is chunked/paced/per-chunk-timeout-bounded so a stuck chunk
-> yields partial results instead of hanging the symbol. Leave these at the defaults unless a
+> yields the contracts that did answer instead of hanging the symbol. Leave these at the defaults unless a
 > specific name still storms.
 
 > **Normal operation on macOS: use `./ibkr`, not the commands below.** `./ibkr install` once, then

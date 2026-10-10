@@ -85,7 +85,8 @@ async def test_whole_expiry_missing_is_not_cached(tmp_path) -> None:
 
     ib = _ib()
     await qualify_options_async(ib, [_opt(600.0), _opt(605.0)], cache=cache, throttle_seconds=0)
-    assert ib.qualifyContractsAsync.await_count == 1  # asked again, not remembered as missing
+    asked = {c.strike for call in ib.qualifyContractsAsync.await_args_list for c in call.args}
+    assert asked == {600.0, 605.0}  # asked again, not remembered as missing
 
 
 async def test_timed_out_chunk_records_nothing(tmp_path) -> None:
@@ -115,6 +116,8 @@ async def test_short_result_list_records_no_missing(tmp_path) -> None:
     cache = _cache(tmp_path)
 
     async def _only_qualified(*cs):
+        if cs[0].strike != 600.0:
+            return []  # no slot for it at all
         cs[0].conId = 6000
         return [cs[0]]
 
@@ -222,3 +225,82 @@ async def test_answers_are_kept_when_the_symbol_is_cancelled_mid_qualification(t
         )
 
     assert cache.lookup([_opt(600.0)]).hits != []
+
+
+async def test_timed_out_chunk_keeps_the_answers_that_came_back(tmp_path) -> None:
+    """Live 2026-10-09: ib_async gathers a chunk's lookups as one call, so the chunk timeout
+    threw away answers already in (PLTR 13/136, SOXL 134/320) and a slow Gateway never let a
+    cold symbol warm up. Each contract is now its own request: the timeout drops only those
+    still out, and what came back is returned and cached."""
+    import asyncio
+
+    cache = _cache(tmp_path)
+
+    async def _one_hangs(*cs):
+        for c in cs:
+            if c.strike == 605.0:
+                await asyncio.sleep(10)
+            c.conId = int(c.strike * 10)
+        return list(cs)
+
+    ib = MagicMock()
+    ib.errorEvent = Event("errorEvent")
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_one_hangs)
+    result = await qualify_options_async(
+        ib,
+        [_opt(600.0), _opt(605.0)],
+        cache=cache,
+        chunk_timeout_seconds=0.2,
+        throttle_seconds=0,
+    )
+
+    assert [c.strike for c in result] == [600.0]
+    assert cache.lookup([_opt(600.0)]).hits != []
+    assert cache.lookup([_opt(605.0)]).misses != []  # unanswered, not remembered as missing
+
+
+async def test_requests_still_out_are_cancelled_when_the_symbol_is(tmp_path) -> None:
+    """The scan's symbol_timeout cancels qualify_options_async mid-chunk; the per-contract
+    requests it started must be cancelled with it, never left running against the Gateway."""
+    import asyncio
+
+    cancelled: list[float] = []
+
+    async def _hangs(*cs):
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.extend(c.strike for c in cs)
+            raise
+        return list(cs)
+
+    ib = MagicMock()
+    ib.errorEvent = Event("errorEvent")
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_hangs)
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(
+            qualify_options_async(
+                ib, [_opt(600.0), _opt(605.0)], cache=_cache(tmp_path), throttle_seconds=0
+            ),
+            timeout=0.2,
+        )
+    await asyncio.sleep(0)
+
+    assert sorted(cancelled) == [600.0, 605.0]
+
+
+async def test_a_failed_request_still_reaches_the_caller(tmp_path) -> None:
+    """Splitting the chunk must not swallow real failures: a disconnect raised by one request
+    propagates, as it did from the one gathered call."""
+    import pytest
+
+    async def _disconnected(*cs):
+        raise ConnectionError("Not connected")
+
+    ib = MagicMock()
+    ib.errorEvent = Event("errorEvent")
+    ib.qualifyContractsAsync = AsyncMock(side_effect=_disconnected)
+    with pytest.raises(ConnectionError):
+        await qualify_options_async(
+            ib, [_opt(600.0), _opt(605.0)], cache=_cache(tmp_path), throttle_seconds=0
+        )

@@ -671,7 +671,9 @@ Manual `/scan` is never budgeted — it is operator-initiated and expected to sw
 "qualified" (its IBKR conId looked up). That answer never changes before expiry, so it is
 remembered in `data/contracts.db` and a cycle asks IBKR only for contracts it hasn't seen today.
 The few remaining lookups go through a lock shared with the spreads service, one chunk at a time,
-so the GEX map build and the scan interleave instead of timing each other out.
+so the GEX map build and the scan interleave instead of timing each other out. Each contract in a
+chunk is its own request, so a chunk that hits its 20 s limit on a slow Gateway still keeps (and
+remembers) every answer that came back — only the stragglers are asked again next cycle.
 
 ### Why a shorter cycle would make this worse
 

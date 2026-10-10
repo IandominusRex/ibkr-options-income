@@ -73,6 +73,38 @@ def _record(store: ContractCache, entries: list[tuple[Key, Any | None]]) -> None
         log.warning("contract cache write failed — answers not remembered", exc_info=True)
 
 
+async def _qualify_each(ib: IB, chunk: list[Option], timeout: float) -> dict[int, list[Any]]:
+    """Qualify every contract of *chunk* as its own request and return the answers that came
+    back within *timeout*, keyed by ``id(contract)``. ``qualifyContractsAsync(*chunk)`` gathers the
+    chunk as one call, so a timeout cancelled the answers already in with the ones still out
+    (live 2026-10-09: PLTR 13/136, SOXL 134/320) and a slow Gateway never let a cold symbol
+    warm its cache. Requests still out at the timeout, or when the caller is cancelled, are
+    cancelled. A request that failed with anything but a timeout re-raises once the rest of
+    the chunk has been waited for, as the one gathered call did."""
+    tasks = [(asyncio.ensure_future(ib.qualifyContractsAsync(c)), c) for c in chunk]
+    try:
+        done, _pending = await asyncio.wait([t for t, _ in tasks], timeout=timeout)
+    finally:
+        for t, _ in tasks:
+            t.cancel()
+    answers: dict[int, list[Any]] = {}
+    error: BaseException | None = None
+    for t, c in tasks:
+        if t not in done or t.cancelled():
+            continue
+        exc = t.exception()
+        if isinstance(exc, TimeoutError):
+            continue
+        if exc is not None:
+            error = error or exc
+            continue
+        result = t.result()
+        answers[id(c)] = list(result) if isinstance(result, list) else [result]
+    if error is not None:
+        raise error
+    return answers
+
+
 class _UseDefault:
     pass
 
@@ -98,9 +130,10 @@ async def qualify_options_async(
     session; and if the burst hasn't returned by ``symbol_timeout_seconds`` the outer
     ``asyncio.wait_for`` cancels it mid-flight, which is what leaves the ib_async request
     pipeline unable to service any subsequent symbol. Chunking caps the in-flight request
-    count, ``throttle_seconds`` paces between chunks, and a per-chunk ``asyncio.wait_for``
-    means a stuck chunk yields whatever qualified and we move on — the symbol is never killed
-    mid-qualification.
+    count, ``throttle_seconds`` paces between chunks, and a per-chunk timeout means a stuck
+    chunk yields whatever qualified and we move on — the symbol is never killed
+    mid-qualification. Each contract in a chunk is its own request (2026-10-10), so the
+    timeout drops only the requests still out, never the answers already in.
 
     **Contract cache (2026-10-10).** Contracts already looked up (by any process, any time
     before expiry) are filled from ``data/contracts.db`` without asking IBKR; strikes IBKR
@@ -150,30 +183,28 @@ async def qualify_options_async(
             chunk = to_ask[i : i + chunk_size]
             lock_path = store.lock_path if store is not None else None
             wait = get_config().market_data.qualify_lock_wait_seconds
-            try:
-                async with contract_cache.contract_details_slot(lock_path, wait):
-                    result = await asyncio.wait_for(
-                        ib.qualifyContractsAsync(*chunk), timeout=chunk_timeout_seconds
-                    )
-            except TimeoutError:
+            async with contract_cache.contract_details_slot(lock_path, wait):
+                answers = await _qualify_each(ib, chunk, chunk_timeout_seconds)
+            if len(answers) < len(chunk):
                 log.warning(
-                    "qualify_options_async: chunk %d-%d timed out after %.0fs — skipping chunk",
+                    "qualify_options_async: chunk %d-%d — %d of %d answered within %.0fs, "
+                    "skipping the rest",
                     i,
                     i + len(chunk),
+                    len(answers),
+                    len(chunk),
                     chunk_timeout_seconds,
                 )
-                continue
-            items = result if isinstance(result, list) else [result]
             chunk_fresh = [
                 cast(Option, item)
-                for item in items
+                for c in chunk
+                for item in answers.get(id(c), [])
                 if item is not None and getattr(item, "conId", None)
             ]
             fresh.extend(chunk_fresh)
-            chunk_missing: list[Option] = []
-            if len(items) == len(chunk):  # aligned slots: a None slot is a failed lookup
-                chunk_missing = [c for c, item in zip(chunk, items, strict=True) if item is None]
-                missing.extend(chunk_missing)
+            # One request per contract, so its one slot lines up: None is a failed lookup.
+            chunk_missing = [c for c in chunk if answers.get(id(c)) == [None]]
+            missing.extend(chunk_missing)
             if store is not None:
                 # Recorded per chunk, not once at the end: the scan bounds a whole symbol with
                 # symbol_timeout_seconds, and a cancelled symbol must keep what IBKR answered.
