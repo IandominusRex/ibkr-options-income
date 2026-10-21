@@ -392,7 +392,8 @@ async def evaluate_roll(
     cand = decision.candidate
     if decision.action == "roll" and cand is not None:
         account = await get_account_snapshot_async(ib, cfg.secrets.ibkr_account)
-        verdict = validate_candidates([cand], account, positions)[0]
+        # Rolls are exempt from regime limits (spec section 5): sizing=None, on purpose.
+        verdict = validate_candidates([cand], account, positions, sizing=None)[0]
         if verdict.verdict != Verdict.PASS:
             decision = _gate_fallback(
                 decision, pos, cc_basis, list(verdict.reasons), on_no_roll=on_no_roll

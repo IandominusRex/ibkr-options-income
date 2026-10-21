@@ -9,6 +9,7 @@ Two-phase design:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -22,11 +23,21 @@ from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.market_hours import is_rth
-from src.common.schemas import ApprovalStatus, OrderState, Strategy, TradeCandidate, Verdict
+from src.common.schemas import (
+    ApprovalStatus,
+    OrderState,
+    PositionSnapshot,
+    SizingContext,
+    Strategy,
+    TradeCandidate,
+    Verdict,
+)
 from src.engine.risk_engine import validate_candidates
 from src.execution.circuit_breakers import evaluate_breakers, remaining_entry_allowance
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+from src.regime.context import build_sizing_context
+from src.regime.refresh import refresh_regime_cached
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
 from src.storage.system_settings import get_halt_source, is_halted, set_halted
@@ -55,6 +66,23 @@ def _load_candidate(session: Session, order_row: OrderRow) -> TradeCandidate | N
     if row is None:
         return None
     return TradeCandidate.model_validate(row.payload)
+
+
+def _send_context(now: datetime, positions: list[PositionSnapshot]) -> SizingContext | None:
+    """The sizing context for the send-time re-gate: the regime as it is *now*.
+
+    Refreshes the regime through a short cache (a regime that escalated between the card and this
+    poll is seen here; a change found now is persisted unsent and announced by the next scan) and
+    builds a ``for_send=True`` context, which counts today's already-sent CSPs but not the queued
+    orders that are the batch being validated. Reads the database in its own session, so it is
+    called *before* the write session below is opened.
+    """
+    try:
+        refresh_regime_cached(now)
+    except Exception:
+        log.warning("send-time regime refresh failed — using the last known regime", exc_info=True)
+    with session_scope() as session:
+        return build_sizing_context(now=now, session=session, for_send=True, positions=positions)
 
 
 def _is_roll_order() -> ColumnElement[bool]:
@@ -141,6 +169,16 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                 await bot.send_message(chat_id=chat_id, message_thread_id=thread, text=text)
             except Exception:
                 log.exception("Failed to send circuit-breaker halt notification")
+        return
+
+    # The send-time sizing context is built here, before the write session below opens (like the
+    # IBKR fetches above, it must not hold the SQLite write lock). If it cannot be built the
+    # pass is skipped: the orders stay QUEUED and are retried, rather than being sent without
+    # the regime's limits.
+    try:
+        sizing = await asyncio.to_thread(_send_context, now, positions)
+    except Exception:
+        log.exception("Could not build the send-time sizing context — skipping execution pass")
         return
 
     # ------------------------------------------------------------------ #
@@ -255,7 +293,9 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         # safety property, and it fails closed. The single-ticker deep-dive opts out
         # instead — it is a browse/compare view, and this gate is its backstop.
         ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
-        verdicts = validate_candidates([c for _, c in ordered], account_snap, positions)
+        verdicts = validate_candidates(
+            [c for _, c in ordered], account_snap, positions, sizing=sizing
+        )
         verdict_map = {v.candidate_id: v for v in verdicts}
 
         # Share-ownership re-check for covered calls. `validate_candidates` gates cash/

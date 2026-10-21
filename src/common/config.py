@@ -1342,6 +1342,13 @@ _DEFAULT_REGIME_DAILY: dict[MarketRegime, int | None] = {
     MarketRegime.STRESSED: 3,
     MarketRegime.CRISIS: 1,
 }
+# Guaranteed lots per governing index per ET day past a full scaled budget (spec decision 31).
+_DEFAULT_REGIME_FLOOR: dict[MarketRegime, int] = {
+    MarketRegime.NORMAL: 0,
+    MarketRegime.CAUTIOUS: 2,
+    MarketRegime.STRESSED: 1,
+    MarketRegime.CRISIS: 1,
+}
 
 
 def _fill_regimes(v: Any, default: dict[MarketRegime, Any]) -> Any:
@@ -1358,7 +1365,12 @@ def _fill_regimes(v: Any, default: dict[MarketRegime, Any]) -> Any:
 class RegimeCspCfg(_KeyedCfg):
     """CSP limits per market regime (config/risk_limits.yaml -> regime.csp)."""
 
-    KEYS: ClassVar[tuple[str, ...]] = ("budget_multiplier", "per_trade_fraction", "max_new_per_day")
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "budget_multiplier",
+        "per_trade_fraction",
+        "max_new_per_day",
+        "floor_new_per_day",
+    )
 
     budget_multiplier: dict[MarketRegime, float] = Field(
         default_factory=lambda: dict(_DEFAULT_REGIME_BUDGET)
@@ -1369,6 +1381,22 @@ class RegimeCspCfg(_KeyedCfg):
     max_new_per_day: dict[MarketRegime, int | None] = Field(
         default_factory=lambda: dict(_DEFAULT_REGIME_DAILY)
     )
+    floor_new_per_day: dict[MarketRegime, int] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_FLOOR)
+    )
+
+    @field_validator("floor_new_per_day", mode="before")
+    @classmethod
+    def _fill_floor(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_FLOOR)
+
+    @field_validator("floor_new_per_day")
+    @classmethod
+    def _floor_non_negative(cls, v: dict[MarketRegime, int]) -> dict[MarketRegime, int]:
+        for regime, value in v.items():
+            if value < 0:
+                raise ValueError(f"regime.csp.floor_new_per_day[{regime.value}] must be >= 0")
+        return v
 
     @field_validator("budget_multiplier", mode="before")
     @classmethod
@@ -1530,6 +1558,97 @@ class RegimeCfg(_KeyedCfg):
     @classmethod
     def _upper(cls, v: list[str]) -> list[str]:
         return [str(s).upper() for s in v]
+
+
+# The leverage multiples the tiers below are defined for (the YAML keys are ints; compared as
+# strings here so a mistyped "x3" or 4 fails with a clear message).
+_LEVERAGE_FACTORS: tuple[str, ...] = ("2", "3")
+_LEVERAGE_TIERS: tuple[str, ...] = ("calm", "stressed")
+_DEFAULT_LEVERAGE_FRACTION: dict[str, dict[int, float]] = {
+    "calm": {2: 0.8, 3: 0.6},
+    "stressed": {2: 0.5, 3: 0.3},
+}
+# The shipped map of leveraged ETF -> daily leverage. A leveraged name in universe.yaml's
+# `leveraged_etfs` that is missing from the operator's map is treated as 3x (the strictest).
+_DEFAULT_LEVERAGE: dict[str, int] = {
+    "TQQQ": 3,
+    "UPRO": 3,
+    "SOXL": 3,
+    "DPST": 3,
+    "LABU": 3,
+    "TSLL": 2,
+}
+
+
+def _leveraged_fraction_defaults() -> dict[Literal["calm", "stressed"], dict[int, float]]:
+    return {
+        "calm": dict(_DEFAULT_LEVERAGE_FRACTION["calm"]),
+        "stressed": dict(_DEFAULT_LEVERAGE_FRACTION["stressed"]),
+    }
+
+
+class LeveragedSizingCfg(_KeyedCfg):
+    """A smaller per-trade size for 2x and 3x leveraged ETFs, in every regime (ruling 35).
+
+    ``per_trade_fraction`` is a fraction of ``cash_secured_put.max_contracts`` multiplied by the
+    regime's own per-trade fraction: **calm** when the name's regime is normal and no ladder
+    trigger holds on it, **stressed** otherwise. Not a regime limit: ``/regime off`` and
+    ``regime.enabled: false`` leave it on; ``enabled: false`` here switches it off.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "per_trade_fraction", "leverage")
+
+    enabled: bool = True
+    per_trade_fraction: dict[Literal["calm", "stressed"], dict[int, float]] = Field(
+        default_factory=lambda: _leveraged_fraction_defaults()
+    )
+    leverage: dict[str, int] = Field(default_factory=lambda: dict(_DEFAULT_LEVERAGE))
+
+    @field_validator("per_trade_fraction", mode="before")
+    @classmethod
+    def _fill_tiers(cls, v: Any) -> Any:
+        merged: dict[Any, dict[Any, Any]] = {
+            t: dict(f) for t, f in _DEFAULT_LEVERAGE_FRACTION.items()
+        }
+        if isinstance(v, dict):
+            for tier, factors in v.items():
+                if tier not in _LEVERAGE_TIERS:
+                    raise ValueError(f"leveraged_sizing.per_trade_fraction: unknown tier {tier!r}")
+                if not isinstance(factors, dict):
+                    raise ValueError(f"leveraged_sizing.per_trade_fraction.{tier} must be a map")
+                merged[tier].update(factors)
+        return merged
+
+    @field_validator("per_trade_fraction")
+    @classmethod
+    def _tiers_valid(
+        cls, v: dict[Literal["calm", "stressed"], dict[int, float]]
+    ) -> dict[Literal["calm", "stressed"], dict[int, float]]:
+        for tier, factors in v.items():
+            for factor, fraction in factors.items():
+                if str(factor) not in _LEVERAGE_FACTORS:
+                    raise ValueError(
+                        f"leveraged_sizing.per_trade_fraction.{tier}: leverage {factor!r} is not "
+                        f"one of {list(_LEVERAGE_FACTORS)}"
+                    )
+                if not (0.0 < fraction <= 1.0):
+                    raise ValueError(
+                        f"leveraged_sizing.per_trade_fraction.{tier}.{factor} must be in (0, 1]"
+                    )
+        return v
+
+    @field_validator("leverage")
+    @classmethod
+    def _leverage_valid(cls, v: dict[str, int]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for symbol, factor in v.items():
+            if str(factor) not in _LEVERAGE_FACTORS:
+                raise ValueError(
+                    f"leveraged_sizing.leverage.{symbol}: {factor!r} is not one of "
+                    f"{list(_LEVERAGE_FACTORS)}"
+                )
+            out[str(symbol).upper()] = int(factor)
+        return out
 
 
 class Config(BaseModel):
@@ -1737,3 +1856,8 @@ def get_regime_cfg() -> RegimeCfg:
     invalid block, at first use rather than at import.
     """
     return RegimeCfg(**(get_config().risk.get("regime") or {}))
+
+
+def get_leveraged_sizing_cfg() -> LeveragedSizingCfg:
+    """The typed ``leveraged_sizing:`` block of ``config/risk_limits.yaml`` (defaults when absent)."""
+    return LeveragedSizingCfg(**(get_config().risk.get("leveraged_sizing") or {}))

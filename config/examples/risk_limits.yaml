@@ -173,6 +173,12 @@ regime:
     budget_multiplier:  {normal: 1.0, cautious: 0.7, stressed: 0.4, crisis: 0.1}
     per_trade_fraction: {normal: 1.0, cautious: 0.6, stressed: 0.3, crisis: 0.1}
     max_new_per_day:    {normal: null, cautious: 6, stressed: 3, crisis: 1}
+    # The guaranteed floor: new CSP lots per governing index per ET day that may exceed the
+    # regime-SCALED budget (never the unscaled caps, the per-trade ceiling or the daily limit).
+    # Without it a full book (collateral at 101% of deployable on 2026-10-20) turns every
+    # non-normal regime into a complete stop until the puts expire. Governing index: QQQ for a
+    # tech_linked name, SPY for every other.
+    floor_new_per_day:  {normal: 0, cautious: 2, stressed: 1, crisis: 1}
   thresholds:
     vol_cautious: 22.0        # VIX close (both indices)
     vol_stressed: 28.0
@@ -190,6 +196,21 @@ regime:
       QQQ: {stressed: -2.5, crisis: -4.0}
       vix_stressed: 30.0
       vix_crisis: 40.0
+
+# --- Leveraged-ETF size ceiling (engine/regime_limits.py) ---
+# A smaller per-trade size for 2x and 3x leveraged ETFs in EVERY regime. The ceiling is
+# floor(cash_secured_put.max_contracts x the regime's per_trade_fraction x the fraction below),
+# at least one lot (zero only when the regime's own ceiling is zero). `calm` applies while the
+# name's regime is normal and no ladder trigger holds on it; `stressed` otherwise. This is not a
+# regime limit: `/regime off` and `regime.enabled: false` leave it on. Rolls are exempt. The
+# `leverage` map is the operator's: a leveraged ETF in universe.yaml's `leveraged_etfs` that is
+# missing here is treated as 3x (the strictest) with a warning. TSLL's factor is yours to confirm.
+leveraged_sizing:
+  enabled: true
+  per_trade_fraction:
+    calm:     {2: 0.8, 3: 0.6}
+    stressed: {2: 0.5, 3: 0.3}
+  leverage: {TQQQ: 3, UPRO: 3, SOXL: 3, DPST: 3, LABU: 3, TSLL: 2}
 
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
 # (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate

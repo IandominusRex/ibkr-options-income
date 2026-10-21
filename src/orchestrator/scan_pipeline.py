@@ -44,6 +44,7 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     SentimentDetail,
+    SizingContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -199,6 +200,7 @@ async def scan_symbol(
     probed_spot: float | None,
     symbol_timeout_seconds: float,
     deps: SymbolDeps,
+    sizing: SizingContext | None = None,
 ) -> SymbolOutcome:
     """Run the full per-symbol pipeline and return what it produced.
 
@@ -214,6 +216,9 @@ async def scan_symbol(
             as the technicals' cached price so a gate-skipped symbol doesn't pay for a second
             identical fetch.
         symbol_timeout_seconds: hard bound on the option-chain fetch.
+        sizing: the market-regime context for this scan (`src/regime/context.py`); handed to the
+            CSP screen so the sizer applies the same regime limits the gate will. ``None`` means
+            no regime behaviour (the covered-call screen never takes it: calls are not limited).
     """
     loop = asyncio.get_running_loop()
     errors: list[str] = []
@@ -302,7 +307,14 @@ async def scan_symbol(
     # CSP candidates for would_own symbols.
     if symbol in would_own and quotes:
         csp_screen = deps.screen_csp(
-            symbol, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
+            symbol,
+            quotes,
+            account,
+            iv_stats,
+            tech_stats,
+            fund_stats,
+            positions=positions,
+            sizing=sizing,
         )
         apply_sentiment(csp_screen, sentiment_detail)
         outcome.csp_passed.extend(csp_screen.passed)

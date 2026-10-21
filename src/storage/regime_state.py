@@ -63,9 +63,14 @@ def _write(session: Session, key: str, value: str) -> None:
         row.value = value
 
 
-def load_regime_state() -> RegimeState | None:
-    """The persisted regime, or None when never written (or unreadable). Never raises."""
+def load_regime_state(session: Session | None = None) -> RegimeState | None:
+    """The persisted regime, or None when never written (or unreadable). Never raises.
+
+    Reads through *session* when one is given (the caller's own read snapshot), else its own.
+    """
     try:
+        if session is not None:
+            return _read(session)
         with session_scope() as s:
             return _read(s)
     except Exception:

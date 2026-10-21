@@ -53,6 +53,7 @@ from src.common.schemas import (
     RegimeState,
     RiskVerdict,
     SectorContext,
+    SizingContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -76,7 +77,8 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
-from src.regime.refresh import refresh_regime
+from src.regime.context import build_sizing_context
+from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
@@ -1105,6 +1107,19 @@ def _fetch_analytics(
     return iv_stats, tech_stats, fund_stats
 
 
+def _build_sizing(positions: list[PositionSnapshot], symbols: list[str]) -> SizingContext | None:
+    """The market-regime `SizingContext` the sizer and the gate apply (one per scan).
+
+    Reads the persisted regime and today's counts from the trading database, so it runs off the
+    event loop. A database failure propagates: the scan stops rather than sizing without the
+    regime.
+    """
+    with session_scope() as session:
+        return build_sizing_context(
+            now=datetime.now(UTC), session=session, symbols=symbols, positions=positions
+        )
+
+
 async def _refresh_and_announce_regime(result: ScanResult) -> None:
     """Refresh the persisted market regime, store it on *result*, and announce any change.
 
@@ -1286,6 +1301,9 @@ async def _run_scan_body(
             unmapped,
         )
 
+    # --- 2b. The market regime as the sizer and the gate apply it (deterministic) ---
+    sizing = await loop.run_in_executor(None, _build_sizing, positions, would_own)
+
     # --- 3. Sentiment scorer ---
     sentiment = SentimentScorer(
         client_id=cfg.secrets.reddit_client_id,
@@ -1454,6 +1472,7 @@ async def _run_scan_body(
             probed_spot=probed_spots.get(symbol),
             symbol_timeout_seconds=cfg.market_data.symbol_timeout_seconds,
             deps=deps,
+            sizing=sizing,
         )
 
         # Chain + Greeks provenance for this symbol.
@@ -1601,6 +1620,7 @@ async def _run_scan_body(
                     for sym, (iv, _tech, _fund) in analytics_map.items()
                     if iv.current_iv is not None
                 },
+                sizing=sizing,
             )
             verdict_map = {v.candidate_id: v for v in verdicts}
             gate_passed = [
@@ -1970,6 +1990,17 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
         log.exception("ticker_scan: failed to fetch positions/account for %s", ticker)
         raise TickerPricingAborted("account") from exc
 
+    # 4b. The market regime for this one name (the same context a full scan builds). A one-off
+    # scan or a promote can run before the day's first full scan, so bring the persisted regime up
+    # to date first (cached: at most one refresh a minute).
+    try:
+        await loop.run_in_executor(None, refresh_regime_cached, datetime.now(UTC))
+    except Exception:
+        log.warning(
+            "ticker_scan: regime refresh failed — using the last known regime", exc_info=True
+        )
+    sizing = await loop.run_in_executor(None, _build_sizing, positions, [ticker])
+
     # 5. CC candidates — only if we hold the stock.
     cc_candidates: list[TradeCandidate] = []
     ticker_rejects: list[tuple[TradeCandidate, list[str]]] = []
@@ -2008,7 +2039,14 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
     csp_skip_reason: str | None = None
     if quotes:
         csp_screen = screen_csp_candidates(
-            ticker, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
+            ticker,
+            quotes,
+            account,
+            iv_stats,
+            tech_stats,
+            fund_stats,
+            positions=positions,
+            sizing=sizing,
         )
         csp_candidates = csp_screen.passed
         ticker_rejects.extend(csp_screen.rejected)
@@ -2028,7 +2066,9 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             # this view exists to let an operator compare. This is a browse/compare surface,
             # not an execution-committing one: anything promoted out of it is re-gated at
             # order-approval time (`execution/approval.py`), which keeps the dedupe ON.
-            verdicts = validate_candidates(scored, account, positions, dedupe_same_symbol=False)
+            verdicts = validate_candidates(
+                scored, account, positions, dedupe_same_symbol=False, sizing=sizing
+            )
             verdict_map = {v.candidate_id: v for v in verdicts}
             min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [

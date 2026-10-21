@@ -1121,7 +1121,8 @@ async def handle_regime_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             f"Regime limits suspended for today ({today.isoformat()}). They apply again from the "
             f"next trading day's base ({resumes.isoformat()}), or sooner with /regime on. "
-            "Closes, rolls, profit-takes and loss exits are never limited by the regime."
+            "Closes, rolls, profit-takes and loss exits are never limited by the regime, and the "
+            "leveraged-ETF size limit is not a regime limit, so it stays on."
         )
         return
     if arg == "on":

@@ -23,11 +23,30 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     RiskVerdict,
+    SizingContext,
     Strategy,
     TradeCandidate,
     Verdict,
 )
-from src.engine.capital import Budgets, charge, resolve_caps, risk_units, seed_budgets
+from src.engine.capital import (
+    Budgets,
+    Caps,
+    charge,
+    resolve_caps,
+    risk_units,
+    scale_caps,
+    seed_budgets,
+)
+from src.engine.regime_limits import (
+    active,
+    ceiling_kind,
+    daily_limit,
+    floor_left,
+    governing_index,
+    multipliers,
+    per_trade_cap,
+    sizing_note,
+)
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
@@ -66,6 +85,58 @@ def _select_budget_representatives(
     return representatives
 
 
+def _cumulative_reasons(
+    cand: TradeCandidate, sector: str | None, caps: Caps, budgets: Budgets
+) -> list[str]:
+    """The pass-2 (shared-budget) reasons *cand* would be rejected for against *caps*.
+
+    Mirrors ``capital._fits`` exactly: the gate must never be looser than the sizer. Pure with
+    respect to *budgets* (read only), so it can be run twice, against the regime-scaled caps and
+    then the unscaled ones, to tell a regime rejection from a book rejection.
+    """
+    reasons: list[str] = []
+    # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
+    # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
+    # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
+    # $65k META put and a $15k MARA put on the same scale. When IV is missing we fall back
+    # to a stricter raw-collateral cap.
+    #
+    # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
+    cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
+    units = risk_units(cand.collateral, cand.current_iv, cand.dte)
+    if units is None:
+        if cum_collateral > caps.max_ticker_collateral:
+            reasons.append("concentration_limit")
+    else:
+        if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
+            reasons.append("concentration_limit")
+        if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
+            reasons.append("sector_limit")
+
+    # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
+    # slot is free. This is also the raw-collateral backstop on every path that cannot
+    # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
+    # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
+    # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
+    # holding a slot (seeded from the book, or claimed by an earlier representative this
+    # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
+    if cum_collateral > caps.max_ticker_collateral:
+        if (
+            cand.underlying not in budgets.large_tickers
+            and len(budgets.large_tickers) >= caps.max_large_positions
+        ):
+            reasons.append("large_position_slot_full")
+        elif cum_collateral > caps.large_ticker_collateral:
+            reasons.append("concentration_limit")
+
+    if cand.strategy == Strategy.CASH_SECURED_PUT:
+        if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
+            reasons.append("csp_allocation_limit")
+    if budgets.cash_used + cand.collateral > caps.deployable_cash:
+        reasons.append("buying_power_buffer")
+    return reasons
+
+
 def validate_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -73,6 +144,7 @@ def validate_candidates(
     iv_by_symbol: dict[str, float] | None = None,
     *,
     dedupe_same_symbol: bool = True,
+    sizing: SizingContext | None = None,
 ) -> list[RiskVerdict]:
     """Gate each candidate against hard limits. One RiskVerdict per candidate.
 
@@ -120,6 +192,17 @@ def validate_candidates(
     pass it (the full scan sweep); callers on a latency-sensitive path where it would cost a
     fresh network round-trip — the order-approval re-validation gate, a single-ticker
     deep-dive — deliberately do not, and rely on the raw-collateral tally instead.
+
+    *sizing* carries the market regime (`src/regime/context.py`); ``None`` (rolls, tests) means no
+    regime behaviour. It only ever touches cash-secured puts: covered calls and rolls are never
+    regime-limited, exactly like the income gates above. With it, a CSP is also held to the
+    per-trade ceiling (`regime_ceiling`, or `leveraged_ceiling` for a leveraged ETF), the
+    regime-scaled budgets (`regime_budget` when only the scaled cap stops it, i.e. it fits every
+    unscaled cap), the day's new-CSP count (`regime_daily_limit`, per governing index), and the
+    guaranteed floor: while ``floor_new_per_day`` lots remain, a candidate whose *only* reason is
+    `regime_budget` is accepted and tagged ``sizing.floor_lot`` (an in-place update of the
+    candidate; the gate returns verdicts only). The generator calls the same functions
+    (`src/engine/regime_limits.py`), so the two cannot disagree.
     """
     if not candidates:
         return []
@@ -232,6 +315,16 @@ def validate_candidates(
         if max_contracts is not None and cand.contracts > max_contracts:
             reasons.append("contracts_exceeds_max")
 
+        # --- Per-trade ceiling from the market regime and, for a leveraged ETF, its smaller
+        # ceiling. Cash-secured puts only: a roll or a covered call is never regime-limited.
+        if sizing is not None and cand.strategy == Strategy.CASH_SECURED_PUT:
+            hard_max = int(limits.get("max_contracts", 10)) if limits else 10
+            if cand.contracts > per_trade_cap(sizing, cand.underlying, hard_max):
+                reasons.append(
+                    ceiling_kind(sizing, cand.underlying, hard_max, cand.contracts)
+                    or "regime_ceiling"
+                )
+
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
         # A ROLL is judged only on whether its new expiry runs into earnings: the proximity
         # clause keeps NEW entries away from an announcement, but a roll that expires first
@@ -316,52 +409,54 @@ def validate_candidates(
     # --- Pass 2: cumulative, shared-budget gates. Representatives only, walked in the same
     # score-sorted order as *candidates* so cross-symbol competition for the shared
     # sector/CSP/cash budgets is still resolved by priority, exactly as before this split.
+    #
+    # With a regime, a CSP is checked against the regime-SCALED caps first; when that fails, the
+    # same checks run against the unscaled caps and, if they pass, the reasons become the single
+    # `regime_budget` (the regime, not the book, said no). Budgets are always seeded and charged
+    # against the unscaled caps. Names accepted so far are tracked per underlying, so in the
+    # deep-dive (``dedupe_same_symbol=False``) the strikes of one name share one daily-count and
+    # one floor slot instead of each using a slot.
+    accepted_csp: dict[str, str] = {}  # underlying -> governing index, accepted CSPs this batch
+    accepted_floor: dict[str, str] = {}  # underlying -> governing index, floor lots this batch
+
+    def _others(by_name: dict[str, str], index: str, underlying: str) -> int:
+        return sum(1 for name, idx in by_name.items() if idx == index and name != underlying)
+
     for cand in candidates:
         if cand.candidate_id not in representative_ids:
             continue
         reasons = candidate_reasons[cand.candidate_id]
         sector = _sector_of(cand.underlying)
+        is_csp = cand.strategy == Strategy.CASH_SECURED_PUT
+        regime_active = sizing is not None and is_csp and active(sizing)
 
-        # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
-        # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
-        # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
-        # $65k META put and a $15k MARA put on the same scale. When IV is missing we fall back
-        # to a stricter raw-collateral cap.
-        # Mirrors `capital._fits` exactly — the gate must never be looser than the sizer.
-        #
-        # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
-        cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
-        units = risk_units(cand.collateral, cand.current_iv, cand.dte)
-        if units is None:
-            if cum_collateral > caps.max_ticker_collateral:
-                reasons.append("concentration_limit")
-        else:
-            if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
-                reasons.append("concentration_limit")
-            if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
-                reasons.append("sector_limit")
+        check_caps = caps
+        if regime_active:
+            ticker_mult, book_mult = multipliers(sizing, cand.underlying)
+            check_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
+        reasons.extend(_cumulative_reasons(cand, sector, check_caps, budgets))
 
-        # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
-        # slot is free. This is also the raw-collateral backstop on every path that cannot
-        # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
-        # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
-        # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
-        # holding a slot (seeded from the book, or claimed by an earlier representative this
-        # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
-        if cum_collateral > caps.max_ticker_collateral:
+        took_floor = False
+        if regime_active:
+            assert sizing is not None
+            if reasons and not _cumulative_reasons(cand, sector, caps, budgets):
+                reasons = ["regime_budget"]
+            index = governing_index(sizing, cand.underlying)
+            limit = daily_limit(sizing, cand.underlying)
             if (
-                cand.underlying not in budgets.large_tickers
-                and len(budgets.large_tickers) >= caps.max_large_positions
+                limit is not None
+                and sizing.csp_opens_counted.get(index, 0)
+                + _others(accepted_csp, index, cand.underlying)
+                >= limit
             ):
-                reasons.append("large_position_slot_full")
-            elif cum_collateral > caps.large_ticker_collateral:
-                reasons.append("concentration_limit")
-
-        if cand.strategy == Strategy.CASH_SECURED_PUT:
-            if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
-                reasons.append("csp_allocation_limit")
-        if budgets.cash_used + cand.collateral > caps.deployable_cash:
-            reasons.append("buying_power_buffer")
+                reasons.append("regime_daily_limit")
+            if reasons == ["regime_budget"]:
+                batch_floor: dict[str, int] = {
+                    idx: _others(accepted_floor, idx, cand.underlying) for idx in ("SPY", "QQQ")
+                }
+                if floor_left(sizing, cand.underlying, batch_floor) > 0:
+                    reasons = []
+                    took_floor = True
 
         # Dedupe: two independent checks above (the ticker-risk breach and the large-slot
         # ceiling) can both append "concentration_limit" for the same candidate. Display
@@ -386,6 +481,21 @@ def validate_candidates(
                 caps=caps,
                 budgets=budgets,
             )
+            if sizing is not None and is_csp:
+                index = governing_index(sizing, cand.underlying)
+                accepted_csp[cand.underlying] = index
+                if took_floor:
+                    accepted_floor[cand.underlying] = index
+                note = cand.sizing or sizing_note(
+                    sizing,
+                    cand.underlying,
+                    cand.contracts,
+                    int(_strategy_limits(cand.strategy).get("max_contracts", 10)),
+                )
+                if note is not None:
+                    # An in-place tag: the gate returns verdicts only, and the caller's candidate
+                    # is what is sized, shown and frozen into the order snapshot.
+                    cand.sizing = note.model_copy(update={"floor_lot": took_floor})
 
     return [
         RiskVerdict(

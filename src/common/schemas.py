@@ -495,6 +495,72 @@ class RollOrigin(BaseModel):
     allow_debit: bool = False  # a keep-shares covered-call roll may pay up to roll.cc.max_debit
 
 
+class ScaleInZone(BaseModel):
+    """Where the next CSP lot on a name may be added while it is under the scale-in ladder.
+
+    Defined with the sizing schemas so `SizingContext` and `SizingNote` need no forward
+    reference; the ladder (a later task) fills it. A strike whose spot is above ``zone_high``
+    is refused with ``scale_in_zone_not_reached``.
+    """
+
+    anchor: float
+    anchor_source: Literal["order_snapshot", "price_history", "shares", "position"]
+    zone_low: float
+    zone_high: float
+    support: float | None = None
+    min_gap_pct: float
+    triggers: list[str] = Field(default_factory=list)
+    bottoming_signal: bool = False
+
+
+class SizingNote(BaseModel):
+    """How the market regime and the leveraged-ETF ceiling shaped one CSP's size (card + audit).
+
+    Carried on the candidate (and so in the frozen order snapshot), never read back by the
+    sizer or the gate as an input except `scale_in`/`floor_lot`, which the send-time re-gate
+    re-checks from the snapshot.
+    """
+
+    pre_regime_contracts: int  # what capital alone would have allowed (capped at the hard max)
+    regime: MarketRegime
+    regime_index: Literal["SPY", "QQQ"]  # the index whose regime governs this name
+    per_trade_cap: int
+    budget_multiplier: float
+    leverage: int | None = None
+    leverage_tier: Literal["calm", "stressed"] | None = None
+    ceiling_kind: Literal["regime_ceiling", "leveraged_ceiling"] | None = None
+    floor_lot: bool = False  # sent under the guaranteed floor (past the scaled budget)
+    scale_in: ScaleInZone | None = None
+    bottoming: Literal["market", "name"] | None = None
+    claude_suggested: int | None = None
+    claude_reason: str | None = None
+
+
+class SizingContext(BaseModel):
+    """Everything the sizer and the gate need to apply the regime, built once per scan / send.
+
+    ``None`` (where a function takes ``SizingContext | None``) means no regime behaviour at all.
+    Deterministic: the regimes come from the persisted `RegimeState`, the counts from today's
+    orders. Keys of the per-index dicts are ``"SPY"`` / ``"QQQ"``: a tech-linked name is
+    counted under QQQ, every other name under SPY (ruling 16).
+    """
+
+    regimes: dict[str, MarketRegime]  # effective regime per index
+    tech_linked: list[str] = Field(default_factory=list)
+    suspended: bool = False  # `/regime off` today
+    csp_opens_counted: dict[str, int] = Field(default_factory=dict)  # per governing index
+    floor_lots_counted: dict[str, int] = Field(default_factory=dict)  # guaranteed-floor lots today
+    leverage: dict[str, int] = Field(default_factory=dict)  # leveraged ETF -> factor (2 or 3)
+    name_triggers: dict[str, list[str]] = Field(default_factory=dict)  # ladder triggers per name
+    for_send: bool = False  # built at send time (queued orders are the batch, not counted)
+    scale_in: dict[str, ScaleInZone] = Field(default_factory=dict)
+    loss_exit_today: list[str] = Field(default_factory=list)
+    spot_at_send: dict[str, float] = Field(default_factory=dict)
+    name_bottoming: list[str] = Field(default_factory=list)
+    market_bottoming: dict[str, bool] = Field(default_factory=dict)
+    signal_lot_recent: list[str] = Field(default_factory=list)
+
+
 class TradeCandidate(BaseModel):
     """A concrete proposed option sale, fully specified and scored."""
 
@@ -553,6 +619,9 @@ class TradeCandidate(BaseModel):
     # ROLL only (2026-10-11): the short this roll closes and its chain position. None on
     # CC/CSP candidates and on roll snapshots frozen before the redesign.
     roll_from: RollOrigin | None = None
+    # CSP only: how the market regime / leveraged-ETF ceiling shaped the size (None on rolls,
+    # covered calls, and on candidates built without a SizingContext).
+    sizing: SizingNote | None = None
 
 
 class RiskVerdict(BaseModel):

@@ -35,6 +35,10 @@ REASON_BELOW_BASIS = "strike_below_basis"
 REASON_BELOW_FAIR_VALUE = "premium_below_fair_value"
 REASON_INSUFFICIENT_CASH = "insufficient_cash"
 REASON_NO_HEADROOM = "no_headroom"
+# The market regime (src/engine/regime_limits.py), named apart from "no headroom" so the card says
+# the regime shrank the size rather than blaming capital.
+REASON_REGIME_BUDGET = "regime_budget"
+REASON_REGIME_CEILING = "regime_ceiling"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
 REASON_PHASE_DOWNTREND = "phase_downtrend"

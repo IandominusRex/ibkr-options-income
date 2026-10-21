@@ -850,7 +850,7 @@ async def test_process_queued_orders_cancels_if_revalidation_fails(monkeypatch, 
     )
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [mock_verdict],
+        lambda candidates, account, positions, sizing=None: [mock_verdict],
     )
 
     candidate = _make_candidate()
@@ -903,7 +903,7 @@ async def test_a_dedupe_pre_gate_cancel_says_what_actually_displaced_the_order(
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(
                 candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["dedupe_pre_gate"]
             )
@@ -958,7 +958,7 @@ async def test_a_non_dedupe_cancel_message_is_unchanged(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["margin_limit"])
         ],
     )
@@ -1002,7 +1002,7 @@ async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, 
     mock_verdict = RiskVerdict(candidate_id="cand-001", verdict=Verdict.PASS, reasons=[])
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [mock_verdict],
+        lambda candidates, account, positions, sizing=None: [mock_verdict],
     )
 
     executed: list[tuple] = []
@@ -1190,7 +1190,7 @@ async def test_process_queued_orders_rejects_covered_call_without_enough_shares(
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],
@@ -1251,7 +1251,7 @@ async def test_process_queued_orders_allows_covered_call_with_enough_shares(monk
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],
@@ -1313,7 +1313,7 @@ async def test_process_queued_orders_two_covered_calls_same_underlying_second_re
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],

@@ -26,6 +26,7 @@ from src.common.schemas import (
     IdealZone,
     IVStats,
     MarketConditions,
+    MarketRegime,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
@@ -100,6 +101,39 @@ def _pnl2(v: float) -> str:
     return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
 
 
+def _size_line(c: TradeCandidate) -> str | None:
+    """Why a CSP was sized below what capital allows, in words (None when nothing cut it).
+
+    Examples: ``Size 6 of 10 (leveraged ETF, 3×, calm)``, ``Size 3 of 10 (QQQ stressed)``,
+    ``Size 1 of 10 (QQQ crisis; today's guaranteed lot)``. Plain text: the caller escapes it.
+    """
+    note = c.sizing
+    if note is None:
+        return None
+    trimmed = note.pre_regime_contracts > c.contracts
+    if not trimmed and not note.floor_lot:
+        return None
+    triggers = note.scale_in.triggers if note.scale_in is not None else []
+    if note.ceiling_kind == "leveraged_ceiling" and note.leverage is not None:
+        tier = note.leverage_tier or "calm"
+        why = f"leveraged ETF, {note.leverage}×, {tier}"
+        if tier == "stressed":
+            if note.regime != MarketRegime.NORMAL:
+                why += f": {note.regime_index} {note.regime.value}"
+            elif triggers:
+                why += ": " + ", ".join(t.replace("_", " ") for t in triggers)
+    elif note.regime != MarketRegime.NORMAL:
+        why = f"{note.regime_index} {note.regime.value}"
+    else:
+        why = ""
+    if note.floor_lot:
+        why = f"{why}; today's guaranteed lot" if why else "today's guaranteed lot"
+    size = (
+        f"Size {c.contracts} of {note.pre_regime_contracts}" if trimmed else f"Size {c.contracts}"
+    )
+    return f"{size} ({why})" if why else size
+
+
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
@@ -129,6 +163,10 @@ def format_candidate(
             f" · Ann\\. {_md(f'{candidate.annualized_yield_pct:.1f}')}%"
         ),
     ]
+
+    size_line = _size_line(candidate)
+    if size_line is not None:
+        parts.append(_md(size_line))
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
@@ -583,6 +621,11 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",
+    # Market-regime codes (engine/regime_limits.py): the regime, not the book, set the limit.
+    "regime_budget": "the market regime has shrunk the CSP budget",
+    "regime_ceiling": "over the market regime's size limit",
+    "leveraged_ceiling": "over the size limit for a leveraged ETF",
+    "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
     # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",

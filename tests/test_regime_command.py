@@ -133,6 +133,7 @@ async def test_regime_off_suspends_today_and_says_until_when(authorised, monkeyp
     text = update.message.reply_text.call_args.args[0]
     assert "suspended" in text.lower()
     assert "2026-10-22" in text  # the next trading day's base
+    assert "leveraged-ETF size limit" in text and "stays on" in text  # not a regime limit
 
 
 async def test_regime_on_resumes(authorised, monkeypatch):
