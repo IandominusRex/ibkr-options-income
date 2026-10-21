@@ -4,6 +4,7 @@ headlines (N#); every verdict must cite them. Output is one JSON object per sche
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import TYPE_CHECKING
 
 from src.news.playbook import PlaybookPrior
@@ -14,6 +15,7 @@ from src.news.schemas import (
     Explanation,
     FactSheet,
     ItemView,
+    PictureDraft,
     TriageOutput,
 )
 
@@ -22,6 +24,7 @@ if TYPE_CHECKING:  # triage.py imports this module; the type is only needed for 
 
 EXPLANATION_SCHEMA = Explanation.model_json_schema()
 TRIAGE_SCHEMA = TriageOutput.model_json_schema()
+PICTURE_SCHEMA = PictureDraft.model_json_schema()
 DIGEST_SCHEMA = DigestReads.model_json_schema()
 
 RULES = """You are a markets news analyst writing for an options premium seller (cash-secured puts, covered calls).
@@ -148,6 +151,59 @@ def digest_prompt(
             "=== CLUSTERS ===\n" + ids,
             "=== HEADLINES ===\n" + heads,
             "=== JSON SCHEMA ===\n" + json.dumps(DIGEST_SCHEMA),
+        )
+        if x
+    )
+
+
+PICTURE_RULES = """You are a markets news analyst writing for an options premium seller (cash-secured puts, covered calls).
+Rules:
+- Use ONLY the facts (F#) and story clusters (C#) below. Every number you write must appear in the facts.
+- Cite the ids that support each story in "evidence" (C# and F#). A story that cites no valid id is dropped.
+- Be terse and concrete. No trading advice, no hedging filler, no em dashes. Never tell the reader to buy, sell, reduce, add, hedge or close anything.
+- F#/C# ids belong ONLY in "evidence", never in prose. Never comment on which facts or clusters were supplied: write about the market, not the inputs.
+- Seasonality is a weak signal: never use it as a reason.
+- Reply with ONE JSON object matching the schema. Nothing outside the JSON."""
+
+
+def picture_prompt(
+    facts: FactSheet,
+    stories: list[tuple[int, str, date]],
+    clusters: list[ClusterView],
+    events: list[str],
+    *,
+    piles: dict[int, int] | None = None,
+    max_stories: int = 5,
+) -> str:
+    """The market-picture call: name the stories moving the market against the numbered facts.
+
+    Previous stories are listed by id, title and start date only, **never with their earlier
+    prose** (the model must not harden its own words into fact). *piles* marks each cluster's
+    triage pile so the model knows which ones may start a new story (pile 1 only).
+    """
+    story_lines = [f"S{sid} {title} (since {started:%b %d})" for sid, title, started in stories]
+    cluster_lines = []
+    for cl in clusters:
+        tags = [f"{cl.category}/{cl.topic_class}", f"{cl.source_count} sources"]
+        if cl.tickers:
+            tags.append(",".join(cl.tickers[:4]))
+        pile = f"pile {piles[cl.id]}; " if piles and cl.id in piles else ""
+        cluster_lines.append(f"C{cl.id} [{pile}{', '.join(tags)}] {cl.headline}")
+    return "\n\n".join(
+        x
+        for x in (
+            PICTURE_RULES,
+            f"TASK: name the stories moving the market for an options premium seller (at most "
+            f"{max_stories}). Continue a listed story by its id (story_id) or start a new one "
+            "(story_id null). Start a new story only from a pile 1 cluster. Each description is one "
+            "or two sentences that tie the story to the numbered facts; every number must appear "
+            "in the facts. Cite clusters (C#) and facts (F#) in evidence. Seasonality is a weak "
+            "signal: never use it as a reason. Leave out a listed story you cannot support.",
+            "=== FACTS ===\n" + facts.render(),
+            "=== PREVIOUS STORIES (titles only) ===\n" + ("\n".join(story_lines) or "(none)"),
+            "=== CLUSTERS ===\n" + ("\n".join(cluster_lines) or "(none)"),
+            ("=== UPCOMING EVENTS ===\n" + "\n".join(events)) if events else None,
+            "=== JSON SCHEMA ===\n" + json.dumps(PICTURE_SCHEMA),
         )
         if x
     )

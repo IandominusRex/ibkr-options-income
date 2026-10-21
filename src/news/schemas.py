@@ -186,6 +186,20 @@ class TriageOutput(BaseModel):
     items: list[TriageItem] = Field(default_factory=list)
 
 
+class PictureStoryDraft(BaseModel):
+    """One story the model proposes for the picture: a continuation (``story_id``) or a new one.
+    Python validates every field before anything is saved (``picture.validate_drafts``)."""
+
+    story_id: int | None = None
+    title: str = Field(max_length=80)
+    description: str = Field(max_length=280)
+    evidence: list[str] = Field(default_factory=list)  # C# clusters and F# facts
+
+
+class PictureDraft(BaseModel):
+    stories: list[PictureStoryDraft] = Field(default_factory=list, max_length=5)
+
+
 class SourceLink(BaseModel):
     name: str
     url: str

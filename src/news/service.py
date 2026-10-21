@@ -33,6 +33,7 @@ from src.news.digests import (
     regime_line,
 )
 from src.news.facts import Analytics, build_market_facts, sigma_move
+from src.news.picture import build_picture, picture_due
 from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
 from src.news.publish import Publisher
@@ -138,6 +139,7 @@ class NewsService:
             ("earnings_alerts", 300, self._earnings_alerts),
             ("breaking", 120, self._breaking),
             ("triage", 60, self._triage),
+            ("picture", 120, self._picture),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
             ("briefs", self.ncfg.briefs.poll_seconds, self._briefs),
@@ -335,6 +337,12 @@ class NewsService:
             return
         picture = await asyncio.to_thread(_latest_picture)
         await asyncio.to_thread(run_triage, now, picture=picture)
+
+    async def _picture(self, now: datetime) -> None:
+        """Rebuild the market picture after a digest time or a new pile 1 story (capped per day)."""
+        if not await asyncio.to_thread(picture_due, now):
+            return
+        await asyncio.to_thread(build_picture, now)
 
     async def _rank_digest(self, inp: DigestInputs, now: datetime) -> None:
         """Triage first (a failure leaves the deterministic order), then order the threads by pile

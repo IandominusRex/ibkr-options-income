@@ -1251,7 +1251,7 @@ class NewsPictureCfg(BaseModel):
 
     enabled: bool = True
     max_rebuilds_per_day: int = Field(default=4, ge=1)
-    max_stories: int = Field(default=5, ge=1)
+    max_stories: int = Field(default=5, ge=1, le=5)  # the model's answer schema holds five
     story_window_days: int = Field(default=7, ge=1)  # a story needs support inside this window
     story_min_new_clusters: int = Field(default=2, ge=1)  # ... of at least this many new clusters
     story_match_jaccard: float = Field(
