@@ -146,15 +146,19 @@ def _fetch_last_price(symbol: str) -> float | None:
         return None
 
 
-def _rsi14(close: pd.Series) -> float | None:
-    if len(close) < 15:
-        return None
+def rsi14_series(close: pd.Series) -> pd.Series:
+    """Wilder-style RSI-14 for every bar of *close* (the whole series ``_rsi14`` ends on)."""
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     rs = gain / loss
-    rsi = 100 - 100 / (1 + rs)
-    val = float(rsi.iloc[-1])
+    return 100 - 100 / (1 + rs)
+
+
+def _rsi14(close: pd.Series) -> float | None:
+    if len(close) < 15:
+        return None
+    val = float(rsi14_series(close).iloc[-1])
     return round(val, 2) if np.isfinite(val) else None
 
 

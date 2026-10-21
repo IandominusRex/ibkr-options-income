@@ -18,6 +18,21 @@ import pytest
 from src.common import cache
 from src.common.universe import invalidate_universe_cache
 
+WEEK_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "week_2026_10_13"
+
+
+def week_bars(symbol: str) -> Any:
+    """Real daily bars for the week-of-2026-10-13 replay (2025-09-02..2026-10-19).
+
+    *symbol* is ``SPY``, ``QQQ``, ``TQQQ``, ``SOXL``, ``VIX`` or ``VIX3M`` (a leading ``^`` is
+    accepted). Committed CSVs written once by ``scripts/export_week_fixture.py``; no test reads
+    ``data/``. Returns a fresh frame (Open/High/Low/Close/Volume) indexed by date, ascending.
+    """
+    import pandas as pd
+
+    name = symbol.lstrip("^")
+    return pd.read_csv(WEEK_FIXTURE_DIR / f"{name}.csv", index_col="Date", parse_dates=True)
+
 
 @pytest.fixture(autouse=True)
 def _clear_daily_caches():

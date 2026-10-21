@@ -78,8 +78,8 @@ pass adds one commit; record it in the Progress log.
 | 2 Regime state, refresh, `/regime`, notices | done | `feat(regime): persisted regime state, /regime, change notices` | pytest **3951 passed, 1 skipped**; ruff clean; mypy clean (271 source files) | 2026-10-21 | (1) A first-ever refresh appends a `RegimeChange` per index **only when the effective regime is not normal** (a calm first run announces nothing; the plan's test name says "one change per index" and is tested on a stressed market). (2) No data and no previous state: NORMAL with `escalated_by=["no_data"]` and `base_date` set to *yesterday*, so the daily fetch is retried on every call instead of the day being treated as classified (`/regime` says "no market data yet" rather than claiming calm). (3) Only a trading day (or the very first run) fetches or recomputes the daily base; a weekend or holiday refresh rolls the ET day over, keeps the base, and drops the last session's intraday escalation (the change is recorded). Fetchers run outside the state lock; the rules run inside `update_regime_state` against the latest persisted state. (4) `mark_changes_sent(sent=None)` takes the list that actually went out, so a change appended by the order poll while a notice was in flight is not lost; `send_regime_changes` returns 0 and leaves changes queued with no bot token or on a Telegram error. (5) `refresh_regime_cached` returns the persisted state when the refresh raises (None only when nothing is stored). `tests/conftest.py`'s autouse regime fixture also clears the 60 s cache around every test (a cached state must not leak between tests that each have their own tmp DB). (6) The scan refreshes and announces right after the market-conditions block (step 0b), not just before `send_scan_results`, so an early abort (account fetch failure) still announces; a failed refresh falls back to the persisted state. `refresh_regime(..., fetch_bars=)` is accepted and unused until Task 7. (7) `/regime` is plain text; the status calls `refresh_regime_cached` first; `/regime` was also added to `format_help` and the BotCommand menu. Docs for the new command (ARCHITECTURE commands table, SETUP, README) are Task 23's sweep. |
 | 3 Regime sizing in the sizer and the gate | done | `feat(regime): regime budgets with a guaranteed floor, per-trade and leveraged-ETF limits, daily limit` | pytest **4013 passed, 1 skipped**; ruff clean; mypy clean (273 source files) | 2026-10-21 | (1) The plan's `test_generator_trims_to_the_per_trade_cap_and_records_the_note` named TQQQ and expected 3; TQQQ is a leveraged ETF, so under ruling 35 it is 1 in a stressed QQQ. The test uses NVDA (tech-linked, not leveraged) for the 3, and TQQQ has its own tests for 6 (calm), 3 (a ladder trigger) and 1. (2) The `leveraged_sizing.leverage` ticker map has its defaults in code (`_DEFAULT_LEVERAGE`, used when the block or the `leverage:` key is absent): `tests/test_config_keys.py` requires every YAML leaf key (here the tickers UPRO, DPST, LABU) to appear quoted in `src/`, and that guard was neither weakened nor allowlisted. The factor keys 2/3 are validated against `"2"`/`"3"`. The YAML shape is the plan's. (3) The gate tags `sizing.floor_lot` **in place** on the accepted candidate (creating the `SizingNote` if the candidate had none) and overrides the generator's advisory flag: the gate is what decides a lot took the floor; it returns verdicts only. In the deep-dive (`dedupe_same_symbol=False`) the daily count and the floor are tracked per underlying, so the strikes of one name share one slot. (4) `name_regime` on a tie reports QQQ; the daily-count/floor bucket (`governing_index`) is QQQ for any tech-linked name even when SPY is the stricter regime (ruling 16), documented in the module. `SizingNote.regime` reads NORMAL when the regime limits are off, and a note is attached to every CSP candidate whenever a context exists (the card prints a size line only when the lot was cut or is a floor lot). `pre_regime_contracts` is the unscaled capital fit. (5) The send-time context (`approval._send_context`: cached regime refresh + `for_send=True` context, built before the write session) is introduced here, not in Task 4, so `sizing=` is real at send time the moment the keyword exists; a failed build skips the poll (orders stay QUEUED) instead of sending without the limits. Task 4 extends it. A scan's `_build_sizing` runs in the executor and a database failure propagates (fail closed). `_price_and_gate_ticker` refreshes the regime through the cache before building its context (`/scan TICKER` and promote can run before the day's first scan). (6) Seven mocks of `validate_candidates` in `tests/test_execution.py` gained `sizing=None` in their lambda signature (the gate now always receives the keyword); no assertion changed. `generate_csp_candidates` and `roll_pipeline` pass `sizing=None` explicitly. `/regime off` now says the leveraged-ETF limit stays on. (7) Extra tests beyond the plan list: `tests/test_regime_scan_wiring.py` (the value that reaches the sizer, the gate, a one-name scan and the send-time re-gate is the persisted regime), the tie rule, the context's day window/state/close-prefix filters, the card lines, label parity for the four new codes. |
 | 4 Send-time regime re-check, trim, counterfactual table | done | `feat(regime): send-time regime re-check, trim, counterfactual table` | pytest **4036 passed, 1 skipped**; ruff clean; mypy clean (274 source files) | 2026-10-21 | (1) The plan's trim tests used TQQQ for the plain regime trim (10 -> 3); under ruling 35 a stressed TQQQ is 1, so the plain trim uses NVDA and TQQQ has its own two tests (a calm 6-lot cut to 1 and recorded as `leveraged_ceiling`; a stressed-tier card never loosened). (2) `link_order` ties the day's rows for a card to its order **at send time** (when the order poll accepts it), not at queue time in `_auto_queue_candidates` / the approve handler: one place covers auto, Telegram and web approvals, and the id only matters once an order is sent. `record_action(order_id=)` still sets it directly for a send-time trim. (3) `scaled_budget_fit` (in `engine/regime_limits.py`, with `hard_max_contracts`) returns None unless the regime is active and the name's budgets are scaled (or it was a floor lot): the trim is a regime behaviour only, so a card that no longer fits the plain book is refused by the gate exactly as before (tested). The functions live there because they read the real config; `approval.get_config` is patched to a MagicMock in many existing tests. (4) The trim kind is `leveraged_ceiling` when the leveraged factor is the binding one, else `escalation_trim`; a trim bound by the scaled budget says ": budget" in the order detail. The order detail keeps the trim note after the order is marked SUBMITTED, and the operator also gets a Telegram line (`notify_msgs`). A trimmed order the gate then cancels keeps its trimmed snapshot and its row (the resolver reads the order state). (5) `record_action(session=)` writes inside a savepoint so a failed row cannot poison the poll's write session (tested with a NULL strike). `record_scan_actions(top, scored, verdicts)` is called from the scan after `select_top_candidates_detailed`: surfaced CSPs cut below their capital-fitted size are recorded under their ceiling kind (or `regime_budget`), a floor lot as `regime_floor_lot` (a floor lot that was also cut gets both rows), and a name none of whose strikes passed, whose best-ranked candidate failed only for regime reasons, once per name/kind/day with `key=csp:<SYM>:<kind>:<ET day>`. (6) `_send_context` also marks every queued CSP whose snapshot tier was stressed (`name_triggers[symbol] = ["snapshot_stressed"]`) and reads the live spot for names whose snapshot carries a ladder zone (stub-tested; the zone itself arrives in Task 6, as does `loss_exit_today`). `tests/test_regime_scan_wiring.py`'s send-time stub account became a real `AccountSnapshot` because the trim now re-fits the budget. **Section A exit met:** four commits; the regime limits apply in the scan and at send time; no ladder yet. |
-| **B entry checks** | todo | | | | |
-| 5 Support detector | todo | | | | |
+| **B entry checks** | done | (none) | pytest **4036 passed, 1 skipped**; ruff clean; mypy clean (274 source files) | 2026-10-21 | B1–B4 all pass on HEAD 335183a (4 commits, rows 1–4 done, tree clean; `build_sizing_context`, `ScaleInZone` and `SizingContext.scale_in` present; `price_history` for SPY/QQQ/TQQQ/SOXL 2025-09-01..2026-10-19 = 1140 rows in `$MAIN/data/income_system.db`). Operator said "continue" after Section A. |
+| 5 Support detector | done | `feat(analytics): support detector on daily lows; week-of-Oct-13 fixture` | pytest **4046 passed, 1 skipped**; ruff clean; mypy clean (275 source files) | 2026-10-21 | (1) `support_levels` takes one extra optional keyword, `broken_atr: float = 1.0` (the plan's signature has none, but step 3 of the algorithm needs it and says it comes from `ladder.broken_atr`); Task 6 callers pass the configured value. (2) The pinned order is kept: swing lows are merged first (the lower of a close pair is kept, with its own bar), then the broken test runs on the kept levels using closes *after that bar*. Cost if wrong: a merged cluster whose lower member is broken but whose higher member is not loses both; this only makes the zone lower, never looser. (3) With no `atr` given and fewer than 15 bars, the detector claims no level (`[]`); a ties-on-flat-lows bar counts as a swing low (`Low[i] == min(window)`), as pinned. (4) The fixture holds 285 bars per symbol, 2025-09-02..2026-10-19 (2025-09-01 was a holiday); `^VIX`/`^VIX3M` came from the provider on the first try (network available), 287/285 bars. `tests/conftest.py::week_bars(symbol)` accepts `VIX`/`^VIX`. (5) Extra tests beyond the plan list: `tests/test_export_week_fixture.py` (the exporter's database half is read-only, ascending, round-trips to CSV; a missing database is an error and is not created). (6) TQQQ's levels on 2026-10-13 from the fixture: `[75.47, 67.93, 66.55, 57.59, 37.23]` at spot 78.81 (ATR-14 2.76). `scripts/export_week_fixture.py` is a new entrypoint: its `SETUP.md` scripts-table and `ARCHITECTURE.md` `scripts/` entries are Task 23's sweep. |
 | 6 Scale-in ladder: anchors, name triggers, zones, gate | todo | | | | |
 | 7 Bottoming signal and the week-of-Oct-13 replay | todo | | | | |
 | **C entry checks** | todo | | | | |
@@ -517,17 +517,17 @@ tests/test_dossier_build.py, test_dossier_readers.py   CREATE
 
 **Entry checks (baseline; repo root, on `main`):**
 
-- [ ] **A1. Clean start.** `git status --short` shows only this plan and the spec (untracked or
+- [x] **A1. Clean start.** `git status --short` shows only this plan and the spec (untracked or
   modified); `git branch --show-current` prints `main`.
-- [ ] **A2. Worktree.** Create it (superpowers:using-git-worktrees) on branch `feat/market-picture`;
+- [x] **A2. Worktree.** Create it (superpowers:using-git-worktrees) on branch `feat/market-picture`;
   symlink the main `.venv` and `web/node_modules`; **copy this plan and the spec from the main
   checkout into the worktree** (they are untracked, so a new worktree does not have them); run
   `python -c "from src.storage.db import init_db; init_db()"` (else four monitor tests fail "no such
   table: fills"). Record the main checkout's absolute path as `MAIN=` in the Progress log row:
   Tasks 5 and 7 read `$MAIN/data/income_system.db`, which the worktree does not have.
-- [ ] **A3. Baseline green** in the worktree; record the pytest count:
+- [x] **A3. Baseline green** in the worktree; record the pytest count:
   `python -m pytest -q && ruff check . && mypy src`. A red baseline is not this plan's: stop.
-- [ ] **A4. The code is where this plan says.** Each prints at least one line:
+- [x] **A4. The code is where this plan says.** Each prints at least one line:
 
   ```bash
   grep -n "^def resolve_caps(account: AccountSnapshot, risk: dict) -> Caps" src/engine/capital.py
@@ -1076,12 +1076,12 @@ def test_send_context_is_built_outside_the_write_session()
 
 **Entry checks:**
 
-- [ ] **B1.** Section A's four commits are on `feat/market-picture`; Progress log rows 1–4 done.
-- [ ] **B2.** Gate green; pytest count ≥ the A3 baseline + Section A's new tests.
-- [ ] **B3.** `grep -n "def build_sizing_context" src/regime/context.py`,
+- [x] **B1.** Section A's four commits are on `feat/market-picture`; Progress log rows 1–4 done.
+- [x] **B2.** Gate green; pytest count ≥ the A3 baseline + Section A's new tests.
+- [x] **B3.** `grep -n "def build_sizing_context" src/regime/context.py`,
   `grep -n "^class ScaleInZone" src/common/schemas.py` and
   `grep -n "scale_in: dict\[str, ScaleInZone\]" src/common/schemas.py` each print one line.
-- [ ] **B4. Fixture source exists:**
+- [x] **B4. Fixture source exists:**
   `sqlite3 data/income_system.db "select count(*) from price_history where symbol in ('SPY','QQQ','TQQQ','SOXL') and obs_date between '2025-09-01' and '2026-10-19'"`
   prints a number > 1000 (run against the main checkout's `data/`).
 
@@ -1111,13 +1111,13 @@ Algorithm (pinned): for each window `w`, a bar `i` (with `w ≤ i ≤ len−1−
 lower), drop any level with a later daily close `< level − broken_atr × atr` (`broken_atr` from
 `ladder.broken_atr`, default 1.0), keep those `< spot`, sort descending, cap at `max_levels`.
 
-- [ ] **Step 1: Export the fixture.** `scripts/export_week_fixture.py --db PATH --out DIR` writes
+- [x] **Step 1: Export the fixture.** `scripts/export_week_fixture.py --db PATH --out DIR` writes
   `Date,Open,High,Low,Close,Volume` CSVs from the `price_history` table of `--db` (SPY, QQQ, TQQQ,
   SOXL, 2025-09-01..2026-10-19) and from `get_price_provider().get_ohlcv` for `^VIX` and `^VIX3M`
   (same range). Run it with `--db $MAIN/data/income_system.db --out tests/fixtures/week_2026_10_13`
   (A2's `MAIN`); commit the CSVs (small). Tests load them with a `week_bars(symbol)` helper in
   `tests/conftest.py`; no test reads `data/`.
-- [ ] **Step 2: Failing tests** — `tests/test_support_levels.py`
+- [x] **Step 2: Failing tests** — `tests/test_support_levels.py`
 
 ```python
 def test_swing_low_found_and_below_spot()
@@ -1129,8 +1129,8 @@ def test_tqqq_levels_on_oct_13_are_all_below_spot():   # from the fixture, spot 
 def test_rsi14_series_last_value_matches_rsi14()
 ```
 
-- [ ] **Step 3: Run** → FAIL. **Step 4: Implement.** **Step 5: Run** → PASS; full gate.
-- [ ] **Step 6: Commit** — `feat(analytics): support detector on daily lows; week-of-Oct-13 fixture`.
+- [x] **Step 3: Run** → FAIL. **Step 4: Implement.** **Step 5: Run** → PASS; full gate.
+- [x] **Step 6: Commit** — `feat(analytics): support detector on daily lows; week-of-Oct-13 fixture`.
 
 ---
 
