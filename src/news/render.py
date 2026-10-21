@@ -29,6 +29,11 @@ _REGIME = {
 }
 
 
+def late_post_line(move_pct: float) -> str:
+    """The exact copy of a late promotion (safeguard 2): it states the move, never a cause."""
+    return f"Dismissed earlier; the market moved {move_pct:+.1f}% after it. Cause not confirmed."
+
+
 @dataclass
 class RenderedMessage:
     text: str

@@ -33,6 +33,7 @@ from src.news.digests import (
     regime_line,
 )
 from src.news.facts import Analytics, build_market_facts, sigma_move
+from src.news.noise_check import Promotion, beta_vs_spy, find_promotions
 from src.news.picture import build_picture, picture_due
 from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
@@ -140,6 +141,7 @@ class NewsService:
             ("breaking", 120, self._breaking),
             ("triage", 60, self._triage),
             ("picture", 120, self._picture),
+            ("noise_check", 300, self._noise_check),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
             ("briefs", self.ncfg.briefs.poll_seconds, self._briefs),
@@ -344,6 +346,34 @@ class NewsService:
             return
         await asyncio.to_thread(build_picture, now)
 
+    async def _noise_check(self, now: datetime) -> None:
+        """Safeguard 2: post, late, a story the triage dismissed and the market then moved against.
+        RTH only (the reaction is measured on 1-minute bars). Each promotion goes through the
+        alert path, so it counts against ``alerts.max_per_hour`` and rolls into the next digest
+        when that cap holds it back."""
+        if not self.ncfg.triage.enabled or not is_rth(now):
+            return
+        promos = await asyncio.to_thread(self._promotions, now)
+        for p in promos:
+            headline = await asyncio.to_thread(_cluster_headline, p.cluster_id)
+            cand = T.AlertCandidate(
+                kind="late_promotion",
+                subject=p.symbol if p.basis == "ticker" else f"cluster:{p.cluster_id}",
+                critical=False,
+                symbols=[p.symbol],
+                cluster_ids=[p.cluster_id],
+                detail={"move_pct": p.move_pct, "basis": p.basis, "headline": headline},
+            )
+            await self._dispatch([cand], now)
+
+    def _promotions(self, now: datetime) -> list[Promotion]:
+        intraday = get_intraday_price_provider()
+        return find_promotions(
+            now,
+            bars_for=lambda sym: intraday.get_intraday(sym, interval="1m", days=2),
+            beta_for=lambda sym: beta_vs_spy(sym) or 1.0,
+        )
+
     async def _rank_digest(self, inp: DigestInputs, now: datetime) -> None:
         """Triage first (a failure leaves the deterministic order), then order the threads by pile
         and let one batched writer call read them (spec §6.5). The regime line is the trading
@@ -468,6 +498,12 @@ class NewsService:
 
 
 # --- store helpers the loops run in threads ------------------------------------------------
+
+
+def _cluster_headline(cluster_id: int) -> str | None:
+    with news_session() as s:
+        cv = queries.cluster_view(s, cluster_id, max_items=1)
+        return cv.headline if cv is not None else None
 
 
 def _triage_last_run() -> datetime | None:

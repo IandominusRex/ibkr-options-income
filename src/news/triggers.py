@@ -20,7 +20,13 @@ from src.news.store.state import hold_for_digest, release_held
 from src.news.tape import Quote
 
 AlertKind = Literal[
-    "macro_print", "earnings", "market_move", "vix_spike", "ticker_move", "breaking"
+    "macro_print",
+    "earnings",
+    "market_move",
+    "vix_spike",
+    "ticker_move",
+    "breaking",
+    "late_promotion",  # a story dismissed as noise that the market then moved against (safeguard 2)
 ]
 
 
@@ -231,7 +237,15 @@ class AlertGate:
             pass
 
     def hourly_noncritical(self, now: datetime) -> int:
-        kinds = ("macro_print", "earnings", "market_move", "vix_spike", "ticker_move", "breaking")
+        kinds = (
+            "macro_print",
+            "earnings",
+            "market_move",
+            "vix_spike",
+            "ticker_move",
+            "breaking",
+            "late_promotion",
+        )
         with news_session() as s:
             return int(
                 s.scalar(
@@ -277,6 +291,8 @@ def held_text(c: AlertCandidate) -> str:
         head = " ".join(p for p in (c.subject.split(":", 1)[0], _pct(d.get("change_pct"))) if p)
         lvl = _pct(d.get("level"))
         return f"{head} (crossed {lvl})" if lvl else head
+    if c.kind == "late_promotion":
+        return f"Dismissed earlier, then the market moved {_pct(d.get('move_pct')) or 'sharply'}: {d.get('headline') or c.subject}"
     if c.kind == "vix_spike":
         chg, last = _pct(d.get("change_pct")), d.get("last")
         return "VIX " + (chg or (f"at {last:.1f}" if isinstance(last, int | float) else c.subject))

@@ -226,7 +226,14 @@ def recent_items_for(s: Session, symbol: str, since: datetime, limit: int) -> li
 
 KIND_GROUPS: dict[str, tuple[str, ...]] = {
     "macro": ("macro_print", "breaking"),
-    "market": ("market_move", "vix_spike", "digest_premarket", "digest_close", "digest_week"),
+    "market": (
+        "market_move",
+        "vix_spike",
+        "late_promotion",
+        "digest_premarket",
+        "digest_close",
+        "digest_week",
+    ),
     "tickers": ("ticker_move",),
     "earnings": ("earnings",),
     "briefs": ("brief",),

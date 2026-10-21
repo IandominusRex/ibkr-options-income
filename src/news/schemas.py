@@ -138,6 +138,7 @@ CardKind = Literal[
     "vix_spike",
     "ticker_move",
     "breaking",
+    "late_promotion",
     "brief",
     "digest_premarket",
     "digest_close",
