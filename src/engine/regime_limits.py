@@ -22,6 +22,11 @@ What each limit is:
   its zone (`scale_in_reason`); a loss exit on a name blocks new CSPs on it for the rest of the
   ET day (`loss_exit_reason`). The zone itself is worked out by `src/analytics/scale_in.py` and
   carried on the `SizingContext`.
+* **Claude's cut** — an auto-opened opening CSP may be sent smaller than the deterministic size
+  when Claude's review says so (`claude_cut`: a plain integer from a Claude CLI review, from 0 up
+  to the size, never above it), applied in paper and only recorded in live (`cut_applies`, with a
+  daily circuit breaker). Both functions take plain values and nothing else; the sender calls
+  them and records every override.
 
 The regime limits (and the ladder's zone) switch off when the context is None, `/regime off`
 suspended it today, or `regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
@@ -35,7 +40,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from src.common.config import get_config, get_leveraged_sizing_cfg, get_regime_cfg
+from src.common.config import ClaudeCutCfg, get_config, get_leveraged_sizing_cfg, get_regime_cfg
 from src.common.schemas import (
     AccountSnapshot,
     MarketRegime,
@@ -359,6 +364,62 @@ def sizing_note(
         leverage_tier=leverage_tier(ctx, symbol) if factor is not None else None,
         ceiling_kind=ceiling_kind(ctx, symbol, hard_max, pre),
     )
+
+
+def claude_cut(deterministic: int, suggested: int | None, backend: str | None) -> int:
+    """The contract count to send after Claude's size suggestion: the deterministic size, or a
+    smaller number Claude chose. The one place an LLM value reaches a size, and it can only lower.
+
+    Returns *suggested* only when the review came from the Claude CLI (``backend == "cli"``: a
+    local model's number is never applied), *suggested* is a plain integer (not a bool, a float or
+    text) and ``0 <= suggested <= deterministic``. Everything else (a missing value, a negative, a
+    number above the card, an unknown or absent backend) returns *deterministic*. ``0`` means "not
+    now". Pure: takes plain values, imports nothing from the reasoning layer.
+    """
+    if backend != "cli":
+        return deterministic
+    if not isinstance(suggested, int) or isinstance(suggested, bool):
+        return deterministic
+    if not 0 <= suggested <= deterministic:
+        return deterministic
+    return suggested
+
+
+def cut_applies(
+    *, is_live: bool, zeroed_today: int, reviewed_today: int, cfg: ClaudeCutCfg
+) -> tuple[bool, str | None]:
+    """Whether a valid cut changes the size that is sent: ``(True, None)``, or ``(False, why)``.
+
+    ``why`` is ``live_record_only`` (live and ``apply_live`` is off), ``paper_record_only`` (paper
+    and ``apply_in_paper`` is off) or ``breaker``: Claude has already cut at least
+    ``breaker_min`` auto CSPs to zero today (*zeroed_today*) and those are more than
+    ``breaker_pct`` percent of the day's reviewed auto CSPs (*reviewed_today*). A zeroed candidate
+    was necessarily reviewed, so a lost or low counter cannot hide a breach.
+    """
+    if is_live and not cfg.apply_live:
+        return False, "live_record_only"
+    if not is_live and not cfg.apply_in_paper:
+        return False, "paper_record_only"
+    if zeroed_today >= cfg.breaker_min:
+        reviewed = max(reviewed_today, zeroed_today)
+        if zeroed_today / reviewed * 100 > cfg.breaker_pct:
+            return False, "breaker"
+    return True, None
+
+
+def with_claude_cut(
+    note: SizingNote | None, deterministic: int, suggested: int, reason: str
+) -> SizingNote:
+    """*note* with Claude's number and reason on it (a candidate built with no sizing context gets
+    a plain note: normal regime, capital allowed *deterministic* lots). Display and audit only."""
+    base = note or SizingNote(
+        pre_regime_contracts=deterministic,
+        regime=MarketRegime.NORMAL,
+        regime_index="SPY",
+        per_trade_cap=deterministic,
+        budget_multiplier=1.0,
+    )
+    return base.model_copy(update={"claude_suggested": suggested, "claude_reason": reason})
 
 
 def hard_max_contracts() -> int:

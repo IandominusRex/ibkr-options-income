@@ -252,6 +252,18 @@ leveraged_sizing:
     stressed: {2: 0.5, 3: 0.3}
   leverage: {TQQQ: 3, UPRO: 3, SOXL: 3, DPST: 3, LABU: 3, TSLL: 2}
 
+# --- Claude's size cut (engine/regime_limits.py claude_cut; applied in notify/sender.py) ---
+# Claude may LOWER, never raise, the contract count of an auto-opened opening cash-secured put
+# (never a covered call, a roll, a strike, a price or a close). A missing, malformed or
+# out-of-range value, or one produced by the local Ollama model, means the deterministic size.
+# Every override is recorded in `sizing_actions` (`python -m scripts.sizing_report`): read that
+# record before switching `apply_live` on.
+claude_cut:
+  apply_in_paper: true       # paper: the cut is applied and every override recorded
+  apply_live: false          # live: record-only until the operator has reviewed the record
+  breaker_min: 4             # circuit breaker: at least this many auto CSPs cut to 0 today...
+  breaker_pct: 50            # ...and more than this % of the day's reviewed auto CSPs -> further cuts today are recorded, not applied
+
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
 # (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate
 # `approval:` block used to sit in this file but was never read by the config loader.

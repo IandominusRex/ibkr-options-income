@@ -1819,6 +1819,25 @@ class LeveragedSizingCfg(_KeyedCfg):
         return out
 
 
+class ClaudeCutCfg(_KeyedCfg):
+    """Claude's reduce-only size cut on auto-opened cash-secured puts (spec section 9).
+
+    ``apply_in_paper`` / ``apply_live`` say whether a cut Claude makes changes the size that is
+    sent; when it does not, the cut is still recorded (``claude_cut_unapplied``), so the question
+    "does not following the system pay?" keeps being answered without risking the live book.
+    The circuit breaker stops applying cuts for the rest of the ET day once Claude has cut at
+    least ``breaker_min`` auto CSPs to zero and those are more than ``breaker_pct`` percent of the
+    day's reviewed auto CSPs: a prompt or schema regression cannot silently stop the book.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("apply_in_paper", "apply_live", "breaker_min", "breaker_pct")
+
+    apply_in_paper: bool = True
+    apply_live: bool = False
+    breaker_min: int = Field(default=4, ge=1)
+    breaker_pct: float = Field(default=50, gt=0, le=100)
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -2033,6 +2052,11 @@ def get_regime_cfg() -> RegimeCfg:
             f"cash_secured_put.delta_min ({delta_min}): otherwise no signal lot could ever pass"
         )
     return cfg
+
+
+def get_claude_cut_cfg() -> ClaudeCutCfg:
+    """The typed ``claude_cut:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
+    return ClaudeCutCfg(**(get_config().risk.get("claude_cut") or {}))
 
 
 def get_leveraged_sizing_cfg() -> LeveragedSizingCfg:

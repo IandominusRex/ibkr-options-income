@@ -35,9 +35,11 @@ from src.common.schemas import (
     RollDecision,
     RollReview,
     SectorContext,
+    Strategy,
     TechnicalStats,
     TradeCandidate,
 )
+from src.engine.regime_limits import claude_cut
 
 # M5 Task 5.3: the trigger-code → human-label mapping moved to src/monitor/triggers.py (beside
 # the codes it names) so the Telegram formatter and the web API import the one mapping. Kept as
@@ -134,6 +136,48 @@ def _size_line(c: TradeCandidate) -> str | None:
     return f"{size} ({why})" if why else size
 
 
+def _claude_size_suggestion(c: TradeCandidate, review: ClaudeReview | None) -> str | None:
+    """Claude's smaller-size suggestion for an opening CSP card, in words (None when it has none).
+
+    Shown only when ``claude_cut`` would honour it (a Claude CLI review with an integer from 0 to
+    just below the card's size): the card stays the same size and approval still sends it, the
+    line is information. Plain text: the caller escapes it.
+    """
+    if review is None or c.strategy != Strategy.CASH_SECURED_PUT or c.roll_from is not None:
+        return None
+    n = claude_cut(c.contracts, review.max_contracts, review.backend)
+    if n >= c.contracts:
+        return None
+    line = f"Claude suggests {n} of {c.contracts}"
+    return f"{line}: {review.size_reason}" if review.size_reason else line
+
+
+def format_claude_cut_lines(cuts: list[tuple[TradeCandidate, int, str]]) -> str:
+    """The auto-queue summary's block of Claude's applied size cuts (MarkdownV2).
+
+    *cuts* is ``(candidate as the card had it, contracts now sent, Claude's reason)``: a partial
+    cut reads ``Claude cut TQQQ 65P 10 → 3: <reason>``, a cut to zero ``Claude: not sending
+    TQQQ 65P (3 lots): <reason>``.
+    """
+    lines = ["🧠 *Claude size cuts*"]
+    for c, sent, reason in cuts:
+        label = f"{c.underlying} {fmt_strike(c.strike)}{c.right.value}"
+        because = f": {reason}" if reason else ""
+        if sent <= 0:
+            lines.append(f"• {_md(f'Claude: not sending {label} ({c.contracts} lots){because}')}")
+        else:
+            lines.append(f"• {_md(f'Claude cut {label} {c.contracts} → {sent}{because}')}")
+    return "\n".join(lines)[:_MAX_MESSAGE_LEN]
+
+
+def format_claude_cut_breaker_alert(zeroed: int, reviewed: int) -> str:
+    """The once-a-day alert that Claude's cuts are being recorded but no longer applied."""
+    return _md(
+        f"🧠 Claude cut {zeroed} of today's {reviewed} auto CSPs to zero; "
+        "further cuts today are recorded but not applied."
+    )
+
+
 def _zone_line(c: TradeCandidate) -> str | None:
     """The scale-in ladder's zone for this name, in words (None when it is not under the ladder).
 
@@ -224,6 +268,9 @@ def format_candidate(
             parts.append(f"Assignment: {_md(review.assignment_considerations)}")
         if review.rolling_considerations:
             parts.append(f"Rolling: {_md(review.rolling_considerations)}")
+        suggestion = _claude_size_suggestion(candidate, review)
+        if suggestion is not None:
+            parts.append(_md(suggestion))
 
     footer = f"\n_Sources: {_candidate_sources(candidate)}_"
     if observe_only:

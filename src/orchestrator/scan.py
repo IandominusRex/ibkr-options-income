@@ -35,7 +35,7 @@ from src.analytics.sector_context import get_sector_context, render_sector_conte
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.book_context import build_book_block
-from src.claude.picture_context import load_picture, render_picture_block
+from src.claude.picture_context import load_picture, picture_key, render_picture_block
 from src.claude.runner import review_candidates
 from src.common.config import Config, get_config
 from src.common.market_hours import today_et
@@ -392,12 +392,26 @@ def _coarse(v: float | None, step: float) -> float | None:
     return None if v is None else round(round(v / step) * step, 6)
 
 
-def _review_fingerprint(c: TradeCandidate, vix: float | None) -> dict:
+def _review_fingerprint(
+    c: TradeCandidate,
+    vix: float | None,
+    *,
+    regime: str = "normal",
+    picture_version: str | None = None,
+) -> dict:
     """What would make a fresh review read differently, in buckets small enough that a bucket
     means "the same trade". Deliberately NOT ``_signal_vector`` (that one is frozen at full
     precision into the outcome ledger): premium ticks, derived yields and the sentiment message
-    counts drift every cycle without changing a word of the review."""
+    counts drift every cycle without changing a word of the review.
+
+    It also covers what a review's size suggestion rests on: the deterministic size and its
+    per-trade ceiling, the market regime and the picture version. A reused review's cut is thus
+    never older than the size, regime or picture it was based on."""
     return {
+        "contracts": c.contracts,
+        "per_trade_cap": c.sizing.per_trade_cap if c.sizing is not None else None,
+        "regime": regime,
+        "picture": picture_version,
         "blended": _coarse(c.blended_score, 2.0),
         "iv_rank": _coarse(c.iv_rank, 2.0),
         "delta": _coarse(c.delta, 0.02),
@@ -421,15 +435,31 @@ def _review_fingerprint(c: TradeCandidate, vix: float | None) -> dict:
     }
 
 
-def _candidates_review_hash(top: list[TradeCandidate], vix: float | None) -> str:
+def _candidates_review_hash(
+    top: list[TradeCandidate], vix: float | None, *, picture_version: str | None = None
+) -> str:
     """Stable hash of the top candidates' coarse fingerprints (S5).
 
     Keyed on each candidate's deterministic ``candidate_id`` + ``_review_fingerprint``. If a
     cycle's hash matches a recent fresh review, the LLM review would read the same, so the
     intraday loop reuses the persisted ``ClaudeReview`` instead of re-invoking ``claude -p``.
+    Each candidate's regime is the one on its own sizing note; the picture version (or its stale
+    marker, ``picture_context.picture_key``) is the call's.
     """
     payload = sorted(
-        ((c.candidate_id, _review_fingerprint(c, vix)) for c in top), key=lambda x: x[0]
+        (
+            (
+                c.candidate_id,
+                _review_fingerprint(
+                    c,
+                    vix,
+                    regime=c.sizing.regime.value if c.sizing is not None else "normal",
+                    picture_version=picture_version,
+                ),
+            )
+            for c in top
+        ),
+        key=lambda x: x[0],
     )
     blob = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()
@@ -1804,7 +1834,9 @@ async def _run_scan_body(
             # S5: skip the LLM when the top set + signals are unchanged from the prior cycle
             # (intraday loop only — manual /scan always reviews fresh).
             vix = result.market_conditions.vix if result.market_conditions else None
-            review_hash = _candidates_review_hash(top, vix)
+            review_hash = _candidates_review_hash(
+                top, vix, picture_version=picture_key(review_ctx.picture)
+            )
             reuse_minutes = get_config().claude.review_reuse_minutes
             if intraday and _review_is_reusable(review_hash, _utcnow(), reuse_minutes):
                 cached = _load_prior_reviews([c.candidate_id for c in top])
