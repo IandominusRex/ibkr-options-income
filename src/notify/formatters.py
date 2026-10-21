@@ -134,6 +134,20 @@ def _size_line(c: TradeCandidate) -> str | None:
     return f"{size} ({why})" if why else size
 
 
+def _zone_line(c: TradeCandidate) -> str | None:
+    """The scale-in ladder's zone for this name, in words (None when it is not under the ladder).
+
+    Example: ``Next lot zone $47.10–$49.20 (support $48.15, 5.0% below the last lot)``. Plain
+    text: the caller escapes it.
+    """
+    zone = c.sizing.scale_in if c.sizing is not None else None
+    if zone is None:
+        return None
+    gap = f"{zone.min_gap_pct:.1f}% below the last lot"
+    where = f"support ${zone.support:,.2f}, {gap}" if zone.support is not None else gap
+    return f"Next lot zone ${zone.zone_low:,.2f}–${zone.zone_high:,.2f} ({where})"
+
+
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
@@ -167,6 +181,9 @@ def format_candidate(
     size_line = _size_line(candidate)
     if size_line is not None:
         parts.append(_md(size_line))
+    zone_line = _zone_line(candidate)
+    if zone_line is not None:
+        parts.append(_md(zone_line))
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
@@ -626,6 +643,9 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "regime_ceiling": "over the market regime's size limit",
     "leveraged_ceiling": "over the size limit for a leveraged ETF",
     "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
+    # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
+    "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",
+    "loss_exit_cooldown": "a loss exit on this name earlier today",
     # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",

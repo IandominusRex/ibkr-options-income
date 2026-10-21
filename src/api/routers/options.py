@@ -110,6 +110,9 @@ _REASON_LABELS: dict[str, str] = {
     "regime_ceiling": "over the market regime's size limit",
     "leveraged_ceiling": "over the size limit for a leveraged ETF",
     "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
+    # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
+    "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",
+    "loss_exit_cooldown": "a loss exit on this name earlier today",
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",

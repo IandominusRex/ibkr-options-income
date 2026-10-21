@@ -557,7 +557,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
 
     for order_id, candidate in to_execute:
         try:
-            await execute_candidate(ib, bot, chat_id, order_id, candidate)
+            await execute_candidate(ib, bot, chat_id, order_id, candidate, sizing=sizing)
         except Exception:
             log.exception("Execution error for order_id=%s", order_id)
             with session_scope() as session:

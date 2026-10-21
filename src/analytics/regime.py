@@ -241,6 +241,22 @@ def _default_last_price(symbol: str) -> float | None:
     return get_price_provider().get_last_price(symbol)
 
 
+def last_price(symbol: str) -> float | None:
+    """The live last price of *symbol* (None on any failure), through the price provider.
+
+    The one entry the sizing context uses for a live spot; tests stub ``_default_last_price``
+    and so stub this too.
+    """
+    try:
+        value = _default_last_price(symbol)
+    except Exception:
+        log.warning("regime: last price for %s failed", symbol, exc_info=True)
+        return None
+    if value is None or not math.isfinite(float(value)) or float(value) <= 0:
+        return None
+    return float(value)
+
+
 def fetch_live_inputs(
     index: IndexName,
     prior_close: float | None,

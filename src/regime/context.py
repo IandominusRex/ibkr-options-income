@@ -17,8 +17,32 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from src.common.config import get_config, get_leveraged_sizing_cfg, get_regime_cfg
-from src.common.schemas import MarketRegime, OrderState, PositionSnapshot, SizingContext, Strategy
+from src.analytics import regime as regime_data
+from src.analytics.scale_in import (
+    compute_zone,
+    last_broken_support,
+    name_drawdown_triggered,
+    near_money_short_put,
+    recovered,
+)
+from src.analytics.support_levels import support_levels
+from src.analytics.technicals import _atr14, _sma
+from src.common.config import (
+    RegimeLadderCfg,
+    get_config,
+    get_leveraged_sizing_cfg,
+    get_regime_cfg,
+)
+from src.common.schemas import (
+    MarketRegime,
+    OrderState,
+    PositionSnapshot,
+    ScaleInZone,
+    SizingContext,
+    Strategy,
+)
+from src.engine.regime_limits import active, name_regime
+from src.regime.anchors import latest_anchor, loss_exits_today, recent_loss_exit_names
 from src.storage.models import OrderRow
 from src.storage.regime_state import load_regime_state, regime_suspended
 
@@ -122,6 +146,134 @@ def _leverage_map() -> dict[str, int]:
     return out
 
 
+def _atr(frame: pd.DataFrame) -> float | None:
+    if frame is None or frame.empty or not {"High", "Low", "Close"} <= set(frame.columns):
+        return None
+    return _atr14(frame["High"], frame["Low"], frame["Close"])
+
+
+def _short_put_names(positions: list[PositionSnapshot]) -> list[str]:
+    return sorted(
+        {
+            (p.underlying or p.symbol).upper()
+            for p in positions
+            if p.sec_type == "OPT"
+            and p.right is not None
+            and p.right.value == "P"
+            and p.position < 0
+        }
+    )
+
+
+def _ladder(
+    base: SizingContext,
+    *,
+    session: Session,
+    symbols: list[str],
+    positions: list[PositionSnapshot],
+    bars: dict[str, pd.DataFrame] | None,
+    spots: dict[str, float] | None,
+    today: date,
+    cfg: RegimeLadderCfg,
+) -> tuple[dict[str, list[str]], dict[str, ScaleInZone]]:
+    """``(name_triggers, scale_in zones)`` for *symbols* (spec section 6, ruling 37).
+
+    A name is under the ladder when its market regime is one of ``cfg.regimes``, it has fallen
+    ``name_drawdown_atr`` ATRs from its recent high, a short put on it is at or near the money,
+    or it had a loss exit within ``anchor_survival_days``. Its zone sits below its anchor (the
+    last lot); a name with a trigger but no anchor has no zone (the first lot is free) and a
+    name whose price has closed ``recovery_closes`` times above its 20-day average and the level
+    that last broke, all after the anchor lot, is lifted. With no bars the zone falls back to the
+    percentage gap alone (a missing ATR never lifts the ladder). Triggers are returned for every
+    name that has one, whether or not it has an anchor: the leveraged-ETF tier reads them.
+    """
+    frames: dict[str, pd.DataFrame] = dict(bars or {})
+
+    def frame_of(symbol: str) -> pd.DataFrame:
+        if symbol not in frames:
+            frames[symbol] = regime_data.get_bars(symbol)
+        return frames[symbol]
+
+    live: dict[str, float] = dict(spots) if spots is not None else {}
+    if spots is None:
+        for name in _short_put_names(positions):
+            if name in {s.upper() for s in symbols}:
+                price = regime_data.last_price(name)
+                if price is not None:
+                    live[name] = price
+
+    recent_exits = recent_loss_exit_names(session, days=cfg.anchor_survival_days, today=today)
+    triggers_out: dict[str, list[str]] = {}
+    zones: dict[str, ScaleInZone] = {}
+    for symbol in dict.fromkeys(s.upper() for s in symbols):
+        frame = frame_of(symbol)
+        atr = _atr(frame)
+        regime = name_regime(base, symbol)[0] if active(base) else MarketRegime.NORMAL
+        trig: list[str] = []
+        if regime in cfg.regimes:
+            trig.append(f"regime_{regime.value}")
+        if atr is not None and name_drawdown_triggered(
+            frame, atr, sessions=cfg.name_drawdown_sessions, k_atr=cfg.name_drawdown_atr
+        ):
+            trig.append("name_drawdown")
+        last_close = float(frame["Close"].iloc[-1]) if not frame.empty else None
+        spot = live.get(symbol) or last_close
+        if (
+            atr is not None
+            and spot is not None
+            and near_money_short_put(positions, symbol, spot, atr, k_atr=cfg.near_money_atr)
+        ):
+            trig.append("near_money_put")
+        if symbol in recent_exits:
+            trig.append("recent_loss_exit")
+        if not trig:
+            continue
+
+        anchor = latest_anchor(
+            session,
+            symbol,
+            positions,
+            survival_days=cfg.anchor_survival_days,
+            today=today,
+            spot=spot,
+        )
+        if anchor is None:
+            triggers_out[symbol] = trig  # the first lot is free, but the tier still reads this
+            continue
+        price, source, since = anchor
+        if atr is not None:
+            level = (
+                last_broken_support(
+                    frame, anchor=price, after=since, atr=atr, broken_atr=cfg.broken_atr
+                )
+                or price
+            )
+            if recovered(
+                frame,
+                sma20=_sma(frame["Close"], 20),
+                level=level,
+                closes=cfg.recovery_closes,
+                after=since,
+            ):
+                continue  # a confirmed rebound lifts the ladder, whatever its triggers
+        supports = (
+            support_levels(frame, spot=price, atr=atr, broken_atr=cfg.broken_atr)
+            if atr is not None
+            else []
+        )
+        zones[symbol] = compute_zone(
+            anchor=price,
+            anchor_source=source,
+            atr=atr or 0.0,
+            supports=supports,
+            regime=regime,
+            triggers=trig,
+            cfg=cfg,
+        )
+        triggers_out[symbol] = trig
+    return triggers_out, zones
+
+
 def build_sizing_context(
     *,
     now: datetime,
@@ -130,6 +282,7 @@ def build_sizing_context(
     symbols: list[str] | None = None,
     positions: list[PositionSnapshot] | None = None,
     bars: dict[str, pd.DataFrame] | None = None,
+    spots: dict[str, float] | None = None,
 ) -> SizingContext | None:
     """The sizing context for a scan (or, with ``for_send=True``, a send-time re-gate).
 
@@ -139,9 +292,13 @@ def build_sizing_context(
     database failure propagates: the callers fail closed (no scan) rather than size without the
     regime.
 
-    *symbols*, *positions* and *bars* are for the scale-in ladder (a later task) and unused here.
+    *symbols*, *positions*, *bars* and *spots* feed the scale-in ladder (`_ladder`): per-name
+    triggers and zones for *symbols*. *bars* maps a symbol to its completed daily bars (default:
+    `regime.get_bars`, daily-cached); *spots* maps a symbol to its live price for the
+    near-the-money trigger (default: fetched for names with a short put, else the last close).
+    ``for_send=True`` fetches no bars: it carries today's loss exits (a cheap query) and leaves
+    each card's zone to the order snapshot.
     """
-    del symbols, positions, bars
     regime_cfg = get_regime_cfg()
     if not regime_cfg.enabled and not get_leveraged_sizing_cfg().enabled:
         return None
@@ -151,7 +308,7 @@ def build_sizing_context(
         regimes = {"SPY": state.spy.effective, "QQQ": state.qqq.effective}
     else:
         regimes = {"SPY": MarketRegime.NORMAL, "QQQ": MarketRegime.NORMAL}
-    return SizingContext(
+    ctx = SizingContext(
         regimes=regimes,
         tech_linked=list(regime_cfg.tech_linked),
         suspended=regime_suspended(today),
@@ -162,5 +319,19 @@ def build_sizing_context(
             session, today, for_send=for_send, tech_linked=regime_cfg.tech_linked
         ),
         leverage=_leverage_map(),
+        loss_exit_today=loss_exits_today(session, today=today),
         for_send=for_send,
     )
+    if for_send or not symbols:
+        return ctx
+    triggers, zones = _ladder(
+        ctx,
+        session=session,
+        symbols=symbols,
+        positions=positions or [],
+        bars=bars,
+        spots=spots,
+        today=today,
+        cfg=regime_cfg.ladder,
+    )
+    return ctx.model_copy(update={"name_triggers": triggers, "scale_in": zones})

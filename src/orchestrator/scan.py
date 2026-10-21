@@ -1670,7 +1670,12 @@ async def _run_scan_body(
             top, dropped = select_top_candidates_detailed(passed)
             # The counterfactual record: what the market regime trimmed or stopped this cycle
             # (once per contract or name per ET day; read later by a human, never by a gate).
-            record_scan_actions(top=top, scored=scored, verdicts=verdict_map)
+            record_scan_actions(
+                top=top,
+                scored=scored,
+                verdicts=verdict_map,
+                generator_rejects=generator_rejects,
+            )
 
             # Record the fate of every gated contract. `gate_passed` is pre-score-floor, so the
             # difference between it and `passed` is exactly the score-floor casualties.

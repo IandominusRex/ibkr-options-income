@@ -182,7 +182,7 @@ async def run_poll(monkeypatch, *, acct: AccountSnapshot | None = None, position
     """Run one order-poll pass; return the (order_id, candidate) pairs handed to the executor."""
     executed: list[tuple[int, object]] = []
 
-    async def fake_execute(ib, bot, chat_id, order_id, candidate):
+    async def fake_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append((order_id, candidate))
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", fake_execute)

@@ -40,6 +40,13 @@ REGIME_REASONS: tuple[str, ...] = (
     "regime_daily_limit",
 )
 
+# The scale-in ladder's gate reasons and the counterfactual kind each is recorded under. The
+# sizer rejects these before a candidate reaches the gate, so they come in as generator rejects.
+LADDER_KINDS: dict[str, str] = {
+    "loss_exit_cooldown": "loss_exit_cooldown",
+    "scale_in_zone_not_reached": "scale_in_zone",
+}
+
 
 def _regime_of(cand: TradeCandidate) -> str:
     return cand.sizing.regime.value if cand.sizing is not None else MarketRegime.NORMAL.value
@@ -160,6 +167,7 @@ def record_scan_actions(
     scored: list[TradeCandidate],
     verdicts: dict[str, Any],
     picture_version: str | None = None,
+    generator_rejects: list[tuple[TradeCandidate, list[str]]] | None = None,
 ) -> None:
     """Record what the regime did in one scan: trims and floor lots on the surfaced CSPs, and
     the names it stopped outright.
@@ -168,7 +176,11 @@ def record_scan_actions(
       (``regime_ceiling`` / ``leveraged_ceiling``), or ``regime_budget`` when only the scaled
       budget cut it; a floor lot is recorded as ``regime_floor_lot``;
     * a name none of whose strikes passed, whose best-ranked candidate was rejected only for
-      regime reasons, is recorded once as a never-sent row (``sent_contracts`` 0).
+      regime reasons, is recorded once as a never-sent row (``sent_contracts`` 0);
+    * a name the scale-in ladder stopped (*generator_rejects*: contracts the sizer refused,
+      best-ranked first, whose only reasons are ``loss_exit_cooldown`` /
+      ``scale_in_zone_not_reached``) is recorded once per name, kind and ET day, as
+      ``loss_exit_cooldown`` or ``scale_in_zone``.
 
     *scored* is expected best-ranked first (the scan passes it sorted by blended score). Never
     raises.
@@ -224,5 +236,25 @@ def record_scan_actions(
                         key=f"csp:{underlying}:{kind}:{day}",
                     )
                     break
+
+        ladder_done: set[str] = set()
+        for cand, reasons in generator_rejects or []:
+            if cand.strategy != Strategy.CASH_SECURED_PUT or cand.underlying in ladder_done:
+                continue
+            if not reasons or not all(r in LADDER_KINDS for r in reasons):
+                continue  # something else also stopped it: not the ladder's doing alone
+            ladder_done.add(cand.underlying)
+            kind = LADDER_KINDS[
+                "loss_exit_cooldown" if "loss_exit_cooldown" in reasons else reasons[0]
+            ]
+            record_action(
+                cand=cand,
+                kind=kind,
+                deterministic=cand.contracts,
+                sent=0,
+                reason=f"stopped by the scale-in ladder ({', '.join(reasons)})",
+                picture_version=picture_version,
+                key=f"csp:{cand.underlying}:{kind}:{day}",
+            )
     except Exception:
         log.warning("scan sizing actions not recorded", exc_info=True)

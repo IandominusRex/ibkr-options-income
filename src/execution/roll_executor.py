@@ -366,7 +366,8 @@ async def execute_roll(
         #    RollCfg the generator used: net at or above the floor (min_net_credit, or
         #    -cc.max_debit for a keep-shares call roll), |new delta| not above the old leg's,
         #    live IBKR greeks in LIVE mode, and no collapse below the approved net credit.
-        verdict = validate_live_quote(candidate, new_quote)
+        # A roll is never regime- or ladder-limited: explicit sizing=None (a fence test checks it).
+        verdict = validate_live_quote(candidate, new_quote, sizing=None)
         reasons = list(verdict.reasons)
         origin = candidate.roll_from
         assert origin is not None  # _resolve_short_to_close refused a roll without one

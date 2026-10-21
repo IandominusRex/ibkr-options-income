@@ -31,8 +31,10 @@ from src.engine.capital import Budgets, max_contracts, resolve_caps, scale_caps,
 from src.engine.regime_limits import (
     active,
     floor_left,
+    loss_exit_reason,
     multipliers,
     per_trade_cap,
+    scale_in_reason,
     sizing_note,
 )
 from src.strategies._evaluation import (
@@ -41,12 +43,14 @@ from src.strategies._evaluation import (
     REASON_DELTA_RANGE,
     REASON_DTE_RANGE,
     REASON_INSUFFICIENT_CASH,
+    REASON_LOSS_EXIT_COOLDOWN,
     REASON_NO_HEADROOM,
     REASON_NO_MARKET,
     REASON_PHASE_DOWNTREND,
     REASON_REGIME_BUDGET,
     REASON_REGIME_CEILING,
     REASON_ROC,
+    REASON_SCALE_IN_ZONE,
     REASON_YIELD,
     ScreenResult,
     display_premium,
@@ -233,6 +237,14 @@ def screen_csp_candidates(
         note = sizing_note(sizing, symbol, max(unscaled, 1), hard_max)
         if note is not None and floor_lot:
             note = note.model_copy(update={"floor_lot": True})
+        # The scale-in ladder (same functions as the gate): a loss exit on the name earlier today
+        # blocks it; a name under the ladder waits for its zone. The zone travels on the card.
+        if loss_exit_reason(sizing, symbol) is not None:
+            reasons.append(REASON_LOSS_EXIT_COOLDOWN)
+        if scale_in_reason(sizing, symbol, tech_stats.price) is not None:
+            reasons.append(REASON_SCALE_IN_ZONE)
+        if note is not None and sizing is not None and symbol in sizing.scale_in:
+            note = note.model_copy(update={"scale_in": sizing.scale_in[symbol]})
 
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100

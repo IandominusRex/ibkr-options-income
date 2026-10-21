@@ -39,6 +39,10 @@ REASON_NO_HEADROOM = "no_headroom"
 # the regime shrank the size rather than blaming capital.
 REASON_REGIME_BUDGET = "regime_budget"
 REASON_REGIME_CEILING = "regime_ceiling"
+# The scale-in ladder: the next lot on a name waits for a lower price; a loss exit on the name
+# blocks new CSPs on it for the rest of the ET day.
+REASON_SCALE_IN_ZONE = "scale_in_zone_not_reached"
+REASON_LOSS_EXIT_COOLDOWN = "loss_exit_cooldown"
 REASON_ROC = "roc_below_minimum"
 REASON_YIELD = "yield_below_minimum"
 REASON_PHASE_DOWNTREND = "phase_downtrend"

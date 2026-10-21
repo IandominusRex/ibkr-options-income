@@ -18,9 +18,13 @@ What each limit is:
 * **Guaranteed floor** — a few lots per governing index per day may exceed the *scaled* budget
   (never the unscaled caps), so a full book is not a complete stop (decision 31). See
   `floor_left`.
+* **Scale-in ladder** — a name under the ladder may add a lot only once the price has fallen into
+  its zone (`scale_in_reason`); a loss exit on a name blocks new CSPs on it for the rest of the
+  ET day (`loss_exit_reason`). The zone itself is worked out by `src/analytics/scale_in.py` and
+  carried on the `SizingContext`.
 
-The regime limits switch off when the context is None, `/regime off` suspended it today, or
-`regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
+The regime limits (and the ladder's zone) switch off when the context is None, `/regime off`
+suspended it today, or `regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
 limit: it still applies when the regime is suspended or disabled (a ladder trigger on the name
 still stresses its tier). Rolls, covered calls, closes and exits are never limited here: callers
 apply these functions to cash-secured puts only.
@@ -35,6 +39,7 @@ from src.common.config import get_config, get_leveraged_sizing_cfg, get_regime_c
 from src.common.schemas import (
     AccountSnapshot,
     MarketRegime,
+    OptionQuote,
     PositionSnapshot,
     SizingContext,
     SizingNote,
@@ -193,6 +198,85 @@ def floor_left(ctx: SizingContext | None, symbol: str, accepted_so_far: dict[str
     allowed = get_regime_cfg().csp.floor_new_per_day[name_regime(ctx, symbol)[0]]
     index = governing_index(ctx, symbol)
     return max(0, allowed - ctx.floor_lots_counted.get(index, 0) - accepted_so_far.get(index, 0))
+
+
+def loss_exit_reason(ctx: SizingContext | None, symbol: str) -> str | None:
+    """``"loss_exit_cooldown"`` while *symbol* had a loss exit earlier in the same ET day.
+
+    Applies whenever a context is present (the regime being suspended does not lift it), and
+    only while ``regime.ladder.loss_exit_same_day_block`` is on. Checked before the zone: the
+    re-entries of the week of 2026-10-13 came 18-55 minutes after the stop-outs. CSPs only; the
+    callers never apply it to closes, rolls or covered calls.
+    """
+    if ctx is None or not get_regime_cfg().ladder.loss_exit_same_day_block:
+        return None
+    return (
+        "loss_exit_cooldown" if symbol.upper() in {s.upper() for s in ctx.loss_exit_today} else None
+    )
+
+
+def scale_in_reason(ctx: SizingContext | None, symbol: str, spot: float | None) -> str | None:
+    """``"scale_in_zone_not_reached"`` when *symbol* has a zone and *spot* is above its top.
+
+    None when the context is missing or inactive (``/regime off``, ``regime.enabled: false``),
+    when the name has no zone (it is not under the ladder, or this is its first lot), or when
+    the spot is unknown. A spot at or below the top of the zone is allowed: the zone is where
+    the next lot may be sold, and a price already past it is no reason to refuse.
+    """
+    if ctx is None or not active(ctx) or spot is None:
+        return None
+    zone = ctx.scale_in.get(symbol)
+    if zone is None:
+        return None
+    return "scale_in_zone_not_reached" if spot > zone.zone_high else None
+
+
+def live_ladder_spot(
+    candidate: TradeCandidate, quote: OptionQuote, ctx: SizingContext | None
+) -> float | None:
+    """The underlying price the send-time ladder re-check uses (ruling 48).
+
+    The fresh quote's ``underlying_price``; when the quote carries none (paper fallback greeks),
+    the price ``approval._send_context`` fetched for this name (``ctx.spot_at_send``); else None.
+    """
+    if quote.underlying_price is not None and quote.underlying_price > 0:
+        return float(quote.underlying_price)
+    if ctx is not None:
+        return ctx.spot_at_send.get(candidate.underlying)
+    return None
+
+
+def live_ladder_reason(
+    candidate: TradeCandidate, quote: OptionQuote, ctx: SizingContext | None
+) -> str | None:
+    """The send-time ladder check: the card's frozen zone against the live underlying price.
+
+    ``"scale_in_zone_not_reached"`` when the candidate's snapshot carries a zone and the live
+    price is above its top, i.e. the underlying bounced after the card was made. The zone is the
+    one frozen in the order snapshot; no bars are fetched at send time. CSPs only.
+    """
+    if candidate.strategy != Strategy.CASH_SECURED_PUT or candidate.sizing is None:
+        return None
+    zone = candidate.sizing.scale_in
+    if zone is None or ctx is None or not active(ctx):
+        return None
+    spot = live_ladder_spot(candidate, quote, ctx)
+    if spot is None:
+        return None
+    return "scale_in_zone_not_reached" if spot > zone.zone_high else None
+
+
+def live_ladder_note(
+    candidate: TradeCandidate, quote: OptionQuote, ctx: SizingContext | None
+) -> str | None:
+    """The order ``detail`` when the ladder could not be re-checked at send time, else None."""
+    if candidate.strategy != Strategy.CASH_SECURED_PUT or candidate.sizing is None:
+        return None
+    if candidate.sizing.scale_in is None or ctx is None or not active(ctx):
+        return None
+    if live_ladder_spot(candidate, quote, ctx) is None:
+        return "ladder not re-checked: no underlying price"
+    return None
 
 
 def sizing_note(

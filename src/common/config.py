@@ -1511,6 +1511,87 @@ class RegimeThresholdsCfg(_KeyedCfg):
         return self
 
 
+# The ladder's minimum gap below the last lot, in percent, per market regime (spec section 6).
+_DEFAULT_LADDER_GAP: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 5.0,
+    MarketRegime.CAUTIOUS: 5.0,
+    MarketRegime.STRESSED: 5.0,
+    MarketRegime.CRISIS: 7.0,
+}
+
+
+class RegimeLadderCfg(_KeyedCfg):
+    """The scale-in ladder (config/risk_limits.yaml -> regime.ladder, spec section 6).
+
+    Under the ladder a further CSP lot on a name is accepted only once the price has fallen
+    into a zone worked out from the name's own technicals. It applies to a name when its market
+    regime is one of ``regimes`` or a name-level trigger holds (a sharp fall of the name, a
+    near-the-money short put on it, a recent loss exit on it).
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "regimes",
+        "min_gap_pct",
+        "min_gap_atr",
+        "band_atr",
+        "broken_atr",
+        "anchor_survival_days",
+        "name_drawdown_atr",
+        "name_drawdown_sessions",
+        "recovery_closes",
+        "near_money_atr",
+        "loss_exit_same_day_block",
+    )
+
+    regimes: list[MarketRegime] = Field(
+        default_factory=lambda: [MarketRegime.STRESSED, MarketRegime.CRISIS]
+    )
+    min_gap_pct: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_LADDER_GAP)
+    )
+    min_gap_atr: float = 1.5
+    band_atr: float = 0.5
+    broken_atr: float = 1.0
+    anchor_survival_days: int = 5
+    name_drawdown_atr: float = 2.5  # drawdown from the recent high, in ATRs
+    name_drawdown_sessions: int = 10
+    recovery_closes: int = 2  # counted only after the anchor lot's fill date (ruling 37)
+    near_money_atr: float = 0.5  # a short put with spot <= strike + this x ATR fires the ladder
+    loss_exit_same_day_block: bool = True
+
+    @field_validator("min_gap_pct", mode="before")
+    @classmethod
+    def _fill_gap(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_LADDER_GAP)
+
+    @field_validator("min_gap_pct")
+    @classmethod
+    def _gap_positive(cls, v: dict[MarketRegime, float]) -> dict[MarketRegime, float]:
+        for regime, value in v.items():
+            if not (0.0 < value < 100.0):
+                raise ValueError(f"regime.ladder.min_gap_pct[{regime.value}] must be in (0, 100)")
+        return v
+
+    @model_validator(mode="after")
+    def _sane(self) -> RegimeLadderCfg:
+        for name in (
+            "min_gap_atr",
+            "band_atr",
+            "broken_atr",
+            "name_drawdown_atr",
+            "near_money_atr",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"regime.ladder.{name} must be >= 0")
+        if self.anchor_survival_days < 0 or self.recovery_closes < 1:
+            raise ValueError(
+                "regime.ladder: anchor_survival_days must be >= 0 and recovery_closes >= 1"
+            )
+        if self.name_drawdown_sessions < 2:
+            raise ValueError("regime.ladder.name_drawdown_sessions must be >= 2")
+        return self
+
+
 _DEFAULT_TECH_LINKED = [
     "QQQ",
     "TQQQ",
@@ -1545,7 +1626,7 @@ class RegimeCfg(_KeyedCfg):
     parsed by :func:`get_regime_cfg`. A missing block means the shipped defaults.
     """
 
-    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "tech_linked", "csp", "thresholds")
+    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "tech_linked", "csp", "thresholds", "ladder")
 
     enabled: bool = True
     # Names governed by the stricter of the SPY and QQQ regimes. An explicit list: the sector
@@ -1553,6 +1634,7 @@ class RegimeCfg(_KeyedCfg):
     tech_linked: list[str] = Field(default_factory=lambda: list(_DEFAULT_TECH_LINKED))
     csp: RegimeCspCfg = Field(default_factory=RegimeCspCfg)
     thresholds: RegimeThresholdsCfg = Field(default_factory=RegimeThresholdsCfg)
+    ladder: RegimeLadderCfg = Field(default_factory=RegimeLadderCfg)
 
     @field_validator("tech_linked")
     @classmethod

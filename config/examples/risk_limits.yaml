@@ -196,6 +196,26 @@ regime:
       QQQ: {stressed: -2.5, crisis: -4.0}
       vix_stressed: 30.0
       vix_crisis: 40.0
+  # The scale-in ladder: under it, a further CSP lot on a name is accepted only once its price
+  # has fallen into a zone worked out from the name's own technicals (swing lows on daily
+  # lows, ATR-14), below the price at its last lot (the "anchor"). It applies to a name when its
+  # market regime is one of `regimes`, or a name-level trigger holds in ANY regime: the name has
+  # fallen name_drawdown_atr ATRs from its recent high, a short put on it is at or near the
+  # money, or it had a loss exit within anchor_survival_days. A first lot (no anchor) is free.
+  # Never applies to closes, rolls or covered calls; `/regime off` lifts the zone, not the
+  # same-day loss-exit block.
+  ladder:
+    regimes: [stressed, crisis]          # market regimes where the ladder applies to every held name
+    min_gap_pct: {normal: 5.0, cautious: 5.0, stressed: 5.0, crisis: 7.0}
+    min_gap_atr: 1.5                     # the gap below the last lot is the larger of this and min_gap_pct
+    band_atr: 0.5                        # the zone is the support +- this x ATR
+    broken_atr: 1.0                      # a close this many ATRs under a support breaks it
+    anchor_survival_days: 5              # the anchor survives a profit-take / loss exit this long
+    name_drawdown_atr: 2.5               # fall from the recent high, in ATRs, that fires the ladder
+    name_drawdown_sessions: 10
+    recovery_closes: 2                   # closes AFTER the anchor lot above sma20 and the last-broken support lift it
+    near_money_atr: 0.5                  # a short put with spot <= strike + this x ATR fires the ladder
+    loss_exit_same_day_block: true       # no new CSP on a name for the rest of the ET day of its loss exit
 
 # --- Leveraged-ETF size ceiling (engine/regime_limits.py) ---
 # A smaller per-trade size for 2x and 3x leveraged ETFs in EVERY regime. The ceiling is

@@ -43,8 +43,11 @@ from src.engine.regime_limits import (
     daily_limit,
     floor_left,
     governing_index,
+    live_ladder_reason,
+    loss_exit_reason,
     multipliers,
     per_trade_cap,
+    scale_in_reason,
     sizing_note,
 )
 
@@ -324,6 +327,16 @@ def validate_candidates(
                     ceiling_kind(sizing, cand.underlying, hard_max, cand.contracts)
                     or "regime_ceiling"
                 )
+            # The scale-in ladder (same functions as the sizer): a loss exit on the name earlier
+            # today blocks it; a name under the ladder waits for its zone. A missing ``ideal``
+            # means no spot to judge, which is data-unavailable and never rejects.
+            cooldown = loss_exit_reason(sizing, cand.underlying)
+            if cooldown is not None:
+                reasons.append(cooldown)
+            if cand.ideal is not None:
+                not_reached = scale_in_reason(sizing, cand.underlying, cand.ideal.spot)
+                if not_reached is not None:
+                    reasons.append(not_reached)
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
         # A ROLL is judged only on whether its new expiry runs into earnings: the proximity
@@ -494,8 +507,13 @@ def validate_candidates(
                 )
                 if note is not None:
                     # An in-place tag: the gate returns verdicts only, and the caller's candidate
-                    # is what is sized, shown and frozen into the order snapshot.
-                    cand.sizing = note.model_copy(update={"floor_lot": took_floor})
+                    # is what is sized, shown and frozen into the order snapshot. The name's
+                    # scale-in zone travels with it: the send-time re-gate checks the live price
+                    # against this frozen zone.
+                    zone = note.scale_in or sizing.scale_in.get(cand.underlying)
+                    cand.sizing = note.model_copy(
+                        update={"floor_lot": took_floor, "scale_in": zone}
+                    )
 
     return [
         RiskVerdict(
@@ -507,7 +525,12 @@ def validate_candidates(
     ]
 
 
-def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVerdict:
+def validate_live_quote(
+    candidate: TradeCandidate,
+    quote: OptionQuote,
+    *,
+    sizing: SizingContext | None = None,
+) -> RiskVerdict:
     """Second gate: re-check a single candidate against the FRESH live quote at send time.
 
     Catches the case the decision-time gate cannot see: the option drifted between the
@@ -515,6 +538,12 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
     collapsed). Deterministic. Delta is only enforced when the live quote actually carries
     greeks — missing live greeks degrade to the (already-passed) decision-time gate rather
     than blocking the fill.
+
+    *sizing* is the send-time context (`approval._send_context`); the send path passes it
+    explicitly (rolls pass ``None``: they are never regime- or ladder-limited). For a
+    cash-secured put it adds the scale-in ladder: ``loss_exit_cooldown`` when the name had a
+    loss exit today (including since the card was made), and ``scale_in_zone_not_reached`` when
+    the zone frozen into the card is now below the live underlying price (it bounced).
     """
     reasons: list[str] = []
 
@@ -566,6 +595,14 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
         and quote.mid < float(min_ratio) * candidate.premium
     ):
         reasons.append("live_premium_collapse")
+
+    if sizing is not None and candidate.strategy == Strategy.CASH_SECURED_PUT:
+        cooldown = loss_exit_reason(sizing, candidate.underlying)
+        if cooldown is not None:
+            reasons.append(cooldown)
+        not_reached = live_ladder_reason(candidate, quote, sizing)
+        if not_reached is not None:
+            reasons.append(not_reached)
 
     return RiskVerdict(
         candidate_id=candidate.candidate_id,
