@@ -50,6 +50,7 @@ from src.common.schemas import (
     OptionQuote,
     OptionRight,
     PositionSnapshot,
+    RegimeState,
     RiskVerdict,
     SectorContext,
     TechnicalStats,
@@ -66,6 +67,7 @@ from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 # scan_progress, which owns every other Telegram call — because tests/test_scan_timeout.py,
 # tests/test_scan_materiality.py and tests/test_scan_review_reuse.py monkeypatch them as
 # attributes of this module. They are injected into send_scan_results via SendDeps.
+from src.notify.regime_notice import send_regime_changes
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates
 from src.orchestrator.scan_pipeline import ChainStatus, SymbolDeps, scan_symbol
 from src.orchestrator.scan_progress import (
@@ -74,9 +76,11 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
+from src.regime.refresh import refresh_regime
 from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
+from src.storage.regime_state import load_regime_state
 from src.storage.risk_verdicts import record_assessments
 from src.storage.scan_state import ScanState, bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
@@ -142,6 +146,9 @@ class ScanResult:
     assessed: list[AssessedContract] = field(default_factory=list)
     reviews: list[ClaudeReview] = field(default_factory=list)
     market_conditions: MarketConditions = field(default_factory=MarketConditions)
+    # The persisted market regime this cycle ran under (SPY and QQQ); None when it could not be
+    # read at all. Deterministic: the sizer and the gate read it through the SizingContext.
+    regime: RegimeState | None = None
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     # True when this scan was skipped because another process held the scan lease (F5).
     lease_skipped: bool = False
@@ -1098,6 +1105,25 @@ def _fetch_analytics(
     return iv_stats, tech_stats, fund_stats
 
 
+async def _refresh_and_announce_regime(result: ScanResult) -> None:
+    """Refresh the persisted market regime, store it on *result*, and announce any change.
+
+    The regime is deterministic (``src/analytics/regime.py``) and owned by this process. Both
+    steps are best-effort: a failed refresh falls back to the last persisted regime and a failed
+    notice stays queued for the next scan, so neither can abort a scan or reach the broker.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        result.regime = await loop.run_in_executor(None, refresh_regime, datetime.now(UTC))
+    except Exception:
+        log.warning("scan: regime refresh failed — using the last known regime", exc_info=True)
+        result.regime = load_regime_state()
+    try:
+        await send_regime_changes()
+    except Exception:
+        log.warning("scan: regime change notice failed — will retry next scan", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1212,6 +1238,9 @@ async def _run_scan_body(
             result.provenance.vix_available = True
     except Exception:
         log.warning("scan: failed to fetch market conditions")
+
+    # --- 0b. Market regime (deterministic): refresh it and announce a change ---
+    await _refresh_and_announce_regime(result)
 
     # --- 1. Account + positions ---
     await tracker.tick("account", "⏳")

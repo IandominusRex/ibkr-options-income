@@ -71,8 +71,14 @@ def _no_network_for_regime(monkeypatch):
     """
     import pandas as pd
 
+    from src.regime.refresh import clear_regime_cache
+
     monkeypatch.setattr("src.analytics.regime._load_raw", lambda symbol: pd.DataFrame())
     monkeypatch.setattr("src.analytics.regime._default_last_price", lambda symbol: None)
+    # refresh_regime_cached keeps a 60 s process-wide cache; never let one test's state leak
+    clear_regime_cache()
+    yield
+    clear_regime_cache()
 
 
 @pytest.fixture(autouse=True)
