@@ -654,3 +654,33 @@ async def test_scan_records_a_decision_time_trim(tmp_path, monkeypatch):
     assert row.kind == "regime_ceiling"
     assert (row.deterministic_contracts, row.sent_contracts) == (10, 3)
     assert row.candidate_id == cand.candidate_id and row.underlying == "AAPL"
+
+
+# --------------------------------------------------------------------------- #
+# a lot opened on a name-level bottoming signal is recorded when it is sent
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_name_signal_lot_is_recorded_when_it_is_sent(monkeypatch):
+    seed_regime(N, N)
+    signal = note(pre=1).model_copy(update={"bottoming": "name"})
+    _, order_id = queue("sig-1", "NVDA", 1, sizing=signal)
+    executed, _ = await run_poll(monkeypatch)
+    assert [oid for oid, _ in executed] == [order_id]
+    (a,) = actions(kind="bottoming_lot")
+    assert (a.candidate_id, a.underlying, a.deterministic_contracts, a.sent_contracts) == (
+        "sig-1",
+        "NVDA",
+        1,
+        1,
+    )
+    assert a.order_id == order_id
+
+
+async def test_a_market_tagged_or_ordinary_lot_is_not_recorded_as_a_signal_lot(monkeypatch):
+    seed_regime(N, N)
+    queue("mkt-1", "NVDA", 1, sizing=note(pre=1).model_copy(update={"bottoming": "market"}))
+    queue("plain-1", "WFC", 1, sizing=note(pre=1))
+    executed, _ = await run_poll(monkeypatch)
+    assert len(executed) == 2
+    assert actions(kind="bottoming_lot") == []

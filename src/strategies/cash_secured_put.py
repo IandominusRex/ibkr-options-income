@@ -30,11 +30,14 @@ from src.common.universe import effective_universe
 from src.engine.capital import Budgets, max_contracts, resolve_caps, scale_caps, seed_budgets
 from src.engine.regime_limits import (
     active,
+    bottoming_guard,
+    bottoming_tag,
     floor_left,
     loss_exit_reason,
     multipliers,
     per_trade_cap,
     scale_in_reason,
+    signal_lot,
     sizing_note,
 )
 from src.strategies._evaluation import (
@@ -243,8 +246,17 @@ def screen_csp_candidates(
             reasons.append(REASON_LOSS_EXIT_COOLDOWN)
         if scale_in_reason(sizing, symbol, tech_stats.price) is not None:
             reasons.append(REASON_SCALE_IN_ZONE)
-        if note is not None and sizing is not None and symbol in sizing.scale_in:
-            note = note.model_copy(update={"scale_in": sizing.scale_in[symbol]})
+        elif signal_lot(sizing, symbol, tech_stats.price):
+            # a name-level bottoming signal lets the lot in above the zone, under its guards
+            guard = bottoming_guard(sizing, symbol, quote.delta)
+            if guard is not None:
+                reasons.append(guard)
+        if note is not None and sizing is not None:
+            ladder_zone = sizing.scale_in.get(symbol)
+            tag = bottoming_tag(sizing, symbol, tech_stats.price)
+            if tag == "name" and ladder_zone is not None:
+                ladder_zone = ladder_zone.model_copy(update={"bottoming_signal": True})
+            note = note.model_copy(update={"scale_in": ladder_zone, "bottoming": tag})
 
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100

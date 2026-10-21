@@ -216,6 +216,26 @@ regime:
     recovery_closes: 2                   # closes AFTER the anchor lot above sma20 and the last-broken support lift it
     near_money_atr: 0.5                  # a short put with spot <= strike + this x ATR fires the ladder
     loss_exit_same_day_block: true       # no new CSP on a name for the rest of the ET day of its loss exit
+  # The bottoming signal: in a fast drop the system must not simply wait for the slow easing
+  # rules, so each scan looks for a deterministic sign that a bottom is forming and loosens ONE
+  # notch. Market level (per index, only while its regime is stressed or crisis): after a VIX
+  # spike the live VIX is `off_peak_pct` under the peak, the VIX/VIX3M curve is back under 1 if it
+  # inverted, and the index holds above the low of the selloff's lowest day; the regime eases one
+  # notch at once, and a fresh breach of an intraday escalation threshold cancels it for the day.
+  # Name level (a name under the ladder): the price is at a support the ladder would otherwise
+  # make it wait past, its RSI-14 was oversold within `rsi_lookback` sessions and has turned up,
+  # and the last close is above the prior day's high; one lot may then be sold at once, with a
+  # delta of at most `signal_delta_max` and at most one such lot per name per
+  # `signal_lot_every_sessions` sessions. Every other gate still applies, and a signal lot uses
+  # the guaranteed floor when the scaled budget is full.
+  bottoming:
+    vix_spike_pct: 25.0          # the VIX rose at least this much from its window low to its peak
+    spike_sessions: 10
+    off_peak_pct: 15.0           # live VIX at least this far below the spike peak
+    rsi_oversold: 30.0
+    rsi_lookback: 5
+    signal_delta_max: 0.25       # must be above cash_secured_put.delta_min (0.20): checked at load
+    signal_lot_every_sessions: 3
 
 # --- Leveraged-ETF size ceiling (engine/regime_limits.py) ---
 # A smaller per-trade size for 2x and 3x leveraged ETFs in EVERY regime. The ceiling is

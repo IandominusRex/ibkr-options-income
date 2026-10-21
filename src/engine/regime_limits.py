@@ -228,7 +228,62 @@ def scale_in_reason(ctx: SizingContext | None, symbol: str, spot: float | None) 
     zone = ctx.scale_in.get(symbol)
     if zone is None:
         return None
+    if symbol in ctx.name_bottoming:
+        return None  # a bottom is forming: the lot may open here, under `bottoming_reason`'s guards
     return "scale_in_zone_not_reached" if spot > zone.zone_high else None
+
+
+def signal_lot(ctx: SizingContext | None, symbol: str, spot: float | None) -> bool:
+    """True when a lot on *symbol* at *spot* opens on a name-level bottoming signal.
+
+    The name has a zone, a bottom is forming (``ctx.name_bottoming``) and the price is above the
+    zone top, i.e. the ladder alone would have made it wait. A lot inside or under the zone is an
+    ordinary ladder lot, not a signal lot. Off when the regime limits are off.
+    """
+    if ctx is None or not active(ctx) or spot is None or symbol not in ctx.name_bottoming:
+        return False
+    zone = ctx.scale_in.get(symbol)
+    return zone is not None and spot > zone.zone_high
+
+
+def bottoming_guard(ctx: SizingContext | None, symbol: str, delta: float | None) -> str | None:
+    """The guards on a signal lot (spec section 6b): the delta cap and one lot per N sessions.
+
+    ``"bottoming_delta_too_high"`` when ``abs(delta)`` is above ``bottoming.signal_delta_max``
+    (config validation keeps that above the strategy's ``delta_min``, so a real far strike
+    passes); ``"bottoming_lot_recent"`` when the name had a signal lot within
+    ``signal_lot_every_sessions`` sessions. Callers apply it only to a `signal_lot`.
+    """
+    if ctx is None:
+        return None
+    if delta is not None and abs(delta) > get_regime_cfg().bottoming.signal_delta_max + 1e-9:
+        return "bottoming_delta_too_high"
+    if symbol in ctx.signal_lot_recent:
+        return "bottoming_lot_recent"
+    return None
+
+
+def bottoming_reason(ctx: SizingContext | None, cand: TradeCandidate) -> str | None:
+    """`bottoming_guard` for a candidate that opens on a name-level signal, else None."""
+    spot = cand.ideal.spot if cand.ideal is not None else None
+    if not signal_lot(ctx, cand.underlying, spot):
+        return None
+    return bottoming_guard(ctx, cand.underlying, cand.delta)
+
+
+def bottoming_tag(
+    ctx: SizingContext | None, symbol: str, spot: float | None
+) -> Literal["market", "name"] | None:
+    """How a lot relates to the bottoming signal, for the card and the order snapshot.
+
+    ``"name"`` for a signal lot (it opened above the zone on the name's signal); ``"market"``
+    when the name's governing index was eased one notch by the market signal; else None.
+    """
+    if ctx is None:
+        return None
+    if signal_lot(ctx, symbol, spot):
+        return "name"
+    return "market" if ctx.market_bottoming.get(governing_index(ctx, symbol)) else None
 
 
 def live_ladder_spot(
@@ -260,6 +315,8 @@ def live_ladder_reason(
     zone = candidate.sizing.scale_in
     if zone is None or ctx is None or not active(ctx):
         return None
+    if zone.bottoming_signal or candidate.sizing.bottoming == "name":
+        return None  # opened above the zone on a name-level signal, validated at decision time
     spot = live_ladder_spot(candidate, quote, ctx)
     if spot is None:
         return None
@@ -273,6 +330,8 @@ def live_ladder_note(
     if candidate.strategy != Strategy.CASH_SECURED_PUT or candidate.sizing is None:
         return None
     if candidate.sizing.scale_in is None or ctx is None or not active(ctx):
+        return None
+    if candidate.sizing.scale_in.bottoming_signal or candidate.sizing.bottoming == "name":
         return None
     if live_ladder_spot(candidate, quote, ctx) is None:
         return "ladder not re-checked: no underlying price"

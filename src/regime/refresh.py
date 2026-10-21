@@ -35,6 +35,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from src.analytics.bottoming import market_bottoming
 from src.analytics.regime import (
     ORDER,
     classify_base,
@@ -126,6 +127,7 @@ def _next_index(
     now: datetime,
     today: date,
     th: RegimeThresholdsCfg,
+    bottom: tuple[bool, list[str]] | None = None,
 ) -> tuple[IndexRegime, RegimeChange | None]:
     new_day = prev is None or prev.base_date != today
     base_why: list[str] = []
@@ -188,6 +190,26 @@ def _next_index(
     if carry is not None:
         effective = stricter(effective, carry)
 
+    # Rule 6 (bottoming, spec section 6b): a market-level bottoming signal eases a STRESSED or
+    # CRISIS regime ONE notch. A fresh breach of an escalation threshold cancels it for the whole
+    # day (and the escalated regime is back); an escalation the tape raised earlier today is not
+    # eased away (the regime may not be below its base to be eased, nor above it).
+    breach_now = _rank(esc) > _rank(MarketRegime.NORMAL)
+    cancelled_on = prev.bottoming_cancelled_on if prev is not None else None
+    if breach_now:
+        cancelled_on = today
+    eased_by_bottoming = False
+    bottom_why: list[str] = []
+    if (
+        bottom is not None
+        and bottom[0]
+        and cancelled_on != today
+        and _rank(MarketRegime.STRESSED) <= _rank(effective) <= _rank(base)
+    ):
+        effective = ease_one(effective)
+        eased_by_bottoming = True
+        bottom_why = bottom[1]
+
     triggers = [w for w in esc_why if not w.startswith("stale:")]
     if _rank(effective) <= _rank(base):
         escalated_by: list[str] = []
@@ -200,7 +222,11 @@ def _next_index(
     changed = effective != before
     change: RegimeChange | None = None
     if changed:
-        if _rank(effective) > _rank(before):
+        if eased_by_bottoming:
+            why = ["bottoming: " + "; ".join(bottom_why)]
+        elif prev is not None and prev.eased_by_bottoming and _rank(effective) > _rank(before):
+            why = ["bottoming signal ended", *base_why]
+        elif _rank(effective) > _rank(before):
             why = escalated_by if _rank(effective) > _rank(base) and escalated_by else base_why
         elif eased:
             why = [f"easing after {daily_inputs.contango_streak} days of contango", *base_why]
@@ -219,12 +245,22 @@ def _next_index(
             base_since=base_since,
             effective=effective,
             escalated_by=escalated_by,
-            eased_by_bottoming=prev.eased_by_bottoming if prev else False,
-            bottoming_cancelled_on=prev.bottoming_cancelled_on if prev else None,
+            eased_by_bottoming=eased_by_bottoming,
+            bottoming_cancelled_on=cancelled_on,
             inputs=inp,
         ),
         change,
     )
+
+
+def _could_ease(p: IndexRegime | None, daily: RegimeInputs | None, th: RegimeThresholdsCfg) -> bool:
+    """True when the index's regime is, or is about to be, stressed or crisis (bars are worth a fetch)."""
+    ranks = [_rank(MarketRegime.NORMAL)]
+    if p is not None:
+        ranks += [_rank(p.base), _rank(p.effective)]
+    if daily is not None and not _empty(daily):
+        ranks.append(_rank(classify_base(daily, th)[0]))
+    return max(ranks) >= _rank(MarketRegime.STRESSED)
 
 
 def _apply(
@@ -233,13 +269,16 @@ def _apply(
     today: date,
     fetched: dict[IndexName, tuple[RegimeInputs | None, dict[str, Any] | None]],
     th: RegimeThresholdsCfg,
+    bottoming: dict[IndexName, tuple[bool, list[str]]] | None = None,
 ) -> RegimeState:
     changes = list(cur.changes) if cur else []
     out: dict[IndexName, IndexRegime] = {}
     for index in INDICES:
         prev = (cur.spy if index == "SPY" else cur.qqq) if cur else None
         daily, live = fetched[index]
-        new, change = _next_index(index, prev, daily, live, now, today, th)
+        new, change = _next_index(
+            index, prev, daily, live, now, today, th, (bottoming or {}).get(index)
+        )
         out[index] = new
         if change is not None:
             changes.append(change)
@@ -264,11 +303,12 @@ def refresh_regime(
     inputs on every call. Never raises for a data problem (a failed fetch keeps the last known
     regime); a database failure propagates, and the callers log it and carry on.
 
-    ``fetch_bars`` is the bar source for the bottoming signal (a later task); the classifier
-    itself reads bars through ``fetch_daily``.
+    ``fetch_bars`` is the bar source for the market-level bottoming signal (``^VIX``, ``^VIX3M``
+    and the index), read only for an index whose regime could be eased (stressed or crisis);
+    the classifier itself reads bars through ``fetch_daily``.
     """
-    del fetch_bars  # used by the bottoming signal (Task 7); accepted now so callers need not change
-    th = get_regime_cfg().thresholds
+    regime_cfg = get_regime_cfg()
+    th = regime_cfg.thresholds
     today = _et_date(now)
     prev = load_regime_state()
 
@@ -301,7 +341,26 @@ def refresh_regime(
             log.warning("regime: live inputs for %s failed", index, exc_info=True)
         fetched[index] = (daily, live)
 
-    return update_regime_state(lambda cur: _apply(cur, now, today, fetched, th))
+    # The bottoming signal (fetches are outside the lock): only where it could change anything.
+    bottoming: dict[IndexName, tuple[bool, list[str]]] = {}
+    for index in INDICES:
+        daily, live = fetched[index]
+        p = (prev.spy if index == "SPY" else prev.qqq) if prev else None
+        if live is None or not _could_ease(p, daily, th):
+            continue
+        try:
+            bottoming[index] = market_bottoming(
+                vix=fetch_bars("^VIX"),
+                vix3m=fetch_bars("^VIX3M"),
+                index=fetch_bars(index),
+                live_vix=live.get("live_vol"),
+                live_index=live.get("index_live"),
+                cfg=regime_cfg.bottoming,
+            )
+        except Exception:
+            log.warning("regime: bottoming check for %s failed", index, exc_info=True)
+
+    return update_regime_state(lambda cur: _apply(cur, now, today, fetched, th, bottoming))
 
 
 def refresh_regime_cached(now: datetime, max_age_s: float = 60.0) -> RegimeState | None:

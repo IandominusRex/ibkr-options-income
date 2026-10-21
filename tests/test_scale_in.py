@@ -732,6 +732,7 @@ def test_the_send_time_context_carries_todays_loss_exits_and_fetches_no_bars():
 LADDER_MODULES = (
     "src/analytics/support_levels.py",
     "src/analytics/scale_in.py",
+    "src/analytics/bottoming.py",
     "src/regime/anchors.py",
     "src/regime/context.py",
     "src/engine/regime_limits.py",

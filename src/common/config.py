@@ -1592,6 +1592,46 @@ class RegimeLadderCfg(_KeyedCfg):
         return self
 
 
+class RegimeBottomingCfg(_KeyedCfg):
+    """The bottoming signal (config/risk_limits.yaml -> regime.bottoming, spec section 6b).
+
+    A deterministic sign that a bottom is forming eases one notch: an index's regime at the
+    market level, a single lot at the current zone at the name level. ``signal_delta_max`` must
+    stay above the strategy's ``delta_min`` or no lot could ever pass (`get_regime_cfg` checks).
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "vix_spike_pct",
+        "spike_sessions",
+        "off_peak_pct",
+        "rsi_oversold",
+        "rsi_lookback",
+        "signal_delta_max",
+        "signal_lot_every_sessions",
+    )
+
+    vix_spike_pct: float = 25.0  # the VIX rose at least this much from its window low to its peak
+    spike_sessions: int = 10
+    off_peak_pct: float = 15.0  # live VIX at least this far below the spike peak
+    rsi_oversold: float = 30.0
+    rsi_lookback: int = 5
+    signal_delta_max: float = 0.25  # must exceed cash_secured_put.delta_min (checked at load)
+    signal_lot_every_sessions: int = 3
+
+    @model_validator(mode="after")
+    def _sane(self) -> RegimeBottomingCfg:
+        if self.vix_spike_pct <= 0 or not (0 < self.off_peak_pct < 100):
+            raise ValueError("regime.bottoming: vix_spike_pct > 0 and 0 < off_peak_pct < 100")
+        if self.spike_sessions < 3 or self.rsi_lookback < 1 or self.signal_lot_every_sessions < 1:
+            raise ValueError(
+                "regime.bottoming: spike_sessions >= 3, rsi_lookback >= 1, "
+                "signal_lot_every_sessions >= 1"
+            )
+        if not (0 < self.signal_delta_max < 1):
+            raise ValueError("regime.bottoming.signal_delta_max must be in (0, 1)")
+        return self
+
+
 _DEFAULT_TECH_LINKED = [
     "QQQ",
     "TQQQ",
@@ -1626,7 +1666,14 @@ class RegimeCfg(_KeyedCfg):
     parsed by :func:`get_regime_cfg`. A missing block means the shipped defaults.
     """
 
-    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "tech_linked", "csp", "thresholds", "ladder")
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "enabled",
+        "tech_linked",
+        "csp",
+        "thresholds",
+        "ladder",
+        "bottoming",
+    )
 
     enabled: bool = True
     # Names governed by the stricter of the SPY and QQQ regimes. An explicit list: the sector
@@ -1635,6 +1682,7 @@ class RegimeCfg(_KeyedCfg):
     csp: RegimeCspCfg = Field(default_factory=RegimeCspCfg)
     thresholds: RegimeThresholdsCfg = Field(default_factory=RegimeThresholdsCfg)
     ladder: RegimeLadderCfg = Field(default_factory=RegimeLadderCfg)
+    bottoming: RegimeBottomingCfg = Field(default_factory=RegimeBottomingCfg)
 
     @field_validator("tech_linked")
     @classmethod
@@ -1935,9 +1983,18 @@ def get_regime_cfg() -> RegimeCfg:
 
     Parsed on every call (a small model; tests and the operator's edits both change the
     underlying dict) and raises ``ValueError`` (pydantic's ``ValidationError`` is one) on an
-    invalid block, at first use rather than at import.
+    invalid block, at first use rather than at import. ``bottoming.signal_delta_max`` must
+    exceed ``cash_secured_put.delta_min``: a guard at or below it is an empty band (ruling 42).
     """
-    return RegimeCfg(**(get_config().risk.get("regime") or {}))
+    risk = get_config().risk
+    cfg = RegimeCfg(**(risk.get("regime") or {}))
+    delta_min = float((risk.get("cash_secured_put") or {}).get("delta_min", 0.0))
+    if cfg.bottoming.signal_delta_max <= delta_min:
+        raise ValueError(
+            f"regime.bottoming.signal_delta_max ({cfg.bottoming.signal_delta_max}) must be above "
+            f"cash_secured_put.delta_min ({delta_min}): otherwise no signal lot could ever pass"
+        )
+    return cfg
 
 
 def get_leveraged_sizing_cfg() -> LeveragedSizingCfg:

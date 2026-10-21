@@ -525,6 +525,19 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             if candidate.strategy == Strategy.CASH_SECURED_PUT:
                 # Tie the day's counterfactual rows for this card to the order that was sent.
                 link_order(candidate.candidate_id, order_row.id, session=session)
+                if candidate.sizing is not None and candidate.sizing.bottoming == "name":
+                    # A lot opened above its zone on a name-level bottoming signal: recorded
+                    # when SENT (a card nobody approved does not use up the name's turn), so a
+                    # human can see whether these lots pay and the guard can count them.
+                    record_action(
+                        cand=candidate,
+                        kind="bottoming_lot",
+                        deterministic=candidate.contracts,
+                        sent=candidate.contracts,
+                        reason="lot opened on a name-level bottoming signal",
+                        order_id=order_row.id,
+                        session=session,
+                    )
             to_execute.append((order_row.id, candidate))
             if cap_remaining is not None and candidate.strategy != Strategy.ROLL:
                 cap_remaining -= 1

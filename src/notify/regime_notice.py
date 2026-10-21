@@ -137,6 +137,8 @@ def format_regime_status(
         head = f"{ir.index}: {ir.effective.value}"
         if "no_data" in ir.escalated_by:
             head += " (no market data yet: assumed normal until it can be read)"
+        elif ir.eased_by_bottoming:
+            head += f" (daily base {ir.base.value}, eased one notch by a bottoming signal)"
         elif ir.effective != ir.base:
             raised = "; ".join(ir.escalated_by) or "intraday"
             head += f" (daily base {ir.base.value}, raised today: {raised})"

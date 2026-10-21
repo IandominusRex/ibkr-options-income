@@ -18,6 +18,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from src.analytics import regime as regime_data
+from src.analytics.bottoming import name_bottoming
 from src.analytics.scale_in import (
     compute_zone,
     last_broken_support,
@@ -28,11 +29,13 @@ from src.analytics.scale_in import (
 from src.analytics.support_levels import support_levels
 from src.analytics.technicals import _atr14, _sma
 from src.common.config import (
+    RegimeBottomingCfg,
     RegimeLadderCfg,
     get_config,
     get_leveraged_sizing_cfg,
     get_regime_cfg,
 )
+from src.common.market_hours import is_trading_day
 from src.common.schemas import (
     MarketRegime,
     OrderState,
@@ -43,7 +46,7 @@ from src.common.schemas import (
 )
 from src.engine.regime_limits import active, name_regime
 from src.regime.anchors import latest_anchor, loss_exits_today, recent_loss_exit_names
-from src.storage.models import OrderRow
+from src.storage.models import OrderRow, SizingActionRow
 from src.storage.regime_state import load_regime_state, regime_suspended
 
 log = logging.getLogger(__name__)
@@ -175,8 +178,11 @@ def _ladder(
     spots: dict[str, float] | None,
     today: date,
     cfg: RegimeLadderCfg,
-) -> tuple[dict[str, list[str]], dict[str, ScaleInZone]]:
-    """``(name_triggers, scale_in zones)`` for *symbols* (spec section 6, ruling 37).
+    bottoming_cfg: RegimeBottomingCfg,
+) -> tuple[dict[str, list[str]], dict[str, ScaleInZone], list[str]]:
+    """``(name_triggers, scale_in zones, names with a bottoming signal)`` for *symbols*.
+
+    Spec sections 6 and 6b, ruling 37.
 
     A name is under the ladder when its market regime is one of ``cfg.regimes``, it has fallen
     ``name_drawdown_atr`` ATRs from its recent high, a short put on it is at or near the money,
@@ -205,6 +211,7 @@ def _ladder(
     recent_exits = recent_loss_exit_names(session, days=cfg.anchor_survival_days, today=today)
     triggers_out: dict[str, list[str]] = {}
     zones: dict[str, ScaleInZone] = {}
+    bottoming_names: list[str] = []
     for symbol in dict.fromkeys(s.upper() for s in symbols):
         frame = frame_of(symbol)
         atr = _atr(frame)
@@ -261,7 +268,7 @@ def _ladder(
             if atr is not None
             else []
         )
-        zones[symbol] = compute_zone(
+        zone = compute_zone(
             anchor=price,
             anchor_source=source,
             atr=atr or 0.0,
@@ -270,8 +277,57 @@ def _ladder(
             triggers=trig,
             cfg=cfg,
         )
+        zones[symbol] = zone
         triggers_out[symbol] = trig
-    return triggers_out, zones
+
+        # The name-level bottoming signal needs the price now: fetch it for a name under a zone
+        # (a handful at most) when the caller did not hand live prices in.
+        now_price = live.get(symbol)
+        if now_price is None and spots is None:
+            now_price = regime_data.last_price(symbol)
+        now_price = now_price or spot
+        if atr is not None and now_price is not None:
+            fired, _why = name_bottoming(
+                bars=frame,
+                zone=zone,
+                supports=supports,
+                spot=now_price,
+                atr=atr,
+                band_atr=cfg.band_atr,
+                cfg=bottoming_cfg,
+            )
+            if fired:
+                bottoming_names.append(symbol)
+    return triggers_out, zones, bottoming_names
+
+
+def _sessions_between(day: date, today: date) -> int:
+    """Trading days in ``(day, today]``: how many sessions have passed since *day*."""
+    n, d = 0, day
+    while d < today:
+        d += timedelta(days=1)
+        if is_trading_day(d):
+            n += 1
+    return n
+
+
+def signal_lots_recent(session: Session, today: date, *, sessions: int) -> list[str]:
+    """Names with a bottoming-signal lot recorded fewer than *sessions* sessions ago (sorted).
+
+    Read from the counterfactual table: a signal lot is recorded (``kind="bottoming_lot"``) when
+    its order is sent, so a card the operator never approved does not use up the name's turn.
+    """
+    since = today - timedelta(days=sessions * 3 + 7)
+    rows = (
+        session.query(SizingActionRow.underlying, SizingActionRow.action_day)
+        .filter(
+            SizingActionRow.kind == "bottoming_lot",
+            SizingActionRow.action_day >= since,
+            SizingActionRow.action_day <= today,
+        )
+        .all()
+    )
+    return sorted({sym for sym, day in rows if _sessions_between(day, today) < sessions})
 
 
 def build_sizing_context(
@@ -308,6 +364,11 @@ def build_sizing_context(
         regimes = {"SPY": state.spy.effective, "QQQ": state.qqq.effective}
     else:
         regimes = {"SPY": MarketRegime.NORMAL, "QQQ": MarketRegime.NORMAL}
+    market_flags = (
+        {"SPY": state.spy.eased_by_bottoming, "QQQ": state.qqq.eased_by_bottoming}
+        if state is not None
+        else {}
+    )
     ctx = SizingContext(
         regimes=regimes,
         tech_linked=list(regime_cfg.tech_linked),
@@ -320,11 +381,15 @@ def build_sizing_context(
         ),
         leverage=_leverage_map(),
         loss_exit_today=loss_exits_today(session, today=today),
+        market_bottoming=market_flags,
+        signal_lot_recent=signal_lots_recent(
+            session, today, sessions=regime_cfg.bottoming.signal_lot_every_sessions
+        ),
         for_send=for_send,
     )
     if for_send or not symbols:
         return ctx
-    triggers, zones = _ladder(
+    triggers, zones, bottoming_names = _ladder(
         ctx,
         session=session,
         symbols=symbols,
@@ -333,5 +398,8 @@ def build_sizing_context(
         spots=spots,
         today=today,
         cfg=regime_cfg.ladder,
+        bottoming_cfg=regime_cfg.bottoming,
     )
-    return ctx.model_copy(update={"name_triggers": triggers, "scale_in": zones})
+    return ctx.model_copy(
+        update={"name_triggers": triggers, "scale_in": zones, "name_bottoming": bottoming_names}
+    )

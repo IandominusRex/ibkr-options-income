@@ -39,6 +39,8 @@ from src.engine.capital import (
 )
 from src.engine.regime_limits import (
     active,
+    bottoming_reason,
+    bottoming_tag,
     ceiling_kind,
     daily_limit,
     floor_left,
@@ -337,6 +339,12 @@ def validate_candidates(
                 not_reached = scale_in_reason(sizing, cand.underlying, cand.ideal.spot)
                 if not_reached is not None:
                     reasons.append(not_reached)
+                else:
+                    # A lot above the zone on a name-level bottoming signal: its guards apply
+                    # (delta cap, one signal lot per name per N sessions).
+                    guard = bottoming_reason(sizing, cand)
+                    if guard is not None:
+                        reasons.append(guard)
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
         # A ROLL is judged only on whether its new expiry runs into earnings: the proximity
@@ -511,8 +519,15 @@ def validate_candidates(
                     # scale-in zone travels with it: the send-time re-gate checks the live price
                     # against this frozen zone.
                     zone = note.scale_in or sizing.scale_in.get(cand.underlying)
+                    spot = cand.ideal.spot if cand.ideal is not None else None
+                    # The send-time context carries no signals (no bars): a tag the card already
+                    # carries is kept, never erased.
+                    tag = bottoming_tag(sizing, cand.underlying, spot) or note.bottoming
+                    if tag == "name" and zone is not None:
+                        # frozen into the snapshot so the send-time re-gate knows the signal
+                        zone = zone.model_copy(update={"bottoming_signal": True})
                     cand.sizing = note.model_copy(
-                        update={"floor_lot": took_floor, "scale_in": zone}
+                        update={"floor_lot": took_floor, "scale_in": zone, "bottoming": tag}
                     )
 
     return [

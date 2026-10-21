@@ -646,6 +646,8 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
     "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",
     "loss_exit_cooldown": "a loss exit on this name earlier today",
+    "bottoming_delta_too_high": "a bottoming-signal lot must be a lower-delta strike",
+    "bottoming_lot_recent": "a bottoming-signal lot was already opened on this name lately",
     # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
