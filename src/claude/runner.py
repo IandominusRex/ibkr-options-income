@@ -164,12 +164,13 @@ def _run_cli_outcome[T](
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
 ) -> list[ClaudeReview]:
     """Review candidates via the configured `claude.backend`. Returns [] on any failure.
 
@@ -180,17 +181,24 @@ def review_candidates(
     sector_context / single_ticker: forwarded to the prompt builder so a `/scan TICKER` deep-dive
     gets the sector backdrop and the extra plain-English ``summary`` (see strategist.build_prompt).
     analytics: per-symbol raw signals annotated onto each candidate in the prompt (enrichment).
+    picture_block / book_block: the shared market picture and the book around the reviewed names,
+    pre-rendered by the scan (``picture_context`` / ``book_context``); both are prompt text only.
+
+    Every review comes back stamped with the backend that produced it (``"cli"`` or ``"ollama"``):
+    the stamp is the runner's, never the model's, and it is what keeps a local model's size
+    suggestion from ever being applied (``engine.regime_limits.claude_cut``).
     """
     cfg = get_config().claude
     kwargs = dict(
         candidates=candidates,
         account=account,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
+        picture_block=picture_block,
+        book_block=book_block,
     )
 
     if cfg.backend == "ollama":
@@ -208,20 +216,26 @@ def _review_candidates_cli(*args: Any, **kwargs: Any) -> list[ClaudeReview]:
     return _review_candidates_cli_outcome(*args, **kwargs)[0]
 
 
+def _stamp(reviews: list[ClaudeReview], backend: str) -> list[ClaudeReview]:
+    """Reviews marked with the backend that produced them (the parser leaves it blank)."""
+    return [r.model_copy(update={"backend": backend}) for r in reviews]
+
+
 def _review_candidates_cli_outcome(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
 ) -> tuple[list[ClaudeReview], str | None]:
     """Shell out to `claude -p`, parse output → (list[ClaudeReview], error). [] on any failure.
 
-    history: optional list of ClaudeMemoryRow objects from prior scans; injected into the prompt
-    so Claude can learn from past recommendations and their outcomes.
+    picture_block / book_block: the pre-rendered market picture and book (enrichment, prompt text
+    only). The reviews returned are stamped ``backend="cli"``.
     market_conditions: optional macro snapshot (VIX) injected as enrichment context.
     spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels rather
     than the stale static universe anchors (N17).
@@ -240,12 +254,13 @@ def _review_candidates_cli_outcome(
     prompt = build_prompt(
         candidates,
         account,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
+        picture_block=picture_block,
+        book_block=book_block,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
@@ -293,13 +308,13 @@ def _review_candidates_cli_outcome(
             # stdout present despite non-zero rc: try to parse it
             reviews = parse_claude_output(result.stdout, candidate_ids)
             if reviews:
-                return reviews, None
+                return _stamp(reviews, "cli"), None
             continue
 
         reviews = parse_claude_output(result.stdout, candidate_ids)
         if reviews:
             _log_cost(result.stdout, "claude review")
-            return reviews, None
+            return _stamp(reviews, "cli"), None
 
         log.warning("claude: output parsed to empty list (attempt %d)", attempt + 1)
         error = "bad_envelope"

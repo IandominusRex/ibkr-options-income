@@ -8,7 +8,7 @@ Runs:
   5. Buy-to-own: score symbols not held from the would_own universe
   6. Risk engine: gate CC + CSP candidates
   7. Scoring: blended_score
-  8. Claude: review with prior recommendation history injected
+  8. Claude: review with the market picture and the book in the prompt
   9. Persist: CandidateRow, ClaudeReviewRow, ClaudeMemoryRow
  10. Notify: send CC/CSP as Approve/Reject messages; buy list as informational message
 """
@@ -34,6 +34,8 @@ from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sector_context import get_sector_context, render_sector_context
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
+from src.claude.book_context import build_book_block
+from src.claude.picture_context import load_picture, render_picture_block
 from src.claude.runner import review_candidates
 from src.common.config import Config, get_config
 from src.common.market_hours import today_et
@@ -47,6 +49,7 @@ from src.common.schemas import (
     IdealZone,
     IVStats,
     MarketConditions,
+    MarketPicture,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
@@ -321,6 +324,33 @@ def _persist_memory(
             )
 
     log.info("Persisted/updated ClaudeMemoryRow entries (%d new) for %s", written, today)
+
+
+@dataclass
+class _ReviewContext:
+    """What the reviewer reads besides the candidates: the market picture and the book."""
+
+    picture: MarketPicture | None
+    picture_block: str
+    book_block: str
+
+
+def _build_review_context(
+    candidates: list[TradeCandidate],
+    positions: list[PositionSnapshot],
+    spots: dict[str, float] | None,
+) -> _ReviewContext:
+    """Read the stored market picture (news.db, read-only) and build the book block.
+
+    Blocking small reads: callers run it off the event loop. Both parts degrade on their own (no
+    picture reads "(unavailable)", a book that cannot be built is left out), so this never raises.
+    """
+    picture = load_picture()
+    return _ReviewContext(
+        picture=picture,
+        picture_block=render_picture_block(picture, now=datetime.now(UTC)),
+        book_block=build_book_block(candidates, positions, spots=spots),
+    )
 
 
 def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
@@ -1748,8 +1778,7 @@ async def _run_scan_body(
             cleared_floor_symbols,
         )
 
-    # --- 7. Load prior Claude memory for history injection ---
-    memory = _load_memory(all_symbols)
+    # --- 7. (The model's own prior recommendations are no longer injected: spec decision 1.) ---
 
     # --- 8. Claude review (enrichment only — failure does not abort) ---
     # Final review I2(b): the lease is otherwise renewed only inside the per-symbol loop, and the
@@ -1768,6 +1797,10 @@ async def _run_scan_body(
                 for sym, (_iv, tech, _fund) in analytics_map.items()
                 if tech.price  # drop missing/zero spot
             }
+            # The market picture and the book the reviewer reads (small local reads, off the loop).
+            review_ctx = await loop.run_in_executor(
+                None, _build_review_context, top, positions, spot_prices
+            )
             # S5: skip the LLM when the top set + signals are unchanged from the prior cycle
             # (intraday loop only — manual /scan always reviews fresh).
             vix = result.market_conditions.vix if result.market_conditions else None
@@ -1794,10 +1827,11 @@ async def _run_scan_body(
                     lambda: review_candidates(
                         top,
                         account,
-                        history=memory,
                         market_conditions=result.market_conditions,
                         spot_prices=spot_prices,
                         analytics=analytics_map,
+                        picture_block=review_ctx.picture_block,
+                        book_block=review_ctx.book_block,
                     ),
                 )
                 if result.reviews and reuse_minutes > 0:
@@ -2288,17 +2322,15 @@ async def run_ticker_scan(
     # The LLM "Read" reviews the best CC + best CSP. When neither cleared the gate we fall back to
     # reviewing the closest *near-miss* per strategy so the deep-dive still produces a synthesis
     # instead of going silent — these near-misses surface only as the overall summary, never as a
-    # per-candidate verdict (the card shows verdicts only beside a qualifying contract). Prior-
-    # recommendation memory for this ticker is injected so the read can learn from how past calls
-    # on the same name played out. Per-symbol analytics are passed so the model sees the raw
+    # per-candidate verdict (the card shows verdicts only beside a qualifying contract). The
+    # market picture and the book around this name are in the prompt (no memory of the model's own
+    # past calls). Per-symbol analytics are passed so the model sees the raw
     # technical/fundamental/IV signals, not just the composite scores.
     sector_ctx: SectorContext | None = None
     market_conditions: MarketConditions | None = None
     reviews: list[ClaudeReview] = []
-    memory: list = []
     try:
-        memory, market_conditions, sector_ctx = await asyncio.gather(
-            loop.run_in_executor(None, _load_memory, [ticker]),
+        market_conditions, sector_ctx = await asyncio.gather(
             loop.run_in_executor(None, get_market_conditions),
             loop.run_in_executor(None, get_sector_context, ticker),
         )
@@ -2312,17 +2344,21 @@ async def run_ticker_scan(
         spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
         sector_block = render_sector_context(sector_ctx)
         try:
+            review_ctx = await loop.run_in_executor(
+                None, _build_review_context, to_review, positions, spot_prices
+            )
             reviews = await loop.run_in_executor(
                 None,
                 lambda: review_candidates(
                     to_review,
                     account,
-                    history=memory,
                     market_conditions=market_conditions,
                     spot_prices=spot_prices,
                     sector_context=sector_block,
                     single_ticker=True,
                     analytics=analytics_map,
+                    picture_block=review_ctx.picture_block,
+                    book_block=review_ctx.book_block,
                 ),
             )
         except Exception:

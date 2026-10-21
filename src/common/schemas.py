@@ -751,6 +751,26 @@ class ClaudeReview(BaseModel):
     # unstated impression. Empty is valid (older prompts / a model that ignores the rubric) but
     # `scripts/review_eval.py` flags a high empty rate as a quality signal.
     evidence: list[str] = Field(default_factory=list)
+    # Claude's optional size cut for an auto-opened CSP (spec section 9): the most contracts it
+    # would sell. It only ever reaches the engine package through the one clamped function
+    # `engine.regime_limits.claude_cut`, which can lower the deterministic size and never raise it.
+    # Anything that is not a plain integer (a bool, a float, text) reads as None here, so a
+    # malformed value can never cost the review its other fields.
+    max_contracts: int | None = None
+    size_reason: str = ""
+    # Which backend produced this review. Never taken from the model's output: the parser blanks
+    # it and the runner stamps it, so a reused or Ollama-made review is recognisable later.
+    backend: Literal["cli", "ollama"] | None = None
+
+    @field_validator("max_contracts", mode="before")
+    @classmethod
+    def _only_a_real_integer(cls, v: Any) -> int | None:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @field_validator("size_reason", mode="before")
+    @classmethod
+    def _reason_is_short_text(cls, v: Any) -> str:
+        return v[:300] if isinstance(v, str) else ""
 
 
 class RollAlert(BaseModel):

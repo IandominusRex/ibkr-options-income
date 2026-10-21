@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from src.analytics.market_conditions import render_macro_context
 from src.common.schemas import (
     AccountSnapshot,
@@ -11,12 +9,10 @@ from src.common.schemas import (
     IVStats,
     MarketConditions,
     OptionRight,
+    Strategy,
     TechnicalStats,
     TradeCandidate,
 )
-
-if TYPE_CHECKING:
-    from src.storage.models import ClaudeMemoryRow
 
 # Per-underlying analytics keyed by symbol — the raw technical/fundamental/IV-microstructure
 # signals that were previously collapsed into the opaque ScoreCard digits before reaching the
@@ -113,25 +109,6 @@ KEY RULES FOR REVIEW:
 - HIMS: flag FDA calendar risk near any earnings or regulatory announcement date
 - MAGS: flag the overlap with GOOGL/NVDA/AMZN when sizing — it's not independent exposure
 """.strip()
-
-
-def _format_history(memory: list[ClaudeMemoryRow]) -> list[str]:
-    """Format prior recommendation history for injection into the prompt."""
-    if not memory:
-        return []
-
-    lines = ["", "=== YOUR PRIOR RECOMMENDATIONS (learn from these outcomes) ==="]
-    for row in memory:
-        outcome = row.outcome or "pending (no outcome yet)"
-        confidence_str = f" confidence={row.confidence:.2f}" if row.confidence is not None else ""
-        lines.append(
-            f"[{row.scan_date}] {row.underlying} {row.strategy_type}: "
-            f'"{row.recommendation}"{confidence_str} → outcome: {outcome.upper()}'
-        )
-        if row.rationale:
-            lines.append(f"  Rationale: {row.rationale[:200]}")
-    lines.append("")
-    return lines
 
 
 def _backtest_line(cand: TradeCandidate) -> str:
@@ -412,6 +389,30 @@ def _candidate_facts(
     return facts
 
 
+def _size_lines(c: TradeCandidate) -> list[str]:
+    """The candidate's deterministic size, and for a name under the scale-in ladder its zone.
+
+    The size already includes every market-regime limit (the sizer and the gate apply them before
+    a candidate reaches Claude), which is what lets the task text tell the model not to count the
+    regime a second time when it suggests a smaller number.
+    """
+    note = c.sizing
+    if c.strategy != Strategy.CASH_SECURED_PUT or note is None:
+        return [f"Size:             {c.contracts} contracts (deterministic)"]
+    lines = [
+        f"Size:             {c.contracts} contracts (deterministic, after market-regime limits; "
+        f"regime {note.regime.value} on {note.regime_index})"
+    ]
+    zone = note.scale_in
+    if zone is not None:
+        where = f"support ${zone.support:,.2f}, " if zone.support is not None else ""
+        lines.append(
+            f"Next lot zone:    ${zone.zone_low:,.2f}-${zone.zone_high:,.2f} "
+            f"({where}{zone.min_gap_pct:.1f}% below the last lot)"
+        )
+    return lines
+
+
 def _vix_context(vix: float | None) -> str:
     """One-line macro-vol regime hint derived from the VIX level.
 
@@ -429,18 +430,21 @@ def _vix_context(vix: float | None) -> str:
 def build_prompt(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list[ClaudeMemoryRow] | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
     news_block: str | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
 ) -> str:
     """Build the full prompt string sent to the reasoning backend.
 
     Returns an empty string if there are no candidates (caller skips the call).
-    history: optional list of ClaudeMemoryRow from prior scans for learning injection.
+    There is no memory of the model's own past recommendations in the prompt (spec decision 1):
+    what it is given is the state of the market (``picture_block``) and of the book
+    (``book_block``), not a record of what it said before.
     market_conditions: optional macro snapshot (VIX) so the reasoning layer can weigh the
         vol regime. Enrichment only — it never changes the deterministic gates.
     spot_prices: optional scan-time {symbol: spot} so the model reasons from current levels
@@ -459,6 +463,12 @@ def build_prompt(
         full-universe and single-ticker paths. Precomputed by the caller — like every other
         optional context block here, `build_prompt` itself performs no I/O — and omitted
         entirely when `None`/empty, matching every other block's fail-soft pattern.
+    picture_block: optional pre-rendered ``=== MARKET PICTURE ===`` block
+        (:func:`src.claude.picture_context.load_picture_block`): the regimes, numbers and
+        multi-week stories every Claude call reads. Enrichment only.
+    book_block: optional pre-rendered ``=== YOUR BOOK ===`` block
+        (:func:`src.claude.book_context.build_book_block`): the open positions and recent
+        stop-outs on the reviewed names and the names related to them. Enrichment only.
     """
     if not candidates:
         return ""
@@ -481,7 +491,9 @@ def build_prompt(
             "These candidates have already been approved by the deterministic Rules Engine. "
             "Your role is enrichment only: re-rank by priority and explain the risks, tradeoffs, "
             "and assignment considerations so the trader can make an informed final decision. "
-            "You cannot place, size, or block orders."
+            "You cannot place or price orders or change a strike, and you can never raise a "
+            "size: your only say on size is to suggest a smaller number of contracts for a "
+            "cash-secured put (max_contracts, see YOUR TASK)."
         )
     lines: list[str] = [
         "You are a disciplined options income strategist reviewing proposed covered call (CC) "
@@ -506,6 +518,11 @@ def build_prompt(
         "",
     ]
 
+    # The shared market picture (regimes, numbers, multi-week stories): the same block every
+    # Claude call reads, so a story never reads differently in two places.
+    if picture_block:
+        lines += [picture_block, ""]
+
     # Macro backdrop: VIX term structure, rates, the tape and broad-market news flow. Only the
     # single-ticker deep-dive gets it — the full-universe prompt is shared across ~10 candidates
     # and must stay compact enough for the local model's context window.
@@ -527,15 +544,14 @@ def build_prompt(
         f"Maint. Margin:   ${account.maintenance_margin:,.0f}",
         f"Excess Liquidity:${account.excess_liquidity:,.0f}",
         "",
-        "=== TRADE CANDIDATES ===",
     ]
 
-    if history:
-        # Only the reviewed tickers' own track record. The scan loads memory for every symbol it
-        # touched, and sending the other tickers' prose with every call was ~half of a one-
-        # candidate prompt (2026-10-15: 47 rows over 18 tickers, none of them the candidate).
-        tickers = {c.underlying for c in candidates}
-        lines.extend(_format_history([r for r in history if r.underlying in tickers]))
+    # What is already open on these names (and the ones that move with them), and what was just
+    # stopped out: without it every re-entry looks like a fresh, independent trade.
+    if book_block:
+        lines += [book_block, ""]
+
+    lines.append("=== TRADE CANDIDATES ===")
 
     for i, c in enumerate(candidates, 1):
         lines.append(f"\n--- Candidate {i} ---")
@@ -544,6 +560,7 @@ def build_prompt(
         lines.append(f"Symbol:           {c.underlying}  ({c.right.value})")
         lines.append(f"Strike / Expiry:  ${c.strike:.2f}  {c.expiry}  ({c.dte} DTE)")
         lines.append(f"Premium ($/share):{c.premium:.4f}   Contracts: {c.contracts}")
+        lines += _size_lines(c)
         lines.append(
             f"ROC:              {c.roc_pct:.2f}%   Ann. Yield: {c.annualized_yield_pct:.1f}%"
         )
@@ -667,6 +684,24 @@ def build_prompt(
             'to "sell"',
             "unless you can cite a specific FACT (F#) or NEWS item (N#) that argues otherwise:",
         ]
+    # Claude's one lever on size (spec section 9): a smaller contract count for a cash-secured
+    # put. Asked for only on the full-universe path: nothing consumes a cut from /scan TICKER.
+    size_schema: list[str] = []
+    size_guide: list[str] = []
+    if not single_ticker:
+        size_schema = [
+            '  "max_contracts": <integer from 0 to the candidate\'s Size; cash-secured puts only,'
+            " leave it out for covered calls>,",
+            '  "size_reason": "<one sentence citing F#/N#/S# ids; empty when you keep the size>",',
+        ]
+        size_guide = [
+            "",
+            "max_contracts: an integer from 0 to that candidate's Size. The market-regime limits "
+            "above already price the regime: cut only for something specific to this name or "
+            "trade inside its window (a dated event, a thesis-breaking story, an existing "
+            "position on the same bet). Return the Size to keep it; a larger number is ignored. "
+            "0 means not now. size_reason: one sentence citing F#/N#/S# ids.",
+        ]
     lines += [
         *summary_guide,
         "",
@@ -700,8 +735,10 @@ def build_prompt(
         '  "rolling_considerations": "<2-3 sentences or empty string>",',
         summary_schema_line,
         '  "evidence": ["<F# or N# id you relied on>", ...],',
+        *size_schema,
         '  "confidence": <float 0.0-1.0>',
         "}",
+        *size_guide,
         "",
         f"Candidate IDs to include (all {len(candidates)}): {candidate_ids}",
         "",
