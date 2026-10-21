@@ -49,6 +49,19 @@ class Regime(StrEnum):
     LOW_VOL = "low_volatility"
 
 
+class MarketRegime(StrEnum):
+    """The market-wide state the sizing limits follow (not a per-ticker label: see `Regime`).
+
+    Ordered calm to severe: normal, cautious, stressed, crisis. Classified deterministically
+    by `src/analytics/regime.py`; turned into limits by `src/engine/regime_limits.py`.
+    """
+
+    NORMAL = "normal"
+    CAUTIOUS = "cautious"
+    STRESSED = "stressed"
+    CRISIS = "crisis"
+
+
 class Verdict(StrEnum):
     PASS = "pass"
     REJECT = "reject"
@@ -233,6 +246,68 @@ class MarketConditions(BaseModel):
     macro_headline_count: int = 0
     top_macro_headline: str | None = None
     captured_at: datetime = Field(default_factory=_utcnow)
+
+
+class RegimeInputs(BaseModel):
+    """Everything one index's regime was classified from (deterministic; see analytics/regime.py).
+
+    ``vol`` is the VIX close for **both** indices (ruling 15), so the VIX thresholds mean the
+    same thing for SPY and QQQ. A field that could not be read, or that is a last close served
+    as live, is ``None`` and named in ``stale``: it is skipped by the classifier and never read
+    as calm.
+    """
+
+    vol: float | None = None
+    vol_pct_1y: float | None = None  # 0-100
+    term_ratio: float | None = None  # VIX / VIX3M; above 1 is backwardation
+    contango_streak: int = 0  # consecutive daily closes with term_ratio < 1, most recent first
+    index_close: float | None = None
+    index_live: float | None = None
+    day_change_pct: float | None = None
+    sma50: float | None = None
+    sma200: float | None = None
+    drawdown_52w_pct: float | None = None  # a positive number
+    ret_1m_pct: float | None = None
+    ret_3m_pct: float | None = None
+    rv20: float | None = None
+    rv_1y_avg: float | None = None
+    live_vol: float | None = None
+    stale: list[str] = Field(default_factory=list)
+
+
+class IndexRegime(BaseModel):
+    """One index's persisted regime: the daily base, today's intraday escalation, the result."""
+
+    index: Literal["SPY", "QQQ"]
+    base: MarketRegime
+    base_date: date  # the ET day the base was last computed
+    since: date  # the ET day the *effective* regime last changed
+    base_since: date  # the ET day the *base* last changed: the hysteresis clock (ruling 40)
+    effective: MarketRegime
+    escalated_by: list[str] = Field(default_factory=list)
+    eased_by_bottoming: bool = False
+    bottoming_cancelled_on: date | None = None
+    inputs: RegimeInputs = Field(default_factory=RegimeInputs)
+
+
+class RegimeChange(BaseModel):
+    """An effective-regime change, queued for a Telegram notice until ``sent``."""
+
+    index: Literal["SPY", "QQQ"]
+    before: MarketRegime
+    after: MarketRegime
+    why: list[str] = Field(default_factory=list)
+    at: datetime
+    sent: bool = False
+
+
+class RegimeState(BaseModel):
+    """The persisted market regime for both indices (written only by the trading process)."""
+
+    as_of: datetime
+    spy: IndexRegime
+    qqq: IndexRegime
+    changes: list[RegimeChange] = Field(default_factory=list)
 
 
 class TechnicalStats(BaseModel):

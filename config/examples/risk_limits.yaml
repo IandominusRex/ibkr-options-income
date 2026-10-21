@@ -157,6 +157,40 @@ portfolio:
   max_margin_usage_pct: 50.0
   max_new_positions_per_run: 10
 
+# --- Market regime (analytics/regime.py -> engine/regime_limits.py) ---
+# A deterministic classification of SPY and QQQ (normal / cautious / stressed / crisis) that
+# shrinks NEW cash-secured puts in a falling market. Covered calls, rolls, closes, profit-takes
+# and loss exits are never limited by it. The operator's private copy needs this block added by
+# hand; with it absent the shipped defaults below apply. `/regime off` (Telegram) suspends the
+# limits until the next trading day; `enabled: false` switches them off outright.
+regime:
+  enabled: true
+  # Names governed by the stricter of the SPY and QQQ regimes (every other name follows SPY).
+  # An explicit list: the sector tags misclassify e.g. TSLL as consumer and MARA as crypto.
+  tech_linked: [QQQ, TQQQ, SMH, SOXL, NVDA, AMD, AVGO, AAPL, MSFT, GOOGL, AMZN, META, PLTR, MAGS,
+                HACK, IGV, CRWD, NBIS, IONQ, RGTI, BABA, TSLL, MARA]
+  csp:
+    budget_multiplier:  {normal: 1.0, cautious: 0.7, stressed: 0.4, crisis: 0.1}
+    per_trade_fraction: {normal: 1.0, cautious: 0.6, stressed: 0.3, crisis: 0.1}
+    max_new_per_day:    {normal: null, cautious: 6, stressed: 3, crisis: 1}
+  thresholds:
+    vol_cautious: 22.0        # VIX close (both indices)
+    vol_stressed: 28.0
+    vol_crisis: 36.0
+    vol_pct_cautious: 90.0    # 1-year percentile of the VIX (80 fired at a VIX of 20.0 after a calm year)
+    vol_pct_min_vol: 20.0     # ...and only when the VIX close is at least this
+    term_stressed: 1.00       # VIX/VIX3M at or above -> at least stressed (backwardation)
+    term_crisis: 1.10
+    slow_drawdown_pct: 10.0   # slow signals may add at most one notch
+    slow_ret_1m_pct: -5.0
+    ease_contango_days: 3     # contango closes needed before easing one notch
+    min_days_in_regime: 2
+    intraday:                 # one-way within the day; expires at the close
+      SPY: {stressed: -2.0, crisis: -3.5}
+      QQQ: {stressed: -2.5, crisis: -4.0}
+      vix_stressed: 30.0
+      vix_crisis: 40.0
+
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
 # (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate
 # `approval:` block used to sit in this file but was never read by the config loader.

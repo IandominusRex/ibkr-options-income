@@ -60,6 +60,22 @@ def _mock_telegram_sender(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_network_for_regime(monkeypatch):
+    """The market regime's two network touch points answer "no data" in every test.
+
+    ``src.analytics.regime._load_raw`` (daily bars) and ``_default_last_price`` (the live quote)
+    are the only places the regime reaches a data provider. The scan, the order poll and the
+    ``/regime`` command refresh the regime, and a test that never meant to touch the network
+    must not (a refresh with no data keeps the previous state, which is exactly the fail-soft
+    path). Tests of the regime itself inject their own bars and prices.
+    """
+    import pandas as pd
+
+    monkeypatch.setattr("src.analytics.regime._load_raw", lambda symbol: pd.DataFrame())
+    monkeypatch.setattr("src.analytics.regime._default_last_price", lambda symbol: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_telegram_for_news(monkeypatch):
     """src.news.publish builds its own Bot from .env; never let a test talk to Telegram."""
     from unittest.mock import MagicMock

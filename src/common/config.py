@@ -15,12 +15,14 @@ import logging
 import os
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.common.schemas import MarketRegime
 
 # Project root = two levels up from this file (src/common/config.py -> root).
 ROOT = Path(__file__).resolve().parents[2]
@@ -1299,6 +1301,237 @@ class WebCfg(BaseModel):
         return v
 
 
+class _KeyedCfg(BaseModel):
+    """A config block whose YAML keys are listed by name in ``KEYS``.
+
+    ``risk_limits.yaml`` is an untyped dict, so a mistyped tunable (``vol_cautios``) would be
+    dropped by pydantic and leave the shipped default quietly in force, which for a limit that
+    shrinks position sizes means the operator believes a limit is set when it is not. A block
+    that subclasses this refuses a key it does not list, at first use. ``KEYS`` must equal the
+    model's fields (``tests/test_regime_classifier.py`` asserts it); it is also what lets
+    ``tests/test_config_keys.py`` see that every YAML key is read.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unknown_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict) and cls.KEYS:
+            unknown = sorted(str(k) for k in data if k not in cls.KEYS)
+            if unknown:
+                raise ValueError(f"unknown key(s) {unknown}; the keys here are {list(cls.KEYS)}")
+        return data
+
+
+_DEFAULT_REGIME_BUDGET: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 1.0,
+    MarketRegime.CAUTIOUS: 0.7,
+    MarketRegime.STRESSED: 0.4,
+    MarketRegime.CRISIS: 0.1,
+}
+_DEFAULT_REGIME_PER_TRADE: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 1.0,
+    MarketRegime.CAUTIOUS: 0.6,
+    MarketRegime.STRESSED: 0.3,
+    MarketRegime.CRISIS: 0.1,
+}
+_DEFAULT_REGIME_DAILY: dict[MarketRegime, int | None] = {
+    MarketRegime.NORMAL: None,
+    MarketRegime.CAUTIOUS: 6,
+    MarketRegime.STRESSED: 3,
+    MarketRegime.CRISIS: 1,
+}
+
+
+def _fill_regimes(v: Any, default: dict[MarketRegime, Any]) -> Any:
+    """Before-validator body: the regimes the YAML omitted take their shipped default."""
+    if v is None:
+        return dict(default)
+    if isinstance(v, dict):
+        merged: dict[Any, Any] = {k.value: val for k, val in default.items()}
+        merged.update(v)
+        return merged
+    return v
+
+
+class RegimeCspCfg(_KeyedCfg):
+    """CSP limits per market regime (config/risk_limits.yaml -> regime.csp)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("budget_multiplier", "per_trade_fraction", "max_new_per_day")
+
+    budget_multiplier: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_BUDGET)
+    )
+    per_trade_fraction: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_PER_TRADE)
+    )
+    max_new_per_day: dict[MarketRegime, int | None] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_DAILY)
+    )
+
+    @field_validator("budget_multiplier", mode="before")
+    @classmethod
+    def _fill_budget(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_BUDGET)
+
+    @field_validator("per_trade_fraction", mode="before")
+    @classmethod
+    def _fill_fraction(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_PER_TRADE)
+
+    @field_validator("max_new_per_day", mode="before")
+    @classmethod
+    def _fill_daily(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_DAILY)
+
+    @field_validator("budget_multiplier", "per_trade_fraction")
+    @classmethod
+    def _fraction_in_unit_interval(cls, v: dict[MarketRegime, float]) -> dict[MarketRegime, float]:
+        for regime, value in v.items():
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(
+                    f"regime.csp fractions must be between 0 and 1; {regime.value} is {value}"
+                )
+        return v
+
+    @field_validator("max_new_per_day")
+    @classmethod
+    def _daily_limit_non_negative(
+        cls, v: dict[MarketRegime, int | None]
+    ) -> dict[MarketRegime, int | None]:
+        for regime, value in v.items():
+            if value is not None and value < 0:
+                raise ValueError(f"regime.csp.max_new_per_day[{regime.value}] must be >= 0")
+        return v
+
+
+class RegimeIndexIntradayCfg(_KeyedCfg):
+    """Day-move escalation thresholds for one index, in percent (negative numbers)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("stressed", "crisis")
+
+    stressed: float
+    crisis: float
+
+    @model_validator(mode="after")
+    def _ordered(self) -> RegimeIndexIntradayCfg:
+        if not (self.crisis <= self.stressed <= 0):
+            raise ValueError(
+                "regime.thresholds.intraday: need crisis <= stressed <= 0 "
+                f"(got stressed {self.stressed}, crisis {self.crisis})"
+            )
+        return self
+
+
+class RegimeIntradayCfg(_KeyedCfg):
+    """Intraday escalation: an index's move on the day, or the live VIX (spec section 4)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("SPY", "QQQ", "vix_stressed", "vix_crisis")
+
+    SPY: RegimeIndexIntradayCfg = Field(
+        default_factory=lambda: RegimeIndexIntradayCfg(stressed=-2.0, crisis=-3.5)
+    )
+    QQQ: RegimeIndexIntradayCfg = Field(
+        default_factory=lambda: RegimeIndexIntradayCfg(stressed=-2.5, crisis=-4.0)
+    )
+    vix_stressed: float = 30.0
+    vix_crisis: float = 40.0
+
+
+class RegimeThresholdsCfg(_KeyedCfg):
+    """Classifier thresholds (config/risk_limits.yaml -> regime.thresholds)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "vol_cautious",
+        "vol_stressed",
+        "vol_crisis",
+        "vol_pct_cautious",
+        "vol_pct_min_vol",
+        "term_stressed",
+        "term_crisis",
+        "slow_drawdown_pct",
+        "slow_ret_1m_pct",
+        "ease_contango_days",
+        "min_days_in_regime",
+        "intraday",
+    )
+
+    vol_cautious: float = 22.0  # VIX close, both indices (ruling 15)
+    vol_stressed: float = 28.0
+    vol_crisis: float = 36.0
+    # The 1-year percentile counts only at the 90th percentile AND a VIX of at least
+    # ``vol_pct_min_vol`` (ruling 39: the 80th fired at a VIX of 20.0 after a calm year).
+    vol_pct_cautious: float = 90.0
+    vol_pct_min_vol: float = 20.0
+    term_stressed: float = 1.00  # VIX/VIX3M at or above: backwardation -> at least stressed
+    term_crisis: float = 1.10
+    slow_drawdown_pct: float = 10.0  # slow signals may add at most one notch
+    slow_ret_1m_pct: float = -5.0
+    ease_contango_days: int = 3
+    min_days_in_regime: int = 2
+    intraday: RegimeIntradayCfg = Field(default_factory=RegimeIntradayCfg)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> RegimeThresholdsCfg:
+        if not (self.vol_cautious <= self.vol_stressed <= self.vol_crisis):
+            raise ValueError("regime.thresholds: need vol_cautious <= vol_stressed <= vol_crisis")
+        if self.term_stressed > self.term_crisis:
+            raise ValueError("regime.thresholds: need term_stressed <= term_crisis")
+        if self.ease_contango_days < 0 or self.min_days_in_regime < 0:
+            raise ValueError("regime.thresholds: day counts must be >= 0")
+        return self
+
+
+_DEFAULT_TECH_LINKED = [
+    "QQQ",
+    "TQQQ",
+    "SMH",
+    "SOXL",
+    "NVDA",
+    "AMD",
+    "AVGO",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "PLTR",
+    "MAGS",
+    "HACK",
+    "IGV",
+    "CRWD",
+    "NBIS",
+    "IONQ",
+    "RGTI",
+    "BABA",
+    "TSLL",
+    "MARA",
+]
+
+
+class RegimeCfg(_KeyedCfg):
+    """The deterministic market regime and what it does to CSP sizing (spec sections 4-5).
+
+    Lives in ``config/risk_limits.yaml -> regime:`` (the risk dict itself stays untyped) and is
+    parsed by :func:`get_regime_cfg`. A missing block means the shipped defaults.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "tech_linked", "csp", "thresholds")
+
+    enabled: bool = True
+    # Names governed by the stricter of the SPY and QQQ regimes. An explicit list: the sector
+    # tags misclassify e.g. TSLL (consumer) and MARA (crypto). File-only, out of reach of the web.
+    tech_linked: list[str] = Field(default_factory=lambda: list(_DEFAULT_TECH_LINKED))
+    csp: RegimeCspCfg = Field(default_factory=RegimeCspCfg)
+    thresholds: RegimeThresholdsCfg = Field(default_factory=RegimeThresholdsCfg)
+
+    @field_validator("tech_linked")
+    @classmethod
+    def _upper(cls, v: list[str]) -> list[str]:
+        return [str(s).upper() for s in v]
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -1494,3 +1727,13 @@ def get_config() -> Config:
         weights=_load_yaml("scoring_weights.yaml"),
         secrets=Secrets(),
     )
+
+
+def get_regime_cfg() -> RegimeCfg:
+    """The typed ``regime:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent).
+
+    Parsed on every call (a small model; tests and the operator's edits both change the
+    underlying dict) and raises ``ValueError`` (pydantic's ``ValidationError`` is one) on an
+    invalid block, at first use rather than at import.
+    """
+    return RegimeCfg(**(get_config().risk.get("regime") or {}))
