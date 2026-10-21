@@ -24,6 +24,7 @@ from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
 from src.common.config import get_config
 from src.common.market_hours import is_rth
 from src.common.schemas import (
+    AccountSnapshot,
     ApprovalStatus,
     OrderState,
     PositionSnapshot,
@@ -32,10 +33,19 @@ from src.common.schemas import (
     TradeCandidate,
     Verdict,
 )
+from src.data.factory import get_price_provider
+from src.engine.regime_limits import (
+    hard_max_contracts,
+    per_trade_cap,
+    scaled_budget_fit,
+    sizing_note,
+    trim_for_send,
+)
 from src.engine.risk_engine import validate_candidates
 from src.execution.circuit_breakers import evaluate_breakers, remaining_entry_allowance
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+from src.regime.actions import link_order, record_action
 from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime_cached
 from src.storage.db import session_scope
@@ -74,15 +84,116 @@ def _send_context(now: datetime, positions: list[PositionSnapshot]) -> SizingCon
     Refreshes the regime through a short cache (a regime that escalated between the card and this
     poll is seen here; a change found now is persisted unsent and announced by the next scan) and
     builds a ``for_send=True`` context, which counts today's already-sent CSPs but not the queued
-    orders that are the batch being validated. Reads the database in its own session, so it is
-    called *before* the write session below is opened.
+    orders that are the batch being validated. No bars are fetched here, so what the card knew
+    about each name is carried over from its frozen snapshot: a leveraged ETF whose card was cut
+    under the stressed tier stays in that tier (the tier can tighten between card and send, never
+    loosen), and the live spot of every name under the scale-in ladder is read once for the
+    gate's ladder re-check (ruling 48). Reads the database in its own session and the price
+    provider outside it, so it is called *before* the write session below is opened.
     """
     try:
         refresh_regime_cached(now)
     except Exception:
         log.warning("send-time regime refresh failed — using the last known regime", exc_info=True)
+    triggers: dict[str, list[str]] = {}
+    ladder_names: set[str] = set()
     with session_scope() as session:
-        return build_sizing_context(now=now, session=session, for_send=True, positions=positions)
+        ctx = build_sizing_context(now=now, session=session, for_send=True, positions=positions)
+        if ctx is None:
+            return None
+        rows = session.query(OrderRow.snapshot).filter(OrderRow.state == OrderState.QUEUED).all()
+    for (snap,) in rows:
+        if not isinstance(snap, dict) or snap.get("strategy") != Strategy.CASH_SECURED_PUT.value:
+            continue
+        note = snap.get("sizing") or {}
+        symbol = str(snap.get("underlying", ""))
+        if note.get("leverage_tier") == "stressed":
+            triggers[symbol] = ["snapshot_stressed"]
+        if note.get("scale_in"):
+            ladder_names.add(symbol)
+    spots: dict[str, float] = {}
+    if ladder_names:
+        provider = get_price_provider()
+        for symbol in sorted(ladder_names):
+            try:
+                price = provider.get_last_price(symbol)
+            except Exception:
+                price = None
+            if price:
+                spots[symbol] = float(price)
+    return ctx.model_copy(
+        update={"name_triggers": {**ctx.name_triggers, **triggers}, "spot_at_send": spots}
+    )
+
+
+def _trim_to_regime(
+    session: Session,
+    order_row: OrderRow,
+    candidate: TradeCandidate,
+    sizing: SizingContext,
+    hard_max: int,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+) -> tuple[TradeCandidate, str | None]:
+    """Trim a queued CSP down to what the regime allows *now*; returns ``(candidate, note)``.
+
+    The regime can escalate, a budget can shrink and a floor can be used up between the card and
+    this send. Unlike the gate (which rejects rather than trims) this only ever *reduces* the
+    order, which can only reduce exposure; a candidate the regime now allows nothing of
+    (a result of zero) is left as it is for the gate to refuse with the regime's own reason.
+    The trimmed order replaces the frozen snapshot, and the trim is recorded once per day.
+    """
+    if candidate.strategy != Strategy.CASH_SECURED_PUT:
+        return candidate, None
+    fit = scaled_budget_fit(candidate, sizing, account, positions)
+    n = trim_for_send(candidate, sizing, hard_max, fit)
+    old = candidate.contracts
+    if not 0 < n < old:
+        return candidate, None
+    cap = per_trade_cap(sizing, candidate.underlying, hard_max)
+    fresh = sizing_note(sizing, candidate.underlying, old, hard_max)
+    budget_bound = fit is not None and fit < min(old, cap)
+    kind = "escalation_trim"
+    if fresh is not None and not budget_bound and fresh.ceiling_kind == "leveraged_ceiling":
+        kind = "leveraged_ceiling"
+        text = (
+            f"trimmed {old} -> {n} by the size limit for a leveraged ETF "
+            f"({fresh.leverage}x, {fresh.leverage_tier})"
+        )
+    elif fresh is not None:
+        suffix = ": budget" if budget_bound else ""
+        text = (
+            f"trimmed {old} -> {n} by the market regime ({fresh.regime_index} "
+            f"{fresh.regime.value}{suffix})"
+        )
+    else:  # pragma: no cover - a CSP with a context always has a note
+        text = f"trimmed {old} -> {n} by the market regime"
+    update: dict[str, object] = {"contracts": n, "collateral": candidate.strike * n * 100}
+    if fresh is not None:
+        base = candidate.sizing or fresh
+        update["sizing"] = base.model_copy(
+            update={
+                "regime": fresh.regime,
+                "regime_index": fresh.regime_index,
+                "per_trade_cap": fresh.per_trade_cap,
+                "budget_multiplier": fresh.budget_multiplier,
+                "leverage": fresh.leverage,
+                "leverage_tier": fresh.leverage_tier,
+                "ceiling_kind": fresh.ceiling_kind,
+            }
+        )
+    trimmed = candidate.model_copy(update=update)
+    order_row.snapshot = trimmed.model_dump(mode="json")
+    record_action(
+        cand=trimmed,
+        kind=kind,
+        deterministic=old,
+        sent=n,
+        reason=text,
+        order_id=order_row.id,
+        session=session,
+    )
+    return trimmed, text
 
 
 def _is_roll_order() -> ColumnElement[bool]:
@@ -281,6 +392,26 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
 
             pending.append((order_row, candidate))
 
+        # --- Market regime: the order can only SHRINK between the card and now. ---
+        # An escalated regime, a smaller budget or a used-up floor trims the order down to what
+        # is allowed (a zero is left for the gate to refuse with the regime's reason).
+        trim_notes: dict[int, str] = {}
+        if sizing is not None:
+            hard_max = hard_max_contracts()
+            retrimmed: list[tuple[OrderRow, TradeCandidate]] = []
+            for order_row, candidate in pending:
+                candidate, trim_text = _trim_to_regime(
+                    session, order_row, candidate, sizing, hard_max, account_snap, positions
+                )
+                if trim_text is not None:
+                    trim_notes[order_row.id] = trim_text
+                    notify_msgs.append(
+                        f"Order {candidate.underlying} {candidate.strike:g}P {trim_text} before "
+                        "sending."
+                    )
+                retrimmed.append((order_row, candidate))
+            pending = retrimmed
+
         # --- Second Rules Engine pass (batched, cumulative-aware) ---
         # Sort by blended_score desc so the greedy cumulative budgets are consumed in
         # priority order, matching how the decision-time gate ran.
@@ -388,7 +519,12 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             # every poll_interval_seconds) does not pick up the same order again.
             # If execution fails, the except block in Phase 2 sets it to REJECTED.
             order_row.state = OrderState.SUBMITTED
-            order_row.detail = "Queued for async execution"
+            order_row.detail = "Queued for async execution" + (
+                f" — {trim_notes[order_row.id]}" if order_row.id in trim_notes else ""
+            )
+            if candidate.strategy == Strategy.CASH_SECURED_PUT:
+                # Tie the day's counterfactual rows for this card to the order that was sent.
+                link_order(candidate.candidate_id, order_row.id, session=session)
             to_execute.append((order_row.id, candidate))
             if cap_remaining is not None and candidate.strategy != Strategy.ROLL:
                 cap_remaining -= 1

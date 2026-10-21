@@ -31,8 +31,17 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from src.common.config import get_leveraged_sizing_cfg, get_regime_cfg
-from src.common.schemas import MarketRegime, SizingContext, SizingNote
+from src.common.config import get_config, get_leveraged_sizing_cfg, get_regime_cfg
+from src.common.schemas import (
+    AccountSnapshot,
+    MarketRegime,
+    PositionSnapshot,
+    SizingContext,
+    SizingNote,
+    Strategy,
+    TradeCandidate,
+)
+from src.engine.capital import max_contracts, resolve_caps, scale_caps, seed_budgets
 
 IndexName = Literal["SPY", "QQQ"]
 Tier = Literal["calm", "stressed"]
@@ -207,3 +216,69 @@ def sizing_note(
         leverage_tier=leverage_tier(ctx, symbol) if factor is not None else None,
         ceiling_kind=ceiling_kind(ctx, symbol, hard_max, pre),
     )
+
+
+def hard_max_contracts() -> int:
+    """``cash_secured_put.max_contracts`` from ``risk_limits.yaml`` (10 when absent)."""
+    csp = get_config().risk.get("cash_secured_put") or {}
+    return int(csp.get("max_contracts", 10))
+
+
+def scaled_budget_fit(
+    cand: TradeCandidate,
+    ctx: SizingContext | None,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+) -> int | None:
+    """The most contracts of *cand* that fit the regime-SCALED budgets right now (send time).
+
+    ``None`` when there is nothing to re-fit (no context, not a CSP, the regime limits off, or
+    the budgets are not scaled for this name). Budgets are seeded from *positions* with the
+    unscaled caps, exactly as the sizer and the gate do. A candidate that was a guaranteed-floor
+    lot is re-checked against the **unscaled** caps while the floor still has a lot left today,
+    else against the scaled ones (so it fits nothing and is refused as ``regime_budget``).
+    """
+    if ctx is None or cand.strategy != Strategy.CASH_SECURED_PUT or not active(ctx):
+        return None
+    floor_lot = bool(cand.sizing and cand.sizing.floor_lot)
+    ticker, book = multipliers(ctx, cand.underlying)
+    if ticker == 1.0 and book == 1.0 and not floor_lot:
+        return None
+    cfg = get_config()
+    caps = resolve_caps(account, cfg.risk)
+    use = (
+        caps
+        if floor_lot and floor_left(ctx, cand.underlying, {}) > 0
+        else scale_caps(caps, ticker=ticker, book=book)
+    )
+    sector_of = (cfg.universe.get("sectors") or {}).get
+    budgets = seed_budgets(positions, sector_of, caps=caps)
+    fit, _ = max_contracts(
+        unit_collateral=cand.strike * 100.0,
+        current_iv=cand.current_iv,
+        dte=cand.dte,
+        symbol=cand.underlying,
+        sector=sector_of(cand.underlying),
+        caps=use,
+        budgets=budgets,
+        hard_max=cand.contracts,
+    )
+    return fit
+
+
+def trim_for_send(
+    cand: TradeCandidate, ctx: SizingContext | None, hard_max: int, budget_fit: int | None
+) -> int:
+    """The contract count to send a queued order at: the card's size, trimmed down, never up.
+
+    For a CSP ``min(cand.contracts, per_trade_cap, budget_fit)`` (*budget_fit* is
+    `scaled_budget_fit`, None when there is nothing to re-fit); anything else, and a missing
+    context, keep the card's size. A result of zero means the regime now allows nothing: the
+    caller leaves the order as it is and the gate refuses it with the regime's reason.
+    """
+    if ctx is None or cand.strategy != Strategy.CASH_SECURED_PUT:
+        return cand.contracts
+    n = min(cand.contracts, per_trade_cap(ctx, cand.underlying, hard_max))
+    if budget_fit is not None:
+        n = min(n, budget_fit)
+    return n

@@ -127,12 +127,10 @@ async def test_the_send_time_regate_receives_a_for_send_context(tmp_path, monkey
     monkeypatch.setattr(approval, "is_rth", lambda: True)
     monkeypatch.setattr(approval, "validate_candidates", fake_gate)
     monkeypatch.setattr(approval, "get_positions", lambda ib: [])
+    from tests.test_execution import _make_account
+
     monkeypatch.setattr(
-        approval,
-        "get_account_snapshot_async",
-        AsyncMock(
-            return_value=SimpleNamespace(net_liquidation=100_000.0)  # evaluate_breakers reads it
-        ),
+        approval, "get_account_snapshot_async", AsyncMock(return_value=_make_account())
     )
     monkeypatch.setattr(approval, "evaluate_breakers", lambda positions, nlv: None)
     monkeypatch.setattr(approval, "remaining_entry_allowance", lambda s: None)

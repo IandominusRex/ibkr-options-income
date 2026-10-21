@@ -77,6 +77,7 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
+from src.regime.actions import record_scan_actions
 from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
@@ -1667,6 +1668,9 @@ async def _run_scan_body(
             for c in passed:
                 per_symbol_skip.pop(c.underlying, None)
             top, dropped = select_top_candidates_detailed(passed)
+            # The counterfactual record: what the market regime trimmed or stopped this cycle
+            # (once per contract or name per ET day; read later by a human, never by a gate).
+            record_scan_actions(top=top, scored=scored, verdicts=verdict_map)
 
             # Record the fate of every gated contract. `gate_passed` is pre-score-floor, so the
             # difference between it and `passed` is exactly the score-floor casualties.
