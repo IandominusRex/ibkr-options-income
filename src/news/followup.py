@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from src.common.config import Config
 from src.news.alerts import items_about
-from src.news.explain import explain_card
+from src.news.explain import explain_card, latest_picture_text
 from src.news.facts import build_macro_facts
 from src.news.playbook import load_playbook, prior_for
 from src.news.posting import update_post
@@ -136,6 +136,7 @@ async def complete_post(
 
         facts = FactSheet()
     headlines = await asyncio.to_thread(_headlines, payload, cfg.news.tagging.noise_terms)
+    picture_text = await asyncio.to_thread(latest_picture_text, now)
     outcome = await asyncio.to_thread(
         explain_card,
         payload.kind,
@@ -145,6 +146,7 @@ async def complete_post(
         reaction=reaction,
         now=now,
         fallback_what=fallback_what(payload),
+        picture_text=picture_text,
     )
     concurrent = await asyncio.to_thread(_concurrent_fields, post_id)
     payload = payload.model_copy(

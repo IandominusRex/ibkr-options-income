@@ -49,6 +49,7 @@ class TriageView(BaseModel):
     judged_at: datetime | None = None
     promoted_at: datetime | None = None
     promoted_move_pct: float | None = None
+    rank: float = 0.0  # the Python presort rank (the digest orders each pile by it)
 
 
 class EconEventView(BaseModel):
@@ -173,17 +174,16 @@ class DigestReads(BaseModel):
     items: list[DigestRead] = Field(default_factory=list, max_length=10)
 
 
-class EditorThread(BaseModel):
-    cluster_ids: list[int] = Field(min_length=1)
-    title: str = Field(max_length=80)
+class TriageItem(BaseModel):
+    """The model's answer for one cluster: which pile and a one-line reason (spec section 7)."""
+
+    cluster_id: int
+    pile: Literal[1, 2, 3]  # 1 shapes the picture, 2 worth telling, 3 noise
+    reason: str = Field(max_length=120)
 
 
-class EditorOutput(BaseModel):
-    """The editor pass (spec §6.5 pass 1): regime, ranked threads, dropped noise."""
-
-    regime: Literal["risk_on", "risk_off", "rotation", "mixed"]
-    threads: list[EditorThread] = Field(default_factory=list, max_length=10)
-    dropped: list[int] = Field(default_factory=list)
+class TriageOutput(BaseModel):
+    items: list[TriageItem] = Field(default_factory=list)
 
 
 class SourceLink(BaseModel):

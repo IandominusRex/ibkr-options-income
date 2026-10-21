@@ -4,20 +4,24 @@ headlines (N#); every verdict must cite them. Output is one JSON object per sche
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from src.news.playbook import PlaybookPrior
 from src.news.reaction import Reaction
 from src.news.schemas import (
     ClusterView,
     DigestReads,
-    EditorOutput,
     Explanation,
     FactSheet,
     ItemView,
+    TriageOutput,
 )
 
+if TYPE_CHECKING:  # triage.py imports this module; the type is only needed for annotations
+    from src.news.triage import TriageCandidate
+
 EXPLANATION_SCHEMA = Explanation.model_json_schema()
-EDITOR_SCHEMA = EditorOutput.model_json_schema()
+TRIAGE_SCHEMA = TriageOutput.model_json_schema()
 DIGEST_SCHEMA = DigestReads.model_json_schema()
 
 RULES = """You are a markets news analyst writing for an options premium seller (cash-secured puts, covered calls).
@@ -64,6 +68,18 @@ def _prior_block(prior: PlaybookPrior | None, reaction: Reaction | None) -> str:
     return "\n".join(lines)
 
 
+def picture_block(picture_text: str | None) -> str | None:
+    """The market picture as context for a prompt, or None when there is none yet. It frames the
+    story; it is not a source: the card's numbers must still come from its own facts."""
+    if not picture_text:
+        return None
+    return (
+        f"{picture_text}\n"
+        "(Context for framing only: do not quote its numbers, do not cite it. "
+        "Numbers you write must come from the facts and headlines.)"
+    )
+
+
 def writer_prompt(
     kind: str,
     *,
@@ -71,11 +87,13 @@ def writer_prompt(
     facts: FactSheet,
     prior: PlaybookPrior | None,
     reaction: Reaction | None,
+    picture_text: str | None = None,
 ) -> str:
     return "\n\n".join(
         x
         for x in (
             RULES,
+            picture_block(picture_text),
             f"EVENT TYPE: {kind}",
             "=== FACTS ===\n" + facts.render(),
             _prior_block(prior, reaction),
@@ -86,37 +104,50 @@ def writer_prompt(
     )
 
 
-def editor_prompt(clusters: list[ClusterView], backdrop: FactSheet) -> str:
-    lines = [
-        f"C{c.id} [{c.category}/{c.topic_class}, {c.source_count} sources] {c.headline}"
-        for c in clusters
-    ]
+def triage_prompt(cands: list[TriageCandidate], picture_text: str | None) -> str:
+    """One batched triage call: the ranked clusters, each to be put in a pile. The model is
+    told nothing about floors: Python applies them to whatever it answers."""
+    lines = []
+    for c in cands:
+        cl = c.cluster
+        tags = [f"{cl.category}/{cl.topic_class}", f"{cl.source_count} sources"]
+        if cl.tickers:
+            tags.append(",".join(cl.tickers[:4]))
+        lines.append(f"C{cl.id} [{', '.join(tags)}] {cl.headline}")
     return "\n\n".join(
-        [
+        x
+        for x in (
             RULES.replace(
                 'Cite the ids that support your verdict in "evidence". No ids, no verdict: use "unclear".',
                 "",
             ),
-            "TASK: label the market regime, group these stories into at most 6 threads ranked by market importance "
-            "for a US options seller, and list cluster ids that are noise.",
-            "=== BACKDROP ===\n" + backdrop.render(),
+            "TASK: sort each cluster into a pile. 1 = shapes the market picture (market-wide, "
+            "persisting); 2 = worth telling an options seller but does not change the picture; "
+            "3 = noise. Give a one-line reason each. Cite nothing else.",
+            picture_text,
             "=== CLUSTERS ===\n" + "\n".join(lines),
-            "=== JSON SCHEMA ===\n" + json.dumps(EDITOR_SCHEMA),
-        ]
+            "=== JSON SCHEMA ===\n" + json.dumps(TRIAGE_SCHEMA),
+        )
+        if x
     )
 
 
-def digest_prompt(threads: list[ClusterView], backdrop: FactSheet) -> str:
+def digest_prompt(
+    threads: list[ClusterView], backdrop: FactSheet, picture_text: str | None = None
+) -> str:
     items = [it for c in threads for it in c.items[:2]]
     heads, _ = number_headlines(items)
     ids = "\n".join(f"cluster_id {c.id}: {c.headline}" for c in threads)
     return "\n\n".join(
-        [
+        x
+        for x in (
             RULES,
+            picture_block(picture_text),
             "TASK: for EACH cluster below write a one-line read (what it means for US stocks / rates) and a verdict.",
             "=== FACTS ===\n" + backdrop.render(),
             "=== CLUSTERS ===\n" + ids,
             "=== HEADLINES ===\n" + heads,
             "=== JSON SCHEMA ===\n" + json.dumps(DIGEST_SCHEMA),
-        ]
+        )
+        if x
     )

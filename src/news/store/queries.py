@@ -317,6 +317,7 @@ def triage_since(s: Session, since: datetime) -> list[TriageView]:
             judged_at=aware_utc(t.judged_at) if t.judged_at else None,
             promoted_at=aware_utc(t.promoted_at) if t.promoted_at else None,
             promoted_move_pct=t.promoted_move_pct,
+            rank=t.rank or 0.0,
         )
         for t, headline in rows
     ]

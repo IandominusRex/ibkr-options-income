@@ -121,14 +121,26 @@ def test_ungrounded_number_is_trimmed_and_what_falls_back(news_db, monkeypatch) 
     assert out.trimmed and out.explanation.what_happened == "Move today: -6.2%"
 
 
-def test_editor_drops_unknown_cluster_ids(news_db, monkeypatch) -> None:
+def test_digest_reads_drop_unknown_cluster_ids(news_db, monkeypatch) -> None:
+    """Replaces test_editor_drops_unknown_cluster_ids: the editor pass was removed (the triage
+    orders the digest now), but the model must still never invent a cluster the digest shows."""
     body = {
-        "regime": "risk_off",
-        "threads": [
-            {"cluster_ids": [1, 99], "title": "Fed"},
-            {"cluster_ids": [98], "title": "Ghost"},
-        ],
-        "dropped": [],
+        "items": [
+            {
+                "cluster_id": 1,
+                "headline": "Fed split",
+                "read": "Fewer cuts.",
+                "verdict": "priced_in",
+                "evidence": ["N1"],
+            },
+            {
+                "cluster_id": 99,
+                "headline": "Ghost",
+                "read": "Not shown.",
+                "verdict": "unclear",
+                "evidence": [],
+            },
+        ]
     }
     monkeypatch.setattr(X, "call_llm", lambda prompt, **kw: LlmResult(json.dumps(body), "cli"))
     cl = ClusterView(
@@ -138,11 +150,12 @@ def test_editor_drops_unknown_cluster_ids(news_db, monkeypatch) -> None:
         first_seen=NOW,
         last_seen=NOW,
         source_count=2,
+        items=[ItemView(title="Fed minutes show split")],
     )
-    out = X.edit_digest([cl], FactSheet(), now=NOW)
-    assert out is not None and out.regime == "risk_off"
-    assert [t.cluster_ids for t in out.threads] == [[1]]
-    assert X.edit_digest([], FactSheet(), now=NOW) is None
+    reads = X.digest_reads([cl], FactSheet(), now=NOW)
+    assert list(reads) == [1]
+    assert X.digest_reads([], FactSheet(), now=NOW) == {}
+    assert not hasattr(X, "edit_digest")
 
 
 def test_writer_prompt_carries_facts_prior_and_reaction_gap() -> None:

@@ -19,13 +19,19 @@ from sqlalchemy import update
 from src.analytics.market_conditions import get_market_conditions
 from src.common.config import Config
 from src.common.market_hours import is_rth, is_trading_day
-from src.common.schemas import MarketConditions
+from src.common.schemas import MarketConditions, MarketPicture
 from src.data.breaker import breaker_states
 from src.data.factory import get_intraday_price_provider
 from src.news import triggers as T
 from src.news.alerts import AlertContext, build_card, plan_alert
 from src.news.collectors import Collector, held_positions, held_underlyings, watch_symbols
-from src.news.digests import DigestInputs, build_digest, due_digests, gather_inputs
+from src.news.digests import (
+    DigestInputs,
+    build_digest,
+    due_digests,
+    gather_inputs,
+    regime_line,
+)
 from src.news.facts import Analytics, build_market_facts, sigma_move
 from src.news.playbook import load_playbook
 from src.news.posting import post_card, ticker_chart, update_post
@@ -38,6 +44,14 @@ from src.news.store.prune import prune
 from src.news.store.session import init_news_db, news_session
 from src.news.store.state import get_state, mark_digested, set_state, touch_heartbeat
 from src.news.tape import Quote, tape
+from src.news.triage import (
+    STATE_LAST_RUN,
+    ranked_threads,
+    run_triage,
+    triage_due,
+    triage_ok_since,
+)
+from src.storage.regime_state import load_regime_state
 
 log = logging.getLogger(__name__)
 
@@ -123,6 +137,7 @@ class NewsService:
             ("tickers_sweep", self._sweep_interval, self._ticker_sweep),
             ("earnings_alerts", 300, self._earnings_alerts),
             ("breaking", 120, self._breaking),
+            ("triage", 60, self._triage),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
             ("briefs", self.ncfg.briefs.poll_seconds, self._briefs),
@@ -310,20 +325,60 @@ class NewsService:
         q = await asyncio.to_thread(tape, [sym])
         await self._dispatch(cands, now, tape_now=q)
 
+    async def _triage(self, now: datetime) -> None:
+        """Sort the new clusters into the three piles once each RTH batch time has passed."""
+        t = self.ncfg.triage
+        if not t.enabled:
+            return
+        last = await asyncio.to_thread(_triage_last_run)
+        if not triage_due(now, last, t.rth_batch_times):
+            return
+        picture = await asyncio.to_thread(_latest_picture)
+        await asyncio.to_thread(run_triage, now, picture=picture)
+
     async def _rank_digest(self, inp: DigestInputs, now: datetime) -> None:
-        """Editor pass orders the threads, one batched writer call reads them (spec §6.5).
-        Either returning nothing leaves the deterministic ordering / no reads."""
-        from src.news.explain import digest_reads, edit_digest
+        """Triage first (a failure leaves the deterministic order), then order the threads by pile
+        and let one batched writer call read them (spec §6.5). The regime line is the trading
+        process's record, never a model's label."""
+        from src.news.explain import digest_reads, latest_picture_text
 
         backdrop = build_market_facts(inp.tape, self._backdrop(now))
-        editor = await asyncio.to_thread(edit_digest, inp.clusters[:25], backdrop, now=now)
-        if editor is not None:
-            inp.regime = editor.regime
-            inp.thread_order = [t.cluster_ids for t in editor.threads]
+        inp.regime = regime_line(await asyncio.to_thread(load_regime_state))
+        if self.ncfg.triage.enabled:
+            try:
+                picture = await asyncio.to_thread(_latest_picture)
+                await asyncio.to_thread(run_triage, now, picture=picture)
+                await asyncio.to_thread(self._order_by_triage, inp, now)
+            except Exception:
+                log.exception("news: triage failed — the digest keeps its deterministic order")
         order = inp.thread_order or [[c.id] for c in inp.clusters]
         by_id = {c.id: c for c in inp.clusters}
         threads = [by_id[ids[0]] for ids in order[: inp.max_threads] if ids[0] in by_id]
-        inp.reads = await asyncio.to_thread(digest_reads, threads, backdrop, now=now)
+        picture_text = await asyncio.to_thread(latest_picture_text, now)
+        inp.reads = await asyncio.to_thread(
+            digest_reads, threads, backdrop, now=now, picture_text=picture_text
+        )
+
+    def _order_by_triage(self, inp: DigestInputs, now: datetime) -> None:
+        """Replace the digest's clusters by the triaged piles 1 and 2, in order. A floored or
+        pile-1/2 story the digest's own cluster query did not return is loaded from the store.
+        If the model has judged nothing in the digest window (it was down, or capped), the piles
+        are only floors and not-reviewed rows: the digest keeps its deterministic order."""
+        since = inp.since or now - timedelta(hours=16)
+        if not triage_ok_since(since):
+            log.info(
+                "news: no triage verdict since %s — digest keeps its deterministic order", since
+            )
+            return
+        with news_session() as s:
+            ids = ranked_threads(queries.triage_since(s, since), limit=inp.max_threads)
+            by_id = {c.id: c for c in inp.clusters}
+            for cid in ids:
+                if cid not in by_id and (cv := queries.cluster_view(s, cid)) is not None:
+                    by_id[cid] = cv
+        ids = [cid for cid in ids if cid in by_id]
+        inp.clusters = [by_id[cid] for cid in ids]
+        inp.thread_order = [[cid] for cid in ids]
 
     async def _followup(self, now: datetime) -> None:
         from src.news.followup import complete_post, pending_posts
@@ -405,6 +460,21 @@ class NewsService:
 
 
 # --- store helpers the loops run in threads ------------------------------------------------
+
+
+def _triage_last_run() -> datetime | None:
+    raw = get_state(STATE_LAST_RUN)
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _latest_picture() -> MarketPicture | None:
+    with news_session() as s:
+        return queries.latest_picture(s)
 
 
 def _message_id(post_id: int) -> int | None:
