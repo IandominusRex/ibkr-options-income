@@ -1222,6 +1222,42 @@ class NewsLlmCfg(BaseModel):
     ollama_model: str = ""  # empty = claude.ollama_model
     timeout_seconds: float = 120.0
     max_calls_per_day: int = 40
+    # Of max_calls_per_day, this many are kept for triage and picture builds: general calls (the
+    # card writer, digests, briefs) stop at max - reserved, so a selloff day's alert storm cannot
+    # starve the picture. The total cap still holds for everyone.
+    reserved_for_picture: int = Field(default=10, ge=0)
+
+
+class NewsTriageCfg(BaseModel):
+    """Three-pile triage (spec section 7): the ranked batch, its schedule, and the market-reaction
+    check that promotes a dismissed story late (safeguard 2)."""
+
+    enabled: bool = True
+    batch_size: int = Field(default=40, ge=1)  # clusters the model sees per call
+    rth_batch_times: list[str] = Field(default_factory=lambda: ["10:30", "12:30", "14:30"])  # ET
+    promote_index_move_pct: float = Field(default=1.0, gt=0)  # a macro story: SPY/QQQ move
+    promote_ticker_residual_pct: float = Field(default=3.0, gt=0)  # ticker move net of beta x SPY
+    promote_window_min: int = Field(default=60, ge=1)
+    max_promotions_per_hour: int = Field(default=2, ge=0)
+
+    @field_validator("rth_batch_times")
+    @classmethod
+    def _valid_times(cls, v: list[str]) -> list[str]:
+        return [_hhmm(t) for t in v]
+
+
+class NewsPictureCfg(BaseModel):
+    """The market picture (spec section 8): how often it is rebuilt and when a story ends."""
+
+    enabled: bool = True
+    max_rebuilds_per_day: int = Field(default=4, ge=1)
+    max_stories: int = Field(default=5, ge=1)
+    story_window_days: int = Field(default=7, ge=1)  # a story needs support inside this window
+    story_min_new_clusters: int = Field(default=2, ge=1)  # ... of at least this many new clusters
+    story_match_jaccard: float = Field(
+        default=0.3, gt=0, le=1
+    )  # ticker/tag/topic overlap to attach
+    staleness_hours: float = Field(default=26.0, gt=0)  # readers are told a picture is stale
 
 
 class NewsSentimentCfg(BaseModel):
@@ -1282,6 +1318,8 @@ class NewsCfg(BaseModel):
     grounding: NewsGroundingCfg = Field(default_factory=NewsGroundingCfg)
     flags: NewsFlagsCfg = Field(default_factory=NewsFlagsCfg)
     briefs: NewsBriefsCfg = Field(default_factory=NewsBriefsCfg)
+    triage: NewsTriageCfg = Field(default_factory=NewsTriageCfg)
+    picture: NewsPictureCfg = Field(default_factory=NewsPictureCfg)
 
 
 class WebCfg(BaseModel):

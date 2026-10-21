@@ -10,7 +10,7 @@ twice as fast unnoticed: it is visible in news_state and on GET /news/status.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, NamedTuple
 from zoneinfo import ZoneInfo
 
@@ -56,21 +56,44 @@ def _ollama(prompt: str, schema: dict, cfg: NewsLlmCfg) -> str | None:
     return _generate(prompt, ccfg, schema, timeout=cfg.timeout_seconds)
 
 
-def cap_reached(now: datetime) -> bool:
-    cfg = get_config().news.llm
-    return llm_calls(now.astimezone(ET).date()) >= cfg.max_calls_per_day
+Purpose = Literal["general", "picture"]
 
 
-def call_llm(prompt: str, *, schema: dict, prefix: str, now: datetime) -> LlmResult | None:
+def _general_limit(cfg: NewsLlmCfg) -> int:
+    """General calls (card writer, digests, briefs) stop here: the cap less the picture reserve,
+    but never below one a day, so a reserve at or above the cap cannot silence the writer."""
+    cap = cfg.max_calls_per_day
+    return min(cap, max(1, cap - cfg.reserved_for_picture))
+
+
+def _allowed(day: date, purpose: Purpose, cfg: NewsLlmCfg) -> bool:
+    if llm_calls(day) >= cfg.max_calls_per_day:
+        return False
+    return purpose != "general" or llm_calls(day, "general") < _general_limit(cfg)
+
+
+def cap_reached(now: datetime, purpose: Purpose = "general") -> bool:
+    return not _allowed(now.astimezone(ET).date(), purpose, get_config().news.llm)
+
+
+def call_llm(
+    prompt: str, *, schema: dict, prefix: str, now: datetime, purpose: Purpose = "general"
+) -> LlmResult | None:
+    """``purpose`` picks the budget: ``general`` calls stop at ``max_calls_per_day - reserved_for_picture``
+    so triage and picture builds (``picture``) always have their share; both stop at the total."""
     cfg = get_config().news.llm
     day = now.astimezone(ET).date()
     for backend in _ORDER[cfg.backend]:
-        if llm_calls(day) >= cfg.max_calls_per_day:
+        if not _allowed(day, purpose, cfg):
             log.info(
-                "news llm: daily cap %d reached — deterministic cards only", cfg.max_calls_per_day
+                "news llm: %s budget reached (cap %d, %d reserved for the picture) — "
+                "deterministic output only",
+                purpose,
+                cfg.max_calls_per_day,
+                cfg.reserved_for_picture,
             )
             return None
-        incr_llm_calls(day)
+        incr_llm_calls(day, purpose)
         error: str | None = None
         try:
             if backend == "cli":

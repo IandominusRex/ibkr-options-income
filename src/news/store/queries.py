@@ -9,18 +9,24 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import String, cast, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView
+from src.common.schemas import MarketPicture
+from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView, TriageView
 from src.news.store.models import (
     EarningsEventRow,
     EconEventRow,
+    MarketPictureRow,
     NewsClusterRow,
     NewsItemRow,
     NewsPostRow,
     NewsRequestRow,
     NewsStateRow,
+    PictureStoryRow,
+    StoryTriageRow,
 )
 
 
@@ -263,3 +269,67 @@ def state_values(s: Session, prefix: str) -> dict[str, str]:
         select(NewsStateRow).where(NewsStateRow.key.startswith(prefix, autoescape=True))
     )
     return {r.key: r.value for r in rows}
+
+
+# --- triage, stories and the picture --------------------------------------------------------
+# Each reader answers "nothing yet" when its table is missing: the API opens news.db read-only
+# and cannot create the tables, so a news.db written before the picture existed must not 500.
+
+
+def latest_picture(s: Session) -> MarketPicture | None:
+    """The newest saved picture. The row's ``stale`` flag wins over the JSON's: a failed rebuild
+    marks the row, and a reader must be told. A payload that no longer validates reads as none."""
+    try:
+        row = s.scalar(
+            select(MarketPictureRow)
+            .order_by(MarketPictureRow.built_at.desc(), MarketPictureRow.id.desc())
+            .limit(1)
+        )
+    except OperationalError:
+        return None
+    if row is None:
+        return None
+    try:
+        picture = MarketPicture.model_validate(row.payload)
+    except ValidationError:
+        return None
+    return picture.model_copy(update={"stale": bool(row.stale) or picture.stale})
+
+
+def triage_since(s: Session, since: datetime) -> list[TriageView]:
+    """Triage rows for clusters last seen at or after *since*, newest story first."""
+    try:
+        rows = s.execute(
+            select(StoryTriageRow, NewsClusterRow.headline)
+            .join(NewsClusterRow, NewsClusterRow.id == StoryTriageRow.cluster_id)
+            .where(NewsClusterRow.last_seen >= naive_utc(since))
+            .order_by(NewsClusterRow.last_seen.desc(), StoryTriageRow.id.desc())
+        ).all()
+    except OperationalError:
+        return []
+    return [
+        TriageView(
+            cluster_id=t.cluster_id,
+            headline=headline,
+            pile=t.pile,
+            floor=t.floor,
+            reason=t.reason or "",
+            judged_at=aware_utc(t.judged_at) if t.judged_at else None,
+            promoted_at=aware_utc(t.promoted_at) if t.promoted_at else None,
+            promoted_move_pct=t.promoted_move_pct,
+        )
+        for t, headline in rows
+    ]
+
+
+def active_stories(s: Session) -> list[PictureStoryRow]:
+    try:
+        return list(
+            s.scalars(
+                select(PictureStoryRow)
+                .where(PictureStoryRow.active.is_(True))
+                .order_by(PictureStoryRow.started_on, PictureStoryRow.id)
+            )
+        )
+    except OperationalError:
+        return []

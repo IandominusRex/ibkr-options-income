@@ -310,6 +310,72 @@ class RegimeState(BaseModel):
     changes: list[RegimeChange] = Field(default_factory=list)
 
 
+class PictureFact(BaseModel):
+    """One deterministic line of the market picture: a label and a value Python computed."""
+
+    label: str
+    value: str
+
+
+class SeasonalityView(BaseModel):
+    """SPY's calendar-month tendency over the years the price provider covers (a weak signal)."""
+
+    month: int
+    avg_return_pct: float
+    up_share: float  # 0-1: the share of those years the month closed up
+    years: int
+
+
+class PictureStory(BaseModel):
+    """A multi-week story the picture is tracking. Identity (id, title, start date) is kept by
+    Python; the description is the model's one-sentence tie to the numbered facts."""
+
+    id: int
+    title: str
+    started_on: date
+    description: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+class NoiseSummary(BaseModel):
+    """What the triage kept out of the picture in the last 7 days (shown, never overruled)."""
+
+    judged: int = 0  # Claude saw it and called it noise
+    not_reviewed: int = 0  # outside the ranked batch: nobody judged it
+    promotions: int = 0  # judged noise that the market reaction check promoted late
+
+
+class PictureRegime(BaseModel):
+    """One index's regime as the picture shows it (read from the trading process's record)."""
+
+    index: Literal["SPY", "QQQ"]
+    effective: MarketRegime
+    base: MarketRegime
+    eased_by_bottoming: bool = False
+    suspended: bool = False
+    as_of: datetime
+
+
+class MarketPicture(BaseModel):
+    """The shared, persistent picture of the market every ``claude -p`` call reads.
+
+    Written only by the news process (``src/news/picture.py``); every number in it is computed by
+    Python, the story descriptions are the model's prose and are grounded before they are saved.
+    Enrichment: it reaches prompts and cards, never the engine, execution or sizing.
+    """
+
+    version: str  # the build time, ISO: a reader compares versions to know a picture is new
+    built_at: datetime
+    regimes: list[PictureRegime] = Field(default_factory=list)
+    regime_source: Literal["trading", "news"] = "trading"
+    facts: list[PictureFact] = Field(default_factory=list)
+    seasonality: SeasonalityView | None = None
+    events: list[str] = Field(default_factory=list)
+    stories: list[PictureStory] = Field(default_factory=list)
+    noise: NoiseSummary = Field(default_factory=NoiseSummary)
+    stale: bool = False  # True when the model call failed and only the deterministic part is fresh
+
+
 class TechnicalStats(BaseModel):
     symbol: str
     price: float

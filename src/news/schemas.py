@@ -37,6 +37,20 @@ class ClusterView(BaseModel):
     items: list[ItemView] = Field(default_factory=list)
 
 
+class TriageView(BaseModel):
+    """One cluster's triage as readers see it (digest ordering, the picture's noise counts, the
+    page). ``pile`` is None for a cluster nobody reviewed."""
+
+    cluster_id: int
+    headline: str
+    pile: int | None = None
+    floor: str | None = None
+    reason: str = ""
+    judged_at: datetime | None = None
+    promoted_at: datetime | None = None
+    promoted_move_pct: float | None = None
+
+
 class EconEventView(BaseModel):
     event_key: str
     title: str

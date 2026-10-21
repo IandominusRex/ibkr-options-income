@@ -82,7 +82,28 @@ digests: {premarket: "08:00", close: "16:30", week_ahead_weekday: 6, week_ahead_
 # inverted, near-term stress"; 0.93 is contango) in 2 of 18 where Sonnet read it correctly, and it
 # saves ~$0.20/week. Not worth any added risk. Every attempt, claude or Ollama, counts toward
 # max_calls_per_day.
-llm: {backend: cli_then_ollama, model: "claude-sonnet-5-5", ollama_model: "", timeout_seconds: 120, max_calls_per_day: 40}
+# reserved_for_picture: of max_calls_per_day, this many are kept for triage and picture builds;
+# general calls (card writer, digests, briefs) stop at max - reserved.
+llm: {backend: cli_then_ollama, model: "claude-sonnet-5-5", ollama_model: "", timeout_seconds: 120,
+      max_calls_per_day: 40, reserved_for_picture: 10}
+# Three-pile triage (docs/superpowers/specs/2026-10-20-market-picture-design.md section 7).
+triage:
+  enabled: true
+  batch_size: 40
+  rth_batch_times: ["10:30", "12:30", "14:30"]   # ET, plus one inside each digest
+  promote_index_move_pct: 1.0
+  promote_ticker_residual_pct: 3.0               # ticker move net of beta x index move
+  promote_window_min: 60
+  max_promotions_per_hour: 2
+# The shared market picture (spec section 8).
+picture:
+  enabled: true
+  max_rebuilds_per_day: 4
+  max_stories: 5
+  story_window_days: 7
+  story_min_new_clusters: 2
+  story_match_jaccard: 0.3
+  staleness_hours: 26
 sentiment: {model: vader, lookback_hours: 72, half_life_hours: 24}
 grounding: {rel_tol: 0.02}
 flags: {large_move_sigma: 2.0, oversold_rsi: 30, earnings_outsized: 1.5, earnings_muted: 0.5}
