@@ -14,6 +14,12 @@ they can mis-size or mis-gate a real order. Act like that is true even in paper 
    deterministic Python with no LLM involvement.** Never write code that lets a Claude/LLM review,
    score, or heuristic place, size, or gate an order directly. If a change could let a malformed or
    hallucinated model response reach the broker, it is wrong — redesign it through the Rules Engine.
+   **One narrow exception (operator decisions, 2026-10-20/21; `CLAUDE.md` core invariant):** Claude
+   may lower, never raise, the contract count of an auto-opened opening CSP through the one clamped
+   function `src/engine/regime_limits.py::claude_cut`. It is applied in paper and record-only in
+   live (`claude_cut.apply_live: false`); a missing, malformed, out-of-range or Ollama-produced value
+   means the deterministic size, and it never touches a close, a roll, a covered call, a strike or a
+   price. Every override is recorded in `sizing_actions`.
 2. **The fence holds.** Nothing in `src/claude/eval/` or `src/claude/skills/` may be imported by, or
    reachable from, `engine/`, `execution/`, or `strategies/` — except the documented one-way
    exception for `src/claude/memory`'s outcome-recording. `tests/test_eval_skills.py` enforces this;

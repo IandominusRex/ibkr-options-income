@@ -730,7 +730,8 @@ class AssessedContract(BaseModel):
 
 
 class ClaudeReview(BaseModel):
-    """Structured output parsed from `claude -p`. Enrichment only — never gating."""
+    """Structured output parsed from `claude -p`. Enrichment only — never gating, except the
+    reduce-only ``max_contracts`` cut (spec section 9; ``engine.regime_limits.claude_cut``)."""
 
     candidate_id: str
     priority: int  # 1 = highest

@@ -104,6 +104,16 @@ place, size, or gate an order. A hallucinated or malformed Claude response must 
 the broker. The risk gate runs twice: once at decision time, once again at order-send time against
 a fresh quote.
 
+**One narrow exception (operator decisions, 2026-10-20/21 — `docs/superpowers/specs/2026-10-20-market-picture-design.md` §9, decisions 3, 15 and 33):**
+Claude may **lower, never raise,** the contract count of an **auto-opened opening CSP**, through
+one clamped integer function (`src/engine/regime_limits.py::claude_cut`). It is applied in paper
+and **record-only in live** (`claude_cut.apply_live: false`) until the operator has reviewed the
+record; a daily circuit breaker stops applying cuts when Claude zeroes most of the day's auto
+CSPs. A missing, malformed, out-of-range or Ollama-produced value means the deterministic size.
+Claude still never places, prices, gates any other field, or touches a close, a roll or a
+covered call. Every override is recorded in `sizing_actions` (`scripts/sizing_report.py`) and
+reviewed by a human before the live cutover.
+
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
 `src/claude/eval/` closes a read-only feedback loop around Claude's reviews: an **outcome ledger**
@@ -185,6 +195,17 @@ merely reorder candidates, it would move `min_credit` and let news tone and crow
 
 `fair_value.py` still has no reject path of its own: it computes and returns numbers, and the Rules
 Engine is what refuses the order. The Rules Engine remains the sole path to an order.
+
+### Regime sizing — a deterministic module family
+
+The market regime, the scale-in ladder, the bottoming signal and the regime limits are
+**deterministic tier**: `src/analytics/{regime,support_levels,scale_in,bottoming,seasonality,breakout}.py`,
+`src/regime/`, `src/storage/regime_state.py` and `src/engine/regime_limits.py`. They may feed the
+sizer, the gate and sizing, and **none of them may import enrichment**: `src.claude`, `src.news`,
+`src.spreads_ai`, `src.analytics.market_conditions`, `src.analytics.sentiment` or
+`src.analytics.sector_context`. The news process reads the regime record only through
+`src.storage.regime_state.load_regime_state` (and `regime_suspended`), and never writes it: the
+trading process is the only writer. Enforced by `tests/test_regime_fence.py` — keep it green.
 
 ### The third, read-only tier — `src/reporting/`
 
@@ -318,7 +339,8 @@ Telegram thread (`TELEGRAM_THREAD_NEWS`). It explains news; it never trades. The
    (`det_sentiment`, `published_at`, `fetched_at`, `tickers`, `cluster_id`, `title`) through
    `src.news.store.readonly` — never `news_posts`, never an `Explanation`. **No LLM output reaches
    `ScoreCard.sentiment_score`, the risk engine or sizing** (spec D3, permanent). FinBERT is
-   allowed because it is deterministic classification, not generation.
+   allowed because it is deterministic classification, not generation. Exception: the same narrow
+   reduce-only cut above, since the market picture (news-derived) informs it.
 5. `src.news` is on `tests/test_eval_skills.py`'s enrichment list.
 6. `src/api/` reaches `news.db` only through `src/api/news_db.py`'s read-only engine and the
    Session-parameterised `src/news/store/queries.py`; it never imports `src.news.store.session`.

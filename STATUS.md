@@ -4355,6 +4355,10 @@ What must still be true **at the moment of cutover** is narrower and mandatory:
 2. **Set `automation.paper_skip_promotion_gate: false`** in `config/settings.yaml` (see below).
 3. **Re-confirm `monitor.roll_execution_enabled`.** Turned on for paper on 2026-10-01; leave it on
    for live only once at least one approved paper roll has filled with the right net credit/debit.
+4. **Review `scripts/sizing_report.py` output before going live** — including the leveraged-ETF
+   ceiling, floor lots and Claude's overrides — and decide `claude_cut.apply_live`. Claude's size cut
+   (reduce-only, spec section 9) is applied in paper and **record-only in live** (`apply_live: false`
+   in `config/risk_limits.yaml`) until you have read that record and switched it on.
 
 **`automation.paper_skip_promotion_gate` must be `false`.** Task 12 added a paper-only override
 that lets `promotion_blockers` skip the fill-count evidence above; `config/settings.yaml` ships
