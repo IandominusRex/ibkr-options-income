@@ -15,8 +15,10 @@ from zoneinfo import ZoneInfo
 from src.analytics.market_conditions import get_market_conditions
 from src.analytics.realized_vol import compute_realized_vol
 from src.analytics.technicals import get_technical_stats
+from src.common.config import get_config
+from src.common.picture_text import render_picture
 from src.common.schemas import SpreadMarketSnapshot
-from src.news.store.queries import clusters_since, econ_events_between
+from src.news.store.queries import clusters_since, econ_events_between, latest_picture
 from src.news.store.readonly import read_only_session
 from src.spreads_ai.parse import clean
 
@@ -72,6 +74,28 @@ def _news(now: datetime, limit: int) -> tuple[list[str], float | None, list[str]
         return [], None, [], False
 
 
+def _picture_text(now: datetime) -> str | None:
+    """The stored market picture as prompt text, its regime lines labelled "as of <built_at>"
+    (this process never fetches a regime of its own: ruling 11). None when there is no picture or
+    it cannot be read; a source that is merely absent is not an error."""
+    try:
+        with read_only_session() as s:
+            if s is None:
+                return None
+            picture = latest_picture(s)
+        if picture is None:
+            return None
+        return render_picture(
+            picture,
+            now=now,
+            staleness_hours=get_config().news.picture.staleness_hours,
+            regime_as_of=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - enrichment degrades, never raises
+        log.warning("spreads_ai: picture read failed: %s", exc)
+        return None
+
+
 def market_snapshot(now: datetime, *, symbol: str, max_headlines: int) -> SpreadMarketSnapshot:
     fields: dict[str, float | None] = {}
     unavailable: list[str] = []
@@ -114,5 +138,6 @@ def market_snapshot(now: datetime, *, symbol: str, max_headlines: int) -> Spread
         headline_sentiment_mean=tone,
         headlines=headlines,
         econ_today=econ,
+        picture_text=_picture_text(now),
         unavailable=unavailable,
     )

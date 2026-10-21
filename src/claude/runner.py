@@ -10,12 +10,14 @@ import json
 import logging
 import subprocess
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from src.claude import cli, ollama_runner
 from src.claude.cli import is_usage_limit, log_usage, should_fall_back
 from src.claude.parser import parse_claude_output, parse_journal_output, parse_roll_output
+from src.claude.picture_context import load_picture_block
 from src.claude.prompts.eod import build_eod_prompt
 from src.claude.prompts.roll import build_roll_prompt
 from src.claude.prompts.strategist import build_prompt
@@ -329,26 +331,42 @@ def review_roll(
     quote: OptionQuote,
     *,
     proposal: str | None = None,
+    picture_block: str | None = None,
 ) -> RollReview | None:
     """Roll/hold/close recommendation via the configured `claude.backend`.
 
     Returns None on any failure — the caller proceeds without Claude's input.
     Intended to be called from a ThreadPoolExecutor so it doesn't block asyncio.
+    *picture_block* is the pre-rendered market picture; when not given the stored picture is
+    read (news.db, read-only; one small read, never raises) and shown either backend.
     """
     cfg = get_config().claude
+    if picture_block is None:
+        picture_block = load_picture_block(datetime.now(UTC))
 
     if cfg.backend == "ollama":
-        return ollama_runner.review_roll(alert, pos, quote, proposal=proposal)
+        return ollama_runner.review_roll(
+            alert, pos, quote, proposal=proposal, picture_block=picture_block
+        )
 
-    review, error = _review_roll_cli(alert, pos, quote, proposal=proposal)
+    review, error = _review_roll_cli(
+        alert, pos, quote, proposal=proposal, picture_block=picture_block
+    )
     if review is None and cfg.backend == "cli_then_ollama" and should_fall_back(error):
         log.warning("claude unavailable (%s) — using ollama for the roll review", error)
-        return ollama_runner.review_roll(alert, pos, quote, proposal=proposal)
+        return ollama_runner.review_roll(
+            alert, pos, quote, proposal=proposal, picture_block=picture_block
+        )
     return review
 
 
 def _review_roll_cli(
-    alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote, *, proposal: str | None = None
+    alert: RollAlert,
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    *,
+    proposal: str | None = None,
+    picture_block: str | None = None,
 ) -> tuple[RollReview | None, str | None]:
     """Shell out to `claude -p` for a focused roll/hold/close recommendation.
 
@@ -359,7 +377,7 @@ def _review_roll_cli(
         log.info("claude: disabled by config — skipping roll review")
         return None, "disabled"
     return _run_cli_outcome(
-        build_roll_prompt(alert, pos, quote, proposal=proposal),
+        build_roll_prompt(alert, pos, quote, proposal=proposal, picture_block=picture_block),
         "claude roll",
         parse_roll_output,
         cmd=_build_cmd(cfg, model=cfg.model_for("roll")),
@@ -373,25 +391,28 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
     JournalRow without a narrative and sends Telegram without the journal paragraph.
     """
     cfg = get_config().claude
+    picture_block = load_picture_block(datetime.now(UTC))
 
     if cfg.backend == "ollama":
-        return ollama_runner.write_journal_narrative(summary)
+        return ollama_runner.write_journal_narrative(summary, picture_block=picture_block)
 
-    narrative, error = _write_journal_narrative_cli(summary)
+    narrative, error = _write_journal_narrative_cli(summary, picture_block=picture_block)
     if narrative is None and cfg.backend == "cli_then_ollama" and should_fall_back(error):
         log.warning("claude unavailable (%s) — using ollama for the EOD journal", error)
-        return ollama_runner.write_journal_narrative(summary)
+        return ollama_runner.write_journal_narrative(summary, picture_block=picture_block)
     return narrative
 
 
-def _write_journal_narrative_cli(summary: EODSummary) -> tuple[str | None, str | None]:
+def _write_journal_narrative_cli(
+    summary: EODSummary, *, picture_block: str | None = None
+) -> tuple[str | None, str | None]:
     """Shell out to `claude -p` for an EOD journal narrative. ``(None, error)`` on any failure."""
     cfg = get_config().claude
     if not cfg.enabled:
         log.info("claude: disabled by config — skipping EOD journal")
         return None, "disabled"
     return _run_cli_outcome(
-        build_eod_prompt(summary),
+        build_eod_prompt(summary, picture_block=picture_block),
         "claude eod",
         parse_journal_output,
         cmd=_build_cmd(cfg, model=cfg.model_for("eod")),

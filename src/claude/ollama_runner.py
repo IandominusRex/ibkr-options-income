@@ -417,6 +417,7 @@ def review_roll(
     quote: OptionQuote,
     *,
     proposal: str | None = None,
+    picture_block: str | None = None,
 ) -> RollReview | None:
     """Local-model equivalent of `runner.review_roll`. Returns None on any failure."""
     cfg = get_config().claude
@@ -429,7 +430,7 @@ def review_roll(
         log.debug("ollama: circuit open — skipping roll review")
         return None
 
-    prompt = build_roll_prompt(alert, pos, quote, proposal=proposal)
+    prompt = build_roll_prompt(alert, pos, quote, proposal=proposal, picture_block=picture_block)
 
     raw = _generate(prompt, cfg, schema="json")
     if raw is None:
@@ -445,7 +446,7 @@ def review_roll(
     return review
 
 
-def write_journal_narrative(summary: EODSummary) -> str | None:
+def write_journal_narrative(summary: EODSummary, *, picture_block: str | None = None) -> str | None:
     """Local-model equivalent of `runner.write_journal_narrative`. Returns None on failure."""
     cfg = get_config().claude
 
@@ -457,7 +458,7 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
         log.debug("ollama: circuit open — skipping EOD journal")
         return None
 
-    prompt = build_eod_prompt(summary)
+    prompt = build_eod_prompt(summary, picture_block=picture_block)
 
     raw = _generate(prompt, cfg, schema="json")
     if raw is None:

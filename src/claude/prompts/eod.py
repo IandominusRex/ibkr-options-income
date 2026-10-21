@@ -15,8 +15,11 @@ def _money(v: float) -> str:
     return f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
 
 
-def build_eod_prompt(summary: EODSummary) -> str:
-    """Return the prompt string for a narrative end-of-day journal entry."""
+def build_eod_prompt(summary: EODSummary, *, picture_block: str | None = None) -> str:
+    """Return the prompt string for a narrative end-of-day journal entry.
+
+    *picture_block* is the shared market picture, pre-rendered (``picture_context``), so the
+    interpretation of the day can be set against the market it happened in."""
     lines: list[str] = [
         "You are the risk-minded strategist of an options-income book (cash-secured puts and "
         "covered calls, paper account). The reader has already seen every fact below in the "
@@ -53,6 +56,9 @@ def build_eod_prompt(summary: EODSummary) -> str:
             lines.append("- " + " ".join(bits))
     else:
         lines.append("- none")
+
+    if picture_block:
+        lines += ["", picture_block]
 
     lines.append("")
     lines.append("=== ROLL-POLICY DECISIONS (deterministic rules, already acted on) ===")

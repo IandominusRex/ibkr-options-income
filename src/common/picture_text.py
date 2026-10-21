@@ -36,7 +36,7 @@ def _aware(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
-def _regime_line(r: PictureRegime) -> str:
+def _regime_line(r: PictureRegime, *, as_of: datetime | None = None) -> str:
     notes: list[str] = []
     if r.base != r.effective:
         notes.append(f"base {r.base.value}")
@@ -44,20 +44,32 @@ def _regime_line(r: PictureRegime) -> str:
         notes.append("eased by a bottoming signal")
     if r.suspended:
         notes.append("limits suspended today")
+    if as_of is not None:
+        notes.append(f"as of {_aware(as_of).astimezone(_ET):%b %d %H:%M} ET")
     tail = f" ({'; '.join(notes)})" if notes else ""
     return f"{r.index}: {r.effective.value}{tail}"
 
 
-def render_picture(p: MarketPicture | None, *, now: datetime, staleness_hours: float) -> str:
+def render_picture(
+    p: MarketPicture | None,
+    *,
+    now: datetime,
+    staleness_hours: float,
+    regime_as_of: bool = False,
+) -> str:
     """The picture as prompt text. ``None`` renders as unavailable; a picture older than
-    *staleness_hours*, or one whose rebuild failed, is prefixed so the reader knows."""
+    *staleness_hours*, or one whose rebuild failed, is prefixed so the reader knows.
+
+    *regime_as_of* labels each regime line with the time the picture was built. The spreads
+    picker sets it: its process never fetches a regime of its own (ruling 11), so the regime it
+    reads is as old as the picture and must say so."""
     if p is None:
         return f"{_HEADER}\n(unavailable)"
     lines = [_HEADER]
     built = _aware(p.built_at)
     if p.stale or _aware(now) - built > timedelta(hours=staleness_hours):
         lines.append(f"PICTURE IS STALE (built {built.astimezone(_ET):%b %d %H:%M} ET)")
-    lines += [_regime_line(r) for r in p.regimes]
+    lines += [_regime_line(r, as_of=built if regime_as_of else None) for r in p.regimes]
     if p.regimes and p.regime_source == "news":
         lines.append(
             "(regime estimated by the news service; the trading process has not recorded one)"

@@ -1973,6 +1973,9 @@ class SpreadMarketSnapshot(BaseModel):
     headline_sentiment_mean: float | None = None
     headlines: list[str] = Field(default_factory=list)
     econ_today: list[str] = Field(default_factory=list)
+    # The shared market picture (src/common/picture_text.render_picture, regime lines labelled "as
+    # of <built_at>"), read from news.db. None when there is no picture; prompt text only.
+    picture_text: str | None = None
     unavailable: list[str] = Field(default_factory=list)  # sources that failed this call
 
 

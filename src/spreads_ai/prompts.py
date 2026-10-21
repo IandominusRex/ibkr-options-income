@@ -81,6 +81,12 @@ def _market(m: SpreadMarketSnapshot) -> str:
     return "\n".join(lines)
 
 
+def _picture(m: SpreadMarketSnapshot) -> str | None:
+    """The shared market picture, or None. Its regime lines say when the picture was built: the
+    spreads process reads the persisted picture and fetches no regime of its own."""
+    return m.picture_text or None
+
+
 def _events(req: SpreadBriefRequest, m: SpreadMarketSnapshot) -> str:
     lines = ["=== EVENTS ==="]
     lines += [f"operator calendar: {clean(e, 120)}" for e in req.events] or [
@@ -216,6 +222,7 @@ def build_brief_prompt(req: SpreadBriefRequest, market: SpreadMarketSnapshot) ->
             _levels(req),
             _tape(req),
             _market(market),
+            *([pic] if (pic := _picture(market)) else []),
             _events(req, market),
             _headlines(market),
             _exits(req),
@@ -236,6 +243,7 @@ def build_pick_prompt(req: SpreadPickRequest, market: SpreadMarketSnapshot) -> s
             _tape(req),
             _levels(req),
             _market(market),
+            *([pic] if (pic := _picture(market)) else []),
             _events(req, market),
             _headlines(market),
             _exits(req),
