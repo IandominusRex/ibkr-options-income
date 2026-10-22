@@ -435,3 +435,39 @@ def test_the_fresh_row_is_stored_naive_utc(news_db, monkeypatch) -> None:
     with news_session() as s:
         (row,) = s.query(TickerDossierRow).all()
         assert row.built_at == naive_utc(NOW) and row.symbol == "META"
+
+
+def test_the_refresh_carries_the_newest_prose_not_the_one_it_started_from(
+    news_db, monkeypatch
+) -> None:
+    """The numbers take a while to fetch. A prose build that lands meanwhile must survive: the
+    refresh row carries the prose of the newest row at the moment it writes."""
+    monkeypatch.setattr(D, "dossier_symbols", lambda: ["META"])
+    save(
+        dossier(
+            "META", NOW - timedelta(hours=2), story="OLD story", prose_at=NOW - timedelta(hours=9)
+        )
+    )
+    bundle = an()
+    landed: list[bool] = []
+
+    def quote_that_lets_a_prose_build_land(symbol: str):
+        if not landed:  # once: the "other loop" writes a newer row with new prose
+            landed.append(True)
+            save(
+                dossier(
+                    "META",
+                    NOW + timedelta(minutes=1),
+                    story="NEW story",
+                    prose_at=NOW + timedelta(minutes=1),
+                    version="META@prose",
+                )
+            )
+        return an().quote(symbol)
+
+    bundle.quote = quote_that_lets_a_prose_build_land  # type: ignore[method-assign]
+    assert D.refresh_facts(NOW, an=bundle, fundamentals=fund_stub) == 1
+    got = latest("META")
+    assert got is not None and got.story == "NEW story"
+    assert got.prose_at == NOW + timedelta(minutes=1)
+    assert got.facts_at == NOW and got.facts  # and the numbers are the fresh ones

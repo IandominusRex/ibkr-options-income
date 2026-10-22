@@ -4,14 +4,17 @@ headlines (N#); every verdict must cite them. Output is one JSON object per sche
 from __future__ import annotations
 
 import json
-from datetime import date
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
+from src.common.schemas import DossierFact
 from src.news.playbook import PlaybookPrior
 from src.news.reaction import Reaction
 from src.news.schemas import (
     ClusterView,
     DigestReads,
+    DossierDraft,
     Explanation,
     FactSheet,
     ItemView,
@@ -26,6 +29,7 @@ EXPLANATION_SCHEMA = Explanation.model_json_schema()
 TRIAGE_SCHEMA = TriageOutput.model_json_schema()
 PICTURE_SCHEMA = PictureDraft.model_json_schema()
 DIGEST_SCHEMA = DigestReads.model_json_schema()
+DOSSIER_SCHEMA = DossierDraft.model_json_schema()
 
 RULES = """You are a markets news analyst writing for an options premium seller (cash-secured puts, covered calls).
 Rules:
@@ -204,6 +208,91 @@ def picture_prompt(
             "=== CLUSTERS ===\n" + ("\n".join(cluster_lines) or "(none)"),
             ("=== UPCOMING EVENTS ===\n" + "\n".join(events)) if events else None,
             "=== JSON SCHEMA ===\n" + json.dumps(PICTURE_SCHEMA),
+        )
+        if x
+    )
+
+
+DOSSIER_RULES = """You are a markets news analyst writing short notes on individual stocks and ETFs for an options premium seller (cash-secured puts, covered calls).
+Rules:
+- Use ONLY the facts (<SYM>:F#) and the story clusters (C#) listed under each name. Every number you write must appear in that name's facts; write no other number or date in the profile or the story.
+- Cite the clusters that support a story in "story_evidence", and the one that states an event's date in that event's "evidence". A story that cites no listed cluster is dropped.
+- Be terse and concrete. No trading advice, no hedging filler, no em dashes. Never tell the reader to buy, sell, reduce, add, hedge or close anything.
+- Cluster and fact ids belong ONLY in the evidence fields, never in prose. Never comment on which facts or clusters were supplied: write about the company, not the inputs.
+- Reply with ONE JSON object matching the schema. Nothing outside the JSON."""
+
+_DOSSIER_ITEMS = 2  # items shown under a cluster
+_DOSSIER_SUMMARY_CHARS = 200
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+
+
+@dataclass
+class DossierPromptEntry:
+    """One name's slice of a dossier prompt: its numbers, its recent clusters and whether the
+    profile is wanted this time. Nothing the model wrote before is ever in here."""
+
+    symbol: str
+    kind: str
+    facts: list[DossierFact]
+    clusters: list[ClusterView]
+    want_profile: bool
+
+
+def dossier_cluster_lines(cl: ClusterView, symbol: str) -> list[str]:
+    """The text the model is shown for one cluster: its headline and up to two items, preferring
+    the items that name *symbol*, each with its summary cut at 200 characters.
+
+    This is also the text an event's date is checked against (``dossier.verify_event_date``): the
+    date has to be written in what the model actually saw."""
+    about = sorted(
+        (it for it in cl.items if symbol in it.tickers),
+        key=lambda it: it.published_at or _EPOCH,
+        reverse=True,
+    )
+    lines = [f"C{cl.id} {cl.headline}"]
+    for it in (about or cl.items)[:_DOSSIER_ITEMS]:
+        summary = f" — {it.summary[:_DOSSIER_SUMMARY_CHARS]}" if it.summary else ""
+        lines.append(f"  - {it.title}{summary}")
+    return lines
+
+
+def dossier_prompt(entries: list[DossierPromptEntry], picture_text: str | None) -> str:
+    """One batched call: notes on several names, each against its own numbered facts and clusters.
+
+    The previous profile, story and events are **never** included (the model must not harden its
+    own earlier words into fact); only the current numbers and the current news are."""
+    blocks = []
+    for e in entries:
+        blocks.append(
+            "\n".join(
+                [
+                    f"=== {e.symbol} ({e.kind.replace('_', ' ')}) ===",
+                    f"PROFILE requested: {'yes' if e.want_profile else 'no'}",
+                    "FACTS",
+                    *(f"{f.id} {f.label}: {f.display}" for f in e.facts),
+                    "CLUSTERS",
+                    *(
+                        [line for cl in e.clusters for line in dossier_cluster_lines(cl, e.symbol)]
+                        or ["(none)"]
+                    ),
+                ]
+            )
+        )
+    return "\n\n".join(
+        x
+        for x in (
+            DOSSIER_RULES,
+            picture_block(picture_text),
+            'TASK: for EACH name below write its notes. PROFILE (only where "PROFILE requested: '
+            'yes"): what the company or fund is and what moves its price, at most three sentences '
+            "and 400 characters, with no numbers. STORY: what is happening to the name now, from "
+            "its listed clusters only, at most 280 characters; cite those clusters in "
+            "story_evidence (C# ids); leave it empty when none of them is about the name. EVENTS: "
+            "dated upcoming catalysts other than earnings that a listed cluster states with a "
+            "calendar date, at most three; give the date as YYYY-MM-DD and cite that cluster in "
+            "evidence; never infer or estimate a date. Use each name's symbol exactly as headed.",
+            *blocks,
+            "=== JSON SCHEMA ===\n" + json.dumps(DOSSIER_SCHEMA),
         )
         if x
     )

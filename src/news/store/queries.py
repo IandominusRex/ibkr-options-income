@@ -372,3 +372,31 @@ def latest_dossiers(s: Session, symbols: list[str]) -> dict[str, TickerDossier]:
         if found is not None:
             out[symbol] = found
     return out
+
+
+def piled_clusters_for(
+    s: Session, symbol: str, since: datetime, *, limit: int = 16
+) -> list[ClusterView]:
+    """Clusters naming *symbol*, last seen at or after *since*, that triage put in pile 1 or 2 -
+    pile 1 first, then newest. A dossier's story is written only from these."""
+    sym = symbol.upper()
+    try:
+        rows = s.scalars(
+            select(NewsClusterRow)
+            .join(StoryTriageRow, StoryTriageRow.cluster_id == NewsClusterRow.id)
+            .where(
+                StoryTriageRow.pile.in_((1, 2)),
+                NewsClusterRow.last_seen >= naive_utc(since),
+                cast(NewsClusterRow.tickers, String).contains(f'"{sym}"', autoescape=True),
+            )
+            .order_by(StoryTriageRow.pile, NewsClusterRow.last_seen.desc(), NewsClusterRow.id)
+        )
+        out: list[ClusterView] = []
+        for r in rows:
+            if sym in (r.tickers or []):
+                out.append(_cluster(s, r, 6))
+                if len(out) >= limit:
+                    break
+        return out
+    except OperationalError:
+        return []

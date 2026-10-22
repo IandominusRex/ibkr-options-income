@@ -32,6 +32,7 @@ from src.news.digests import (
     gather_inputs,
     regime_line,
 )
+from src.news.dossier import build_dossier_prose, in_dossier_window, refresh_facts
 from src.news.facts import Analytics, build_market_facts, sigma_move
 from src.news.noise_check import Promotion, beta_vs_spy, find_promotions
 from src.news.picture import build_picture, picture_due
@@ -142,6 +143,8 @@ class NewsService:
             ("triage", 60, self._triage),
             ("picture", 120, self._picture),
             ("noise_check", 300, self._noise_check),
+            ("dossier_facts", 300, self._dossier_facts),
+            ("dossier", 600, self._dossier),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
             ("briefs", self.ncfg.briefs.poll_seconds, self._briefs),
@@ -365,6 +368,22 @@ class NewsService:
                 detail={"move_pct": p.move_pct, "basis": p.basis, "headline": headline},
             )
             await self._dispatch([cand], now)
+
+    def _dossier_active(self, now: datetime) -> bool:
+        """The dossier loops run from the pre-market digest time to the close, on trading days."""
+        return self.ncfg.dossier.enabled and in_dossier_window(now)
+
+    async def _dossier_facts(self, now: datetime) -> None:
+        """Hourly numbers refresh for every dossier name (no model call): facts, health,
+        sentiment; the prose is copied forward."""
+        if self._dossier_active(now):
+            await asyncio.to_thread(refresh_facts, now, an=self.an)
+
+    async def _dossier(self, now: datetime) -> None:
+        """Rebuild the model's part (profile, story, events) of the dossiers that are due, in
+        batches under the dossier's own daily call cap."""
+        if self._dossier_active(now):
+            await asyncio.to_thread(build_dossier_prose, now)
 
     def _promotions(self, now: datetime) -> list[Promotion]:
         intraday = get_intraday_price_provider()

@@ -201,6 +201,29 @@ class PictureDraft(BaseModel):
     stories: list[PictureStoryDraft] = Field(default_factory=list, max_length=5)
 
 
+class DossierEventDraft(BaseModel):
+    """A dated catalyst the model proposes for a name. Python keeps it only when the date is
+    written in the cluster it cites (``dossier.verify_event_date``)."""
+
+    title: str = Field(max_length=80)
+    on: date
+    evidence: str  # the C# of the cluster that states the date
+
+
+class DossierNameDraft(BaseModel):
+    """The model's notes on one name: a profile (only when asked), the current story and events."""
+
+    symbol: str
+    profile: str | None = Field(default=None, max_length=400)
+    story: str = Field(default="", max_length=280)
+    story_evidence: list[str] = Field(default_factory=list)  # C# clusters
+    events: list[DossierEventDraft] = Field(default_factory=list, max_length=3)
+
+
+class DossierDraft(BaseModel):
+    names: list[DossierNameDraft] = Field(default_factory=list)
+
+
 class SourceLink(BaseModel):
     name: str
     url: str
