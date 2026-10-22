@@ -14,6 +14,7 @@ const LINKS = [
   { href: "/news", label: "News", sub: "Feed, calendar and ticker briefs" },
   { href: "/ledger", label: "Ledger", sub: "Broker trades and per-ticker roll-ups" },
   { href: "/explain", label: "How it works", sub: "The pipeline in plain English" },
+  { href: "/more/claude", label: "What Claude knows", sub: "The market picture and what each Claude call reads" },
   { href: "/ledger/import", label: "Import a statement", sub: "Upload an IBKR activity CSV" },
 ];
 

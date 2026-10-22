@@ -38,6 +38,10 @@ describe("More page", () => {
     expect(screen.getByRole("link", { name: /News/ })).toHaveAttribute("href", "/news");
     expect(screen.getByRole("link", { name: /Import a statement/ })).toHaveAttribute("href", "/ledger/import");
   });
+  it("links to What Claude knows, the page that shows the market picture and what each call reads", () => {
+    renderWithQuery(<MorePage />, served);
+    expect(screen.getByRole("link", { name: /What Claude knows/ })).toHaveAttribute("href", "/more/claude");
+  });
   it("links to Universe and Ledger, which have no tab or rail entry", () => {
     renderWithQuery(<MorePage />, served);
     expect(screen.getByRole("link", { name: /^Universe/ })).toHaveAttribute("href", "/research/universe");
