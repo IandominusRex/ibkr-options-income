@@ -11,8 +11,10 @@ Two halves with a hard line between them:
   7-day deterministic sentiment, and the upcoming events (`verify_event_date`: a date is kept
   only when it is written in the cited news). `refresh_facts` is the hourly refresh; it copies
   the model's prose forward unchanged.
-* **The model** writes only a short profile, the current story and proposed events. That is
-  `build_dossier_prose` (batched, grounded, under its own daily call budget).
+* **The model** writes only a short profile, the current story, figures it quotes from the cited
+  news (`reported`, each checked against the cited cluster's shown text and kept apart from the
+  story, which may use only Python's numbers) and proposed events. That is `build_dossier_prose`
+  (batched, validated name by name, grounded, under its own daily call budget).
 
 Who gets one: ``would_own`` and ``actively_wheeling`` (the effective universe, so web overrides
 count) plus every held underlying. A dossier carries **no book** (the trade reviewer's book block
@@ -47,13 +49,19 @@ from src.common.config import (
     get_regime_cfg,
 )
 from src.common.market_hours import is_trading_day
-from src.common.schemas import DossierEvent, DossierFact, FundamentalStats, TickerDossier
+from src.common.schemas import (
+    DossierEvent,
+    DossierFact,
+    DossierReported,
+    FundamentalStats,
+    TickerDossier,
+)
 from src.common.universe import effective_universe
 from src.news.alerts import rank_ticker_clusters
 from src.news.collectors import held_underlyings, universe_lists
-from src.news.explain import latest_picture_text, validated_call
+from src.news.explain import latest_picture_text, validated_items_call
 from src.news.facts import Analytics, build_ticker_facts
-from src.news.grounding import extract_numbers, strip_meta_and_advice, strip_ungrounded
+from src.news.grounding import extract_numbers, grounded, strip_meta_and_advice, strip_ungrounded
 from src.news.llm import cap_reached
 from src.news.prompts import (
     DOSSIER_SCHEMA,
@@ -63,9 +71,9 @@ from src.news.prompts import (
 )
 from src.news.schemas import (
     ClusterView,
-    DossierDraft,
     DossierEventDraft,
     DossierNameDraft,
+    DossierReportedDraft,
     EarningsView,
 )
 from src.news.store import queries
@@ -73,6 +81,7 @@ from src.news.store.models import (
     EarningsEventRow,
     NewsClusterRow,
     NewsPostRow,
+    NewsStateRow,
     StoryTriageRow,
     TickerDossierRow,
 )
@@ -371,6 +380,7 @@ def _fresh_row(
             "profile": prev.profile,
             "story": prev.story,
             "story_evidence": list(prev.story_evidence),
+            "reported": list(prev.reported),
             "events": [e for e in prev.events if e.on >= today],
             "stale": prev.stale,
         }
@@ -518,6 +528,30 @@ def _earnings_since(s: Session, symbol: str, since: datetime) -> bool:
     )
 
 
+_REJECTED_PREFIX = "dossier_rejected:"  # news_state: when a name's draft was last rejected
+
+
+def _rejected_at(s: Session, symbol: str) -> datetime | None:
+    row = s.get(NewsStateRow, f"{_REJECTED_PREFIX}{symbol}")
+    return None if row is None else aware_utc(row.updated_at)
+
+
+def _note_rejected(s: Session, symbol: str, now: datetime) -> None:
+    """Record that *symbol*'s draft was rejected now: it waits ``prose_min_interval_hours``."""
+    key = f"{_REJECTED_PREFIX}{symbol}"
+    row = s.get(NewsStateRow, key)
+    if row is None:
+        s.add(NewsStateRow(key=key, value="draft rejected", updated_at=naive_utc(now)))
+    else:
+        row.updated_at = naive_utc(now)
+
+
+def _clear_rejected(s: Session, symbol: str) -> None:
+    row = s.get(NewsStateRow, f"{_REJECTED_PREFIX}{symbol}")
+    if row is not None:
+        s.delete(row)
+
+
 def dossier_due(symbol: str, last: TickerDossier | None, *, now: datetime, s: Session) -> list[str]:
     """Why *symbol*'s prose should be (re)built now; empty when it should not.
 
@@ -532,8 +566,18 @@ def dossier_due(symbol: str, last: TickerDossier | None, *, now: datetime, s: Se
     old (ruling 43). ``news`` and ``profile`` wait until ``prose_min_interval_hours`` have passed
     since the last prose; ``new``, ``alert`` and ``earnings`` never wait. A reader of an old
     news.db without the tables gets no reasons.
+
+    A name whose last draft was **rejected** (it overshot a limit or broke the schema) waits
+    ``prose_min_interval_hours`` from that attempt whatever the reason, so a persistently bad
+    answer costs one call per interval, never one per loop and never the day's whole budget.
     """
     cfg = get_config().news.dossier
+    try:
+        rejected = _rejected_at(s, symbol)
+    except OperationalError:
+        return []
+    if rejected is not None and now - rejected < timedelta(hours=cfg.prose_min_interval_hours):
+        return []
     if last is None or last.prose_at is None:
         profile = last is None or _profile_wanted(last, now, cfg)
         return ["new", "profile"] if profile else ["new"]
@@ -639,6 +683,40 @@ def clean_story(
     prose = _CLUSTER_ID.sub(lambda m: "" if int(m.group(1)) in listed else m.group(0), prose)
     clean = _prose_clean(prose, refs, rel_tol)
     return (clean, cited) if clean else ("", [])
+
+
+_REPORTED_MAX_ITEMS = 3
+_REPORTED_MAX_CHARS = 120
+
+
+def clean_reported(
+    drafts: list[DossierReportedDraft], *, shown: dict[int, str], rel_tol: float
+) -> list[DossierReported]:
+    """The quoted figures Python can stand behind (OI-E10), each judged on its own.
+
+    An item is kept when it cites a cluster the model was shown for this name (*shown* maps the
+    cluster id to the exact text the prompt carried), its text is at most 120 characters with no
+    advice, no talk about the inputs and no id (the story's stripping), and **every** number in it
+    is written in that cluster's shown text within the grounding tolerance (small numbers too:
+    these are figures, and a dropped item costs nothing). Duplicates collapse; the first three
+    that pass are kept. An item that fails is dropped alone: it never costs the story."""
+    out: list[DossierReported] = []
+    seen: set[str] = set()
+    for d in drafts:
+        if len(out) == _REPORTED_MAX_ITEMS:
+            break
+        m = re.fullmatch(r"C(\d+)", d.evidence.strip())
+        if not m or int(m.group(1)) not in shown:
+            continue
+        text = _prose_clean(d.text, None, 0.0)
+        if text is None or len(text) > _REPORTED_MAX_CHARS or text in seen:
+            continue
+        refs = [v for v, _decimals, _must in extract_numbers(shown[int(m.group(1))])]
+        if not all(grounded(v, dec, refs, rel_tol) for v, dec, _must in extract_numbers(text)):
+            continue
+        seen.add(text)
+        out.append(DossierReported(text=text, cluster_id=f"C{m.group(1)}"))
+    return out
 
 
 def verified_events(
@@ -748,42 +826,58 @@ def _version(symbol: str, now: datetime) -> str:
     return f"{symbol}@{now.isoformat(timespec='microseconds')}:prose"
 
 
+def _stale_row(s: Session, p: _Pending, now: datetime) -> None:
+    """Keep *p*'s prose and say it is stale (nothing to mark when no prose was ever written)."""
+    if p.last.prose_at is None:
+        return
+    held = _newest(s, p.symbol)
+    if held is None:
+        return
+    row, current = held
+    _save(
+        s,
+        row,
+        current.model_copy(update={"stale": True, "version": _version(p.symbol, now)}),
+        now,
+    )
+
+
 def _mark_stale(batch: list[_Pending], now: datetime) -> None:
     """The model gave no usable answer: keep each name's prose and say it is stale."""
     with news_session() as s:
         for p in batch:
-            if p.last.prose_at is None:
-                continue  # nothing was written yet: nothing to mark
-            held = _newest(s, p.symbol)
-            if held is None:
-                continue
-            row, current = held
-            _save(
-                s,
-                row,
-                current.model_copy(update={"stale": True, "version": _version(p.symbol, now)}),
-                now,
-            )
+            _stale_row(s, p, now)
 
 
 def _write_prose(
     batch: list[_Pending],
-    out: DossierDraft,
+    drafts: list[DossierNameDraft],
+    rejected: set[str],
     *,
     now: datetime,
     today: date,
     cfg: NewsCfg,
-) -> None:
-    """Validate the model's notes against Python's facts and save one new row per name.
+) -> int:
+    """Validate the model's notes against Python's facts and save one new row per name; returns
+    the names written.
 
-    Each row is built from the **newest** stored dossier, read inside this transaction, with only
-    the prose fields replaced: a numbers refresh that landed during the model call is kept."""
+    *drafts* are the names whose answer passed its limits and schema; *rejected* are the symbols
+    whose answer did not (OI-E12): such a name keeps its previous prose, marked stale, and waits
+    ``prose_min_interval_hours`` before it is tried again (`dossier_due`). The other names of the
+    same reply are unaffected. Each row is built from the **newest** stored dossier, read inside
+    this transaction, with only the prose fields replaced: a numbers refresh that landed during
+    the model call is kept."""
     by_symbol: dict[str, DossierNameDraft] = {}
-    for d in out.names:
+    for d in drafts:
         by_symbol.setdefault(d.symbol.strip().upper(), d)
     rel_tol = cfg.grounding.rel_tol
+    written = 0
     with news_session() as s:
         for p in batch:
+            if p.symbol in rejected and p.symbol not in by_symbol:
+                _stale_row(s, p, now)
+                _note_rejected(s, p.symbol, now)
+                continue
             held = _newest(s, p.symbol)
             if held is None:
                 continue
@@ -798,6 +892,7 @@ def _write_prose(
                 "prose_at": now,
                 "story": story,
                 "story_evidence": cited,
+                "reported": clean_reported(draft.reported, shown=shown, rel_tol=rel_tol),
                 "stale": False,
                 "events": merge_events(
                     p.symbol,
@@ -817,6 +912,9 @@ def _write_prose(
                 update["profile"] = profile
                 update["profile_at"] = now
             _save(s, row, current.model_copy(update=update), now)
+            _clear_rejected(s, p.symbol)
+            written += 1
+    return written
 
 
 def build_dossier_prose(now: datetime) -> int:
@@ -826,9 +924,12 @@ def build_dossier_prose(now: datetime) -> int:
     Due names (`dossier_due`) go held first, then by number of reasons, then by symbol, in
     batches of ``batch_size``; one call per batch under the dossier's own daily cap (the rest wait
     for the next loop or the next day). A name with no dossier row yet waits for the numbers
-    refresh to create it. A failed call keeps each name's previous prose, marked stale; a name
-    whose notes fail Python's checks loses that part (never the previous text); a name the model
-    left out gets an empty story. Nothing the model wrote before is sent back to it.
+    refresh to create it. A failed call (no usable answer) keeps each name's previous prose,
+    marked stale. The answer is validated **name by name**: one whose draft breaks a limit or the
+    schema is rejected on its own (previous prose kept and marked stale, a wait of
+    ``prose_min_interval_hours`` before its next try) and the others are accepted, all on the one
+    call; a name whose notes fail Python's checks loses that part (never the previous text); a name
+    the model left out gets an empty story. Nothing the model wrote before is sent back to it.
     """
     cfg = get_config().news
     dcfg = cfg.dossier
@@ -879,17 +980,30 @@ def build_dossier_prose(now: datetime) -> int:
             ],
             picture_text,
         )
-        out, _backend = validated_call(
-            DossierDraft,
+        answer = validated_items_call(
+            DossierNameDraft,
             prompt,
+            key="names",
             schema=DOSSIER_SCHEMA,
             prefix="news:dossier",
             now=now,
             purpose="dossier",
         )
-        if out is None:
+        if answer is None:
             _mark_stale(batch, now)
             continue
-        _write_prose(batch, out, now=now, today=today, cfg=cfg)
-        built += len(batch)
+        drafts, bad = answer
+        rejected = {
+            str(raw["symbol"]).strip().upper()
+            for raw, _why in bad
+            if isinstance(raw, dict) and isinstance(raw.get("symbol"), str)
+        }
+        if bad:
+            log.info(
+                "dossier: %d draft(s) rejected on their own limits (%s): %s",
+                len(bad),
+                ", ".join(sorted(rejected)) or "no symbol",
+                "; ".join(why.splitlines()[0] for _raw, why in bad)[:300],
+            )
+        built += _write_prose(batch, drafts, rejected, now=now, today=today, cfg=cfg)
     return built

@@ -400,6 +400,20 @@ class DossierEvent(BaseModel):
     quote: str = Field(max_length=200)
 
 
+class DossierReported(BaseModel):
+    """A figure quoted from the news about a name, kept apart from the story (OI-E10).
+
+    ``text`` is a short statement of the figure (120 characters at most) and ``cluster_id`` the
+    ``C<id>`` of the news cluster that states it. Python keeps an item only when every number in
+    ``text`` is written in that cluster's text as the model was shown it, so the figure is the
+    news's, not the system's: every reader labels it "Reported in news (not computed by the
+    system)" and never mixes it into the story.
+    """
+
+    text: str = Field(max_length=120)
+    cluster_id: str
+
+
 class TickerDossier(BaseModel):
     """What the news process knows about one name the book cares about (spec section 16).
 
@@ -423,6 +437,9 @@ class TickerDossier(BaseModel):
     profile: str = ""
     story: str = ""
     story_evidence: list[str] = Field(default_factory=list)
+    # Figures quoted from the cited news (OI-E10), apart from the story, which may use only the
+    # name's own facts. An older stored dossier has none: it reads as an empty list.
+    reported: list[DossierReported] = Field(default_factory=list)
     events: list[DossierEvent] = Field(default_factory=list)
     stale: bool = False  # True when the last prose build failed and the prose is carried forward
 

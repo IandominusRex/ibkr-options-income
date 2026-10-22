@@ -8,7 +8,12 @@ Two sizes. **Compact** (about 80 words) is for the many names of a full-scan pro
 health, the story, the dated events and three key facts. **Full** (about 220 words) adds the
 profile (labelled as Claude's general knowledge), every fact that fits and the 7-day news
 sentiment; it is for the one name a deep-dive or a roll is about. The word budget is enforced here,
-not left to the builder: facts give way first, then extra events, then the story is shortened.
+not left to the builder: facts give way first, then extra events, then extra reported figures,
+then the story is shortened, and only then is the last reported figure dropped.
+
+Figures quoted from the news (``TickerDossier.reported``, OI-E10) print on **their own line**,
+labelled "Reported in news (not computed by the system)", under the story and never inside it: the
+story carries only the system's numbers, the reader must be able to tell the two apart.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from src.common.schemas import DossierEvent, DossierFact, TickerDossier
+from src.common.schemas import DossierEvent, DossierFact, DossierReported, TickerDossier
 
 _ET = ZoneInfo("America/New_York")
 _HEADER = "=== NAME NOTES ==="
@@ -50,6 +55,8 @@ _FACT_PRIORITY = (
     "Universe",
 )
 _MIN_STORY_WORDS = 8
+REPORTED_LABEL = "Reported in news (not computed by the system): "
+_REPORTED_COMPACT = 2  # reported figures a compact note starts with (the budget may drop some)
 
 
 def _aware(dt: datetime) -> datetime:
@@ -66,6 +73,13 @@ def _fact_line(f: DossierFact) -> str:
 
 def _event_line(e: DossierEvent) -> str:
     return f"{e.id} {e.title} on {e.on:%Y-%m-%d} ({e.evidence})"
+
+
+def _reported_line(items: list[DossierReported]) -> str:
+    """The quoted figures on their own line, each with the cluster that states it ("" for none)."""
+    if not items:
+        return ""
+    return REPORTED_LABEL + "; ".join(f"{r.text} ({r.cluster_id})" for r in items)
 
 
 def _story_line(story: str, evidence: list[str]) -> str:
@@ -157,20 +171,31 @@ def render_dossier(
                 f"7-day news sentiment {d.sentiment_7d:+.2f} over {n} item{'' if n == 1 else 's'}"
             )
 
-    base = _words(*top, story, *events, *tail)
-    if base > budget:  # extra events go first, then the story is shortened
+    reported = d.reported[:_REPORTED_COMPACT] if compact else list(d.reported)
+    base = _words(*top, story, _reported_line(reported), *events, *tail)
+    if base > budget:
+        # extra events go first, then extra reported figures, then the story is shortened, and
+        # only then is the last reported figure dropped
         while base > budget and len(events) > 1:
             events.pop()
-            base = _words(*top, story, *events, *tail)
+            base = _words(*top, story, _reported_line(reported), *events, *tail)
+        while base > budget and len(reported) > 1:
+            reported = reported[:-1]
+            base = _words(*top, story, _reported_line(reported), *events, *tail)
         if base > budget and story:
             allowance = len(story.split()) - (base - budget)
             story = _shorten(d.story, d.story_evidence, allowance)
+            base = _words(*top, story, _reported_line(reported), *events, *tail)
+        if base > budget and reported:
+            reported = []
             base = _words(*top, story, *events, *tail)
     shown = _pick_facts(d.facts, compact=compact, room=max(0, budget - base))
 
     lines = [*top]
     if story:
         lines.append(story)
+    if reported:
+        lines.append(_reported_line(reported))
     lines.extend(events)
     lines.extend(tail)
     lines.extend(_fact_line(f) for f in shown)

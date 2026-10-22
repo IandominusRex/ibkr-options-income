@@ -215,7 +215,8 @@ def picture_prompt(
 
 DOSSIER_RULES = """You are a markets news analyst writing short notes on individual stocks and ETFs for an options premium seller (cash-secured puts, covered calls).
 Rules:
-- Use ONLY the facts (<SYM>:F#) and the story clusters (C#) listed under each name. Every number you write must appear in that name's facts; write no other number or date in the profile or the story.
+- Use ONLY the facts (<SYM>:F#) and the story clusters (C#) listed under each name. Every number you write in the profile or the story must appear in that name's facts; write no other number or date there.
+- Any figure you quote from the news (a price target, a revenue figure, a percent move, a date) goes ONLY in "reported": at most three items per name, each at most 120 characters, each citing in "evidence" the one listed cluster (C#) whose text states it, with the figure copied exactly as that cluster writes it. Never put such a figure in the story.
 - Cite the clusters that support a story in "story_evidence", and the one that states an event's date in that event's "evidence". A story that cites no listed cluster is dropped.
 - Be terse and concrete. No trading advice, no hedging filler, no em dashes. Never tell the reader to buy, sell, reduce, add, hedge or close anything.
 - Cluster and fact ids belong ONLY in the evidence fields, never in prose. Never comment on which facts or clusters were supplied: write about the company, not the inputs.
@@ -286,8 +287,11 @@ def dossier_prompt(entries: list[DossierPromptEntry], picture_text: str | None) 
             'TASK: for EACH name below write its notes. PROFILE (only where "PROFILE requested: '
             'yes"): what the company or fund is and what moves its price, at most three sentences '
             "and 400 characters, with no numbers. STORY: what is happening to the name now, from "
-            "its listed clusters only, at most 280 characters; cite those clusters in "
-            "story_evidence (C# ids); leave it empty when none of them is about the name. EVENTS: "
+            "its listed clusters only, at most 280 characters, using only numbers from the name's "
+            "facts; cite those clusters in story_evidence (C# ids); leave it empty when none of "
+            "them is about the name. REPORTED: figures a listed cluster quotes about the name, "
+            "each a short statement of at most 120 characters with the C# of the cluster that "
+            "states it; at most three; none when no listed cluster quotes a figure. EVENTS: "
             "dated upcoming catalysts other than earnings that a listed cluster states with a "
             "calendar date, at most three; give the date as YYYY-MM-DD and cite that cluster in "
             "evidence; never infer or estimate a date. Use each name's symbol exactly as headed.",

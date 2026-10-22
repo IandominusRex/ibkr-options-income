@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 class ItemView(BaseModel):
@@ -210,14 +210,39 @@ class DossierEventDraft(BaseModel):
     evidence: str  # the C# of the cluster that states the date
 
 
+class DossierReportedDraft(BaseModel):
+    """A figure the model quotes from a cluster's news (OI-E10). Python keeps it only when every
+    number in ``text`` is written in the cited cluster's shown text; the length (120 characters),
+    the count (3) and the ids are checked there too, so one bad item never costs the story."""
+
+    text: str
+    evidence: str  # the C# of the cluster whose shown text states the figure
+
+
 class DossierNameDraft(BaseModel):
-    """The model's notes on one name: a profile (only when asked), the current story and events."""
+    """The model's notes on one name: a profile (only when asked), the current story, figures
+    quoted from the news and events."""
 
     symbol: str
     profile: str | None = Field(default=None, max_length=400)
     story: str = Field(default="", max_length=280)
     story_evidence: list[str] = Field(default_factory=list)  # C# clusters
+    reported: list[DossierReportedDraft] = Field(default_factory=list)
     events: list[DossierEventDraft] = Field(default_factory=list, max_length=3)
+
+    @field_validator("reported", mode="before")
+    @classmethod
+    def _skip_malformed_items(cls, value: object) -> list[DossierReportedDraft]:
+        """A reported item of the wrong shape is dropped on its own; it never rejects the name."""
+        if not isinstance(value, list):
+            return []
+        items: list[DossierReportedDraft] = []
+        for raw in value:
+            try:
+                items.append(DossierReportedDraft.model_validate(raw))
+            except ValidationError:
+                continue
+        return items
 
 
 class DossierDraft(BaseModel):

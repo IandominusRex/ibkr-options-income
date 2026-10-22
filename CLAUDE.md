@@ -159,6 +159,11 @@ bounded tool-calling research turn the local Ollama reviewer may run before judg
 plus their keyless data-layer backend `src/data/google_news_backend.py`, reach the prompt and the
 local reviewer only — never `engine/`, `execution/`, or `strategies/`. Enforced by
 `tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer`.
+The market-picture modules follow the same rule: `src/claude/picture_context.py`, `book_context.py`
+and `dossier_context.py`, the news-side `src/news/dossier.py` and the neutral renderers
+`src/common/picture_text.py` and `dossier_text.py` (which import only `src.common.schemas`) reach
+prompts, cards and the web page only, never `engine/`, `execution/` or `strategies/`; they are
+covered by `tests/test_regime_fence.py` and `tests/test_news_fence.py`.
 `src/spreads_ai/` is enrichment too (on `tests/test_eval_skills.py`'s list): it reads the
 deterministic and enrichment analytics and `news.db`, and its only output is a menu letter
 that the spreads service validates and re-gates.
