@@ -14,7 +14,8 @@ Two halves with a hard line between them:
 * **The model** writes only a short profile, the current story, figures it quotes from the cited
   news (`reported`, each checked against the cited cluster's shown text and kept apart from the
   story, which may use only Python's numbers) and proposed events. That is `build_dossier_prose`
-  (batched, validated name by name, grounded, under its own daily call budget).
+  (batched, validated name by name, grounded, under its own daily call budget; a whole-batch
+  failure waits an hour before the next call).
 
 Who gets one: ``would_own`` and ``actively_wheeling`` (the effective universe, so web overrides
 count) plus every held underlying. A dossier carries **no book** (the trade reviewer's book block
@@ -552,6 +553,32 @@ def _clear_rejected(s: Session, symbol: str) -> None:
         s.delete(row)
 
 
+# A whole-batch failure (no answer, or an unusable reply after the one retry) waits this long before
+# the next model call. A code constant, not a config key (OI-P5, 2026-10-22).
+BATCH_FAILURE_WAIT = timedelta(hours=1)
+_BATCH_FAILED_KEY = "dossier_batch_failed"  # news_state: when the last whole batch failed
+
+
+def _batch_failed_at(s: Session) -> datetime | None:
+    row = s.get(NewsStateRow, _BATCH_FAILED_KEY)
+    return None if row is None else aware_utc(row.updated_at)
+
+
+def _note_batch_failed(s: Session, now: datetime) -> None:
+    """Record that a whole batch failed now: no model call for ``BATCH_FAILURE_WAIT``."""
+    row = s.get(NewsStateRow, _BATCH_FAILED_KEY)
+    if row is None:
+        s.add(NewsStateRow(key=_BATCH_FAILED_KEY, value="batch failed", updated_at=naive_utc(now)))
+    else:
+        row.updated_at = naive_utc(now)
+
+
+def _clear_batch_failed(s: Session) -> None:
+    row = s.get(NewsStateRow, _BATCH_FAILED_KEY)
+    if row is not None:
+        s.delete(row)
+
+
 def dossier_due(symbol: str, last: TickerDossier | None, *, now: datetime, s: Session) -> list[str]:
     """Why *symbol*'s prose should be (re)built now; empty when it should not.
 
@@ -924,8 +951,12 @@ def build_dossier_prose(now: datetime) -> int:
     Due names (`dossier_due`) go held first, then by number of reasons, then by symbol, in
     batches of ``batch_size``; one call per batch under the dossier's own daily cap (the rest wait
     for the next loop or the next day). A name with no dossier row yet waits for the numbers
-    refresh to create it. A failed call (no usable answer) keeps each name's previous prose,
-    marked stale. The answer is validated **name by name**: one whose draft breaks a limit or the
+    refresh to create it. A **whole-batch failure** (no answer, or an unusable reply after the one
+    retry) keeps each name's previous prose, marked stale, ends the pass and records the time
+    (`news_state` ``dossier_batch_failed``): no model call is made for `BATCH_FAILURE_WAIT` (an
+    hour, so a down or rate-limited CLI cannot spend the day's calls in forty minutes) and a
+    usable answer clears it. The numbers refresh (`refresh_facts`, no model call) is not held.
+    Otherwise the answer is validated **name by name**: one whose draft breaks a limit or the
     schema is rejected on its own (previous prose kept and marked stale, a wait of
     ``prose_min_interval_hours`` before its next try) and the others are accepted, all on the one
     call; a name whose notes fail Python's checks loses that part (never the previous text); a name
@@ -934,6 +965,18 @@ def build_dossier_prose(now: datetime) -> int:
     cfg = get_config().news
     dcfg = cfg.dossier
     if not dcfg.enabled:
+        return 0
+    try:
+        with news_session() as s:
+            failed = _batch_failed_at(s)
+    except OperationalError:
+        return 0
+    if failed is not None and now - failed < BATCH_FAILURE_WAIT:
+        log.info(
+            "dossier: the last whole batch failed at %s — no model call before %s",
+            failed.isoformat(timespec="minutes"),
+            (failed + BATCH_FAILURE_WAIT).isoformat(timespec="minutes"),
+        )
         return 0
     try:
         symbols = dossier_symbols()
@@ -990,8 +1033,15 @@ def build_dossier_prose(now: datetime) -> int:
             purpose="dossier",
         )
         if answer is None:
+            # A whole-batch failure: keep the prose (stale), record the time and stop. No further
+            # call this pass (a second batch would hit the same down CLI) and none for an hour.
+            with news_session() as s:
+                _note_batch_failed(s, now)
             _mark_stale(batch, now)
-            continue
+            log.info("dossier: no usable answer — no model call for %s", BATCH_FAILURE_WAIT)
+            break
+        with news_session() as s:
+            _clear_batch_failed(s)
         drafts, bad = answer
         rejected = {
             str(raw["symbol"]).strip().upper()
