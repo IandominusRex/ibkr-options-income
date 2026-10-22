@@ -358,11 +358,22 @@ def test_context_is_none_when_every_switch_is_off(tmp_path, monkeypatch):
     from src.storage.db import session_scope
 
     _db(tmp_path, monkeypatch)
-    set_risk(monkeypatch, regime={"enabled": False}, leveraged_sizing={"enabled": False})
+    # every switch: the covered-call breakout rule (Task 16) is the third one that wants a context
+    set_risk(
+        monkeypatch,
+        regime={"enabled": False},
+        leveraged_sizing={"enabled": False},
+        cc_timing={"breakout": {"enabled": False}},
+    )
     with session_scope() as s:
         assert build_sizing_context(now=NOW, session=s) is None
     # either switch alone is enough to want a context
-    set_risk(monkeypatch, regime={"enabled": False}, leveraged_sizing={"enabled": True})
+    set_risk(
+        monkeypatch,
+        regime={"enabled": False},
+        leveraged_sizing={"enabled": True},
+        cc_timing={"breakout": {"enabled": False}},
+    )
     with session_scope() as s:
         assert build_sizing_context(now=NOW, session=s) is not None
 

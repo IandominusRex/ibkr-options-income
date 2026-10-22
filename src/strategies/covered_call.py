@@ -20,10 +20,12 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     ScoreCard,
+    SizingContext,
     Strategy,
     TechnicalStats,
     TradeCandidate,
 )
+from src.engine.regime_limits import cc_timing_reasons
 from src.storage.campaigns import adjusted_cost_basis_for
 from src.strategies._evaluation import (
     REASON_BELOW_BASIS,
@@ -84,6 +86,8 @@ def generate_cc_candidates(
     tech_stats: TechnicalStats,
     fund_stats: FundamentalStats,
     existing_short_calls: int = 0,
+    *,
+    sizing: SizingContext | None = None,
 ) -> list[TradeCandidate]:
     """Return ranked CC candidates for *symbol* given the existing long stock *position*.
 
@@ -92,7 +96,14 @@ def generate_cc_candidates(
     quotes pass filters.
     """
     return screen_cc_candidates(
-        symbol, quotes, position, iv_stats, tech_stats, fund_stats, existing_short_calls
+        symbol,
+        quotes,
+        position,
+        iv_stats,
+        tech_stats,
+        fund_stats,
+        existing_short_calls,
+        sizing=sizing,
     ).passed
 
 
@@ -104,6 +115,8 @@ def screen_cc_candidates(
     tech_stats: TechnicalStats,
     fund_stats: FundamentalStats,
     existing_short_calls: int = 0,
+    *,
+    sizing: SizingContext | None = None,
 ) -> ScreenResult:
     """Screen *symbol*'s call chain, returning both the passing and the rejected contracts.
 
@@ -115,6 +128,11 @@ def screen_cc_candidates(
 
     Every quote is evaluated against **all** gates rather than short-circuiting on the first
     failure, so a rejected contract carries the complete list of what stood in its way.
+
+    *sizing* carries the covered-call breakout (`SizingContext.cc_breakout`): while *symbol* is
+    in one, a call under the strike floor or over the delta cap is rejected
+    (`cc_timing_reasons`, the same function the Rules Engine applies) and every candidate carries
+    the breakout for its card and its send-time re-check. ``None`` means no breakout behaviour.
     """
     result = ScreenResult()
     if position.position <= 0:
@@ -151,6 +169,7 @@ def screen_cc_candidates(
     min_strike_vs_basis: float = cc_cfg.get("min_strike_vs_basis", 1.00)
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
+    breakout_now = sizing.cc_breakout.get(symbol.upper()) if sizing is not None else None
     rejected: list[tuple[TradeCandidate, list[str]]] = []
     # The ideal zone depends on (symbol, right, DTE) — not on the strike — so memoize per
     # expiry rather than recomputing it for every strike in the chain.
@@ -270,7 +289,11 @@ def screen_cc_candidates(
             open_interest=quote.open_interest,
             option_volume=quote.volume,
             rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],
+            cc_breakout=breakout_now,
         )
+        # After an upside breakout the call has to be pushed out (strike floor, delta cap);
+        # the full reason list is kept like every other gate's.
+        reasons.extend(cc_timing_reasons(sizing, candidate))
 
         if reasons:
             rejected.append((candidate, reasons))

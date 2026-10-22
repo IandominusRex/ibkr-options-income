@@ -602,6 +602,26 @@ class SizingNote(BaseModel):
     claude_reason: str | None = None
 
 
+class CcBreakout(BaseModel):
+    """An upside breakout on a held name that governs its covered-call strikes for a few sessions.
+
+    Worked out by `src/analytics/breakout.py` from daily bars; the covered-call generator and the
+    Rules Engine hold a call on the name to ``floor_strike`` and ``delta_max`` while it lasts
+    (`engine/regime_limits.cc_timing_reasons`). It only pushes a strike out: it never skips a
+    name, loosens a limit or sizes anything. ``broke_level`` is None when the close was a
+    ``high_sessions`` high with no resistance to clear.
+    """
+
+    trigger_day: date
+    trigger_close: float
+    jump_pct: float  # the close-to-close rise on the trigger day, in percent
+    volume_ratio: float  # the trigger day's volume over its 20-session average
+    broke_level: float | None = None
+    floor_strike: float
+    delta_max: float
+    sessions_left: int
+
+
 class SizingContext(BaseModel):
     """Everything the sizer and the gate need to apply the regime, built once per scan / send.
 
@@ -625,6 +645,9 @@ class SizingContext(BaseModel):
     name_bottoming: list[str] = Field(default_factory=list)
     market_bottoming: dict[str, bool] = Field(default_factory=dict)
     signal_lot_recent: list[str] = Field(default_factory=list)
+    # Held names in a covered-call breakout (scan time only; the send-time gate reads the
+    # candidate's own frozen copy). Not a regime limit: `/regime off` leaves it on.
+    cc_breakout: dict[str, CcBreakout] = Field(default_factory=dict)
 
 
 class TradeCandidate(BaseModel):
@@ -688,6 +711,9 @@ class TradeCandidate(BaseModel):
     # CSP only: how the market regime / leveraged-ETF ceiling shaped the size (None on rolls,
     # covered calls, and on candidates built without a SizingContext).
     sizing: SizingNote | None = None
+    # Covered call only: the breakout in force on the name when the call was priced (the card
+    # shows it and the send-time gate re-checks the strike floor and delta cap from it).
+    cc_breakout: CcBreakout | None = None
 
 
 class RiskVerdict(BaseModel):

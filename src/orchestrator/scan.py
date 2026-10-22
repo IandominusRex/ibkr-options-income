@@ -80,7 +80,7 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
-from src.regime.actions import record_scan_actions
+from src.regime.actions import record_cc_timing, record_scan_actions
 from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
@@ -1784,6 +1784,11 @@ async def _run_scan_body(
         await tracker.error("scoring", "failed — aborting")
         return result
 
+    # The covered calls the breakout rule held back (once per name per ET day; read later by a
+    # human, never by a gate). Outside the gate block on purpose: a name where nothing cleared
+    # the strike floor passes no candidate at all, and that is the case worth recording.
+    record_cc_timing(generator_rejects=generator_rejects)
+
     # Rank the assessed-but-not-approved contracts best-first, per strategy. This now covers
     # generator-stage rejects too, so a symbol whose entire chain failed the delta band still
     # produces a named closest contract instead of silence.
@@ -2105,6 +2110,7 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             tech_stats,
             fund_stats,
             existing_short_calls=existing_short_calls,
+            sizing=sizing,
         )
         cc_candidates = cc_screen.passed
         ticker_rejects.extend(cc_screen.rejected)

@@ -1838,6 +1838,61 @@ class ClaudeCutCfg(_KeyedCfg):
     breaker_pct: float = Field(default=50, gt=0, le=100)
 
 
+class CcBreakoutCfg(_KeyedCfg):
+    """The covered-call breakout rule (config/risk_limits.yaml -> cc_timing.breakout, spec 17).
+
+    After an upside breakout on a held name, its covered-call strikes must clear a floor and
+    its delta stay under a cap for ``lookback_sessions`` sessions (or until it fades). It only
+    pushes a strike out: it never skips a name, loosens a limit or sizes anything. Its own
+    switch: not a regime limit, so ``/regime off`` and ``regime.enabled: false`` leave it on.
+    ``delta_max`` must stay above ``covered_call.delta_min`` (`get_cc_timing_cfg` checks), or no
+    call could ever pass.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "enabled",
+        "lookback_sessions",
+        "jump_atr",
+        "volume_mult",
+        "high_sessions",
+        "fade_atr",
+        "floor_atr",
+        "delta_max",
+    )
+
+    enabled: bool = True
+    lookback_sessions: int = 5  # a breakout governs strikes for this many sessions
+    jump_atr: float = 1.5  # close-to-close rise, in ATR-14 of the day before
+    volume_mult: float = 1.5  # the day's volume vs its 20-session average
+    high_sessions: int = 60  # a close at this many sessions' high also counts as a breakout
+    fade_atr: float = 1.0  # a later close this many ATRs below the breakout close ends it
+    floor_atr: float = 1.0  # strike floor = max(next resistance, price + floor_atr x ATR)
+    delta_max: float = 0.25  # must exceed covered_call.delta_min (checked at load)
+
+    @model_validator(mode="after")
+    def _sane(self) -> CcBreakoutCfg:
+        if self.lookback_sessions < 1 or self.high_sessions < 20:
+            raise ValueError(
+                "cc_timing.breakout: lookback_sessions must be >= 1 and high_sessions >= 20"
+            )
+        if self.jump_atr <= 0 or self.volume_mult <= 0 or self.fade_atr <= 0 or self.floor_atr < 0:
+            raise ValueError(
+                "cc_timing.breakout: jump_atr, volume_mult and fade_atr must be > 0 and "
+                "floor_atr >= 0"
+            )
+        if not (0 < self.delta_max < 1):
+            raise ValueError("cc_timing.breakout.delta_max must be in (0, 1)")
+        return self
+
+
+class CcTimingCfg(_KeyedCfg):
+    """Covered-call timing (config/risk_limits.yaml -> cc_timing:). One rule today: ``breakout``."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("breakout",)
+
+    breakout: CcBreakoutCfg = Field(default_factory=CcBreakoutCfg)
+
+
 class Config(BaseModel):
     """Top-level config: settings.yaml sections + the rules/universe/weights dicts."""
 
@@ -2062,3 +2117,21 @@ def get_claude_cut_cfg() -> ClaudeCutCfg:
 def get_leveraged_sizing_cfg() -> LeveragedSizingCfg:
     """The typed ``leveraged_sizing:`` block of ``config/risk_limits.yaml`` (defaults when absent)."""
     return LeveragedSizingCfg(**(get_config().risk.get("leveraged_sizing") or {}))
+
+
+def get_cc_timing_cfg() -> CcTimingCfg:
+    """The typed ``cc_timing:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent).
+
+    Parsed on every call and raises ``ValueError`` on an invalid block (a mistyped key included),
+    at first use. ``breakout.delta_max`` must exceed ``covered_call.delta_min``: a guard at or
+    below it is an empty band that would stop every call instead of pushing it out (ruling 42).
+    """
+    risk = get_config().risk
+    cfg = CcTimingCfg(**(risk.get("cc_timing") or {}))
+    delta_min = float((risk.get("covered_call") or {}).get("delta_min", 0.0))
+    if cfg.breakout.delta_max <= delta_min:
+        raise ValueError(
+            f"cc_timing.breakout.delta_max ({cfg.breakout.delta_max}) must be above "
+            f"covered_call.delta_min ({delta_min}): otherwise no call could ever pass"
+        )
+    return cfg

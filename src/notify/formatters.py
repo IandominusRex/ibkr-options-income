@@ -192,6 +192,24 @@ def _zone_line(c: TradeCandidate) -> str | None:
     return f"Next lot zone ${zone.zone_low:,.2f}–${zone.zone_high:,.2f} ({where})"
 
 
+def _breakout_line(c: TradeCandidate) -> str | None:
+    """The covered-call breakout in force on this name, in words (None when there is none).
+
+    Example: ``Breakout Oct 14 (+6.1%, 2.3× volume, above $742.00): CC strikes at or above
+    $760.00, delta ≤ 0.25, for 3 more sessions``. Plain text: the caller escapes it.
+    """
+    b = c.cc_breakout
+    if b is None or c.strategy != Strategy.COVERED_CALL:
+        return None
+    where = f"above ${b.broke_level:,.2f}" if b.broke_level is not None else "at a 60-session high"
+    more = f"{b.sessions_left} more session{'' if b.sessions_left == 1 else 's'}"
+    return (
+        f"Breakout {b.trigger_day:%b} {b.trigger_day.day} (+{b.jump_pct:.1f}%, "
+        f"{b.volume_ratio:.1f}× volume, {where}): CC strikes at or above ${b.floor_strike:,.2f}, "
+        f"delta ≤ {b.delta_max:.2f}, for {more}"
+    )
+
+
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
@@ -228,6 +246,9 @@ def format_candidate(
     zone_line = _zone_line(candidate)
     if zone_line is not None:
         parts.append(_md(zone_line))
+    breakout_line = _breakout_line(candidate)
+    if breakout_line is not None:
+        parts.append(_md(breakout_line))
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
@@ -695,6 +716,9 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "loss_exit_cooldown": "a loss exit on this name earlier today",
     "bottoming_delta_too_high": "a bottoming-signal lot must be a lower-delta strike",
     "bottoming_lot_recent": "a bottoming-signal lot was already opened on this name lately",
+    # Covered-call breakout codes (engine/regime_limits.py cc_timing_reasons): push the call out.
+    "cc_breakout_strike_floor": "below the strike floor after a breakout",
+    "cc_breakout_delta": "too close to the money after a breakout",
     # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",

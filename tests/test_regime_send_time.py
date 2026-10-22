@@ -684,3 +684,68 @@ async def test_a_market_tagged_or_ordinary_lot_is_not_recorded_as_a_signal_lot(m
     executed, _ = await run_poll(monkeypatch)
     assert len(executed) == 2
     assert actions(kind="bottoming_lot") == []
+
+
+# --------------------------------------------------------------------------- #
+# the covered-call breakout is re-checked at send time from the frozen card (Task 16)
+# --------------------------------------------------------------------------- #
+
+
+def queue_call(candidate_id: str, *, strike: float, delta: float, breakout=None):
+    """Queue an approved covered call the way the approval path does (snapshot = the frozen card)."""
+    from src.common.schemas import Strategy
+    from src.storage.db import session_scope
+
+    cand = _make_candidate(
+        candidate_id=candidate_id,
+        underlying="AAPL",
+        strategy=Strategy.COVERED_CALL,
+        delta=delta,
+        dte=21,
+        current_iv=30.0,
+    ).model_copy(update={"right": OptionRight.CALL, "strike": strike, "cc_breakout": breakout})
+    with session_scope() as s:
+        approval = ApprovalRow(
+            candidate_id=candidate_id,
+            status=ApprovalStatus.APPROVED,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        s.add(approval)
+        s.flush()
+        order = OrderRow(
+            candidate_id=candidate_id,
+            approval_id=approval.id,
+            state=OrderState.QUEUED,
+            snapshot=cand.model_dump(mode="json"),
+        )
+        s.add(order)
+        s.flush()
+        return order.id
+
+
+async def test_the_send_time_regate_enforces_the_breakout_frozen_on_the_card(monkeypatch):
+    from src.common.schemas import CcBreakout
+
+    seed_regime(N, N)
+    frozen = CcBreakout(
+        trigger_day=date.today() - timedelta(days=1),
+        trigger_close=190.0,
+        jump_pct=6.1,
+        volume_ratio=2.3,
+        broke_level=185.0,
+        floor_strike=190.0,
+        delta_max=0.25,
+        sessions_left=4,
+    )
+    stock = PositionSnapshot(symbol="AAPL", sec_type="STK", position=200.0, avg_cost=150.0)
+    near = queue_call("cc-near", strike=186.0, delta=0.22, breakout=frozen)
+    far = queue_call("cc-far", strike=192.0, delta=0.22, breakout=frozen)
+    free = queue_call("cc-free", strike=186.0, delta=0.22)  # no breakout on its card
+
+    executed, _ = await run_poll(monkeypatch, positions=[stock])
+
+    sent = sorted(oid for oid, _ in executed)
+    assert order_row(near).state == OrderState.CANCELLED
+    assert "cc_breakout_strike_floor" in (order_row(near).detail or "")
+    # 200 shares cover two calls: the far strike and the card without a breakout both go
+    assert sent == sorted([far, free])

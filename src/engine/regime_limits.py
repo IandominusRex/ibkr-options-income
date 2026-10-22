@@ -28,11 +28,15 @@ What each limit is:
   daily circuit breaker). Both functions take plain values and nothing else; the sender calls
   them and records every override.
 
+* **Covered-call breakout** — after an upside breakout a held name's call strikes must clear a
+  floor and stay under a delta cap (`cc_timing_reasons`). Its own switch (``cc_timing.breakout``);
+  not a regime limit.
+
 The regime limits (and the ladder's zone) switch off when the context is None, `/regime off`
 suspended it today, or `regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
 limit: it still applies when the regime is suspended or disabled (a ladder trigger on the name
-still stresses its tier). Rolls, covered calls, closes and exits are never limited here: callers
-apply these functions to cash-secured puts only.
+still stresses its tier). Rolls, closes and exits are never limited here, and a covered call only
+by the breakout rule: callers apply the other functions to cash-secured puts only.
 """
 
 from __future__ import annotations
@@ -40,7 +44,13 @@ from __future__ import annotations
 import math
 from typing import Literal
 
-from src.common.config import ClaudeCutCfg, get_config, get_leveraged_sizing_cfg, get_regime_cfg
+from src.common.config import (
+    ClaudeCutCfg,
+    get_cc_timing_cfg,
+    get_config,
+    get_leveraged_sizing_cfg,
+    get_regime_cfg,
+)
 from src.common.schemas import (
     AccountSnapshot,
     MarketRegime,
@@ -486,3 +496,34 @@ def trim_for_send(
     if budget_fit is not None:
         n = min(n, budget_fit)
     return n
+
+
+def cc_timing_reasons(ctx: SizingContext | None, cand: TradeCandidate) -> list[str]:
+    """Why a covered call on a name in an upside breakout is too close (spec section 17).
+
+    ``"cc_breakout_strike_floor"`` when the strike is under the breakout's floor and
+    ``"cc_breakout_delta"`` when its delta is over the cap: while a breakout lasts, a call must
+    be pushed out, never skipped. Covered calls only: a roll or a put never gets a reason here.
+    The breakout comes from the context (the scan's fresh one) or, failing that, from the copy
+    frozen on the candidate, which is how the send-time re-gate sees it without fetching bars.
+
+    **Not gated by** `active`: this is not a regime limit, so ``/regime off`` and
+    ``regime.enabled: false`` leave it on; ``cc_timing.breakout.enabled: false`` switches it off.
+    A missing delta is the generator's and the gate's own ``delta_missing``, not this rule's.
+    """
+    if cand.strategy != Strategy.COVERED_CALL or cand.roll_from is not None:
+        return []
+    cfg = get_cc_timing_cfg().breakout
+    if not cfg.enabled:
+        return []
+    found = (ctx.cc_breakout.get(cand.underlying.upper()) if ctx is not None else None) or (
+        cand.cc_breakout
+    )
+    if found is None:
+        return []
+    reasons: list[str] = []
+    if cand.strike < found.floor_strike - 1e-9:
+        reasons.append("cc_breakout_strike_floor")
+    if cand.delta is not None and abs(cand.delta) > found.delta_max + 1e-9:
+        reasons.append("cc_breakout_delta")
+    return reasons

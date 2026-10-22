@@ -162,15 +162,23 @@ def _rsi14(close: pd.Series) -> float | None:
     return round(val, 2) if np.isfinite(val) else None
 
 
-def _atr14(high: pd.Series, low: pd.Series, close: pd.Series) -> float | None:
-    if len(close) < 15:
-        return None
+def atr14_series(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    """Wilder-style ATR-14 for every bar (the whole series ``_atr14`` ends on).
+
+    Defined from the first bar on, but only meaningful once 14 bars have gone by; callers that
+    need a trustworthy value check the history length themselves.
+    """
     prev_close = close.shift(1)
     tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(
         axis=1
     )
-    atr = tr.ewm(com=13, adjust=False).mean()
-    val = float(atr.iloc[-1])
+    return tr.ewm(com=13, adjust=False).mean()
+
+
+def _atr14(high: pd.Series, low: pd.Series, close: pd.Series) -> float | None:
+    if len(close) < 15:
+        return None
+    val = float(atr14_series(high, low, close).iloc[-1])
     return round(val, 4) if np.isfinite(val) else None
 
 

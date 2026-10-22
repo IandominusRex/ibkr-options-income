@@ -216,9 +216,10 @@ async def scan_symbol(
             as the technicals' cached price so a gate-skipped symbol doesn't pay for a second
             identical fetch.
         symbol_timeout_seconds: hard bound on the option-chain fetch.
-        sizing: the market-regime context for this scan (`src/regime/context.py`); handed to the
-            CSP screen so the sizer applies the same regime limits the gate will. ``None`` means
-            no regime behaviour (the covered-call screen never takes it: calls are not limited).
+        sizing: the sizing context for this scan (`src/regime/context.py`); handed to the CSP
+            screen so the sizer applies the same regime limits the gate will, and to the
+            covered-call screen, which reads only its breakout (strikes pushed out after an
+            upside breakout; calls are not regime-limited). ``None`` means no such behaviour.
     """
     loop = asyncio.get_running_loop()
     errors: list[str] = []
@@ -297,6 +298,7 @@ async def scan_symbol(
             tech_stats,
             fund_stats,
             existing_short_calls=existing_short_calls,
+            sizing=sizing,
         )
         # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches).
         # Rejected contracts get it too — they are shown on the same cards.

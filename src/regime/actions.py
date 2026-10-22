@@ -258,3 +258,45 @@ def record_scan_actions(
             )
     except Exception:
         log.warning("scan sizing actions not recorded", exc_info=True)
+
+
+# The covered-call breakout rule's gate reasons (engine/regime_limits.cc_timing_reasons).
+CC_TIMING_REASONS: tuple[str, ...] = ("cc_breakout_strike_floor", "cc_breakout_delta")
+
+
+def record_cc_timing(*, generator_rejects: list[tuple[TradeCandidate, list[str]]]) -> None:
+    """Record the covered calls the breakout rule held back in one scan (spec section 17).
+
+    Per underlying, the highest-premium covered call rejected **only** for
+    ``cc_breakout_*`` reasons (it would otherwise have been a valid call; a reject that also
+    failed ROC or the delta band is not the rule's doing) becomes one ``cc_breakout_floor`` row,
+    keyed ``cctiming:<SYM>:<ET day>`` so a different near strike rejected on each 15-minute scan
+    still counts once and the day's first contract is the counterfactual. When a farther call
+    on the name is sold that day, Task 15's `summarize` reports the row as "pushed out"
+    (ruling 45). The sizer rejects these before the gate, so they arrive as *generator_rejects*.
+    Never raises.
+    """
+    try:
+        day = today_et().isoformat()
+        best: dict[str, tuple[TradeCandidate, list[str]]] = {}
+        for cand, reasons in generator_rejects:
+            if cand.strategy != Strategy.COVERED_CALL or cand.roll_from is not None:
+                continue
+            if not reasons or not all(r in CC_TIMING_REASONS for r in reasons):
+                continue
+            held = best.get(cand.underlying)
+            if held is None or cand.premium > held[0].premium:
+                best[cand.underlying] = (cand, reasons)
+        for underlying, (cand, reasons) in best.items():
+            floor = cand.cc_breakout.floor_strike if cand.cc_breakout is not None else None
+            under = f"; floor ${floor:,.2f}" if floor is not None else ""
+            record_action(
+                cand=cand,
+                kind="cc_breakout_floor",
+                deterministic=cand.contracts,
+                sent=0,
+                reason=f"held back by the covered-call breakout rule ({', '.join(reasons)}{under})",
+                key=f"cctiming:{underlying}:{day}",
+            )
+    except Exception:
+        log.warning("covered-call timing actions not recorded", exc_info=True)

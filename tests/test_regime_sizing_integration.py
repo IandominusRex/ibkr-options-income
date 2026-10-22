@@ -433,7 +433,14 @@ def test_floor_is_per_governing_index(monkeypatch):
 def test_every_production_caller_passes_sizing():
     """Review Focus 1: a caller that forgets ``sizing=`` silently drops every regime limit."""
     root = Path(__file__).resolve().parents[1] / "src"
-    watched = {"validate_candidates", "screen_csp_candidates", "screen_csp"}
+    # The covered-call screens join the CSP ones: the breakout rule rides the same context.
+    watched = {
+        "validate_candidates",
+        "screen_csp_candidates",
+        "screen_csp",
+        "screen_cc_candidates",
+        "screen_cc",
+    }
     offenders: list[str] = []
     seen = 0
     for path in sorted(root.rglob("*.py")):

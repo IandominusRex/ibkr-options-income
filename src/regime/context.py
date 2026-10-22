@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.analytics import regime as regime_data
 from src.analytics.bottoming import name_bottoming
+from src.analytics.breakout import breakout
 from src.analytics.scale_in import (
     compute_zone,
     last_broken_support,
@@ -29,14 +30,17 @@ from src.analytics.scale_in import (
 from src.analytics.support_levels import support_levels
 from src.analytics.technicals import _atr14, _sma
 from src.common.config import (
+    CcBreakoutCfg,
     RegimeBottomingCfg,
     RegimeLadderCfg,
+    get_cc_timing_cfg,
     get_config,
     get_leveraged_sizing_cfg,
     get_regime_cfg,
 )
 from src.common.market_hours import is_trading_day
 from src.common.schemas import (
+    CcBreakout,
     MarketRegime,
     OrderState,
     PositionSnapshot,
@@ -330,6 +334,41 @@ def signal_lots_recent(session: Session, today: date, *, sessions: int) -> list[
     return sorted({sym for sym, day in rows if _sessions_between(day, today) < sessions})
 
 
+def _round_lot_holdings(positions: list[PositionSnapshot]) -> list[str]:
+    """Underlyings with at least 100 long shares (enough to write one covered call), sorted."""
+    shares: dict[str, float] = {}
+    for p in positions:
+        if p.sec_type == "STK" and p.position > 0:
+            name = (p.underlying or p.symbol).upper()
+            shares[name] = shares.get(name, 0.0) + p.position
+    return sorted(name for name, qty in shares.items() if qty >= 100)
+
+
+def _cc_breakouts(
+    positions: list[PositionSnapshot],
+    bars: dict[str, pd.DataFrame] | None,
+    cfg: CcBreakoutCfg,
+) -> dict[str, CcBreakout]:
+    """The breakout in force on each held name (ruling 28: recomputed from daily bars every scan).
+
+    A name with no bars, or one whose bars fail to load, simply has none: the rule only ever
+    pushes a call out, so missing data leaves the call as the strategy would have priced it.
+    """
+    out: dict[str, CcBreakout] = {}
+    for name in _round_lot_holdings(positions):
+        try:
+            frame = (bars or {}).get(name)
+            if frame is None:
+                frame = regime_data.get_bars(name)
+            found = breakout(frame, cfg=cfg)
+        except Exception:
+            log.warning("cc breakout: bars for %s unavailable — no breakout", name, exc_info=True)
+            continue
+        if found is not None:
+            out[name] = found
+    return out
+
+
 def build_sizing_context(
     *,
     now: datetime,
@@ -342,21 +381,27 @@ def build_sizing_context(
 ) -> SizingContext | None:
     """The sizing context for a scan (or, with ``for_send=True``, a send-time re-gate).
 
-    ``None`` only when every switch that wants a context is off (``regime.enabled`` and
-    ``leveraged_sizing.enabled`` today; the covered-call timing switches join them later). The
-    regimes are the persisted effective regimes (both NORMAL when none was ever stored). A
-    database failure propagates: the callers fail closed (no scan) rather than size without the
-    regime.
+    ``None`` only when every switch that wants a context is off (``regime.enabled``,
+    ``leveraged_sizing.enabled`` and ``cc_timing.breakout.enabled``). The regimes are the
+    persisted effective regimes (both NORMAL when none was ever stored). A database failure
+    propagates: the callers fail closed (no scan) rather than size without the regime.
 
     *symbols*, *positions*, *bars* and *spots* feed the scale-in ladder (`_ladder`): per-name
     triggers and zones for *symbols*. *bars* maps a symbol to its completed daily bars (default:
     `regime.get_bars`, daily-cached); *spots* maps a symbol to its live price for the
     near-the-money trigger (default: fetched for names with a short put, else the last close).
     ``for_send=True`` fetches no bars: it carries today's loss exits (a cheap query) and leaves
-    each card's zone to the order snapshot.
+    each card's zone to the order snapshot and each covered call's breakout to its own frozen copy.
+
+    A scan also fills ``cc_breakout`` (spec section 17): the breakout, if any, on every
+    underlying with at least 100 long shares in *positions*, from the same daily bars (*bars*, or
+    `regime.get_bars`). That rule has its own switch and is not a regime limit, so it is filled
+    whether or not the regime is on, suspended or disabled.
     """
     regime_cfg = get_regime_cfg()
-    if not regime_cfg.enabled and not get_leveraged_sizing_cfg().enabled:
+    cc_cfg = get_cc_timing_cfg().breakout
+    leveraged_on = get_leveraged_sizing_cfg().enabled
+    if not regime_cfg.enabled and not leveraged_on and not cc_cfg.enabled:
         return None
     today = _et_date(now)
     state = load_regime_state(session)
@@ -380,15 +425,21 @@ def build_sizing_context(
             session, today, for_send=for_send, tech_linked=regime_cfg.tech_linked
         ),
         leverage=_leverage_map(),
-        loss_exit_today=loss_exits_today(session, today=today),
+        loss_exit_today=(
+            loss_exits_today(session, today=today) if regime_cfg.enabled or leveraged_on else []
+        ),
         market_bottoming=market_flags,
         signal_lot_recent=signal_lots_recent(
             session, today, sessions=regime_cfg.bottoming.signal_lot_every_sessions
         ),
         for_send=for_send,
     )
-    if for_send or not symbols:
+    if for_send:
         return ctx
+    if cc_cfg.enabled:
+        ctx = ctx.model_copy(update={"cc_breakout": _cc_breakouts(positions or [], bars, cc_cfg)})
+    if not symbols or not (regime_cfg.enabled or leveraged_on):
+        return ctx  # a breakout-only context needs no ladder work
     triggers, zones, bottoming_names = _ladder(
         ctx,
         session=session,

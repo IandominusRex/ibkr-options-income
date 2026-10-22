@@ -264,6 +264,26 @@ claude_cut:
   breaker_min: 4             # circuit breaker: at least this many auto CSPs cut to 0 today...
   breaker_pct: 50            # ...and more than this % of the day's reviewed auto CSPs -> further cuts today are recorded, not applied
 
+# --- Covered-call timing (analytics/breakout.py; engine/regime_limits.py cc_timing_reasons) ---
+# After an UPSIDE BREAKOUT on a held name -- a close that rose `jump_atr` x ATR-14 on `volume_mult`
+# x its 20-day average volume and cleared the nearest resistance (or a `high_sessions` high) --
+# covered calls on it must be pushed out for `lookback_sessions` sessions (or until a close fades
+# `fade_atr` x ATR under the breakout close): strike at or above max(next resistance, price +
+# `floor_atr` x ATR) and delta at most `delta_max`. It only pushes a strike out: it never skips a
+# name, loosens a limit or sizes anything. Its own switch, NOT a regime limit: `/regime off` and
+# `regime.enabled: false` leave it on. Rolls are exempt. `delta_max` must exceed
+# covered_call.delta_min (checked at load, or the rule would stop every call, not push it out).
+cc_timing:
+  breakout:
+    enabled: true
+    lookback_sessions: 5      # a breakout governs CC strikes for this many sessions
+    jump_atr: 1.5             # close-to-close rise, in ATR-14 of the day before
+    volume_mult: 1.5          # the day's volume vs its 20-session average
+    high_sessions: 60         # a close at this many sessions' high counts too
+    fade_atr: 1.0             # a later close this many ATRs below the breakout close ends it
+    floor_atr: 1.0            # strike floor = max(next resistance above price, price + floor_atr x ATR)
+    delta_max: 0.25           # must exceed covered_call.delta_min (0.20), checked at load
+
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
 # (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate
 # `approval:` block used to sit in this file but was never read by the config loader.

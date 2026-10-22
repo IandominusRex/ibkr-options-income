@@ -41,6 +41,7 @@ from src.engine.regime_limits import (
     active,
     bottoming_reason,
     bottoming_tag,
+    cc_timing_reasons,
     ceiling_kind,
     daily_limit,
     floor_left,
@@ -200,7 +201,9 @@ def validate_candidates(
 
     *sizing* carries the market regime (`src/regime/context.py`); ``None`` (rolls, tests) means no
     regime behaviour. It only ever touches cash-secured puts: covered calls and rolls are never
-    regime-limited, exactly like the income gates above. With it, a CSP is also held to the
+    regime-limited, exactly like the income gates above. (The one thing a covered call meets is
+    the breakout rule, `cc_timing_reasons`, which has its own switch and also reads the breakout
+    frozen on the candidate when there is no context.) With it, a CSP is also held to the
     per-trade ceiling (`regime_ceiling`, or `leveraged_ceiling` for a leveraged ETF), the
     regime-scaled budgets (`regime_budget` when only the scaled cap stops it, i.e. it fits every
     unscaled cap), the day's new-CSP count (`regime_daily_limit`, per governing index), and the
@@ -345,6 +348,13 @@ def validate_candidates(
                     guard = bottoming_reason(sizing, cand)
                     if guard is not None:
                         reasons.append(guard)
+
+        # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
+        # a call must sit at or above the strike floor and under the delta cap. Pushes a call
+        # out, never skips the name; covered calls only (a roll or a put gets no reason), and
+        # not a regime limit (`/regime off` leaves it on). At send time there is no fresh
+        # context: the copy frozen on the candidate carries it.
+        reasons.extend(cc_timing_reasons(sizing, cand))
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
         # A ROLL is judged only on whether its new expiry runs into earnings: the proximity
