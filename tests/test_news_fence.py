@@ -25,6 +25,7 @@ _ROW_CLASSES = (
     "StoryTriageRow(",
     "MarketPictureRow(",
     "PictureStoryRow(",
+    "TickerDossierRow(",
 )
 
 

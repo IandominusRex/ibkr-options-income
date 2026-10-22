@@ -14,7 +14,7 @@ from sqlalchemy import String, cast, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from src.common.schemas import MarketPicture
+from src.common.schemas import MarketPicture, TickerDossier
 from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView, TriageView
 from src.news.store.models import (
     EarningsEventRow,
@@ -27,6 +27,7 @@ from src.news.store.models import (
     NewsStateRow,
     PictureStoryRow,
     StoryTriageRow,
+    TickerDossierRow,
 )
 
 
@@ -341,3 +342,33 @@ def active_stories(s: Session) -> list[PictureStoryRow]:
         )
     except OperationalError:
         return []
+
+
+def latest_dossier(s: Session, symbol: str) -> TickerDossier | None:
+    """The newest saved dossier for *symbol*. A payload that no longer validates reads as none,
+    and so does a news.db written before the table existed."""
+    try:
+        row = s.scalar(
+            select(TickerDossierRow)
+            .where(TickerDossierRow.symbol == symbol.upper())
+            .order_by(TickerDossierRow.built_at.desc(), TickerDossierRow.id.desc())
+            .limit(1)
+        )
+    except OperationalError:
+        return None
+    if row is None:
+        return None
+    try:
+        return TickerDossier.model_validate(row.payload)
+    except ValidationError:
+        return None
+
+
+def latest_dossiers(s: Session, symbols: list[str]) -> dict[str, TickerDossier]:
+    """`latest_dossier` for each of *symbols* that has one, keyed by upper-cased symbol."""
+    out: dict[str, TickerDossier] = {}
+    for symbol in dict.fromkeys(x.upper() for x in symbols):
+        found = latest_dossier(s, symbol)
+        if found is not None:
+            out[symbol] = found
+    return out

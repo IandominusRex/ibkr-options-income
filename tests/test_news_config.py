@@ -13,7 +13,7 @@ def test_example_config_loads_with_spec_defaults() -> None:
     assert cfg.enabled is True
     assert cfg.llm.backend == "cli_then_ollama"  # claude -p, Ollama when it fails (2026-10-15)
     assert cfg.llm.model == "claude-sonnet-5-5"  # Haiku audited 2026-10-15, not adopted
-    assert cfg.llm.max_calls_per_day == 40
+    assert cfg.llm.max_calls_per_day == 44  # 30 general + 10 picture + 4 dossier
     assert cfg.quiet_hours.tz == "Asia/Singapore"
     assert (cfg.quiet_hours.start, cfg.quiet_hours.end) == ("00:00", "07:00")
     assert cfg.digests.premarket == "08:00" and cfg.digests.close == "16:30"

@@ -215,3 +215,17 @@ class PictureStoryRow(NewsBase):
     cluster_ids: Mapped[list] = mapped_column(JSON, default=list)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class TickerDossierRow(NewsBase):
+    """One build of a name's dossier (``TickerDossier`` as JSON); the newest row per symbol is
+    the current one and older rows are kept ``dossier.keep_days`` for audit. Every build is a new
+    row: the hourly numbers-only refresh and the prose build alike."""
+
+    __tablename__ = "ticker_dossiers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    version: Mapped[str] = mapped_column(String(64), unique=True)
+    built_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)

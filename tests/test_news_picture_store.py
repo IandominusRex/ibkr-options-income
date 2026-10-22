@@ -198,6 +198,8 @@ def test_queries_return_empty_on_an_old_news_db(tmp_path) -> None:
 
 def test_general_calls_stop_at_the_reserve_picture_calls_do_not(news_db, monkeypatch) -> None:
     _cfg(monkeypatch, backend="cli", max_calls_per_day=10, reserved_for_picture=4)
+    # this test is about the picture reserve alone: no share is held back for dossiers (Task 17)
+    monkeypatch.setattr(get_config().news.dossier, "max_calls_per_day", 0)
     monkeypatch.setattr(llm, "_cli", lambda prompt, prefix, cfg: ("x", None))
     for _ in range(6):
         assert llm.call_llm("p", schema={}, prefix="t", now=NOW) is not None
@@ -214,7 +216,8 @@ def test_general_calls_stop_at_the_reserve_picture_calls_do_not(news_db, monkeyp
 
 
 def test_general_is_counted_separately_from_picture(news_db, monkeypatch) -> None:
-    """25 picture calls then general calls: general is allowed until general == 30 or total == 40."""
+    """25 picture calls then general calls: general is allowed until general == 26 (40 - 10 reserved
+    - 4 for dossiers) or total == 40."""
     _cfg(monkeypatch, backend="cli", max_calls_per_day=40, reserved_for_picture=10)
     monkeypatch.setattr(llm, "_cli", lambda prompt, prefix, cfg: ("x", None))
     for _ in range(25):
@@ -224,7 +227,7 @@ def test_general_is_counted_separately_from_picture(news_db, monkeypatch) -> Non
     n = 0
     while llm.call_llm("p", schema={}, prefix="t", now=NOW) is not None:
         n += 1
-    assert n == 15  # the total (40) bit before the general share (30) did
+    assert n == 15  # the total (40) bit before the general share (26) did
     assert llm_calls(DAY) == 40 and llm_calls(DAY, "general") == 15
 
 
@@ -256,7 +259,7 @@ def test_each_purpose_is_counted_under_its_own_key(news_db, monkeypatch, purpose
 
 def test_example_news_config_carries_the_triage_and_picture_blocks() -> None:
     cfg = get_config().news
-    assert cfg.llm.reserved_for_picture == 10 and cfg.llm.max_calls_per_day == 40
+    assert cfg.llm.reserved_for_picture == 10 and cfg.llm.max_calls_per_day == 44
     t = cfg.triage
     assert t.enabled and t.batch_size == 40 and t.rth_batch_times == ["10:30", "12:30", "14:30"]
     assert t.promote_index_move_pct == 1.0 and t.promote_ticker_residual_pct == 3.0

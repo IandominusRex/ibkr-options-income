@@ -56,19 +56,28 @@ def _ollama(prompt: str, schema: dict, cfg: NewsLlmCfg) -> str | None:
     return _generate(prompt, ccfg, schema, timeout=cfg.timeout_seconds)
 
 
-Purpose = Literal["general", "picture"]
+Purpose = Literal["general", "picture", "dossier"]
+
+
+def _dossier_share(cfg: NewsLlmCfg) -> int:
+    """The calls kept for the dossier's prose builds: its own daily cap while it is enabled."""
+    dossier = get_config().news.dossier
+    return dossier.max_calls_per_day if dossier.enabled else 0
 
 
 def _general_limit(cfg: NewsLlmCfg) -> int:
-    """General calls (card writer, digests, briefs) stop here: the cap less the picture reserve,
-    but never below one a day, so a reserve at or above the cap cannot silence the writer."""
+    """General calls (card writer, digests, briefs) stop here: the cap less the picture reserve
+    and the dossier's own cap, but never below one a day, so a big reserve cannot silence the
+    writer."""
     cap = cfg.max_calls_per_day
-    return min(cap, max(1, cap - cfg.reserved_for_picture))
+    return min(cap, max(1, cap - cfg.reserved_for_picture - _dossier_share(cfg)))
 
 
 def _allowed(day: date, purpose: Purpose, cfg: NewsLlmCfg) -> bool:
     if llm_calls(day) >= cfg.max_calls_per_day:
         return False
+    if purpose == "dossier":
+        return _dossier_share(cfg) > llm_calls(day, "dossier")
     return purpose != "general" or llm_calls(day, "general") < _general_limit(cfg)
 
 
@@ -79,18 +88,21 @@ def cap_reached(now: datetime, purpose: Purpose = "general") -> bool:
 def call_llm(
     prompt: str, *, schema: dict, prefix: str, now: datetime, purpose: Purpose = "general"
 ) -> LlmResult | None:
-    """``purpose`` picks the budget: ``general`` calls stop at ``max_calls_per_day - reserved_for_picture``
-    so triage and picture builds (``picture``) always have their share; both stop at the total."""
+    """``purpose`` picks the budget: ``general`` calls stop at ``max_calls_per_day`` less the
+    picture reserve and the dossier's own cap, ``dossier`` calls at ``dossier.max_calls_per_day``
+    (none while the dossier is disabled), ``picture`` (triage and picture builds) only at the
+    total; every purpose stops at the total."""
     cfg = get_config().news.llm
     day = now.astimezone(ET).date()
     for backend in _ORDER[cfg.backend]:
         if not _allowed(day, purpose, cfg):
             log.info(
-                "news llm: %s budget reached (cap %d, %d reserved for the picture) — "
-                "deterministic output only",
+                "news llm: %s budget reached (cap %d, %d reserved for the picture, %d for "
+                "dossiers) — deterministic output only",
                 purpose,
                 cfg.max_calls_per_day,
                 cfg.reserved_for_picture,
+                _dossier_share(cfg),
             )
             return None
         incr_llm_calls(day, purpose)

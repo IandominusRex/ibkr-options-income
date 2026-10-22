@@ -376,6 +376,57 @@ class MarketPicture(BaseModel):
     stale: bool = False  # True when the model call failed and only the deterministic part is fresh
 
 
+class DossierFact(BaseModel):
+    """One deterministic line of a ticker dossier. ``id`` is ``<SYM>:F<n>`` so a reviewer can cite
+    it next to the candidate's own facts without a clash."""
+
+    id: str
+    label: str
+    display: str
+
+
+class DossierEvent(BaseModel):
+    """An upcoming dated catalyst (not earnings) that the model proposed and Python verified.
+
+    ``id`` is ``<SYM>:E<n>``; ``evidence`` is the ``C<id>`` of the news cluster that states the
+    date and ``quote`` the text of that cluster around it. Python keeps an event only when its
+    date is written in that cluster's text, so it is data, not prose.
+    """
+
+    id: str
+    title: str = Field(max_length=80)
+    on: date
+    evidence: str
+    quote: str = Field(max_length=200)
+
+
+class TickerDossier(BaseModel):
+    """What the news process knows about one name the book cares about (spec section 16).
+
+    Python writes every number (``facts``, ``health``, ``sentiment_*``) and recomputes it on each
+    build; the model writes only ``profile`` (what the business is and what moves it), ``story``
+    (what is happening to it now, citing news clusters) and proposes ``events`` (which Python
+    verifies). Enrichment: it reaches prompts, never the engine, execution or sizing.
+    """
+
+    symbol: str
+    version: str  # changes on every build, including the hourly numbers-only refresh
+    facts_at: datetime
+    prose_at: datetime | None = None  # when story/events were last written (None: never)
+    profile_at: datetime | None = None
+    kind: Literal["stock", "etf", "leveraged_etf"]
+    health: Literal["strong", "ok", "weak", "n/a", "unknown"]
+    health_why: list[str] = Field(default_factory=list)
+    facts: list[DossierFact] = Field(default_factory=list)
+    sentiment_7d: float | None = None  # mean deterministic sentiment of the last 7 days
+    sentiment_items_7d: int = 0
+    profile: str = ""
+    story: str = ""
+    story_evidence: list[str] = Field(default_factory=list)
+    events: list[DossierEvent] = Field(default_factory=list)
+    stale: bool = False  # True when the last prose build failed and the prose is carried forward
+
+
 class TechnicalStats(BaseModel):
     symbol: str
     price: float

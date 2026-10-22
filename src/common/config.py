@@ -1221,7 +1221,7 @@ class NewsLlmCfg(BaseModel):
     model: str = "claude-sonnet-5-5"
     ollama_model: str = ""  # empty = claude.ollama_model
     timeout_seconds: float = 120.0
-    max_calls_per_day: int = 40
+    max_calls_per_day: int = 44  # 30 general + 10 picture + 4 dossier at the shipped shares
     # Of max_calls_per_day, this many are kept for triage and picture builds: general calls (the
     # card writer, digests, briefs) stop at max - reserved, so a selloff day's alert storm cannot
     # starve the picture. The total cap still holds for everyone.
@@ -1258,6 +1258,39 @@ class NewsPictureCfg(BaseModel):
         default=0.3, gt=0, le=1
     )  # ticker/tag/topic overlap to attach
     staleness_hours: float = Field(default=26.0, gt=0)  # readers are told a picture is stale
+
+
+class NewsDossierHealthCfg(BaseModel):
+    """Debt/equity bands for a stock's health label, in yfinance's unit (percent: 150 = 1.5x)."""
+
+    de_strong: float = Field(default=100.0, gt=0)
+    de_weak: float = Field(default=200.0, gt=0)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> NewsDossierHealthCfg:
+        if self.de_strong > self.de_weak:
+            raise ValueError("dossier.health: de_strong must not exceed de_weak")
+        return self
+
+
+class NewsDossierCfg(BaseModel):
+    """Per-name dossiers (spec section 16): the hourly numbers refresh, the batched prose build and
+    its daily call budget."""
+
+    enabled: bool = True
+    batch_size: int = Field(default=6, ge=1)  # names per LLM call
+    max_calls_per_day: int = Field(default=4, ge=0)  # its own cap (0: no prose builds)
+    facts_refresh_min: int = Field(default=60, ge=1)  # deterministic refresh, no LLM
+    prose_min_interval_hours: float = Field(
+        default=6.0, ge=0
+    )  # prose rebuilt on change, at most this often
+    profile_days: int = Field(default=7, ge=1)  # the profile is rewritten this often
+    story_window_days: int = Field(default=7, ge=1)  # clusters a story may cite
+    max_event_days: int = Field(default=45, ge=1)  # an event must fall within this many days
+    staleness_hours: float = Field(default=26.0, gt=0)  # readers are told old prose is old
+    max_names_in_review: int = Field(default=8, ge=1)  # compact notes in a full-scan prompt
+    keep_days: int = Field(default=30, ge=1)  # older rows are deleted
+    health: NewsDossierHealthCfg = Field(default_factory=NewsDossierHealthCfg)
 
 
 class NewsSentimentCfg(BaseModel):
@@ -1320,6 +1353,7 @@ class NewsCfg(BaseModel):
     briefs: NewsBriefsCfg = Field(default_factory=NewsBriefsCfg)
     triage: NewsTriageCfg = Field(default_factory=NewsTriageCfg)
     picture: NewsPictureCfg = Field(default_factory=NewsPictureCfg)
+    dossier: NewsDossierCfg = Field(default_factory=NewsDossierCfg)
 
 
 class WebCfg(BaseModel):
