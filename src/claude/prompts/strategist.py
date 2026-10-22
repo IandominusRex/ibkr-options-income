@@ -381,10 +381,19 @@ def _candidate_facts(
         facts.append(f"F6 IV/RV {c.iv_rv_ratio:.2f} → {note}")
 
     if gate_passed:
-        facts.append(
-            "F7 Passed every deterministic gate (delta, liquidity, fair value, IV, earnings "
-            "blackout, concentration)"
-        )
+        if c.sizing is not None and c.sizing.vrp_waived:
+            # A name-level bottoming-signal lot is exempt from the fair-value floor (and only
+            # that): F4 shows the credit is under it, so F7 must not claim the floor was met.
+            facts.append(
+                "F7 Passed every deterministic gate (delta, liquidity, IV, earnings blackout, "
+                "concentration); the fair-value floor was waived because this lot opened on a "
+                "bottoming signal"
+            )
+        else:
+            facts.append(
+                "F7 Passed every deterministic gate (delta, liquidity, fair value, IV, earnings "
+                "blackout, concentration)"
+            )
 
     return facts
 

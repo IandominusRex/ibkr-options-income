@@ -1876,8 +1876,9 @@ class CcBreakoutCfg(_KeyedCfg):
     """The covered-call breakout rule (config/risk_limits.yaml -> cc_timing.breakout, spec 17).
 
     After an upside breakout on a held name, its covered-call strikes must clear a floor and
-    its delta stay under a cap for ``lookback_sessions`` sessions (or until it fades). It only
-    pushes a strike out: it never skips a name, loosens a limit or sizes anything. Its own
+    its delta stay under a cap for ``lookback_sessions`` sessions (or until it fades). A call is
+    pushed out; when nothing on the chain clears the strike floor and the delta cap, none is sold
+    on that name that scan. It never loosens a limit or sizes anything. Its own
     switch: not a regime limit, so ``/regime off`` and ``regime.enabled: false`` leave it on.
     ``delta_max`` must stay above ``covered_call.delta_min`` (`get_cc_timing_cfg` checks), or no
     call could ever pass.

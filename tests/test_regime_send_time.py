@@ -749,3 +749,110 @@ async def test_the_send_time_regate_enforces_the_breakout_frozen_on_the_card(mon
     assert "cc_breakout_strike_floor" in (order_row(near).detail or "")
     # 200 shares cover two calls: the far strike and the card without a breakout both go
     assert sent == sorted([far, free])
+
+
+# --------------------------------------------------------------------------- #
+# OI-B3: the variance-premium floor is waived for a name-level signal lot only, and at send time
+# the re-gate reads the tag frozen on the card (it has no fresh signals)
+# --------------------------------------------------------------------------- #
+
+
+def freeze_floor(order_id: int, min_credit: float = 2.5, *, tag: str | None = None) -> None:
+    """Freeze a fair-value floor above the card's 1.55 credit (and optionally a tag) into the
+    order snapshot, the way a below-floor signal lot reaches the queue."""
+    from src.common.schemas import IdealZone
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        row = s.get(OrderRow, order_id)
+        assert row is not None
+        snap = dict(row.snapshot)
+        snap["ideal"] = IdealZone(
+            symbol=snap["underlying"],
+            right=OptionRight(snap["right"]),
+            dte=snap["dte"],
+            spot=185.0,
+            min_credit=min_credit,
+        ).model_dump(mode="json")
+        if tag is not None:
+            base = snap.get("sizing") or note(pre=1).model_dump(mode="json")
+            snap["sizing"] = {**base, "bottoming": tag}
+        row.snapshot = snap
+
+
+async def test_a_below_floor_signal_lot_is_sent_and_the_waiver_is_recorded(monkeypatch):
+    seed_regime(N, N)
+    _, order_id = queue(
+        "sig-vrp", "NVDA", 1, sizing=note(pre=1).model_copy(update={"bottoming": "name"})
+    )
+    freeze_floor(order_id)
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [order_id]
+    sent = executed[0][1]
+    assert sent.sizing is not None  # type: ignore[attr-defined]
+    assert sent.sizing.bottoming == "name" and sent.sizing.vrp_waived is True  # type: ignore[attr-defined]
+    (a,) = actions(kind="bottoming_lot")
+    assert a.order_id == order_id
+    assert "premium_below_fair_value" in a.reason and "waived" in a.reason
+
+
+async def test_a_signal_lot_that_clears_the_floor_records_no_waiver(monkeypatch):
+    seed_regime(N, N)
+    _, order_id = queue(
+        "sig-ok", "NVDA", 1, sizing=note(pre=1).model_copy(update={"bottoming": "name"})
+    )
+    freeze_floor(order_id, min_credit=1.0)  # the 1.55 credit is above the floor
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [order_id]
+    assert executed[0][1].sizing.vrp_waived is False  # type: ignore[attr-defined]
+    (a,) = actions(kind="bottoming_lot")
+    assert "waived" not in a.reason
+
+
+@pytest.mark.parametrize("tag", [None, "market"])
+async def test_a_below_floor_lot_without_the_name_tag_is_refused_at_send_time(monkeypatch, tag):
+    seed_regime(N, N)
+    sizing = note(pre=1).model_copy(update={"bottoming": tag})
+    _, order_id = queue("plain-vrp", "NVDA", 1, sizing=sizing)
+    freeze_floor(order_id)
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert executed == []
+    row = order_row(order_id)
+    assert row.state == OrderState.CANCELLED
+    assert "premium_below_fair_value" in (row.detail or "")
+
+
+async def test_a_name_tag_stops_waiving_when_the_regime_is_suspended_before_the_send(monkeypatch):
+    from src.storage.regime_state import suspend_regime
+
+    seed_regime(N, N)
+    suspend_regime(today_et())  # /regime off: no signal lots exist while it is in force
+    _, order_id = queue(
+        "sig-off", "NVDA", 1, sizing=note(pre=1).model_copy(update={"bottoming": "name"})
+    )
+    freeze_floor(order_id)
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert executed == []
+    assert "premium_below_fair_value" in (order_row(order_id).detail or "")
+
+
+async def test_a_forged_name_tag_on_a_queued_covered_call_waives_nothing(monkeypatch):
+    seed_regime(N, N)
+    order_id = queue_call("cc-forged", strike=186.0, delta=0.22)
+    freeze_floor(order_id, tag="name")
+    stock = PositionSnapshot(symbol="AAPL", sec_type="STK", position=200.0, avg_cost=150.0)
+
+    executed, _ = await run_poll(monkeypatch, positions=[stock])
+
+    assert executed == []
+    row = order_row(order_id)
+    assert row.state == OrderState.CANCELLED
+    assert "premium_below_fair_value" in (row.detail or "")

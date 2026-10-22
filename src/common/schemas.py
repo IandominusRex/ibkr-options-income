@@ -649,6 +649,10 @@ class SizingNote(BaseModel):
     floor_lot: bool = False  # sent under the guaranteed floor (past the scaled budget)
     scale_in: ScaleInZone | None = None
     bottoming: Literal["market", "name"] | None = None
+    # The variance-premium floor (`premium_below_fair_value`) would have refused this lot and was
+    # waived because it opened on a name-level bottoming signal (OI-B3). Display and audit only:
+    # the gate recomputes it from the frozen tag and never reads it back as an input.
+    vrp_waived: bool = False
     claude_suggested: int | None = None
     claude_reason: str | None = None
 
@@ -658,8 +662,9 @@ class CcBreakout(BaseModel):
 
     Worked out by `src/analytics/breakout.py` from daily bars; the covered-call generator and the
     Rules Engine hold a call on the name to ``floor_strike`` and ``delta_max`` while it lasts
-    (`engine/regime_limits.cc_timing_reasons`). It only pushes a strike out: it never skips a
-    name, loosens a limit or sizes anything. ``broke_level`` is None when the close was a
+    (`engine/regime_limits.cc_timing_reasons`). A call is pushed out; when nothing on the chain
+    clears the strike floor and the delta cap, none is sold on that name that scan. It never
+    loosens a limit or sizes anything. ``broke_level`` is None when the close was a
     ``high_sessions`` high with no resistance to clear.
     """
 

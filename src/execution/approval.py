@@ -529,12 +529,23 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
                     # A lot opened above its zone on a name-level bottoming signal: recorded
                     # when SENT (a card nobody approved does not use up the name's turn), so a
                     # human can see whether these lots pay and the guard can count them.
+                    reason = "lot opened on a name-level bottoming signal"
+                    if candidate.sizing.vrp_waived:
+                        # The one gate a signal lot is exempt from (OI-B3), recorded so the
+                        # review can see how often it fired and what those lots did.
+                        floor = candidate.ideal.min_credit if candidate.ideal is not None else None
+                        reason += (
+                            f"; credit ${candidate.premium:.2f} was under the fair-value floor "
+                            f"${floor:.2f}, so premium_below_fair_value was waived"
+                            if floor is not None
+                            else "; premium_below_fair_value was waived"
+                        )
                     record_action(
                         cand=candidate,
                         kind="bottoming_lot",
                         deterministic=candidate.contracts,
                         sent=candidate.contracts,
-                        reason="lot opened on a name-level bottoming signal",
+                        reason=reason,
                         order_id=order_row.id,
                         session=session,
                     )

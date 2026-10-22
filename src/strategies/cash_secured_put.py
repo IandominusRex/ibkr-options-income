@@ -39,6 +39,7 @@ from src.engine.regime_limits import (
     scale_in_reason,
     signal_lot,
     sizing_note,
+    vrp_waiver,
 )
 from src.strategies._evaluation import (
     REASON_BELOW_FAIR_VALUE,
@@ -287,7 +288,13 @@ def screen_csp_candidates(
         if income_cfg.get("require_vrp_edge", True):
             floor = contract_zone.min_credit
             if floor is not None and floor > 0 and mid < floor:
-                reasons.append(REASON_BELOW_FAIR_VALUE)
+                if vrp_waiver(sizing, Strategy.CASH_SECURED_PUT, symbol, tech_stats.price):
+                    # A name-level bottoming signal lot is exempt from this floor and from no
+                    # other gate (OI-B3): the waiver is recorded on the card's size note.
+                    if note is not None:
+                        note = note.model_copy(update={"vrp_waived": True})
+                else:
+                    reasons.append(REASON_BELOW_FAIR_VALUE)
 
         # Optional down‑trend reject (Phase 3). If configured, reject when market is in DOWNTREND.
         if (

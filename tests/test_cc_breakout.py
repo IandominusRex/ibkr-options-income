@@ -4,7 +4,8 @@ After an upside breakout a held name's covered-call strikes are pushed out for a
 the strike must clear a floor and the delta must stay under a cap. Deterministic only: the
 resistance detector (`support_levels.resistance_levels`), the breakout detector
 (`analytics/breakout.py`), the pure gate function (`engine/regime_limits.cc_timing_reasons`),
-the generator and the Rules Engine. Nothing here ever skips a name, loosens a strike or sizes.
+the generator and the Rules Engine. A call is pushed out (when nothing clears the floor and the
+delta cap, none is sold on that name that scan); nothing here loosens a strike or sizes.
 """
 
 from __future__ import annotations
@@ -775,3 +776,134 @@ def test_the_breakout_survives_the_order_snapshot_round_trip():
     # the snapshot freezes it as JSON: a round trip must give the same model back
     b = _breakout()
     assert CcBreakout.model_validate(b.model_dump(mode="json")) == b
+
+
+# --------------------------------------------------------------------------- #
+# OI-E3: at send time a covered call is held to the breakout's delta cap against the LIVE quote
+# (the breakout itself is the copy frozen on the card; no bars are fetched at send time)
+# --------------------------------------------------------------------------- #
+
+
+def _live_call(delta: float | None, *, strike: float = 170.0) -> OptionQuote:
+    return OptionQuote(
+        underlying="AAPL",
+        right=OptionRight.CALL,
+        strike=strike,
+        expiry=_EXPIRY,
+        bid=2.9,
+        ask=3.1,
+        delta=delta,
+    )
+
+
+def _frozen_cc(delta: float = 0.24, **kw):
+    cand = _cc(170.0, delta, **kw)  # a strike above the floor: only the delta can refuse it
+    cand.cc_breakout = _breakout(160.0, 0.25)
+    return cand
+
+
+def test_a_call_whose_delta_drifted_over_the_cap_is_refused_at_send_time():
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _frozen_cc(0.24)
+    # decision time: the card's own delta clears the cap
+    assert validate_candidates([cand], _account(), [], sizing=None)[0].verdict == Verdict.PASS
+    # send time: the live quote now says 0.31 (inside the strategy's own 0.20-0.35 band)
+    drifted = validate_live_quote(cand, _live_call(0.31))
+    assert drifted.verdict == Verdict.REJECT
+    assert drifted.reasons == ["cc_breakout_delta"]
+    # a live delta at or under the cap passes
+    assert validate_live_quote(cand, _live_call(0.24)).verdict == Verdict.PASS
+    assert validate_live_quote(cand, _live_call(0.25)).verdict == Verdict.PASS
+
+
+def test_the_live_delta_check_needs_a_breakout_on_the_card():
+    from src.engine.risk_engine import validate_live_quote
+
+    free = _cc(170.0, 0.24)  # no breakout frozen on this card
+    assert validate_live_quote(free, _live_call(0.31)).verdict == Verdict.PASS
+
+
+def test_a_missing_live_delta_does_not_trigger_the_breakout_rule():
+    from src.engine.risk_engine import validate_live_quote
+
+    out = validate_live_quote(_frozen_cc(0.24), _live_call(None))
+    assert out.verdict == Verdict.PASS, out.reasons
+
+
+def test_the_live_delta_check_is_for_covered_calls_only():
+    from src.engine.risk_engine import validate_live_quote
+
+    roll = _candidate(strategy=Strategy.ROLL, right=OptionRight.CALL, delta=0.24)
+    roll.strike = 170.0
+    roll.cc_breakout = _breakout(160.0, 0.25)
+    assert "cc_breakout_delta" not in validate_live_quote(roll, _live_call(0.31)).reasons
+    # a call that carries a roll origin is a roll whatever its strategy says
+    from tests.test_engine import _roll_origin
+
+    tagged = _frozen_cc(0.24)
+    tagged.roll_from = _roll_origin(OptionRight.CALL, 20)
+    assert "cc_breakout_delta" not in validate_live_quote(tagged, _live_call(0.31)).reasons
+    put = _candidate(strategy=Strategy.CASH_SECURED_PUT, right=OptionRight.PUT, delta=-0.24)
+    put.cc_breakout = _breakout(160.0, 0.25)
+    live_put = _live_call(-0.31).model_copy(update={"right": OptionRight.PUT})
+    assert "cc_breakout_delta" not in validate_live_quote(put, live_put).reasons
+
+
+def test_the_live_delta_check_follows_the_breakout_switch(monkeypatch):
+    from src.engine.risk_engine import validate_live_quote
+
+    set_risk(monkeypatch, cc_timing={"breakout": {"enabled": False}})
+    assert validate_live_quote(_frozen_cc(0.24), _live_call(0.31)).verdict == Verdict.PASS
+
+
+def test_the_live_delta_check_survives_regime_off():
+    """The breakout is not a regime limit: a suspended context changes nothing about it."""
+    from src.engine.risk_engine import validate_live_quote
+
+    out = validate_live_quote(_frozen_cc(0.24), _live_call(0.31), sizing=_ctx(suspended=True))
+    assert out.reasons == ["cc_breakout_delta"]
+
+
+async def test_a_drifted_call_is_refused_by_the_executor_and_the_order_says_why(
+    tmp_path, monkeypatch
+):
+    """End to end through `execute_candidate`: the fresh quote's delta reaches the re-gate."""
+    from src.common.schemas import OrderState
+    from src.execution.executor import execute_candidate
+    from src.storage.db import session_scope
+    from src.storage.models import OrderRow
+    from tests.test_execution import _db_setup, _make_candidate, _make_mock_bot, _make_mock_ib
+
+    _db_setup(tmp_path, monkeypatch)
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.execution.quote_timeout_seconds = 1.0
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+    cand = _make_candidate().model_copy(
+        update={
+            "strategy": Strategy.COVERED_CALL,
+            "right": OptionRight.CALL,
+            "delta": 0.24,
+            "cc_breakout": _breakout(160.0, 0.25),
+        }
+    )
+    with session_scope() as s:
+        row = OrderRow(candidate_id=cand.candidate_id, state=OrderState.QUEUED)
+        s.add(row)
+        s.flush()
+        order_id = row.id
+    ib = _make_mock_ib()
+    ticker = ib.reqMktData.return_value
+    ticker.bid, ticker.ask = 1.50, 1.60  # the credit is unchanged: only the delta moved
+    ticker.modelGreeks.delta = 0.31  # inside the strategy's own 0.20-0.35 band, over the cap
+
+    await execute_candidate(ib, _make_mock_bot(), "99999", order_id, cand)
+
+    with session_scope() as s:
+        saved = s.get(OrderRow, order_id)
+        assert saved is not None
+        assert saved.state == OrderState.REJECTED
+        assert "Live re-validation failed" in (saved.detail or "")
+    ib.placeOrder.assert_not_called()

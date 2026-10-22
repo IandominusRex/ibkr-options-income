@@ -29,8 +29,14 @@ What each limit is:
   them and records every override.
 
 * **Covered-call breakout** — after an upside breakout a held name's call strikes must clear a
-  floor and stay under a delta cap (`cc_timing_reasons`). Its own switch (``cc_timing.breakout``);
-  not a regime limit.
+  floor and stay under a delta cap (`cc_timing_reasons`, held again against the live delta at
+  send time by `live_cc_delta_reason`): a call is pushed out, and when nothing on the chain
+  clears both, none is sold on that name that scan. Its own switch (``cc_timing.breakout``); not
+  a regime limit.
+* **Variance-premium waiver** — a cash-secured put that opens on a *name-level* bottoming signal
+  is exempt from the credit-below-fair-value floor and from nothing else (`vrp_waiver`): it
+  carries its own guards (the delta cap and one lot per name per N sessions). Not a market-eased
+  lot, not an ordinary ladder lot, not a call or a roll.
 
 The regime limits (and the ladder's zone) switch off when the context is None, `/regime off`
 suspended it today, or `regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
@@ -53,6 +59,7 @@ from src.common.config import (
 )
 from src.common.schemas import (
     AccountSnapshot,
+    CcBreakout,
     MarketRegime,
     OptionQuote,
     PositionSnapshot,
@@ -259,6 +266,35 @@ def signal_lot(ctx: SizingContext | None, symbol: str, spot: float | None) -> bo
         return False
     zone = ctx.scale_in.get(symbol)
     return zone is not None and spot > zone.zone_high
+
+
+def vrp_waiver(
+    ctx: SizingContext | None,
+    strategy: Strategy,
+    symbol: str,
+    spot: float | None,
+    frozen: SizingNote | None = None,
+) -> bool:
+    """True when the credit-below-fair-value floor (``premium_below_fair_value``) does not apply.
+
+    Only a cash-secured put that opens on a **name-level** bottoming signal is exempt: the lots
+    that carry the delta cap and the one-lot-per-N-sessions guard (`bottoming_guard`), since the
+    operator's 2026-10-22 ruling. Nothing else is: not an ordinary ladder lot (inside or under
+    the zone), not a lot sized under a market-eased regime (tag ``"market"``), not a covered
+    call or a roll, and not when the regime limits are off (``/regime off``,
+    ``regime.enabled: false``, or no context), because no signal lot exists then.
+
+    At decision time (*ctx* built for a scan) the fresh signal decides, exactly as `signal_lot`
+    does for the guards; a tag already on the card is never trusted there. At send time
+    (``ctx.for_send``) the context carries no signals, so the re-gate reads the tag frozen on
+    the card (*frozen*, the candidate's own `SizingNote`): ``bottoming == "name"``. Pure; the
+    generator and the gate call this one function, so they cannot disagree.
+    """
+    if strategy != Strategy.CASH_SECURED_PUT or ctx is None or not active(ctx):
+        return False
+    if ctx.for_send:
+        return frozen is not None and frozen.bottoming == "name"
+    return signal_lot(ctx, symbol, spot)
 
 
 def bottoming_guard(ctx: SizingContext | None, symbol: str, delta: float | None) -> str | None:
@@ -498,27 +534,37 @@ def trim_for_send(
     return n
 
 
+def _breakout_in_force(ctx: SizingContext | None, cand: TradeCandidate) -> CcBreakout | None:
+    """The covered-call breakout that governs *cand*, or None (the rule is off, or none applies).
+
+    Covered calls only (a roll or a put has none), with ``cc_timing.breakout.enabled`` on. The
+    breakout comes from the context (the scan's fresh one) or, failing that, from the copy frozen
+    on the candidate, which is how the send-time re-gate sees it without fetching bars.
+    """
+    if cand.strategy != Strategy.COVERED_CALL or cand.roll_from is not None:
+        return None
+    if not get_cc_timing_cfg().breakout.enabled:
+        return None
+    return (ctx.cc_breakout.get(cand.underlying.upper()) if ctx is not None else None) or (
+        cand.cc_breakout
+    )
+
+
 def cc_timing_reasons(ctx: SizingContext | None, cand: TradeCandidate) -> list[str]:
     """Why a covered call on a name in an upside breakout is too close (spec section 17).
 
     ``"cc_breakout_strike_floor"`` when the strike is under the breakout's floor and
-    ``"cc_breakout_delta"`` when its delta is over the cap: while a breakout lasts, a call must
-    be pushed out, never skipped. Covered calls only: a roll or a put never gets a reason here.
-    The breakout comes from the context (the scan's fresh one) or, failing that, from the copy
+    ``"cc_breakout_delta"`` when its delta is over the cap: while a breakout lasts, a call is
+    pushed out to a strike that clears both, and when nothing on the chain does, none is sold on
+    the name that scan. Covered calls only: a roll or a put never gets a reason here. The
+    breakout comes from the context (the scan's fresh one) or, failing that, from the copy
     frozen on the candidate, which is how the send-time re-gate sees it without fetching bars.
 
     **Not gated by** `active`: this is not a regime limit, so ``/regime off`` and
     ``regime.enabled: false`` leave it on; ``cc_timing.breakout.enabled: false`` switches it off.
     A missing delta is the generator's and the gate's own ``delta_missing``, not this rule's.
     """
-    if cand.strategy != Strategy.COVERED_CALL or cand.roll_from is not None:
-        return []
-    cfg = get_cc_timing_cfg().breakout
-    if not cfg.enabled:
-        return []
-    found = (ctx.cc_breakout.get(cand.underlying.upper()) if ctx is not None else None) or (
-        cand.cc_breakout
-    )
+    found = _breakout_in_force(ctx, cand)
     if found is None:
         return []
     reasons: list[str] = []
@@ -527,3 +573,21 @@ def cc_timing_reasons(ctx: SizingContext | None, cand: TradeCandidate) -> list[s
     if cand.delta is not None and abs(cand.delta) > found.delta_max + 1e-9:
         reasons.append("cc_breakout_delta")
     return reasons
+
+
+def live_cc_delta_reason(
+    candidate: TradeCandidate, quote: OptionQuote, ctx: SizingContext | None
+) -> str | None:
+    """The send-time breakout check against the FRESH quote: the live delta against the cap.
+
+    ``"cc_breakout_delta"`` when a covered call carries a breakout (frozen on the card, or in
+    *ctx*) and the live quote's delta is over its ``delta_max``: the call drifted toward the
+    money between approval and send. The card's own delta is already held by `cc_timing_reasons`;
+    this holds the number the order is about to be sent at, so the gate runs twice on the cap.
+    A missing live delta triggers nothing (the live re-gate's delta handling stands: missing
+    greeks degrade to the decision-time gate). Covered calls only; never a roll or a put.
+    """
+    found = _breakout_in_force(ctx, candidate)
+    if found is None or quote.delta is None:
+        return None
+    return "cc_breakout_delta" if abs(quote.delta) > found.delta_max + 1e-9 else None

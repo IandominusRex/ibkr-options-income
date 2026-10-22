@@ -522,3 +522,49 @@ def test_a_reject_with_another_reason_besides_the_ladder_is_not_recorded_as_a_la
     )
     with session_scope() as s:
         assert s.query(SizingActionRow).count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# OI-E4: the ladder's blocks are recorded even when nothing else passes the generator
+# --------------------------------------------------------------------------- #
+
+
+def _ladder_rows() -> list[tuple[str, str, int]]:
+    from src.storage.models import SizingActionRow
+
+    with session_scope() as s:
+        rows = s.query(SizingActionRow).order_by(SizingActionRow.underlying).all()
+        return [(r.underlying, r.kind, r.sent_contracts) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_scan_where_the_ladder_stops_every_csp_still_records_the_blocks(monkeypatch):
+    """Every CSP is stopped by the ladder or the loss-exit block, nothing else passes the
+    generator: `record_scan_actions` used to run only when some candidate passed, so these scans
+    recorded nothing and the 4-week ladder review would have missed the blocks that matter most."""
+    from unittest.mock import MagicMock
+
+    import src.orchestrator.scan as scanmod
+    from src.strategies._evaluation import ScreenResult
+    from tests.test_scan_review_reuse import _stub_pipeline
+
+    _stub_pipeline(scanmod, monkeypatch, {"n": 0})
+    blocked = {
+        "BAC": (csp("zone", "BAC", spot=50.0), ["scale_in_zone_not_reached"]),
+        "TQQQ": (csp("loss", "TQQQ", spot=50.0), ["loss_exit_cooldown"]),
+    }
+
+    def screen_csp(symbol, *args, **kwargs):
+        cand, reasons = blocked[symbol]
+        return ScreenResult(rejected=[(cand, reasons)], evaluated=1)
+
+    monkeypatch.setattr(scanmod, "screen_csp_candidates", screen_csp)
+    monkeypatch.setattr(scanmod, "screen_cc_candidates", lambda *a, **k: ScreenResult())
+
+    await scanmod.run_scan(MagicMock(), bot=object(), chat_id="1")
+
+    assert _ladder_rows() == [("BAC", "scale_in_zone", 0), ("TQQQ", "loss_exit_cooldown", 0)]
+
+    # a second scan the same ET day: the same names, kinds and day add nothing
+    await scanmod.run_scan(MagicMock(), bot=object(), chat_id="1")
+    assert _ladder_rows() == [("BAC", "scale_in_zone", 0), ("TQQQ", "loss_exit_cooldown", 0)]

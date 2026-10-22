@@ -46,12 +46,14 @@ from src.engine.regime_limits import (
     daily_limit,
     floor_left,
     governing_index,
+    live_cc_delta_reason,
     live_ladder_reason,
     loss_exit_reason,
     multipliers,
     per_trade_cap,
     scale_in_reason,
     sizing_note,
+    vrp_waiver,
 )
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
@@ -239,6 +241,7 @@ def validate_candidates(
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
     # can run in any order and never depend on what else is in *candidates*.
     candidate_reasons: dict[str, list[str]] = {}
+    vrp_waived_ids: set[str] = set()  # name-level signal lots the fair-value floor would refuse
     for cand in candidates:
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
@@ -267,10 +270,18 @@ def validate_candidates(
             # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
             # low-vol diversifier in the universe and pushed every trade to the top of the
             # delta band (D2). Missing zone = data unavailable, never a rejection.
+            # One exemption (OI-B3): a CSP opened on a name-level bottoming signal, which
+            # carries its own guards. At scan time the fresh signal decides; at send time, where
+            # the context has no signals, the tag frozen on the card does (`vrp_waiver`).
             if income.get("require_vrp_edge", True) and cand.ideal is not None:
                 floor = cand.ideal.min_credit
                 if floor is not None and floor > 0 and cand.premium < floor:
-                    reasons.append("premium_below_fair_value")
+                    if vrp_waiver(
+                        sizing, cand.strategy, cand.underlying, cand.ideal.spot, cand.sizing
+                    ):
+                        vrp_waived_ids.add(cand.candidate_id)
+                    else:
+                        reasons.append("premium_below_fair_value")
 
         # --- IV environment: only sell premium when it's relatively expensive.
         # Enforced only when an IV rank is available (missing history is not a capital
@@ -350,9 +361,9 @@ def validate_candidates(
                         reasons.append(guard)
 
         # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
-        # a call must sit at or above the strike floor and under the delta cap. Pushes a call
-        # out, never skips the name; covered calls only (a roll or a put gets no reason), and
-        # not a regime limit (`/regime off` leaves it on). At send time there is no fresh
+        # a call must sit at or above the strike floor and under the delta cap. A call is
+        # pushed out (when nothing on the chain clears both, none is sold on the name that
+        # scan); covered calls only (a roll or a put gets no reason), and not a regime limit (`/regime off` leaves it on). At send time there is no fresh
         # context: the copy frozen on the candidate carries it.
         reasons.extend(cc_timing_reasons(sizing, cand))
 
@@ -537,7 +548,12 @@ def validate_candidates(
                         # frozen into the snapshot so the send-time re-gate knows the signal
                         zone = zone.model_copy(update={"bottoming_signal": True})
                     cand.sizing = note.model_copy(
-                        update={"floor_lot": took_floor, "scale_in": zone, "bottoming": tag}
+                        update={
+                            "floor_lot": took_floor,
+                            "scale_in": zone,
+                            "bottoming": tag,
+                            "vrp_waived": cand.candidate_id in vrp_waived_ids,
+                        }
                     )
 
     return [
@@ -568,7 +584,10 @@ def validate_live_quote(
     explicitly (rolls pass ``None``: they are never regime- or ladder-limited). For a
     cash-secured put it adds the scale-in ladder: ``loss_exit_cooldown`` when the name had a
     loss exit today (including since the card was made), and ``scale_in_zone_not_reached`` when
-    the zone frozen into the card is now below the live underlying price (it bounced).
+    the zone frozen into the card is now below the live underlying price (it bounced). For a
+    covered call carrying a breakout it adds ``cc_breakout_delta`` when the LIVE delta is over
+    the breakout's ``delta_max`` (the strike floor is a property of the card's strike and was
+    held at decision time; the delta is what can drift).
     """
     reasons: list[str] = []
 
@@ -620,6 +639,14 @@ def validate_live_quote(
         and quote.mid < float(min_ratio) * candidate.premium
     ):
         reasons.append("live_premium_collapse")
+
+    # The covered-call breakout's delta cap against the LIVE delta (the breakout itself is the
+    # copy frozen on the card; the send-time context has none). Not a regime limit: it applies
+    # with or without a context.
+    if candidate.strategy == Strategy.COVERED_CALL:
+        drifted = live_cc_delta_reason(candidate, quote, sizing)
+        if drifted is not None:
+            reasons.append(drifted)
 
     if sizing is not None and candidate.strategy == Strategy.CASH_SECURED_PUT:
         cooldown = loss_exit_reason(sizing, candidate.underlying)

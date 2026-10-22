@@ -181,6 +181,10 @@ jobs** — keep them straight:
   and the roll executor re-checks at send time; its `ideal` stays populated for the card but never
   rejects. The roll *decision* (roll / assign / let called away / close / hold) is deterministic
   Python in `strategies/roll_policy.py` — no LLM output reaches it. A missing zone is data-unavailable and never rejects.
+  A name-level bottoming signal lot is also scoped out of this floor (`regime_limits.vrp_waiver`: a
+  CSP above its ladder zone while a bottom is forming, identified at send time by the tag frozen on
+  the card, never when the regime limits are off), because it carries its own guards (the delta 0.25
+  cap and one lot per name per 3 sessions); no other lot is exempt and every other gate still applies.
 - **`zone_fit` only ranks, and still ships at `0.0`.** The separate `fair_value.zone_fit_score`
   hook blends into `technical_score` under the `zone_fit` weight in `scoring_weights.yaml`, which
   is `0.0` for both strategies — strike placement changes no ranking until a human raises it.

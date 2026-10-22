@@ -107,13 +107,15 @@ def _size_line(c: TradeCandidate) -> str | None:
     """Why a CSP was sized below what capital allows, in words (None when nothing cut it).
 
     Examples: ``Size 6 of 10 (leveraged ETF, 3×, calm)``, ``Size 3 of 10 (QQQ stressed)``,
-    ``Size 1 of 10 (QQQ crisis; today's guaranteed lot)``. Plain text: the caller escapes it.
+    ``Size 1 of 10 (QQQ crisis; today's guaranteed lot)``. A name-level bottoming-signal lot
+    whose credit is under the fair-value floor says so (``bottoming-signal lot: fair-value floor
+    waived``), cut or not. Plain text: the caller escapes it.
     """
     note = c.sizing
     if note is None:
         return None
     trimmed = note.pre_regime_contracts > c.contracts
-    if not trimmed and not note.floor_lot:
+    if not trimmed and not note.floor_lot and not note.vrp_waived:
         return None
     triggers = note.scale_in.triggers if note.scale_in is not None else []
     if note.ceiling_kind == "leveraged_ceiling" and note.leverage is not None:
@@ -130,6 +132,9 @@ def _size_line(c: TradeCandidate) -> str | None:
         why = ""
     if note.floor_lot:
         why = f"{why}; today's guaranteed lot" if why else "today's guaranteed lot"
+    if note.vrp_waived:
+        waived = "bottoming-signal lot: fair-value floor waived"
+        why = f"{why}; {waived}" if why else waived
     size = (
         f"Size {c.contracts} of {note.pre_regime_contracts}" if trimmed else f"Size {c.contracts}"
     )

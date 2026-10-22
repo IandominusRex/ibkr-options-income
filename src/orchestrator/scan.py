@@ -1811,6 +1811,10 @@ async def _run_scan_body(
             top = []
             passed = []
             per_symbol_skip = {}
+            # Nothing passed the generators, but the ladder and the same-day loss-exit block
+            # may be why: a name they stopped outright is the record's most important row (it
+            # feeds the 4-week ladder review), and it arrives only as a generator reject.
+            record_scan_actions(top=[], scored=[], verdicts={}, generator_rejects=generator_rejects)
     except Exception:
         log.exception("scan: scoring/risk-gate failed — aborting")
         await tracker.error("scoring", "failed — aborting")

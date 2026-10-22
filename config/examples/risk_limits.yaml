@@ -269,8 +269,9 @@ claude_cut:
 # x its 20-day average volume and cleared the nearest resistance (or a `high_sessions` high) --
 # covered calls on it must be pushed out for `lookback_sessions` sessions (or until a close fades
 # `fade_atr` x ATR under the breakout close): strike at or above max(next resistance, price +
-# `floor_atr` x ATR) and delta at most `delta_max`. It only pushes a strike out: it never skips a
-# name, loosens a limit or sizes anything. Its own switch, NOT a regime limit: `/regime off` and
+# `floor_atr` x ATR) and delta at most `delta_max`. A call is pushed out; when nothing on the chain
+# clears the floor and the cap, none is sold on that name that scan. It never loosens a limit or
+# sizes anything. Its own switch, NOT a regime limit: `/regime off` and
 # `regime.enabled: false` leave it on. Rolls are exempt. `delta_max` must exceed
 # covered_call.delta_min (checked at load, or the rule would stop every call, not push it out).
 cc_timing:
