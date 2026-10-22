@@ -20,10 +20,10 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from src.common.schemas import PositionSnapshot, Strategy
+from src.common.schemas import OrderState, PositionSnapshot, Strategy
 from src.storage.models import FillRow, OrderRow, PriceHistoryRow
 
 log = logging.getLogger(__name__)
@@ -189,7 +189,12 @@ def latest_anchor(
     In order: (1) the most recent CSP lot that is still open or closed within *survival_days*
     (a profit take or loss exit does not clear it, so a stop-out cannot reset the ladder), its
     price the order snapshot's ``ideal.spot``, else the ``price_history`` close on the fill
-    date; (2) held shares' ``avg_cost`` (an assignment); (3) a short put in *positions* with no
+    date. A CSP order that has been **sent but is not yet filled** (``submitted``, or ``partial``
+    before its fill is recorded) is a lot too, dated by its creation day (its last fill's, once
+    it has one): a lot sent at 10:00 and still working at the 10:15 scan must anchor the ladder,
+    or that scan would take the name for a first lot and propose a second at the same price. A
+    cancelled or rejected order with no fill never counts, and a queued one has not been sent;
+    (2) held shares' ``avg_cost`` (an assignment); (3) a short put in *positions* with no
     system fill: ``max(strike, spot)`` (*spot* defaults to the strike). Rolls never move it: a
     roll's own order is a ROLL, not a lot. The third item is the lot's fill date (ET), used by
     ``recovered(after=)``; shares and positions carry ``date.min`` (no date is known).
@@ -198,7 +203,10 @@ def latest_anchor(
     lots = (
         session.query(OrderRow)
         .filter(
-            OrderRow.filled_qty > 0,
+            or_(
+                OrderRow.filled_qty > 0,
+                OrderRow.state.in_([OrderState.SUBMITTED.value, OrderState.PARTIAL.value]),
+            ),
             OrderRow.candidate_id.notlike("close:%"),
             func.json_extract(OrderRow.snapshot, "$.underlying") == target,
             func.json_extract(OrderRow.snapshot, "$.strategy") == Strategy.CASH_SECURED_PUT.value,

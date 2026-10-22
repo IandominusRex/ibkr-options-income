@@ -56,7 +56,7 @@ from src.common.market_hours import (
     today_et,
 )
 from src.common.schemas import ApprovalStatus, AutonomyLevel, OrderState, TradeCandidate
-from src.execution.approval import process_queued_orders
+from src.execution.approval import check_sizing_config_at_startup, process_queued_orders
 from src.execution.executor import resolve_live_confirm
 
 # Profit-take orchestration lives in src/execution/ (N23 — trading control flow is not the notify
@@ -2110,6 +2110,12 @@ async def _run_service(token: str, chat_id: str) -> None:
                 )
             except Exception:
                 logger.warning("Could not send autonomy-demotion notice to Telegram", exc_info=True)
+
+        # The typed market-regime blocks of risk_limits.yaml are read on every scan and every
+        # order poll. A bad one holds new puts and calls (queued rolls, profit-takes and loss exits
+        # keep working), so say so now, loudly, rather than on the first poll; the service still
+        # starts, since refusing would also stop the closes. Never raises.
+        await check_sizing_config_at_startup(app.bot, chat_id)
 
         # Arm the scan-only background loops FIRST, before any IBKR-touching startup recovery.
         # Startup reconciliation calls the broker (reqExecutions); on a half-dead TWS socket

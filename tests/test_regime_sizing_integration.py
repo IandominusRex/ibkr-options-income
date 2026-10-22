@@ -434,15 +434,21 @@ def test_every_production_caller_passes_sizing():
     """Review Focus 1: a caller that forgets ``sizing=`` silently drops every regime limit."""
     root = Path(__file__).resolve().parents[1] / "src"
     # The covered-call screens join the CSP ones: the breakout rule rides the same context.
+    # `scan_symbol` (R10) is the only caller of the screens, and its own ``sizing`` parameter
+    # defaults to None: a second caller that forgot the keyword would drop every regime limit and
+    # the breakout rule from CSP and covered-call generation with nothing failing (the send-time
+    # gate would still apply them, so the cards would just be wrong).
     watched = {
         "validate_candidates",
         "screen_csp_candidates",
         "screen_csp",
         "screen_cc_candidates",
         "screen_cc",
+        "scan_symbol",
     }
     offenders: list[str] = []
     seen = 0
+    seen_names: set[str] = set()
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -453,9 +459,11 @@ def test_every_production_caller_passes_sizing():
             if name not in watched:
                 continue
             seen += 1
+            seen_names.add(name)
             if "sizing" not in {k.arg for k in node.keywords}:
                 offenders.append(f"{path.relative_to(root.parent)}:{node.lineno} {name}(...)")
-    assert seen >= 6, "the AST walk found too few call sites; the test lost its target"
+    assert seen >= 7, "the AST walk found too few call sites; the test lost its target"
+    assert watched <= seen_names, f"watched names with no call site: {watched - seen_names}"
     assert not offenders, f"callers without sizing=: {offenders}"
 
 

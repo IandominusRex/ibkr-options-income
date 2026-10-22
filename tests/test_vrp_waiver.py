@@ -421,3 +421,138 @@ def test_the_reviewer_is_not_told_a_waived_lot_passed_the_fair_value_gate():
     f7 = next(f for f in _candidate_facts(waived, 50.0) if f.startswith("F7"))
     assert "fair value, " not in f7  # not in the list of gates it passed
     assert "waived" in f7 and "bottoming" in f7
+
+
+# --------------------------------------------------------------------------- #
+# R3 (whole-branch review): the one-lot-per-name-per-N-sessions guard holds at send time too
+# --------------------------------------------------------------------------- #
+
+RECENT = "bottoming_lot_recent"
+
+
+def recent_ctx(*names: str, **kw) -> SizingContext:
+    """The send-time context after a signal lot on *names* was recorded within the window."""
+    return send_ctx(**kw).model_copy(update={"signal_lot_recent": list(names)})
+
+
+def test_a_second_name_signal_lot_inside_the_window_is_refused_at_send_time():
+    cand = frozen("sig-b", "name", bottoming_zone=True)
+    reasons = gate([cand], recent_ctx("BAC"))["sig-b"].reasons
+    assert RECENT in reasons
+    # and the waiver is not applied to a lot refused here: the floor refuses it too
+    assert FLOOR in reasons
+    assert cand.sizing is not None and cand.sizing.vrp_waived is False
+
+
+def test_a_refused_second_lot_that_clears_the_floor_is_still_refused_for_the_guard():
+    cand = frozen("sig-b", "name", bottoming_zone=True, min_credit=2.0)  # credit above the floor
+    assert gate([cand], recent_ctx("BAC"))["sig-b"].reasons == [RECENT]
+
+
+def test_the_same_signal_lot_passes_when_the_name_has_no_recent_lot():
+    cand = frozen("sig-a", "name", bottoming_zone=True)
+    verdict = gate([cand], recent_ctx("NVDA"))["sig-a"]  # another name had one
+    assert verdict.verdict == Verdict.PASS, verdict.reasons
+    assert cand.sizing is not None and cand.sizing.vrp_waived is True
+    assert gate([frozen("sig-0", "name", bottoming_zone=True)], send_ctx())["sig-0"].verdict == (
+        Verdict.PASS
+    )
+
+
+@pytest.mark.parametrize("tag", [None, "market"])
+def test_untagged_and_market_eased_lots_are_not_held_to_the_signal_lot_guard(tag):
+    cand = frozen("plain", tag, min_credit=2.0)  # clears the floor: nothing else stops it
+    verdict = gate([cand], recent_ctx("BAC"))["plain"]
+    assert verdict.verdict == Verdict.PASS, verdict.reasons
+
+
+def test_a_covered_call_or_a_roll_with_a_forged_name_tag_is_not_held_to_it():
+    call = frozen("cc", "name", strategy=Strategy.COVERED_CALL, right=OptionRight.CALL)
+    call.delta = 0.25
+    assert RECENT not in gate([call], recent_ctx("BAC"))["cc"].reasons
+    roll = frozen("roll", "name", strategy=Strategy.ROLL)
+    assert RECENT not in gate([roll], recent_ctx("BAC"))["roll"].reasons
+
+
+def test_the_guard_needs_no_ideal_zone_on_the_card():
+    """A card with no `ideal` has no spot to judge the floor with, but its frozen tag still
+    says it is a signal lot, and the session count is a count of orders."""
+    cand = frozen("sig-b", "name", bottoming_zone=True)
+    cand.ideal = None
+    assert RECENT in gate([cand], recent_ctx("BAC"))["sig-b"].reasons
+
+
+def _two_tagged() -> list[TradeCandidate]:
+    """Two frozen signal-lot cards on BAC, best-ranked first (the caller's order is the gate's)."""
+    a = frozen("sig-a", "name", bottoming_zone=True)
+    b = frozen("sig-b", "name", bottoming_zone=True)
+    return [a, b]
+
+
+def test_two_tagged_lots_on_one_name_in_one_batch_only_the_first_passes():
+    from src.engine.risk_engine import validate_candidates
+    from tests.test_engine import _account
+
+    a, b = _two_tagged()
+    out = {
+        v.candidate_id: v
+        for v in validate_candidates(
+            [a, b], _account(net_liq=500_000.0, cash=400_000.0), [], sizing=send_ctx()
+        )
+    }
+    assert out["sig-a"].verdict == Verdict.PASS, out["sig-a"].reasons
+    assert out["sig-b"].verdict == Verdict.REJECT
+
+
+def test_the_in_batch_rule_holds_even_without_the_symbol_dedupe():
+    """The send batch dedupes by name (`dedupe_pre_gate`); the guard does not lean on that."""
+    from src.engine.risk_engine import validate_candidates
+    from tests.test_engine import _account
+
+    a, b = _two_tagged()
+    out = {
+        v.candidate_id: v
+        for v in validate_candidates(
+            [a, b],
+            _account(net_liq=500_000.0, cash=400_000.0),
+            [],
+            sizing=send_ctx(),
+            dedupe_same_symbol=False,
+        )
+    }
+    assert out["sig-a"].verdict == Verdict.PASS, out["sig-a"].reasons
+    assert out["sig-b"].reasons == [RECENT]
+
+
+def test_two_tagged_lots_on_two_different_names_both_pass():
+    from src.engine.risk_engine import validate_candidates
+    from tests.test_engine import _account
+
+    a = frozen("sig-a", "name", bottoming_zone=True)
+    b = frozen("sig-n", "name", bottoming_zone=True)
+    b.underlying = "NVDA"
+    assert b.ideal is not None
+    b.ideal = b.ideal.model_copy(update={"symbol": "NVDA"})
+    out = {
+        v.candidate_id: v
+        for v in validate_candidates(
+            [a, b],
+            _account(net_liq=500_000.0, cash=400_000.0),
+            [],
+            sizing=send_ctx(),
+            dedupe_same_symbol=False,
+        )
+    }
+    assert out["sig-a"].verdict == Verdict.PASS, out["sig-a"].reasons
+    assert out["sig-n"].verdict == Verdict.PASS, out["sig-n"].reasons
+
+
+def test_decision_time_is_unchanged_by_the_send_time_guard():
+    """At scan time a lot is judged by the fresh signal and the guard as before: a stale
+    `signal_lot_recent` entry never refuses an ordinary lot, and a "name" tag on the card is not
+    trusted there (the send-time guard reads it, the decision-time one never does)."""
+    scan = ctx(zone=ZONE).model_copy(update={"signal_lot_recent": ["BAC"]})
+    plain = frozen("plain", None, min_credit=2.0)
+    assert RECENT not in gate([plain], scan)["plain"].reasons
+    stale_tag = frozen("stale", "name", bottoming_zone=True, min_credit=2.0)
+    assert RECENT not in gate([stale_tag], scan)["stale"].reasons

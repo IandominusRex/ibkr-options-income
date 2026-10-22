@@ -856,3 +856,489 @@ async def test_a_forged_name_tag_on_a_queued_covered_call_waives_nothing(monkeyp
     row = order_row(order_id)
     assert row.state == OrderState.CANCELLED
     assert "premium_below_fair_value" in (row.detail or "")
+
+
+# --------------------------------------------------------------------------- #
+# R1 (whole-branch review): a send-time sizing context that cannot be built (a bad typed block)
+# holds new puts and calls but never stops a queued roll
+# --------------------------------------------------------------------------- #
+
+
+def queue_roll(candidate_id: str) -> int:
+    """Queue an approved CSP roll the way the roll pipeline does (snapshot = the frozen card)."""
+    from src.common.schemas import RollOrigin, Strategy
+    from src.storage.db import session_scope
+
+    origin = RollOrigin(
+        con_id=1,
+        candidate_id="c-old",
+        strike=190.0,
+        expiry=date.today() + timedelta(days=3),
+        right=OptionRight.PUT,
+        contracts=1,
+        chain_id="c-old",
+        seq=1,
+        original_expiry=date.today() + timedelta(days=3),
+        old_mid=5.0,
+        new_mid=5.4,
+    )
+    cand = _make_candidate(
+        candidate_id=candidate_id,
+        underlying="NVDA",
+        strategy=Strategy.ROLL,
+        current_iv=30.0,
+        dte=21,
+    ).model_copy(update={"roll_from": origin, "roc_pct": 0.0, "annualized_yield_pct": 0.0})
+    with session_scope() as s:
+        approval = ApprovalRow(
+            candidate_id=candidate_id,
+            status=ApprovalStatus.APPROVED,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        s.add(approval)
+        s.flush()
+        order = OrderRow(
+            candidate_id=candidate_id,
+            approval_id=approval.id,
+            state=OrderState.QUEUED,
+            snapshot=cand.model_dump(mode="json"),
+        )
+        s.add(order)
+        s.flush()
+        return order.id
+
+
+def break_risk_block(monkeypatch, how: str) -> None:
+    """Make one of the typed sizing blocks invalid the ways the operator can: a mistyped key in
+    a block typed in by hand, or a strategy ``delta_min`` retuned up to a guard's cap (the
+    guard then leaves an empty delta band, which both getters refuse)."""
+    risk = get_config().risk
+    if how == "regime_typo":
+        set_risk(monkeypatch, regime={"enabledd": True})
+    elif how == "leveraged_typo":
+        set_risk(monkeypatch, leveraged_sizing={"enabledd": True})
+    elif how == "cc_delta_min":
+        set_risk(monkeypatch, covered_call={**risk["covered_call"], "delta_min": 0.25})
+    elif how == "csp_delta_min":
+        set_risk(monkeypatch, cash_secured_put={**risk["cash_secured_put"], "delta_min": 0.25})
+    else:  # pragma: no cover
+        raise AssertionError(how)
+
+
+BAD_BLOCKS = ["regime_typo", "leveraged_typo", "cc_delta_min", "csp_delta_min"]
+
+
+def alert_texts(bot) -> list[str]:
+    return [c.kwargs.get("text", "") for c in bot.send_message.call_args_list]
+
+
+@pytest.mark.parametrize("how", BAD_BLOCKS)
+async def test_a_bad_sizing_block_still_sends_a_queued_roll_and_holds_a_put_and_a_call(
+    monkeypatch, how
+):
+    seed_regime(N, N)
+    roll_id = queue_roll("roll-1")
+    _, csp_id = queue("csp-1", "BAC", 1, sizing=note(pre=1))
+    call_id = queue_call("cc-1", strike=192.0, delta=0.22)
+    stock = PositionSnapshot(symbol="AAPL", sec_type="STK", position=200.0, avg_cost=150.0)
+    break_risk_block(monkeypatch, how)
+
+    executed, _ = await run_poll(monkeypatch, positions=[stock])
+
+    # the roll went to the executor, with no sizing context (as the roll executor sends it)
+    assert [oid for oid, _ in executed] == [roll_id]
+    assert order_row(roll_id).state == OrderState.SUBMITTED
+    # the put and the call are neither sent nor cancelled: they wait for the next poll
+    assert order_row(csp_id).state == OrderState.QUEUED
+    assert order_row(call_id).state == OrderState.QUEUED
+
+
+@pytest.mark.parametrize("how", BAD_BLOCKS)
+async def test_the_held_put_is_sent_as_soon_as_the_block_is_valid_again(monkeypatch, how):
+    seed_regime(N, N)
+    _, csp_id = queue("csp-1", "BAC", 1, sizing=note(pre=1))
+    with monkeypatch.context() as broken:
+        break_risk_block(broken, how)
+        executed, _ = await run_poll(monkeypatch)
+        assert executed == []
+    executed, _ = await run_poll(monkeypatch)  # config fixed
+    assert [oid for oid, _ in executed] == [csp_id]
+
+
+async def test_a_bad_sizing_block_never_sends_a_put_without_the_regime_limits(monkeypatch):
+    """The fail-closed half: with the limits unreadable no put or call reaches the executor, not
+    even one the regime would have allowed in full (the fail-open mutation sends it)."""
+    seed_regime(X, X)  # a crisis regime: a 10-lot NVDA put must never go out unlimited
+    _, csp_id = queue("csp-big", "NVDA", 10, sizing=note(pre=10, regime=N))
+    break_risk_block(monkeypatch, "regime_typo")
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert executed == []
+    assert order_row(csp_id).state == OrderState.QUEUED
+
+
+async def test_the_config_alert_names_the_error_and_goes_out_once_per_day(monkeypatch):
+    from src.execution.approval import SIZING_CONFIG_ALERT_KEY
+    from src.storage.system_settings import get_setting, set_setting
+
+    seed_regime(N, N)
+    queue_roll("roll-1")
+    queue("csp-1", "BAC", 1, sizing=note(pre=1))
+    break_risk_block(monkeypatch, "regime_typo")
+
+    _, bot1 = await run_poll(monkeypatch)
+    _, bot2 = await run_poll(monkeypatch)
+    _, bot3 = await run_poll(monkeypatch)
+
+    first = alert_texts(bot1)
+    assert len(first) == 1
+    text = first[0]
+    assert "regime" in text and "enabledd" in text  # names the block and the bad key
+    assert "on hold" in text and "rolls" in text and "keep" in text
+    assert alert_texts(bot2) == [] and alert_texts(bot3) == []
+    assert get_setting(SIZING_CONFIG_ALERT_KEY) == today_et().isoformat()
+
+    # the next ET day it speaks again (the remembered day is yesterday's)
+    set_setting(SIZING_CONFIG_ALERT_KEY, (today_et() - timedelta(days=1)).isoformat())
+    _, bot4 = await run_poll(monkeypatch)
+    assert len(alert_texts(bot4)) == 1
+
+
+async def test_a_failure_that_is_not_a_config_error_is_held_and_alerted_with_its_own_text(
+    monkeypatch,
+):
+    import src.execution.approval as approval
+
+    seed_regime(N, N)
+    roll_id = queue_roll("roll-1")
+    _, csp_id = queue("csp-1", "BAC", 1, sizing=note(pre=1))
+
+    def boom(now, positions):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(approval, "_send_context", boom)
+    executed, bot = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [roll_id]
+    assert order_row(csp_id).state == OrderState.QUEUED
+    (text,) = alert_texts(bot)
+    assert "database is locked" in text
+
+
+async def test_a_good_config_changes_nothing(monkeypatch):
+    seed_regime(N, N)
+    roll_id = queue_roll("roll-1")
+    _, csp_id = queue("csp-1", "BAC", 1, sizing=note(pre=1))
+
+    executed, bot = await run_poll(monkeypatch)
+
+    assert sorted(oid for oid, _ in executed) == sorted([roll_id, csp_id])
+    assert not any("on hold" in t for t in alert_texts(bot))
+
+
+async def test_a_breaker_halt_with_a_bad_block_still_sends_the_queued_roll(monkeypatch):
+    from src.storage.system_settings import set_halted
+
+    seed_regime(N, N)
+    roll_id = queue_roll("roll-1")
+    _, csp_id = queue("csp-1", "BAC", 1, sizing=note(pre=1))
+    set_halted(True, "Daily mark-to-market loss", source="breaker")
+    break_risk_block(monkeypatch, "regime_typo")
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [roll_id]
+    assert order_row(csp_id).state == OrderState.QUEUED
+
+
+# the start-up check of the four typed blocks (the service still starts: refusing would also stop
+# profit-takes and loss exits)
+
+
+@pytest.mark.parametrize("how", BAD_BLOCKS)
+async def test_the_startup_check_alerts_and_does_not_raise(monkeypatch, how):
+    from src.execution.approval import check_sizing_config_at_startup
+
+    break_risk_block(monkeypatch, how)
+    bot = AsyncMock()
+
+    errors = await check_sizing_config_at_startup(bot, "99999")
+
+    assert errors  # it reports what is wrong
+    (text,) = alert_texts(bot)
+    assert "on hold" in text and "rolls" in text
+
+
+async def test_the_startup_check_is_silent_with_a_good_config(monkeypatch):
+    from src.execution.approval import check_sizing_config_at_startup
+
+    bot = AsyncMock()
+    assert await check_sizing_config_at_startup(bot, "99999") == []
+    bot.send_message.assert_not_called()
+
+
+async def test_the_startup_check_survives_a_failing_telegram_send(monkeypatch):
+    from src.execution.approval import check_sizing_config_at_startup
+
+    break_risk_block(monkeypatch, "regime_typo")
+    bot = AsyncMock()
+    bot.send_message.side_effect = RuntimeError("telegram down")
+
+    assert await check_sizing_config_at_startup(bot, "99999")  # no exception
+
+
+async def test_the_startup_alert_is_the_days_alert(monkeypatch):
+    """A startup alert counts as the day's alert, so the first poll does not repeat it."""
+    from src.execution.approval import check_sizing_config_at_startup
+
+    seed_regime(N, N)
+    queue("csp-1", "BAC", 1, sizing=note(pre=1))
+    break_risk_block(monkeypatch, "regime_typo")
+    await check_sizing_config_at_startup(AsyncMock(), "99999")
+
+    executed, bot = await run_poll(monkeypatch)
+
+    assert executed == [] and alert_texts(bot) == []
+
+
+def test_the_service_runs_the_startup_check_before_it_arms_the_order_poll():
+    """`_run_service` is not unit-testable without Telegram and IBKR, so (as the autonomy rung's
+    enforcement does) the call is pinned textually: it must exist, and come before the order-poll
+    loop is created."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "src" / "notify" / "approval_service.py").read_text(encoding="utf-8")
+    assert text.index("check_sizing_config_at_startup(") < text.rindex("_order_poll_loop(")
+
+
+# --------------------------------------------------------------------------- #
+# R2 (whole-branch review): a card that first becomes a guaranteed-floor lot AT SEND TIME is
+# written back to its order snapshot, so the floor's daily count sees it
+# --------------------------------------------------------------------------- #
+
+
+def floor_setup(monkeypatch) -> None:
+    """A crisis regime and a book that fits the unscaled caps but not the scaled ones: a one-lot
+    card has nothing but the guaranteed floor to get through on (as the floor tests above)."""
+    set_portfolio(monkeypatch, max_csp_allocation_pct_of_deployable=130.0)
+    seed_regime(X, X)
+
+
+async def test_a_card_that_first_becomes_a_floor_lot_at_send_time_is_counted(monkeypatch):
+    floor_setup(monkeypatch)
+    # queued under a calm regime: nothing on the card says "floor lot"
+    _, first = queue("c-bac", "BAC", 1, sizing=note(pre=1))
+    assert order_row(first).snapshot["sizing"]["floor_lot"] is False
+
+    executed, _ = await run_poll(monkeypatch, positions=[book(323_200)])
+
+    assert [oid for oid, _ in executed] == [first]
+    assert executed[0][1].sizing.floor_lot is True  # type: ignore[attr-defined]
+    # the order's snapshot (what the day's counts read) now says so too
+    assert order_row(first).snapshot["sizing"]["floor_lot"] is True
+
+    # a second ordinary card in the next poll of the same crisis day finds the floor used up
+    # (crisis floor: 1 lot a day per index)
+    _, second = queue("c-wfc", "WFC", 1, sizing=note(pre=1))
+    executed2, _ = await run_poll(monkeypatch, positions=[book(323_200)])
+
+    assert executed2 == []
+    row = order_row(second)
+    assert row.state == OrderState.CANCELLED and "regime_budget" in (row.detail or "")
+
+
+async def test_the_floor_lot_taken_at_send_time_is_recorded_once(monkeypatch):
+    floor_setup(monkeypatch)
+    _, order_id = queue("c-bac", "BAC", 1, sizing=note(pre=1))
+
+    await run_poll(monkeypatch, positions=[book(323_200)])
+
+    (a,) = actions(kind="regime_floor_lot")
+    assert (a.candidate_id, a.underlying, a.deterministic_contracts, a.sent_contracts) == (
+        "c-bac",
+        "BAC",
+        1,
+        1,
+    )
+    assert a.order_id == order_id and a.regime == "crisis"
+    # recording again for the same card and day updates the row, never adds a second
+    record_action(
+        cand=_candidate_from(order_id),
+        kind="regime_floor_lot",
+        deterministic=1,
+        sent=1,
+        reason="again",
+        order_id=order_id,
+    )
+    assert len(actions(kind="regime_floor_lot")) == 1
+
+
+def _candidate_from(order_id: int):
+    from src.common.schemas import TradeCandidate
+
+    return TradeCandidate.model_validate(order_row(order_id).snapshot)
+
+
+async def test_a_card_already_recorded_as_a_floor_lot_at_scan_time_keeps_one_row(monkeypatch):
+    """The scan recorded the floor lot (keyed by the card); the send updates that row and links it."""
+    floor_setup(monkeypatch)
+    cand, order_id = queue("c-bac", "BAC", 1, sizing=note(pre=2, regime=X, floor=True))
+    record_action(
+        cand=cand,
+        kind="regime_floor_lot",
+        deterministic=1,
+        sent=1,
+        reason="guaranteed floor lot under SPY crisis",
+    )
+    assert actions(kind="regime_floor_lot")[0].order_id is None
+
+    await run_poll(monkeypatch, positions=[book(323_200)])
+
+    (a,) = actions(kind="regime_floor_lot")
+    assert a.order_id == order_id
+    assert order_row(order_id).snapshot["sizing"]["floor_lot"] is True
+
+
+async def test_persisting_the_tags_keeps_the_frozen_zone_the_signal_tag_and_the_size(monkeypatch):
+    """The send-time gate deliberately keeps a name-level signal lot's tag and frozen zone (Task 7
+    ruling 6): writing the gate's tags back must not erase them or move the contract count."""
+    floor_setup(monkeypatch)
+    zone = ScaleInZone(
+        anchor=190.0,
+        anchor_source="order_snapshot",
+        zone_low=170.0,
+        zone_high=178.0,
+        support=172.0,
+        min_gap_pct=6.0,
+        triggers=["loss_exit"],
+        bottoming_signal=True,
+    )
+    frozen = note(pre=1).model_copy(update={"bottoming": "name", "scale_in": zone})
+    _, order_id = queue("c-sig", "BAC", 1, sizing=frozen)
+
+    executed, _ = await run_poll(monkeypatch, positions=[book(323_200)])
+
+    assert [oid for oid, _ in executed] == [order_id]
+    snap = order_row(order_id).snapshot
+    assert snap["sizing"]["floor_lot"] is True  # the new tag is there
+    assert snap["sizing"]["bottoming"] == "name"  # the frozen ones are not erased
+    assert snap["sizing"]["scale_in"] == zone.model_dump(mode="json")
+    assert snap["contracts"] == 1 and executed[0][1].contracts == 1  # type: ignore[attr-defined]
+
+
+async def test_a_card_that_no_longer_needs_the_floor_is_not_counted_as_one(monkeypatch):
+    """Tagged at scan, but the book now fits the scaled caps: it used none of the floor, so the
+    day's floor count must not include it."""
+    seed_regime(N, N)
+    _, order_id = queue("c-bac", "BAC", 1, sizing=note(pre=2, floor=True))
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [order_id]
+    assert order_row(order_id).snapshot["sizing"]["floor_lot"] is False
+    assert actions(kind="regime_floor_lot") == []
+
+
+async def test_a_non_floor_order_leaves_its_snapshot_as_it_was(monkeypatch):
+    seed_regime(N, N)
+    _, order_id = queue("c-bac", "BAC", 1, sizing=note(pre=1))
+    before = order_row(order_id).snapshot
+
+    await run_poll(monkeypatch)
+
+    assert order_row(order_id).snapshot["sizing"] == before["sizing"]
+    assert actions() == []
+
+
+# --------------------------------------------------------------------------- #
+# R3 (whole-branch review): two queued signal lots on one name, approved a poll apart
+# --------------------------------------------------------------------------- #
+
+
+def queue_signal_lot(candidate_id: str, underlying: str = "NVDA") -> int:
+    """A queued name-level signal lot whose credit is under the frozen fair-value floor."""
+    _, order_id = queue(
+        candidate_id,
+        underlying,
+        1,
+        sizing=note(pre=1).model_copy(update={"bottoming": "name"}),
+    )
+    freeze_floor(order_id)
+    return order_id
+
+
+async def test_a_second_signal_lot_on_a_name_is_refused_in_a_later_poll(monkeypatch):
+    seed_regime(N, N)
+    first = queue_signal_lot("sig-1")
+    executed, _ = await run_poll(monkeypatch)
+    assert [oid for oid, _ in executed] == [first]
+    assert [a.candidate_id for a in actions(kind="bottoming_lot")] == ["sig-1"]
+
+    # a second card on the same name, queued before the first was sent, is approved a poll later
+    second = queue_signal_lot("sig-2")
+    executed2, _ = await run_poll(monkeypatch)
+
+    assert executed2 == []
+    row = order_row(second)
+    assert row.state == OrderState.CANCELLED
+    assert "bottoming_lot_recent" in (row.detail or "")
+    assert "premium_below_fair_value" in (row.detail or "")  # the waiver was not applied to it
+    assert [a.candidate_id for a in actions(kind="bottoming_lot")] == ["sig-1"]  # not recorded
+
+
+async def test_two_signal_lots_queued_for_one_poll_send_only_the_first(monkeypatch):
+    seed_regime(N, N)
+    first = queue_signal_lot("sig-1")
+    second = queue_signal_lot("sig-2")
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert len(executed) == 1
+    sent_id = executed[0][0]
+    other = second if sent_id == first else first
+    assert order_row(other).state == OrderState.CANCELLED
+    assert len(actions(kind="bottoming_lot")) == 1
+
+
+async def test_signal_lots_on_two_different_names_both_go(monkeypatch):
+    seed_regime(N, N)
+    a = queue_signal_lot("sig-nvda", "NVDA")
+    b = queue_signal_lot("sig-amd", "AMD")
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert sorted(oid for oid, _ in executed) == sorted([a, b])
+    assert len(actions(kind="bottoming_lot")) == 2
+
+
+async def test_a_signal_lot_on_a_name_sent_before_the_window_is_not_blocked(monkeypatch):
+    """The guard is N sessions, not forever: a lot recorded four trading days ago is outside it."""
+    from src.regime.actions import record_action as rec
+
+    seed_regime(N, N)
+    old = _make_candidate(candidate_id="sig-old", underlying="NVDA", dte=21)
+    rec(cand=old, kind="bottoming_lot", deterministic=1, sent=1, reason="old")
+    from src.storage.db import session_scope
+
+    with session_scope() as s:
+        row = s.query(SizingActionRow).filter_by(candidate_id="sig-old").one()
+        row.action_day = today_et() - timedelta(days=10)
+    second = queue_signal_lot("sig-2")
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert [oid for oid, _ in executed] == [second]
+
+
+async def test_a_market_eased_or_ordinary_lot_after_a_signal_lot_is_not_refused(monkeypatch):
+    seed_regime(N, N)
+    queue_signal_lot("sig-1")
+    await run_poll(monkeypatch)
+    queue("mkt", "NVDA", 1, sizing=note(pre=1).model_copy(update={"bottoming": "market"}))
+    queue("plain", "WFC", 1, sizing=note(pre=1))
+
+    executed, _ = await run_poll(monkeypatch)
+
+    assert sorted(c.candidate_id for _, c in executed) == ["mkt", "plain"]  # type: ignore[attr-defined]

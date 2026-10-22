@@ -40,6 +40,7 @@ from src.engine.capital import (
 from src.engine.regime_limits import (
     active,
     bottoming_reason,
+    bottoming_send_reason,
     bottoming_tag,
     cc_timing_reasons,
     ceiling_kind,
@@ -360,6 +361,12 @@ def validate_candidates(
                     guard = bottoming_reason(sizing, cand)
                     if guard is not None:
                         reasons.append(guard)
+            # At send time the fresh signals are gone, so the one-lot-per-name guard is read from
+            # the tag frozen on the card against the lots recorded when sent. It does not need the
+            # card's `ideal`: it is a count of orders, not a price judgement.
+            recent = bottoming_send_reason(sizing, cand)
+            if recent is not None:
+                reasons.append(recent)
 
         # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
         # a call must sit at or above the strike floor and under the delta cap. A call is
@@ -462,6 +469,7 @@ def validate_candidates(
     # one floor slot instead of each using a slot.
     accepted_csp: dict[str, str] = {}  # underlying -> governing index, accepted CSPs this batch
     accepted_floor: dict[str, str] = {}  # underlying -> governing index, floor lots this batch
+    accepted_signal_lot: set[str] = set()  # names that took a name-level signal lot this batch
 
     def _others(by_name: dict[str, str], index: str, underlying: str) -> int:
         return sum(1 for name, idx in by_name.items() if idx == index and name != underlying)
@@ -501,6 +509,20 @@ def validate_candidates(
                 if floor_left(sizing, cand.underlying, batch_floor) > 0:
                     reasons = []
                     took_floor = True
+
+        # One name-level signal lot per name per batch at send time, in the batch's own order (the
+        # first one passes). The send batch's per-name dedupe already leaves a single card per
+        # name; this keeps the guard whole when it is off. Decision time is untouched: there the
+        # fresh signal, not a tag on the card, says what a signal lot is.
+        if (
+            sizing is not None
+            and sizing.for_send
+            and is_csp
+            and cand.sizing is not None
+            and cand.sizing.bottoming == "name"
+            and cand.underlying in accepted_signal_lot
+        ):
+            reasons.append("bottoming_lot_recent")
 
         # Dedupe: two independent checks above (the ticker-risk breach and the large-slot
         # ceiling) can both append "concentration_limit" for the same candidate. Display
@@ -557,6 +579,8 @@ def validate_candidates(
                             "vrp_waived": cand.candidate_id in vrp_waived_ids,
                         }
                     )
+                    if sizing.for_send and tag == "name":
+                        accepted_signal_lot.add(cand.underlying)
 
     return [
         RiskVerdict(

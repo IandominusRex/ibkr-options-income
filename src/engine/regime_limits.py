@@ -289,13 +289,20 @@ def vrp_waiver(
     At decision time (*ctx* built for a scan) the fresh signal decides, exactly as `signal_lot`
     does for the guards; a tag already on the card is never trusted there. At send time
     (``ctx.for_send``) the context carries no signals, so the re-gate reads the tag frozen on
-    the card (*frozen*, the candidate's own `SizingNote`): ``bottoming == "name"``. Pure; the
-    generator and the gate call this one function, so they cannot disagree.
+    the card (*frozen*, the candidate's own `SizingNote`): ``bottoming == "name"``, **unless the
+    name already had a signal lot within the window** (``ctx.signal_lot_recent``, which the
+    send-time context does carry): that lot is refused by `bottoming_send_reason`, and a lot
+    refused for the guard is never waived. Pure; the generator and the gate call this one
+    function, so they cannot disagree.
     """
     if strategy != Strategy.CASH_SECURED_PUT or ctx is None or not active(ctx):
         return False
     if ctx.for_send:
-        return frozen is not None and frozen.bottoming == "name"
+        return (
+            frozen is not None
+            and frozen.bottoming == "name"
+            and symbol not in ctx.signal_lot_recent
+        )
     return signal_lot(ctx, symbol, spot)
 
 
@@ -322,6 +329,27 @@ def bottoming_reason(ctx: SizingContext | None, cand: TradeCandidate) -> str | N
     if not signal_lot(ctx, cand.underlying, spot):
         return None
     return bottoming_guard(ctx, cand.underlying, cand.delta)
+
+
+def bottoming_send_reason(ctx: SizingContext | None, cand: TradeCandidate) -> str | None:
+    """The one signal-lot guard that holds at send time: one lot per name per N sessions.
+
+    ``"bottoming_lot_recent"`` for a cash-secured put whose frozen note carries the name-level tag
+    (``bottoming == "name"``: the card was opened on a name signal, which the send-time context has
+    no fresh signals to re-derive) when the name already had a signal lot within
+    ``signal_lot_every_sessions`` sessions (``ctx.signal_lot_recent``, read from the lots recorded
+    when sent). Two cards queued on one name before either was sent, approved one poll apart, would
+    otherwise both go out with the fair-value floor waived. Reads the tag on the card and not
+    the regime switch: refusing is only ever more conservative (as the live delta cap is). Rolls,
+    covered calls, market-eased lots and ordinary ladder lots carry no such tag and are untouched.
+    """
+    if ctx is None or not ctx.for_send:
+        return None
+    if cand.strategy != Strategy.CASH_SECURED_PUT or cand.sizing is None:
+        return None
+    if cand.sizing.bottoming != "name":
+        return None
+    return "bottoming_lot_recent" if cand.underlying in ctx.signal_lot_recent else None
 
 
 def bottoming_tag(

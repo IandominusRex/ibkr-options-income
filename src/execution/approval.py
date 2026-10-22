@@ -21,7 +21,13 @@ from telegram import Bot
 
 from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
-from src.common.config import get_config
+from src.common.config import (
+    get_cc_timing_cfg,
+    get_claude_cut_cfg,
+    get_config,
+    get_leveraged_sizing_cfg,
+    get_regime_cfg,
+)
 from src.common.market_hours import is_rth
 from src.common.schemas import (
     AccountSnapshot,
@@ -50,12 +56,118 @@ from src.regime.context import build_sizing_context
 from src.regime.refresh import refresh_regime_cached
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
-from src.storage.system_settings import get_halt_source, is_halted, set_halted
+from src.storage.system_settings import (
+    get_halt_source,
+    get_setting,
+    is_halted,
+    set_halted,
+    set_setting,
+)
 from src.strategies.covered_call import uncovered_call_capacity
 
 log = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
+
+# The ET day (ISO date) on which the operator was last told that new puts and calls are on hold
+# because the sizing settings could not be read: one alert a day, not one per ~30 s poll. Kept in
+# `system_settings`, the trading side's own store (nothing here depends on the news database).
+SIZING_CONFIG_ALERT_KEY = "sizing_config_alert_day"
+
+
+def _one_line(exc: BaseException, limit: int = 300) -> str:
+    """An exception's text on one line (a validation error spans several), cut to *limit*."""
+    text = " ".join(str(exc).split()) or type(exc).__name__
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def sizing_config_errors() -> list[str]:
+    """What is wrong with the four typed blocks the sizing path reads, in plain words.
+
+    ``regime:``, ``leveraged_sizing:``, ``cc_timing:`` and ``claude_cut:`` of
+    ``config/risk_limits.yaml``: each is parsed on every use and raises on a mistyped key, a
+    bound outside its range or a guard at or below its strategy's ``delta_min``. Returns one
+    ``"<block>: <problem>"`` line per block that does not load (empty when all four do).
+    """
+    errors: list[str] = []
+    for name, getter in (
+        ("regime", get_regime_cfg),
+        ("leveraged_sizing", get_leveraged_sizing_cfg),
+        ("cc_timing", get_cc_timing_cfg),
+        ("claude_cut", get_claude_cut_cfg),
+    ):
+        try:
+            getter()
+        except Exception as exc:
+            errors.append(f"{name}: {_one_line(exc)}")
+    return errors
+
+
+def _sizing_hold_text(detail: str, *, config: bool) -> str:
+    """The Telegram text: new puts and calls are on hold, rolls and closes keep working."""
+    cause = (
+        f"The market-regime settings in config/risk_limits.yaml are invalid ({detail})."
+        if config
+        else f"The send-time sizing limits could not be built ({detail})."
+    )
+    fix = (
+        "Fix the setting and restart the trading service."
+        if config
+        else "It is retried on every order poll."
+    )
+    return (
+        f"⚠️ New cash-secured puts and covered calls are on hold. {cause} "
+        "Queued rolls keep going, and profit-takes and loss exits are not affected. "
+        f"{fix} This alert repeats at most once a day."
+    )
+
+
+async def _alert_sizing_hold(
+    bot: Bot, chat_id: str, text: str, today: str, *, force: bool = False
+) -> bool:
+    """Send *text* once per ET day (*force* sends it regardless); True when it went out.
+
+    The day is remembered only after the send succeeded, so a Telegram outage is retried on the
+    next poll rather than silently swallowing the day's one alert.
+    """
+    if not force and get_setting(SIZING_CONFIG_ALERT_KEY) == today:
+        return False
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+    except Exception:
+        log.exception("Failed to send the sizing-configuration alert")
+        return False
+    set_setting(SIZING_CONFIG_ALERT_KEY, today)
+    return True
+
+
+async def check_sizing_config_at_startup(bot: Bot, chat_id: str) -> list[str]:
+    """Validate the typed sizing blocks when the approval service starts; never raises.
+
+    A bad block is logged critical and announced (the same alert the order poll sends), but the
+    service still starts: refusing to start would also stop profit-takes and loss exits, which
+    never read these blocks. Returns the problems found (empty when the blocks load). A startup
+    alert is sent whatever was sent earlier today (the operator has just restarted, perhaps to fix
+    it) and counts as the day's alert, so the first poll does not repeat it.
+    """
+    try:
+        errors = sizing_config_errors()
+        if not errors:
+            return []
+        detail = "; ".join(errors)
+        log.critical(
+            "Invalid market-regime sizing settings: %s. New puts and calls are held until it is "
+            "fixed; the service keeps running so closes, profit-takes, loss exits and rolls work.",
+            detail,
+        )
+        today = datetime.now(UTC).astimezone(_ET).date().isoformat()
+        await _alert_sizing_hold(
+            bot, chat_id, _sizing_hold_text(detail, config=True), today, force=True
+        )
+        return errors
+    except Exception:
+        log.exception("Start-up check of the sizing settings failed")
+        return []
 
 
 def _load_candidate(session: Session, order_row: OrderRow) -> TradeCandidate | None:
@@ -196,6 +308,62 @@ def _trim_to_regime(
     return trimmed, text
 
 
+def _persist_gate_tags(
+    session: Session,
+    order_row: OrderRow,
+    candidate: TradeCandidate,
+    sizing: SizingContext | None,
+) -> None:
+    """Write the batch gate's in-place ``sizing`` tags back to the order's frozen snapshot.
+
+    The send-time gate tags each accepted put (``floor_lot``, ``bottoming``, ``scale_in``,
+    ``vrp_waived``) on the in-memory candidate only; the day's counts
+    (`regime/context.floor_lots_counted`, `csp_opens_counted`) read the order's snapshot. Without
+    this write a card that first becomes a guaranteed-floor lot at send time was never counted, so
+    the next poll's floor was unused and the floor's daily limit could be exceeded up to the daily
+    limit. Only the ``sizing`` note is rewritten, from the candidate the gate tagged: contract
+    count, strike, price and every other frozen field are left as they were, and the tags the gate
+    deliberately keeps (the name-level ``bottoming`` tag and the frozen zone) come through
+    unchanged.
+
+    A lot that took the floor is also recorded (`regime_floor_lot`; the same card and day is one
+    row, so a lot the scan already recorded is updated and linked, not doubled). Its note's regime
+    fields are refreshed to the regime in force *now* first (as the send-time trim does): the card
+    may have been made under a calmer one, and the lot took the floor under this one.
+    """
+    if candidate.sizing is None:
+        return
+    if candidate.sizing.floor_lot and sizing is not None:
+        fresh = sizing_note(sizing, candidate.underlying, candidate.contracts, hard_max_contracts())
+        if fresh is not None:
+            candidate.sizing = candidate.sizing.model_copy(
+                update={
+                    "regime": fresh.regime,
+                    "regime_index": fresh.regime_index,
+                    "per_trade_cap": fresh.per_trade_cap,
+                    "budget_multiplier": fresh.budget_multiplier,
+                }
+            )
+    note = candidate.sizing.model_dump(mode="json")
+    snap = dict(order_row.snapshot or {})
+    if snap.get("sizing") != note:
+        snap["sizing"] = note
+        order_row.snapshot = snap  # a new dict: SQLAlchemy does not see an in-place JSON edit
+    if candidate.sizing.floor_lot:
+        record_action(
+            cand=candidate,
+            kind="regime_floor_lot",
+            deterministic=candidate.contracts,
+            sent=candidate.contracts,
+            reason=(
+                f"guaranteed floor lot under {candidate.sizing.regime_index} "
+                f"{candidate.sizing.regime.value}"
+            ),
+            order_id=order_row.id,
+            session=session,
+        )
+
+
 def _is_roll_order() -> ColumnElement[bool]:
     """SQL predicate: the order's frozen snapshot is a roll candidate."""
     return func.json_extract(OrderRow.snapshot, "$.strategy") == Strategy.ROLL.value
@@ -283,14 +451,27 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         return
 
     # The send-time sizing context is built here, before the write session below opens (like the
-    # IBKR fetches above, it must not hold the SQLite write lock). If it cannot be built the
-    # pass is skipped: the orders stay QUEUED and are retried, rather than being sent without
-    # the regime's limits.
+    # IBKR fetches above, it must not hold the SQLite write lock). If it cannot be built (a bad
+    # typed config block, say) every cash-secured put and covered call stays QUEUED and is
+    # retried next poll, never sent without the regime's limits; queued ROLLS still go, as the
+    # circuit-breaker pass sends them (no sizing context: the regime never touches a roll, and a
+    # defensive roll must not wait on a config typo). One Telegram alert a day says so.
     try:
         sizing = await asyncio.to_thread(_send_context, now, positions)
-    except Exception:
-        log.exception("Could not build the send-time sizing context — skipping execution pass")
-        return
+    except Exception as exc:
+        log.exception(
+            "Could not build the send-time sizing context — sending queued rolls only; "
+            "puts and calls stay queued"
+        )
+        sizing = None
+        rolls_only = True
+        problems = sizing_config_errors()
+        await _alert_sizing_hold(
+            bot,
+            chat_id,
+            _sizing_hold_text("; ".join(problems) or _one_line(exc), config=bool(problems)),
+            now.astimezone(_ET).date().isoformat(),
+        )
 
     # ------------------------------------------------------------------ #
     # Phase 1: synchronous classification                                  #
@@ -525,6 +706,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             if candidate.strategy == Strategy.CASH_SECURED_PUT:
                 # Tie the day's counterfactual rows for this card to the order that was sent.
                 link_order(candidate.candidate_id, order_row.id, session=session)
+                _persist_gate_tags(session, order_row, candidate, sizing)
                 if candidate.sizing is not None and candidate.sizing.bottoming == "name":
                     # A lot opened above its zone on a name-level bottoming signal: recorded
                     # when SENT (a card nobody approved does not use up the name's turn), so a

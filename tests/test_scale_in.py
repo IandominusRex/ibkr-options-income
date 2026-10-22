@@ -473,6 +473,173 @@ def test_a_cancelled_or_unfilled_order_is_not_a_lot():
         assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) is None
 
 
+def seed_working(
+    session,
+    *,
+    symbol: str,
+    created_at: datetime,
+    spot: float | None,
+    state: str = "submitted",
+    filled_qty: float = 0.0,
+    strategy: str = "cash_secured_put",
+    strike: float = 78.0,
+    contracts: int = 10,
+) -> OrderRow:
+    """An opening order that has been sent but not (fully) filled: no SELL fill row yet."""
+    _ID[0] += 1
+    cid = f"work{_ID[0]:04d}"
+    snap: dict[str, Any] = {
+        "candidate_id": cid,
+        "strategy": strategy,
+        "underlying": symbol,
+        "right": "P",
+        "strike": strike,
+        "expiry": date(2026, 10, 30).isoformat(),
+        "contracts": contracts,
+    }
+    if spot is not None:
+        snap["ideal"] = {"spot": spot}
+    row = OrderRow(
+        candidate_id=cid,
+        state=state,
+        filled_qty=filled_qty,
+        snapshot=snap,
+        created_at=created_at.replace(tzinfo=None),
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+@pytest.mark.parametrize("state", ["submitted", "partial"])
+def test_a_working_order_with_no_fill_yet_is_a_lot(state):
+    """R9: a lot sent at 10:00 and still unfilled at the 10:15 scan must exist for the ladder."""
+    with session_scope() as s:
+        seed_working(s, symbol="TQQQ", created_at=utc(2026, 10, 13, 14, 0), spot=81.79, state=state)
+        anchor = latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY)
+    assert anchor == (81.79, "order_snapshot", date(2026, 10, 13))
+
+
+def test_a_part_filled_order_is_a_lot_dated_by_its_last_fill():
+    with session_scope() as s:
+        row = seed_working(
+            s,
+            symbol="TQQQ",
+            created_at=utc(2026, 10, 12, 14, 0),
+            spot=81.79,
+            state="partial",
+            filled_qty=3.0,
+        )
+        s.add(
+            FillRow(
+                order_id=row.id,
+                candidate_id=row.candidate_id,
+                action="SELL",
+                filled_qty=3.0,
+                avg_price=1.0,
+                filled_at=utc(2026, 10, 13, 15, 0).replace(tzinfo=None),
+            )
+        )
+        s.flush()
+        anchor = latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY)
+    assert anchor == (81.79, "order_snapshot", date(2026, 10, 13))
+
+
+def test_a_working_order_is_dated_by_its_et_creation_day():
+    # 02:30 UTC on 10-14 is 22:30 ET on 10-13
+    with session_scope() as s:
+        seed_working(s, symbol="TQQQ", created_at=utc(2026, 10, 14, 2, 30), spot=81.79)
+        anchor = latest_anchor(s, "TQQQ", [], survival_days=5, today=date(2026, 10, 14))
+    assert anchor == (81.79, "order_snapshot", date(2026, 10, 13))
+
+
+@pytest.mark.parametrize("state", ["cancelled", "rejected", "queued"])
+def test_a_working_order_stops_counting_once_it_ends_with_no_fill(state):
+    """A cancelled or rejected order with no fill never counts, and a queued one is not sent yet."""
+    with session_scope() as s:
+        row = seed_working(s, symbol="TQQQ", created_at=utc(2026, 10, 13, 14, 0), spot=81.79)
+        assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) is not None
+        row.state = state
+        s.flush()
+        assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) is None
+
+
+def test_a_working_order_is_a_lot_only_for_its_own_name_and_only_a_put_lot():
+    with session_scope() as s:
+        seed_working(s, symbol="SOXL", created_at=utc(2026, 10, 13, 14, 0), spot=122.9)
+        seed_working(
+            s, symbol="TQQQ", created_at=utc(2026, 10, 13, 14, 0), spot=81.79, strategy="roll"
+        )
+        seed_working(
+            s,
+            symbol="TQQQ",
+            created_at=utc(2026, 10, 13, 14, 0),
+            spot=81.79,
+            strategy="covered_call",
+        )
+        assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) is None
+
+
+def test_a_working_order_is_priced_like_a_filled_lot():
+    """The snapshot's spot, else the close on the creation date."""
+    from src.storage.models import PriceHistoryRow
+
+    with session_scope() as s:
+        s.add(
+            PriceHistoryRow(
+                symbol="TQQQ", obs_date=date(2026, 10, 13), open=82, high=84, low=81, close=83.62
+            )
+        )
+        seed_working(s, symbol="TQQQ", created_at=utc(2026, 10, 13, 14, 0), spot=None)
+        anchor = latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY)
+    assert anchor == (83.62, "price_history", date(2026, 10, 13))
+
+
+def test_a_filled_lot_is_still_the_anchor_it_was_when_a_later_order_is_working():
+    """The most recent lot wins, working or filled: a newer working order moves the anchor to it."""
+    with session_scope() as s:
+        seed_lot(s, symbol="TQQQ", strike=78.0, filled_at=utc(2026, 10, 7, 13, 51), spot=81.79)
+        assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) == (
+            81.79,
+            "order_snapshot",
+            date(2026, 10, 7),
+        )
+        seed_working(s, symbol="TQQQ", created_at=utc(2026, 10, 13, 14, 0), spot=78.4)
+        assert latest_anchor(s, "TQQQ", [], survival_days=5, today=TODAY) == (
+            78.4,
+            "order_snapshot",
+            date(2026, 10, 13),
+        )
+
+
+def test_a_second_lot_on_a_name_with_an_unfilled_first_lot_is_subject_to_the_zone():
+    """The review's scenario end to end: the 10:00 lot is sent and still unfilled (so no short put
+    is held yet) when the 10:15 scan runs, on a name that has fallen hard. Before R9 the name had
+    a trigger but no anchor, so the scan took it for a first lot and proposed a second at the same
+    price; now the working lot anchors the ladder and the second lot must wait for its zone."""
+    now = utc(2026, 10, 14, 14, 15)
+    bars = {"SOXL": bars_before("SOXL", date(2026, 10, 14))}
+
+    def zone_context(session):
+        return build_sizing_context(
+            now=now, session=session, symbols=["SOXL"], positions=[], bars=bars,
+            spots={"SOXL": 140.0},
+        )  # fmt: skip
+
+    with session_scope() as s:
+        without = zone_context(s)
+        seed_working(s, symbol="SOXL", created_at=utc(2026, 10, 14, 14, 0), spot=140.19)
+        with_working = zone_context(s)
+    assert without is not None and with_working is not None
+    assert without.name_triggers["SOXL"] == ["name_drawdown"]
+    assert "SOXL" not in without.scale_in  # no anchor: the first lot is free
+    zone = with_working.scale_in["SOXL"]
+    assert zone.anchor == 140.19 and zone.anchor_source == "order_snapshot"
+    # a second lot at (about) the same price is above the zone top: it waits
+    assert scale_in_reason(with_working, "SOXL", 140.0) == "scale_in_zone_not_reached"
+    assert scale_in_reason(without, "SOXL", 140.0) is None
+
+
 def test_loss_exit_blocks_the_name_for_the_rest_of_the_day():
     # SOXL loss exit at 13:34 UTC on 10-13 -> a SOXL CSP at 13:52 gets "loss_exit_cooldown";
     # the next day it does not
