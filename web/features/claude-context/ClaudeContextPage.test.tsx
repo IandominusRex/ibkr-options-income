@@ -105,6 +105,7 @@ const base = (over: Partial<ClaudeContext> = {}): ClaudeContext => ({
     { symbol: "TSLL", leverage: 2, calm_fraction: 0.8, stressed_fraction: 0.5 },
   ],
   claude_cut_mode: "applied",
+  claude_cut_breaker_tripped_today: false,
   account_mode: "paper",
   calls: [
     { kind: "trade_review", label: "Trade review", blocks: ["Market picture", "Your book", "Name notes", "News", "Candidates"] },
@@ -358,6 +359,73 @@ describe("What Claude knows", () => {
     expect(zzz.getByText("no fundamentals")).toBeInTheDocument();
   });
 
+  const REPORTED = "Reported in news (not computed by the system)";
+  const quote = (text: string, cluster_id: string) => ({ text, cluster_id });
+
+  it("shows the figures quoted from the news under their own label, apart from Claude's story", async () => {
+    serve(
+      base({
+        dossiers: [
+          dossier("META", {
+            reported: [
+              quote("Analysts see glasses sales of $5.2 billion", "C8123"),
+              quote("Launch set for 3 markets", "C8124"),
+            ],
+          }),
+        ],
+      }),
+    );
+    const meta = within(await screen.findByRole("listitem", { name: "META" }));
+    const label = meta.getByText(REPORTED);
+    expect(label.className).toContain("text-muted"); // the same small label face as "Claude's story"
+    const list = meta.getByRole("list", { name: REPORTED });
+    const items = within(list).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]!.textContent).toContain("Analysts see glasses sales of $5.2 billion");
+    expect(items[0]!.textContent).toContain("Evidence: C8123");
+    expect(items[1]!.textContent).toContain("Launch set for 3 markets");
+    expect(items[1]!.textContent).toContain("Evidence: C8124");
+    // never inside the story's own paragraph
+    const storyLabel = meta.getByText("Claude's story");
+    const storyP = storyLabel.parentElement!;
+    expect(storyP.textContent).not.toContain("$5.2 billion");
+    expect(storyP.contains(label)).toBe(false);
+    // and it comes after the story, before the upcoming dates
+    const order = Array.from(meta.getByText("Claude's story").closest("li")!.querySelectorAll("p, ul, div"));
+    expect(order.findIndex((n) => n.contains(label))).toBeGreaterThan(order.findIndex((n) => n === storyP));
+  });
+
+  it("shows nothing for a name with no reported figures", async () => {
+    serve(base({ dossiers: [dossier("META", { reported: [] }), dossier("AMD"), dossier("NVDA", { reported: undefined })] }));
+    const names = within(await screen.findByRole("region", { name: "Names" }));
+    expect(names.queryByText(REPORTED)).toBeNull();
+    expect(names.queryByRole("list", { name: REPORTED })).toBeNull();
+    expect(names.queryByText(/Reported/)).toBeNull();
+  });
+
+  it("shows the reported figures even when Claude wrote no story", async () => {
+    serve(
+      base({
+        dossiers: [
+          dossier("META", { story: "", story_evidence: [], reported: [quote("Guidance of $5.2 billion", "C8123")] }),
+        ],
+      }),
+    );
+    const meta = within(await screen.findByRole("listitem", { name: "META" }));
+    expect(meta.getByText(/No story right now/)).toBeInTheDocument();
+    expect(meta.getByText(REPORTED)).toBeInTheDocument();
+    expect(meta.getByText(/Guidance of \$5\.2 billion/)).toBeInTheDocument();
+  });
+
+  it("keeps a long quoted figure inside the row", async () => {
+    const long = `Analysts see sales of $5.2 billion ${"x".repeat(80)}`;
+    serve(base({ dossiers: [dossier("META", { reported: [quote(long, "C8123")] })] }));
+    const meta = within(await screen.findByRole("listitem", { name: "META" }));
+    expect(meta.getByText(long).className).toContain("break-words");
+    // the evidence id never splits from its label ("Evidence:" on one line, "C8123" on the next)
+    expect(within(meta.getByRole("list", { name: REPORTED })).getByText("Evidence: C8123").className).toContain("whitespace-nowrap");
+  });
+
   it("keeps the order the API gives: held names first", async () => {
     serve(base({ dossiers: [dossier("META", { held: true }), dossier("AMD"), dossier("NVDA")] }));
     const names = within(await screen.findByRole("region", { name: "Names" }));
@@ -416,6 +484,41 @@ describe("What Claude knows", () => {
     expect(regime.getByText("Leveraged-ETF ceilings are switched off.")).toBeInTheDocument();
   });
 
+  it("says today's circuit breaker tripped, next to the cut mode", async () => {
+    serve(base({ claude_cut_breaker_tripped_today: true }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    const cut = regime.getByText("Claude's size cuts: applied (paper).");
+    const paused = regime.getByText("Cuts paused today: the circuit breaker tripped.");
+    // a plain sentence straight after the cut-mode one, not a control and not a status word
+    expect(cut.nextElementSibling).toBe(paused);
+    expect(paused.tagName).toBe("P");
+    expect(paused.querySelector("[data-tone]")).toBeNull();
+    expect(paused.closest("button, a")).toBeNull();
+  });
+
+  it("says nothing about the breaker while it has not tripped", async () => {
+    serve(base({ claude_cut_breaker_tripped_today: false }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    expect(regime.getByText("Claude's size cuts: applied (paper).")).toBeInTheDocument();
+    expect(regime.queryByText(/circuit breaker/)).toBeNull();
+    expect(regime.queryByText(/paused/i)).toBeNull();
+  });
+
+  it("says the breaker tripped whatever the cut mode, and keeps the regime card whole", async () => {
+    serve(base({ claude_cut_mode: "record_only", account_mode: "live", claude_cut_breaker_tripped_today: true }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    expect(regime.getByText("Claude's size cuts: recorded only (live).")).toBeInTheDocument();
+    expect(regime.getByText("Cuts paused today: the circuit breaker tripped.")).toBeInTheDocument();
+    expect(regime.getByText("Claude can lower the size of a put the system opens on its own. It can never raise it.")).toBeInTheDocument();
+  });
+
+  it("says the breaker tripped even with no regime recorded yet", async () => {
+    serve(base({ regime: null, limits: [], claude_cut_breaker_tripped_today: true }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    expect(regime.getByText(/No regime recorded yet/)).toBeInTheDocument();
+    expect(regime.getByText("Cuts paused today: the circuit breaker tripped.")).toBeInTheDocument();
+  });
+
   it("holds its place while loading", async () => {
     serve(base());
     expect(screen.getByRole("status", { name: "Loading what Claude knows" })).toBeInTheDocument();
@@ -457,6 +560,20 @@ describe("What Claude knows", () => {
     const text = container.textContent ?? "";
     expect(text).not.toContain("\u2014"); // the em dash
     expect(text).not.toMatch(/seamless|robust|unlock|elevate/i);
+  });
+
+  it("keeps the copy rules in the breaker sentence and the reported line", async () => {
+    const { container } = serve(
+      base({
+        claude_cut_breaker_tripped_today: true,
+        dossiers: [dossier("META", { reported: [quote("Guidance of $5.2 billion", "C8123")] })],
+      }),
+    );
+    await screen.findByRole("region", { name: "Regime and limits" });
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("\u2014");
+    expect(text).not.toMatch(/seamless|robust|unlock|elevate/i);
+    expect(container.querySelector(".bg-primary")).toBeNull();
   });
 
   it("links back to More", async () => {

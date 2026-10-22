@@ -17,6 +17,7 @@ export type CallContext = S["CallContextOut"];
 export type Dropped = S["DroppedOut"];
 export type Dossier = S["DossierOut"];
 export type DossierEvent = S["DossierEvent"];
+export type DossierReported = S["DossierReported"];
 export type DossierFact = S["DossierFact"];
 export type PictureStory = S["PictureStory"];
 export type PictureFact = S["PictureFact"];

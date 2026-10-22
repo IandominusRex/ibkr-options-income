@@ -535,6 +535,134 @@ def test_the_cut_mode_follows_the_account_and_the_config(
     assert (body["claude_cut_mode"], body["account_mode"]) == (mode, account)
 
 
+# --- the cut breaker, today (OI-F4) -----------------------------------------------------------
+
+
+def _set_cut_state(raw: str) -> None:
+    from src.storage.system_settings import set_setting
+
+    set_setting("claude_cut_state", raw)
+
+
+def _cut_state(day: date, *, alerted: bool, reviewed=("c1", "c2")) -> str:
+    import json
+
+    return json.dumps(
+        {"day": day.isoformat(), "reviewed": list(reviewed), "breaker_alerted": alerted}
+    )
+
+
+def test_the_breaker_flag_is_true_when_it_tripped_today(news_client) -> None:
+    _set_cut_state(_cut_state(TODAY_ET, alerted=True))
+    assert _get(news_client)["claude_cut_breaker_tripped_today"] is True
+
+
+def test_the_breaker_flag_is_false_while_it_has_not_tripped(news_client) -> None:
+    _set_cut_state(_cut_state(TODAY_ET, alerted=False))
+    assert _get(news_client)["claude_cut_breaker_tripped_today"] is False
+
+
+def test_a_breaker_that_tripped_on_another_day_does_not_count(news_client) -> None:
+    _set_cut_state(_cut_state(TODAY_ET - timedelta(days=1), alerted=True))
+    assert _get(news_client)["claude_cut_breaker_tripped_today"] is False
+    _set_cut_state(_cut_state(TODAY_ET + timedelta(days=1), alerted=True))
+    assert _get(news_client)["claude_cut_breaker_tripped_today"] is False
+
+
+def test_a_missing_cut_state_means_the_breaker_has_not_tripped(news_client) -> None:
+    body = _get(news_client)
+    assert body["claude_cut_breaker_tripped_today"] is False
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "[]", '"tripped"', "null", '{"day": 5, "breaker_alerted": true}', "{}", ""],
+)
+def test_a_malformed_cut_state_means_the_breaker_has_not_tripped(news_client, raw) -> None:
+    _set_cut_state(raw)
+    assert _get(news_client)["claude_cut_breaker_tripped_today"] is False
+
+
+def test_the_breaker_needs_a_real_true_not_a_missing_or_loose_value(news_client) -> None:
+    import json
+
+    for flag in ({}, {"breaker_alerted": "yes"}, {"breaker_alerted": 1}, {"breaker_alerted": None}):
+        _set_cut_state(json.dumps({"day": TODAY_ET.isoformat(), "reviewed": [], **flag}))
+        assert _get(news_client)["claude_cut_breaker_tripped_today"] is False, flag
+
+
+def test_the_breaker_flag_is_reported_without_a_news_service(client, tmp_path, monkeypatch) -> None:
+    """The regime card does not need news.db: the flag rides the base response."""
+    import src.api.news_db as nd
+    import src.api.routers.claude_context as cc
+
+    nd.reset_engine()
+    monkeypatch.setattr(nd, "_resolve_path", lambda: str(tmp_path / "missing.db"))
+    monkeypatch.setattr(cc, "_now", lambda: NOW)
+    _set_cut_state(_cut_state(TODAY_ET, alerted=True))
+    body = _get(client)
+    assert body["available"] is False and body["claude_cut_breaker_tripped_today"] is True
+    nd.reset_engine()
+
+
+def test_the_breaker_key_is_the_one_the_sender_writes() -> None:
+    """The API cannot import the sender (it would load the Telegram stack), so the key is spelled
+    here and in the router; this keeps the two from drifting."""
+    import src.api.routers.claude_context as cc
+    from src.notify import sender
+
+    assert cc._CUT_STATE_KEY == sender._CUT_STATE_KEY == "claude_cut_state"
+
+
+# --- reported figures on a name (OI-E10) ------------------------------------------------------
+
+
+def test_a_dossiers_reported_figures_come_through_with_their_cluster_ids(news_client) -> None:
+    from src.common.schemas import DossierReported
+
+    _save_dossier(
+        _dossier(
+            "META",
+            reported=[
+                DossierReported(
+                    text="Analysts see glasses sales of $5.2 billion", cluster_id="C8123"
+                ),
+                DossierReported(text="Launch set for 3 markets", cluster_id="C8124"),
+            ],
+        )
+    )
+    meta = next(d for d in _get(news_client)["dossiers"] if d["symbol"] == "META")
+    assert meta["reported"] == [
+        {"text": "Analysts see glasses sales of $5.2 billion", "cluster_id": "C8123"},
+        {"text": "Launch set for 3 markets", "cluster_id": "C8124"},
+    ]
+    assert "$5.2 billion" not in meta["story"]  # the story and the reported figures stay apart
+
+
+def test_a_dossier_without_reported_figures_reports_an_empty_list(news_client) -> None:
+    _save_dossier(_dossier("META"))
+    meta = next(d for d in _get(news_client)["dossiers"] if d["symbol"] == "META")
+    assert meta["reported"] == []
+
+
+def test_a_row_stored_before_the_field_existed_reads_as_an_empty_list(news_client) -> None:
+    from src.news.store.models import TickerDossierRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
+
+    d = _dossier("META")
+    payload = d.model_dump(mode="json")
+    payload.pop("reported")
+    with news_session() as s:
+        s.add(
+            TickerDossierRow(
+                symbol="META", version=d.version, built_at=naive_utc(d.facts_at), payload=payload
+            )
+        )
+    meta = next(x for x in _get(news_client)["dossiers"] if x["symbol"] == "META")
+    assert meta["reported"] == []
+
+
 # --- the static call map ---------------------------------------------------------------------
 
 

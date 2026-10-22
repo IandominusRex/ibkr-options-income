@@ -94,6 +94,11 @@ export function RegimeCard({ ctx }: { ctx: ClaudeContext }) {
           <p className="mt-1 text-sm">Leveraged-ETF ceilings are switched off.</p>
         )}
         <p className="mt-2 text-sm">{cutSentence(ctx.claude_cut_mode, ctx.account_mode)}</p>
+        {ctx.claude_cut_breaker_tripped_today && (
+          // The day's circuit breaker: Claude zeroed most of the day's auto puts, so cuts are
+          // recorded but not applied until tomorrow. A plain sentence, whatever the mode above says.
+          <p className="mt-1 text-sm">Cuts paused today: the circuit breaker tripped.</p>
+        )}
         <p className="mt-1 text-[0.8125rem] text-muted">
           Claude can lower the size of a put the system opens on its own. It can never raise it.
         </p>

@@ -12,6 +12,7 @@ never a 500.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -53,6 +54,11 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/claude", tags=["claude"])
 ET = ZoneInfo("America/New_York")
 
+# The trading process's per-day bookkeeping for Claude's cut (``src/notify/sender.py::_CUT_STATE_KEY``):
+# {"day": ET date, "reviewed": [...], "breaker_alerted": bool}. Spelled out here because this module
+# cannot import the sender (it would load the Telegram stack into the API); a test keeps the two equal.
+_CUT_STATE_KEY = "claude_cut_state"
+
 _DROPPED_WINDOW = timedelta(days=7)
 _DROPPED_CAP = 100  # the list is the latest of them; ``dropped_total`` says how many there were
 _DEFAULT_LEVERAGE = 3  # a leveraged ETF missing from the operator's map: the strictest factor
@@ -78,6 +84,26 @@ def _regime_state(db: Session) -> RegimeState | None:
 
 def _suspended_today(db: Session, today_et: str) -> bool:
     return read_setting(db, SUSPENDED_KEY) == today_et
+
+
+def _breaker_tripped_today(db: Session, today_et: str) -> bool:
+    """True when Claude's daily cut breaker tripped today (ET): the sender's day state says so.
+
+    A state for another day, a missing setting and anything that is not the expected JSON object
+    all read as not tripped, as the sender itself treats them (it starts a fresh day).
+    """
+    raw = read_setting(db, _CUT_STATE_KEY)
+    if not raw:
+        return False
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        return False
+    return (
+        isinstance(state, dict)
+        and state.get("day") == today_et
+        and state.get("breaker_alerted") is True
+    )
 
 
 def _limits(state: RegimeState | None) -> tuple[bool, list[RegimeLimitOut]]:
@@ -217,6 +243,7 @@ def _dossiers(s: Session, covered: list[str], held: set[str]) -> tuple[list[Doss
             held=d.symbol.upper() in held,
             story=d.story,
             story_evidence=d.story_evidence,
+            reported=d.reported,
             events=d.events,
             profile=d.profile,
             facts=d.facts,
@@ -238,16 +265,18 @@ def context(_: OwnerUser, db: TradingDb) -> ClaudeContextResponse:
     leveraged_enabled, leveraged = _leveraged()
     cut_mode, account = _cut_mode()
     held = _held(db)
+    today = now.astimezone(ET).date().isoformat()
     base = ClaudeContextResponse(
         as_of=now,
         available=False,
         regime=state,
         regime_enabled=regime_enabled,
-        suspended_today=_suspended_today(db, now.astimezone(ET).date().isoformat()),
+        suspended_today=_suspended_today(db, today),
         limits=limits,
         leveraged_enabled=leveraged_enabled,
         leveraged=leveraged,
         claude_cut_mode=cut_mode,
+        claude_cut_breaker_tripped_today=_breaker_tripped_today(db, today),
         account_mode=account,
         calls=[
             CallContextOut(kind=c.kind, label=c.label, blocks=[b.label for b in c.blocks])

@@ -5869,6 +5869,11 @@
             "title": "Claude Cut Mode",
             "default": "record_only"
           },
+          "claude_cut_breaker_tripped_today": {
+            "type": "boolean",
+            "title": "Claude Cut Breaker Tripped Today",
+            "default": false
+          },
           "account_mode": {
             "type": "string",
             "enum": [
@@ -7033,6 +7038,13 @@
             "type": "array",
             "title": "Story Evidence"
           },
+          "reported": {
+            "items": {
+              "$ref": "#/components/schemas/DossierReported"
+            },
+            "type": "array",
+            "title": "Reported"
+          },
           "events": {
             "items": {
               "$ref": "#/components/schemas/DossierEvent"
@@ -7087,6 +7099,26 @@
         ],
         "title": "DossierOut",
         "description": "One name's notes: Python's numbers and health, Claude's story and profile, verified events."
+      },
+      "DossierReported": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "Text"
+          },
+          "cluster_id": {
+            "type": "string",
+            "title": "Cluster Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "cluster_id"
+        ],
+        "title": "DossierReported",
+        "description": "A figure quoted from the news about a name, kept apart from the story (OI-E10).\n\n``text`` is a short statement of the figure (120 characters at most) and ``cluster_id`` the\n``C<id>`` of the news cluster that states it. Python keeps an item only when every number in\n``text`` is written in that cluster's text as the model was shown it, so the figure is the\nnews's, not the system's: every reader labels it \"Reported in news (not computed by the\nsystem)\" and never mixes it into the story."
       },
       "DroppedOut": {
         "properties": {

@@ -41,6 +41,7 @@ function Notes({ d }: { d: Dossier }) {
 function Name({ d }: { d: Dossier }) {
   const events = d.events ?? [];
   const evidence = d.story_evidence ?? [];
+  const reported = d.reported ?? [];
   const facts = d.facts ?? [];
   const why = d.health_why ?? [];
   return (
@@ -68,6 +69,26 @@ function Name({ d }: { d: Dossier }) {
           <span className={`${LABEL} mr-1.5`}>Claude&apos;s story</span>
           <span className="hatch mr-1.5 px-1.5 text-unknown">n/a</span>No story right now.
         </p>
+      )}
+
+      {reported.length > 0 && (
+        // Figures Claude quoted from the cited news, kept off the story line: the story carries only
+        // the system's numbers. Each was checked against the cluster it cites, shown as its evidence.
+        <div className="mt-2">
+          <p id={`reported-${d.symbol}`} className={LABEL}>
+            Reported in news (not computed by the system)
+          </p>
+          <ul aria-labelledby={`reported-${d.symbol}`} className="mt-1 grid gap-1.5 text-sm">
+            {reported.map((r) => (
+              <li key={`${r.cluster_id}|${r.text}`} className="break-words">
+                {r.text}
+                <span className="tabular ml-1.5 whitespace-nowrap font-mono text-[0.8125rem] text-muted">
+                  Evidence: {r.cluster_id}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {events.length > 0 && (

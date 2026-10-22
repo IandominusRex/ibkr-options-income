@@ -2074,6 +2074,11 @@ export interface components {
              */
             claude_cut_mode: "applied" | "record_only";
             /**
+             * Claude Cut Breaker Tripped Today
+             * @default false
+             */
+            claude_cut_breaker_tripped_today: boolean;
+            /**
              * Account Mode
              * @default paper
              * @enum {string}
@@ -2602,6 +2607,8 @@ export interface components {
             story: string;
             /** Story Evidence */
             story_evidence?: string[];
+            /** Reported */
+            reported?: components["schemas"]["DossierReported"][];
             /** Events */
             events?: components["schemas"]["DossierEvent"][];
             /** Profile */
@@ -2617,6 +2624,22 @@ export interface components {
             prose_at: string | null;
             /** Stale */
             stale: boolean;
+        };
+        /**
+         * DossierReported
+         * @description A figure quoted from the news about a name, kept apart from the story (OI-E10).
+         *
+         *     ``text`` is a short statement of the figure (120 characters at most) and ``cluster_id`` the
+         *     ``C<id>`` of the news cluster that states it. Python keeps an item only when every number in
+         *     ``text`` is written in that cluster's text as the model was shown it, so the figure is the
+         *     news's, not the system's: every reader labels it "Reported in news (not computed by the
+         *     system)" and never mixes it into the story.
+         */
+        DossierReported: {
+            /** Text */
+            text: string;
+            /** Cluster Id */
+            cluster_id: string;
         };
         /**
          * DroppedOut

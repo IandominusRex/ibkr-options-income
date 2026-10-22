@@ -15,6 +15,7 @@ from src.api.models.common import Envelope
 from src.common.schemas import (
     DossierEvent,
     DossierFact,
+    DossierReported,
     MarketPicture,
     MarketRegime,
     RegimeState,
@@ -71,6 +72,9 @@ class DossierOut(BaseModel):
     held: bool
     story: str
     story_evidence: list[str] = Field(default_factory=list)
+    # Figures quoted from the cited news, kept apart from the story (the story carries only the
+    # system's numbers). Each was checked against the cited cluster's text.
+    reported: list[DossierReported] = Field(default_factory=list)
     events: list[DossierEvent] = Field(default_factory=list)
     profile: str
     facts: list[DossierFact] = Field(default_factory=list)
@@ -89,6 +93,9 @@ class ClaudeContextResponse(Envelope):
     leveraged_enabled: bool = True  # ``leveraged_sizing.enabled``
     leveraged: list[LeveragedLimitOut] = Field(default_factory=list)
     claude_cut_mode: Literal["applied", "record_only"] = "record_only"
+    # Today's daily breaker has tripped (Claude zeroed most of the day's auto CSPs): cuts are
+    # recorded but not applied for the rest of the ET day, whatever the mode says.
+    claude_cut_breaker_tripped_today: bool = False
     account_mode: Literal["paper", "live"] = "paper"
     calls: list[CallContextOut] = Field(default_factory=list)
     dropped: list[DroppedOut] = Field(default_factory=list)
