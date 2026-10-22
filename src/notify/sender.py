@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -17,7 +18,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-from src.common.config import get_config
+from src.common.config import ClaudeCutCfg, get_claude_cut_cfg, get_config
+from src.common.market_hours import today_et
 from src.common.schemas import (
     AccountSnapshot,
     ApprovalStatus,
@@ -26,19 +28,24 @@ from src.common.schemas import (
     ClaudeReview,
     OrderState,
     PositionSnapshot,
+    Strategy,
     TradeCandidate,
 )
+from src.engine.regime_limits import claude_cut, cut_applies, with_claude_cut
 from src.notify.formatters import (
     format_account_snapshot,
     format_auto_trade_notification,
     format_buy_list,
     format_candidate,
+    format_claude_cut_breaker_alert,
+    format_claude_cut_lines,
     format_near_miss_line,
     format_order_notification,
     format_unchanged_cards_digest,
 )
+from src.regime.actions import record_action
 from src.storage.db import session_scope
-from src.storage.models import ApprovalRow, OrderRow
+from src.storage.models import ApprovalRow, OrderRow, SizingActionRow
 from src.storage.orders import has_active_order
 from src.storage.system_settings import (
     get_autonomy_level,
@@ -303,7 +310,7 @@ async def send_candidates(
     sent = False
     if auto_candidates:
         auto_sent = await _auto_queue_candidates(
-            auto_candidates, cfg, token, str(chat_id), thread_id
+            auto_candidates, cfg, token, str(chat_id), thread_id, reviews=reviews
         )
         sent = sent or auto_sent
     if manual_candidates:
@@ -374,19 +381,199 @@ async def _send_assessed_block(
         logger.exception("Failed to send assessed-contracts block for %s", label)
 
 
+# ---------------------------------------------------------------------------
+# Claude's size cut (spec section 9) — the auto branch's only use of a review's size fields
+# ---------------------------------------------------------------------------
+
+# system_settings key holding today's bookkeeping for the cut (self-resetting each ET day):
+# {"day": ET date, "reviewed": [candidate ids Claude reviewed], "breaker_alerted": bool}.
+_CUT_STATE_KEY = "claude_cut_state"
+
+
+@dataclass
+class _CutDay:
+    """Today's Claude-cut bookkeeping for the auto branch."""
+
+    day: str
+    reviewed: set[str] = field(default_factory=set)  # auto CSPs the Claude CLI has reviewed today
+    zeroed: set[str] = field(default_factory=set)  # candidates whose cut to zero was applied today
+    cut_rows: set[str] = field(default_factory=set)  # every candidate with a claude_cut row today
+    breaker_alerted: bool = False
+    tripped: tuple[int, int] | None = None  # (zeroed, reviewed) when the breaker first tripped here
+    dirty: bool = False  # the state setting needs writing
+
+
+@dataclass
+class _CutPlan:
+    """What the auto branch does with one candidate after reading Claude's size suggestion."""
+
+    candidate: TradeCandidate  # what to queue (resized when an applied cut lowers it)
+    send: bool  # False: a cut to zero was applied, so nothing is queued
+    kind: str  # the sizing_actions kind: claude_cut | claude_cut_unapplied
+    deterministic: int
+    sent: int
+    reason: str
+    announce: bool = False  # worth a line in the auto summary
+
+
+def _load_cut_day() -> _CutDay | None:
+    """Today's counters, from the state setting and today's ``claude_cut`` rows. None when the
+    record cannot be read: the caller then applies no cut at all (the deterministic size goes)."""
+    day = today_et()
+    out = _CutDay(day=day.isoformat())
+    try:
+        raw = json.loads(get_setting(_CUT_STATE_KEY) or "{}")
+        if isinstance(raw, dict) and raw.get("day") == out.day:
+            ids = raw.get("reviewed")
+            if isinstance(ids, list):
+                out.reviewed = {str(i) for i in ids}
+            out.breaker_alerted = bool(raw.get("breaker_alerted"))
+        with session_scope() as s:
+            for cid, sent in s.query(
+                SizingActionRow.candidate_id, SizingActionRow.sent_contracts
+            ).filter(SizingActionRow.kind == "claude_cut", SizingActionRow.action_day == day):
+                out.cut_rows.add(cid)
+                if sent == 0:
+                    out.zeroed.add(cid)
+    except Exception:
+        logger.warning("Claude cut: today's record unreadable — no cut applied", exc_info=True)
+        return None
+    return out
+
+
+def _save_cut_day(state: _CutDay, session: Session) -> None:
+    set_setting(
+        _CUT_STATE_KEY,
+        json.dumps(
+            {
+                "day": state.day,
+                "reviewed": sorted(state.reviewed),
+                "breaker_alerted": state.breaker_alerted,
+            }
+        ),
+        session=session,
+    )
+
+
+def _plan_claude_cut(
+    c: TradeCandidate,
+    review: ClaudeReview | None,
+    cfg: ClaudeCutCfg,
+    day: _CutDay,
+    *,
+    is_live: bool,
+) -> _CutPlan | None:
+    """Read Claude's size suggestion for one auto candidate. None: leave the candidate alone.
+
+    Only an opening cash-secured put with a review is looked at: covered calls and rolls are never
+    cut. ``claude_cut`` (pure, in the engine package) is the only thing that turns the review's
+    number into a size, and it can only lower it. The counters in *day* move as a side effect.
+    """
+    if review is None or c.strategy != Strategy.CASH_SECURED_PUT or c.roll_from is not None:
+        return None
+    reviewed_before = len(day.reviewed - {c.candidate_id})
+    if review.backend == "cli" and c.candidate_id not in day.reviewed:
+        day.reviewed.add(c.candidate_id)
+        day.dirty = True
+    n = claude_cut(c.contracts, review.max_contracts, review.backend)
+    if n >= c.contracts:
+        # Nothing to override. If an earlier review of this candidate today cut it, the record
+        # must say that a later one did not, or it would claim a trade that was in fact sent.
+        day.zeroed.discard(c.candidate_id)
+        if c.candidate_id in day.cut_rows:
+            return _CutPlan(
+                c,
+                True,
+                "claude_cut",
+                c.contracts,
+                c.contracts,
+                "a later review kept the deterministic size",
+            )
+        return None
+    detail = review.size_reason or "no reason given"
+    applies, why = cut_applies(
+        is_live=is_live,
+        zeroed_today=len(day.zeroed - {c.candidate_id}),
+        reviewed_today=reviewed_before,
+        cfg=cfg,
+    )
+    if not applies:
+        if why == "breaker" and not day.breaker_alerted:
+            day.breaker_alerted = True
+            day.dirty = True
+            day.tripped = (len(day.zeroed - {c.candidate_id}), reviewed_before)
+        return _CutPlan(
+            c,
+            True,
+            "claude_cut_unapplied",
+            c.contracts,
+            c.contracts,
+            f"{why}: Claude suggested {n}: {detail}",
+        )
+    announce = n > 0 or c.candidate_id not in day.zeroed
+    if n == 0:
+        day.zeroed.add(c.candidate_id)
+    else:
+        day.zeroed.discard(c.candidate_id)
+    day.cut_rows.add(c.candidate_id)
+    if n == 0:
+        return _CutPlan(c, False, "claude_cut", c.contracts, 0, detail, announce)
+    cut = c.model_copy(
+        update={
+            "contracts": n,
+            "collateral": c.strike * n * 100,
+            "sizing": with_claude_cut(c.sizing, c.contracts, n, detail),
+        }
+    )
+    return _CutPlan(cut, True, "claude_cut", c.contracts, n, detail, announce)
+
+
+def _join_notifications(base: str, extra: str) -> str:
+    """*base* then *extra*, within Telegram's limit (the base is cut at a line break if need be)."""
+    room = 4000 - len(extra) - 2
+    if len(base) > room:
+        base = base[:room].rsplit("\n", 1)[0]
+    return f"{base}\n\n{extra}" if base else extra
+
+
+async def _send_claude_cut_breaker_alert(
+    cfg: object, token: str, chat_id: str, fallback_thread: int | None, zeroed: int, reviewed: int
+) -> None:
+    """One alert to the orders (account) thread that Claude's cuts are no longer applied today."""
+    raw = getattr(getattr(cfg, "secrets", None), "telegram_thread_account", None)
+    thread = thread_id(raw) if isinstance(raw, str) and raw else fallback_thread
+    try:
+        async with Bot(token=token) as bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread,
+                text=format_claude_cut_breaker_alert(zeroed, reviewed),
+                parse_mode="MarkdownV2",
+            )
+    except Exception:
+        logger.exception("Failed to send the Claude-cut breaker alert")
+
+
 async def _auto_queue_candidates(
     candidates: list[TradeCandidate],
     cfg: object,
     token: str,
     chat_id: str,
     thread_id: int | None,
+    *,
+    reviews: list[ClaudeReview] | None = None,
 ) -> bool:
     """Auto-open path (WHITELIST/FULL): persist APPROVED approvals + QUEUED orders, send summary
     notification. Callers must pre-filter *candidates* to ones ``may_auto_open`` cleared —
     this function does not re-check the autonomy level, only the kill switch.
 
-    Returns ``True`` if a summary notification was sent (candidates were queued), ``False``
-    otherwise (halted, or nothing new to queue this cycle).
+    *reviews* carries Claude's reviews of these candidates. For an opening cash-secured put whose
+    review suggests a smaller size, the size is lowered here, before the order's snapshot is
+    frozen (``_plan_claude_cut``): applied in paper, recorded without being applied in live, with
+    every override written to ``sizing_actions``. Nothing else a review holds reaches an order.
+
+    Returns ``True`` if a summary notification was sent (candidates were queued, or an applied cut
+    stopped one), ``False`` otherwise (halted, or nothing new to queue this cycle).
     """
     # Kill switch: never auto-open new positions while halted (SYSTEM_REVIEW Phase 2).
     # The daily trade-count cap is enforced at the execution chokepoint (process_queued_orders).
@@ -396,6 +583,20 @@ async def _auto_queue_candidates(
 
     ttl = cfg.approval.ttl_minutes  # type: ignore[attr-defined]
     queued: list[TradeCandidate] = []
+    cut_lines: list[tuple[TradeCandidate, int, str]] = []
+
+    # Claude's size cut: read the config and today's counters before the write session opens. Any
+    # failure here means no cut (the deterministic size goes), never a failed queue.
+    review_map = {r.candidate_id: r for r in reviews or []}
+    cut_cfg: ClaudeCutCfg | None = None
+    cut_day: _CutDay | None = None
+    if review_map:
+        try:
+            cut_cfg = get_claude_cut_cfg()
+            cut_day = _load_cut_day()
+        except Exception:
+            logger.warning("Claude cut: config unreadable — no cut applied", exc_info=True)
+            cut_cfg = cut_day = None
 
     with session_scope() as s:
         for candidate in candidates:
@@ -409,6 +610,32 @@ async def _auto_queue_candidates(
                     candidate.candidate_id,
                 )
                 continue
+            plan: _CutPlan | None = None
+            if cut_cfg is not None and cut_day is not None:
+                plan = _plan_claude_cut(
+                    candidate,
+                    review_map.get(candidate.candidate_id),
+                    cut_cfg,
+                    cut_day,
+                    is_live=bool(cfg.is_live),  # type: ignore[attr-defined]
+                )
+            if plan is not None and not plan.send:
+                # Claude's cut to zero is applied: nothing is queued, the override is recorded.
+                record_action(
+                    cand=candidate,
+                    kind=plan.kind,
+                    deterministic=plan.deterministic,
+                    sent=plan.sent,
+                    reason=plan.reason,
+                    session=s,
+                )
+                if plan.announce:
+                    cut_lines.append((candidate, 0, plan.reason))
+                logger.info("Claude cut %s to zero: %s", candidate.candidate_id, plan.reason)
+                continue
+            card = candidate  # the candidate as the card showed it
+            if plan is not None:
+                candidate = plan.candidate  # lowered when an applied cut says so
             expires_at = datetime.now(UTC) + timedelta(minutes=ttl)
             # Per-candidate SAVEPOINT so a race (the partial unique index firing because a
             # concurrent writer queued the same candidate) rolls back only this candidate,
@@ -449,22 +676,42 @@ async def _auto_queue_candidates(
             logger.info(
                 "Auto-queued candidate %s (approval_id=%s)", candidate.candidate_id, approval.id
             )
+            if plan is not None:
+                # The override is recorded against the order that carries it (applied or not).
+                record_action(
+                    cand=card,
+                    kind=plan.kind,
+                    deterministic=plan.deterministic,
+                    sent=plan.sent,
+                    reason=plan.reason,
+                    order_id=order.id,
+                    session=s,
+                )
+                if plan.announce and plan.kind == "claude_cut":
+                    cut_lines.append((card, plan.sent, plan.reason))
+        if cut_day is not None and cut_day.dirty:
+            _save_cut_day(cut_day, s)
 
-    if not queued:
-        return False
-
-    text = format_auto_trade_notification(queued)
-    try:
-        async with Bot(token=token) as bot:
-            await bot.send_message(
-                chat_id=chat_id,
-                message_thread_id=thread_id,
-                text=text,
-                parse_mode="MarkdownV2",
-            )
-    except Exception:
-        logger.exception("Failed to send auto-queue notification")
-    return True
+    tripped = cut_day.tripped if cut_day is not None else None
+    notified = False
+    if queued or cut_lines:
+        text = format_auto_trade_notification(queued) if queued else ""
+        if cut_lines:
+            text = _join_notifications(text, format_claude_cut_lines(cut_lines))
+        try:
+            async with Bot(token=token) as bot:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=text,
+                    parse_mode="MarkdownV2",
+                )
+        except Exception:
+            logger.exception("Failed to send auto-queue notification")
+        notified = True
+    if tripped is not None:
+        await _send_claude_cut_breaker_alert(cfg, token, chat_id, thread_id, *tripped)
+    return notified
 
 
 def _live_pending_approval(session: Session, candidate: TradeCandidate) -> ApprovalRow | None:

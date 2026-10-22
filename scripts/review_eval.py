@@ -16,7 +16,7 @@ call `analytics.price_data.get_ohlcv`, which appends any missing daily bars via
 `FundamentalCacheRow` when its entry is missing or past its earnings-aware TTL). Both are the same
 rows/upserts a live scan would write for these symbols regardless of whether this script ever ran
 — stubbing them out was considered and rejected: it would make the eval diverge from the real
-prompt again, the exact gap fix round 1 closed. `_load_candidates`/`_build_history` only `SELECT`
+prompt again, the exact gap fix round 1 closed. `_load_candidates` only `SELECT`s
 (`candidates`/`claude_memory`); `_build_market_conditions` (`get_market_conditions`) uses only the
 process-local, in-memory `@daily_cached` decorator (`src/common/cache.py`) and writes nothing to
 any table — verified by reading every function this script's call graph reaches, not assumed.
@@ -30,9 +30,9 @@ tripped production circuit (or `enabled: false`) never blocks an eval run.
 prompt with no `analytics`, `market_conditions`, or `history` — understating the real prompt the
 production scan sends (`scan.py`'s full-universe review call passes all three; a full scan can
 also send up to `risk_limits.yaml → portfolio.max_new_positions_per_run` candidates, default 10).
-This version reuses `scan.py`'s own `_fetch_analytics`/`_load_memory` and
+This version reuses `scan.py`'s own `_fetch_analytics` and
 `analytics.market_conditions.get_market_conditions` — the exact functions production calls, none
-of which need an IBKR connection (yfinance/`price_history`/`iv_history`/`claude_memory` only) — so
+of which need an IBKR connection (yfinance/`price_history`/`iv_history` only) — so
 the replayed prompt matches what a real scan would have sent for these candidates. Each piece
 degrades independently and is reported: a symbol whose analytics fetch fails is just missing from
 the FACTS/analytics block (matching production's per-symbol fail-soft behaviour), and a failed
@@ -62,7 +62,7 @@ import argparse
 import sys
 import time
 from collections import Counter
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import httpx
@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.claude.news_context import news_block_for_candidates
 from src.claude.ollama_runner import REVIEW_SCHEMA
 from src.claude.parser import parse_ollama_review_output
+from src.claude.picture_context import load_picture_block
 from src.claude.prompts.strategist import AnalyticsMap, build_prompt
 from src.common.config import get_config
 from src.common.schemas import AccountSnapshot, ClaudeReview, MarketConditions, TradeCandidate
@@ -180,18 +181,6 @@ def _build_market_conditions() -> MarketConditions | None:
         return None
 
 
-def _build_history(underlyings: list[str]) -> list:
-    """Real prior-recommendation memory, via scan.py's own `_load_memory` — the exact function
-    the production scan calls. DB-only (reads `claude_memory`), no network."""
-    from src.orchestrator.scan import _load_memory
-
-    try:
-        return _load_memory(underlyings)
-    except Exception as exc:  # noqa: BLE001
-        print(f"  (memory history unavailable: {exc})")
-        return []
-
-
 def _build_news_block(candidates: list[TradeCandidate]) -> str:
     """Real NEWS block (Task 11): Google News RSS search + yfinance headlines for these
     candidates' underlyings, via the same `news_block_for_candidates` production calls
@@ -210,11 +199,12 @@ def _build_news_block(candidates: list[TradeCandidate]) -> str:
 
 def _build_production_prompt(candidates: list[TradeCandidate]) -> str:
     """The prompt a real full-universe scan would send for these candidates: real analytics
-    (IV/technicals/fundamentals) per underlying, real prior-recommendation history, real VIX/macro
+    (IV/technicals/fundamentals) per underlying, the stored market picture, real VIX/macro
     conditions, spot prices read off the same analytics (mirroring
     `scan.py`'s `spot_prices = {sym: tech.price for sym, (_iv, tech, _fund) in
     analytics_map.items() if tech.price}`) — not an approximation from a stored daily bar — and
-    (Task 11) a real NEWS block. Does not replicate the bounded tool-calling research turn
+    (Task 11) a real NEWS block. It leaves out the book block (that one is built from the live
+    positions, which this script never connects for). Does not replicate the bounded tool-calling research turn
     (`src.claude.ollama_tools.research_turn`) — this script mirrors `_generate`'s single-shot
     `/api/generate` request shape by design (see module docstring), not
     `review_candidates`'s `/api/chat` research path.
@@ -222,17 +212,17 @@ def _build_production_prompt(candidates: list[TradeCandidate]) -> str:
     underlyings = {c.underlying for c in candidates}
     analytics = _build_analytics(underlyings)
     spot_prices = {sym: tech.price for sym, (_iv, tech, _fund) in analytics.items() if tech.price}
-    history = _build_history(sorted(underlyings))
+    picture_block = load_picture_block(datetime.now(UTC))
     market_conditions = _build_market_conditions()
     news_block = _build_news_block(candidates)
     return build_prompt(
         candidates,
         _STUB_ACCOUNT,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         analytics=analytics,
         news_block=news_block or None,
+        picture_block=picture_block,
     )
 
 
@@ -295,7 +285,7 @@ def _run_once(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Replay stored candidates through the local Ollama reviewer, "
-        "production-shaped (real analytics/history/market conditions). Never writes candidates, "
+        "production-shaped (real analytics/picture/market conditions). Never writes candidates, "
         "approvals, orders, claude_memory, or the verdict ledger — but, via scan.py's own "
         "_fetch_analytics, may populate the shared price_history/fundamentals_cache caches, the "
         "same idempotent rows a live scan writes."
@@ -330,7 +320,7 @@ def main() -> None:
         return
     print(f"Reviewing {len(candidates)} candidate(s): {[c.candidate_id for c in candidates]}")
     print(f"Model: {args.model}   Runs: {args.runs}   Client timeout: {timeout:.0f}s")
-    print("Building production-shaped prompt (real analytics/history/market conditions)...")
+    print("Building production-shaped prompt (real analytics/picture/market conditions)...")
     print("=" * 72)
 
     verdicts: Counter[str] = Counter()

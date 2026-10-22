@@ -247,17 +247,42 @@ async def test_econ_actuals_marks_alerted_and_never_redispatches(news_db, monkey
         assert s.get(EconEventRow, "k1").alerted is True
 
 
-async def test_digest_uses_editor_order_and_reads_or_falls_back(news_db, monkeypatch) -> None:
+async def test_digest_uses_triage_order_and_reads_or_falls_back(news_db, monkeypatch) -> None:
+    """Was test_digest_uses_editor_order_and_reads_or_falls_back: the ordering assertions are the
+    same, but the order now comes from the stored triage piles (the editor pass is gone), and
+    the regime line is the trading process's deterministic record."""
+    from datetime import date
+
     from src.common.config import get_config
+    from src.common.schemas import IndexRegime, MarketRegime, RegimeState
     from src.news import explain as X
     from src.news import service as S
     from src.news.digests import DigestInputs
-    from src.news.schemas import ClusterView, DigestRead, EditorOutput, EditorThread
+    from src.news.schemas import ClusterView, DigestRead
+    from src.news.store import state
+    from src.news.store.models import NewsClusterRow, NewsPostRow, StoryTriageRow
+    from src.news.store.queries import naive_utc
+    from src.news.store.session import news_session
 
     svc = S.NewsService(get_config())
     svc.publisher = None
     monkeypatch.setattr(svc, "_backdrop", lambda now: None)
     now = datetime(2026, 10, 14, 12, 5, tzinfo=UTC)
+    day = date(2026, 10, 14)
+
+    def idx(name):
+        return IndexRegime(
+            index=name,
+            base=MarketRegime.CAUTIOUS,
+            base_date=day,
+            since=day,
+            base_since=day,
+            effective=MarketRegime.CAUTIOUS,
+        )
+
+    monkeypatch.setattr(
+        S, "load_regime_state", lambda: RegimeState(as_of=now, spy=idx("SPY"), qqq=idx("QQQ"))
+    )
     cls = [
         ClusterView(
             id=i,
@@ -269,6 +294,22 @@ async def test_digest_uses_editor_order_and_reads_or_falls_back(news_db, monkeyp
         )
         for i in (1, 2)
     ]
+    with news_session() as s:
+        for c in cls:
+            s.add(
+                NewsClusterRow(
+                    id=c.id,
+                    headline=c.headline,
+                    category="macro",
+                    first_seen=naive_utc(now),
+                    last_seen=naive_utc(now),
+                    tickers=[],
+                    tags=[],
+                )
+            )
+        s.add(StoryTriageRow(cluster_id=1, pile=2, rank=1.0, reason="r"))
+        s.add(StoryTriageRow(cluster_id=2, pile=1, rank=0.5, reason="r"))
+    state.set_state("triage_last_ok", now.isoformat())  # the model judged this window
     captured: list[DigestInputs] = []
 
     def fake_build(name, inp):
@@ -292,20 +333,10 @@ async def test_digest_uses_editor_order_and_reads_or_falls_back(news_db, monkeyp
         ),
     )
     monkeypatch.setattr(S, "build_digest", fake_build)
-    monkeypatch.setattr(
-        X,
-        "edit_digest",
-        lambda c, b, now: EditorOutput(
-            regime="risk_off",
-            threads=[
-                EditorThread(cluster_ids=[2], title="two"),
-                EditorThread(cluster_ids=[1], title="one"),
-            ],
-        ),
-    )
+    monkeypatch.setattr(S, "run_triage", lambda n, *, picture: 0)
     asked: list[list[int]] = []
 
-    def fake_reads(threads, b, now):
+    def fake_reads(threads, b, now, picture_text=None):
         asked.append([t.id for t in threads])
         return {2: DigestRead(cluster_id=2, headline="h", read="r", verdict="priced_in")}
 
@@ -313,20 +344,22 @@ async def test_digest_uses_editor_order_and_reads_or_falls_back(news_db, monkeyp
     await svc._digests(now)
     assert (
         asked == [[2, 1]]
-        and captured[0].regime == "risk_off"
+        and captured[0].regime == "SPY cautious · QQQ cautious"
         and captured[0].thread_order == [[2], [1]]
     )
     assert set(captured[0].reads) == {2}
 
-    from src.news.store import state
-    from src.news.store.models import NewsPostRow
-    from src.news.store.session import news_session
-
     with news_session() as s:
         assert [r.stage for r in s.query(NewsPostRow)] == ["explained"]
+    # the model judged nothing (and no regime is recorded): the deterministic order, no reads
     state.set_state("digest_sent:premarket", "")
-    monkeypatch.setattr(X, "edit_digest", lambda c, b, now: None)
-    monkeypatch.setattr(X, "digest_reads", lambda t, b, now: asked.append([x.id for x in t]) or {})
+    state.delete_state(["triage_last_ok"])
+    monkeypatch.setattr(S, "load_regime_state", lambda: None)
+    monkeypatch.setattr(
+        X,
+        "digest_reads",
+        lambda t, b, now, picture_text=None: asked.append([x.id for x in t]) or {},
+    )
     await svc._digests(now)
     assert asked[-1] == [1, 2] and captured[-1].regime is None
     with news_session() as s:

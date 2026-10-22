@@ -177,6 +177,22 @@ def test_a_repeated_eod_run_still_reconciles_and_snapshots(db, eod_env) -> None:
     assert snapshot.call_count == 2
 
 
+def test_the_sizing_record_is_resolved_at_eod_and_a_failure_does_not_stop_the_day(
+    db, eod_env
+) -> None:
+    """The counterfactual record is valued once a day, after the ledger is reconciled; if that
+    raises, the rest of the day (the reconciler, tomorrow's baseline) still ran."""
+    with (
+        patch("src.orchestrator.eod_report.resolve_actions", side_effect=RuntimeError("boom")) as r,
+        patch("src.orchestrator.eod_report.reconcile") as reconcile,
+        patch("src.orchestrator.eod_report.save_position_snapshot") as snapshot,
+    ):
+        await_eod_run(eod_env)
+
+    assert r.call_count == 1
+    assert reconcile.call_count == 1 and snapshot.call_count == 1
+
+
 def test_created_at_survives_an_upsert(db, session, an_eod_summary) -> None:
     from src.orchestrator.eod_report import _write_journal
 

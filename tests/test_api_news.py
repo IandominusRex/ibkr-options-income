@@ -109,7 +109,7 @@ def test_ticker_and_status(news_client) -> None:
         t["latest_brief"]["payload"]["title"] == "TSM brief" and t["request"]["status"] == "pending"
     )
     st = news_client.get("/news/status", headers=OWNER).json()
-    assert st["available"] and st["heartbeat_age_s"] is not None and st["llm_cap"] == 40
+    assert st["available"] and st["heartbeat_age_s"] is not None and st["llm_cap"] == 44
 
 
 def test_news_routes_when_db_missing(client, tmp_path, monkeypatch) -> None:

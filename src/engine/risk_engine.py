@@ -23,11 +23,40 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     RiskVerdict,
+    SizingContext,
     Strategy,
     TradeCandidate,
     Verdict,
 )
-from src.engine.capital import Budgets, charge, resolve_caps, risk_units, seed_budgets
+from src.engine.capital import (
+    Budgets,
+    Caps,
+    charge,
+    resolve_caps,
+    risk_units,
+    scale_caps,
+    seed_budgets,
+)
+from src.engine.regime_limits import (
+    active,
+    bottoming_reason,
+    bottoming_send_reason,
+    bottoming_tag,
+    cc_timing_reasons,
+    ceiling_kind,
+    daily_limit,
+    floor_left,
+    governing_index,
+    live_bottoming_delta_reason,
+    live_cc_delta_reason,
+    live_ladder_reason,
+    loss_exit_reason,
+    multipliers,
+    per_trade_cap,
+    scale_in_reason,
+    sizing_note,
+    vrp_waiver,
+)
 
 _INCOME_STRATEGIES = (Strategy.COVERED_CALL, Strategy.CASH_SECURED_PUT)
 
@@ -66,6 +95,58 @@ def _select_budget_representatives(
     return representatives
 
 
+def _cumulative_reasons(
+    cand: TradeCandidate, sector: str | None, caps: Caps, budgets: Budgets
+) -> list[str]:
+    """The pass-2 (shared-budget) reasons *cand* would be rejected for against *caps*.
+
+    Mirrors ``capital._fits`` exactly: the gate must never be looser than the sizer. Pure with
+    respect to *budgets* (read only), so it can be run twice, against the regime-scaled caps and
+    then the unscaled ones, to tell a regime rejection from a book rejection.
+    """
+    reasons: list[str] = []
+    # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
+    # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
+    # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
+    # $65k META put and a $15k MARA put on the same scale. When IV is missing we fall back
+    # to a stricter raw-collateral cap.
+    #
+    # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
+    cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
+    units = risk_units(cand.collateral, cand.current_iv, cand.dte)
+    if units is None:
+        if cum_collateral > caps.max_ticker_collateral:
+            reasons.append("concentration_limit")
+    else:
+        if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
+            reasons.append("concentration_limit")
+        if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
+            reasons.append("sector_limit")
+
+    # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
+    # slot is free. This is also the raw-collateral backstop on every path that cannot
+    # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
+    # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
+    # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
+    # holding a slot (seeded from the book, or claimed by an earlier representative this
+    # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
+    if cum_collateral > caps.max_ticker_collateral:
+        if (
+            cand.underlying not in budgets.large_tickers
+            and len(budgets.large_tickers) >= caps.max_large_positions
+        ):
+            reasons.append("large_position_slot_full")
+        elif cum_collateral > caps.large_ticker_collateral:
+            reasons.append("concentration_limit")
+
+    if cand.strategy == Strategy.CASH_SECURED_PUT:
+        if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
+            reasons.append("csp_allocation_limit")
+    if budgets.cash_used + cand.collateral > caps.deployable_cash:
+        reasons.append("buying_power_buffer")
+    return reasons
+
+
 def validate_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -73,6 +154,7 @@ def validate_candidates(
     iv_by_symbol: dict[str, float] | None = None,
     *,
     dedupe_same_symbol: bool = True,
+    sizing: SizingContext | None = None,
 ) -> list[RiskVerdict]:
     """Gate each candidate against hard limits. One RiskVerdict per candidate.
 
@@ -120,6 +202,19 @@ def validate_candidates(
     pass it (the full scan sweep); callers on a latency-sensitive path where it would cost a
     fresh network round-trip — the order-approval re-validation gate, a single-ticker
     deep-dive — deliberately do not, and rely on the raw-collateral tally instead.
+
+    *sizing* carries the market regime (`src/regime/context.py`); ``None`` (rolls, tests) means no
+    regime behaviour. It only ever touches cash-secured puts: covered calls and rolls are never
+    regime-limited, exactly like the income gates above. (The one thing a covered call meets is
+    the breakout rule, `cc_timing_reasons`, which has its own switch and also reads the breakout
+    frozen on the candidate when there is no context.) With it, a CSP is also held to the
+    per-trade ceiling (`regime_ceiling`, or `leveraged_ceiling` for a leveraged ETF), the
+    regime-scaled budgets (`regime_budget` when only the scaled cap stops it, i.e. it fits every
+    unscaled cap), the day's new-CSP count (`regime_daily_limit`, per governing index), and the
+    guaranteed floor: while ``floor_new_per_day`` lots remain, a candidate whose *only* reason is
+    `regime_budget` is accepted and tagged ``sizing.floor_lot`` (an in-place update of the
+    candidate; the gate returns verdicts only). The generator calls the same functions
+    (`src/engine/regime_limits.py`), so the two cannot disagree.
     """
     if not candidates:
         return []
@@ -148,6 +243,7 @@ def validate_candidates(
     # --- Pass 1: per-candidate gates. No shared budget is read or written here, so these
     # can run in any order and never depend on what else is in *candidates*.
     candidate_reasons: dict[str, list[str]] = {}
+    vrp_waived_ids: set[str] = set()  # name-level signal lots the fair-value floor would refuse
     for cand in candidates:
         reasons: list[str] = []
         limits = _strategy_limits(cand.strategy)
@@ -176,10 +272,18 @@ def validate_candidates(
             # max(1% ROC, 12% annualized) was a hidden ~25-30% IV floor that excluded every
             # low-vol diversifier in the universe and pushed every trade to the top of the
             # delta band (D2). Missing zone = data unavailable, never a rejection.
+            # One exemption (OI-B3): a CSP opened on a name-level bottoming signal, which
+            # carries its own guards. At scan time the fresh signal decides; at send time, where
+            # the context has no signals, the tag frozen on the card does (`vrp_waiver`).
             if income.get("require_vrp_edge", True) and cand.ideal is not None:
                 floor = cand.ideal.min_credit
                 if floor is not None and floor > 0 and cand.premium < floor:
-                    reasons.append("premium_below_fair_value")
+                    if vrp_waiver(
+                        sizing, cand.strategy, cand.underlying, cand.ideal.spot, cand.sizing
+                    ):
+                        vrp_waived_ids.add(cand.candidate_id)
+                    else:
+                        reasons.append("premium_below_fair_value")
 
         # --- IV environment: only sell premium when it's relatively expensive.
         # Enforced only when an IV rank is available (missing history is not a capital
@@ -231,6 +335,46 @@ def validate_candidates(
         max_contracts = limits.get("max_contracts") if limits else None
         if max_contracts is not None and cand.contracts > max_contracts:
             reasons.append("contracts_exceeds_max")
+
+        # --- Per-trade ceiling from the market regime and, for a leveraged ETF, its smaller
+        # ceiling. Cash-secured puts only: a roll or a covered call is never regime-limited.
+        if sizing is not None and cand.strategy == Strategy.CASH_SECURED_PUT:
+            hard_max = int(limits.get("max_contracts", 10)) if limits else 10
+            if cand.contracts > per_trade_cap(sizing, cand.underlying, hard_max):
+                reasons.append(
+                    ceiling_kind(sizing, cand.underlying, hard_max, cand.contracts)
+                    or "regime_ceiling"
+                )
+            # The scale-in ladder (same functions as the sizer): a loss exit on the name earlier
+            # today blocks it; a name under the ladder waits for its zone. A missing ``ideal``
+            # means no spot to judge, which is data-unavailable and never rejects.
+            cooldown = loss_exit_reason(sizing, cand.underlying)
+            if cooldown is not None:
+                reasons.append(cooldown)
+            if cand.ideal is not None:
+                not_reached = scale_in_reason(sizing, cand.underlying, cand.ideal.spot)
+                if not_reached is not None:
+                    reasons.append(not_reached)
+                else:
+                    # A lot above the zone on a name-level bottoming signal: its guards apply
+                    # (delta cap, one signal lot per name per N sessions).
+                    guard = bottoming_reason(sizing, cand)
+                    if guard is not None:
+                        reasons.append(guard)
+            # At send time the fresh signals are gone, so the one-lot-per-name guard is read from
+            # the tag frozen on the card against the lots recorded when sent. It does not need the
+            # card's `ideal`: it is a count of orders, not a price judgement.
+            recent = bottoming_send_reason(sizing, cand)
+            if recent is not None:
+                reasons.append(recent)
+
+        # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
+        # a call must sit at or above the strike floor and under the delta cap. A call is
+        # pushed out (when nothing on the chain clears both, none is sold on the name that
+        # scan); covered calls only (a roll or a put gets no reason), and not a regime limit
+        # (`/regime off` leaves it on). At send time there is no fresh context: the copy
+        # frozen on the candidate carries it.
+        reasons.extend(cc_timing_reasons(sizing, cand))
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
         # A ROLL is judged only on whether its new expiry runs into earnings: the proximity
@@ -316,52 +460,69 @@ def validate_candidates(
     # --- Pass 2: cumulative, shared-budget gates. Representatives only, walked in the same
     # score-sorted order as *candidates* so cross-symbol competition for the shared
     # sector/CSP/cash budgets is still resolved by priority, exactly as before this split.
+    #
+    # With a regime, a CSP is checked against the regime-SCALED caps first; when that fails, the
+    # same checks run against the unscaled caps and, if they pass, the reasons become the single
+    # `regime_budget` (the regime, not the book, said no). Budgets are always seeded and charged
+    # against the unscaled caps. Names accepted so far are tracked per underlying, so in the
+    # deep-dive (``dedupe_same_symbol=False``) the strikes of one name share one daily-count and
+    # one floor slot instead of each using a slot.
+    accepted_csp: dict[str, str] = {}  # underlying -> governing index, accepted CSPs this batch
+    accepted_floor: dict[str, str] = {}  # underlying -> governing index, floor lots this batch
+    accepted_signal_lot: set[str] = set()  # names that took a name-level signal lot this batch
+
+    def _others(by_name: dict[str, str], index: str, underlying: str) -> int:
+        return sum(1 for name, idx in by_name.items() if idx == index and name != underlying)
+
     for cand in candidates:
         if cand.candidate_id not in representative_ids:
             continue
         reasons = candidate_reasons[cand.candidate_id]
         sector = _sector_of(cand.underlying)
+        is_csp = cand.strategy == Strategy.CASH_SECURED_PUT
+        regime_active = sizing is not None and is_csp and active(sizing)
 
-        # --- Cumulative concentration, measured in RISK UNITS. Raw collateral encodes share
-        # price, which is not a risk measure: a 10-for-1 split would make a name tradeable
-        # overnight with identical risk. Risk units (collateral x IV x sqrt(DTE/365)) put a
-        # $65k META put and a $15k MARA put on the same scale. When IV is missing we fall back
-        # to a stricter raw-collateral cap.
-        # Mirrors `capital._fits` exactly — the gate must never be looser than the sizer.
-        #
-        # CUMULATIVE per-ticker collateral: this candidate on top of what is already held.
-        cum_collateral = budgets.ticker_collateral.get(cand.underlying, 0.0) + cand.collateral
-        units = risk_units(cand.collateral, cand.current_iv, cand.dte)
-        if units is None:
-            if cum_collateral > caps.max_ticker_collateral:
-                reasons.append("concentration_limit")
-        else:
-            if budgets.ticker_risk.get(cand.underlying, 0.0) + units > caps.max_ticker_risk:
-                reasons.append("concentration_limit")
-            if sector and budgets.sector_risk.get(sector, 0.0) + units > caps.max_sector_risk:
-                reasons.append("sector_limit")
+        check_caps = caps
+        if regime_active:
+            ticker_mult, book_mult = multipliers(sizing, cand.underlying)
+            check_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
+        reasons.extend(_cumulative_reasons(cand, sector, check_caps, budgets))
 
-        # Large-position slot: outsized CUMULATIVE exposure in one name is refused unless a
-        # slot is free. This is also the raw-collateral backstop on every path that cannot
-        # seed `ticker_risk` from live IV (no `iv_by_symbol` — the order-approval re-gate,
-        # the single-ticker deep-dive): cumulative per-ticker collateral can never exceed
-        # `max_pct_per_ticker_large`, whatever the candidate's own IV says. A ticker already
-        # holding a slot (seeded from the book, or claimed by an earlier representative this
-        # cycle via `capital.charge`) needs no NEW free slot for another lot on the same name.
-        if cum_collateral > caps.max_ticker_collateral:
+        took_floor = False
+        if regime_active:
+            assert sizing is not None
+            if reasons and not _cumulative_reasons(cand, sector, caps, budgets):
+                reasons = ["regime_budget"]
+            index = governing_index(sizing, cand.underlying)
+            limit = daily_limit(sizing, cand.underlying)
             if (
-                cand.underlying not in budgets.large_tickers
-                and len(budgets.large_tickers) >= caps.max_large_positions
+                limit is not None
+                and sizing.csp_opens_counted.get(index, 0)
+                + _others(accepted_csp, index, cand.underlying)
+                >= limit
             ):
-                reasons.append("large_position_slot_full")
-            elif cum_collateral > caps.large_ticker_collateral:
-                reasons.append("concentration_limit")
+                reasons.append("regime_daily_limit")
+            if reasons == ["regime_budget"]:
+                batch_floor: dict[str, int] = {
+                    idx: _others(accepted_floor, idx, cand.underlying) for idx in ("SPY", "QQQ")
+                }
+                if floor_left(sizing, cand.underlying, batch_floor) > 0:
+                    reasons = []
+                    took_floor = True
 
-        if cand.strategy == Strategy.CASH_SECURED_PUT:
-            if budgets.csp_collateral + cand.collateral > caps.max_csp_collateral:
-                reasons.append("csp_allocation_limit")
-        if budgets.cash_used + cand.collateral > caps.deployable_cash:
-            reasons.append("buying_power_buffer")
+        # One name-level signal lot per name per batch at send time, in the batch's own order (the
+        # first one passes). The send batch's per-name dedupe already leaves a single card per
+        # name; this keeps the guard whole when it is off. Decision time is untouched: there the
+        # fresh signal, not a tag on the card, says what a signal lot is.
+        if (
+            sizing is not None
+            and sizing.for_send
+            and is_csp
+            and cand.sizing is not None
+            and cand.sizing.bottoming == "name"
+            and cand.underlying in accepted_signal_lot
+        ):
+            reasons.append("bottoming_lot_recent")
 
         # Dedupe: two independent checks above (the ticker-risk breach and the large-slot
         # ceiling) can both append "concentration_limit" for the same candidate. Display
@@ -386,6 +547,40 @@ def validate_candidates(
                 caps=caps,
                 budgets=budgets,
             )
+            if sizing is not None and is_csp:
+                index = governing_index(sizing, cand.underlying)
+                accepted_csp[cand.underlying] = index
+                if took_floor:
+                    accepted_floor[cand.underlying] = index
+                note = cand.sizing or sizing_note(
+                    sizing,
+                    cand.underlying,
+                    cand.contracts,
+                    int(_strategy_limits(cand.strategy).get("max_contracts", 10)),
+                )
+                if note is not None:
+                    # An in-place tag: the gate returns verdicts only, and the caller's candidate
+                    # is what is sized, shown and frozen into the order snapshot. The name's
+                    # scale-in zone travels with it: the send-time re-gate checks the live price
+                    # against this frozen zone.
+                    zone = note.scale_in or sizing.scale_in.get(cand.underlying)
+                    spot = cand.ideal.spot if cand.ideal is not None else None
+                    # The send-time context carries no signals (no bars): a tag the card already
+                    # carries is kept, never erased.
+                    tag = bottoming_tag(sizing, cand.underlying, spot) or note.bottoming
+                    if tag == "name" and zone is not None:
+                        # frozen into the snapshot so the send-time re-gate knows the signal
+                        zone = zone.model_copy(update={"bottoming_signal": True})
+                    cand.sizing = note.model_copy(
+                        update={
+                            "floor_lot": took_floor,
+                            "scale_in": zone,
+                            "bottoming": tag,
+                            "vrp_waived": cand.candidate_id in vrp_waived_ids,
+                        }
+                    )
+                    if sizing.for_send and tag == "name":
+                        accepted_signal_lot.add(cand.underlying)
 
     return [
         RiskVerdict(
@@ -397,7 +592,12 @@ def validate_candidates(
     ]
 
 
-def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVerdict:
+def validate_live_quote(
+    candidate: TradeCandidate,
+    quote: OptionQuote,
+    *,
+    sizing: SizingContext | None = None,
+) -> RiskVerdict:
     """Second gate: re-check a single candidate against the FRESH live quote at send time.
 
     Catches the case the decision-time gate cannot see: the option drifted between the
@@ -405,6 +605,18 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
     collapsed). Deterministic. Delta is only enforced when the live quote actually carries
     greeks — missing live greeks degrade to the (already-passed) decision-time gate rather
     than blocking the fill.
+
+    *sizing* is the send-time context (`approval._send_context`); the send path passes it
+    explicitly (rolls pass ``None``: they are never regime- or ladder-limited). For a
+    cash-secured put it adds the scale-in ladder: ``loss_exit_cooldown`` when the name had a
+    loss exit today (including since the card was made), and ``scale_in_zone_not_reached`` when
+    the zone frozen into the card is now below the live underlying price (it bounced). For a
+    covered call carrying a breakout it adds ``cc_breakout_delta`` when the LIVE delta is over
+    the breakout's ``delta_max`` (the strike floor is a property of the card's strike and was
+    held at decision time; the delta is what can drift). A cash-secured put whose card is tagged
+    as a name-level bottoming signal lot (``sizing.bottoming == "name"``) gets
+    ``bottoming_delta_too_high`` when the LIVE delta is over ``bottoming.signal_delta_max``,
+    with or without *sizing*.
     """
     reasons: list[str] = []
 
@@ -456,6 +668,28 @@ def validate_live_quote(candidate: TradeCandidate, quote: OptionQuote) -> RiskVe
         and quote.mid < float(min_ratio) * candidate.premium
     ):
         reasons.append("live_premium_collapse")
+
+    # The covered-call breakout's delta cap against the LIVE delta (the breakout itself is the
+    # copy frozen on the card; the send-time context has none). Not a regime limit: it applies
+    # with or without a context.
+    if candidate.strategy == Strategy.COVERED_CALL:
+        drifted = live_cc_delta_reason(candidate, quote, sizing)
+        if drifted is not None:
+            reasons.append(drifted)
+
+    # A name-level signal lot's delta cap (`bottoming.signal_delta_max`) against the LIVE delta,
+    # read from the tag frozen on the card: it applies with or without a send-time context.
+    signal_drift = live_bottoming_delta_reason(candidate, quote)
+    if signal_drift is not None:
+        reasons.append(signal_drift)
+
+    if sizing is not None and candidate.strategy == Strategy.CASH_SECURED_PUT:
+        cooldown = loss_exit_reason(sizing, candidate.underlying)
+        if cooldown is not None:
+            reasons.append(cooldown)
+        not_reached = live_ladder_reason(candidate, quote, sizing)
+        if not_reached is not None:
+            reasons.append(not_reached)
 
     return RiskVerdict(
         candidate_id=candidate.candidate_id,

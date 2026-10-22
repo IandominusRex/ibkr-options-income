@@ -22,7 +22,15 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.claude.memory import FILLED, record_outcome
 from src.common.config import get_config
-from src.common.schemas import OptionQuote, OrderState, Strategy, TradeCandidate, Verdict
+from src.common.schemas import (
+    OptionQuote,
+    OrderState,
+    SizingContext,
+    Strategy,
+    TradeCandidate,
+    Verdict,
+)
+from src.engine.regime_limits import live_ladder_note
 from src.engine.risk_engine import validate_live_quote
 from src.execution.order_builder import build_limit_order, reprice_limit
 from src.ibkr.contracts import build_option
@@ -42,6 +50,12 @@ def _safe_float(val: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if f != f else f  # NaN check
+
+
+def _positive_float(val: object) -> float | None:
+    """``_safe_float`` that also rejects zero/negative sentinels (IBKR sends -1 for "no data")."""
+    f = _safe_float(val)
+    return f if f is not None and f > 0 else None
 
 
 def _two_sided(ticker: object) -> bool:
@@ -175,6 +189,7 @@ async def _fetch_quote(ib: IB, candidate: TradeCandidate) -> tuple[OptionQuote, 
         ask=ask,
         delta=_safe_float(getattr(greeks, "delta", None)) if greeks else None,
         iv=_safe_float(getattr(greeks, "impliedVol", None)) if greeks else None,
+        underlying_price=_positive_float(getattr(greeks, "undPrice", None)) if greeks else None,
     )
     return quote, qualified
 
@@ -213,8 +228,15 @@ async def execute_candidate(
     chat_id: str,
     order_id: int,
     candidate: TradeCandidate,
+    *,
+    sizing: SizingContext | None = None,
 ) -> None:
-    """Execute a single pre-validated TradeCandidate: qualify → quote → place → monitor → confirm."""
+    """Execute a single pre-validated TradeCandidate: qualify → quote → place → monitor → confirm.
+
+    *sizing* is the send-time sizing context the order poll built (`approval._send_context`); it
+    reaches the fresh-quote re-gate, which re-checks the scale-in ladder and the same-day
+    loss-exit block against it. The poll passes it explicitly.
+    """
     cfg = get_config()
     fill_timeout = cfg.execution.fill_timeout_minutes * 60.0
 
@@ -277,7 +299,7 @@ async def execute_candidate(
         quote, qualified = await _fetch_quote(ib, candidate)
 
         # Second Rules Engine pass — against the FRESH live quote (delta drift / collapsed mid).
-        live_verdict = validate_live_quote(candidate, quote)
+        live_verdict = validate_live_quote(candidate, quote, sizing=sizing)
         if live_verdict.verdict != Verdict.PASS:
             live_detail = _live_regate_detail(candidate, quote)
             log.warning(
@@ -339,12 +361,17 @@ async def execute_candidate(
         )
 
         lmt = float(order.lmtPrice) if order.lmtPrice is not None else None
+        # The scale-in ladder could not be re-checked (no underlying price anywhere): say so on
+        # the order, so the gap is visible rather than silent (ruling 48).
+        ladder_note = live_ladder_note(candidate, quote, sizing)
         with session_scope() as session:
             row = session.get(OrderRow, order_id)
             if row:
                 row.state = OrderState.SUBMITTED
                 row.ib_order_id = trade.order.orderId
                 row.limit_price = lmt
+                if ladder_note:
+                    row.detail = f"{row.detail} — {ladder_note}" if row.detail else ladder_note
 
         from src.notify.sender import send_order_notification
 

@@ -18,6 +18,21 @@ import pytest
 from src.common import cache
 from src.common.universe import invalidate_universe_cache
 
+WEEK_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "week_2026_10_13"
+
+
+def week_bars(symbol: str) -> Any:
+    """Real daily bars for the week-of-2026-10-13 replay (2025-09-02..2026-10-19).
+
+    *symbol* is ``SPY``, ``QQQ``, ``TQQQ``, ``SOXL``, ``VIX`` or ``VIX3M`` (a leading ``^`` is
+    accepted). Committed CSVs written once by ``scripts/export_week_fixture.py``; no test reads
+    ``data/``. Returns a fresh frame (Open/High/Low/Close/Volume) indexed by date, ascending.
+    """
+    import pandas as pd
+
+    name = symbol.lstrip("^")
+    return pd.read_csv(WEEK_FIXTURE_DIR / f"{name}.csv", index_col="Date", parse_dates=True)
+
 
 @pytest.fixture(autouse=True)
 def _clear_daily_caches():
@@ -57,6 +72,28 @@ def _mock_telegram_sender(monkeypatch):
     executor tests make real HTTP round-trips (~1–2 s each) to Telegram.
     """
     monkeypatch.setattr("src.notify.sender.send_order_notification", AsyncMock())
+
+
+@pytest.fixture(autouse=True)
+def _no_network_for_regime(monkeypatch):
+    """The market regime's two network touch points answer "no data" in every test.
+
+    ``src.analytics.regime._load_raw`` (daily bars) and ``_default_last_price`` (the live quote)
+    are the only places the regime reaches a data provider. The scan, the order poll and the
+    ``/regime`` command refresh the regime, and a test that never meant to touch the network
+    must not (a refresh with no data keeps the previous state, which is exactly the fail-soft
+    path). Tests of the regime itself inject their own bars and prices.
+    """
+    import pandas as pd
+
+    from src.regime.refresh import clear_regime_cache
+
+    monkeypatch.setattr("src.analytics.regime._load_raw", lambda symbol: pd.DataFrame())
+    monkeypatch.setattr("src.analytics.regime._default_last_price", lambda symbol: None)
+    # refresh_regime_cached keeps a 60 s process-wide cache; never let one test's state leak
+    clear_regime_cache()
+    yield
+    clear_regime_cache()
 
 
 @pytest.fixture(autouse=True)

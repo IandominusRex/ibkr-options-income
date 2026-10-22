@@ -13,7 +13,7 @@ from src.common.schemas import MarketConditions, PositionSnapshot
 from src.news.facts import Analytics, build_macro_facts, build_market_facts, build_ticker_facts
 from src.news.links import links_for, links_for_items, pick_primary  # noqa: F401  (re-exported)
 from src.news.playbook import ASSETS, Playbook, prior_for
-from src.news.render import SGT
+from src.news.render import SGT, late_post_line
 from src.news.schemas import (
     CardPayload,
     ClusterView,
@@ -264,7 +264,38 @@ def _breaking_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
     )
 
 
+def _late_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
+    """The late post for a dismissed story the market moved against (safeguard 2). Deterministic:
+    the story's own headline and links, the move and what it was measured on, and the fixed copy
+    that says the cause is not confirmed. No explanation is ever written for it."""
+    with news_session() as s:
+        cl = queries.cluster_view(s, c.cluster_ids[0])
+    assert cl is not None
+    move = float(c.detail.get("move_pct") or 0.0)
+    sym = c.symbols[0]
+    mins = ctx.cfg.news.triage.promote_window_min
+    facts_line = (
+        f"{sym} {move:+.1f}% net of its beta to SPY in the {mins} min after"
+        if c.detail.get("basis") == "ticker"
+        else f"{sym} {move:+.1f}% in the {mins} min after it first appeared"
+    )
+    return CardPayload(
+        kind="late_promotion",
+        subject=c.subject,
+        title=cl.headline[:120],
+        emoji="⏪",
+        when=ctx.now,
+        headline_line=late_post_line(move),
+        facts_line=facts_line,
+        links=links_for(cl, ctx.cfg.news.source_rank),
+        critical=False,
+        cluster_ids=[cl.id],
+    )
+
+
 def build_card(c: AlertCandidate, ctx: AlertContext) -> CardPayload:
+    if c.kind == "late_promotion":
+        return _late_card(c, ctx)
     if c.kind == "macro_print":
         return _macro_card(c, ctx)
     if c.kind in ("ticker_move", "earnings"):

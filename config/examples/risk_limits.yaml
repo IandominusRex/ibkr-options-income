@@ -157,6 +157,134 @@ portfolio:
   max_margin_usage_pct: 50.0
   max_new_positions_per_run: 10
 
+# --- Market regime (analytics/regime.py -> engine/regime_limits.py) ---
+# A deterministic classification of SPY and QQQ (normal / cautious / stressed / crisis) that
+# shrinks NEW cash-secured puts in a falling market. Covered calls, rolls, closes, profit-takes
+# and loss exits are never limited by it. The operator's private copy needs this block added by
+# hand; with it absent the shipped defaults below apply. `/regime off` (Telegram) suspends the
+# limits until the next trading day; `enabled: false` switches them off outright.
+regime:
+  enabled: true
+  # Names governed by the stricter of the SPY and QQQ regimes (every other name follows SPY).
+  # An explicit list: the sector tags misclassify e.g. TSLL as consumer and MARA as crypto.
+  tech_linked: [QQQ, TQQQ, SMH, SOXL, NVDA, AMD, AVGO, AAPL, MSFT, GOOGL, AMZN, META, PLTR, MAGS,
+                HACK, IGV, CRWD, NBIS, IONQ, RGTI, BABA, TSLL, MARA]
+  csp:
+    budget_multiplier:  {normal: 1.0, cautious: 0.7, stressed: 0.4, crisis: 0.1}
+    per_trade_fraction: {normal: 1.0, cautious: 0.6, stressed: 0.3, crisis: 0.1}
+    max_new_per_day:    {normal: null, cautious: 6, stressed: 3, crisis: 1}
+    # The guaranteed floor: new CSP lots per governing index per ET day that may exceed the
+    # regime-SCALED budget (never the unscaled caps, the per-trade ceiling or the daily limit).
+    # Without it a full book (collateral at 101% of deployable on 2026-10-20) turns every
+    # non-normal regime into a complete stop until the puts expire. Governing index: QQQ for a
+    # tech_linked name, SPY for every other.
+    floor_new_per_day:  {normal: 0, cautious: 2, stressed: 1, crisis: 1}
+  thresholds:
+    vol_cautious: 22.0        # VIX close (both indices)
+    vol_stressed: 28.0
+    vol_crisis: 36.0
+    vol_pct_cautious: 90.0    # 1-year percentile of the VIX (80 fired at a VIX of 20.0 after a calm year)
+    vol_pct_min_vol: 20.0     # ...and only when the VIX close is at least this
+    term_stressed: 1.00       # VIX/VIX3M at or above -> at least stressed (backwardation)
+    term_crisis: 1.10
+    slow_drawdown_pct: 10.0   # slow signals may add at most one notch
+    slow_ret_1m_pct: -5.0
+    ease_contango_days: 3     # contango closes needed before easing one notch
+    min_days_in_regime: 2
+    intraday:                 # one-way within the day; expires at the close
+      SPY: {stressed: -2.0, crisis: -3.5}
+      QQQ: {stressed: -2.5, crisis: -4.0}
+      vix_stressed: 30.0
+      vix_crisis: 40.0
+  # The scale-in ladder: under it, a further CSP lot on a name is accepted only once its price
+  # has fallen into a zone worked out from the name's own technicals (swing lows on daily
+  # lows, ATR-14), below the price at its last lot (the "anchor"). It applies to a name when its
+  # market regime is one of `regimes`, or a name-level trigger holds in ANY regime: the name has
+  # fallen name_drawdown_atr ATRs from its recent high, a short put on it is at or near the
+  # money, or it had a loss exit within anchor_survival_days. A first lot (no anchor) is free.
+  # Never applies to closes, rolls or covered calls; `/regime off` lifts the zone, not the
+  # same-day loss-exit block.
+  ladder:
+    regimes: [stressed, crisis]          # market regimes where the ladder applies to every held name
+    min_gap_pct: {normal: 5.0, cautious: 5.0, stressed: 5.0, crisis: 7.0}
+    min_gap_atr: 1.5                     # the gap below the last lot is the larger of this and min_gap_pct
+    band_atr: 0.5                        # the zone is the support +- this x ATR
+    broken_atr: 1.0                      # a close this many ATRs under a support breaks it
+    anchor_survival_days: 5              # the anchor survives a profit-take / loss exit this long
+    name_drawdown_atr: 2.5               # fall from the recent high, in ATRs, that fires the ladder
+    name_drawdown_sessions: 10
+    recovery_closes: 2                   # closes AFTER the anchor lot above sma20 and the last-broken support lift it
+    near_money_atr: 0.5                  # a short put with spot <= strike + this x ATR fires the ladder
+    loss_exit_same_day_block: true       # no new CSP on a name for the rest of the ET day of its loss exit
+  # The bottoming signal: in a fast drop the system must not simply wait for the slow easing
+  # rules, so each scan looks for a deterministic sign that a bottom is forming and loosens ONE
+  # notch. Market level (per index, only while its regime is stressed or crisis): after a VIX
+  # spike the live VIX is `off_peak_pct` under the peak, the VIX/VIX3M curve is back under 1 if it
+  # inverted, and the index holds above the low of the selloff's lowest day; the regime eases one
+  # notch at once, and a fresh breach of an intraday escalation threshold cancels it for the day.
+  # Name level (a name under the ladder): the price is at a support the ladder would otherwise
+  # make it wait past, its RSI-14 was oversold within `rsi_lookback` sessions and has turned up,
+  # and the last close is above the prior day's high; one lot may then be sold at once, with a
+  # delta of at most `signal_delta_max` and at most one such lot per name per
+  # `signal_lot_every_sessions` sessions. Every other gate still applies, and a signal lot uses
+  # the guaranteed floor when the scaled budget is full.
+  bottoming:
+    vix_spike_pct: 25.0          # the VIX rose at least this much from its window low to its peak
+    spike_sessions: 10
+    off_peak_pct: 15.0           # live VIX at least this far below the spike peak
+    rsi_oversold: 30.0
+    rsi_lookback: 5
+    signal_delta_max: 0.25       # must be above cash_secured_put.delta_min (0.20): checked at load
+    signal_lot_every_sessions: 3
+
+# --- Leveraged-ETF size ceiling (engine/regime_limits.py) ---
+# A smaller per-trade size for 2x and 3x leveraged ETFs in EVERY regime. The ceiling is
+# floor(cash_secured_put.max_contracts x the regime's per_trade_fraction x the fraction below),
+# at least one lot (zero only when the regime's own ceiling is zero). `calm` applies while the
+# name's regime is normal and no ladder trigger holds on it; `stressed` otherwise. This is not a
+# regime limit: `/regime off` and `regime.enabled: false` leave it on. Rolls are exempt. The
+# `leverage` map is the operator's: a leveraged ETF in universe.yaml's `leveraged_etfs` that is
+# missing here is treated as 3x (the strictest) with a warning. TSLL's factor is yours to confirm.
+leveraged_sizing:
+  enabled: true
+  per_trade_fraction:
+    calm:     {2: 0.8, 3: 0.6}
+    stressed: {2: 0.5, 3: 0.3}
+  leverage: {TQQQ: 3, UPRO: 3, SOXL: 3, DPST: 3, LABU: 3, TSLL: 2}
+
+# --- Claude's size cut (engine/regime_limits.py claude_cut; applied in notify/sender.py) ---
+# Claude may LOWER, never raise, the contract count of an auto-opened opening cash-secured put
+# (never a covered call, a roll, a strike, a price or a close). A missing, malformed or
+# out-of-range value, or one produced by the local Ollama model, means the deterministic size.
+# Every override is recorded in `sizing_actions` (`python -m scripts.sizing_report`): read that
+# record before switching `apply_live` on.
+claude_cut:
+  apply_in_paper: true       # paper: the cut is applied and every override recorded
+  apply_live: false          # live: record-only until the operator has reviewed the record
+  breaker_min: 4             # circuit breaker: at least this many auto CSPs cut to 0 today...
+  breaker_pct: 50            # ...and more than this % of the day's reviewed auto CSPs -> further cuts today are recorded, not applied
+
+# --- Covered-call timing (analytics/breakout.py; engine/regime_limits.py cc_timing_reasons) ---
+# After an UPSIDE BREAKOUT on a held name -- a close that rose `jump_atr` x ATR-14 on `volume_mult`
+# x its 20-day average volume and cleared the nearest resistance (or a `high_sessions` high) --
+# covered calls on it must be pushed out for `lookback_sessions` sessions (or until a close fades
+# `fade_atr` x ATR under the breakout close): strike at or above max(next resistance, price +
+# `floor_atr` x ATR) and delta at most `delta_max`. A call is pushed out; when nothing on the chain
+# clears the floor and the cap, none is sold on that name that scan. It never loosens a limit or
+# sizes anything. Its own switch, NOT a regime limit: `/regime off` and
+# `regime.enabled: false` leave it on. Rolls are exempt. `delta_max` must exceed
+# covered_call.delta_min (checked at load, or the rule would stop every call, not push it out).
+cc_timing:
+  breakout:
+    enabled: true
+    lookback_sessions: 5      # a breakout governs CC strikes for this many sessions
+    jump_atr: 1.5             # close-to-close rise, in ATR-14 of the day before
+    volume_mult: 1.5          # the day's volume vs its 20-session average
+    high_sessions: 60         # a close at this many sessions' high counts too
+    fade_atr: 1.0             # a later close this many ATRs below the breakout close ends it
+    floor_atr: 1.0            # strike floor = max(next resistance above price, price + floor_atr x ATR)
+    delta_max: 0.25           # must exceed covered_call.delta_min (0.20), checked at load
+
 # NOTE: approval TTL and transmit-only-in-RTH live in settings.yaml
 # (approval.ttl_minutes / execution.transmit_only_in_rth) — NOT here. A duplicate
 # `approval:` block used to sit in this file but was never read by the config loader.

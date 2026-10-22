@@ -10,12 +10,15 @@ import json
 import logging
 import subprocess
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from src.claude import cli, ollama_runner
 from src.claude.cli import is_usage_limit, log_usage, should_fall_back
+from src.claude.dossier_context import load_dossier_block
 from src.claude.parser import parse_claude_output, parse_journal_output, parse_roll_output
+from src.claude.picture_context import load_picture_block
 from src.claude.prompts.eod import build_eod_prompt
 from src.claude.prompts.roll import build_roll_prompt
 from src.claude.prompts.strategist import build_prompt
@@ -164,12 +167,14 @@ def _run_cli_outcome[T](
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> list[ClaudeReview]:
     """Review candidates via the configured `claude.backend`. Returns [] on any failure.
 
@@ -180,17 +185,26 @@ def review_candidates(
     sector_context / single_ticker: forwarded to the prompt builder so a `/scan TICKER` deep-dive
     gets the sector backdrop and the extra plain-English ``summary`` (see strategist.build_prompt).
     analytics: per-symbol raw signals annotated onto each candidate in the prompt (enrichment).
+    picture_block / book_block / dossier_block: the shared market picture, the book around the
+    reviewed names and the reviewed names' dossier notes, pre-rendered by the scan
+    (``picture_context`` / ``book_context`` / ``dossier_context``); all prompt text only.
+
+    Every review comes back stamped with the backend that produced it (``"cli"`` or ``"ollama"``):
+    the stamp is the runner's, never the model's, and it is what keeps a local model's size
+    suggestion from ever being applied (``engine.regime_limits.claude_cut``).
     """
     cfg = get_config().claude
     kwargs = dict(
         candidates=candidates,
         account=account,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
+        picture_block=picture_block,
+        book_block=book_block,
+        dossier_block=dossier_block,
     )
 
     if cfg.backend == "ollama":
@@ -208,20 +222,27 @@ def _review_candidates_cli(*args: Any, **kwargs: Any) -> list[ClaudeReview]:
     return _review_candidates_cli_outcome(*args, **kwargs)[0]
 
 
+def _stamp(reviews: list[ClaudeReview], backend: str) -> list[ClaudeReview]:
+    """Reviews marked with the backend that produced them (the parser leaves it blank)."""
+    return [r.model_copy(update={"backend": backend}) for r in reviews]
+
+
 def _review_candidates_cli_outcome(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> tuple[list[ClaudeReview], str | None]:
     """Shell out to `claude -p`, parse output → (list[ClaudeReview], error). [] on any failure.
 
-    history: optional list of ClaudeMemoryRow objects from prior scans; injected into the prompt
-    so Claude can learn from past recommendations and their outcomes.
+    picture_block / book_block / dossier_block: the pre-rendered market picture, book and name
+    notes (enrichment, prompt text only). The reviews returned are stamped ``backend="cli"``.
     market_conditions: optional macro snapshot (VIX) injected as enrichment context.
     spot_prices: optional scan-time {symbol: spot} so Claude reasons from current levels rather
     than the stale static universe anchors (N17).
@@ -240,12 +261,14 @@ def _review_candidates_cli_outcome(
     prompt = build_prompt(
         candidates,
         account,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
+        picture_block=picture_block,
+        book_block=book_block,
+        dossier_block=dossier_block,
     )
 
     # Pass prompt via stdin rather than -p to avoid ARG_MAX (~128 KB) limits
@@ -293,13 +316,13 @@ def _review_candidates_cli_outcome(
             # stdout present despite non-zero rc: try to parse it
             reviews = parse_claude_output(result.stdout, candidate_ids)
             if reviews:
-                return reviews, None
+                return _stamp(reviews, "cli"), None
             continue
 
         reviews = parse_claude_output(result.stdout, candidate_ids)
         if reviews:
             _log_cost(result.stdout, "claude review")
-            return reviews, None
+            return _stamp(reviews, "cli"), None
 
         log.warning("claude: output parsed to empty list (attempt %d)", attempt + 1)
         error = "bad_envelope"
@@ -314,26 +337,66 @@ def review_roll(
     quote: OptionQuote,
     *,
     proposal: str | None = None,
+    picture_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> RollReview | None:
     """Roll/hold/close recommendation via the configured `claude.backend`.
 
     Returns None on any failure — the caller proceeds without Claude's input.
     Intended to be called from a ThreadPoolExecutor so it doesn't block asyncio.
+    *picture_block* is the pre-rendered market picture; when not given the stored picture is
+    read (news.db, read-only; one small read, never raises) and shown either backend.
+    *dossier_block* is the rolled name's dossier note; when not given, the full note of the
+    underlying is read the same way (an explicit empty string means none).
     """
     cfg = get_config().claude
+    now = datetime.now(UTC)
+    if picture_block is None:
+        picture_block = load_picture_block(now)
+    if dossier_block is None:
+        dossier_block = load_dossier_block(
+            [alert.underlying or pos.underlying or pos.symbol], now, compact=False
+        )
 
     if cfg.backend == "ollama":
-        return ollama_runner.review_roll(alert, pos, quote, proposal=proposal)
+        return ollama_runner.review_roll(
+            alert,
+            pos,
+            quote,
+            proposal=proposal,
+            picture_block=picture_block,
+            dossier_block=dossier_block,
+        )
 
-    review, error = _review_roll_cli(alert, pos, quote, proposal=proposal)
+    review, error = _review_roll_cli(
+        alert,
+        pos,
+        quote,
+        proposal=proposal,
+        picture_block=picture_block,
+        dossier_block=dossier_block,
+    )
     if review is None and cfg.backend == "cli_then_ollama" and should_fall_back(error):
         log.warning("claude unavailable (%s) — using ollama for the roll review", error)
-        return ollama_runner.review_roll(alert, pos, quote, proposal=proposal)
+        return ollama_runner.review_roll(
+            alert,
+            pos,
+            quote,
+            proposal=proposal,
+            picture_block=picture_block,
+            dossier_block=dossier_block,
+        )
     return review
 
 
 def _review_roll_cli(
-    alert: RollAlert, pos: PositionSnapshot, quote: OptionQuote, *, proposal: str | None = None
+    alert: RollAlert,
+    pos: PositionSnapshot,
+    quote: OptionQuote,
+    *,
+    proposal: str | None = None,
+    picture_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> tuple[RollReview | None, str | None]:
     """Shell out to `claude -p` for a focused roll/hold/close recommendation.
 
@@ -344,7 +407,14 @@ def _review_roll_cli(
         log.info("claude: disabled by config — skipping roll review")
         return None, "disabled"
     return _run_cli_outcome(
-        build_roll_prompt(alert, pos, quote, proposal=proposal),
+        build_roll_prompt(
+            alert,
+            pos,
+            quote,
+            proposal=proposal,
+            picture_block=picture_block,
+            dossier_block=dossier_block,
+        ),
         "claude roll",
         parse_roll_output,
         cmd=_build_cmd(cfg, model=cfg.model_for("roll")),
@@ -358,25 +428,28 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
     JournalRow without a narrative and sends Telegram without the journal paragraph.
     """
     cfg = get_config().claude
+    picture_block = load_picture_block(datetime.now(UTC))
 
     if cfg.backend == "ollama":
-        return ollama_runner.write_journal_narrative(summary)
+        return ollama_runner.write_journal_narrative(summary, picture_block=picture_block)
 
-    narrative, error = _write_journal_narrative_cli(summary)
+    narrative, error = _write_journal_narrative_cli(summary, picture_block=picture_block)
     if narrative is None and cfg.backend == "cli_then_ollama" and should_fall_back(error):
         log.warning("claude unavailable (%s) — using ollama for the EOD journal", error)
-        return ollama_runner.write_journal_narrative(summary)
+        return ollama_runner.write_journal_narrative(summary, picture_block=picture_block)
     return narrative
 
 
-def _write_journal_narrative_cli(summary: EODSummary) -> tuple[str | None, str | None]:
+def _write_journal_narrative_cli(
+    summary: EODSummary, *, picture_block: str | None = None
+) -> tuple[str | None, str | None]:
     """Shell out to `claude -p` for an EOD journal narrative. ``(None, error)`` on any failure."""
     cfg = get_config().claude
     if not cfg.enabled:
         log.info("claude: disabled by config — skipping EOD journal")
         return None, "disabled"
     return _run_cli_outcome(
-        build_eod_prompt(summary),
+        build_eod_prompt(summary, picture_block=picture_block),
         "claude eod",
         parse_journal_output,
         cmd=_build_cmd(cfg, model=cfg.model_for("eod")),

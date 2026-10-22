@@ -151,6 +151,52 @@ class OrderRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class SizingActionRow(Base):
+    """One regime / leveraged-ETF / Claude-cut action on a cash-secured put (the counterfactual
+    record, spec section 10): what the deterministic size would otherwise have been, what was
+    sent, why, and later what the difference earned.
+
+    Written only by `src/regime/actions.py::record_action` (an upsert keyed on ``record_key`` +
+    ``kind`` + the ET day, so the same contract trimmed on every 15-minute scan counts once);
+    resolved later by `src/claude/eval/sizing_counterfactual.py`. Read by a human through
+    `scripts/sizing_report.py` — nothing here is ever read back by the engine, execution or
+    sizing (the fence). ``record_key`` is the candidate id, or, for a CSP that was never sent,
+    ``csp:<SYM>:<kind>:<ET day>`` so one blocked name is one row however many strikes were tried.
+    """
+
+    __tablename__ = "sizing_actions"
+    __table_args__ = (
+        UniqueConstraint("record_key", "kind", "action_day", name="uq_sizing_actions_key_kind_day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    candidate_id: Mapped[str] = mapped_column(String(64), index=True)
+    underlying: Mapped[str] = mapped_column(String(16), index=True)
+    strategy: Mapped[str] = mapped_column(String(20))
+    right: Mapped[str] = mapped_column(String(1))
+    strike: Mapped[float] = mapped_column(Float)
+    expiry: Mapped[date] = mapped_column(Date)
+    premium: Mapped[float] = mapped_column(Float)
+    # regime_budget | regime_ceiling | leveraged_ceiling | regime_daily_limit | regime_floor_lot |
+    # escalation_trim | scale_in_zone | loss_exit_cooldown | bottoming_lot | claude_cut |
+    # claude_cut_unapplied | cc_breakout_floor
+    kind: Mapped[str] = mapped_column(String(24))
+    regime: Mapped[str] = mapped_column(String(12))
+    picture_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    deterministic_contracts: Mapped[int] = mapped_column(Integer)
+    sent_contracts: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    action_day: Mapped[date] = mapped_column(Date, index=True)  # the ET day of the action
+    order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    realized_pnl_per_contract: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shadow_pnl_expiry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shadow_pnl_rules: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_iv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    record_key: Mapped[str] = mapped_column(String(64))
+
+
 class IVHistoryRow(Base):
     """Daily implied-vol observations powering IV Rank/Percentile."""
 

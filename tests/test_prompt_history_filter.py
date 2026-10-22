@@ -1,11 +1,17 @@
-"""The strategist prompt's "YOUR PRIOR RECOMMENDATIONS" block holds only the reviewed
-candidates' own tickers. It used to carry the memory of every scanned symbol: in the AVGO review
-of 2026-10-15 that was 47 rows over 18 other tickers (0 AVGO), 48% of the prompt, the same prose
-sent again with every call."""
+"""The strategist prompt no longer carries "YOUR PRIOR RECOMMENDATIONS" at all (spec decision 1:
+memory is the state of the market, not a record of what the model said before).
+
+This file used to hold the filter that kept that block to the reviewed candidates' own tickers
+(in the AVGO review of 2026-10-15 the block was 47 rows over 18 other tickers, 48% of the prompt).
+The block is gone, so the same intent - a prompt that is not padded with the model's own old
+prose - is now asserted directly: there is no history parameter, and passing one is an error."""
 
 from __future__ import annotations
 
+import inspect
 from datetime import date
+
+import pytest
 
 from src.claude.prompts.strategist import build_prompt
 from src.storage.models import ClaudeMemoryRow
@@ -24,37 +30,27 @@ def _row(underlying: str, rationale: str = "x") -> ClaudeMemoryRow:
     )
 
 
-def _history_block(prompt: str) -> str:
-    if "=== YOUR PRIOR RECOMMENDATIONS" not in prompt:
-        return ""
-    block = prompt.split("=== YOUR PRIOR RECOMMENDATIONS", 1)[1]
-    return block.split("--- Candidate 1 ---", 1)[0]
+def test_the_prompt_builder_takes_no_history() -> None:
+    assert "history" not in inspect.signature(build_prompt).parameters
 
 
-def test_history_keeps_only_the_candidates_own_ticker() -> None:
-    prompt = build_prompt(
-        [_make_candidate(underlying="AVGO")],
-        _make_account(),
-        history=[_row("AAPL"), _row("AVGO"), _row("MSFT")],
-    )
-    block = _history_block(prompt)
-    assert "AVGO-only-text" in block
-    assert "AAPL-only-text" not in block and "MSFT-only-text" not in block
+def test_passing_history_is_an_error_not_a_silent_no_op() -> None:
+    """A caller that still passes the old memory rows must fail loudly, not be ignored."""
+    with pytest.raises(TypeError):
+        build_prompt(  # type: ignore[call-arg]
+            [_make_candidate(underlying="AVGO")], _make_account(), history=[_row("AVGO")]
+        )
 
 
-def test_history_covers_every_candidate_ticker() -> None:
+def test_no_prior_recommendations_block_in_a_built_prompt() -> None:
+    prompt = build_prompt([_make_candidate(underlying="AVGO")], _make_account())
+    assert "PRIOR RECOMMENDATIONS" not in prompt and "outcome:" not in prompt
+
+
+def test_the_candidate_block_is_the_only_per_name_text() -> None:
     prompt = build_prompt(
         [_make_candidate("a", underlying="AVGO"), _make_candidate("b", underlying="AMD")],
         _make_account(),
-        history=[_row("AVGO"), _row("AMD"), _row("PLTR")],
     )
-    block = _history_block(prompt)
-    assert "AVGO-only-text" in block and "AMD-only-text" in block
-    assert "PLTR-only-text" not in block
-
-
-def test_no_history_block_when_nothing_matches_the_candidates() -> None:
-    prompt = build_prompt(
-        [_make_candidate(underlying="AVGO")], _make_account(), history=[_row("AAPL"), _row("MSFT")]
-    )
+    assert "--- Candidate 1 ---" in prompt and "--- Candidate 2 ---" in prompt
     assert "PRIOR RECOMMENDATIONS" not in prompt

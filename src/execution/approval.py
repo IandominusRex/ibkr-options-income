@@ -9,6 +9,7 @@ Two-phase design:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -20,21 +21,153 @@ from telegram import Bot
 
 from src.analytics.fundamentals import get_fundamental_stats
 from src.claude.memory import EXPIRED, RISK_REJECTED, record_outcome
-from src.common.config import get_config
+from src.common.config import (
+    get_cc_timing_cfg,
+    get_claude_cut_cfg,
+    get_config,
+    get_leveraged_sizing_cfg,
+    get_regime_cfg,
+)
 from src.common.market_hours import is_rth
-from src.common.schemas import ApprovalStatus, OrderState, Strategy, TradeCandidate, Verdict
+from src.common.schemas import (
+    AccountSnapshot,
+    ApprovalStatus,
+    OrderState,
+    PositionSnapshot,
+    SizingContext,
+    Strategy,
+    TradeCandidate,
+    Verdict,
+)
+from src.data.factory import get_price_provider
+from src.engine.regime_limits import (
+    hard_max_contracts,
+    per_trade_cap,
+    scaled_budget_fit,
+    sizing_note,
+    trim_for_send,
+)
 from src.engine.risk_engine import validate_candidates
 from src.execution.circuit_breakers import evaluate_breakers, remaining_entry_allowance
 from src.execution.executor import execute_candidate
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
+from src.regime.actions import link_order, record_action
+from src.regime.context import build_sizing_context
+from src.regime.refresh import refresh_regime_cached
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, CandidateRow, OrderRow
-from src.storage.system_settings import get_halt_source, is_halted, set_halted
+from src.storage.system_settings import (
+    get_halt_source,
+    get_setting,
+    is_halted,
+    set_halted,
+    set_setting,
+)
 from src.strategies.covered_call import uncovered_call_capacity
 
 log = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
+
+# The ET day (ISO date) on which the operator was last told that new puts and calls are on hold
+# because the sizing settings could not be read: one alert a day, not one per ~30 s poll. Kept in
+# `system_settings`, the trading side's own store (nothing here depends on the news database).
+SIZING_CONFIG_ALERT_KEY = "sizing_config_alert_day"
+
+
+def _one_line(exc: BaseException, limit: int = 300) -> str:
+    """An exception's text on one line (a validation error spans several), cut to *limit*."""
+    text = " ".join(str(exc).split()) or type(exc).__name__
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def sizing_config_errors() -> list[str]:
+    """What is wrong with the four typed blocks the sizing path reads, in plain words.
+
+    ``regime:``, ``leveraged_sizing:``, ``cc_timing:`` and ``claude_cut:`` of
+    ``config/risk_limits.yaml``: each is parsed on every use and raises on a mistyped key, a
+    bound outside its range or a guard at or below its strategy's ``delta_min``. Returns one
+    ``"<block>: <problem>"`` line per block that does not load (empty when all four do).
+    """
+    errors: list[str] = []
+    for name, getter in (
+        ("regime", get_regime_cfg),
+        ("leveraged_sizing", get_leveraged_sizing_cfg),
+        ("cc_timing", get_cc_timing_cfg),
+        ("claude_cut", get_claude_cut_cfg),
+    ):
+        try:
+            getter()
+        except Exception as exc:
+            errors.append(f"{name}: {_one_line(exc)}")
+    return errors
+
+
+def _sizing_hold_text(detail: str, *, config: bool) -> str:
+    """The Telegram text: new puts and calls are on hold, rolls and closes keep working."""
+    cause = (
+        f"The market-regime settings in config/risk_limits.yaml are invalid ({detail})."
+        if config
+        else f"The send-time sizing limits could not be built ({detail})."
+    )
+    fix = (
+        "Fix the setting and restart the trading service."
+        if config
+        else "It is retried on every order poll."
+    )
+    return (
+        f"⚠️ New cash-secured puts and covered calls are on hold. {cause} "
+        "Queued rolls keep going, and profit-takes and loss exits are not affected. "
+        f"{fix} This alert repeats at most once a day."
+    )
+
+
+async def _alert_sizing_hold(
+    bot: Bot, chat_id: str, text: str, today: str, *, force: bool = False
+) -> bool:
+    """Send *text* once per ET day (*force* sends it regardless); True when it went out.
+
+    The day is remembered only after the send succeeded, so a Telegram outage is retried on the
+    next poll rather than silently swallowing the day's one alert.
+    """
+    if not force and get_setting(SIZING_CONFIG_ALERT_KEY) == today:
+        return False
+    try:
+        await bot.send_message(chat_id=chat_id, text=text)
+    except Exception:
+        log.exception("Failed to send the sizing-configuration alert")
+        return False
+    set_setting(SIZING_CONFIG_ALERT_KEY, today)
+    return True
+
+
+async def check_sizing_config_at_startup(bot: Bot, chat_id: str) -> list[str]:
+    """Validate the typed sizing blocks when the approval service starts; never raises.
+
+    A bad block is logged critical and announced (the same alert the order poll sends), but the
+    service still starts: refusing to start would also stop profit-takes and loss exits, which
+    never read these blocks. Returns the problems found (empty when the blocks load). A startup
+    alert is sent whatever was sent earlier today (the operator has just restarted, perhaps to fix
+    it) and counts as the day's alert, so the first poll does not repeat it.
+    """
+    try:
+        errors = sizing_config_errors()
+        if not errors:
+            return []
+        detail = "; ".join(errors)
+        log.critical(
+            "Invalid market-regime sizing settings: %s. New puts and calls are held until it is "
+            "fixed; the service keeps running so closes, profit-takes, loss exits and rolls work.",
+            detail,
+        )
+        today = datetime.now(UTC).astimezone(_ET).date().isoformat()
+        await _alert_sizing_hold(
+            bot, chat_id, _sizing_hold_text(detail, config=True), today, force=True
+        )
+        return errors
+    except Exception:
+        log.exception("Start-up check of the sizing settings failed")
+        return []
 
 
 def _load_candidate(session: Session, order_row: OrderRow) -> TradeCandidate | None:
@@ -55,6 +188,180 @@ def _load_candidate(session: Session, order_row: OrderRow) -> TradeCandidate | N
     if row is None:
         return None
     return TradeCandidate.model_validate(row.payload)
+
+
+def _send_context(now: datetime, positions: list[PositionSnapshot]) -> SizingContext | None:
+    """The sizing context for the send-time re-gate: the regime as it is *now*.
+
+    Refreshes the regime through a short cache (a regime that escalated between the card and this
+    poll is seen here; a change found now is persisted unsent and announced by the next scan) and
+    builds a ``for_send=True`` context, which counts today's already-sent CSPs but not the queued
+    orders that are the batch being validated. No bars are fetched here, so what the card knew
+    about each name is carried over from its frozen snapshot: a leveraged ETF whose card was cut
+    under the stressed tier stays in that tier (the tier can tighten between card and send, never
+    loosen), and the live spot of every name under the scale-in ladder is read once for the
+    gate's ladder re-check (ruling 48). Reads the database in its own session and the price
+    provider outside it, so it is called *before* the write session below is opened.
+    """
+    try:
+        refresh_regime_cached(now)
+    except Exception:
+        log.warning("send-time regime refresh failed — using the last known regime", exc_info=True)
+    triggers: dict[str, list[str]] = {}
+    ladder_names: set[str] = set()
+    with session_scope() as session:
+        ctx = build_sizing_context(now=now, session=session, for_send=True, positions=positions)
+        if ctx is None:
+            return None
+        rows = session.query(OrderRow.snapshot).filter(OrderRow.state == OrderState.QUEUED).all()
+    for (snap,) in rows:
+        if not isinstance(snap, dict) or snap.get("strategy") != Strategy.CASH_SECURED_PUT.value:
+            continue
+        note = snap.get("sizing") or {}
+        symbol = str(snap.get("underlying", ""))
+        if note.get("leverage_tier") == "stressed":
+            triggers[symbol] = ["snapshot_stressed"]
+        if note.get("scale_in"):
+            ladder_names.add(symbol)
+    spots: dict[str, float] = {}
+    if ladder_names:
+        provider = get_price_provider()
+        for symbol in sorted(ladder_names):
+            try:
+                price = provider.get_last_price(symbol)
+            except Exception:
+                price = None
+            if price:
+                spots[symbol] = float(price)
+    return ctx.model_copy(
+        update={"name_triggers": {**ctx.name_triggers, **triggers}, "spot_at_send": spots}
+    )
+
+
+def _trim_to_regime(
+    session: Session,
+    order_row: OrderRow,
+    candidate: TradeCandidate,
+    sizing: SizingContext,
+    hard_max: int,
+    account: AccountSnapshot,
+    positions: list[PositionSnapshot],
+) -> tuple[TradeCandidate, str | None]:
+    """Trim a queued CSP down to what the regime allows *now*; returns ``(candidate, note)``.
+
+    The regime can escalate, a budget can shrink and a floor can be used up between the card and
+    this send. Unlike the gate (which rejects rather than trims) this only ever *reduces* the
+    order, which can only reduce exposure; a candidate the regime now allows nothing of
+    (a result of zero) is left as it is for the gate to refuse with the regime's own reason.
+    The trimmed order replaces the frozen snapshot, and the trim is recorded once per day.
+    """
+    if candidate.strategy != Strategy.CASH_SECURED_PUT:
+        return candidate, None
+    fit = scaled_budget_fit(candidate, sizing, account, positions)
+    n = trim_for_send(candidate, sizing, hard_max, fit)
+    old = candidate.contracts
+    if not 0 < n < old:
+        return candidate, None
+    cap = per_trade_cap(sizing, candidate.underlying, hard_max)
+    fresh = sizing_note(sizing, candidate.underlying, old, hard_max)
+    budget_bound = fit is not None and fit < min(old, cap)
+    kind = "escalation_trim"
+    if fresh is not None and not budget_bound and fresh.ceiling_kind == "leveraged_ceiling":
+        kind = "leveraged_ceiling"
+        text = (
+            f"trimmed {old} -> {n} by the size limit for a leveraged ETF "
+            f"({fresh.leverage}x, {fresh.leverage_tier})"
+        )
+    elif fresh is not None:
+        suffix = ": budget" if budget_bound else ""
+        text = (
+            f"trimmed {old} -> {n} by the market regime ({fresh.regime_index} "
+            f"{fresh.regime.value}{suffix})"
+        )
+    else:  # pragma: no cover - a CSP with a context always has a note
+        text = f"trimmed {old} -> {n} by the market regime"
+    update: dict[str, object] = {"contracts": n, "collateral": candidate.strike * n * 100}
+    if fresh is not None:
+        base = candidate.sizing or fresh
+        update["sizing"] = base.model_copy(
+            update={
+                "regime": fresh.regime,
+                "regime_index": fresh.regime_index,
+                "per_trade_cap": fresh.per_trade_cap,
+                "budget_multiplier": fresh.budget_multiplier,
+                "leverage": fresh.leverage,
+                "leverage_tier": fresh.leverage_tier,
+                "ceiling_kind": fresh.ceiling_kind,
+            }
+        )
+    trimmed = candidate.model_copy(update=update)
+    order_row.snapshot = trimmed.model_dump(mode="json")
+    record_action(
+        cand=trimmed,
+        kind=kind,
+        deterministic=old,
+        sent=n,
+        reason=text,
+        order_id=order_row.id,
+        session=session,
+    )
+    return trimmed, text
+
+
+def _persist_gate_tags(
+    session: Session,
+    order_row: OrderRow,
+    candidate: TradeCandidate,
+    sizing: SizingContext | None,
+) -> None:
+    """Write the batch gate's in-place ``sizing`` tags back to the order's frozen snapshot.
+
+    The send-time gate tags each accepted put (``floor_lot``, ``bottoming``, ``scale_in``,
+    ``vrp_waived``) on the in-memory candidate only; the day's counts
+    (`regime/context.floor_lots_counted`, `csp_opens_counted`) read the order's snapshot. Without
+    this write a card that first becomes a guaranteed-floor lot at send time was never counted, so
+    the next poll's floor was unused and the floor's daily limit could be exceeded up to the daily
+    limit. Only the ``sizing`` note is rewritten, from the candidate the gate tagged: contract
+    count, strike, price and every other frozen field are left as they were, and the tags the gate
+    deliberately keeps (the name-level ``bottoming`` tag and the frozen zone) come through
+    unchanged.
+
+    A lot that took the floor is also recorded (`regime_floor_lot`; the same card and day is one
+    row, so a lot the scan already recorded is updated and linked, not doubled). Its note's regime
+    fields are refreshed to the regime in force *now* first (as the send-time trim does): the card
+    may have been made under a calmer one, and the lot took the floor under this one.
+    """
+    if candidate.sizing is None:
+        return
+    if candidate.sizing.floor_lot and sizing is not None:
+        fresh = sizing_note(sizing, candidate.underlying, candidate.contracts, hard_max_contracts())
+        if fresh is not None:
+            candidate.sizing = candidate.sizing.model_copy(
+                update={
+                    "regime": fresh.regime,
+                    "regime_index": fresh.regime_index,
+                    "per_trade_cap": fresh.per_trade_cap,
+                    "budget_multiplier": fresh.budget_multiplier,
+                }
+            )
+    note = candidate.sizing.model_dump(mode="json")
+    snap = dict(order_row.snapshot or {})
+    if snap.get("sizing") != note:
+        snap["sizing"] = note
+        order_row.snapshot = snap  # a new dict: SQLAlchemy does not see an in-place JSON edit
+    if candidate.sizing.floor_lot:
+        record_action(
+            cand=candidate,
+            kind="regime_floor_lot",
+            deterministic=candidate.contracts,
+            sent=candidate.contracts,
+            reason=(
+                f"guaranteed floor lot under {candidate.sizing.regime_index} "
+                f"{candidate.sizing.regime.value}"
+            ),
+            order_id=order_row.id,
+            session=session,
+        )
 
 
 def _is_roll_order() -> ColumnElement[bool]:
@@ -142,6 +449,29 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             except Exception:
                 log.exception("Failed to send circuit-breaker halt notification")
         return
+
+    # The send-time sizing context is built here, before the write session below opens (like the
+    # IBKR fetches above, it must not hold the SQLite write lock). If it cannot be built (a bad
+    # typed config block, say) every cash-secured put and covered call stays QUEUED and is
+    # retried next poll, never sent without the regime's limits; queued ROLLS still go, as the
+    # circuit-breaker pass sends them (no sizing context: the regime never touches a roll, and a
+    # defensive roll must not wait on a config typo). One Telegram alert a day says so.
+    try:
+        sizing = await asyncio.to_thread(_send_context, now, positions)
+    except Exception as exc:
+        log.exception(
+            "Could not build the send-time sizing context — sending queued rolls only; "
+            "puts and calls stay queued"
+        )
+        sizing = None
+        rolls_only = True
+        problems = sizing_config_errors()
+        await _alert_sizing_hold(
+            bot,
+            chat_id,
+            _sizing_hold_text("; ".join(problems) or _one_line(exc), config=bool(problems)),
+            now.astimezone(_ET).date().isoformat(),
+        )
 
     # ------------------------------------------------------------------ #
     # Phase 1: synchronous classification                                  #
@@ -243,6 +573,26 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
 
             pending.append((order_row, candidate))
 
+        # --- Market regime: the order can only SHRINK between the card and now. ---
+        # An escalated regime, a smaller budget or a used-up floor trims the order down to what
+        # is allowed (a zero is left for the gate to refuse with the regime's reason).
+        trim_notes: dict[int, str] = {}
+        if sizing is not None:
+            hard_max = hard_max_contracts()
+            retrimmed: list[tuple[OrderRow, TradeCandidate]] = []
+            for order_row, candidate in pending:
+                candidate, trim_text = _trim_to_regime(
+                    session, order_row, candidate, sizing, hard_max, account_snap, positions
+                )
+                if trim_text is not None:
+                    trim_notes[order_row.id] = trim_text
+                    notify_msgs.append(
+                        f"Order {candidate.underlying} {candidate.strike:g}P {trim_text} before "
+                        "sending."
+                    )
+                retrimmed.append((order_row, candidate))
+            pending = retrimmed
+
         # --- Second Rules Engine pass (batched, cumulative-aware) ---
         # Sort by blended_score desc so the greedy cumulative budgets are consumed in
         # priority order, matching how the decision-time gate ran.
@@ -255,7 +605,9 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
         # safety property, and it fails closed. The single-ticker deep-dive opts out
         # instead — it is a browse/compare view, and this gate is its backstop.
         ordered = sorted(pending, key=lambda pc: pc[1].blended_score, reverse=True)
-        verdicts = validate_candidates([c for _, c in ordered], account_snap, positions)
+        verdicts = validate_candidates(
+            [c for _, c in ordered], account_snap, positions, sizing=sizing
+        )
         verdict_map = {v.candidate_id: v for v in verdicts}
 
         # Share-ownership re-check for covered calls. `validate_candidates` gates cash/
@@ -348,7 +700,37 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
             # every poll_interval_seconds) does not pick up the same order again.
             # If execution fails, the except block in Phase 2 sets it to REJECTED.
             order_row.state = OrderState.SUBMITTED
-            order_row.detail = "Queued for async execution"
+            order_row.detail = "Queued for async execution" + (
+                f" — {trim_notes[order_row.id]}" if order_row.id in trim_notes else ""
+            )
+            if candidate.strategy == Strategy.CASH_SECURED_PUT:
+                # Tie the day's counterfactual rows for this card to the order that was sent.
+                link_order(candidate.candidate_id, order_row.id, session=session)
+                _persist_gate_tags(session, order_row, candidate, sizing)
+                if candidate.sizing is not None and candidate.sizing.bottoming == "name":
+                    # A lot opened above its zone on a name-level bottoming signal: recorded
+                    # when SENT (a card nobody approved does not use up the name's turn), so a
+                    # human can see whether these lots pay and the guard can count them.
+                    reason = "lot opened on a name-level bottoming signal"
+                    if candidate.sizing.vrp_waived:
+                        # The one gate a signal lot is exempt from (OI-B3), recorded so the
+                        # review can see how often it fired and what those lots did.
+                        floor = candidate.ideal.min_credit if candidate.ideal is not None else None
+                        reason += (
+                            f"; credit ${candidate.premium:.2f} was under the fair-value floor "
+                            f"${floor:.2f}, so premium_below_fair_value was waived"
+                            if floor is not None
+                            else "; premium_below_fair_value was waived"
+                        )
+                    record_action(
+                        cand=candidate,
+                        kind="bottoming_lot",
+                        deterministic=candidate.contracts,
+                        sent=candidate.contracts,
+                        reason=reason,
+                        order_id=order_row.id,
+                        session=session,
+                    )
             to_execute.append((order_row.id, candidate))
             if cap_remaining is not None and candidate.strategy != Strategy.ROLL:
                 cap_remaining -= 1
@@ -381,7 +763,7 @@ async def process_queued_orders(ib: IB, bot: Bot, chat_id: str) -> None:
 
     for order_id, candidate in to_execute:
         try:
-            await execute_candidate(ib, bot, chat_id, order_id, candidate)
+            await execute_candidate(ib, bot, chat_id, order_id, candidate, sizing=sizing)
         except Exception:
             log.exception("Execution error for order_id=%s", order_id)
             with session_scope() as session:

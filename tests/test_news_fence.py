@@ -22,6 +22,10 @@ _ROW_CLASSES = (
     "NewsRequestRow(",
     "NewsStateRow(",
     "TickerAliasRow(",
+    "StoryTriageRow(",
+    "MarketPictureRow(",
+    "PictureStoryRow(",
+    "TickerDossierRow(",
 )
 
 

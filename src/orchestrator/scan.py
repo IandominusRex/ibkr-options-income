@@ -8,7 +8,7 @@ Runs:
   5. Buy-to-own: score symbols not held from the would_own universe
   6. Risk engine: gate CC + CSP candidates
   7. Scoring: blended_score
-  8. Claude: review with prior recommendation history injected
+  8. Claude: review with the market picture and the book in the prompt
   9. Persist: CandidateRow, ClaudeReviewRow, ClaudeMemoryRow
  10. Notify: send CC/CSP as Approve/Reject messages; buy list as informational message
 """
@@ -34,6 +34,9 @@ from src.analytics.market_conditions import get_market_conditions
 from src.analytics.sector_context import get_sector_context, render_sector_context
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
+from src.claude.book_context import build_book_block
+from src.claude.dossier_context import dossier_block, load_dossiers, prose_key
+from src.claude.picture_context import load_picture, picture_key, render_picture_block
 from src.claude.runner import review_candidates
 from src.common.config import Config, get_config
 from src.common.market_hours import today_et
@@ -47,11 +50,14 @@ from src.common.schemas import (
     IdealZone,
     IVStats,
     MarketConditions,
+    MarketPicture,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
+    RegimeState,
     RiskVerdict,
     SectorContext,
+    SizingContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -66,6 +72,7 @@ from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 # scan_progress, which owns every other Telegram call — because tests/test_scan_timeout.py,
 # tests/test_scan_materiality.py and tests/test_scan_review_reuse.py monkeypatch them as
 # attributes of this module. They are injected into send_scan_results via SendDeps.
+from src.notify.regime_notice import send_regime_changes
 from src.notify.sender import send_account_snapshot, send_buy_list, send_candidates
 from src.orchestrator.scan_pipeline import ChainStatus, SymbolDeps, scan_symbol
 from src.orchestrator.scan_progress import (
@@ -74,9 +81,13 @@ from src.orchestrator.scan_progress import (
     _Tracker,
     send_scan_results,
 )
+from src.regime.actions import record_cc_timing, record_scan_actions
+from src.regime.context import build_sizing_context
+from src.regime.refresh import refresh_regime, refresh_regime_cached
 from src.storage.buy_candidates import save_buy_candidates
 from src.storage.db import session_scope
 from src.storage.models import CandidateRow, ClaudeMemoryRow, ClaudeReviewRow
+from src.storage.regime_state import load_regime_state
 from src.storage.risk_verdicts import record_assessments
 from src.storage.scan_state import ScanState, bulk_upsert_scan_state, get_scan_state
 from src.storage.system_settings import (
@@ -142,6 +153,9 @@ class ScanResult:
     assessed: list[AssessedContract] = field(default_factory=list)
     reviews: list[ClaudeReview] = field(default_factory=list)
     market_conditions: MarketConditions = field(default_factory=MarketConditions)
+    # The persisted market regime this cycle ran under (SPY and QQQ); None when it could not be
+    # read at all. Deterministic: the sizer and the gate read it through the SizingContext.
+    regime: RegimeState | None = None
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     # True when this scan was skipped because another process held the scan lease (F5).
     lease_skipped: bool = False
@@ -313,6 +327,51 @@ def _persist_memory(
     log.info("Persisted/updated ClaudeMemoryRow entries (%d new) for %s", written, today)
 
 
+@dataclass
+class _ReviewContext:
+    """What the reviewer reads besides the candidates: the market picture, the book and the
+    reviewed names' dossier notes (``dossier_keys``: what each shown note's prose and events are,
+    for the review-reuse fingerprint)."""
+
+    picture: MarketPicture | None
+    picture_block: str
+    book_block: str
+    dossier_block: str = ""
+    dossier_keys: dict[str, str | None] = field(default_factory=dict)
+
+
+def _build_review_context(
+    candidates: list[TradeCandidate],
+    positions: list[PositionSnapshot],
+    spots: dict[str, float] | None,
+    *,
+    compact: bool = True,
+) -> _ReviewContext:
+    """Read the stored market picture and dossiers (news.db, read-only) and build the book block.
+
+    The notes are for the reviewed underlyings in the candidates' priority order, each once: a
+    compact note per name capped at ``news.dossier.max_names_in_review`` for a full scan, or
+    (``compact=False``, the one-name ``/scan TICKER``) the full note with no cap.
+
+    Blocking small reads: callers run it off the event loop. Every part degrades on its own (no
+    picture reads "(unavailable)", no notes leave the block out, a book that cannot be built is
+    left out), so this never raises.
+    """
+    now = datetime.now(UTC)
+    picture = load_picture()
+    names = list(dict.fromkeys(c.underlying.upper() for c in candidates))
+    cap = get_config().news.dossier.max_names_in_review if compact else max(1, len(names))
+    shown = names[:cap]
+    dossiers = load_dossiers(shown)
+    return _ReviewContext(
+        picture=picture,
+        picture_block=render_picture_block(picture, now=now),
+        book_block=build_book_block(candidates, positions, spots=spots),
+        dossier_block=dossier_block(names, dossiers, now=now, compact=compact, max_names=cap),
+        dossier_keys={n: prose_key(d) for n in shown if (d := dossiers.get(n)) is not None},
+    )
+
+
 def _signal_vector(c: TradeCandidate, vix: float | None) -> dict:
     """The signal snapshot Claude saw for this candidate — frozen into the outcome ledger."""
     return {
@@ -352,12 +411,33 @@ def _coarse(v: float | None, step: float) -> float | None:
     return None if v is None else round(round(v / step) * step, 6)
 
 
-def _review_fingerprint(c: TradeCandidate, vix: float | None) -> dict:
+def _review_fingerprint(
+    c: TradeCandidate,
+    vix: float | None,
+    *,
+    regime: str = "normal",
+    picture_version: str | None = None,
+    dossier_key: str | None = None,
+) -> dict:
     """What would make a fresh review read differently, in buckets small enough that a bucket
     means "the same trade". Deliberately NOT ``_signal_vector`` (that one is frozen at full
     precision into the outcome ledger): premium ticks, derived yields and the sentiment message
-    counts drift every cycle without changing a word of the review."""
+    counts drift every cycle without changing a word of the review.
+
+    It also covers what a review's size suggestion rests on: the deterministic size and its
+    per-trade ceiling, the market regime and the picture version. A reused review's cut is thus
+    never older than the size, regime or picture it was based on.
+
+    The name's dossier enters as ``dossier_key`` (`dossier_context.prose_key`: when its prose was
+    written and its events), **not** its version, which changes with every hourly numbers refresh
+    and would defeat the reuse (ruling 43). A reused review is thus never older than the prose and
+    events it read."""
     return {
+        "contracts": c.contracts,
+        "per_trade_cap": c.sizing.per_trade_cap if c.sizing is not None else None,
+        "regime": regime,
+        "picture": picture_version,
+        "dossier": dossier_key,
         "blended": _coarse(c.blended_score, 2.0),
         "iv_rank": _coarse(c.iv_rank, 2.0),
         "delta": _coarse(c.delta, 0.02),
@@ -381,15 +461,37 @@ def _review_fingerprint(c: TradeCandidate, vix: float | None) -> dict:
     }
 
 
-def _candidates_review_hash(top: list[TradeCandidate], vix: float | None) -> str:
+def _candidates_review_hash(
+    top: list[TradeCandidate],
+    vix: float | None,
+    *,
+    picture_version: str | None = None,
+    dossier_keys: dict[str, str | None] | None = None,
+) -> str:
     """Stable hash of the top candidates' coarse fingerprints (S5).
 
     Keyed on each candidate's deterministic ``candidate_id`` + ``_review_fingerprint``. If a
     cycle's hash matches a recent fresh review, the LLM review would read the same, so the
     intraday loop reuses the persisted ``ClaudeReview`` instead of re-invoking ``claude -p``.
+    Each candidate's regime is the one on its own sizing note; the picture version (or its stale
+    marker, ``picture_context.picture_key``) is the call's; each candidate carries the prose key
+    of its own underlying's note (*dossier_keys*, only for the names the model was shown).
     """
     payload = sorted(
-        ((c.candidate_id, _review_fingerprint(c, vix)) for c in top), key=lambda x: x[0]
+        (
+            (
+                c.candidate_id,
+                _review_fingerprint(
+                    c,
+                    vix,
+                    regime=c.sizing.regime.value if c.sizing is not None else "normal",
+                    picture_version=picture_version,
+                    dossier_key=(dossier_keys or {}).get(c.underlying.upper()),
+                ),
+            )
+            for c in top
+        ),
+        key=lambda x: x[0],
     )
     blob = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()
@@ -1098,6 +1200,38 @@ def _fetch_analytics(
     return iv_stats, tech_stats, fund_stats
 
 
+def _build_sizing(positions: list[PositionSnapshot], symbols: list[str]) -> SizingContext | None:
+    """The market-regime `SizingContext` the sizer and the gate apply (one per scan).
+
+    Reads the persisted regime and today's counts from the trading database, so it runs off the
+    event loop. A database failure propagates: the scan stops rather than sizing without the
+    regime.
+    """
+    with session_scope() as session:
+        return build_sizing_context(
+            now=datetime.now(UTC), session=session, symbols=symbols, positions=positions
+        )
+
+
+async def _refresh_and_announce_regime(result: ScanResult) -> None:
+    """Refresh the persisted market regime, store it on *result*, and announce any change.
+
+    The regime is deterministic (``src/analytics/regime.py``) and owned by this process. Both
+    steps are best-effort: a failed refresh falls back to the last persisted regime and a failed
+    notice stays queued for the next scan, so neither can abort a scan or reach the broker.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        result.regime = await loop.run_in_executor(None, refresh_regime, datetime.now(UTC))
+    except Exception:
+        log.warning("scan: regime refresh failed — using the last known regime", exc_info=True)
+        result.regime = load_regime_state()
+    try:
+        await send_regime_changes()
+    except Exception:
+        log.warning("scan: regime change notice failed — will retry next scan", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1213,6 +1347,9 @@ async def _run_scan_body(
     except Exception:
         log.warning("scan: failed to fetch market conditions")
 
+    # --- 0b. Market regime (deterministic): refresh it and announce a change ---
+    await _refresh_and_announce_regime(result)
+
     # --- 1. Account + positions ---
     await tracker.tick("account", "⏳")
     try:
@@ -1256,6 +1393,9 @@ async def _run_scan_body(
             len(unmapped),
             unmapped,
         )
+
+    # --- 2b. The market regime as the sizer and the gate apply it (deterministic) ---
+    sizing = await loop.run_in_executor(None, _build_sizing, positions, would_own)
 
     # --- 3. Sentiment scorer ---
     sentiment = SentimentScorer(
@@ -1425,6 +1565,7 @@ async def _run_scan_body(
             probed_spot=probed_spots.get(symbol),
             symbol_timeout_seconds=cfg.market_data.symbol_timeout_seconds,
             deps=deps,
+            sizing=sizing,
         )
 
         # Chain + Greeks provenance for this symbol.
@@ -1572,6 +1713,7 @@ async def _run_scan_body(
                     for sym, (iv, _tech, _fund) in analytics_map.items()
                     if iv.current_iv is not None
                 },
+                sizing=sizing,
             )
             verdict_map = {v.candidate_id: v for v in verdicts}
             gate_passed = [
@@ -1618,6 +1760,14 @@ async def _run_scan_body(
             for c in passed:
                 per_symbol_skip.pop(c.underlying, None)
             top, dropped = select_top_candidates_detailed(passed)
+            # The counterfactual record: what the market regime trimmed or stopped this cycle
+            # (once per contract or name per ET day; read later by a human, never by a gate).
+            record_scan_actions(
+                top=top,
+                scored=scored,
+                verdicts=verdict_map,
+                generator_rejects=generator_rejects,
+            )
 
             # Record the fate of every gated contract. `gate_passed` is pre-score-floor, so the
             # difference between it and `passed` is exactly the score-floor casualties.
@@ -1661,10 +1811,19 @@ async def _run_scan_body(
             top = []
             passed = []
             per_symbol_skip = {}
+            # Nothing passed the generators, but the ladder and the same-day loss-exit block
+            # may be why: a name they stopped outright is the record's most important row (it
+            # feeds the 4-week ladder review), and it arrives only as a generator reject.
+            record_scan_actions(top=[], scored=[], verdicts={}, generator_rejects=generator_rejects)
     except Exception:
         log.exception("scan: scoring/risk-gate failed — aborting")
         await tracker.error("scoring", "failed — aborting")
         return result
+
+    # The covered calls the breakout rule held back (once per name per ET day; read later by a
+    # human, never by a gate). Outside the gate block on purpose: a name where nothing cleared
+    # the strike floor passes no candidate at all, and that is the case worth recording.
+    record_cc_timing(generator_rejects=generator_rejects)
 
     # Rank the assessed-but-not-approved contracts best-first, per strategy. This now covers
     # generator-stage rejects too, so a symbol whose entire chain failed the delta band still
@@ -1690,8 +1849,7 @@ async def _run_scan_body(
             cleared_floor_symbols,
         )
 
-    # --- 7. Load prior Claude memory for history injection ---
-    memory = _load_memory(all_symbols)
+    # --- 7. (The model's own prior recommendations are no longer injected: spec decision 1.) ---
 
     # --- 8. Claude review (enrichment only — failure does not abort) ---
     # Final review I2(b): the lease is otherwise renewed only inside the per-symbol loop, and the
@@ -1710,10 +1868,19 @@ async def _run_scan_body(
                 for sym, (_iv, tech, _fund) in analytics_map.items()
                 if tech.price  # drop missing/zero spot
             }
+            # The market picture and the book the reviewer reads (small local reads, off the loop).
+            review_ctx = await loop.run_in_executor(
+                None, _build_review_context, top, positions, spot_prices
+            )
             # S5: skip the LLM when the top set + signals are unchanged from the prior cycle
             # (intraday loop only — manual /scan always reviews fresh).
             vix = result.market_conditions.vix if result.market_conditions else None
-            review_hash = _candidates_review_hash(top, vix)
+            review_hash = _candidates_review_hash(
+                top,
+                vix,
+                picture_version=picture_key(review_ctx.picture),
+                dossier_keys=review_ctx.dossier_keys,
+            )
             reuse_minutes = get_config().claude.review_reuse_minutes
             if intraday and _review_is_reusable(review_hash, _utcnow(), reuse_minutes):
                 cached = _load_prior_reviews([c.candidate_id for c in top])
@@ -1736,10 +1903,12 @@ async def _run_scan_body(
                     lambda: review_candidates(
                         top,
                         account,
-                        history=memory,
                         market_conditions=result.market_conditions,
                         spot_prices=spot_prices,
                         analytics=analytics_map,
+                        picture_block=review_ctx.picture_block,
+                        book_block=review_ctx.book_block,
+                        dossier_block=review_ctx.dossier_block,
                     ),
                 )
                 if result.reviews and reuse_minutes > 0:
@@ -1941,6 +2110,17 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
         log.exception("ticker_scan: failed to fetch positions/account for %s", ticker)
         raise TickerPricingAborted("account") from exc
 
+    # 4b. The market regime for this one name (the same context a full scan builds). A one-off
+    # scan or a promote can run before the day's first full scan, so bring the persisted regime up
+    # to date first (cached: at most one refresh a minute).
+    try:
+        await loop.run_in_executor(None, refresh_regime_cached, datetime.now(UTC))
+    except Exception:
+        log.warning(
+            "ticker_scan: regime refresh failed — using the last known regime", exc_info=True
+        )
+    sizing = await loop.run_in_executor(None, _build_sizing, positions, [ticker])
+
     # 5. CC candidates — only if we hold the stock.
     cc_candidates: list[TradeCandidate] = []
     ticker_rejects: list[tuple[TradeCandidate, list[str]]] = []
@@ -1970,6 +2150,7 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             tech_stats,
             fund_stats,
             existing_short_calls=existing_short_calls,
+            sizing=sizing,
         )
         cc_candidates = cc_screen.passed
         ticker_rejects.extend(cc_screen.rejected)
@@ -1979,7 +2160,14 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
     csp_skip_reason: str | None = None
     if quotes:
         csp_screen = screen_csp_candidates(
-            ticker, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
+            ticker,
+            quotes,
+            account,
+            iv_stats,
+            tech_stats,
+            fund_stats,
+            positions=positions,
+            sizing=sizing,
         )
         csp_candidates = csp_screen.passed
         ticker_rejects.extend(csp_screen.rejected)
@@ -1999,7 +2187,9 @@ async def _price_and_gate_ticker(ib: IB, ticker: str) -> TickerPricingResult:
             # this view exists to let an operator compare. This is a browse/compare surface,
             # not an execution-committing one: anything promoted out of it is re-gated at
             # order-approval time (`execution/approval.py`), which keeps the dedupe ON.
-            verdicts = validate_candidates(scored, account, positions, dedupe_same_symbol=False)
+            verdicts = validate_candidates(
+                scored, account, positions, dedupe_same_symbol=False, sizing=sizing
+            )
             verdict_map = {v.candidate_id: v for v in verdicts}
             min_score = get_config().weights.get("min_candidate_score", 0)
             passed = [
@@ -2210,17 +2400,15 @@ async def run_ticker_scan(
     # The LLM "Read" reviews the best CC + best CSP. When neither cleared the gate we fall back to
     # reviewing the closest *near-miss* per strategy so the deep-dive still produces a synthesis
     # instead of going silent — these near-misses surface only as the overall summary, never as a
-    # per-candidate verdict (the card shows verdicts only beside a qualifying contract). Prior-
-    # recommendation memory for this ticker is injected so the read can learn from how past calls
-    # on the same name played out. Per-symbol analytics are passed so the model sees the raw
+    # per-candidate verdict (the card shows verdicts only beside a qualifying contract). The
+    # market picture and the book around this name are in the prompt (no memory of the model's own
+    # past calls). Per-symbol analytics are passed so the model sees the raw
     # technical/fundamental/IV signals, not just the composite scores.
     sector_ctx: SectorContext | None = None
     market_conditions: MarketConditions | None = None
     reviews: list[ClaudeReview] = []
-    memory: list = []
     try:
-        memory, market_conditions, sector_ctx = await asyncio.gather(
-            loop.run_in_executor(None, _load_memory, [ticker]),
+        market_conditions, sector_ctx = await asyncio.gather(
             loop.run_in_executor(None, get_market_conditions),
             loop.run_in_executor(None, get_sector_context, ticker),
         )
@@ -2234,17 +2422,24 @@ async def run_ticker_scan(
         spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
         sector_block = render_sector_context(sector_ctx)
         try:
+            # One name: its dossier note in full (a full scan gets a compact one per name).
+            review_ctx = await loop.run_in_executor(
+                None,
+                lambda: _build_review_context(to_review, positions, spot_prices, compact=False),
+            )
             reviews = await loop.run_in_executor(
                 None,
                 lambda: review_candidates(
                     to_review,
                     account,
-                    history=memory,
                     market_conditions=market_conditions,
                     spot_prices=spot_prices,
                     sector_context=sector_block,
                     single_ticker=True,
                     analytics=analytics_map,
+                    picture_block=review_ctx.picture_block,
+                    book_block=review_ctx.book_block,
+                    dossier_block=review_ctx.dossier_block,
                 ),
             )
         except Exception:

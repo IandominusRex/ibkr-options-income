@@ -104,6 +104,16 @@ place, size, or gate an order. A hallucinated or malformed Claude response must 
 the broker. The risk gate runs twice: once at decision time, once again at order-send time against
 a fresh quote.
 
+**One narrow exception (operator decisions, 2026-10-20/21 — `docs/superpowers/specs/2026-10-20-market-picture-design.md` §9, decisions 3, 15 and 33):**
+Claude may **lower, never raise,** the contract count of an **auto-opened opening CSP**, through
+one clamped integer function (`src/engine/regime_limits.py::claude_cut`). It is applied in paper
+and **record-only in live** (`claude_cut.apply_live: false`) until the operator has reviewed the
+record; a daily circuit breaker stops applying cuts when Claude zeroes most of the day's auto
+CSPs. A missing, malformed, out-of-range or Ollama-produced value means the deterministic size.
+Claude still never places, prices, gates any other field, or touches a close, a roll or a
+covered call. Every override is recorded in `sizing_actions` (`scripts/sizing_report.py`) and
+reviewed by a human before the live cutover.
+
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
 `src/claude/eval/` closes a read-only feedback loop around Claude's reviews: an **outcome ledger**
@@ -149,6 +159,11 @@ bounded tool-calling research turn the local Ollama reviewer may run before judg
 plus their keyless data-layer backend `src/data/google_news_backend.py`, reach the prompt and the
 local reviewer only — never `engine/`, `execution/`, or `strategies/`. Enforced by
 `tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer`.
+The market-picture modules follow the same rule: `src/claude/picture_context.py`, `book_context.py`
+and `dossier_context.py`, the news-side `src/news/dossier.py` and the neutral renderers
+`src/common/picture_text.py` and `dossier_text.py` (which import only `src.common.schemas`) reach
+prompts, cards and the web page only, never `engine/`, `execution/` or `strategies/`; they are
+covered by `tests/test_regime_fence.py` and `tests/test_news_fence.py`.
 `src/spreads_ai/` is enrichment too (on `tests/test_eval_skills.py`'s list): it reads the
 deterministic and enrichment analytics and `news.db`, and its only output is a menu letter
 that the spreads service validates and re-gates.
@@ -171,6 +186,10 @@ jobs** — keep them straight:
   and the roll executor re-checks at send time; its `ideal` stays populated for the card but never
   rejects. The roll *decision* (roll / assign / let called away / close / hold) is deterministic
   Python in `strategies/roll_policy.py` — no LLM output reaches it. A missing zone is data-unavailable and never rejects.
+  A name-level bottoming signal lot is also scoped out of this floor (`regime_limits.vrp_waiver`: a
+  CSP above its ladder zone while a bottom is forming, identified at send time by the tag frozen on
+  the card, never when the regime limits are off), because it carries its own guards (the delta 0.25
+  cap and one lot per name per 3 sessions); no other lot is exempt and every other gate still applies.
 - **`zone_fit` only ranks, and still ships at `0.0`.** The separate `fair_value.zone_fit_score`
   hook blends into `technical_score` under the `zone_fit` weight in `scoring_weights.yaml`, which
   is `0.0` for both strategies — strike placement changes no ranking until a human raises it.
@@ -185,6 +204,17 @@ merely reorder candidates, it would move `min_credit` and let news tone and crow
 
 `fair_value.py` still has no reject path of its own: it computes and returns numbers, and the Rules
 Engine is what refuses the order. The Rules Engine remains the sole path to an order.
+
+### Regime sizing — a deterministic module family
+
+The market regime, the scale-in ladder, the bottoming signal and the regime limits are
+**deterministic tier**: `src/analytics/{regime,support_levels,scale_in,bottoming,seasonality,breakout}.py`,
+`src/regime/`, `src/storage/regime_state.py` and `src/engine/regime_limits.py`. They may feed the
+sizer, the gate and sizing, and **none of them may import enrichment**: `src.claude`, `src.news`,
+`src.spreads_ai`, `src.analytics.market_conditions`, `src.analytics.sentiment` or
+`src.analytics.sector_context`. The news process reads the regime record only through
+`src.storage.regime_state.load_regime_state` (and `regime_suspended`), and never writes it: the
+trading process is the only writer. Enforced by `tests/test_regime_fence.py` — keep it green.
 
 ### The third, read-only tier — `src/reporting/`
 
@@ -318,7 +348,8 @@ Telegram thread (`TELEGRAM_THREAD_NEWS`). It explains news; it never trades. The
    (`det_sentiment`, `published_at`, `fetched_at`, `tickers`, `cluster_id`, `title`) through
    `src.news.store.readonly` — never `news_posts`, never an `Explanation`. **No LLM output reaches
    `ScoreCard.sentiment_score`, the risk engine or sizing** (spec D3, permanent). FinBERT is
-   allowed because it is deterministic classification, not generation.
+   allowed because it is deterministic classification, not generation. Exception: the same narrow
+   reduce-only cut above, since the market picture (news-derived) informs it.
 5. `src.news` is on `tests/test_eval_skills.py`'s enrichment list.
 6. `src/api/` reaches `news.db` only through `src/api/news_db.py`'s read-only engine and the
    Session-parameterised `src/news/store/queries.py`; it never imports `src.news.store.session`.

@@ -119,10 +119,16 @@ app/                App Router pages and the root layout
                     Dark / Follow OS), <TargetCard/> (features/more/: the monthly income
                     target as none, a fixed amount, a percent of the account or a percent
                     of an amount, saved through the `set_income_target` command), links to
-                    Research, Universe, News, Ledger, How it works and statement import,
+                    Research, Universe, News, Ledger, How it works, What Claude knows and
+                    statement import,
                     <SystemStatusCard/> (system health lives here now, not in the rail)
                     and Credits (the chart library's licence link to tradingview.com, which
                     left the chart's corner).
+  more/claude/      What Claude knows (market picture build, 2026-10-22): `page.tsx` mounts
+                    <ClaudeContextPage/> (features/claude-context/), reached from a row on More.
+                    Read-only: one request, `GET /claude/context`, and five cards (Regime and
+                    limits, Market picture, What each Claude call reads, Dropped as noise, Names).
+                    No news service says so in a sentence and the regime still shows.
   research/         Research, the old landing page (moved from app/page.tsx): a header
                     row with the page title and a visible
                     search-bar button (opens the same <CommandPalette/> ⌘K does — the
@@ -824,6 +830,24 @@ features/trades/    Web overhaul Part 2: TradesPage (the strategy switcher with 
                     components/options/AssessedBrowser. Nothing here reaches `submitCommand` or
                     `confirmCommand`: an order intent goes through DecideControls inside the review
                     sheet, a promote through AssessedRow, a roll through RollCard.
+features/claude-context/  What Claude knows (read-only): ClaudeContextPage (react-query on
+                    GET /claude/context, refetched every minute; the loading block, the error with
+                    its retry, then the cards), RegimeCard (SPY and QQQ regimes as words, the CSP
+                    limits as figure lines, the leveraged-ETF ceilings, Claude's cut mode, and a
+                    stack of amber flag words at the top when they apply: `Off in config`,
+                    `Suspended today` and `Cuts paused today` (today's cut breaker has tripped,
+                    from `claude_cut_breaker_tripped_today`; the cut-mode line then ends ", paused
+                    today")),
+                    PictureCard (stories first; the numbers, seasonality as a weak signal and the
+                    events behind a disclosure; stale says so), CallsCard (a row per Claude call,
+                    its prompt blocks as non-interactive chips), DroppedCard (the first five, the
+                    rest on request, promotions, the unreviewed count), NamesCard (a row per name:
+                    Python's health, Claude's story and summary labelled as Claude's, the figures
+                    Claude quoted from the news under "Reported in news (not computed by the
+                    system)" apart from the story, each with its cluster id as evidence, and
+                    upcoming events: the date found in the news, the title labelled as Claude's), FigureLines (the perforated figure lines), format.ts (New York times,
+                    percents, the regime line, the leveraged sentences) and types.ts (aliases of
+                    the generated api-types). Nothing here writes or reaches a command.
 features/more/      TargetCard + target.ts (the income-target form's rules: text in, a validated
                     `set_income_target` payload out, mirroring `IncomeTarget` and its bounds).
 lib/

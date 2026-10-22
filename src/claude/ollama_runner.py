@@ -70,6 +70,10 @@ _REVIEW_ITEM = {
         "summary": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "number"},
+        # Optional (Task 12): the size cut Claude may suggest for a cash-secured put. A local
+        # model's value is recorded with its review and never applied (claude_cut ignores it).
+        "max_contracts": {"type": "integer"},
+        "size_reason": {"type": "string"},
     },
     "required": [
         "candidate_id",
@@ -282,14 +286,20 @@ def _generate_chat(
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
-    history: list | None = None,
     market_conditions: MarketConditions | None = None,
     spot_prices: dict[str, float] | None = None,
     sector_context: str | None = None,
     single_ticker: bool = False,
     analytics: AnalyticsMap | None = None,
+    picture_block: str | None = None,
+    book_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> list[ClaudeReview]:
-    """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure."""
+    """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure.
+
+    Every review is stamped ``backend="ollama"`` (whatever the model's own output claimed), so a
+    size suggestion from the local model is recognisable and never applied.
+    """
     cfg = get_config().claude
 
     if not cfg.enabled:
@@ -344,13 +354,15 @@ def review_candidates(
     prompt = build_prompt(
         candidates,
         account,
-        history=history,
         market_conditions=market_conditions,
         spot_prices=spot_prices,
         sector_context=sector_context,
         single_ticker=single_ticker,
         analytics=analytics,
         news_block=news_block or None,
+        picture_block=picture_block,
+        book_block=book_block,
+        dossier_block=dossier_block,
     )
 
     reviews: list[ClaudeReview] = []
@@ -398,7 +410,7 @@ def review_candidates(
         _record_failure()
     else:
         _record_success()
-    return reviews
+    return [r.model_copy(update={"backend": "ollama"}) for r in reviews]
 
 
 def review_roll(
@@ -407,6 +419,8 @@ def review_roll(
     quote: OptionQuote,
     *,
     proposal: str | None = None,
+    picture_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> RollReview | None:
     """Local-model equivalent of `runner.review_roll`. Returns None on any failure."""
     cfg = get_config().claude
@@ -419,7 +433,14 @@ def review_roll(
         log.debug("ollama: circuit open — skipping roll review")
         return None
 
-    prompt = build_roll_prompt(alert, pos, quote, proposal=proposal)
+    prompt = build_roll_prompt(
+        alert,
+        pos,
+        quote,
+        proposal=proposal,
+        picture_block=picture_block,
+        dossier_block=dossier_block,
+    )
 
     raw = _generate(prompt, cfg, schema="json")
     if raw is None:
@@ -435,7 +456,7 @@ def review_roll(
     return review
 
 
-def write_journal_narrative(summary: EODSummary) -> str | None:
+def write_journal_narrative(summary: EODSummary, *, picture_block: str | None = None) -> str | None:
     """Local-model equivalent of `runner.write_journal_narrative`. Returns None on failure."""
     cfg = get_config().claude
 
@@ -447,7 +468,7 @@ def write_journal_narrative(summary: EODSummary) -> str | None:
         log.debug("ollama: circuit open — skipping EOD journal")
         return None
 
-    prompt = build_eod_prompt(summary)
+    prompt = build_eod_prompt(summary, picture_block=picture_block)
 
     raw = _generate(prompt, cfg, schema="json")
     if raw is None:

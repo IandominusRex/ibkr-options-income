@@ -105,6 +105,19 @@ _REASON_LABELS: dict[str, str] = {
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",
+    # Market-regime codes (engine/regime_limits.py): the regime, not the book, set the limit.
+    "regime_budget": "the market regime has shrunk the CSP budget",
+    "regime_ceiling": "over the market regime's size limit",
+    "leveraged_ceiling": "over the size limit for a leveraged ETF",
+    "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
+    # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
+    "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",
+    "loss_exit_cooldown": "a loss exit on this name earlier today",
+    "bottoming_delta_too_high": "a bottoming-signal lot must be a lower-delta strike",
+    "bottoming_lot_recent": "a bottoming-signal lot was already opened on this name lately",
+    # Covered-call breakout codes (engine/regime_limits.py cc_timing_reasons): push the call out.
+    "cc_breakout_strike_floor": "below the strike floor after a breakout",
+    "cc_breakout_delta": "too close to the money after a breakout",
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
     "top_n_not_surfaced": "max new positions per run already full",

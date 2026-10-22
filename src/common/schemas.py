@@ -49,6 +49,19 @@ class Regime(StrEnum):
     LOW_VOL = "low_volatility"
 
 
+class MarketRegime(StrEnum):
+    """The market-wide state the sizing limits follow (not a per-ticker label: see `Regime`).
+
+    Ordered calm to severe: normal, cautious, stressed, crisis. Classified deterministically
+    by `src/analytics/regime.py`; turned into limits by `src/engine/regime_limits.py`.
+    """
+
+    NORMAL = "normal"
+    CAUTIOUS = "cautious"
+    STRESSED = "stressed"
+    CRISIS = "crisis"
+
+
 class Verdict(StrEnum):
     PASS = "pass"
     REJECT = "reject"
@@ -233,6 +246,202 @@ class MarketConditions(BaseModel):
     macro_headline_count: int = 0
     top_macro_headline: str | None = None
     captured_at: datetime = Field(default_factory=_utcnow)
+
+
+class RegimeInputs(BaseModel):
+    """Everything one index's regime was classified from (deterministic; see analytics/regime.py).
+
+    ``vol`` is the VIX close for **both** indices (ruling 15), so the VIX thresholds mean the
+    same thing for SPY and QQQ. A field that could not be read, or that is a last close served
+    as live, is ``None`` and named in ``stale``: it is skipped by the classifier and never read
+    as calm.
+    """
+
+    vol: float | None = None
+    vol_pct_1y: float | None = None  # 0-100
+    term_ratio: float | None = None  # VIX / VIX3M; above 1 is backwardation
+    contango_streak: int = 0  # consecutive daily closes with term_ratio < 1, most recent first
+    index_close: float | None = None
+    index_live: float | None = None
+    day_change_pct: float | None = None
+    sma50: float | None = None
+    sma200: float | None = None
+    drawdown_52w_pct: float | None = None  # a positive number
+    ret_1m_pct: float | None = None
+    ret_3m_pct: float | None = None
+    rv20: float | None = None
+    rv_1y_avg: float | None = None
+    live_vol: float | None = None
+    stale: list[str] = Field(default_factory=list)
+
+
+class IndexRegime(BaseModel):
+    """One index's persisted regime: the daily base, today's intraday escalation, the result."""
+
+    index: Literal["SPY", "QQQ"]
+    base: MarketRegime
+    base_date: date  # the ET day the base was last computed
+    since: date  # the ET day the *effective* regime last changed
+    base_since: date  # the ET day the *base* last changed: the hysteresis clock (ruling 40)
+    effective: MarketRegime
+    escalated_by: list[str] = Field(default_factory=list)
+    eased_by_bottoming: bool = False
+    bottoming_cancelled_on: date | None = None
+    inputs: RegimeInputs = Field(default_factory=RegimeInputs)
+
+
+class RegimeChange(BaseModel):
+    """An effective-regime change, queued for a Telegram notice until ``sent``."""
+
+    index: Literal["SPY", "QQQ"]
+    before: MarketRegime
+    after: MarketRegime
+    why: list[str] = Field(default_factory=list)
+    at: datetime
+    sent: bool = False
+
+
+class RegimeState(BaseModel):
+    """The persisted market regime for both indices (written only by the trading process)."""
+
+    as_of: datetime
+    spy: IndexRegime
+    qqq: IndexRegime
+    changes: list[RegimeChange] = Field(default_factory=list)
+
+
+class PictureFact(BaseModel):
+    """One deterministic line of the market picture: a label and a value Python computed."""
+
+    label: str
+    value: str
+
+
+class SeasonalityView(BaseModel):
+    """SPY's calendar-month tendency over the years the price provider covers (a weak signal)."""
+
+    month: int
+    avg_return_pct: float
+    up_share: float  # 0-1: the share of those years the month closed up
+    years: int
+
+
+class PictureStory(BaseModel):
+    """A multi-week story the picture is tracking. Identity (id, title, start date) is kept by
+    Python; the description is the model's one-sentence tie to the numbered facts."""
+
+    id: int
+    title: str
+    started_on: date
+    description: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+class NoiseSummary(BaseModel):
+    """What the triage kept out of the picture in the last 7 days (shown, never overruled)."""
+
+    judged: int = 0  # Claude saw it and called it noise
+    not_reviewed: int = 0  # outside the ranked batch: nobody judged it
+    promotions: int = 0  # judged noise that the market reaction check promoted late
+
+
+class PictureRegime(BaseModel):
+    """One index's regime as the picture shows it (read from the trading process's record)."""
+
+    index: Literal["SPY", "QQQ"]
+    effective: MarketRegime
+    base: MarketRegime
+    eased_by_bottoming: bool = False
+    suspended: bool = False
+    as_of: datetime
+
+
+class MarketPicture(BaseModel):
+    """The shared, persistent picture of the market every ``claude -p`` call reads.
+
+    Written only by the news process (``src/news/picture.py``); every number in it is computed by
+    Python, the story descriptions are the model's prose and are grounded before they are saved.
+    Enrichment: it reaches prompts and cards, never the engine, execution or sizing.
+    """
+
+    version: str  # the build time, ISO: a reader compares versions to know a picture is new
+    built_at: datetime
+    regimes: list[PictureRegime] = Field(default_factory=list)
+    regime_source: Literal["trading", "news"] = "trading"
+    facts: list[PictureFact] = Field(default_factory=list)
+    seasonality: SeasonalityView | None = None
+    events: list[str] = Field(default_factory=list)
+    stories: list[PictureStory] = Field(default_factory=list)
+    noise: NoiseSummary = Field(default_factory=NoiseSummary)
+    stale: bool = False  # True when the model call failed and only the deterministic part is fresh
+
+
+class DossierFact(BaseModel):
+    """One deterministic line of a ticker dossier. ``id`` is ``<SYM>:F<n>`` so a reviewer can cite
+    it next to the candidate's own facts without a clash."""
+
+    id: str
+    label: str
+    display: str
+
+
+class DossierEvent(BaseModel):
+    """An upcoming dated catalyst (not earnings) that the model proposed and Python verified.
+
+    ``id`` is ``<SYM>:E<n>``; ``evidence`` is the ``C<id>`` of the news cluster that states the
+    date and ``quote`` the text of that cluster around it. Python keeps an event only when its
+    date is written in that cluster's text, so it is data, not prose.
+    """
+
+    id: str
+    title: str = Field(max_length=80)
+    on: date
+    evidence: str
+    quote: str = Field(max_length=200)
+
+
+class DossierReported(BaseModel):
+    """A figure quoted from the news about a name, kept apart from the story (OI-E10).
+
+    ``text`` is a short statement of the figure (120 characters at most) and ``cluster_id`` the
+    ``C<id>`` of the news cluster that states it. Python keeps an item only when every number in
+    ``text`` is written in that cluster's text as the model was shown it, so the figure is the
+    news's, not the system's: every reader labels it "Reported in news (not computed by the
+    system)" and never mixes it into the story.
+    """
+
+    text: str = Field(max_length=120)
+    cluster_id: str
+
+
+class TickerDossier(BaseModel):
+    """What the news process knows about one name the book cares about (spec section 16).
+
+    Python writes every number (``facts``, ``health``, ``sentiment_*``) and recomputes it on each
+    build; the model writes only ``profile`` (what the business is and what moves it), ``story``
+    (what is happening to it now, citing news clusters) and proposes ``events`` (which Python
+    verifies). Enrichment: it reaches prompts, never the engine, execution or sizing.
+    """
+
+    symbol: str
+    version: str  # changes on every build, including the hourly numbers-only refresh
+    facts_at: datetime
+    prose_at: datetime | None = None  # when story/events were last written (None: never)
+    profile_at: datetime | None = None
+    kind: Literal["stock", "etf", "leveraged_etf"]
+    health: Literal["strong", "ok", "weak", "n/a", "unknown"]
+    health_why: list[str] = Field(default_factory=list)
+    facts: list[DossierFact] = Field(default_factory=list)
+    sentiment_7d: float | None = None  # mean deterministic sentiment of the last 7 days
+    sentiment_items_7d: int = 0
+    profile: str = ""
+    story: str = ""
+    story_evidence: list[str] = Field(default_factory=list)
+    # Figures quoted from the cited news (OI-E10), apart from the story, which may use only the
+    # name's own facts. An older stored dossier has none: it reads as an empty list.
+    reported: list[DossierReported] = Field(default_factory=list)
+    events: list[DossierEvent] = Field(default_factory=list)
+    stale: bool = False  # True when the last prose build failed and the prose is carried forward
 
 
 class TechnicalStats(BaseModel):
@@ -420,6 +629,100 @@ class RollOrigin(BaseModel):
     allow_debit: bool = False  # a keep-shares covered-call roll may pay up to roll.cc.max_debit
 
 
+class ScaleInZone(BaseModel):
+    """Where the next CSP lot on a name may be added while it is under the scale-in ladder.
+
+    Defined with the sizing schemas so `SizingContext` and `SizingNote` need no forward
+    reference; the ladder (a later task) fills it. A strike whose spot is above ``zone_high``
+    is refused with ``scale_in_zone_not_reached``.
+    """
+
+    anchor: float
+    anchor_source: Literal["order_snapshot", "price_history", "shares", "position"]
+    zone_low: float
+    zone_high: float
+    support: float | None = None
+    min_gap_pct: float
+    triggers: list[str] = Field(default_factory=list)
+    bottoming_signal: bool = False
+
+
+class SizingNote(BaseModel):
+    """How the market regime and the leveraged-ETF ceiling shaped one CSP's size (card + audit).
+
+    Carried on the candidate (and so in the frozen order snapshot), never read back by the
+    sizer or the gate as an input except `scale_in`/`floor_lot`, which the send-time re-gate
+    re-checks from the snapshot.
+    """
+
+    pre_regime_contracts: int  # what capital alone would have allowed (capped at the hard max)
+    regime: MarketRegime
+    regime_index: Literal["SPY", "QQQ"]  # the index whose regime governs this name
+    per_trade_cap: int
+    budget_multiplier: float
+    leverage: int | None = None
+    leverage_tier: Literal["calm", "stressed"] | None = None
+    ceiling_kind: Literal["regime_ceiling", "leveraged_ceiling"] | None = None
+    floor_lot: bool = False  # sent under the guaranteed floor (past the scaled budget)
+    scale_in: ScaleInZone | None = None
+    bottoming: Literal["market", "name"] | None = None
+    # The variance-premium floor (`premium_below_fair_value`) would have refused this lot and was
+    # waived because it opened on a name-level bottoming signal (OI-B3). Display and audit only:
+    # the gate recomputes it from the frozen tag and never reads it back as an input.
+    vrp_waived: bool = False
+    claude_suggested: int | None = None
+    claude_reason: str | None = None
+
+
+class CcBreakout(BaseModel):
+    """An upside breakout on a held name that governs its covered-call strikes for a few sessions.
+
+    Worked out by `src/analytics/breakout.py` from daily bars; the covered-call generator and the
+    Rules Engine hold a call on the name to ``floor_strike`` and ``delta_max`` while it lasts
+    (`engine/regime_limits.cc_timing_reasons`). A call is pushed out; when nothing on the chain
+    clears the strike floor and the delta cap, none is sold on that name that scan. It never
+    loosens a limit or sizes anything. ``broke_level`` is None when the close was a
+    ``high_sessions`` high with no resistance to clear.
+    """
+
+    trigger_day: date
+    trigger_close: float
+    jump_pct: float  # the close-to-close rise on the trigger day, in percent
+    volume_ratio: float  # the trigger day's volume over its 20-session average
+    broke_level: float | None = None
+    floor_strike: float
+    delta_max: float
+    sessions_left: int
+
+
+class SizingContext(BaseModel):
+    """Everything the sizer and the gate need to apply the regime, built once per scan / send.
+
+    ``None`` (where a function takes ``SizingContext | None``) means no regime behaviour at all.
+    Deterministic: the regimes come from the persisted `RegimeState`, the counts from today's
+    orders. Keys of the per-index dicts are ``"SPY"`` / ``"QQQ"``: a tech-linked name is
+    counted under QQQ, every other name under SPY (ruling 16).
+    """
+
+    regimes: dict[str, MarketRegime]  # effective regime per index
+    tech_linked: list[str] = Field(default_factory=list)
+    suspended: bool = False  # `/regime off` today
+    csp_opens_counted: dict[str, int] = Field(default_factory=dict)  # per governing index
+    floor_lots_counted: dict[str, int] = Field(default_factory=dict)  # guaranteed-floor lots today
+    leverage: dict[str, int] = Field(default_factory=dict)  # leveraged ETF -> factor (2 or 3)
+    name_triggers: dict[str, list[str]] = Field(default_factory=dict)  # ladder triggers per name
+    for_send: bool = False  # built at send time (queued orders are the batch, not counted)
+    scale_in: dict[str, ScaleInZone] = Field(default_factory=dict)
+    loss_exit_today: list[str] = Field(default_factory=list)
+    spot_at_send: dict[str, float] = Field(default_factory=dict)
+    name_bottoming: list[str] = Field(default_factory=list)
+    market_bottoming: dict[str, bool] = Field(default_factory=dict)
+    signal_lot_recent: list[str] = Field(default_factory=list)
+    # Held names in a covered-call breakout (scan time only; the send-time gate reads the
+    # candidate's own frozen copy). Not a regime limit: `/regime off` leaves it on.
+    cc_breakout: dict[str, CcBreakout] = Field(default_factory=dict)
+
+
 class TradeCandidate(BaseModel):
     """A concrete proposed option sale, fully specified and scored."""
 
@@ -478,6 +781,12 @@ class TradeCandidate(BaseModel):
     # ROLL only (2026-10-11): the short this roll closes and its chain position. None on
     # CC/CSP candidates and on roll snapshots frozen before the redesign.
     roll_from: RollOrigin | None = None
+    # CSP only: how the market regime / leveraged-ETF ceiling shaped the size (None on rolls,
+    # covered calls, and on candidates built without a SizingContext).
+    sizing: SizingNote | None = None
+    # Covered call only: the breakout in force on the name when the call was priced (the card
+    # shows it and the send-time gate re-checks the strike floor and delta cap from it).
+    cc_breakout: CcBreakout | None = None
 
 
 class RiskVerdict(BaseModel):
@@ -520,7 +829,8 @@ class AssessedContract(BaseModel):
 
 
 class ClaudeReview(BaseModel):
-    """Structured output parsed from `claude -p`. Enrichment only — never gating."""
+    """Structured output parsed from `claude -p`. Enrichment only — never gating, except the
+    reduce-only ``max_contracts`` cut (spec section 9; ``engine.regime_limits.claude_cut``)."""
 
     candidate_id: str
     priority: int  # 1 = highest
@@ -541,6 +851,26 @@ class ClaudeReview(BaseModel):
     # unstated impression. Empty is valid (older prompts / a model that ignores the rubric) but
     # `scripts/review_eval.py` flags a high empty rate as a quality signal.
     evidence: list[str] = Field(default_factory=list)
+    # Claude's optional size cut for an auto-opened CSP (spec section 9): the most contracts it
+    # would sell. It only ever reaches the engine package through the one clamped function
+    # `engine.regime_limits.claude_cut`, which can lower the deterministic size and never raise it.
+    # Anything that is not a plain integer (a bool, a float, text) reads as None here, so a
+    # malformed value can never cost the review its other fields.
+    max_contracts: int | None = None
+    size_reason: str = ""
+    # Which backend produced this review. Never taken from the model's output: the parser blanks
+    # it and the runner stamps it, so a reused or Ollama-made review is recognisable later.
+    backend: Literal["cli", "ollama"] | None = None
+
+    @field_validator("max_contracts", mode="before")
+    @classmethod
+    def _only_a_real_integer(cls, v: Any) -> int | None:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @field_validator("size_reason", mode="before")
+    @classmethod
+    def _reason_is_short_text(cls, v: Any) -> str:
+        return v[:300] if isinstance(v, str) else ""
 
 
 class RollAlert(BaseModel):
@@ -1743,6 +2073,9 @@ class SpreadMarketSnapshot(BaseModel):
     headline_sentiment_mean: float | None = None
     headlines: list[str] = Field(default_factory=list)
     econ_today: list[str] = Field(default_factory=list)
+    # The shared market picture (src/common/picture_text.render_picture, regime lines labelled "as
+    # of <built_at>"), read from news.db. None when there is no picture; prompt text only.
+    picture_text: str | None = None
     unavailable: list[str] = Field(default_factory=list)  # sources that failed this call
 
 

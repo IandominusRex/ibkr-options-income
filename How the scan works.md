@@ -11,7 +11,9 @@ longer trims the trading day; the last 15-min cycle, 15:45, is the last one eith
 + `would_own` + `actively_wheeling`; DPST moved from the CC-only leveraged set into the
 `actively_wheeling`/`would_own` deliberate exception alongside TQQQ/UPRO/SOXL), updated
 2026-10-10 (AVGO/VST/BE added and CRWD promoted to `actively_wheeling`; JPM/WMT/UBER/TSLA/IWM
-archived — membership counts below reflect this). Reflects
+archived — membership counts below reflect this), updated 2026-10-22 (section 11: what the market
+regime, the scale-in ladder and the covered-call breakout rule do to a contract the scan has already
+found; it does not change which tickers are looked at). Reflects
 `src/orchestrator/scan.py`, `src/notify/approval_service.py` (`_intraday_scan_loop`),
 `config/universe.yaml`, and `config/settings.yaml → market_data` / `scheduler` as they stand
 today.*
@@ -891,3 +893,56 @@ is the raw figure divided by 1.05 — about 2–4 points lower than the "52 + 0.
 above (e.g. 59–63 raw → ≈56.2–60.0 normalized). The conclusion is unchanged: TQQQ still clears the
 55 floor post-Task-9 without needing the IV backfill; it just does so with a few points less
 headroom than the raw arithmetic suggests.
+
+---
+
+## 11. What the market regime, the ladder and the breakout rule do to a contract (2026-10-22)
+
+Everything above decides *which tickers get looked at*. None of it changes. Section 11 is about what happens
+**after** a ticker has been fetched and a put or call has been found: since 2026-10-22 each scan cycle starts by
+refreshing the market regime (a failed refresh falls back to the last one saved), builds one sizing context from it
+and the trading database, and hands that to the put and call generators and to the Rules Engine. The generator
+and the gate use the same functions, so they agree; a contract stopped here shows up in the "Assessed — not
+approved" block and in `risk_verdicts` with its reason code (§9). It never limits a close, a profit-take, a loss
+exit or a roll.
+
+**Regime limits, the guaranteed floor and the leveraged-ETF ceiling.** SPY and QQQ each carry a regime
+(normal, cautious, stressed, crisis), set from the VIX close (22 / 28 / 36), its 1-year percentile, the VIX/VIX3M
+term ratio and a few slow trend signals, and lifted at once intraday if an index falls hard (SPY -2% / -3.5%, QQQ
+-2.5% / -4%, or a live VIX of 30 / 40; this expires at the close). A tech-linked name (`regime.tech_linked`) follows
+the stricter of the two indices, every other name follows SPY. The regime shrinks *new cash-secured puts only*:
+the CSP budgets (x1.0 / 0.7 / 0.4 / 0.1), the per-trade size (x1.0 / 0.6 / 0.3 / 0.1 of `cash_secured_put.max_contracts`)
+and the number of new puts a day per index (no limit / 6 / 3 / 1). So with a hard maximum of 10 contracts, NVDA's
+puts go from up to 10 contracts on a normal day to 3 when QQQ is stressed, and at most 3 new tech-linked puts that
+day. Because the book can already be full (collateral at 101% of deployable on 2026-10-20), a shrunken budget
+alone would stop every put until they expire; a **guaranteed floor** (0 / 2 / 1 / 1 lots per index per day) lets
+that many puts through past the *scaled* budget, never past the unscaled caps, the per-trade size or the daily
+count. Reason codes: `regime_budget` (only the scaled budget stopped it), `regime_ceiling`, `regime_daily_limit`.
+Independently of the regime, 2x and 3x ETFs carry a smaller per-trade size in **every** regime
+(`leveraged_sizing`): TQQQ is 6 contracts while its name regime is normal and nothing has fired on it, and 3 or
+fewer as soon as a ladder trigger holds or its regime is not normal (1 in a stressed QQQ), code
+`leveraged_ceiling`. `/regime off` suspends the regime limits for the day but not this ceiling.
+
+**The ladder, the same-day block and the bottoming signal.** In a stressed or crisis market, and on any name
+where a name-level trigger holds in any regime (it fell 2.5 ATRs from its recent high, a short put on it is at or
+near the money, or it had a loss exit in the last 5 days), a *further* put lot on that name is accepted only once
+the price has fallen into a zone below the price at its last lot, built from its own recent swing lows (code
+`scale_in_zone_not_reached`). The first lot on a name is free. Two closes after the last lot above its 20-day
+average and the support that last broke lift the ladder, and a recovered name stops being treated as falling.
+Separately, a **loss exit on a name blocks any new put on it for the rest of that ET day** (`loss_exit_cooldown`);
+`/regime off` does not lift that block. A deterministic **bottoming signal** can ease an index's regime one notch
+and let one guarded lot into a falling name (a delta of at most 0.25, one such lot per name per 3 sessions, both checked again at send time,
+`bottoming_delta_too_high` / `bottoming_lot_recent`); that name-level lot alone is exempt from the variance-premium
+floor (`premium_below_fair_value`) and says so on its card. Every scan that stops a put *only* for these ladder reasons records
+it once per name and day in `sizing_actions` (`python -m scripts.sizing_report`), also when nothing else passed.
+At send time the order poll re-reads the regime and can only *trim* a queued put, and the fresh-quote re-gate checks
+the frozen zone against the live price again.
+
+**The covered-call breakout rule.** After an upside breakout on a stock you hold (a close up at least 1.5 ATR on
+1.5x average volume, above its nearest resistance or at a 60-session high, from completed daily bars, so a
+breakout today is first applied tomorrow), its covered calls must sit at or above `max(next resistance, price + 1
+ATR)` and at a delta of at most 0.25 for 5 sessions, or until a close fades 1 ATR under the breakout close. A call
+that is too close is rejected `cc_breakout_strike_floor` / `cc_breakout_delta`; the rule only pushes strikes
+out, so when nothing on the chain clears the floor and the delta cap, no call is sold on that name that scan. It has
+its own switch (`cc_timing.breakout.enabled`), `/regime off` leaves it on, it never touches rolls, and the card
+carries a `Breakout` line while it lasts.

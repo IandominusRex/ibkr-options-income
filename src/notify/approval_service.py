@@ -18,6 +18,7 @@ Responsibilities:
       /expire    — expire all pending approvals
       /halt      — kill switch: stop all order transmission
       /resume    — release the kill switch
+      /regime    — market regime (SPY, QQQ) and its CSP limits; /regime off|on suspends or resumes them
       /help      — command list
 
 Only the configured TELEGRAM_CHAT_ID can trigger any command or approval.
@@ -41,7 +42,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from src.claude.memory import USER_REJECTED, record_outcome
-from src.common.config import get_config
+from src.common.config import get_config, get_regime_cfg
 from src.common.market_hours import (
     holiday_name,
     is_market_holiday,
@@ -52,9 +53,10 @@ from src.common.market_hours import (
     now_et_hhmm,
     seconds_until_next_aligned_mark,
     seconds_until_time,
+    today_et,
 )
 from src.common.schemas import ApprovalStatus, AutonomyLevel, OrderState, TradeCandidate
-from src.execution.approval import process_queued_orders
+from src.execution.approval import check_sizing_config_at_startup, process_queued_orders
 from src.execution.executor import resolve_live_confirm
 
 # Profit-take orchestration lives in src/execution/ (N23 — trading control flow is not the notify
@@ -77,11 +79,14 @@ from src.ibkr.connection import (
     suppress_account_summary_on_reconnect,
 )
 from src.notify.command_drain import drain_once
+from src.notify.regime_notice import format_regime_status
 from src.notify.sender import thread_id
+from src.regime.refresh import refresh_regime_cached
 from src.storage.approvals import expire_stale_approvals
 from src.storage.db import init_db, session_scope
 from src.storage.models import ApprovalRow, CandidateRow, FillRow, OrderRow
 from src.storage.orders import has_active_order
+from src.storage.regime_state import regime_suspended, resume_regime, suspend_regime
 from src.storage.system_settings import (
     SCAN_COMPLETED_KEY,
     autonomy_progress,
@@ -1092,6 +1097,61 @@ async def handle_resume_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def handle_regime_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the market regime and its limits, or suspend / resume them.
+
+    /regime       — SPY and QQQ regimes, what each means for new CSPs, and whether the limits
+                    are active (the state is refreshed first, so the reply is current)
+    /regime off   — suspend every regime limit for the rest of this trading day; the next
+                    trading day's base is back under the limits
+    /regime on    — resume them now
+
+    The regime only ever limits NEW cash-secured puts: closes, rolls, profit-takes and loss
+    exits are never touched by it, suspended or not.
+    """
+    if not _is_authorized(update) or update.message is None:
+        return
+    arg = (context.args[0].lower() if context.args else "").strip()
+    today = today_et()
+
+    if arg == "off":
+        suspend_regime(today)
+        resumes = next_session(today)
+        logger.warning("Regime limits SUSPENDED for %s via /regime off", today)
+        await update.message.reply_text(
+            f"Regime limits suspended for today ({today.isoformat()}). They apply again from the "
+            f"next trading day's base ({resumes.isoformat()}), or sooner with /regime on. "
+            "Closes, rolls, profit-takes and loss exits are never limited by the regime, and the "
+            "leveraged-ETF size limit is not a regime limit, so it stays on."
+        )
+        return
+    if arg == "on":
+        resume_regime()
+        logger.warning("Regime limits RESUMED via /regime on")
+        await update.message.reply_text("Regime limits resumed.")
+        return
+    if arg:
+        await update.message.reply_text("Usage: /regime, /regime off or /regime on")
+        return
+
+    state = await asyncio.to_thread(refresh_regime_cached, datetime.now(UTC))
+    if state is None:
+        await update.message.reply_text(
+            "No regime state yet: the first scan (or a refresh once market data is available) "
+            "computes it."
+        )
+        return
+    suspended = regime_suspended(today)
+    await update.message.reply_text(
+        format_regime_status(
+            state,
+            get_regime_cfg(),
+            suspended=suspended,
+            resumes_on=next_session(today) if suspended else None,
+        )
+    )
+
+
 async def handle_campaigns_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show wheel-strategy campaigns: P&L threads linking all option legs per symbol (C6).
 
@@ -1951,6 +2011,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("autonomy", handle_autonomy_command))
     app.add_handler(CommandHandler("halt", handle_halt_command))
     app.add_handler(CommandHandler("resume", handle_resume_command))
+    app.add_handler(CommandHandler("regime", handle_regime_command))
     app.add_handler(CommandHandler("calendar", handle_calendar_command))
     app.add_handler(CommandHandler("campaigns", handle_campaigns_command))
 
@@ -1979,6 +2040,7 @@ async def _run_service(token: str, chat_id: str) -> None:
                     ),
                     BotCommand("halt", "🛑 Kill switch: stop all order transmission now"),
                     BotCommand("resume", "Release the kill switch and resume execution"),
+                    BotCommand("regime", "Market regime and its limits"),
                     BotCommand("status", "Account · shorts · pending approvals"),
                     BotCommand("positions", "Full portfolio positions with P&L"),
                     BotCommand("account", "Account balances (buying power, net liq, margin)"),
@@ -2048,6 +2110,12 @@ async def _run_service(token: str, chat_id: str) -> None:
                 )
             except Exception:
                 logger.warning("Could not send autonomy-demotion notice to Telegram", exc_info=True)
+
+        # The typed market-regime blocks of risk_limits.yaml are read on every scan and every
+        # order poll. A bad one holds new puts and calls (queued rolls, profit-takes and loss exits
+        # keep working), so say so now, loudly, rather than on the first poll; the service still
+        # starts, since refusing would also stop the closes. Never raises.
+        await check_sizing_config_at_startup(app.bot, chat_id)
 
         # Arm the scan-only background loops FIRST, before any IBKR-touching startup recovery.
         # Startup reconciliation calls the broker (reqExecutions); on a half-dead TWS socket

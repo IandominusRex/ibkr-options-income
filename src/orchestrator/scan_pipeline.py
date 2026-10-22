@@ -44,6 +44,7 @@ from src.common.schemas import (
     OptionRight,
     PositionSnapshot,
     SentimentDetail,
+    SizingContext,
     TechnicalStats,
     TradeCandidate,
 )
@@ -199,6 +200,7 @@ async def scan_symbol(
     probed_spot: float | None,
     symbol_timeout_seconds: float,
     deps: SymbolDeps,
+    sizing: SizingContext | None = None,
 ) -> SymbolOutcome:
     """Run the full per-symbol pipeline and return what it produced.
 
@@ -214,6 +216,10 @@ async def scan_symbol(
             as the technicals' cached price so a gate-skipped symbol doesn't pay for a second
             identical fetch.
         symbol_timeout_seconds: hard bound on the option-chain fetch.
+        sizing: the sizing context for this scan (`src/regime/context.py`); handed to the CSP
+            screen so the sizer applies the same regime limits the gate will, and to the
+            covered-call screen, which reads only its breakout (strikes pushed out after an
+            upside breakout; calls are not regime-limited). ``None`` means no such behaviour.
     """
     loop = asyncio.get_running_loop()
     errors: list[str] = []
@@ -292,6 +298,7 @@ async def scan_symbol(
             tech_stats,
             fund_stats,
             existing_short_calls=existing_short_calls,
+            sizing=sizing,
         )
         # Inject composite sentiment into ScoreCard (overall drives scoring; detail enriches).
         # Rejected contracts get it too — they are shown on the same cards.
@@ -302,7 +309,14 @@ async def scan_symbol(
     # CSP candidates for would_own symbols.
     if symbol in would_own and quotes:
         csp_screen = deps.screen_csp(
-            symbol, quotes, account, iv_stats, tech_stats, fund_stats, positions=positions
+            symbol,
+            quotes,
+            account,
+            iv_stats,
+            tech_stats,
+            fund_stats,
+            positions=positions,
+            sizing=sizing,
         )
         apply_sentiment(csp_screen, sentiment_detail)
         outcome.csp_passed.extend(csp_screen.passed)

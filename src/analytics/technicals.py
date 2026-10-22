@@ -146,27 +146,39 @@ def _fetch_last_price(symbol: str) -> float | None:
         return None
 
 
-def _rsi14(close: pd.Series) -> float | None:
-    if len(close) < 15:
-        return None
+def rsi14_series(close: pd.Series) -> pd.Series:
+    """Wilder-style RSI-14 for every bar of *close* (the whole series ``_rsi14`` ends on)."""
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     rs = gain / loss
-    rsi = 100 - 100 / (1 + rs)
-    val = float(rsi.iloc[-1])
+    return 100 - 100 / (1 + rs)
+
+
+def _rsi14(close: pd.Series) -> float | None:
+    if len(close) < 15:
+        return None
+    val = float(rsi14_series(close).iloc[-1])
     return round(val, 2) if np.isfinite(val) else None
+
+
+def atr14_series(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+    """Wilder-style ATR-14 for every bar (the whole series ``_atr14`` ends on).
+
+    Defined from the first bar on, but only meaningful once 14 bars have gone by; callers that
+    need a trustworthy value check the history length themselves.
+    """
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(
+        axis=1
+    )
+    return tr.ewm(com=13, adjust=False).mean()
 
 
 def _atr14(high: pd.Series, low: pd.Series, close: pd.Series) -> float | None:
     if len(close) < 15:
         return None
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(
-        axis=1
-    )
-    atr = tr.ewm(com=13, adjust=False).mean()
-    val = float(atr.iloc[-1])
+    val = float(atr14_series(high, low, close).iloc[-1])
     return round(val, 4) if np.isfinite(val) else None
 
 

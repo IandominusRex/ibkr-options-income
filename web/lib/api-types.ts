@@ -1057,6 +1057,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claude/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Context */
+        get: operations["context_claude_context_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spreads/positions": {
         parameters: {
             query?: never;
@@ -1835,6 +1852,18 @@ export interface components {
             /** Days */
             days: components["schemas"]["CalendarDay"][];
         };
+        /**
+         * CallContextOut
+         * @description One Claude call and the context blocks its prompt carries (static: ``claude_calls.CALLS``).
+         */
+        CallContextOut: {
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Blocks */
+            blocks: string[];
+        };
         /** CampaignLeg */
         CampaignLeg: {
             /**
@@ -2007,6 +2036,72 @@ export interface components {
              * @default []
              */
             warnings: components["schemas"]["Warning"][];
+        };
+        /** ClaudeContextResponse */
+        ClaudeContextResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            picture?: components["schemas"]["MarketPicture"] | null;
+            regime?: components["schemas"]["RegimeState"] | null;
+            /**
+             * Regime Enabled
+             * @default true
+             */
+            regime_enabled: boolean;
+            /**
+             * Suspended Today
+             * @default false
+             */
+            suspended_today: boolean;
+            /** Limits */
+            limits?: components["schemas"]["RegimeLimitOut"][];
+            /**
+             * Leveraged Enabled
+             * @default true
+             */
+            leveraged_enabled: boolean;
+            /** Leveraged */
+            leveraged?: components["schemas"]["LeveragedLimitOut"][];
+            /**
+             * Claude Cut Mode
+             * @default record_only
+             * @enum {string}
+             */
+            claude_cut_mode: "applied" | "record_only";
+            /**
+             * Claude Cut Breaker Tripped Today
+             * @default false
+             */
+            claude_cut_breaker_tripped_today: boolean;
+            /**
+             * Account Mode
+             * @default paper
+             * @enum {string}
+             */
+            account_mode: "paper" | "live";
+            /** Calls */
+            calls?: components["schemas"]["CallContextOut"][];
+            /** Dropped */
+            dropped?: components["schemas"]["DroppedOut"][];
+            /**
+             * Dropped Total
+             * @default 0
+             */
+            dropped_total: number;
+            /**
+             * Not Reviewed 7D
+             * @default 0
+             */
+            not_reviewed_7d: number;
+            /** Dossiers */
+            dossiers?: components["schemas"]["DossierOut"][];
+            /** Without Notes */
+            without_notes?: string[];
         };
         /**
          * ClaudeReviewPayload
@@ -2451,6 +2546,119 @@ export interface components {
             /** Next Day */
             next_day?: string | null;
         };
+        /**
+         * DossierEvent
+         * @description An upcoming dated catalyst (not earnings) that the model proposed and Python verified.
+         *
+         *     ``id`` is ``<SYM>:E<n>``; ``evidence`` is the ``C<id>`` of the news cluster that states the
+         *     date and ``quote`` the text of that cluster around it. Python keeps an event only when its
+         *     date is written in that cluster's text, so it is data, not prose.
+         */
+        DossierEvent: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /**
+             * On
+             * Format: date
+             */
+            on: string;
+            /** Evidence */
+            evidence: string;
+            /** Quote */
+            quote: string;
+        };
+        /**
+         * DossierFact
+         * @description One deterministic line of a ticker dossier. ``id`` is ``<SYM>:F<n>`` so a reviewer can cite
+         *     it next to the candidate's own facts without a clash.
+         */
+        DossierFact: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Display */
+            display: string;
+        };
+        /**
+         * DossierOut
+         * @description One name's notes: Python's numbers and health, Claude's story and profile, verified events.
+         */
+        DossierOut: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "stock" | "etf" | "leveraged_etf";
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "strong" | "ok" | "weak" | "n/a" | "unknown";
+            /** Health Why */
+            health_why?: string[];
+            /** Held */
+            held: boolean;
+            /** Story */
+            story: string;
+            /** Story Evidence */
+            story_evidence?: string[];
+            /** Reported */
+            reported?: components["schemas"]["DossierReported"][];
+            /** Events */
+            events?: components["schemas"]["DossierEvent"][];
+            /** Profile */
+            profile: string;
+            /** Facts */
+            facts?: components["schemas"]["DossierFact"][];
+            /**
+             * Facts At
+             * Format: date-time
+             */
+            facts_at: string;
+            /** Prose At */
+            prose_at: string | null;
+            /** Stale */
+            stale: boolean;
+        };
+        /**
+         * DossierReported
+         * @description A figure quoted from the news about a name, kept apart from the story (OI-E10).
+         *
+         *     ``text`` is a short statement of the figure (120 characters at most) and ``cluster_id`` the
+         *     ``C<id>`` of the news cluster that states it. Python keeps an item only when every number in
+         *     ``text`` is written in that cluster's text as the model was shown it, so the figure is the
+         *     news's, not the system's: every reader labels it "Reported in news (not computed by the
+         *     system)" and never mixes it into the story.
+         */
+        DossierReported: {
+            /** Text */
+            text: string;
+            /** Cluster Id */
+            cluster_id: string;
+        };
+        /**
+         * DroppedOut
+         * @description A story the triage kept out of the picture, or one the market reaction promoted later.
+         */
+        DroppedOut: {
+            /** Cluster Id */
+            cluster_id: number;
+            /** Headline */
+            headline: string;
+            /** Reason */
+            reason: string;
+            /** Judged At */
+            judged_at: string | null;
+            /** Promoted */
+            promoted: boolean;
+            /** Promoted Move Pct */
+            promoted_move_pct: number | null;
+        };
         /** EarningsOut */
         EarningsOut: {
             /** Symbol */
@@ -2696,6 +2904,44 @@ export interface components {
              * @enum {string}
              */
             source: "web" | "config" | "none";
+        };
+        /**
+         * IndexRegime
+         * @description One index's persisted regime: the daily base, today's intraday escalation, the result.
+         */
+        IndexRegime: {
+            /**
+             * Index
+             * @enum {string}
+             */
+            index: "SPY" | "QQQ";
+            base: components["schemas"]["MarketRegime"];
+            /**
+             * Base Date
+             * Format: date
+             */
+            base_date: string;
+            /**
+             * Since
+             * Format: date
+             */
+            since: string;
+            /**
+             * Base Since
+             * Format: date
+             */
+            base_since: string;
+            effective: components["schemas"]["MarketRegime"];
+            /** Escalated By */
+            escalated_by?: string[];
+            /**
+             * Eased By Bottoming
+             * @default false
+             */
+            eased_by_bottoming: boolean;
+            /** Bottoming Cancelled On */
+            bottoming_cancelled_on?: string | null;
+            inputs?: components["schemas"]["RegimeInputs"];
         };
         /** LedgerBasisPoint */
         LedgerBasisPoint: {
@@ -3263,6 +3509,20 @@ export interface components {
             trades: components["schemas"]["LedgerTrade"][];
         };
         /**
+         * LeveragedLimitOut
+         * @description A leveraged ETF's per-trade ceiling as a fraction of the regime's own (ruling 35).
+         */
+        LeveragedLimitOut: {
+            /** Symbol */
+            symbol: string;
+            /** Leverage */
+            leverage: number;
+            /** Calm Fraction */
+            calm_fraction: number;
+            /** Stressed Fraction */
+            stressed_fraction: number;
+        };
+        /**
          * LineItemValue
          * @description One normalised line item for one period, traceable to its filing.
          */
@@ -3280,6 +3540,53 @@ export interface components {
             /** Form */
             form?: string | null;
         };
+        /**
+         * MarketPicture
+         * @description The shared, persistent picture of the market every ``claude -p`` call reads.
+         *
+         *     Written only by the news process (``src/news/picture.py``); every number in it is computed by
+         *     Python, the story descriptions are the model's prose and are grounded before they are saved.
+         *     Enrichment: it reaches prompts and cards, never the engine, execution or sizing.
+         */
+        MarketPicture: {
+            /** Version */
+            version: string;
+            /**
+             * Built At
+             * Format: date-time
+             */
+            built_at: string;
+            /** Regimes */
+            regimes?: components["schemas"]["PictureRegime"][];
+            /**
+             * Regime Source
+             * @default trading
+             * @enum {string}
+             */
+            regime_source: "trading" | "news";
+            /** Facts */
+            facts?: components["schemas"]["PictureFact"][];
+            seasonality?: components["schemas"]["SeasonalityView"] | null;
+            /** Events */
+            events?: string[];
+            /** Stories */
+            stories?: components["schemas"]["PictureStory"][];
+            noise?: components["schemas"]["NoiseSummary"];
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
+        };
+        /**
+         * MarketRegime
+         * @description The market-wide state the sizing limits follow (not a per-ticker label: see `Regime`).
+         *
+         *     Ordered calm to severe: normal, cautious, stressed, crisis. Classified deterministically
+         *     by `src/analytics/regime.py`; turned into limits by `src/engine/regime_limits.py`.
+         * @enum {string}
+         */
+        MarketRegime: "normal" | "cautious" | "stressed" | "crisis";
         /** MeResponse */
         MeResponse: {
             /**
@@ -3590,6 +3897,27 @@ export interface components {
             next_earnings?: components["schemas"]["EarningsOut"] | null;
             request?: components["schemas"]["NewsRequestOut"] | null;
         };
+        /**
+         * NoiseSummary
+         * @description What the triage kept out of the picture in the last 7 days (shown, never overruled).
+         */
+        NoiseSummary: {
+            /**
+             * Judged
+             * @default 0
+             */
+            judged: number;
+            /**
+             * Not Reviewed
+             * @default 0
+             */
+            not_reviewed: number;
+            /**
+             * Promotions
+             * @default 0
+             */
+            promotions: number;
+        };
         /** NormalizedFinancials */
         NormalizedFinancials: {
             /** Symbol */
@@ -3787,6 +4115,67 @@ export interface components {
          * @enum {string}
          */
         Phase: "base" | "uptrend" | "distribution" | "downtrend";
+        /**
+         * PictureFact
+         * @description One deterministic line of the market picture: a label and a value Python computed.
+         */
+        PictureFact: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+        };
+        /**
+         * PictureRegime
+         * @description One index's regime as the picture shows it (read from the trading process's record).
+         */
+        PictureRegime: {
+            /**
+             * Index
+             * @enum {string}
+             */
+            index: "SPY" | "QQQ";
+            effective: components["schemas"]["MarketRegime"];
+            base: components["schemas"]["MarketRegime"];
+            /**
+             * Eased By Bottoming
+             * @default false
+             */
+            eased_by_bottoming: boolean;
+            /**
+             * Suspended
+             * @default false
+             */
+            suspended: boolean;
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+        };
+        /**
+         * PictureStory
+         * @description A multi-week story the picture is tracking. Identity (id, title, start date) is kept by
+         *     Python; the description is the model's one-sentence tie to the numbered facts.
+         */
+        PictureStory: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /**
+             * Started On
+             * Format: date
+             */
+            started_on: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Evidence */
+            evidence?: string[];
+        };
         /**
          * PnlBucket
          * @description Realised performance grouped by one key (a symbol, a strategy).
@@ -4028,6 +4417,113 @@ export interface components {
          * @enum {string}
          */
         Regime: "bullish" | "bearish" | "sideways" | "high_volatility" | "low_volatility";
+        /**
+         * RegimeChange
+         * @description An effective-regime change, queued for a Telegram notice until ``sent``.
+         */
+        RegimeChange: {
+            /**
+             * Index
+             * @enum {string}
+             */
+            index: "SPY" | "QQQ";
+            before: components["schemas"]["MarketRegime"];
+            after: components["schemas"]["MarketRegime"];
+            /** Why */
+            why?: string[];
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Sent
+             * @default false
+             */
+            sent: boolean;
+        };
+        /**
+         * RegimeInputs
+         * @description Everything one index's regime was classified from (deterministic; see analytics/regime.py).
+         *
+         *     ``vol`` is the VIX close for **both** indices (ruling 15), so the VIX thresholds mean the
+         *     same thing for SPY and QQQ. A field that could not be read, or that is a last close served
+         *     as live, is ``None`` and named in ``stale``: it is skipped by the classifier and never read
+         *     as calm.
+         */
+        RegimeInputs: {
+            /** Vol */
+            vol?: number | null;
+            /** Vol Pct 1Y */
+            vol_pct_1y?: number | null;
+            /** Term Ratio */
+            term_ratio?: number | null;
+            /**
+             * Contango Streak
+             * @default 0
+             */
+            contango_streak: number;
+            /** Index Close */
+            index_close?: number | null;
+            /** Index Live */
+            index_live?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /** Sma50 */
+            sma50?: number | null;
+            /** Sma200 */
+            sma200?: number | null;
+            /** Drawdown 52W Pct */
+            drawdown_52w_pct?: number | null;
+            /** Ret 1M Pct */
+            ret_1m_pct?: number | null;
+            /** Ret 3M Pct */
+            ret_3m_pct?: number | null;
+            /** Rv20 */
+            rv20?: number | null;
+            /** Rv 1Y Avg */
+            rv_1y_avg?: number | null;
+            /** Live Vol */
+            live_vol?: number | null;
+            /** Stale */
+            stale?: string[];
+        };
+        /**
+         * RegimeLimitOut
+         * @description What one index's regime does to new cash-secured puts (``regime.csp`` in
+         *     ``risk_limits.yaml``). Percentages are of the unscaled limit.
+         */
+        RegimeLimitOut: {
+            /**
+             * Index
+             * @enum {string}
+             */
+            index: "SPY" | "QQQ";
+            regime: components["schemas"]["MarketRegime"];
+            /** Budget Pct */
+            budget_pct: number;
+            /** Per Trade Pct */
+            per_trade_pct: number;
+            /** Max New Per Day */
+            max_new_per_day: number | null;
+            /** Floor New Per Day */
+            floor_new_per_day: number;
+        };
+        /**
+         * RegimeState
+         * @description The persisted market regime for both indices (written only by the trading process).
+         */
+        RegimeState: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            spy: components["schemas"]["IndexRegime"];
+            qqq: components["schemas"]["IndexRegime"];
+            /** Changes */
+            changes?: components["schemas"]["RegimeChange"][];
+        };
         /** RollAlertSummary */
         RollAlertSummary: {
             /** Id */
@@ -4120,6 +4616,20 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SearchHit"][];
+        };
+        /**
+         * SeasonalityView
+         * @description SPY's calendar-month tendency over the years the price provider covers (a weak signal).
+         */
+        SeasonalityView: {
+            /** Month */
+            month: number;
+            /** Avg Return Pct */
+            avg_return_pct: number;
+            /** Up Share */
+            up_share: number;
+            /** Years */
+            years: number;
         };
         /**
          * SectionState
@@ -6326,6 +6836,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NewsStatusResponse"];
+                };
+            };
+        };
+    };
+    context_claude_context_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeContextResponse"];
                 };
             };
         };

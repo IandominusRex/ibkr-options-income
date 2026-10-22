@@ -7,6 +7,7 @@ import json
 from datetime import UTC, date, datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.news.store.models import NewsStateRow
 from src.news.store.queries import naive_utc
@@ -117,18 +118,30 @@ def held_alerts() -> list[tuple[str, datetime, str]]:
     return sorted(out, key=lambda t: t[1])
 
 
-def llm_calls(day: date) -> int:
-    raw = get_state(_llm_key(day))
+def _llm_purpose_key(day: date, purpose: str) -> str:
+    return f"{_llm_key(day)}:{purpose}"
+
+
+def llm_calls(day: date, purpose: str | None = None) -> int:
+    """Attempts counted on *day*: the total, or just those made for one *purpose*."""
+    raw = get_state(_llm_key(day) if purpose is None else _llm_purpose_key(day, purpose))
     return int(raw) if raw else 0
 
 
-def incr_llm_calls(day: date) -> int:
+def _bump(s: Session, key: str, now: datetime) -> int:
+    row = s.get(NewsStateRow, key)
+    if row is None:
+        s.add(NewsStateRow(key=key, value="1", updated_at=now))
+        return 1
+    row.value = str(int(row.value) + 1)
+    row.updated_at = now
+    return int(row.value)
+
+
+def incr_llm_calls(day: date, purpose: str = "general") -> int:
+    """Count one attempt: the day's total (``llm_calls:<day>``, what GET /news/status reads) and
+    the same attempt under its purpose, in one transaction. Returns the new total."""
+    now = naive_utc(datetime.now(UTC))
     with news_session() as s:
-        row = s.get(NewsStateRow, _llm_key(day))
-        now = naive_utc(datetime.now(UTC))
-        if row is None:
-            s.add(NewsStateRow(key=_llm_key(day), value="1", updated_at=now))
-            return 1
-        row.value = str(int(row.value) + 1)
-        row.updated_at = now
-        return int(row.value)
+        _bump(s, _llm_purpose_key(day, purpose), now)
+        return _bump(s, _llm_key(day), now)

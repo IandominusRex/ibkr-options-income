@@ -26,6 +26,7 @@ from telegram import Bot
 
 from src.claude.eval.assignment import assigned_shorts
 from src.claude.eval.reconcile import reconcile
+from src.claude.eval.sizing_counterfactual import resolve_actions
 from src.claude.runner import write_journal_narrative
 from src.common.config import get_config
 from src.common.market_hours import next_session as next_trading_session
@@ -583,6 +584,14 @@ async def run() -> None:
         save_position_snapshot(today, positions)
     except Exception:
         logger.exception("EOD: ledger reconciliation failed — continuing")
+
+    # 6c. Value the sizing counterfactual record (regime trims and blocks, floor lots, Claude's
+    #     cuts): what each action's withheld contracts earned once their expiry settles. A human
+    #     reads it (scripts/sizing_report.py); nothing in the trading path ever does.
+    try:
+        resolve_actions(datetime.now(UTC))
+    except Exception:
+        logger.exception("EOD: sizing counterfactual resolution failed — continuing")
 
     # 7. Send Telegram.
     await _send_eod_telegram(summary, narrative)

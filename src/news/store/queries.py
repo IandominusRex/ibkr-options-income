@@ -9,18 +9,25 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import String, cast, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView
+from src.common.schemas import MarketPicture, TickerDossier
+from src.news.schemas import ClusterView, EarningsView, EconEventView, ItemView, TriageView
 from src.news.store.models import (
     EarningsEventRow,
     EconEventRow,
+    MarketPictureRow,
     NewsClusterRow,
     NewsItemRow,
     NewsPostRow,
     NewsRequestRow,
     NewsStateRow,
+    PictureStoryRow,
+    StoryTriageRow,
+    TickerDossierRow,
 )
 
 
@@ -220,7 +227,14 @@ def recent_items_for(s: Session, symbol: str, since: datetime, limit: int) -> li
 
 KIND_GROUPS: dict[str, tuple[str, ...]] = {
     "macro": ("macro_print", "breaking"),
-    "market": ("market_move", "vix_spike", "digest_premarket", "digest_close", "digest_week"),
+    "market": (
+        "market_move",
+        "vix_spike",
+        "late_promotion",
+        "digest_premarket",
+        "digest_close",
+        "digest_week",
+    ),
     "tickers": ("ticker_move",),
     "earnings": ("earnings",),
     "briefs": ("brief",),
@@ -263,3 +277,126 @@ def state_values(s: Session, prefix: str) -> dict[str, str]:
         select(NewsStateRow).where(NewsStateRow.key.startswith(prefix, autoescape=True))
     )
     return {r.key: r.value for r in rows}
+
+
+# --- triage, stories and the picture --------------------------------------------------------
+# Each reader answers "nothing yet" when its table is missing: the API opens news.db read-only
+# and cannot create the tables, so a news.db written before the picture existed must not 500.
+
+
+def latest_picture(s: Session) -> MarketPicture | None:
+    """The newest saved picture. The row's ``stale`` flag wins over the JSON's: a failed rebuild
+    marks the row, and a reader must be told. A payload that no longer validates reads as none."""
+    try:
+        row = s.scalar(
+            select(MarketPictureRow)
+            .order_by(MarketPictureRow.built_at.desc(), MarketPictureRow.id.desc())
+            .limit(1)
+        )
+    except OperationalError:
+        return None
+    if row is None:
+        return None
+    try:
+        picture = MarketPicture.model_validate(row.payload)
+    except ValidationError:
+        return None
+    return picture.model_copy(update={"stale": bool(row.stale) or picture.stale})
+
+
+def triage_since(s: Session, since: datetime) -> list[TriageView]:
+    """Triage rows for clusters last seen at or after *since*, newest story first."""
+    try:
+        rows = s.execute(
+            select(StoryTriageRow, NewsClusterRow.headline)
+            .join(NewsClusterRow, NewsClusterRow.id == StoryTriageRow.cluster_id)
+            .where(NewsClusterRow.last_seen >= naive_utc(since))
+            .order_by(NewsClusterRow.last_seen.desc(), StoryTriageRow.id.desc())
+        ).all()
+    except OperationalError:
+        return []
+    return [
+        TriageView(
+            cluster_id=t.cluster_id,
+            headline=headline,
+            pile=t.pile,
+            floor=t.floor,
+            reason=t.reason or "",
+            judged_at=aware_utc(t.judged_at) if t.judged_at else None,
+            promoted_at=aware_utc(t.promoted_at) if t.promoted_at else None,
+            promoted_move_pct=t.promoted_move_pct,
+            rank=t.rank or 0.0,
+        )
+        for t, headline in rows
+    ]
+
+
+def active_stories(s: Session) -> list[PictureStoryRow]:
+    try:
+        return list(
+            s.scalars(
+                select(PictureStoryRow)
+                .where(PictureStoryRow.active.is_(True))
+                .order_by(PictureStoryRow.started_on, PictureStoryRow.id)
+            )
+        )
+    except OperationalError:
+        return []
+
+
+def latest_dossier(s: Session, symbol: str) -> TickerDossier | None:
+    """The newest saved dossier for *symbol*. A payload that no longer validates reads as none,
+    and so does a news.db written before the table existed."""
+    try:
+        row = s.scalar(
+            select(TickerDossierRow)
+            .where(TickerDossierRow.symbol == symbol.upper())
+            .order_by(TickerDossierRow.built_at.desc(), TickerDossierRow.id.desc())
+            .limit(1)
+        )
+    except OperationalError:
+        return None
+    if row is None:
+        return None
+    try:
+        return TickerDossier.model_validate(row.payload)
+    except ValidationError:
+        return None
+
+
+def latest_dossiers(s: Session, symbols: list[str]) -> dict[str, TickerDossier]:
+    """`latest_dossier` for each of *symbols* that has one, keyed by upper-cased symbol."""
+    out: dict[str, TickerDossier] = {}
+    for symbol in dict.fromkeys(x.upper() for x in symbols):
+        found = latest_dossier(s, symbol)
+        if found is not None:
+            out[symbol] = found
+    return out
+
+
+def piled_clusters_for(
+    s: Session, symbol: str, since: datetime, *, limit: int = 16
+) -> list[ClusterView]:
+    """Clusters naming *symbol*, last seen at or after *since*, that triage put in pile 1 or 2 -
+    pile 1 first, then newest. A dossier's story is written only from these."""
+    sym = symbol.upper()
+    try:
+        rows = s.scalars(
+            select(NewsClusterRow)
+            .join(StoryTriageRow, StoryTriageRow.cluster_id == NewsClusterRow.id)
+            .where(
+                StoryTriageRow.pile.in_((1, 2)),
+                NewsClusterRow.last_seen >= naive_utc(since),
+                cast(NewsClusterRow.tickers, String).contains(f'"{sym}"', autoescape=True),
+            )
+            .order_by(StoryTriageRow.pile, NewsClusterRow.last_seen.desc(), NewsClusterRow.id)
+        )
+        out: list[ClusterView] = []
+        for r in rows:
+            if sym in (r.tickers or []):
+                out.append(_cluster(s, r, 6))
+                if len(out) >= limit:
+                    break
+        return out
+    except OperationalError:
+        return []

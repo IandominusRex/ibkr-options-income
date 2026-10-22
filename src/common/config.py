@@ -15,12 +15,14 @@ import logging
 import os
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.common.schemas import MarketRegime
 
 # Project root = two levels up from this file (src/common/config.py -> root).
 ROOT = Path(__file__).resolve().parents[2]
@@ -1219,7 +1221,76 @@ class NewsLlmCfg(BaseModel):
     model: str = "claude-sonnet-5-5"
     ollama_model: str = ""  # empty = claude.ollama_model
     timeout_seconds: float = 120.0
-    max_calls_per_day: int = 40
+    max_calls_per_day: int = 44  # 30 general + 10 picture + 4 dossier at the shipped shares
+    # Of max_calls_per_day, this many are kept for triage and picture builds: general calls (the
+    # card writer, digests, briefs) stop at max - reserved, so a selloff day's alert storm cannot
+    # starve the picture. The total cap still holds for everyone.
+    reserved_for_picture: int = Field(default=10, ge=0)
+
+
+class NewsTriageCfg(BaseModel):
+    """Three-pile triage (spec section 7): the ranked batch, its schedule, and the market-reaction
+    check that promotes a dismissed story late (safeguard 2)."""
+
+    enabled: bool = True
+    batch_size: int = Field(default=40, ge=1)  # clusters the model sees per call
+    rth_batch_times: list[str] = Field(default_factory=lambda: ["10:30", "12:30", "14:30"])  # ET
+    promote_index_move_pct: float = Field(default=1.0, gt=0)  # a macro story: SPY/QQQ move
+    promote_ticker_residual_pct: float = Field(default=3.0, gt=0)  # ticker move net of beta x SPY
+    promote_window_min: int = Field(default=60, ge=1)
+    max_promotions_per_hour: int = Field(default=2, ge=0)
+
+    @field_validator("rth_batch_times")
+    @classmethod
+    def _valid_times(cls, v: list[str]) -> list[str]:
+        return [_hhmm(t) for t in v]
+
+
+class NewsPictureCfg(BaseModel):
+    """The market picture (spec section 8): how often it is rebuilt and when a story ends."""
+
+    enabled: bool = True
+    max_rebuilds_per_day: int = Field(default=4, ge=1)
+    max_stories: int = Field(default=5, ge=1, le=5)  # the model's answer schema holds five
+    story_window_days: int = Field(default=7, ge=1)  # a story needs support inside this window
+    story_min_new_clusters: int = Field(default=2, ge=1)  # ... of at least this many new clusters
+    story_match_jaccard: float = Field(
+        default=0.3, gt=0, le=1
+    )  # ticker/tag/topic overlap to attach
+    staleness_hours: float = Field(default=26.0, gt=0)  # readers are told a picture is stale
+
+
+class NewsDossierHealthCfg(BaseModel):
+    """Debt/equity bands for a stock's health label, in yfinance's unit (percent: 150 = 1.5x)."""
+
+    de_strong: float = Field(default=100.0, gt=0)
+    de_weak: float = Field(default=200.0, gt=0)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> NewsDossierHealthCfg:
+        if self.de_strong > self.de_weak:
+            raise ValueError("dossier.health: de_strong must not exceed de_weak")
+        return self
+
+
+class NewsDossierCfg(BaseModel):
+    """Per-name dossiers (spec section 16): the hourly numbers refresh, the batched prose build and
+    its daily call budget."""
+
+    enabled: bool = True
+    batch_size: int = Field(default=6, ge=1)  # names per LLM call
+    max_calls_per_day: int = Field(default=4, ge=0)  # its own cap (0: no prose builds)
+    facts_refresh_min: int = Field(default=60, ge=1)  # deterministic refresh, no LLM
+    prose_min_interval_hours: float = Field(
+        default=6.0, ge=0
+    )  # prose rebuilt on change, at most this often
+    profile_days: int = Field(default=7, ge=1)  # the profile is rewritten this often
+    story_window_days: int = Field(default=7, ge=1)  # clusters a story may cite
+    max_event_days: int = Field(default=45, ge=1)  # an event must fall within this many days
+    staleness_hours: float = Field(default=26.0, gt=0)  # readers are told old prose is old
+    max_names_in_review: int = Field(default=8, ge=1)  # compact notes in a full-scan prompt
+    keep_days: int = Field(default=30, ge=1)  # older rows are deleted
+    health: NewsDossierHealthCfg = Field(default_factory=NewsDossierHealthCfg)
 
 
 class NewsSentimentCfg(BaseModel):
@@ -1280,6 +1351,9 @@ class NewsCfg(BaseModel):
     grounding: NewsGroundingCfg = Field(default_factory=NewsGroundingCfg)
     flags: NewsFlagsCfg = Field(default_factory=NewsFlagsCfg)
     briefs: NewsBriefsCfg = Field(default_factory=NewsBriefsCfg)
+    triage: NewsTriageCfg = Field(default_factory=NewsTriageCfg)
+    picture: NewsPictureCfg = Field(default_factory=NewsPictureCfg)
+    dossier: NewsDossierCfg = Field(default_factory=NewsDossierCfg)
 
 
 class WebCfg(BaseModel):
@@ -1297,6 +1371,561 @@ class WebCfg(BaseModel):
                 "web.monthly_income_target_pct must be > 0 and <= 20 (percent per month)"
             )
         return v
+
+
+class _KeyedCfg(BaseModel):
+    """A config block whose YAML keys are listed by name in ``KEYS``.
+
+    ``risk_limits.yaml`` is an untyped dict, so a mistyped tunable (``vol_cautios``) would be
+    dropped by pydantic and leave the shipped default quietly in force, which for a limit that
+    shrinks position sizes means the operator believes a limit is set when it is not. A block
+    that subclasses this refuses a key it does not list, at first use. ``KEYS`` must equal the
+    model's fields (``tests/test_regime_classifier.py`` asserts it); it is also what lets
+    ``tests/test_config_keys.py`` see that every YAML key is read.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unknown_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict) and cls.KEYS:
+            unknown = sorted(str(k) for k in data if k not in cls.KEYS)
+            if unknown:
+                raise ValueError(f"unknown key(s) {unknown}; the keys here are {list(cls.KEYS)}")
+        return data
+
+
+_DEFAULT_REGIME_BUDGET: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 1.0,
+    MarketRegime.CAUTIOUS: 0.7,
+    MarketRegime.STRESSED: 0.4,
+    MarketRegime.CRISIS: 0.1,
+}
+_DEFAULT_REGIME_PER_TRADE: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 1.0,
+    MarketRegime.CAUTIOUS: 0.6,
+    MarketRegime.STRESSED: 0.3,
+    MarketRegime.CRISIS: 0.1,
+}
+_DEFAULT_REGIME_DAILY: dict[MarketRegime, int | None] = {
+    MarketRegime.NORMAL: None,
+    MarketRegime.CAUTIOUS: 6,
+    MarketRegime.STRESSED: 3,
+    MarketRegime.CRISIS: 1,
+}
+# Guaranteed lots per governing index per ET day past a full scaled budget (spec decision 31).
+_DEFAULT_REGIME_FLOOR: dict[MarketRegime, int] = {
+    MarketRegime.NORMAL: 0,
+    MarketRegime.CAUTIOUS: 2,
+    MarketRegime.STRESSED: 1,
+    MarketRegime.CRISIS: 1,
+}
+
+
+def _fill_regimes(v: Any, default: dict[MarketRegime, Any]) -> Any:
+    """Before-validator body: the regimes the YAML omitted take their shipped default."""
+    if v is None:
+        return dict(default)
+    if isinstance(v, dict):
+        merged: dict[Any, Any] = {k.value: val for k, val in default.items()}
+        merged.update(v)
+        return merged
+    return v
+
+
+class RegimeCspCfg(_KeyedCfg):
+    """CSP limits per market regime (config/risk_limits.yaml -> regime.csp)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "budget_multiplier",
+        "per_trade_fraction",
+        "max_new_per_day",
+        "floor_new_per_day",
+    )
+
+    budget_multiplier: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_BUDGET)
+    )
+    per_trade_fraction: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_PER_TRADE)
+    )
+    max_new_per_day: dict[MarketRegime, int | None] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_DAILY)
+    )
+    floor_new_per_day: dict[MarketRegime, int] = Field(
+        default_factory=lambda: dict(_DEFAULT_REGIME_FLOOR)
+    )
+
+    @field_validator("floor_new_per_day", mode="before")
+    @classmethod
+    def _fill_floor(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_FLOOR)
+
+    @field_validator("floor_new_per_day")
+    @classmethod
+    def _floor_non_negative(cls, v: dict[MarketRegime, int]) -> dict[MarketRegime, int]:
+        for regime, value in v.items():
+            if value < 0:
+                raise ValueError(f"regime.csp.floor_new_per_day[{regime.value}] must be >= 0")
+        return v
+
+    @field_validator("budget_multiplier", mode="before")
+    @classmethod
+    def _fill_budget(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_BUDGET)
+
+    @field_validator("per_trade_fraction", mode="before")
+    @classmethod
+    def _fill_fraction(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_PER_TRADE)
+
+    @field_validator("max_new_per_day", mode="before")
+    @classmethod
+    def _fill_daily(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_REGIME_DAILY)
+
+    @field_validator("budget_multiplier", "per_trade_fraction")
+    @classmethod
+    def _fraction_in_unit_interval(cls, v: dict[MarketRegime, float]) -> dict[MarketRegime, float]:
+        for regime, value in v.items():
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(
+                    f"regime.csp fractions must be between 0 and 1; {regime.value} is {value}"
+                )
+        return v
+
+    @field_validator("max_new_per_day")
+    @classmethod
+    def _daily_limit_non_negative(
+        cls, v: dict[MarketRegime, int | None]
+    ) -> dict[MarketRegime, int | None]:
+        for regime, value in v.items():
+            if value is not None and value < 0:
+                raise ValueError(f"regime.csp.max_new_per_day[{regime.value}] must be >= 0")
+        return v
+
+
+class RegimeIndexIntradayCfg(_KeyedCfg):
+    """Day-move escalation thresholds for one index, in percent (negative numbers)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("stressed", "crisis")
+
+    stressed: float
+    crisis: float
+
+    @model_validator(mode="after")
+    def _ordered(self) -> RegimeIndexIntradayCfg:
+        if not (self.crisis <= self.stressed <= 0):
+            raise ValueError(
+                "regime.thresholds.intraday: need crisis <= stressed <= 0 "
+                f"(got stressed {self.stressed}, crisis {self.crisis})"
+            )
+        return self
+
+
+class RegimeIntradayCfg(_KeyedCfg):
+    """Intraday escalation: an index's move on the day, or the live VIX (spec section 4)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("SPY", "QQQ", "vix_stressed", "vix_crisis")
+
+    SPY: RegimeIndexIntradayCfg = Field(
+        default_factory=lambda: RegimeIndexIntradayCfg(stressed=-2.0, crisis=-3.5)
+    )
+    QQQ: RegimeIndexIntradayCfg = Field(
+        default_factory=lambda: RegimeIndexIntradayCfg(stressed=-2.5, crisis=-4.0)
+    )
+    vix_stressed: float = 30.0
+    vix_crisis: float = 40.0
+
+
+class RegimeThresholdsCfg(_KeyedCfg):
+    """Classifier thresholds (config/risk_limits.yaml -> regime.thresholds)."""
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "vol_cautious",
+        "vol_stressed",
+        "vol_crisis",
+        "vol_pct_cautious",
+        "vol_pct_min_vol",
+        "term_stressed",
+        "term_crisis",
+        "slow_drawdown_pct",
+        "slow_ret_1m_pct",
+        "ease_contango_days",
+        "min_days_in_regime",
+        "intraday",
+    )
+
+    vol_cautious: float = 22.0  # VIX close, both indices (ruling 15)
+    vol_stressed: float = 28.0
+    vol_crisis: float = 36.0
+    # The 1-year percentile counts only at the 90th percentile AND a VIX of at least
+    # ``vol_pct_min_vol`` (ruling 39: the 80th fired at a VIX of 20.0 after a calm year).
+    vol_pct_cautious: float = 90.0
+    vol_pct_min_vol: float = 20.0
+    term_stressed: float = 1.00  # VIX/VIX3M at or above: backwardation -> at least stressed
+    term_crisis: float = 1.10
+    slow_drawdown_pct: float = 10.0  # slow signals may add at most one notch
+    slow_ret_1m_pct: float = -5.0
+    ease_contango_days: int = 3
+    min_days_in_regime: int = 2
+    intraday: RegimeIntradayCfg = Field(default_factory=RegimeIntradayCfg)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> RegimeThresholdsCfg:
+        if not (self.vol_cautious <= self.vol_stressed <= self.vol_crisis):
+            raise ValueError("regime.thresholds: need vol_cautious <= vol_stressed <= vol_crisis")
+        if self.term_stressed > self.term_crisis:
+            raise ValueError("regime.thresholds: need term_stressed <= term_crisis")
+        if self.ease_contango_days < 0 or self.min_days_in_regime < 0:
+            raise ValueError("regime.thresholds: day counts must be >= 0")
+        return self
+
+
+# The ladder's minimum gap below the last lot, in percent, per market regime (spec section 6).
+_DEFAULT_LADDER_GAP: dict[MarketRegime, float] = {
+    MarketRegime.NORMAL: 5.0,
+    MarketRegime.CAUTIOUS: 5.0,
+    MarketRegime.STRESSED: 5.0,
+    MarketRegime.CRISIS: 7.0,
+}
+
+
+class RegimeLadderCfg(_KeyedCfg):
+    """The scale-in ladder (config/risk_limits.yaml -> regime.ladder, spec section 6).
+
+    Under the ladder a further CSP lot on a name is accepted only once the price has fallen
+    into a zone worked out from the name's own technicals. It applies to a name when its market
+    regime is one of ``regimes`` or a name-level trigger holds (a sharp fall of the name, a
+    near-the-money short put on it, a recent loss exit on it).
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "regimes",
+        "min_gap_pct",
+        "min_gap_atr",
+        "band_atr",
+        "broken_atr",
+        "anchor_survival_days",
+        "name_drawdown_atr",
+        "name_drawdown_sessions",
+        "recovery_closes",
+        "near_money_atr",
+        "loss_exit_same_day_block",
+    )
+
+    regimes: list[MarketRegime] = Field(
+        default_factory=lambda: [MarketRegime.STRESSED, MarketRegime.CRISIS]
+    )
+    min_gap_pct: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_LADDER_GAP)
+    )
+    min_gap_atr: float = 1.5
+    band_atr: float = 0.5
+    broken_atr: float = 1.0
+    anchor_survival_days: int = 5
+    name_drawdown_atr: float = 2.5  # drawdown from the recent high, in ATRs
+    name_drawdown_sessions: int = 10
+    recovery_closes: int = 2  # counted only after the anchor lot's fill date (ruling 37)
+    near_money_atr: float = 0.5  # a short put with spot <= strike + this x ATR fires the ladder
+    loss_exit_same_day_block: bool = True
+
+    @field_validator("min_gap_pct", mode="before")
+    @classmethod
+    def _fill_gap(cls, v: Any) -> Any:
+        return _fill_regimes(v, _DEFAULT_LADDER_GAP)
+
+    @field_validator("min_gap_pct")
+    @classmethod
+    def _gap_positive(cls, v: dict[MarketRegime, float]) -> dict[MarketRegime, float]:
+        for regime, value in v.items():
+            if not (0.0 < value < 100.0):
+                raise ValueError(f"regime.ladder.min_gap_pct[{regime.value}] must be in (0, 100)")
+        return v
+
+    @model_validator(mode="after")
+    def _sane(self) -> RegimeLadderCfg:
+        for name in (
+            "min_gap_atr",
+            "band_atr",
+            "broken_atr",
+            "name_drawdown_atr",
+            "near_money_atr",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"regime.ladder.{name} must be >= 0")
+        if self.anchor_survival_days < 0 or self.recovery_closes < 1:
+            raise ValueError(
+                "regime.ladder: anchor_survival_days must be >= 0 and recovery_closes >= 1"
+            )
+        if self.name_drawdown_sessions < 2:
+            raise ValueError("regime.ladder.name_drawdown_sessions must be >= 2")
+        return self
+
+
+class RegimeBottomingCfg(_KeyedCfg):
+    """The bottoming signal (config/risk_limits.yaml -> regime.bottoming, spec section 6b).
+
+    A deterministic sign that a bottom is forming eases one notch: an index's regime at the
+    market level, a single lot at the current zone at the name level. ``signal_delta_max`` must
+    stay above the strategy's ``delta_min`` or no lot could ever pass (`get_regime_cfg` checks).
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "vix_spike_pct",
+        "spike_sessions",
+        "off_peak_pct",
+        "rsi_oversold",
+        "rsi_lookback",
+        "signal_delta_max",
+        "signal_lot_every_sessions",
+    )
+
+    vix_spike_pct: float = 25.0  # the VIX rose at least this much from its window low to its peak
+    spike_sessions: int = 10
+    off_peak_pct: float = 15.0  # live VIX at least this far below the spike peak
+    rsi_oversold: float = 30.0
+    rsi_lookback: int = 5
+    signal_delta_max: float = 0.25  # must exceed cash_secured_put.delta_min (checked at load)
+    signal_lot_every_sessions: int = 3
+
+    @model_validator(mode="after")
+    def _sane(self) -> RegimeBottomingCfg:
+        if self.vix_spike_pct <= 0 or not (0 < self.off_peak_pct < 100):
+            raise ValueError("regime.bottoming: vix_spike_pct > 0 and 0 < off_peak_pct < 100")
+        if self.spike_sessions < 3 or self.rsi_lookback < 1 or self.signal_lot_every_sessions < 1:
+            raise ValueError(
+                "regime.bottoming: spike_sessions >= 3, rsi_lookback >= 1, "
+                "signal_lot_every_sessions >= 1"
+            )
+        if not (0 < self.signal_delta_max < 1):
+            raise ValueError("regime.bottoming.signal_delta_max must be in (0, 1)")
+        return self
+
+
+_DEFAULT_TECH_LINKED = [
+    "QQQ",
+    "TQQQ",
+    "SMH",
+    "SOXL",
+    "NVDA",
+    "AMD",
+    "AVGO",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "PLTR",
+    "MAGS",
+    "HACK",
+    "IGV",
+    "CRWD",
+    "NBIS",
+    "IONQ",
+    "RGTI",
+    "BABA",
+    "TSLL",
+    "MARA",
+]
+
+
+class RegimeCfg(_KeyedCfg):
+    """The deterministic market regime and what it does to CSP sizing (spec sections 4-5).
+
+    Lives in ``config/risk_limits.yaml -> regime:`` (the risk dict itself stays untyped) and is
+    parsed by :func:`get_regime_cfg`. A missing block means the shipped defaults.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "enabled",
+        "tech_linked",
+        "csp",
+        "thresholds",
+        "ladder",
+        "bottoming",
+    )
+
+    enabled: bool = True
+    # Names governed by the stricter of the SPY and QQQ regimes. An explicit list: the sector
+    # tags misclassify e.g. TSLL (consumer) and MARA (crypto). File-only, out of reach of the web.
+    tech_linked: list[str] = Field(default_factory=lambda: list(_DEFAULT_TECH_LINKED))
+    csp: RegimeCspCfg = Field(default_factory=RegimeCspCfg)
+    thresholds: RegimeThresholdsCfg = Field(default_factory=RegimeThresholdsCfg)
+    ladder: RegimeLadderCfg = Field(default_factory=RegimeLadderCfg)
+    bottoming: RegimeBottomingCfg = Field(default_factory=RegimeBottomingCfg)
+
+    @field_validator("tech_linked")
+    @classmethod
+    def _upper(cls, v: list[str]) -> list[str]:
+        return [str(s).upper() for s in v]
+
+
+# The leverage multiples the tiers below are defined for (the YAML keys are ints; compared as
+# strings here so a mistyped "x3" or 4 fails with a clear message).
+_LEVERAGE_FACTORS: tuple[str, ...] = ("2", "3")
+_LEVERAGE_TIERS: tuple[str, ...] = ("calm", "stressed")
+_DEFAULT_LEVERAGE_FRACTION: dict[str, dict[int, float]] = {
+    "calm": {2: 0.8, 3: 0.6},
+    "stressed": {2: 0.5, 3: 0.3},
+}
+# The shipped map of leveraged ETF -> daily leverage. A leveraged name in universe.yaml's
+# `leveraged_etfs` that is missing from the operator's map is treated as 3x (the strictest).
+_DEFAULT_LEVERAGE: dict[str, int] = {
+    "TQQQ": 3,
+    "UPRO": 3,
+    "SOXL": 3,
+    "DPST": 3,
+    "LABU": 3,
+    "TSLL": 2,
+}
+
+
+def _leveraged_fraction_defaults() -> dict[Literal["calm", "stressed"], dict[int, float]]:
+    return {
+        "calm": dict(_DEFAULT_LEVERAGE_FRACTION["calm"]),
+        "stressed": dict(_DEFAULT_LEVERAGE_FRACTION["stressed"]),
+    }
+
+
+class LeveragedSizingCfg(_KeyedCfg):
+    """A smaller per-trade size for 2x and 3x leveraged ETFs, in every regime (ruling 35).
+
+    ``per_trade_fraction`` is a fraction of ``cash_secured_put.max_contracts`` multiplied by the
+    regime's own per-trade fraction: **calm** when the name's regime is normal and no ladder
+    trigger holds on it, **stressed** otherwise. Not a regime limit: ``/regime off`` and
+    ``regime.enabled: false`` leave it on; ``enabled: false`` here switches it off.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("enabled", "per_trade_fraction", "leverage")
+
+    enabled: bool = True
+    per_trade_fraction: dict[Literal["calm", "stressed"], dict[int, float]] = Field(
+        default_factory=lambda: _leveraged_fraction_defaults()
+    )
+    leverage: dict[str, int] = Field(default_factory=lambda: dict(_DEFAULT_LEVERAGE))
+
+    @field_validator("per_trade_fraction", mode="before")
+    @classmethod
+    def _fill_tiers(cls, v: Any) -> Any:
+        merged: dict[Any, dict[Any, Any]] = {
+            t: dict(f) for t, f in _DEFAULT_LEVERAGE_FRACTION.items()
+        }
+        if isinstance(v, dict):
+            for tier, factors in v.items():
+                if tier not in _LEVERAGE_TIERS:
+                    raise ValueError(f"leveraged_sizing.per_trade_fraction: unknown tier {tier!r}")
+                if not isinstance(factors, dict):
+                    raise ValueError(f"leveraged_sizing.per_trade_fraction.{tier} must be a map")
+                merged[tier].update(factors)
+        return merged
+
+    @field_validator("per_trade_fraction")
+    @classmethod
+    def _tiers_valid(
+        cls, v: dict[Literal["calm", "stressed"], dict[int, float]]
+    ) -> dict[Literal["calm", "stressed"], dict[int, float]]:
+        for tier, factors in v.items():
+            for factor, fraction in factors.items():
+                if str(factor) not in _LEVERAGE_FACTORS:
+                    raise ValueError(
+                        f"leveraged_sizing.per_trade_fraction.{tier}: leverage {factor!r} is not "
+                        f"one of {list(_LEVERAGE_FACTORS)}"
+                    )
+                if not (0.0 < fraction <= 1.0):
+                    raise ValueError(
+                        f"leveraged_sizing.per_trade_fraction.{tier}.{factor} must be in (0, 1]"
+                    )
+        return v
+
+    @field_validator("leverage")
+    @classmethod
+    def _leverage_valid(cls, v: dict[str, int]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for symbol, factor in v.items():
+            if str(factor) not in _LEVERAGE_FACTORS:
+                raise ValueError(
+                    f"leveraged_sizing.leverage.{symbol}: {factor!r} is not one of "
+                    f"{list(_LEVERAGE_FACTORS)}"
+                )
+            out[str(symbol).upper()] = int(factor)
+        return out
+
+
+class ClaudeCutCfg(_KeyedCfg):
+    """Claude's reduce-only size cut on auto-opened cash-secured puts (spec section 9).
+
+    ``apply_in_paper`` / ``apply_live`` say whether a cut Claude makes changes the size that is
+    sent; when it does not, the cut is still recorded (``claude_cut_unapplied``), so the question
+    "does not following the system pay?" keeps being answered without risking the live book.
+    The circuit breaker stops applying cuts for the rest of the ET day once Claude has cut at
+    least ``breaker_min`` auto CSPs to zero and those are more than ``breaker_pct`` percent of the
+    day's reviewed auto CSPs: a prompt or schema regression cannot silently stop the book.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = ("apply_in_paper", "apply_live", "breaker_min", "breaker_pct")
+
+    apply_in_paper: bool = True
+    apply_live: bool = False
+    breaker_min: int = Field(default=4, ge=1)
+    breaker_pct: float = Field(default=50, gt=0, le=100)
+
+
+class CcBreakoutCfg(_KeyedCfg):
+    """The covered-call breakout rule (config/risk_limits.yaml -> cc_timing.breakout, spec 17).
+
+    After an upside breakout on a held name, its covered-call strikes must clear a floor and
+    its delta stay under a cap for ``lookback_sessions`` sessions (or until it fades). A call is
+    pushed out; when nothing on the chain clears the strike floor and the delta cap, none is sold
+    on that name that scan. It never loosens a limit or sizes anything. Its own
+    switch: not a regime limit, so ``/regime off`` and ``regime.enabled: false`` leave it on.
+    ``delta_max`` must stay above ``covered_call.delta_min`` (`get_cc_timing_cfg` checks), or no
+    call could ever pass.
+    """
+
+    KEYS: ClassVar[tuple[str, ...]] = (
+        "enabled",
+        "lookback_sessions",
+        "jump_atr",
+        "volume_mult",
+        "high_sessions",
+        "fade_atr",
+        "floor_atr",
+        "delta_max",
+    )
+
+    enabled: bool = True
+    lookback_sessions: int = 5  # a breakout governs strikes for this many sessions
+    jump_atr: float = 1.5  # close-to-close rise, in ATR-14 of the day before
+    volume_mult: float = 1.5  # the day's volume vs its 20-session average
+    high_sessions: int = 60  # a close at this many sessions' high also counts as a breakout
+    fade_atr: float = 1.0  # a later close this many ATRs below the breakout close ends it
+    floor_atr: float = 1.0  # strike floor = max(next resistance, price + floor_atr x ATR)
+    delta_max: float = 0.25  # must exceed covered_call.delta_min (checked at load)
+
+    @model_validator(mode="after")
+    def _sane(self) -> CcBreakoutCfg:
+        if self.lookback_sessions < 1 or self.high_sessions < 20:
+            raise ValueError(
+                "cc_timing.breakout: lookback_sessions must be >= 1 and high_sessions >= 20"
+            )
+        if self.jump_atr <= 0 or self.volume_mult <= 0 or self.fade_atr <= 0 or self.floor_atr < 0:
+            raise ValueError(
+                "cc_timing.breakout: jump_atr, volume_mult and fade_atr must be > 0 and "
+                "floor_atr >= 0"
+            )
+        if not (0 < self.delta_max < 1):
+            raise ValueError("cc_timing.breakout.delta_max must be in (0, 1)")
+        return self
+
+
+class CcTimingCfg(_KeyedCfg):
+    """Covered-call timing (config/risk_limits.yaml -> cc_timing:). One rule today: ``breakout``."""
+
+    KEYS: ClassVar[tuple[str, ...]] = ("breakout",)
+
+    breakout: CcBreakoutCfg = Field(default_factory=CcBreakoutCfg)
 
 
 class Config(BaseModel):
@@ -1494,3 +2123,50 @@ def get_config() -> Config:
         weights=_load_yaml("scoring_weights.yaml"),
         secrets=Secrets(),
     )
+
+
+def get_regime_cfg() -> RegimeCfg:
+    """The typed ``regime:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent).
+
+    Parsed on every call (a small model; tests and the operator's edits both change the
+    underlying dict) and raises ``ValueError`` (pydantic's ``ValidationError`` is one) on an
+    invalid block, at first use rather than at import. ``bottoming.signal_delta_max`` must
+    exceed ``cash_secured_put.delta_min``: a guard at or below it is an empty band (ruling 42).
+    """
+    risk = get_config().risk
+    cfg = RegimeCfg(**(risk.get("regime") or {}))
+    delta_min = float((risk.get("cash_secured_put") or {}).get("delta_min", 0.0))
+    if cfg.bottoming.signal_delta_max <= delta_min:
+        raise ValueError(
+            f"regime.bottoming.signal_delta_max ({cfg.bottoming.signal_delta_max}) must be above "
+            f"cash_secured_put.delta_min ({delta_min}): otherwise no signal lot could ever pass"
+        )
+    return cfg
+
+
+def get_claude_cut_cfg() -> ClaudeCutCfg:
+    """The typed ``claude_cut:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent)."""
+    return ClaudeCutCfg(**(get_config().risk.get("claude_cut") or {}))
+
+
+def get_leveraged_sizing_cfg() -> LeveragedSizingCfg:
+    """The typed ``leveraged_sizing:`` block of ``config/risk_limits.yaml`` (defaults when absent)."""
+    return LeveragedSizingCfg(**(get_config().risk.get("leveraged_sizing") or {}))
+
+
+def get_cc_timing_cfg() -> CcTimingCfg:
+    """The typed ``cc_timing:`` block of ``config/risk_limits.yaml`` (shipped defaults when absent).
+
+    Parsed on every call and raises ``ValueError`` on an invalid block (a mistyped key included),
+    at first use. ``breakout.delta_max`` must exceed ``covered_call.delta_min``: a guard at or
+    below it is an empty band that would stop every call instead of pushing it out (ruling 42).
+    """
+    risk = get_config().risk
+    cfg = CcTimingCfg(**(risk.get("cc_timing") or {}))
+    delta_min = float((risk.get("covered_call") or {}).get("delta_min", 0.0))
+    if cfg.breakout.delta_max <= delta_min:
+        raise ValueError(
+            f"cc_timing.breakout.delta_max ({cfg.breakout.delta_max}) must be above "
+            f"covered_call.delta_min ({delta_min}): otherwise no call could ever pass"
+        )
+    return cfg

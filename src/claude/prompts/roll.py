@@ -11,12 +11,17 @@ def build_roll_prompt(
     quote: OptionQuote,
     *,
     proposal: str | None = None,
+    picture_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> str:
     """Return the prompt string for a single-position roll/hold/close decision.
 
     *proposal* (2026-10-11) is the deterministic roll policy's decision for this position.
     When given, the reviewer is told it may only agree or disagree with it and explain — it
     cannot change the proposal, which the Rules Engine and the operator's tap alone control.
+    *picture_block* is the shared market picture, pre-rendered (``picture_context``): context for
+    judging the proposal in today's market, never a way to change it. *dossier_block* is the
+    rolled name's full dossier note (``dossier_context``): its situation, the same way.
     """
     right_label = pos.right.value if pos.right else "?"
     strategy = "Covered Call" if right_label == "C" else "Cash-Secured Put"
@@ -59,6 +64,12 @@ def build_roll_prompt(
     if quote.theta is not None:
         lines.append(f"Theta:    {quote.theta:.4f}")
     lines.append(f"DTE:      {quote.dte}")
+
+    if picture_block:
+        lines += ["", picture_block]
+
+    if dossier_block:
+        lines += ["", dossier_block]
 
     if proposal:
         lines += [

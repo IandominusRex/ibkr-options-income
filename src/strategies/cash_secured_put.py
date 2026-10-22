@@ -21,22 +21,40 @@ from src.common.schemas import (
     Phase,
     PositionSnapshot,
     ScoreCard,
+    SizingContext,
     Strategy,
     TechnicalStats,
     TradeCandidate,
 )
 from src.common.universe import effective_universe
-from src.engine.capital import Budgets, max_contracts, resolve_caps, seed_budgets
+from src.engine.capital import Budgets, max_contracts, resolve_caps, scale_caps, seed_budgets
+from src.engine.regime_limits import (
+    active,
+    bottoming_guard,
+    bottoming_tag,
+    floor_left,
+    loss_exit_reason,
+    multipliers,
+    per_trade_cap,
+    scale_in_reason,
+    signal_lot,
+    sizing_note,
+    vrp_waiver,
+)
 from src.strategies._evaluation import (
     REASON_BELOW_FAIR_VALUE,
     REASON_DELTA_MISSING,
     REASON_DELTA_RANGE,
     REASON_DTE_RANGE,
     REASON_INSUFFICIENT_CASH,
+    REASON_LOSS_EXIT_COOLDOWN,
     REASON_NO_HEADROOM,
     REASON_NO_MARKET,
     REASON_PHASE_DOWNTREND,
+    REASON_REGIME_BUDGET,
+    REASON_REGIME_CEILING,
     REASON_ROC,
+    REASON_SCALE_IN_ZONE,
     REASON_YIELD,
     ScreenResult,
     display_premium,
@@ -66,7 +84,15 @@ def generate_csp_candidates(
     Thin wrapper over :func:`screen_csp_candidates` for callers that only want the passing
     slate. Returns [] immediately when *symbol* is not in the would_own allowlist.
     """
-    return screen_csp_candidates(symbol, quotes, account, iv_stats, tech_stats, fund_stats).passed
+    return screen_csp_candidates(
+        symbol,
+        quotes,
+        account,
+        iv_stats,
+        tech_stats,
+        fund_stats,
+        sizing=None,  # callers that want the regime go through screen_csp_candidates
+    ).passed
 
 
 def screen_csp_candidates(
@@ -78,6 +104,7 @@ def screen_csp_candidates(
     fund_stats: FundamentalStats,
     *,
     positions: list[PositionSnapshot] | None = None,
+    sizing: SizingContext | None = None,
 ) -> ScreenResult:
     """Screen *symbol*'s put chain, returning both the passing and the rejected contracts.
 
@@ -88,6 +115,13 @@ def screen_csp_candidates(
     maximum affordable lot — the same helper the risk gate uses, so the two can never disagree
     about how big a position may be. *positions* seeds the running budgets from what the
     account already holds; omit it (or pass ``[]``) to size against an empty portfolio.
+
+    *sizing* carries the market regime (`src/regime/context.py`). With it each candidate is
+    also held to the regime's scaled budgets, the per-trade ceiling and, for a leveraged ETF, its
+    smaller ceiling (`src/engine/regime_limits.py`, the same functions the gate calls), and
+    carries a ``SizingNote`` saying what changed. A name that fits the unscaled budgets but not the
+    scaled ones takes a guaranteed-floor lot while the floor is open, else is rejected with
+    ``regime_budget``. ``None`` is the unchanged, regime-free sizer.
     """
     cfg = get_config()
     result = ScreenResult()
@@ -110,8 +144,16 @@ def screen_csp_candidates(
     hard_max: int = csp_cfg.get("max_contracts", 10)
     caps = resolve_caps(account, risk)
     sector_of = cfg.universe.get("sectors", {}).get
+    # Budgets are seeded with the UNSCALED caps (so the large-position slots never move with the
+    # regime); the scaled caps below are used only for the size checks.
     budgets: Budgets = seed_budgets(positions or [], sector_of, caps=caps)
     sector = sector_of(symbol)
+    regime_on = active(sizing)
+    scaled_caps = caps
+    if regime_on:
+        ticker_mult, book_mult = multipliers(sizing, symbol)
+        scaled_caps = scale_caps(caps, ticker=ticker_mult, book=book_mult)
+    ceiling = per_trade_cap(sizing, symbol, hard_max)
 
     enforce_volume = volume_gate_active()  # N19: skip the volume gate before the morning cutoff
     rejected: list[tuple[TradeCandidate, list[str]]] = []
@@ -151,7 +193,7 @@ def screen_csp_candidates(
         # Size to the binding constraint rather than to the maximum affordable lot. The gate
         # rejects rather than trims, so proposing the max meant any position whose *largest*
         # size breached a cap was refused entirely — even when one lot fitted comfortably (D1).
-        contracts, binding = max_contracts(
+        unscaled, unscaled_binding = max_contracts(
             unit_collateral=per_contract,
             current_iv=iv_stats.current_iv,
             dte=dte,
@@ -161,9 +203,61 @@ def screen_csp_candidates(
             budgets=budgets,
             hard_max=hard_max,
         )
+        contracts, binding = unscaled, unscaled_binding
+        if regime_on:
+            contracts, binding = max_contracts(
+                unit_collateral=per_contract,
+                current_iv=iv_stats.current_iv,
+                dte=dte,
+                symbol=symbol,
+                sector=sector,
+                caps=scaled_caps,
+                budgets=budgets,
+                hard_max=hard_max,
+            )
+        floor_lot = False
         if contracts < 1:
-            reasons.append(REASON_INSUFFICIENT_CASH if binding == "cash" else REASON_NO_HEADROOM)
-            contracts = 1  # display a 1-lot; the reason records that it does not fit
+            if regime_on and unscaled >= 1:
+                # Fits every unscaled cap, not the regime-scaled budget. The guaranteed floor
+                # (spec decision 31) lets a lot through at the unscaled fit while it lasts; the
+                # gate decides which candidates actually take it.
+                if floor_left(sizing, symbol, {}) > 0:
+                    contracts, floor_lot = unscaled, True
+                else:
+                    reasons.append(REASON_REGIME_BUDGET)
+                    contracts = 1  # display a 1-lot; the reason records the regime blocked it
+            else:
+                reasons.append(
+                    REASON_INSUFFICIENT_CASH if binding == "cash" else REASON_NO_HEADROOM
+                )
+                contracts = 1  # display a 1-lot; the reason records that it does not fit
+        if sizing is not None and contracts >= 1:
+            # The per-trade ceiling (regime fraction, and the leveraged-ETF factor): a ceiling of
+            # zero is the regime stopping the name outright.
+            if ceiling == 0:
+                reasons.append(REASON_REGIME_CEILING)
+            else:
+                contracts = min(contracts, ceiling)
+        note = sizing_note(sizing, symbol, max(unscaled, 1), hard_max)
+        if note is not None and floor_lot:
+            note = note.model_copy(update={"floor_lot": True})
+        # The scale-in ladder (same functions as the gate): a loss exit on the name earlier today
+        # blocks it; a name under the ladder waits for its zone. The zone travels on the card.
+        if loss_exit_reason(sizing, symbol) is not None:
+            reasons.append(REASON_LOSS_EXIT_COOLDOWN)
+        if scale_in_reason(sizing, symbol, tech_stats.price) is not None:
+            reasons.append(REASON_SCALE_IN_ZONE)
+        elif signal_lot(sizing, symbol, tech_stats.price):
+            # a name-level bottoming signal lets the lot in above the zone, under its guards
+            guard = bottoming_guard(sizing, symbol, quote.delta)
+            if guard is not None:
+                reasons.append(guard)
+        if note is not None and sizing is not None:
+            ladder_zone = sizing.scale_in.get(symbol)
+            tag = bottoming_tag(sizing, symbol, tech_stats.price)
+            if tag == "name" and ladder_zone is not None:
+                ladder_zone = ladder_zone.model_copy(update={"bottoming_signal": True})
+            note = note.model_copy(update={"scale_in": ladder_zone, "bottoming": tag})
 
         collateral = quote.strike * contracts * 100
         roc_pct = (mid / quote.strike) * 100
@@ -194,7 +288,13 @@ def screen_csp_candidates(
         if income_cfg.get("require_vrp_edge", True):
             floor = contract_zone.min_credit
             if floor is not None and floor > 0 and mid < floor:
-                reasons.append(REASON_BELOW_FAIR_VALUE)
+                if vrp_waiver(sizing, Strategy.CASH_SECURED_PUT, symbol, tech_stats.price):
+                    # A name-level bottoming signal lot is exempt from this floor and from no
+                    # other gate (OI-B3): the waiver is recorded on the card's size note.
+                    if note is not None:
+                        note = note.model_copy(update={"vrp_waived": True})
+                else:
+                    reasons.append(REASON_BELOW_FAIR_VALUE)
 
         # Optional down‑trend reject (Phase 3). If configured, reject when market is in DOWNTREND.
         if (
@@ -245,6 +345,7 @@ def screen_csp_candidates(
             open_interest=quote.open_interest,
             option_volume=quote.volume,
             rationale_tags=["iv_rank_unavailable"] if iv_stats.iv_rank is None else [],
+            sizing=note,
         )
 
         if reasons:

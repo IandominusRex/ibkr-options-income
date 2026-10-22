@@ -26,6 +26,7 @@ from src.common.schemas import (
     IdealZone,
     IVStats,
     MarketConditions,
+    MarketRegime,
     OptionQuote,
     OptionRight,
     PositionSnapshot,
@@ -34,9 +35,11 @@ from src.common.schemas import (
     RollDecision,
     RollReview,
     SectorContext,
+    Strategy,
     TechnicalStats,
     TradeCandidate,
 )
+from src.engine.regime_limits import claude_cut
 
 # M5 Task 5.3: the trigger-code → human-label mapping moved to src/monitor/triggers.py (beside
 # the codes it names) so the Telegram formatter and the web API import the one mapping. Kept as
@@ -100,6 +103,118 @@ def _pnl2(v: float) -> str:
     return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
 
 
+def _size_line(c: TradeCandidate) -> str | None:
+    """Why a CSP was sized below what capital allows, in words (None when nothing cut it).
+
+    Examples: ``Size 6 of 10 (leveraged ETF, 3×, calm)``, ``Size 3 of 10 (QQQ stressed)``,
+    ``Size 1 of 10 (QQQ crisis; today's guaranteed lot)``. A name-level bottoming-signal lot
+    whose credit is under the fair-value floor says so (``bottoming-signal lot: fair-value floor
+    waived``), cut or not. Plain text: the caller escapes it.
+    """
+    note = c.sizing
+    if note is None:
+        return None
+    trimmed = note.pre_regime_contracts > c.contracts
+    if not trimmed and not note.floor_lot and not note.vrp_waived:
+        return None
+    triggers = note.scale_in.triggers if note.scale_in is not None else []
+    if note.ceiling_kind == "leveraged_ceiling" and note.leverage is not None:
+        tier = note.leverage_tier or "calm"
+        why = f"leveraged ETF, {note.leverage}×, {tier}"
+        if tier == "stressed":
+            if note.regime != MarketRegime.NORMAL:
+                why += f": {note.regime_index} {note.regime.value}"
+            elif triggers:
+                why += ": " + ", ".join(t.replace("_", " ") for t in triggers)
+    elif note.regime != MarketRegime.NORMAL:
+        why = f"{note.regime_index} {note.regime.value}"
+    else:
+        why = ""
+    if note.floor_lot:
+        why = f"{why}; today's guaranteed lot" if why else "today's guaranteed lot"
+    if note.vrp_waived:
+        waived = "bottoming-signal lot: fair-value floor waived"
+        why = f"{why}; {waived}" if why else waived
+    size = (
+        f"Size {c.contracts} of {note.pre_regime_contracts}" if trimmed else f"Size {c.contracts}"
+    )
+    return f"{size} ({why})" if why else size
+
+
+def _claude_size_suggestion(c: TradeCandidate, review: ClaudeReview | None) -> str | None:
+    """Claude's smaller-size suggestion for an opening CSP card, in words (None when it has none).
+
+    Shown only when ``claude_cut`` would honour it (a Claude CLI review with an integer from 0 to
+    just below the card's size): the card stays the same size and approval still sends it, the
+    line is information. Plain text: the caller escapes it.
+    """
+    if review is None or c.strategy != Strategy.CASH_SECURED_PUT or c.roll_from is not None:
+        return None
+    n = claude_cut(c.contracts, review.max_contracts, review.backend)
+    if n >= c.contracts:
+        return None
+    line = f"Claude suggests {n} of {c.contracts}"
+    return f"{line}: {review.size_reason}" if review.size_reason else line
+
+
+def format_claude_cut_lines(cuts: list[tuple[TradeCandidate, int, str]]) -> str:
+    """The auto-queue summary's block of Claude's applied size cuts (MarkdownV2).
+
+    *cuts* is ``(candidate as the card had it, contracts now sent, Claude's reason)``: a partial
+    cut reads ``Claude cut TQQQ 65P 10 → 3: <reason>``, a cut to zero ``Claude: not sending
+    TQQQ 65P (3 lots): <reason>``.
+    """
+    lines = ["🧠 *Claude size cuts*"]
+    for c, sent, reason in cuts:
+        label = f"{c.underlying} {fmt_strike(c.strike)}{c.right.value}"
+        because = f": {reason}" if reason else ""
+        if sent <= 0:
+            lines.append(f"• {_md(f'Claude: not sending {label} ({c.contracts} lots){because}')}")
+        else:
+            lines.append(f"• {_md(f'Claude cut {label} {c.contracts} → {sent}{because}')}")
+    return "\n".join(lines)[:_MAX_MESSAGE_LEN]
+
+
+def format_claude_cut_breaker_alert(zeroed: int, reviewed: int) -> str:
+    """The once-a-day alert that Claude's cuts are being recorded but no longer applied."""
+    return _md(
+        f"🧠 Claude cut {zeroed} of today's {reviewed} auto CSPs to zero; "
+        "further cuts today are recorded but not applied."
+    )
+
+
+def _zone_line(c: TradeCandidate) -> str | None:
+    """The scale-in ladder's zone for this name, in words (None when it is not under the ladder).
+
+    Example: ``Next lot zone $47.10–$49.20 (support $48.15, 5.0% below the last lot)``. Plain
+    text: the caller escapes it.
+    """
+    zone = c.sizing.scale_in if c.sizing is not None else None
+    if zone is None:
+        return None
+    gap = f"{zone.min_gap_pct:.1f}% below the last lot"
+    where = f"support ${zone.support:,.2f}, {gap}" if zone.support is not None else gap
+    return f"Next lot zone ${zone.zone_low:,.2f}–${zone.zone_high:,.2f} ({where})"
+
+
+def _breakout_line(c: TradeCandidate) -> str | None:
+    """The covered-call breakout in force on this name, in words (None when there is none).
+
+    Example: ``Breakout Oct 14 (+6.1%, 2.3× volume, above $742.00): CC strikes at or above
+    $760.00, delta ≤ 0.25, for 3 more sessions``. Plain text: the caller escapes it.
+    """
+    b = c.cc_breakout
+    if b is None or c.strategy != Strategy.COVERED_CALL:
+        return None
+    where = f"above ${b.broke_level:,.2f}" if b.broke_level is not None else "at a 60-session high"
+    more = f"{b.sessions_left} more session{'' if b.sessions_left == 1 else 's'}"
+    return (
+        f"Breakout {b.trigger_day:%b} {b.trigger_day.day} (+{b.jump_pct:.1f}%, "
+        f"{b.volume_ratio:.1f}× volume, {where}): CC strikes at or above ${b.floor_strike:,.2f}, "
+        f"delta ≤ {b.delta_max:.2f}, for {more}"
+    )
+
+
 def format_candidate(
     candidate: TradeCandidate,
     review: ClaudeReview | None,
@@ -129,6 +244,16 @@ def format_candidate(
             f" · Ann\\. {_md(f'{candidate.annualized_yield_pct:.1f}')}%"
         ),
     ]
+
+    size_line = _size_line(candidate)
+    if size_line is not None:
+        parts.append(_md(size_line))
+    zone_line = _zone_line(candidate)
+    if zone_line is not None:
+        parts.append(_md(zone_line))
+    breakout_line = _breakout_line(candidate)
+    if breakout_line is not None:
+        parts.append(_md(breakout_line))
 
     delta_str = f"{candidate.delta:.2f}" if candidate.delta is not None else "N/A"
     iv_str = f"{candidate.iv_rank:.0f}" if candidate.iv_rank is not None else "N/A"
@@ -169,6 +294,9 @@ def format_candidate(
             parts.append(f"Assignment: {_md(review.assignment_considerations)}")
         if review.rolling_considerations:
             parts.append(f"Rolling: {_md(review.rolling_considerations)}")
+        suggestion = _claude_size_suggestion(candidate, review)
+        if suggestion is not None:
+            parts.append(_md(suggestion))
 
     footer = f"\n_Sources: {_candidate_sources(candidate)}_"
     if observe_only:
@@ -583,6 +711,19 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "strike_below_basis": "strike below cost basis (would lock in a loss)",
     "insufficient_cash": "not enough cash to secure one contract",
     "no_headroom": "no room under the concentration or budget caps",
+    # Market-regime codes (engine/regime_limits.py): the regime, not the book, set the limit.
+    "regime_budget": "the market regime has shrunk the CSP budget",
+    "regime_ceiling": "over the market regime's size limit",
+    "leveraged_ceiling": "over the size limit for a leveraged ETF",
+    "regime_daily_limit": "the market regime's new-CSP limit for today is used up",
+    # Scale-in ladder codes (engine/regime_limits.py): the next lot waits for a lower price.
+    "scale_in_zone_not_reached": "the price has not reached the next lower entry zone",
+    "loss_exit_cooldown": "a loss exit on this name earlier today",
+    "bottoming_delta_too_high": "a bottoming-signal lot must be a lower-delta strike",
+    "bottoming_lot_recent": "a bottoming-signal lot was already opened on this name lately",
+    # Covered-call breakout codes (engine/regime_limits.py cc_timing_reasons): push the call out.
+    "cc_breakout_strike_floor": "below the strike floor after a breakout",
+    "cc_breakout_delta": "too close to the money after a breakout",
     # Dedupe / slate-capacity drops — the trade itself was fine, there wasn't room for it.
     "dedupe_pre_gate": "a better strike on this name already claimed the shared risk budget",
     "dedupe_not_surfaced": "a better strike on this name won the slot",
@@ -1364,6 +1505,9 @@ def format_help() -> str:
         "/autonomy LEVEL — Promote/demote \\(observe\\|manual\\|whitelist\\|full\\)",
         "/halt — 🛑 Kill switch: stop all order transmission now",
         "/resume — Release the kill switch and resume execution",
+        "/regime — Market regime \\(SPY, QQQ\\) and its new\\-CSP limits",
+        "/regime off — Suspend the regime limits until the next trading day",
+        "/regime on — Resume the regime limits",
         "",
         "*News*",
         "/news TICKER — News brief with implications \\(posts in the News thread\\)",

@@ -442,7 +442,17 @@ current row and the lime pending count on Trades; the phone tab bar (64px, white
 holds Home, Trades, Portfolio, Activity and More, and marks More current on Research, Universe,
 stock and News pages, which a phone reaches through More.
 
-**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, links to Research, Universe, News, Ledger, How it works and statement import, system status, and Credits (the chart library's licence link).
+**More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, links to Research, Universe, News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
+
+**Regime and limits card** (What Claude knows): "Regime and limits", with when it was recorded at the right of the title. Per index (SPY, QQQ) a heading, the regime as a status word (flag amber above normal, neutral at normal), one plain line (the daily base, what raised it today, a bottoming-signal ease, or "Matches the daily base") and the CSP limits as figure lines under a perforation: Budget and Per trade as a percent of the normal limit, New puts a day ("No limit" or the count), Guaranteed lots a day. Up to three flag lines come first when they apply, each a flag word with one sentence beside it, in this order: "Off in config", "Suspended today" (`/regime off`, the limits shown are not applied) and "Cuts paused today" (today's circuit breaker has tripped: "The circuit breaker tripped, so Claude's size cuts are recorded but not applied until tomorrow"). Below the indices, the leveraged-ETF ceilings grouped by multiple ("3x (TQQQ, SOXL): 60% of the regime's size when calm, 30% when the name or its market is under stress") and Claude's size cuts as a sentence ("applied (paper)", "recorded only (live)"). When today's circuit breaker has tripped (Claude zeroed most of the day's auto puts) the cut sentence says so itself ("applied (paper), paused today.") so it is true when read alone, and the flag line above carries the state. The breaker is a flag word, not a plain sentence: it is the one state on the card besides `/regime off` that changes what happens today, so it joins that stack, in the first screen at phone width, instead of sitting below both indices. What the limits mean sits in a closed plain Disclosure. No regime yet: "No regime recorded yet" with a hatched n/a.
+
+**Picture card** (What Claude knows): the stories first, each a bold title, "since Oct 12", and, when Claude wrote one, a "Claude's description" line and its evidence ids in the figure face; a stale picture says so above them in a flag line with the time and says to treat the stories as out of date. The numbers (figure lines numbered F1, F2 to match the evidence ids), SPY's seasonality (with a neutral "Weak signal" word) and the coming events sit in a closed plain Disclosure. The card's header says when it was rebuilt, in New York time; the other cards put their own time or window ("Recorded", "Last 7 days", a count) in the same place.
+
+**Call row** (What Claude knows): the call's name in bold and its blocks as a wrapping row of neutral status-word chips. The chips are not controls: they are list items, with no hover state and no pointer.
+
+**Dropped row** (What Claude knows): the story's headline, a muted line "Claude's reason: ..." with the judgement time, and for a story the market promoted afterwards a flag word "Promoted" with "The market moved +1.2% after it." The first five show; "Show all N" reveals the rest. A line says how many stories nobody reviewed.
+
+**Name row** (What Claude knows): ticker bold, then words (Held; Stock, ETF or Leveraged ETF; Health with its first reason on the next line, flag amber for weak, "Health" with a hatched n/a when a stock's fundamentals could not be read, and no health word at all for a fund, which has none), then an inline "Claude's story" label ahead of the story and its evidence ids (or a hatched n/a and "No story right now."), a small label "Reported in news (not computed by the system)" above a short list of figures Claude quoted from the cited news (at most three, one per line with a gap between them, each ending in "Evidence: C8123" in the figure face on one unbroken run; the list is a labelled `ul`), shown only when there are some and never inside the story's own line, an inline "Upcoming" label ahead of each verified date and title, each followed by a small muted note "(title: Claude; date found in C8123)" with the cluster id in the figure face on one unbroken run (only the date is checked against the cited news; the title is Claude's own words, and the note says so, as the prompt's note does), and a muted line "Notes rebuilt 1:00 PM ET" or, when the last rebuild failed, a flag word "Stale" with the time of the notes. A plain Disclosure ("Profile and numbers") holds "Claude's summary, general knowledge" and the numbered facts.
 
 **Disclosure**: a summary row with a round chevron chip that rotates 180°, `aria-expanded` on a
 real button, focus ring in ink. The whole pressed-sage block is the button (at least 44px tall);
@@ -706,7 +716,48 @@ Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENS
 Read. Feed and calendar; ticker briefs.
 
 ### More
-Read and Operate. How it works (the System Explanation pages), Bot controls, Theme, the monthly income target, Ledger import, Credits.
+Read and Operate. How it works (the System Explanation pages), What Claude knows (a link to its own surface), Bot controls, Theme, the monthly income target, Ledger import, Credits.
+
+### What Claude knows
+Read. Dials as the project default; the only thing that moves is a disclosure. Added 2026-10-22 for
+the market picture build (docs/superpowers/plans/2026-10-20-market-picture.md, Task 22), reached from
+a row on More at `/more/claude`. The composition is the operator's: the spec (section 11) pinned
+"mockup option A" (the picture and the limits on top, one tile per Claude call, the dropped stories,
+then the names), so da-vinci's structure workshop was skipped: pinned beats roll.
+- **THESIS:** Claude is only as good as what it is shown, so show the operator exactly that. The
+  page answers, in order: what does the system think the market is and what does that do to new
+  puts; what is the picture Claude reads; which Claude call reads which blocks; what did Claude
+  throw away; what is on file about each name. Refuses a settings-page look, a tile grid and every
+  control: it shows, and nothing on it changes a limit, a size or an order.
+- **OWN-WORLD:** the payslip, read as a reference sheet. Sage paper, white cards, one idea per card;
+  Python's numbers in the stub face (figure lines under a perforation); regimes and states as words
+  (a regime is a status word, flag amber for anything above normal); every piece of Claude's prose
+  carries a label that says it is Claude's ("Claude's description", "Claude's reason", "Claude's
+  story", "Claude's summary, general knowledge", and an upcoming event's title, "title: Claude;
+  date found in C8123"), and a figure Claude quoted from the news carries
+  the label "Reported in news (not computed by the system)" and sits apart from the story, which
+  holds only the system's numbers; none of it sits on a button; a story Claude has not
+  written, a health label that could not be worked out and a missing number are hatched `n/a`, never blank
+  and never zero (only the "n/a" token is hatched, never the words around it). No lime: there is
+  nothing here to act on.
+- **STORY:** the regime and the limits it puts on new puts, with whether they are suspended today;
+  the picture (stories first, the numbers behind them closed); the seven Claude calls and the
+  blocks each reads; the stories dropped as noise, with Claude's reason and any the market later
+  promoted; then one row per name.
+- **FIRST VIEWPORT:** a back link to More, the title and a one-sentence dek, then the Regime and
+  limits card: the flag lines that apply first (off in config, suspended today, cuts paused today),
+  then SPY and QQQ as status words with a plain line each (base, raised today, eased) and each
+  index's CSP limits as figure lines (budget, per trade, new puts a day, guaranteed lots), then the leveraged-ETF
+  ceilings and Claude's cut mode as sentences (the cut sentence adds "paused today" when the circuit
+  breaker has tripped). One column up to 720px wide at every size; two limit blocks side by side from 640px.
+- **FORM:** one column in this DOM order on every viewport: Regime and limits, Market picture, What
+  each call reads (a row per call, its blocks as non-interactive status-word chips, not a tile
+  grid), Dropped as noise (the first five rows, the rest on request), Names (a row per name: ticker,
+  words, Claude's story, the figures quoted from the news under their own label when there are
+  any, upcoming dates, with the profile and the numbers behind a plain disclosure). Data arrives from one request, `GET /claude/context`; the page is read-only.
+  Degrades by section: no news service says so in a sentence and the regime still shows; no regime
+  says "No regime recorded yet" with a hatched n/a; a failed request is a sentence naming the retry.
+- **FINISH:** unreviewed and undocumented is unfinished.
 
 ## Agent Prompt Guide
 
@@ -746,6 +797,51 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-22 (whole-branch review R7): **What Claude knows**, Name row: each upcoming event now
+  carries a small muted note, "(title: Claude; date found in C8123)", after its date and title. The
+  review found that only the date is checked against the cited news cluster (Python), while the
+  title is Claude's and could be invented, yet the row showed both with the same weight and no
+  label, and the prompt rendered the same event as if Python had verified it (`dossier_text.py` is
+  fixed in the same pass). The note uses the page's existing words for Claude's text and the
+  evidence-id style (figure face, one unbroken run); no new component, colour, font, radius,
+  elevation or token. Small edit inside an existing surface: no workshop, no capture round; the
+  muted text on the white card was measured earlier at 6.77:1 and no new pair is introduced.
+- 2026-10-22 (later still): **What Claude knows**, Regime and limits card: today's circuit breaker is
+  now an amber flag word, "Cuts paused today", with "The circuit breaker tripped, so Claude's size
+  cuts are recorded but not applied until tomorrow" beside it, replacing the plain sentence added
+  earlier today (operator decision in the open-items walk-through, plan Task 23 Step 0c; the
+  earlier entry's "if it proves easy to miss, a flag word is the next step" is taken). It reuses
+  `StatusWord` in the flag tone, as "Suspended today" does; no new component, colour, font, radius,
+  elevation or token. The critique first placed it where the sentence was, after the cut-mode line;
+  rendered at 390px that put it about a screen below the fold, under both index blocks, while
+  "Suspended today" is in the first screen. So it joins the flag stack at the top (order: Off in
+  config, Suspended today, Cuts paused today) and the cut-mode sentence gains ", paused today" when
+  the breaker has tripped, so the standing line never says "applied" on its own while the pill says
+  otherwise. Contrast measured: flag word 7.59:1 light (`#6b4500` on `#fff1d6`) and 8.92:1 dark
+  (`#f5cf7a` on `#3a2e12`), the sentence 15.08:1 on the dark card; no horizontal scroll at 390.
+- 2026-10-22 (later): **What Claude knows** gained two things, both from the operator's open-items
+  walk-through (docs/superpowers/plans/2026-10-20-market-picture.md, Task 23 Step 0b). (1) The
+  Regime and limits card says "Cuts paused today: the circuit breaker tripped." after the cut-mode
+  sentence when today's breaker has tripped (`claude_cut_breaker_tripped_today`, read from the
+  sender's day state). The operator asked for a plain sentence and no new component, so it is a
+  `p` in body ink, not an amber status word like "Suspended today"; if it proves easy to miss, a
+  flag word is the next step. (2) A Names row shows the figures Claude quoted from the cited news
+  (`reported`, each already checked in Python against the cited cluster's text) under the label
+  "Reported in news (not computed by the system)", apart from "Claude's story", with each item's
+  cluster id as its evidence; nothing is shown when there are none. The critique found the items
+  ran together when they wrapped at 390px and "Evidence:" split from its id; fixed with a gap
+  between items and a non-breaking evidence run. No new component, colour, font, radius,
+  elevation or token.
+- 2026-10-22: Added the **What Claude knows** surface (`/more/claude`, a row on More) for the market
+  picture build (docs/superpowers/plans/2026-10-20-market-picture.md, Task 22). Read mode over one
+  request, `GET /claude/context`: the regime and its CSP limits, the picture, a row per Claude call
+  with its prompt blocks, the stories dropped as noise, and a row per name. The composition was
+  pinned by the operator's spec (mockup option A), so the structure workshop was skipped. The
+  operator's plan said "tiles" for the calls; a grid of equal tiles is the KPI-tile grid this file
+  refuses, so each call is a row with its blocks as chips. The plan's single top card is two cards
+  (Regime and limits, Market picture), because it asked two questions. New components: Regime and
+  limits card, Picture card, Call row, Dropped row, Name row. No new colour, font, radius,
+  elevation or token. Claude's prose is labelled everywhere it appears; no lime.
 - 2026-10-19: Web overhaul Part 2, Trades, built
   (docs/superpowers/plans/2026-10-19-web-overhaul-2-trades.md) and revised by the operator the same
   day for the account's full autonomy. `/trades` is the strategy switcher and three wheel views,

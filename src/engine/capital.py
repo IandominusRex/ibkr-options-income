@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from src.common.market_hours import today_et
 from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
@@ -103,6 +103,24 @@ def resolve_caps(account: AccountSnapshot, risk: dict) -> Caps:
         max_ticker_collateral=net_liq * float(p.get("max_collateral_per_ticker_pct", 10.0)) / 100.0,
         max_large_positions=int(p.get("max_large_positions", 1)),
         large_ticker_collateral=net_liq * float(p.get("max_pct_per_ticker_large", 25.0)) / 100.0,
+    )
+
+
+def scale_caps(caps: Caps, *, ticker: float, book: float) -> Caps:
+    """The caps with the market regime's CSP budgets scaled (spec section 5).
+
+    ``book`` scales the total CSP allocation (``max_csp_collateral``); ``ticker`` scales the
+    per-ticker and per-sector risk-unit budgets. **Only those three move.** The collateral caps
+    (``max_ticker_collateral``, ``large_ticker_collateral``), the cash, and the large-position
+    slot count are left alone, so the threshold at which a name needs a slot never shifts with
+    the regime. Callers still seed their budgets with the *unscaled* caps and use the scaled
+    ones only for the checks (the sizer and the gate both do).
+    """
+    return replace(
+        caps,
+        max_csp_collateral=caps.max_csp_collateral * book,
+        max_ticker_risk=caps.max_ticker_risk * ticker,
+        max_sector_risk=caps.max_sector_risk * ticker,
     )
 
 

@@ -138,6 +138,10 @@ def _parse_reviews(
         return []
     reviews: list[ClaudeReview] = []
     for item in payload:
+        # Which backend served a review is the runner's word, never the model's: blank any claim
+        # (the runner stamps "cli" or "ollama" after parsing).
+        if isinstance(item, dict) and "backend" in item:
+            item = {**item, "backend": None}
         try:
             reviews.append(ClaudeReview.model_validate(item))
         except (ValidationError, TypeError) as exc:

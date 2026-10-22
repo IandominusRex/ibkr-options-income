@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from src.common.config import Config, NewsDigestCfg
 from src.common.market_hours import is_trading_day
-from src.common.schemas import PositionSnapshot
+from src.common.schemas import PositionSnapshot, RegimeState
 from src.news.facts import Analytics
 from src.news.links import links_for
 from src.news.render import SGT
@@ -86,14 +86,25 @@ class DigestInputs:
     held: set[str]
     positions: list[PositionSnapshot]
     movers: list[TickerMove]
+    # The deterministic regime line ("SPY normal · QQQ stressed"), set by the service from the
+    # trading process's record. No model labels the regime any more.
     regime: str | None = None
     thread_order: list[list[int]] | None = None
     reads: dict[int, DigestRead] = field(default_factory=dict)
     rank: list[str] = field(default_factory=list)
     max_threads: int = 6
     max_movers: int = 5
+    since: datetime | None = None  # the start of this digest's story window (triage reads from it)
     # Non-critical alerts the hourly cap held back (spec §7.2), as (news_state key, line).
     held_back: list[tuple[str, str]] = field(default_factory=list)
+
+
+def regime_line(state: RegimeState | None) -> str | None:
+    """The regime as the digest header shows it, from the trading process's record: both
+    indices' effective regime. None before the trading process has ever recorded one."""
+    if state is None:
+        return None
+    return f"SPY {state.spy.effective.value} · QQQ {state.qqq.effective.value}"
 
 
 def _market(inp: DigestInputs) -> DigestSection:
@@ -228,6 +239,7 @@ def gather_inputs(name: DigestName, *, now: datetime, cfg: Config, an: Analytics
     syms = cfg.news.tape_symbols_rth if name != "premarket" else cfg.news.tape_symbols_ext
     return DigestInputs(
         now=now,
+        since=since,
         tape=tape(syms),
         clusters=[c for c in clusters if c.category != "ticker" or c.source_count >= 2],
         econ=econ,

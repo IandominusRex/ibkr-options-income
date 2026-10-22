@@ -553,7 +553,7 @@ async def test_execute_candidate_humanizes_live_regate_reasons(monkeypatch, tmp_
 
     monkeypatch.setattr(
         "src.execution.executor.validate_live_quote",
-        lambda candidate, quote: RiskVerdict(
+        lambda candidate, quote, sizing=None: RiskVerdict(
             candidate_id=candidate.candidate_id,
             verdict=Verdict.REJECT,
             reasons=["live_premium_collapse", "live_no_mid"],
@@ -850,7 +850,7 @@ async def test_process_queued_orders_cancels_if_revalidation_fails(monkeypatch, 
     )
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [mock_verdict],
+        lambda candidates, account, positions, sizing=None: [mock_verdict],
     )
 
     candidate = _make_candidate()
@@ -903,7 +903,7 @@ async def test_a_dedupe_pre_gate_cancel_says_what_actually_displaced_the_order(
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(
                 candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["dedupe_pre_gate"]
             )
@@ -958,7 +958,7 @@ async def test_a_non_dedupe_cancel_message_is_unchanged(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id="cand-001", verdict=Verdict.REJECT, reasons=["margin_limit"])
         ],
     )
@@ -1002,12 +1002,12 @@ async def test_process_queued_orders_calls_execute_for_valid_order(monkeypatch, 
     mock_verdict = RiskVerdict(candidate_id="cand-001", verdict=Verdict.PASS, reasons=[])
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [mock_verdict],
+        lambda candidates, account, positions, sizing=None: [mock_verdict],
     )
 
     executed: list[tuple] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append((order_id, candidate.candidate_id))
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1065,7 +1065,7 @@ async def test_process_queued_orders_cumulative_regate_rejects_second(monkeypatc
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1131,7 +1131,7 @@ async def test_process_queued_orders_uses_a_fresh_earnings_date_not_the_frozen_o
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1190,7 +1190,7 @@ async def test_process_queued_orders_rejects_covered_call_without_enough_shares(
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],
@@ -1198,7 +1198,7 @@ async def test_process_queued_orders_rejects_covered_call_without_enough_shares(
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1251,7 +1251,7 @@ async def test_process_queued_orders_allows_covered_call_with_enough_shares(monk
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],
@@ -1259,7 +1259,7 @@ async def test_process_queued_orders_allows_covered_call_with_enough_shares(monk
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1313,7 +1313,7 @@ async def test_process_queued_orders_two_covered_calls_same_underlying_second_re
 
     monkeypatch.setattr(
         "src.execution.approval.validate_candidates",
-        lambda candidates, account, positions: [
+        lambda candidates, account, positions, sizing=None: [
             RiskVerdict(candidate_id=c.candidate_id, verdict=Verdict.PASS, reasons=[])
             for c in candidates
         ],
@@ -1321,7 +1321,7 @@ async def test_process_queued_orders_two_covered_calls_same_underlying_second_re
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1364,7 +1364,7 @@ async def test_process_queued_orders_skips_when_halted(monkeypatch, tmp_path):
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1441,7 +1441,7 @@ async def test_process_queued_orders_auto_trips_halt_on_mark_based_loss(monkeypa
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)
@@ -1500,7 +1500,7 @@ async def test_process_queued_orders_auto_trips_halt_on_drawdown(monkeypatch, tm
 
     executed: list[int] = []
 
-    async def mock_execute(ib, bot, chat_id, order_id, candidate):
+    async def mock_execute(ib, bot, chat_id, order_id, candidate, sizing=None):
         executed.append(order_id)
 
     monkeypatch.setattr("src.execution.approval.execute_candidate", mock_execute)

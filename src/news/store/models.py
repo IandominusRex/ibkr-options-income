@@ -166,3 +166,66 @@ class TickerAliasRow(NewsBase):
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
     aliases: Mapped[list] = mapped_column(JSON, default=list)
     fetched_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class StoryTriageRow(NewsBase):
+    """One cluster's triage: which pile, why, and whether the market reaction promoted it later.
+
+    ``pile`` is None for a cluster nobody reviewed (outside the ranked batch): the store keeps
+    "judged noise" (Claude saw it, 3) and "not reviewed" (None) apart, because only the first is
+    a judgement. ``floor`` records why a story may not fall to noise (``alert`` rule or ``held``).
+    """
+
+    __tablename__ = "story_triage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cluster_id: Mapped[int] = mapped_column(Integer, unique=True)
+    pile: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    floor: Mapped[str | None] = mapped_column(String(8), nullable=True)  # alert | held
+    rank: Mapped[float] = mapped_column(Float, default=0.0)  # the Python presort rank
+    reason: Mapped[str] = mapped_column(String(160), default="")
+    judged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    promoted_move_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    story_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # picture_stories.id
+
+
+class MarketPictureRow(NewsBase):
+    """A saved market picture (``MarketPicture`` as JSON); the newest row is the current one."""
+
+    __tablename__ = "market_pictures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    built_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    version: Mapped[str] = mapped_column(String(40), unique=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PictureStoryRow(NewsBase):
+    """A multi-week story's identity. Python decides whether it is alive (``stories.story_alive``);
+    the model never keeps one alive and its previous prose is never stored here."""
+
+    __tablename__ = "picture_stories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(80))
+    started_on: Mapped[date] = mapped_column(Date)
+    last_supported_at: Mapped[datetime] = mapped_column(DateTime)
+    cluster_ids: Mapped[list] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class TickerDossierRow(NewsBase):
+    """One build of a name's dossier (``TickerDossier`` as JSON); the newest row per symbol is
+    the current one and older rows are kept ``dossier.keep_days`` for audit. Every build is a new
+    row: the hourly numbers-only refresh and the prose build alike."""
+
+    __tablename__ = "ticker_dossiers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    version: Mapped[str] = mapped_column(String(64), unique=True)
+    built_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
