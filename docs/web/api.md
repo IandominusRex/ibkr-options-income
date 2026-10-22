@@ -1556,3 +1556,46 @@ nothing), and today's (ET) LLM call count against `news.llm.max_calls_per_day`. 
 value reads as missing, never a 500.
 
 **Response — `NewsStatusResponse`:** `{ as_of, available, heartbeat_at, heartbeat_age_s, sources_ok: {source: datetime}, breakers: {name: "closed" | "open" | "half_open"}, llm_calls_today, llm_cap }`.
+
+## What Claude knows (market picture, spec section 11)
+
+### `GET /claude/context`
+
+Everything the web `/more/claude` page shows: the market picture, the regime and its CSP limits,
+what each Claude call is given, the stories the news triage dropped, and the per-name notes.
+Read-only and owner-only (`src/api/routers/claude_context.py`). The regime state and its
+`/regime off` suspension are read from the trading DB's `system_settings` through
+`src/api/settings_read.py::read_setting`; the picture, the triage rows and the dossiers from
+`data/news.db` through `src/api/news_db.py` (`mode=ro`) and the Session-parameterised readers in
+`src/news/store/queries.py`. The limits are read from the same typed `risk_limits.yaml` blocks the
+sizer reads (`regime:`, `leveraged_sizing:`, `claude_cut:`), so the page cannot disagree with what
+the gate applies. No write of any kind.
+
+**Degrades, never 500s.** No `news.db` (news service never started): `available: false`, no picture,
+empty `dropped` and `dossiers`; the regime, the limits and the tiles still answer. A `news.db` from
+before the picture, triage or dossier tables existed: `available: true` with the same empty
+sections (the read-only engine cannot create tables). No stored regime state, or one that no
+longer validates: `regime: null` and `limits: []`. An invalid `regime:` or `leveraged_sizing:`
+block shows no limits for it.
+
+**Response — `ClaudeContextResponse`:**
+
+| Field | Meaning |
+|---|---|
+| `as_of`, `available` | the envelope; `available` is "`news.db` is present" |
+| `picture` | the newest `MarketPicture` (`src/common/schemas.py`), or `null`. `stale` is true when the last rebuild failed and only the numbers are fresh; the story descriptions are Claude's words, grounded before they were saved |
+| `regime` | the trading process's persisted `RegimeState` (both indices: base, effective regime, why it was raised, the inputs), or `null` |
+| `regime_enabled` | `regime.enabled` in `risk_limits.yaml`; false means no regime limit applies at all |
+| `suspended_today` | `/regime off` was sent today (ET); the limits below are then not in force until the next trading day |
+| `limits` | `RegimeLimitOut[]`, one per index: `{ index, regime, budget_pct, per_trade_pct, max_new_per_day (null: no daily limit), floor_new_per_day }`, the CSP limits of that index's current regime |
+| `leveraged_enabled`, `leveraged` | `leveraged_sizing.enabled`; `LeveragedLimitOut[]` `{ symbol, leverage, calm_fraction, stressed_fraction }` for every name in `universe.leveraged_etfs` (a name missing from the operator's `leverage` map reads as 3x) |
+| `claude_cut_mode`, `account_mode` | `applied` or `record_only` for the account the API runs against (`LIVE_TRADING` picks `claude_cut.apply_live` or `apply_in_paper`), and `paper` or `live`. The daily breaker can still stop a cut on the day; that is not a mode |
+| `calls` | `CallContextOut[]` `{ kind, label, blocks: string[] }`, static (`src/api/claude_calls.py::CALLS`): which prompt blocks each of the seven Claude calls carries. `tests/test_api_claude_context.py` checks every block's header text occurs in the file that builds it |
+| `dropped`, `dropped_total` | `DroppedOut[]` `{ cluster_id, headline, reason, judged_at, promoted, promoted_move_pct }`: stories judged noise in the last 7 days, plus any the market-reaction check promoted later, newest judgement first, at most 100 (`dropped_total` is how many there were). `reason` is the dismissal reason; a promoted row's `promoted_move_pct` is the signed move that promoted it |
+| `not_reviewed_7d` | stories nobody judged (outside the ranked batch) in the last 7 days |
+| `dossiers` | `DossierOut[]` for every covered name that has notes, held names first then alphabetical: `{ symbol, kind, health, health_why, held, story, story_evidence, events: {id, title, on, evidence, quote}[], profile, facts: {id, label, display}[], facts_at, prose_at, stale }`. Python wrote the facts and health; Claude wrote the story and profile; the events carry the news text their date was found in |
+| `without_notes` | covered names with no dossier yet (empty when `available` is false) |
+
+"Covered" is `would_own` + `actively_wheeling` from the effective universe (web overrides
+included) + every held underlying from the portfolio reading, spreads-book underlyings out: the
+same set the news process builds notes for.

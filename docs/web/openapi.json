@@ -3149,6 +3149,32 @@
         ]
       }
     },
+    "/claude/context": {
+      "get": {
+        "tags": [
+          "claude"
+        ],
+        "summary": "Context",
+        "operationId": "context_claude_context_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeContextResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/spreads/positions": {
       "get": {
         "tags": [
@@ -5277,6 +5303,33 @@
         ],
         "title": "CalendarResponse"
       },
+      "CallContextOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "blocks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "label",
+          "blocks"
+        ],
+        "title": "CallContextOut",
+        "description": "One Claude call and the context blocks its prompt carries (static: ``claude_calls.CALLS``)."
+      },
       "CampaignLeg": {
         "properties": {
           "as_of": {
@@ -5746,6 +5799,130 @@
           "categories"
         ],
         "title": "ChecksPayload"
+      },
+      "ClaudeContextResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "picture": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketPicture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegimeState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regime_enabled": {
+            "type": "boolean",
+            "title": "Regime Enabled",
+            "default": true
+          },
+          "suspended_today": {
+            "type": "boolean",
+            "title": "Suspended Today",
+            "default": false
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeLimitOut"
+            },
+            "type": "array",
+            "title": "Limits"
+          },
+          "leveraged_enabled": {
+            "type": "boolean",
+            "title": "Leveraged Enabled",
+            "default": true
+          },
+          "leveraged": {
+            "items": {
+              "$ref": "#/components/schemas/LeveragedLimitOut"
+            },
+            "type": "array",
+            "title": "Leveraged"
+          },
+          "claude_cut_mode": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "record_only"
+            ],
+            "title": "Claude Cut Mode",
+            "default": "record_only"
+          },
+          "account_mode": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "live"
+            ],
+            "title": "Account Mode",
+            "default": "paper"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/CallContextOut"
+            },
+            "type": "array",
+            "title": "Calls"
+          },
+          "dropped": {
+            "items": {
+              "$ref": "#/components/schemas/DroppedOut"
+            },
+            "type": "array",
+            "title": "Dropped"
+          },
+          "dropped_total": {
+            "type": "integer",
+            "title": "Dropped Total",
+            "default": 0
+          },
+          "not_reviewed_7d": {
+            "type": "integer",
+            "title": "Not Reviewed 7D",
+            "default": 0
+          },
+          "dossiers": {
+            "items": {
+              "$ref": "#/components/schemas/DossierOut"
+            },
+            "type": "array",
+            "title": "Dossiers"
+          },
+          "without_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Without Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available"
+        ],
+        "title": "ClaudeContextResponse"
       },
       "ClaudeReviewPayload": {
         "properties": {
@@ -6747,6 +6924,224 @@
         "title": "DayTradesResponse",
         "description": "The trades opened, closed or rolled on one New York day (Home's \"Done today\")."
       },
+      "DossierEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 80,
+            "title": "Title"
+          },
+          "on": {
+            "type": "string",
+            "format": "date",
+            "title": "On"
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Evidence"
+          },
+          "quote": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Quote"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "on",
+          "evidence",
+          "quote"
+        ],
+        "title": "DossierEvent",
+        "description": "An upcoming dated catalyst (not earnings) that the model proposed and Python verified.\n\n``id`` is ``<SYM>:E<n>``; ``evidence`` is the ``C<id>`` of the news cluster that states the\ndate and ``quote`` the text of that cluster around it. Python keeps an event only when its\ndate is written in that cluster's text, so it is data, not prose."
+      },
+      "DossierFact": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "display": {
+            "type": "string",
+            "title": "Display"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "display"
+        ],
+        "title": "DossierFact",
+        "description": "One deterministic line of a ticker dossier. ``id`` is ``<SYM>:F<n>`` so a reviewer can cite\nit next to the candidate's own facts without a clash."
+      },
+      "DossierOut": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "stock",
+              "etf",
+              "leveraged_etf"
+            ],
+            "title": "Kind"
+          },
+          "health": {
+            "type": "string",
+            "enum": [
+              "strong",
+              "ok",
+              "weak",
+              "n/a",
+              "unknown"
+            ],
+            "title": "Health"
+          },
+          "health_why": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Health Why"
+          },
+          "held": {
+            "type": "boolean",
+            "title": "Held"
+          },
+          "story": {
+            "type": "string",
+            "title": "Story"
+          },
+          "story_evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Story Evidence"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/DossierEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "profile": {
+            "type": "string",
+            "title": "Profile"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/DossierFact"
+            },
+            "type": "array",
+            "title": "Facts"
+          },
+          "facts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Facts At"
+          },
+          "prose_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prose At"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "kind",
+          "health",
+          "held",
+          "story",
+          "profile",
+          "facts_at",
+          "prose_at",
+          "stale"
+        ],
+        "title": "DossierOut",
+        "description": "One name's notes: Python's numbers and health, Claude's story and profile, verified events."
+      },
+      "DroppedOut": {
+        "properties": {
+          "cluster_id": {
+            "type": "integer",
+            "title": "Cluster Id"
+          },
+          "headline": {
+            "type": "string",
+            "title": "Headline"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "judged_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judged At"
+          },
+          "promoted": {
+            "type": "boolean",
+            "title": "Promoted"
+          },
+          "promoted_move_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promoted Move Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "headline",
+          "reason",
+          "judged_at",
+          "promoted",
+          "promoted_move_pct"
+        ],
+        "title": "DroppedOut",
+        "description": "A story the triage kept out of the picture, or one the market reaction promoted later."
+      },
       "EarningsOut": {
         "properties": {
           "symbol": {
@@ -7339,6 +7734,77 @@
         ],
         "title": "IncomeTargetResponse",
         "description": "The monthly income target in force and where it came from (web setting, the legacy\n`web.monthly_income_target_pct`, or none)."
+      },
+      "IndexRegime": {
+        "properties": {
+          "index": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "QQQ"
+            ],
+            "title": "Index"
+          },
+          "base": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "base_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Base Date"
+          },
+          "since": {
+            "type": "string",
+            "format": "date",
+            "title": "Since"
+          },
+          "base_since": {
+            "type": "string",
+            "format": "date",
+            "title": "Base Since"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "escalated_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Escalated By"
+          },
+          "eased_by_bottoming": {
+            "type": "boolean",
+            "title": "Eased By Bottoming",
+            "default": false
+          },
+          "bottoming_cancelled_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bottoming Cancelled On"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/RegimeInputs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "base",
+          "base_date",
+          "since",
+          "base_since",
+          "effective"
+        ],
+        "title": "IndexRegime",
+        "description": "One index's persisted regime: the daily base, today's intraday escalation, the result."
       },
       "LedgerBasisPoint": {
         "properties": {
@@ -8980,6 +9446,35 @@
         ],
         "title": "LedgerTradesResponse"
       },
+      "LeveragedLimitOut": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "leverage": {
+            "type": "integer",
+            "title": "Leverage"
+          },
+          "calm_fraction": {
+            "type": "number",
+            "title": "Calm Fraction"
+          },
+          "stressed_fraction": {
+            "type": "number",
+            "title": "Stressed Fraction"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "leverage",
+          "calm_fraction",
+          "stressed_fraction"
+        ],
+        "title": "LeveragedLimitOut",
+        "description": "A leveraged ETF's per-trade ceiling as a fraction of the regime's own (ruling 35)."
+      },
       "LineItemValue": {
         "properties": {
           "line_item": {
@@ -9050,6 +9545,92 @@
         ],
         "title": "LineItemValue",
         "description": "One normalised line item for one period, traceable to its filing."
+      },
+      "MarketPicture": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "built_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Built At"
+          },
+          "regimes": {
+            "items": {
+              "$ref": "#/components/schemas/PictureRegime"
+            },
+            "type": "array",
+            "title": "Regimes"
+          },
+          "regime_source": {
+            "type": "string",
+            "enum": [
+              "trading",
+              "news"
+            ],
+            "title": "Regime Source",
+            "default": "trading"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/PictureFact"
+            },
+            "type": "array",
+            "title": "Facts"
+          },
+          "seasonality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeasonalityView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "stories": {
+            "items": {
+              "$ref": "#/components/schemas/PictureStory"
+            },
+            "type": "array",
+            "title": "Stories"
+          },
+          "noise": {
+            "$ref": "#/components/schemas/NoiseSummary"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "built_at"
+        ],
+        "title": "MarketPicture",
+        "description": "The shared, persistent picture of the market every ``claude -p`` call reads.\n\nWritten only by the news process (``src/news/picture.py``); every number in it is computed by\nPython, the story descriptions are the model's prose and are grounded before they are saved.\nEnrichment: it reaches prompts and cards, never the engine, execution or sizing."
+      },
+      "MarketRegime": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "cautious",
+          "stressed",
+          "crisis"
+        ],
+        "title": "MarketRegime",
+        "description": "The market-wide state the sizing limits follow (not a per-ticker label: see `Regime`).\n\nOrdered calm to severe: normal, cautious, stressed, crisis. Classified deterministically\nby `src/analytics/regime.py`; turned into limits by `src/engine/regime_limits.py`."
       },
       "MeResponse": {
         "properties": {
@@ -9756,6 +10337,28 @@
         ],
         "title": "NewsTickerResponse"
       },
+      "NoiseSummary": {
+        "properties": {
+          "judged": {
+            "type": "integer",
+            "title": "Judged",
+            "default": 0
+          },
+          "not_reviewed": {
+            "type": "integer",
+            "title": "Not Reviewed",
+            "default": 0
+          },
+          "promotions": {
+            "type": "integer",
+            "title": "Promotions",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "NoiseSummary",
+        "description": "What the triage kept out of the picture in the last 7 days (shown, never overruled)."
+      },
       "NormalizedFinancials": {
         "properties": {
           "symbol": {
@@ -10226,6 +10829,104 @@
           "downtrend"
         ],
         "title": "Phase"
+      },
+      "PictureFact": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "PictureFact",
+        "description": "One deterministic line of the market picture: a label and a value Python computed."
+      },
+      "PictureRegime": {
+        "properties": {
+          "index": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "QQQ"
+            ],
+            "title": "Index"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "base": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "eased_by_bottoming": {
+            "type": "boolean",
+            "title": "Eased By Bottoming",
+            "default": false
+          },
+          "suspended": {
+            "type": "boolean",
+            "title": "Suspended",
+            "default": false
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "effective",
+          "base",
+          "as_of"
+        ],
+        "title": "PictureRegime",
+        "description": "One index's regime as the picture shows it (read from the trading process's record)."
+      },
+      "PictureStory": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "started_on": {
+            "type": "string",
+            "format": "date",
+            "title": "Started On"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "started_on"
+        ],
+        "title": "PictureStory",
+        "description": "A multi-week story the picture is tracking. Identity (id, title, start date) is kept by\nPython; the description is the model's one-sentence tie to the numbered facts."
       },
       "PnlBucket": {
         "properties": {
@@ -10884,6 +11585,302 @@
         ],
         "title": "Regime"
       },
+      "RegimeChange": {
+        "properties": {
+          "index": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "QQQ"
+            ],
+            "title": "Index"
+          },
+          "before": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "after": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "why": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Why"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          },
+          "sent": {
+            "type": "boolean",
+            "title": "Sent",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "before",
+          "after",
+          "at"
+        ],
+        "title": "RegimeChange",
+        "description": "An effective-regime change, queued for a Telegram notice until ``sent``."
+      },
+      "RegimeInputs": {
+        "properties": {
+          "vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol"
+          },
+          "vol_pct_1y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Pct 1Y"
+          },
+          "term_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Term Ratio"
+          },
+          "contango_streak": {
+            "type": "integer",
+            "title": "Contango Streak",
+            "default": 0
+          },
+          "index_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Close"
+          },
+          "index_live": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Live"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "sma50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma50"
+          },
+          "sma200": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sma200"
+          },
+          "drawdown_52w_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown 52W Pct"
+          },
+          "ret_1m_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ret 1M Pct"
+          },
+          "ret_3m_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ret 3M Pct"
+          },
+          "rv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rv20"
+          },
+          "rv_1y_avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rv 1Y Avg"
+          },
+          "live_vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Vol"
+          },
+          "stale": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stale"
+          }
+        },
+        "type": "object",
+        "title": "RegimeInputs",
+        "description": "Everything one index's regime was classified from (deterministic; see analytics/regime.py).\n\n``vol`` is the VIX close for **both** indices (ruling 15), so the VIX thresholds mean the\nsame thing for SPY and QQQ. A field that could not be read, or that is a last close served\nas live, is ``None`` and named in ``stale``: it is skipped by the classifier and never read\nas calm."
+      },
+      "RegimeLimitOut": {
+        "properties": {
+          "index": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "QQQ"
+            ],
+            "title": "Index"
+          },
+          "regime": {
+            "$ref": "#/components/schemas/MarketRegime"
+          },
+          "budget_pct": {
+            "type": "number",
+            "title": "Budget Pct"
+          },
+          "per_trade_pct": {
+            "type": "number",
+            "title": "Per Trade Pct"
+          },
+          "max_new_per_day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max New Per Day"
+          },
+          "floor_new_per_day": {
+            "type": "integer",
+            "title": "Floor New Per Day"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "regime",
+          "budget_pct",
+          "per_trade_pct",
+          "max_new_per_day",
+          "floor_new_per_day"
+        ],
+        "title": "RegimeLimitOut",
+        "description": "What one index's regime does to new cash-secured puts (``regime.csp`` in\n``risk_limits.yaml``). Percentages are of the unscaled limit."
+      },
+      "RegimeState": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "spy": {
+            "$ref": "#/components/schemas/IndexRegime"
+          },
+          "qqq": {
+            "$ref": "#/components/schemas/IndexRegime"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/RegimeChange"
+            },
+            "type": "array",
+            "title": "Changes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "spy",
+          "qqq"
+        ],
+        "title": "RegimeState",
+        "description": "The persisted market regime for both indices (written only by the trading process)."
+      },
       "RollAlertSummary": {
         "properties": {
           "id": {
@@ -11095,6 +12092,35 @@
           "results"
         ],
         "title": "SearchResponse"
+      },
+      "SeasonalityView": {
+        "properties": {
+          "month": {
+            "type": "integer",
+            "title": "Month"
+          },
+          "avg_return_pct": {
+            "type": "number",
+            "title": "Avg Return Pct"
+          },
+          "up_share": {
+            "type": "number",
+            "title": "Up Share"
+          },
+          "years": {
+            "type": "integer",
+            "title": "Years"
+          }
+        },
+        "type": "object",
+        "required": [
+          "month",
+          "avg_return_pct",
+          "up_share",
+          "years"
+        ],
+        "title": "SeasonalityView",
+        "description": "SPY's calendar-month tendency over the years the price provider covers (a weak signal)."
       },
       "SectionState": {
         "type": "string",

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.routers import (
+    claude_context,
     commands,
     ledger,
     meta,
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(pnl.router, prefix="/pnl")
     app.include_router(ledger.router)
     app.include_router(news.router)
+    app.include_router(claude_context.router)
     app.include_router(spreads.router)
     app.include_router(universe.router)
     app.include_router(watchlist.router)
