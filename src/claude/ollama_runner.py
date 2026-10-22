@@ -293,6 +293,7 @@ def review_candidates(
     analytics: AnalyticsMap | None = None,
     picture_block: str | None = None,
     book_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> list[ClaudeReview]:
     """Local-model equivalent of `runner.review_candidates`. Returns [] on any failure.
 
@@ -361,6 +362,7 @@ def review_candidates(
         news_block=news_block or None,
         picture_block=picture_block,
         book_block=book_block,
+        dossier_block=dossier_block,
     )
 
     reviews: list[ClaudeReview] = []
@@ -418,6 +420,7 @@ def review_roll(
     *,
     proposal: str | None = None,
     picture_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> RollReview | None:
     """Local-model equivalent of `runner.review_roll`. Returns None on any failure."""
     cfg = get_config().claude
@@ -430,7 +433,14 @@ def review_roll(
         log.debug("ollama: circuit open — skipping roll review")
         return None
 
-    prompt = build_roll_prompt(alert, pos, quote, proposal=proposal, picture_block=picture_block)
+    prompt = build_roll_prompt(
+        alert,
+        pos,
+        quote,
+        proposal=proposal,
+        picture_block=picture_block,
+        dossier_block=dossier_block,
+    )
 
     raw = _generate(prompt, cfg, schema="json")
     if raw is None:

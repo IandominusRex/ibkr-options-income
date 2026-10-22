@@ -229,6 +229,66 @@ def test_news_reads_only_regime_state_and_portfolio_snapshots_from_storage() -> 
     assert offenders == []
 
 
+# What a review's size cut may read: the number, the backend (a local model's number is never
+# applied) and the reason (written to the record). Nothing else a review holds - its
+# recommendation, priority, confidence, prose or evidence - may be read where an order is made.
+_CUT_FIELDS = {"max_contracts", "size_reason", "backend"}
+# Words from the covered-call event hold that decision 34 removed (spec section 17): no part of
+# the system lets Claude hold a covered call, so none of these may come back.
+_REMOVED_CC_HOLD_WORDS = (
+    "cc_hold",
+    "cc_event",
+    "CcHold",
+    "ccholds",
+    "claude_cc_hold",
+    "cc_action",
+    "cc_reason",
+)
+
+
+def _review_reads(path: Path, fields: set[str], base: Path = ROOT) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [
+        f"{path.relative_to(base)}:{n.lineno} .{n.attr}"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and n.attr in fields
+    ]
+
+
+def test_no_llm_value_reaches_a_covered_call() -> None:
+    """Task 20 (Claude's covered-call event hold) was removed by decision 34: nothing an LLM
+    produces holds, moves or sizes a covered call. On the order path - the sender that queues
+    orders and everything under ``src/engine`` - the only parts of a ``ClaudeReview`` that are
+    read are the CSP size cut's inputs (`max_contracts` goes through ``claude_cut``, checked
+    above), and the review schema and the code carry no covered-call hold at all."""
+    from src.common.schemas import ClaudeReview
+
+    others = set(ClaudeReview.model_fields) - _CUT_FIELDS - {"candidate_id"}
+    files = [SRC / "notify" / "sender.py", *sorted((SRC / "engine").rglob("*.py"))]
+    offenders = [hit for p in files for hit in _review_reads(p, others)]
+    assert offenders == [], "a review field other than the CSP size cut is read on the order path"
+
+    assert not {"cc_action", "cc_event", "cc_reason"} & set(ClaudeReview.model_fields)
+    named = [
+        f"{p.relative_to(ROOT)}: {word}"
+        for p in sorted(SRC.rglob("*.py"))
+        for word in _REMOVED_CC_HOLD_WORDS
+        if word in p.read_text(encoding="utf-8")
+    ]
+    assert named == [], "the removed covered-call hold has crept back"
+
+
+def test_the_review_read_checker_sees_a_planted_read(tmp_path) -> None:
+    planted = tmp_path / "sender.py"
+    planted.write_text("def f(review):\n    return review.recommendation == 'wait'\n")
+    assert _review_reads(planted, {"recommendation"}, base=tmp_path) == [
+        "sender.py:2 .recommendation"
+    ]
+    clean = tmp_path / "clean.py"
+    clean.write_text("def f(review):\n    return review.max_contracts\n")
+    assert _review_reads(clean, {"recommendation"}, base=tmp_path) == []
+
+
 def test_the_fence_catches_what_it_claims_to(tmp_path) -> None:
     """The checkers themselves: a planted violation is seen, a clean file is not."""
     bad = tmp_path / "bad.py"

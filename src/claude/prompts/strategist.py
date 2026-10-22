@@ -427,6 +427,12 @@ def _vix_context(vix: float | None) -> str:
     return f"VIX: {vix:.1f} ({vix_regime(vix)})"
 
 
+_NAME_NOTES_RULE = (
+    "NAME NOTES give each name's situation. Cite their ids (META:F3, META:E1, C#) like other "
+    "facts. A profile is general knowledge, never the only reason for a verdict."
+)
+
+
 def build_prompt(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -438,6 +444,7 @@ def build_prompt(
     news_block: str | None = None,
     picture_block: str | None = None,
     book_block: str | None = None,
+    dossier_block: str | None = None,
 ) -> str:
     """Build the full prompt string sent to the reasoning backend.
 
@@ -469,6 +476,10 @@ def build_prompt(
     book_block: optional pre-rendered ``=== YOUR BOOK ===`` block
         (:func:`src.claude.book_context.build_book_block`): the open positions and recent
         stop-outs on the reviewed names and the names related to them. Enrichment only.
+    dossier_block: optional pre-rendered ``=== NAME NOTES ===`` block
+        (:func:`src.claude.dossier_context.dossier_block`): each reviewed name's situation (kind,
+        health, current story, dated events, key numbers; the full note adds a profile of
+        general knowledge). Enrichment only.
     """
     if not candidates:
         return ""
@@ -550,6 +561,11 @@ def build_prompt(
     # stopped out: without it every re-entry looks like a fresh, independent trade.
     if book_block:
         lines += [book_block, ""]
+
+    # Each reviewed name's situation (the news process keeps a dossier per name): after the
+    # picture and the book, before the candidates it is about.
+    if dossier_block:
+        lines += [dossier_block, _NAME_NOTES_RULE, ""]
 
     lines.append("=== TRADE CANDIDATES ===")
 

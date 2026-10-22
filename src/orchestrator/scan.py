@@ -35,6 +35,7 @@ from src.analytics.sector_context import get_sector_context, render_sector_conte
 from src.analytics.sentiment import SentimentScorer
 from src.analytics.technicals import _fetch_last_price, get_technical_stats
 from src.claude.book_context import build_book_block
+from src.claude.dossier_context import dossier_block, load_dossiers, prose_key
 from src.claude.picture_context import load_picture, picture_key, render_picture_block
 from src.claude.runner import review_candidates
 from src.common.config import Config, get_config
@@ -328,28 +329,46 @@ def _persist_memory(
 
 @dataclass
 class _ReviewContext:
-    """What the reviewer reads besides the candidates: the market picture and the book."""
+    """What the reviewer reads besides the candidates: the market picture, the book and the
+    reviewed names' dossier notes (``dossier_keys``: what each shown note's prose and events are,
+    for the review-reuse fingerprint)."""
 
     picture: MarketPicture | None
     picture_block: str
     book_block: str
+    dossier_block: str = ""
+    dossier_keys: dict[str, str | None] = field(default_factory=dict)
 
 
 def _build_review_context(
     candidates: list[TradeCandidate],
     positions: list[PositionSnapshot],
     spots: dict[str, float] | None,
+    *,
+    compact: bool = True,
 ) -> _ReviewContext:
-    """Read the stored market picture (news.db, read-only) and build the book block.
+    """Read the stored market picture and dossiers (news.db, read-only) and build the book block.
 
-    Blocking small reads: callers run it off the event loop. Both parts degrade on their own (no
-    picture reads "(unavailable)", a book that cannot be built is left out), so this never raises.
+    The notes are for the reviewed underlyings in the candidates' priority order, each once: a
+    compact note per name capped at ``news.dossier.max_names_in_review`` for a full scan, or
+    (``compact=False``, the one-name ``/scan TICKER``) the full note with no cap.
+
+    Blocking small reads: callers run it off the event loop. Every part degrades on its own (no
+    picture reads "(unavailable)", no notes leave the block out, a book that cannot be built is
+    left out), so this never raises.
     """
+    now = datetime.now(UTC)
     picture = load_picture()
+    names = list(dict.fromkeys(c.underlying.upper() for c in candidates))
+    cap = get_config().news.dossier.max_names_in_review if compact else max(1, len(names))
+    shown = names[:cap]
+    dossiers = load_dossiers(shown)
     return _ReviewContext(
         picture=picture,
-        picture_block=render_picture_block(picture, now=datetime.now(UTC)),
+        picture_block=render_picture_block(picture, now=now),
         book_block=build_book_block(candidates, positions, spots=spots),
+        dossier_block=dossier_block(names, dossiers, now=now, compact=compact, max_names=cap),
+        dossier_keys={n: prose_key(d) for n in shown if (d := dossiers.get(n)) is not None},
     )
 
 
@@ -398,6 +417,7 @@ def _review_fingerprint(
     *,
     regime: str = "normal",
     picture_version: str | None = None,
+    dossier_key: str | None = None,
 ) -> dict:
     """What would make a fresh review read differently, in buckets small enough that a bucket
     means "the same trade". Deliberately NOT ``_signal_vector`` (that one is frozen at full
@@ -406,12 +426,18 @@ def _review_fingerprint(
 
     It also covers what a review's size suggestion rests on: the deterministic size and its
     per-trade ceiling, the market regime and the picture version. A reused review's cut is thus
-    never older than the size, regime or picture it was based on."""
+    never older than the size, regime or picture it was based on.
+
+    The name's dossier enters as ``dossier_key`` (`dossier_context.prose_key`: when its prose was
+    written and its events), **not** its version, which changes with every hourly numbers refresh
+    and would defeat the reuse (ruling 43). A reused review is thus never older than the prose and
+    events it read."""
     return {
         "contracts": c.contracts,
         "per_trade_cap": c.sizing.per_trade_cap if c.sizing is not None else None,
         "regime": regime,
         "picture": picture_version,
+        "dossier": dossier_key,
         "blended": _coarse(c.blended_score, 2.0),
         "iv_rank": _coarse(c.iv_rank, 2.0),
         "delta": _coarse(c.delta, 0.02),
@@ -436,7 +462,11 @@ def _review_fingerprint(
 
 
 def _candidates_review_hash(
-    top: list[TradeCandidate], vix: float | None, *, picture_version: str | None = None
+    top: list[TradeCandidate],
+    vix: float | None,
+    *,
+    picture_version: str | None = None,
+    dossier_keys: dict[str, str | None] | None = None,
 ) -> str:
     """Stable hash of the top candidates' coarse fingerprints (S5).
 
@@ -444,7 +474,8 @@ def _candidates_review_hash(
     cycle's hash matches a recent fresh review, the LLM review would read the same, so the
     intraday loop reuses the persisted ``ClaudeReview`` instead of re-invoking ``claude -p``.
     Each candidate's regime is the one on its own sizing note; the picture version (or its stale
-    marker, ``picture_context.picture_key``) is the call's.
+    marker, ``picture_context.picture_key``) is the call's; each candidate carries the prose key
+    of its own underlying's note (*dossier_keys*, only for the names the model was shown).
     """
     payload = sorted(
         (
@@ -455,6 +486,7 @@ def _candidates_review_hash(
                     vix,
                     regime=c.sizing.regime.value if c.sizing is not None else "normal",
                     picture_version=picture_version,
+                    dossier_key=(dossier_keys or {}).get(c.underlying.upper()),
                 ),
             )
             for c in top
@@ -1840,7 +1872,10 @@ async def _run_scan_body(
             # (intraday loop only — manual /scan always reviews fresh).
             vix = result.market_conditions.vix if result.market_conditions else None
             review_hash = _candidates_review_hash(
-                top, vix, picture_version=picture_key(review_ctx.picture)
+                top,
+                vix,
+                picture_version=picture_key(review_ctx.picture),
+                dossier_keys=review_ctx.dossier_keys,
             )
             reuse_minutes = get_config().claude.review_reuse_minutes
             if intraday and _review_is_reusable(review_hash, _utcnow(), reuse_minutes):
@@ -1869,6 +1904,7 @@ async def _run_scan_body(
                         analytics=analytics_map,
                         picture_block=review_ctx.picture_block,
                         book_block=review_ctx.book_block,
+                        dossier_block=review_ctx.dossier_block,
                     ),
                 )
                 if result.reviews and reuse_minutes > 0:
@@ -2382,8 +2418,10 @@ async def run_ticker_scan(
         spot_prices = {ticker: tech_stats.price} if tech_stats.price else None
         sector_block = render_sector_context(sector_ctx)
         try:
+            # One name: its dossier note in full (a full scan gets a compact one per name).
             review_ctx = await loop.run_in_executor(
-                None, _build_review_context, to_review, positions, spot_prices
+                None,
+                lambda: _build_review_context(to_review, positions, spot_prices, compact=False),
             )
             reviews = await loop.run_in_executor(
                 None,
@@ -2397,6 +2435,7 @@ async def run_ticker_scan(
                     analytics=analytics_map,
                     picture_block=review_ctx.picture_block,
                     book_block=review_ctx.book_block,
+                    dossier_block=review_ctx.dossier_block,
                 ),
             )
         except Exception:
