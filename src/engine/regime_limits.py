@@ -36,7 +36,9 @@ What each limit is:
 * **Variance-premium waiver** — a cash-secured put that opens on a *name-level* bottoming signal
   is exempt from the credit-below-fair-value floor and from nothing else (`vrp_waiver`): it
   carries its own guards (the delta cap and one lot per name per N sessions). Not a market-eased
-  lot, not an ordinary ladder lot, not a call or a roll.
+  lot, not an ordinary ladder lot, not a call or a roll. The delta cap is held again at send
+  time against the live quote (`live_bottoming_delta_reason`), read from the tag frozen on the
+  card, since the fresh signals the decision-time guard needs do not exist then.
 
 The regime limits (and the ladder's zone) switch off when the context is None, `/regime off`
 suspended it today, or `regime.enabled` is false. The leveraged-ETF ceiling has its own switch and is **not** a regime
@@ -591,3 +593,29 @@ def live_cc_delta_reason(
     if found is None or quote.delta is None:
         return None
     return "cc_breakout_delta" if abs(quote.delta) > found.delta_max + 1e-9 else None
+
+
+def live_bottoming_delta_reason(candidate: TradeCandidate, quote: OptionQuote) -> str | None:
+    """The send-time delta cap of a name-level signal lot, against the FRESH quote.
+
+    ``"bottoming_delta_too_high"`` when the card's frozen tag says it opened as a name-level
+    signal lot (``sizing.bottoming == "name"``, the tag `vrp_waiver` reads at send time) and the
+    live quote's ``abs(delta)`` is above ``bottoming.signal_delta_max``: the put drifted toward
+    the money between approval and send. The card's own delta was held at decision time by
+    `bottoming_guard`; this holds the number the order is about to go out at. The one-lot-per-N-
+    sessions guard needs the fresh signals and stays decision-time only.
+
+    Reads the tag on the card and nothing from a context, so it applies with no send-time
+    context and under ``/regime off``: refusing a lot that drifted is only ever more
+    conservative. A missing live delta triggers nothing (missing greeks degrade to the
+    decision-time gate, as the other live delta checks do). Cash-secured puts only: never a
+    covered call, a roll (the strategy or a roll origin), a market-eased lot (tag ``"market"``)
+    or an ordinary ladder lot (no tag).
+    """
+    if candidate.strategy != Strategy.CASH_SECURED_PUT or candidate.roll_from is not None:
+        return None
+    if candidate.sizing is None or candidate.sizing.bottoming != "name" or quote.delta is None:
+        return None
+    if abs(quote.delta) > get_regime_cfg().bottoming.signal_delta_max + 1e-9:
+        return "bottoming_delta_too_high"
+    return None

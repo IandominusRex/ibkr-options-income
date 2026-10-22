@@ -528,6 +528,201 @@ def test_live_regate_does_not_reject_a_signal_lot_above_its_zone():
     ]
 
 
+# --------------------------------------------------------------------------- #
+# OI-P1: at send time a signal lot's LIVE delta is held to the 0.25 cap again
+# (the card's own delta was checked at decision time; the live number is what is sent)
+# --------------------------------------------------------------------------- #
+
+
+def _live_put(delta: float | None):
+    from tests.test_scale_in_gate import quote
+
+    return quote().model_copy(update={"delta": delta})
+
+
+def _signal_card(delta: float = -0.24):
+    """A signal lot as the gate froze it: through the real decision-time gate, so the tag is real."""
+    cand = csp("sig", spot=50.0, delta=delta)
+    assert gate([cand], bottoming_ctx())["sig"].verdict == Verdict.PASS
+    assert cand.sizing is not None and cand.sizing.bottoming == "name"
+    return cand
+
+
+def _tagged(tag, *, delta: float = -0.24):
+    """The same card with another tag (None, "market"), as `approval` would re-read it."""
+    cand = _signal_card(delta)
+    assert cand.sizing is not None
+    cand.sizing = cand.sizing.model_copy(update={"bottoming": tag})
+    return cand
+
+
+def test_a_signal_lot_whose_live_delta_drifted_over_the_cap_is_refused_at_send_time():
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _signal_card(-0.24)  # decision time: 0.24 is under the 0.25 cap (asserted above)
+    send = ctx(zone=None, for_send=True)
+    # the live quote now says 0.31: inside the strategy's own 0.20-0.35 band, over the cap
+    drifted = validate_live_quote(cand, _live_put(-0.31), sizing=send)
+    assert drifted.verdict == Verdict.REJECT
+    assert drifted.reasons == ["bottoming_delta_too_high"]
+    # the sign is the broker's convention, not the rule's: a positive live delta reads the same
+    assert validate_live_quote(cand, _live_put(0.31), sizing=send).reasons == [
+        "bottoming_delta_too_high"
+    ]
+    assert validate_live_quote(cand, _live_put(-0.26), sizing=send).reasons == [
+        "bottoming_delta_too_high"
+    ]
+
+
+def test_a_signal_lot_whose_live_delta_is_at_or_under_the_cap_passes_at_send_time():
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _signal_card(-0.24)
+    send = ctx(zone=None, for_send=True)
+    assert get_regime_cfg().bottoming.signal_delta_max == 0.25  # the numbers below assume it
+    for live in (-0.24, -0.25, 0.25):  # exactly the cap is not over it
+        out = validate_live_quote(cand, _live_put(live), sizing=send)
+        assert out.verdict == Verdict.PASS, (live, out.reasons)
+
+
+def test_the_live_delta_cap_needs_no_send_time_context_and_survives_regime_off():
+    """The tag frozen on the card decides, so a missing context or `/regime off` lifts nothing:
+    refusing is only ever more conservative than sending a lot at a strike nearer the money."""
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _signal_card(-0.24)
+    for sizing in (
+        None,
+        ctx(zone=None, for_send=True),
+        ctx(zone=None, for_send=True, suspended=True),
+    ):
+        out = validate_live_quote(cand, _live_put(-0.31), sizing=sizing)
+        assert out.reasons == ["bottoming_delta_too_high"], sizing
+
+
+def test_a_missing_live_delta_does_not_trigger_the_signal_lot_cap():
+    from src.engine.risk_engine import validate_live_quote
+
+    out = validate_live_quote(
+        _signal_card(-0.24), _live_put(None), sizing=ctx(zone=None, for_send=True)
+    )
+    assert out.verdict == Verdict.PASS, out.reasons
+
+
+@pytest.mark.parametrize("tag", [None, "market"])
+def test_a_lot_that_is_not_a_name_level_signal_lot_is_not_held_to_the_cap(tag):
+    """A market-eased lot and an ordinary ladder lot keep the strategy's 0.35 band only."""
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _tagged(tag)
+    send = ctx(zone=None, for_send=True)
+    assert validate_live_quote(cand, _live_put(-0.31), sizing=send).verdict == Verdict.PASS
+    # the existing band stands: 0.36 is out of range for the strategy, and only for that reason
+    assert validate_live_quote(cand, _live_put(-0.36), sizing=send).reasons == [
+        "live_delta_out_of_range"
+    ]
+    assert validate_live_quote(cand, _live_put(-0.31)).verdict == Verdict.PASS  # no context
+
+
+def test_a_signal_lot_over_the_band_gets_both_reasons():
+    from src.engine.risk_engine import validate_live_quote
+
+    out = validate_live_quote(
+        _signal_card(-0.24), _live_put(-0.36), sizing=ctx(zone=None, for_send=True)
+    )
+    assert out.reasons == ["live_delta_out_of_range", "bottoming_delta_too_high"]
+
+
+def test_a_forged_name_tag_on_a_call_or_a_roll_is_not_held_to_the_put_cap():
+    from src.common.schemas import OptionRight, Strategy
+    from src.engine.risk_engine import validate_live_quote
+    from tests.test_engine import _roll_origin
+
+    send = ctx(zone=None, for_send=True)
+    note = _signal_card(-0.24).sizing
+    call = _signal_card(-0.24).model_copy(
+        update={
+            "strategy": Strategy.COVERED_CALL,
+            "right": OptionRight.CALL,
+            "delta": 0.24,
+            "sizing": note,
+        }
+    )
+    live_call = _live_put(0.31).model_copy(update={"right": OptionRight.CALL})
+    assert (
+        "bottoming_delta_too_high" not in validate_live_quote(call, live_call, sizing=send).reasons
+    )
+    roll = _signal_card(-0.24).model_copy(
+        update={
+            "strategy": Strategy.ROLL,
+            "sizing": note,
+            "roll_from": _roll_origin(OptionRight.PUT, 20),
+        }
+    )
+    assert (
+        "bottoming_delta_too_high"
+        not in validate_live_quote(roll, _live_put(-0.31), sizing=send).reasons
+    )
+    # a put that carries a roll origin is a roll whatever its strategy says
+    tagged = _signal_card(-0.24).model_copy(update={"roll_from": _roll_origin(OptionRight.PUT, 20)})
+    assert (
+        "bottoming_delta_too_high"
+        not in validate_live_quote(tagged, _live_put(-0.31), sizing=send).reasons
+    )
+
+
+def test_the_cap_follows_the_configured_signal_delta_max(monkeypatch):
+    from src.engine.risk_engine import validate_live_quote
+
+    cand = _signal_card(-0.24)
+    send = ctx(zone=None, for_send=True)
+    assert validate_live_quote(cand, _live_put(-0.27), sizing=send).verdict == Verdict.REJECT
+    set_regime(monkeypatch, signal_delta_max=0.30)
+    assert validate_live_quote(cand, _live_put(-0.27), sizing=send).verdict == Verdict.PASS
+    assert validate_live_quote(cand, _live_put(-0.31), sizing=send).reasons == [
+        "bottoming_delta_too_high"
+    ]
+
+
+async def test_a_drifted_signal_lot_is_refused_by_the_executor_and_the_order_says_why(
+    tmp_path, monkeypatch
+):
+    """End to end through `execute_candidate`: the fresh quote's delta reaches the re-gate."""
+    from unittest.mock import MagicMock
+
+    from src.common.schemas import OrderState
+    from src.execution.executor import execute_candidate
+    from src.storage.models import OrderRow
+    from tests.test_execution import _db_setup, _make_candidate, _make_mock_bot, _make_mock_ib
+
+    _db_setup(tmp_path, monkeypatch)
+    mock_cfg = MagicMock()
+    mock_cfg.execution.fill_timeout_minutes = 1
+    mock_cfg.execution.quote_timeout_seconds = 1.0
+    mock_cfg.is_live = False
+    monkeypatch.setattr("src.execution.executor.get_config", lambda: mock_cfg)
+    cand = _make_candidate(delta=-0.24)
+    cand.sizing = _signal_card(-0.24).sizing
+    with session_scope() as s:
+        row = OrderRow(candidate_id=cand.candidate_id, state=OrderState.QUEUED)
+        s.add(row)
+        s.flush()
+        order_id = row.id
+    ib = _make_mock_ib()
+    ticker = ib.reqMktData.return_value
+    ticker.bid, ticker.ask = 1.50, 1.60  # the credit is unchanged: only the delta moved
+    ticker.modelGreeks.delta = -0.31  # inside the strategy's own 0.20-0.35 band, over the cap
+
+    await execute_candidate(ib, _make_mock_bot(), "99999", order_id, cand)
+
+    with session_scope() as s:
+        saved = s.get(OrderRow, order_id)
+        assert saved is not None
+        assert saved.state == OrderState.REJECTED
+        assert "Live re-validation failed" in (saved.detail or "")
+    ib.placeOrder.assert_not_called()
+
+
 def test_signal_lot_uses_the_floor_when_the_book_is_full(monkeypatch):
     """The signal changes where the lot may open, never the budget (ruling 34)."""
     from src.common.schemas import OptionRight, PositionSnapshot

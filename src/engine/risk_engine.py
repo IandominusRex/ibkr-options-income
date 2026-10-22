@@ -46,6 +46,7 @@ from src.engine.regime_limits import (
     daily_limit,
     floor_left,
     governing_index,
+    live_bottoming_delta_reason,
     live_cc_delta_reason,
     live_ladder_reason,
     loss_exit_reason,
@@ -363,8 +364,9 @@ def validate_candidates(
         # --- Covered-call breakout (spec section 17): after an upside breakout on a held name
         # a call must sit at or above the strike floor and under the delta cap. A call is
         # pushed out (when nothing on the chain clears both, none is sold on the name that
-        # scan); covered calls only (a roll or a put gets no reason), and not a regime limit (`/regime off` leaves it on). At send time there is no fresh
-        # context: the copy frozen on the candidate carries it.
+        # scan); covered calls only (a roll or a put gets no reason), and not a regime limit
+        # (`/regime off` leaves it on). At send time there is no fresh context: the copy
+        # frozen on the candidate carries it.
         reasons.extend(cc_timing_reasons(sizing, cand))
 
         # --- Earnings blackout: no short premium that lives through (or just before) earnings.
@@ -587,7 +589,10 @@ def validate_live_quote(
     the zone frozen into the card is now below the live underlying price (it bounced). For a
     covered call carrying a breakout it adds ``cc_breakout_delta`` when the LIVE delta is over
     the breakout's ``delta_max`` (the strike floor is a property of the card's strike and was
-    held at decision time; the delta is what can drift).
+    held at decision time; the delta is what can drift). A cash-secured put whose card is tagged
+    as a name-level bottoming signal lot (``sizing.bottoming == "name"``) gets
+    ``bottoming_delta_too_high`` when the LIVE delta is over ``bottoming.signal_delta_max``,
+    with or without *sizing*.
     """
     reasons: list[str] = []
 
@@ -647,6 +652,12 @@ def validate_live_quote(
         drifted = live_cc_delta_reason(candidate, quote, sizing)
         if drifted is not None:
             reasons.append(drifted)
+
+    # A name-level signal lot's delta cap (`bottoming.signal_delta_max`) against the LIVE delta,
+    # read from the tag frozen on the card: it applies with or without a send-time context.
+    signal_drift = live_bottoming_delta_reason(candidate, quote)
+    if signal_drift is not None:
+        reasons.append(signal_drift)
 
     if sizing is not None and candidate.strategy == Strategy.CASH_SECURED_PUT:
         cooldown = loss_exit_reason(sizing, candidate.underlying)
