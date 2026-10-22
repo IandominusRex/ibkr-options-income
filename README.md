@@ -60,6 +60,7 @@ live-cutover checklist), **[STATUS.md](STATUS.md)**; to fork and run it yourself
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only |
 | `/news NVDA` | Queue an on-demand news brief for any ticker; the news service posts it (headlines, facts, chart, 🧠 read) in the News topic |
 | `/news` | Link to the latest news digest |
+| `/regime` | Market regime for SPY and QQQ (normal / cautious / stressed / crisis) and what it means for new puts; `/regime off` suspends the regime limits for the rest of the trading day, `/regime on` resumes them |
 | `/expire` | Expire all pending approvals (clears the queue without executing) |
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
 | `/help` | List all commands |
@@ -101,8 +102,13 @@ Each stage links to its full technical writeup in **[ARCHITECTURE.md](ARCHITECTU
 - **[The rulebook](ARCHITECTURE.md#position-sizing-and-risk--the-rulebook)** — pure deterministic
   Python, zero AI, the only path to an order; checks cash, concentration, and the income floor,
   twice.
+- **[The market regime](ARCHITECTURE.md#position-sizing-and-risk--the-rulebook)** — a deterministic
+  SPY/QQQ regime and a scale-in ladder make the system open fewer, smaller new puts in a falling
+  market, and wait for a lower price before adding to a name that is dropping (a small guaranteed
+  lot keeps it from freezing); it never touches closes, profit-takes, loss exits or rolls.
 - **[Claude's second opinion](ARCHITECTURE.md#claudes-second-opinion)** — a plain-English review of
-  the survivors; advisory only, can never open or block a trade.
+  the survivors; advisory only, can never open a trade or raise a size (its one say on size is a
+  smaller number for a put the system opens by itself).
 - **[Telegram + the autonomy ladder](ARCHITECTURE.md#telegram-and-the-autonomy-ladder)** —
   candidates land on your phone; how much executes automatically depends on a four-rung ladder that
   only promotes on proven fill history.
@@ -130,7 +136,7 @@ Each stage links to its full technical writeup in **[ARCHITECTURE.md](ARCHITECTU
 - **[The news thread](ARCHITECTURE.md#the-news-thread--what-happened-and-what-it-means)** — a
   separate process that posts number-grounded macro, market and ticker news with its textbook
   and measured market reaction to its own Telegram topic; enrichment only, it can never rank,
-  gate or size a trade.
+  gate a trade, and its market picture only informs the reviewer's reduce-only size cut.
 
 ## Safety net
 
@@ -138,8 +144,10 @@ Each stage links to its full technical writeup in **[ARCHITECTURE.md](ARCHITECTU
   *and* the account is pointed at the live port — with a loud on-screen banner either way.
 - **The Rules Engine is the only door to an order**, runs with zero AI involvement, and checks twice
   — once when ranking, once again with a fresh quote right before sending.
-- **Claude (or the local model) can never place, size, or gate a trade** — if it's unavailable, the
-  system trades the deterministic, rule-approved list anyway.
+- **Claude (or the local model) can never place or gate a trade, or raise its size** — the one
+  exception is a reduce-only cut of an auto-opened put's contract count (from a Claude review,
+  never the local model), applied in paper and record-only in live until you switch it on. If it's
+  unavailable, the system trades the deterministic, rule-approved list anyway.
 - **A second human tap is required for every order in live mode**, on top of whatever the autonomy
   rung already required.
 - **Secrets never touch git** — tokens and account IDs live only in a local, gitignored `.env` file.

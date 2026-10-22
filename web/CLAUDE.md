@@ -833,13 +833,19 @@ features/trades/    Web overhaul Part 2: TradesPage (the strategy switcher with 
 features/claude-context/  What Claude knows (read-only): ClaudeContextPage (react-query on
                     GET /claude/context, refetched every minute; the loading block, the error with
                     its retry, then the cards), RegimeCard (SPY and QQQ regimes as words, the CSP
-                    limits as figure lines, the leveraged-ETF ceilings and Claude's cut mode),
+                    limits as figure lines, the leveraged-ETF ceilings, Claude's cut mode, and a
+                    stack of amber flag words at the top when they apply: `Off in config`,
+                    `Suspended today` and `Cuts paused today` (today's cut breaker has tripped,
+                    from `claude_cut_breaker_tripped_today`; the cut-mode line then ends ", paused
+                    today")),
                     PictureCard (stories first; the numbers, seasonality as a weak signal and the
                     events behind a disclosure; stale says so), CallsCard (a row per Claude call,
                     its prompt blocks as non-interactive chips), DroppedCard (the first five, the
                     rest on request, promotions, the unreviewed count), NamesCard (a row per name:
-                    Python's health, Claude's story and summary labelled as Claude's, verified
-                    events), FigureLines (the perforated figure lines), format.ts (New York times,
+                    Python's health, Claude's story and summary labelled as Claude's, the figures
+                    Claude quoted from the news under "Reported in news (not computed by the
+                    system)" apart from the story, each with its cluster id as evidence, and
+                    verified events), FigureLines (the perforated figure lines), format.ts (New York times,
                     percents, the regime line, the leveraged sentences) and types.ts (aliases of
                     the generated api-types). Nothing here writes or reaches a command.
 features/more/      TargetCard + target.ts (the income-target form's rules: text in, a validated

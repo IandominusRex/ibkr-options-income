@@ -414,6 +414,39 @@ price/IV data (K skipped for missing data)` — so a data outage (no cached IV/p
 can never look identical to "fewer symbols are tradeable." If `K` is large, fix the data gap (run
 the backfills below) before trusting the tradeable count.
 
+### `config/risk_limits.yaml` — the regime, leveraged-ETF, Claude-cut and covered-call-timing blocks (2026-10-22)
+
+Four top-level blocks added by the market picture build (`docs/superpowers/specs/2026-10-20-market-picture-design.md`).
+**Your private `config/risk_limits.yaml` does not have them yet**, and a private file without a block gets the
+shipped defaults, which means **the regime is enabled the first time the trading service restarts** (for example
+TQQQ is capped at 6 contracts per put even in a normal regime, by the leveraged-ETF ceiling). Copy the blocks from
+`config/examples/risk_limits.yaml` (`diff config/risk_limits.yaml config/examples/risk_limits.yaml`), read them, and
+change what you disagree with; the shipped numbers are starting values, all config-tunable. The blocks refuse an
+unknown key at first use (a typo fails loudly rather than leaving a default in force). Nothing in any of them
+limits a close, a profit-take, a loss exit or a roll.
+
+| Setting (YAML path) | Default | What it means |
+|---|---|---|
+| `regime.enabled` | true | Master switch for the regime limits (budgets, per-trade ceiling, daily count, floor, ladder zone, bottoming guards). `/regime off` suspends them for one trading day instead. Not the leveraged-ETF ceiling, the same-day loss-exit block or the covered-call breakout rule: each has its own switch. |
+| `regime.tech_linked` | QQQ, TQQQ, SMH, SOXL, NVDA, AMD, AVGO, AAPL, MSFT, GOOGL, AMZN, META, PLTR, MAGS, HACK, IGV, CRWD, NBIS, IONQ, RGTI, BABA, TSLL, MARA | Names governed by the stricter of the SPY and QQQ regimes; every other name follows SPY. An explicit list on purpose: the sector tags misclassify some names. Add a new tech-like name here. |
+| `regime.csp.budget_multiplier` | normal 1.0, cautious 0.7, stressed 0.4, crisis 0.1 | Scales the CSP budgets: the total CSP allocation by the SPY regime's multiplier, a name's per-ticker and per-sector risk caps by its own regime's. The cash reserve and the collateral caps never scale. |
+| `regime.csp.per_trade_fraction` | 1.0 / 0.6 / 0.3 / 0.1 | The per-trade ceiling as a fraction of `cash_secured_put.max_contracts`, rounded down. |
+| `regime.csp.max_new_per_day` | null / 6 / 3 / 1 | New CSPs per ET day per governing index (QQQ for a tech-linked name, SPY for every other). `null` is no limit. |
+| `regime.csp.floor_new_per_day` | 0 / 2 / 1 / 1 | **The guaranteed floor.** Lots per governing index per day that may exceed the *scaled* budget (never the unscaled caps, the per-trade ceiling or the daily limit), so a full book is not a complete stop. |
+| `regime.thresholds.*` | VIX 22 / 28 / 36; percentile 90 with a VIX of at least 20; VIX/VIX3M 1.00 / 1.10; slow drawdown 10%, 1-month return -5%; `ease_contango_days` 3, `min_days_in_regime` 2 | What lifts the daily base: the VIX close for **both** indices, its 1-year percentile (only with a VIX of at least 20), the VIX/VIX3M term ratio (above 1 is backwardation); slow signals add at most one notch; easing is one notch at a time. |
+| `regime.thresholds.intraday` | SPY -2.0% / -3.5%, QQQ -2.5% / -4.0%, live VIX 30 / 40 | One-way escalation within a day (stressed / crisis); it expires at the close and a restart does not relax it. |
+| `regime.ladder.*` | `regimes: [stressed, crisis]`, `min_gap_pct` 5 (7 in crisis), `min_gap_atr` 1.5, `band_atr` 0.5, `broken_atr` 1.0, `anchor_survival_days` 5, `name_drawdown_atr` 2.5 over 10 sessions, `recovery_closes` 2, `near_money_atr` 0.5, `loss_exit_same_day_block` true | The scale-in ladder: under it a further CSP lot on a name is accepted only once the price has fallen into a zone below its last lot (the larger of the percent and ATR gap, around the support). It applies to every held name in the listed regimes, and to a name in any regime when a trigger holds (it fell `name_drawdown_atr` ATRs from its recent high, a short put on it is at or near the money, or it had a loss exit within `anchor_survival_days`). `recovery_closes` closes *after* the last lot above the 20-day average and the last-broken support lift it. `loss_exit_same_day_block` stops new CSPs on a name for the rest of the ET day of its loss exit. A first lot (no anchor) is free. **Tune `recovery_closes` and `min_gap_*` after the 4-week review** (STATUS.md). |
+| `regime.bottoming.*` | `vix_spike_pct` 25, `spike_sessions` 10, `off_peak_pct` 15, `rsi_oversold` 30, `rsi_lookback` 5, `signal_delta_max` 0.25, `signal_lot_every_sessions` 3 | The bottoming signal: a deterministic sign a bottom is forming eases a market regime **one notch** (a fresh breach of an escalation threshold cancels it for the day) and lets one lot into a name under the ladder, at a delta of at most `signal_delta_max` and at most one per name per N sessions. That name-level signal lot is the only lot exempt from the variance-premium floor. `signal_delta_max` must stay above `cash_secured_put.delta_min` (checked at load: an empty band would let nothing through). |
+| `leveraged_sizing.enabled` | true | The leveraged-ETF ceiling: a smaller per-trade size for 2x and 3x ETFs **in every regime**. Not a regime limit: `/regime off` and `regime.enabled: false` leave it on. Rolls are exempt. |
+| `leveraged_sizing.per_trade_fraction` | calm 3x 0.6, 2x 0.8; stressed 3x 0.3, 2x 0.5 | Multiplied into the regime's own ceiling, at least one lot. *Calm* while the name's regime is normal and no ladder trigger holds on it; *stressed* otherwise. |
+| `leveraged_sizing.leverage` | TQQQ 3, UPRO 3, SOXL 3, DPST 3, LABU 3, TSLL 2 | Your map of leveraged ETFs to their daily factor. A name in `universe.yaml`'s `leveraged_etfs` missing here is treated as 3x (the strictest) with a warning. **TSLL's 2 is a guess: confirm it.** |
+| `claude_cut.apply_in_paper` / `apply_live` | true / **false** | Claude's reduce-only size cut of an auto-opened opening put (it can lower the contract count, never raise it, and never touches a covered call, roll, close, strike or price). Applied in paper; **record-only in live until you have read `python -m scripts.sizing_report` and switched `apply_live` on** (also a live-cutover gate step, `STATUS.md`). Only a Claude CLI review can cut: a local Ollama review never does. |
+| `claude_cut.breaker_min` / `breaker_pct` | 4 / 50 | The daily circuit breaker: once at least 4 auto puts were cut to zero today and they are more than 50% of the day's reviewed ones, further cuts that day are recorded but not applied, and a Telegram alert says so. |
+| `cc_timing.breakout.*` | `enabled` true, `lookback_sessions` 5, `jump_atr` 1.5, `volume_mult` 1.5, `high_sessions` 60, `fade_atr` 1.0, `floor_atr` 1.0, `delta_max` 0.25 | The covered-call breakout rule: after an upside breakout on a held name (a close up at least `jump_atr` ATRs on `volume_mult` times its average volume, above resistance or at a `high_sessions` high) its calls must be at or above `max(next resistance, price + floor_atr x ATR)` and at a delta of at most `delta_max` for `lookback_sessions` sessions or until a close fades `fade_atr` ATRs. It only pushes strikes out; when nothing on the chain clears the floor and the cap, no call is sold on that name that scan. Own switch, not a regime limit. `delta_max` must stay above `covered_call.delta_min` (checked at load). |
+
+Read what the limits cost and earned with `python -m scripts.sizing_report` (§18). After editing, restart the
+trading service (daemons do not hot-reload).
+
 ### `config/scoring_weights.yaml`
 
 Controls how much weight each factor gets when ranking candidates (IV rank, technicals,
@@ -701,6 +734,8 @@ Once the approval service is running, you can interact with the system from your
 | `/campaigns open` | Same as `/campaigns` but filtered to open (in-progress) campaigns only. |
 | `/news NVDA` | Queues an on-demand **news brief** for any ticker (universe or not) and replies `📰 Building NVDA brief → News thread` (or `📰 Queued NVDA brief. ⚠️ …` saying why when the news service is disabled or has no recent heartbeat; the request then waits for it). The news process (§17) fetches fresh headlines, builds the fact sheet, a chart and a 🧠 read, and posts the brief in the News thread, usually within a minute or two. A repeat request within `news.briefs.dedupe_minutes` (10) reuses the first. Nothing here can reach an order. |
 | `/news` | Replies with a link to the latest news digest (or "No digest posted yet"). |
+| `/regime` | **Market regime** (2026-10-22). Shows the SPY and QQQ regimes (normal / cautious / stressed / crisis, the daily base and what raised it today), what each means for new puts (the CSP budget, the per-trade size and the new puts allowed today), the live inputs (VIX, VIX/VIX3M, the index's move) and whether the limits are active. The state is refreshed first, so the reply is current; with no market data yet it says so. A regime-change notice (orders thread) also says when opening orders already working at the broker are unchanged. |
+| `/regime off` / `/regime on` | Suspend every regime limit for the rest of this trading day (the next trading day's base is back under the limits), or resume them now. Closes, profit-takes, loss exits and rolls are never limited by the regime. **Not switched off by it:** the leveraged-ETF size limit, the same-day loss-exit block on a name, and the covered-call breakout rule (each has its own switch in `risk_limits.yaml`). |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
@@ -1827,7 +1862,9 @@ earnings timing). [Finnhub](https://finnhub.io/register)'s free key is optional 
 news with images, general market news and earnings actuals (personal use, 60 calls/min; the
 client stays under 50). **Earnings-release alerts need the Finnhub key**: it is the only source
 that reports EPS actuals. The 🧠 read uses the same LLM chain as the trade review (`claude -p`,
-then local Ollama), capped at `news.llm.max_calls_per_day` (40) calls per day.
+then local Ollama), capped at `news.llm.max_calls_per_day` (**44** since 2026-10-22: 30 general calls for cards,
+digests and briefs, 10 reserved for triage and picture builds, 4 for the dossiers; see "The market picture and the
+dossiers" below).
 
 ### Enable it
 
@@ -1837,7 +1874,11 @@ then local Ollama), capped at `news.llm.max_calls_per_day` (40) calls per day.
 2. Reinstall to pick up the new chart dependency: `pip install -e ".[dev,sentiment]"`
    (`matplotlib` is now a core dependency).
 3. `cp config/examples/news.yaml config/news.yaml` (your copy is git-ignored). Every key has a code
-   default, so a missing file just runs the shipped settings.
+   default, so a missing file just runs the shipped settings. **An existing private `news.yaml`** needs
+   `llm.max_calls_per_day: 44` if its `llm:` line spells out 40 (that keeps only 26 general calls a day: 40 less the
+   10 reserved for the picture and the 4 for the dossiers); copy the `dossier:` block from the example too, and
+   `triage:` and `picture:` if you want to tune them: all three have code defaults identical to the example, so
+   leaving them out changes nothing, but then you cannot see what is in force.
 4. Probe the sources: `python -m scripts.news_probe`. It prints item counts per RSS feed, whether
    Finnhub answers, and re-derives Nasdaq's economic-calendar date offset. Delete any feed that
    returns `0 items` twice from `sources.rss_feeds`. If the probe prints
@@ -1872,6 +1913,7 @@ the scan's news sentiment reads.
 | 🔴/🟢 Market move, ⚠️ VIX | SPY/QQQ/DIA crossing −1/−2/−3% or +2/+3%, each level once a day; VIX +15% or crossing 25/30 |
 | 🌍 Breaking | A war/ceasefire/sanctions/tariff/Fed/fiscal/energy story from at least two publishers that moved ES/SPY ≥ 0.5% within 30 minutes of first appearing |
 | Brief | `/news TICKER` in Telegram or "Request fresh brief" on the web |
+| Late promotion | A story the triage dismissed as noise that the market then moved against: "Dismissed earlier; the market moved -1.8% after it. Cause not confirmed." It proves a move, never a cause; at most `triage.max_promotions_per_hour` (2) an hour, each story once, silent in quiet hours and counted in the hourly alert cap |
 
 At most `alerts.max_per_hour` (6) non-critical alerts per hour (the rest roll into the next digest
 under "Also flagged (alert cap)"); a second development on the same
@@ -1888,12 +1930,95 @@ textbook move), not blank. Law-firm "investors have opportunity to lead … laws
 out of cards and digests by `tagging.noise_terms`; a 🧠 read that cites nothing is withheld
 (`🧠 withheld (uncited)`) rather than posted.
 
+### The market picture and the dossiers (2026-10-22)
+
+The news service now also keeps two things every `claude -p` call reads (the trade review, `/scan TICKER`, the
+roll review, the EOD journal, the spreads picker and the news cards themselves), and the web page *What Claude
+knows* (`/more/claude`, §18) shows them. Both are deterministic first: Python computes every number, decides what
+is kept, and checks what the model writes; nothing the model writes is kept unless Python can verify it.
+
+| Part | What it does | Config (`news.yaml`) |
+|---|---|---|
+| **Triage** | New stories are ranked by a Python presort, then one batched model call puts each in a pile: 1 shapes the picture, 2 is worth telling, 3 is noise. It runs at 10:30, 12:30 and 14:30 ET and inside each digest. A story an alert rule fired on, or one about a held name, is never below pile 2. The digest now orders its stories by this (the old editor pass is gone). | `triage.enabled`, `batch_size` 40, `rth_batch_times` |
+| **Noise check** | After a story was dismissed, if the market moves against it (a ticker's move net of its beta to SPY, or an index move) it is promoted to pile 2 and posted late (the "Late promotion" card above). | `triage.promote_index_move_pct` 1.0, `promote_ticker_residual_pct` 3.0, `promote_window_min` 60, `max_promotions_per_hour` 2 |
+| **The market picture** | Up to five multi-week stories (Python decides how long each lives; the model cannot keep one alive) plus both indices' regimes from the trading process, numbered facts, upcoming events, SPY's calendar-month tendency (labelled a weak signal) and the noise counts. Rebuilt after the pre-market and close digests or when a top story was judged, at most 4 times a day. A failed rebuild keeps the stories by title and marks the picture stale. | `picture.enabled`, `max_rebuilds_per_day` 4, `max_stories` 5, `story_window_days` 7, `story_min_new_clusters` 2, `story_match_jaccard` 0.3, `staleness_hours` 26 |
+| **Dossiers** | One note per name the book cares about (`would_own`, `actively_wheeling` and held, about 33). Python refreshes the numbers, a health label and the 7-day sentiment every hour with no model call (outside the window below nothing is refreshed); Claude writes a short profile, the current story (using only the name's own numbers), up to three figures it quotes from the news (shown apart, labelled "Reported in news (not computed by the system)", each checked against the cited story) and proposed events whose dates Python verifies. Six names per call, under their own daily cap. The refresh and the builds run only from the pre-market to the close digest time on trading days: a name added at night has no notes until 08:00 ET. A rejected name keeps its previous notes marked stale; a whole-batch failure makes the service wait an hour (the dossier's four daily calls are then not burned on a down model). | `dossier.enabled`, `batch_size` 6, `max_calls_per_day` 4, `facts_refresh_min` 60, `prose_min_interval_hours` 6, `profile_days` 7, `story_window_days` 7, `max_event_days` 45, `staleness_hours` 26, `max_names_in_review` 8, `keep_days` 30, `health.de_strong` / `de_weak` |
+
+The daily call budget is `llm.max_calls_per_day` (44): general calls stop at that less `llm.reserved_for_picture`
+(10) less the dossier's own cap, so 30; picture and triage calls draw on the reserve; a disabled dossier hands its
+4 calls back to general. `GET /news/status` still shows the day's total against the cap. The first day builds the
+whole dossier backlog (about 33 names at 24 a day), so a few names wait for the second day. A name's notes appear in
+a trade review as a compact note (at most `max_names_in_review` names), and a review that was reused earlier in the
+day is redone when a name's story or events changed.
+
 ### Commands
 
 | Command | What it does |
 |---|---|
 | `python -m scripts.run_news` | The news service. Normally started by `scripts.start` / `./ibkr restart`; `--no-news` skips it. Idles when `config/news.yaml → enabled` is false. Logs to `logs/news.log` (`./ibkr logs news`) |
 | `python -m scripts.news_probe` | Live probe of every news source (read-only, writes nothing): RSS item counts, Finnhub, and the inferred Nasdaq date offset against the configured one. Run before go-live and whenever a source looks dead |
+
+---
+
+## 18. Market regime, regime sizing and the first restart (2026-10-22)
+
+What the market picture build changes for you (full design: `ARCHITECTURE.md`, the rulebook paragraph and "The news
+thread"; status and limits: `STATUS.md`): in a falling market the system now opens **fewer and smaller new puts**
+(a regime for SPY and QQQ from the VIX, a per-trade size, a daily count, a small guaranteed floor), waits for a
+**lower price** before adding to a name that is dropping (the scale-in ladder, with a same-day block after a loss
+exit), pushes **covered-call strikes out** after a breakout, sizes **leveraged ETFs smaller** in every regime, and
+lets Claude **lower (never raise)** an auto-opened put's size. Every Claude call also reads a shared market picture
+and a note per name. Closes, profit-takes, loss exits and rolls are never limited. **Everything here ships on** (the
+regime, the leveraged ceiling, the breakout rule, triage, the picture and the dossiers) **except
+`claude_cut.apply_live`, which is off.** It has only been tested offline: nothing has run against real data yet.
+
+### Before the first restart
+
+1. **Add the new blocks to your private config.** `diff config/risk_limits.yaml config/examples/risk_limits.yaml`
+   and copy `regime:`, `leveraged_sizing:`, `claude_cut:` and `cc_timing:` (reference: §5, "the regime,
+   leveraged-ETF, Claude-cut and covered-call-timing blocks"). Without them the shipped defaults apply and **the
+   regime is enabled** at the restart. Keep `claude_cut.apply_live: false`. Confirm TSLL's factor in
+   `leveraged_sizing.leverage` (2 is a guess; it only matters if you ever sell puts on it).
+2. **Add to your private `config/news.yaml`:** `llm.max_calls_per_day: 44` (if your `llm:` line says 40) and the
+   `dossier:` block, so you can see and tune it (§17; its code defaults match the example).
+3. Nothing else in `.env` or `settings.yaml` is new.
+
+### Restart
+
+Daemons do not hot-reload, so nothing here is live until you restart. `./ibkr restart` restarts the whole stack in
+one go (the supervisor starts the approval service and monitor first, then the API, the research worker, the spreads
+service and the news service). What matters is that the new code reaches the **trading service** (it creates
+`sizing_actions` and owns the regime record), then the **news service** (four new tables in `data/news.db`), and
+the **API** last: the API opens both read-only and answers `available: false` or empty sections until they exist,
+and fills in on the page's next refresh. Restarting pieces by hand, use that order: trading service, news
+service, API. The web page needs the web app to serve this build (`next dev` picks it up; a `next start`
+deployment needs a build first).
+
+### Scripts
+
+| Script | What it does |
+|---|---|
+| `python -m scripts.sizing_report [--since YYYY-MM-DD]` | **Read this before switching `claude_cut.apply_live` on.** Per action kind (regime budget, ceiling and daily-limit trims, the leveraged ceiling, floor lots, ladder and loss-exit blocks, bottoming lots, Claude's cuts, covered-call breakout floors) it prints how many lots were withheld and what they would have earned, as two marks side by side: **exact** (some contracts traded, so the withheld ones are valued at the traded contract's realised P&L) and **shadow** (Black-Scholes at the entry IV on daily closes, not a real fill). The EOD run does the valuing, so recent rows stay unvalued until their expiry settles. Read-only. |
+| `python -m scripts.replay_week --db PATH` | Replays the real CSP entries of a window (default 2026-09-30 to 10-20) through the real regime and ladder code, read-only, and prints per entry the verdict and the size and P&L before and after. Open legs are marked at intrinsic value only, so compare shapes, not cents. |
+| `python -m scripts.export_week_fixture --db PATH --out DIR` | One-off. Writes the daily bars the replay test (`tests/test_week_replay.py`) runs on. You never need it unless you rebuild that fixture. |
+| `python -m scripts.claude_usage` | Where the `claude -p` tokens go, by call kind (§5, the `claude:` block). The picture, the book and the name notes add to every review prompt (offline fixture measurements: STATUS.md post-restart list); check the real weight after a day. |
+
+### Using it
+
+| Where | What you get |
+|---|---|
+| `/regime` in Telegram | The two regimes, the limits they imply and whether they apply; `/regime off` suspends the regime limits for the day, `/regime on` resumes. A change of regime is announced in the orders thread. |
+| An order card | A size line when the regime or the leveraged ceiling cut a put, it took a guaranteed lot, or its fair-value floor was waived (a bottoming-signal lot); the ladder zone for a name under it; a `Breakout` line on a covered call; `Claude suggests N of M` on a manual card when Claude would cut. A trimmed order says so in its detail and in Telegram. |
+| The web page **What Claude knows** (`/more/claude`, from More) | Read-only: the market picture, the regime and its limits (with `Off in config`, `Suspended today` and `Cuts paused today` flags), whether Claude's cut is applied (paper) or recorded only (live), what each of the seven Claude calls reads, the stories the triage dropped as noise, and each name's notes. Every piece of Claude's text is labelled as Claude's; Python's numbers are not. |
+
+### After the restart
+
+Check the first-day items and keep the 4-week review: the **Post-restart review** list in `STATUS.md`
+(the first scan writes the regime and `/regime` answers; the first send does not say "ladder not re-checked";
+the breakout rule on real bars; `/more/claude` with real data; the real prompt sizes). The review owed about 4
+weeks later covers ladder over-blocking (`recovery_closes`, `min_gap_*`), Claude's floor-lot vetoes and
+`claude_cut.apply_live`, how often the variance-premium waiver fired, and the dossier stories and quoted figures
+that survived checking.
 
 ---
 
@@ -1914,6 +2039,9 @@ out of cards and digests by `tagging.noise_terms`; a 🧠 read that cites nothin
 | `/campaigns` or the portfolio page shows an adjusted cost basis far below IBKR's average cost on a multi-contract assignment (e.g. MARA 8.30 vs 11.64) | The basis was written before 2026-10-13 by a formula that divided premium by 100 instead of by the shares assigned | Restart the services: `init_db()` repairs it and logs `adjusted cost basis repaired …`. A row whose assigned leg can't be found is left as is and the gate falls back to IBKR's average cost |
 | Spreads candidates always rejected with `account_unknown` | The account's base currency is not USD and the service could not find a USD exchange rate in the account stream | Fixed 2026-10-09 (it now also reads `$LEDGER-ExchangeRate`). If it recurs, check `ib.accountValues()` for the tag your account sends |
 | News: a scheduled US release (CPI, UoM…) posts long after the print | Fixed 2026-10-09: the econ-actuals loop could sleep its full `econ_poll_minutes` past a release's fast window | If it recurs, check `./ibkr logs news` around the release for the `econ_actuals` loop and `GET /news/status` |
+| `/regime` says "No regime state yet" or "no market data yet: assumed normal" | The first scan has not run, or yfinance returned nothing for SPY, QQQ, ^VIX or ^VIX3M (with no regime recorded yet it reads normal and says so; with one recorded the last known regime stays and the stale inputs are named: a data gap never makes it calmer) | Wait for the next scan; `/regime` refreshes it. If it persists, check the data provider (`logs/system.log`) |
+| Puts are suddenly smaller or rejected with `regime_budget`, `regime_ceiling`, `leveraged_ceiling`, `regime_daily_limit`, `scale_in_zone_not_reached` or `loss_exit_cooldown` | The market regime, the leveraged-ETF ceiling or the scale-in ladder is working as designed | `/regime` for the regime and the limits; `/regime off` suspends the regime limits for the day (not the leveraged ceiling or the same-day loss-exit block); `python -m scripts.sizing_report` for what the limits cost |
+| The What Claude knows page shows "no news service" or empty sections | The news service has not run since the restart, `data/news.db` has no picture or dossier tables yet, or the API started before them | Restart in the §18 order and wait one refresh; the regime and the limits show either way |
 | No posts in the News topic | The news service is not running, `TELEGRAM_THREAD_NEWS` is wrong, or every source is failing | `./ibkr logs news`; `GET /news/status` (heartbeat age, last successful poll per source); `python -m scripts.news_probe`. With `TELEGRAM_BOT_TOKEN`/`CHAT_ID` unset the service still stores posts (the web `/news` page shows them) but sends nothing |
 | News cards end with *"🧠 off (daily cap)"* | `news.llm.max_calls_per_day` (40) is used up for the ET day | Raise it in `config/news.yaml`, or accept deterministic cards until midnight ET. *"🧠 unavailable"* instead means both LLM backends failed or returned invalid JSON twice |
 | A macro card keeps *"📈 reaction pending (data delayed)"* | yfinance futures/intraday bars lag ~10 minutes; after `reaction.max_wait_min` (35) the card is finished with whatever bars exist | Raise `reaction.max_wait_min` if it happens on most releases |

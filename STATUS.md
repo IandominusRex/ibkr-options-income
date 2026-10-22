@@ -282,6 +282,8 @@ Every stage of the desk pipeline exists in `src/` and is exercised by `tests/`:
 - **Dashboard** — read-only Streamlit views archived to `Archive/dashboard/` (optional `[dashboard]` extra; restore folder to `dashboard/` to reinstate).
 - **Trade ledger backend** (`src/ledger/`, `src/reporting/trade_ledger.py`, `src/api/routers/ledger.py`) — a broker-truth ledger of every IBKR execution (CSV/Flex/live), rolled up into trades → tickers → a USD portfolio summary, with a read-only API and a one-way Google Sheets mirror. The web dashboard (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) is built too — see "Built (2026-10-06 — trade ledger backend)" below for the full detail, the deferred-for-v1 list, and known limitations.
 
+- **Market regime, regime sizing and the news expert** (2026-10-22, `src/analytics/{regime,support_levels,scale_in,bottoming,seasonality,breakout}.py`, `src/regime/`, `src/engine/regime_limits.py`, `src/news/{triage,stories,picture,noise_check,dossier}.py`, `GET /claude/context` and the web page `/more/claude`) — see "Built (2026-10-22 — market picture, regime sizing and the news expert)" below: a deterministic SPY/QQQ regime that shrinks new cash-secured puts, a scale-in ladder, Claude's reduce-only size cut, a covered-call breakout rule, and a news-side market picture and per-name dossiers that every Claude call reads. **Offline-tested only; nothing is live until the operator restarts `./ibkr`.**
+
 ---
 
 ## Tech stack
@@ -334,10 +336,179 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Campaign chaining (C6)** | **Built (Competitive Phase 4); cost-basis wired live in Phase 6.** `src/storage/campaigns.py` links each CSP→assignment→CC→roll→close sequence for a symbol into one P&L thread (`CampaignRow`). The executor calls `attach_fill_to_campaign` after every fill, which opens a campaign on the first SELL, appends subsequent fills as legs, and auto-closes when buy quantity equals sell quantity (unless assigned). `mark_campaign_assigned(symbol, assignment_price, right, candidate_id)` sets `assigned=True` and computes `adjusted_cost_basis = assignment_price − premium / assigned shares` for share-acquiring (put) assignments (per assigned share since 2026-10-13; it divided by 100 before). **Phase 6 closed a gap:** `mark_campaign_assigned` was previously only called in tests, so adjusted cost basis was never populated in production — the EOD reconciler now calls it for each detected assignment (`eval/assignment.assigned_shorts` surfaces the strike). `adjusted_cost_basis` now also feeds the covered-call gate directly (D5, remediation Task 6): `strategies/covered_call.py` reads a whole-position basis via `campaigns.adjusted_cost_basis_for(symbol, shares_held, avg_cost)` — IBKR's `avg_cost` less the premium of legs before each assignment, over every open assigned campaign — and uses it, falling back to IBKR's `avg_cost` when no open assigned campaign exists, for the `min_strike_vs_basis` comparison, collateral, ROC, breakeven, and the ideal-zone cost basis, so the wheel's already-collected premium affects which strikes are writable rather than being visible only on the `/campaigns` and `/campaigns open` Telegram commands, which still display the wheel P&L thread for each symbol. |
 | **Phase 5 disk cache** | **Built.** Fundamentals (`src/analytics/fundamentals.py`) and sentiment (`src/analytics/sentiment.py`) are persisted to SQLite via `FundamentalCacheRow` and `SentimentCacheRow` (`src/storage/models.py`) with an earnings-aware TTL. The cache invalidates daily and on proximity to earnings so stale fundamentals do not leak through a blackout. |
 | **ML regime detection, vol forecasting, Postgres migration, local-LLM hybrid** | Future ideas, not started. The FMP/Polygon provider swap is now a config change (Phase 2's `src/data/` abstraction), so the data-backend half of any future migration is a `config/settings.yaml → data.*` edit plus a new backend implementing the Protocols — not a rewrite of every analytics module. |
+| **Claude's covered-call event hold and `/ccholds` (withdrawn 2026-10-21)** | **Deliberately not built.** The 2026-10-20 draft let Claude hold a covered call ahead of a Python-verified dated event. Research (spec section 18) did not support holding calls after a past jump, and the operator withdrew it (spec decision 34; plan Task 20 is a removed stub). What exists instead is the deterministic breakout rule, which only pushes strikes out. `tests/test_regime_fence.py::test_no_llm_value_reaches_a_covered_call` keeps any LLM value off a covered call. |
+| **Claude power over covered calls, rolls, closes, strikes, prices and exits** | **Deliberately not built, and fenced.** Claude's one say on size is the reduce-only `max_contracts` cut of an auto-opened opening cash-secured put (`regime_limits.claude_cut`); there is no covered-call exception and no LLM value reaches a roll, a close, a strike, a price or an exit (`tests/test_regime_fence.py`). |
+| **Dossiers for the spreads book** | **Deliberately not built.** `dossier_symbols` drops the spreads book's underlyings (the wheel and the spreads book never share an underlying); the spreads picker reads the market picture, not dossiers. |
 | **News thread: spreads-book impact, IBKR real-time reaction data** | **Deferred.** The news cards' "your book" lines cover the wheel only (spreads legs are excluded from the portfolio snapshot); real-time reaction data via IBKR is out because the news process deliberately holds no IBKR connection. No LLM-derived news signal will ever enter ranking, gating or sizing (spec D3, permanent). |
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
+
+---
+
+## Built (2026-10-22 — market picture, regime sizing and the news expert)
+
+`docs/superpowers/plans/2026-10-20-market-picture.md` (spec `docs/superpowers/specs/2026-10-20-market-picture-design.md`,
+operator decisions 1-39), built on `feat/market-picture`. Why: in the week of 2026-10-13 (SOXL -43%, TQQQ -19%,
+the VIX never above 23) the reviewer said "sell" on all twelve TQQQ and SOXL candidates with nothing in its
+prompt about the positions already open on those names, and the system re-entered the same names 18-55
+minutes after stop-outs.
+
+> **Verified by the offline test suite only.** Every test is offline (IBKR, Telegram, `claude -p`, Ollama and
+> the data providers are mocked or stubbed). None of this has run against a real provider, a real model, the
+> broker or the operator's database. Daemons do not hot-reload: **nothing is live until the operator restarts
+> `./ibkr`** (trading service first, then the news service, then the API). Read the "Post-restart review"
+> list below.
+
+**Built:**
+
+- **Market regime and regime sizing.** `src/analytics/regime.py` classifies SPY and QQQ separately (normal,
+  cautious, stressed, crisis) from the VIX, its percentile and the VIX/VIX3M term ratio, with slow trend
+  signals adding at most one notch and a one-way intraday escalation that expires at the close; the persisted
+  `RegimeState` (`system_settings`, written only by the trading process) is refreshed every scan, announced
+  on Telegram when it changes, and shown and suspended with `/regime`, `/regime off` and `/regime on`. The
+  regime scales the CSP budgets, the per-trade ceiling and the number of new CSPs a day; a guaranteed floor of
+  a few lots per index per day may still exceed the scaled budget (so a full book is not a complete stop);
+  a tiered leveraged-ETF ceiling (2x and 3x ETFs, calm and stressed) applies in every regime and is not a
+  regime limit (`/regime off` leaves it on). The sizer and the gate call the same pure functions
+  (`src/engine/regime_limits.py`), and the order poll re-reads the regime at send time and can only trim a
+  queued put. Missing or stale market data never reads as calm. Closes, profit-takes, loss exits and rolls are
+  never limited.
+- **The scale-in ladder and the same-day loss-exit block.** In a stressed market, or whenever a name-level
+  trigger holds (the name fell hard, a short put on it is at or near the money, or it had a loss exit
+  lately), a further CSP lot on a name is accepted only once the price has fallen into a support-based zone
+  below its last lot; a loss exit on a name blocks new CSPs on it for the rest of that ET day. The send-time
+  re-gate re-checks the zone against the live underlying price. `/regime off` lifts the zone, not the
+  same-day block. **Replay of the real entries of 2026-09-30 to 10-20 with the rules as built**
+  (`scripts/replay_week.py`, read-only): 40 CSP opens judged, 9 blocked, 4 trimmed, contracts 168 to 122,
+  loss exits -$7,824 to -$3,274; the four must-catch entries of the week of 10-13 (SOXL 100P, TQQQ 75P / 70P,
+  TQQQ 68P) are all blocked (`tests/test_week_replay.py`, a hard gate never to be loosened). The CSP P&L
+  levels in the replay are not comparable with the spec's (no option marks are stored, so open legs are
+  intrinsic-only).
+- **The bottoming signal.** A deterministic sign that a bottom is forming eases a market regime one notch and
+  lets one guarded lot into a falling name (delta at most 0.25, one per name per 3 sessions). **Only that
+  name-level signal lot is exempt from the variance-premium floor** (`premium_below_fair_value`, operator
+  decision 2026-10-22, OI-B3): one rule (`regime_limits.vrp_waiver`) used by the generator and the gate,
+  tagged on the card (`bottoming-signal lot: fair-value floor waived`), recorded in the sizing record, and
+  held at send time to the delta cap against the live quote.
+- **The news expert** (`src/news/`). Three-pile triage with a Python floor (an alert-rule story or a held
+  name is never below pile 2), up to five multi-week stories whose survival Python decides, a grounded
+  `MarketPicture` in `data/news.db` (regimes, numbered facts, upcoming events, SPY seasonality as a labelled
+  weak signal, noise counts), and a market-reaction noise check that promotes a dismissed story when the market
+  moves after it. `news.llm.max_calls_per_day` is 44: 30 general, 10 reserved for triage and picture builds,
+  4 for the dossier.
+- **Every Claude call reads the picture.** The trade review, `/scan TICKER`, the roll review, the EOD
+  journal, the spreads picker and the news writer and digest show the model the same rendered block
+  (`src/common/picture_text.py`). The trade reviewer also sees the book around the reviewed names (open
+  options, shares, stop-outs of the last five days, net delta) and a note per name. The prior-recommendations
+  block was removed from the strategist prompt (the `claude_memory` rows are still written and back-filled,
+  just not injected).
+- **Claude's size cut.** Claude may lower, never raise, the contract count of an auto-opened opening
+  cash-secured put, through one clamped integer function (`regime_limits.claude_cut`): a Claude CLI review
+  only (an Ollama-produced review never cuts), a plain integer from 0 to below the card's size. Applied in
+  paper; **record-only in live** until `claude_cut.apply_live` is switched on; a daily circuit breaker stops
+  applying cuts once at least 4 auto CSPs were cut to zero and they are more than 50% of the day's reviewed
+  ones; every override, applied or not, is recorded. A manual or OBSERVE card shows `Claude suggests N of M`
+  only when the cut would be honoured, and approval still sends M. This is the one exception to the core
+  invariant in `CLAUDE.md`.
+- **The counterfactual record and report.** Every regime trim, block, floor lot, ladder block, bottoming lot,
+  Claude override and covered-call breakout row lands in `sizing_actions` (once per contract, kind and ET
+  day); the EOD run values them (`src/claude/eval/sizing_counterfactual.py`, step 6c) and
+  `python -m scripts.sizing_report` prints both marks side by side.
+- **The covered-call breakout rule.** After an upside breakout on a held name (a close up at least 1.5 ATR on
+  1.5x volume above resistance or at a 60-session high) its calls must sit at or above a strike floor and
+  under a delta cap for 5 sessions or until a fade; it only pushes strikes out (when nothing clears, no call is
+  sold on that name that scan), has its own switch (`/regime off` leaves it on), never touches rolls, and is
+  re-checked at send time against the live delta.
+- **Ticker dossiers.** One record per `would_own`, `actively_wheeling` and held name (about 33): Python writes
+  the facts, a health label and the 7-day sentiment hourly (inside the dossier window) with no model call and verifies each event date
+  against the cited news; Claude writes a short profile, the current story (only the name's own numbers),
+  up to three quoted figures (the labelled `reported` line, each checked against the cited cluster's text)
+  and proposed events, six names per call under its own 4-call daily cap, validated name by name. The trade,
+  roll and `/scan` reviews read them; review reuse keys on the prose and events, not the hourly numbers.
+- **The page.** `GET /claude/context` and the web page `/more/claude` ("What Claude knows") show the picture,
+  the regime and its limits, the cut mode and whether today's breaker has tripped, what each of the seven
+  Claude calls reads, the stories dropped as noise and the per-name notes, with every piece of Claude's text
+  labelled as Claude's.
+- **Fences and checks.** `tests/test_regime_fence.py` (the regime family stays deterministic; the clamped cut is the only
+  LLM value that reaches a size; no covered-call hold), the news and eval fences extended to the new modules,
+  and `tests/test_claude_calls_render.py`.
+
+**Deliberately not built** (see the "Not built" table): Claude's covered-call event hold (withdrawn 2026-10-21),
+any Claude power over covered calls, rolls, closes, strikes, prices or exits, and dossiers for the spreads book.
+
+**Known limitations:**
+
+- **Shadow marks are an approximation.** The counterfactual's shadow values are Black-Scholes at the entry IV
+  on daily closes, not real fills (`shadow_pnl_rules` exits at the system's own profit-take line, and a loss
+  line for leveraged ETFs only, the only names the system stops out); a row with no entry IV is counted but has
+  no rules mark. An order that never filled is moot (0 lots withheld). Only exact values (some contracts
+  traded) are real P&L.
+- **The variance-premium floor still bites everywhere but name-level signal lots.** In the replay week it
+  rejected 2,831 of 12,242 SOXL and TQQQ candidate evaluations (23%); it is waived for name-level signal lots
+  only. Read how often the waiver fires (post-restart list).
+- **The ladder can over-block a falling 3x ETF.** After the 10-16 TQQQ lot the zone was 55.95-59.23 against
+  TQQQ at 70-72, so three entries on 10-19 (+$2,168 of winners) were blocked while it blocked -$4,246 of
+  losers in the replay week. A 3x ETF down 20% stays blocked unless it falls about 15% more or closes above its
+  20-day average and its anchor twice. Left as built (OI-B2); tune after the review below.
+- **First lots opened before any signal are not protected** beyond the per-trade ceilings (the first lot on a
+  name has no anchor and is free).
+- **The event-date matcher takes explicit calendar dates only** (`Oct 22`, `22 October`, `10/22/2026`,
+  `2026-10-22` and the like), checked against the text the model was shown (the headline and the first two
+  items, summaries cut at 200 characters), never against the whole cluster; "next Tuesday" is not a date.
+- **The dossier profile is unchecked general knowledge** (labelled so); Python checks the facts, the health
+  label, the events and the quoted figures, not the profile. The story may use only the name's own numbers, so
+  a model that cannot help quoting a figure outside `reported` loses the story; the first day builds a backlog
+  of about 33 names at 24 a day, so a few wait for the second day; the refresh and the prose builds run only
+  from the pre-market to the close digest time on trading days, so a name added at night has no notes until 08:00 ET; a whole-batch
+  failure makes the loop wait an hour (also for alert- and earnings-triggered builds; deleting the
+  `dossier_batch_failed` row in `news_state` ends it early).
+- **Held-stock risk is out of scope.** The shares already owned (the week of 10-13 took them from +$3.8k to
+  -$59k unrealised) are not managed by anything here.
+- **The `close:delta_missing` forced close is a separate bug and still open** (spec section 14): two exits on
+  Oct 15 were the roll policy's `close:delta_missing`, a data gap forcing a close.
+- **A cut to zero can block a floor lot** (spec section 9 does not exempt the guaranteed floor); the daily
+  breaker limits a bad day (OI-D1, review below).
+- **Send-time re-checks are decision-time-light.** At send time no bars are fetched: the ladder re-check uses
+  the zone frozen on the card against the live underlying price (`modelGreeks.undPrice`, else the price
+  provider's last price; stub-tested only, OI-A3, OI-B6); the one-lot-per-3-sessions guard of a signal lot is
+  decision-time only (its delta cap is re-checked); in live mode the send-time context is built before the
+  confirm wait, so a loss exit during that wait is not seen (OI-B7); `/scan TICKER` records no counterfactual
+  rows (OI-P2).
+- **The breakout is worked out from completed daily bars**, so a breakout that happens today is first applied
+  by tomorrow's scans (OI-E2); during one, no call may be sold on a name that scan if nothing clears the floor.
+- **Two overlapping `run_triage` calls could collide** on `story_triage.cluster_id`'s unique key; no lock was
+  added (triage runs at 10:30, 12:30 and 14:30 ET and the digests at other times; OI-C5).
+- **The page** has had no screen-reader, Lighthouse or real-device pass (OI-F10); it has been rendered only
+  against synthetic data (OI-F7); at 320 px with text at 200% the Regime card is wider than the viewport
+  (pre-existing, OI-Q4); the Names list has no search or filter (OI-F11); the dropped list shows the latest
+  100 of the week (OI-F5).
+- **Claude's cut needs the Claude CLI.** With `claude.backend: ollama` (or after a `cli_then_ollama` fallback)
+  the review is stamped `ollama` and never cuts. This deployment runs `cli`.
+
+### Post-restart review (owed; owner: the operator with the next Claude Code session)
+
+None of the behaviour above has run against real data. **Raise this list when the operator says they have
+restarted** `./ibkr`; the first block is for the first RTH session, the second for about **4 weeks** after the
+restart (paper data from `scripts/sizing_report` and `claude_usage`).
+
+| When | What to check | Items |
+|---|---|---|
+| First scan and first day | The first scan writes the persisted regime and `/regime` does not say "no market data yet" (yfinance answered for SPY, QQQ, ^VIX and ^VIX3M). | OI-A2 |
+| First paper send of a ladder-name put | The order's `detail` does not say `ladder not re-checked: no underlying price` (the live price reached the send-time re-check). | OI-B6 |
+| First scans | The breakout on real bars: every held name with 100+ shares loads 60+ sessions with a Volume column, a card shows the Breakout line only after a real breakout, and how often it fires (spec section 17 measured 0 to 7% of days per name). | OI-E5 |
+| First day | `GET /claude/context` and `/more/claude` against the real `news.db` and trading DB (the picture, the dropped list, the dossiers, the limits; an old `news.db` still answers); the real length of the 33-name list, long stories, and how the picture's fact labels read. | OI-F2, OI-F7 |
+| First day | The news prompts, the counterfactual resolver and the hourly dossier refresh against real providers: first run duration and any yfinance rate limiting. | OI-C6, OI-D9, OI-E8 |
+| After a day | Measured prompt sizes: `python -m scripts.claude_usage`. Offline fixture measurements are in the plan's Task 23 row (words times 1.3 as a token estimate); the notes add at most about 640 words to a full-scan review and the picture a few hundred. | OI-D4, OI-E14 |
+| After about 4 weeks | **Ladder over-blocking:** read `scripts/sizing_report` `scale_in_zone` rows and the replay-week evidence, and tune `regime.ladder.recovery_closes` / `min_gap_*` if it blocks more winners than losers. | OI-B2 |
+| After about 4 weeks | **Claude's floor-lot vetoes:** the `claude_overrides` group and the never-sent shadow P&L; decide `claude_cut.apply_live` (also a live-cutover gate step). | OI-D1 |
+| After about 4 weeks | **How often the variance-premium waiver fired** (count `bottoming_lot` rows whose reason says "waived") **and what those lots did.** | OI-B3, OI-P3 |
+| After about 4 weeks | **Dossier stories and reported figures surviving grounding** (per name, per day), and how often the one-hour whole-batch wait fired. | OI-E10, OI-E13, OI-P8, OI-P5 |
+
+**At the restart (operator):** copy the new blocks into the private config (a private `risk_limits.yaml` with no
+`regime:` block gets the shipped defaults and the regime is **enabled**), add `llm.max_calls_per_day: 44` (if it says 40) and the
+`dossier:` block (its code defaults match the example) to the private `news.yaml`, keep `claude_cut.apply_live: false`, confirm TSLL's leverage factor,
+and restart in order (trading service, news, API). `SETUP.md` section 18 has the steps.
 
 ---
 
@@ -4193,6 +4364,10 @@ approval integrity. Phase 1 — the two findings that change *what gets traded* 
   no_bid_ask / liquidity / no_cash / roc / yield).
 
 ## Remaining known issues (not fixed — require live validation or design decision)
+- **`close:delta_missing` forced close (found in the market-picture review, spec section 14; separate, still open).**
+  Two exits on 2026-10-15 were the roll policy's `close:delta_missing`: a data gap (no delta on the quote)
+  forced a close. A missing delta should wait for data or fall back, not close. Not fixed by the market
+  picture build.
 - **Order idempotency (fixed, including the race — this bullet was stale):** `candidate_id` is a
   deterministic hash, so a re-scan — especially the 15-min automated loop — regenerates the
   identical candidate. Both order-creation paths (`sender._auto_queue_candidates`,
@@ -4274,6 +4449,12 @@ Four items below map straight onto that file's questions — **approve → fill 
 rate by liquidity tier), **limit-order repricing** is Q2, the **roll combo (BAG) sign convention** is
 Q3, and **layered IBKR-first greeks** is Q4 (the hard gate) — so record the raw observation there
 and then clear the corresponding item here. Nothing in this list has been cleared yet.
+
+- **Market picture build (2026-10-22), everything.** The regime, the ladder, the bottoming signal, the
+  breakout rule, Claude's cut, triage, the picture, the dossiers and the page are offline-tested only: no real
+  provider, model, broker or operator database was used. The dated checklist (first-day checks, the 4-week
+  review) is the "Post-restart review" list in "Built (2026-10-22 — market picture, regime sizing and the news
+  expert)" above.
 
 - **Roll redesign (2026-10-11), first live rolls.** The targeted roll fetch (an ITM contract and its
   later strikes qualifying and quoting on the monitor's connection in 10-line batches), the
