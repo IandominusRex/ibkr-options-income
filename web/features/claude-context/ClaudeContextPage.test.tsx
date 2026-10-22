@@ -484,16 +484,47 @@ describe("What Claude knows", () => {
     expect(regime.getByText("Leveraged-ETF ceilings are switched off.")).toBeInTheDocument();
   });
 
-  it("says today's circuit breaker tripped, next to the cut mode", async () => {
+  it("shows today's circuit breaker as an amber flag word, before the index blocks", async () => {
     serve(base({ claude_cut_breaker_tripped_today: true }));
     const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
-    const cut = regime.getByText("Claude's size cuts: applied (paper).");
-    const paused = regime.getByText("Cuts paused today: the circuit breaker tripped.");
-    // a plain sentence straight after the cut-mode one, not a control and not a status word
-    expect(cut.nextElementSibling).toBe(paused);
-    expect(paused.tagName).toBe("P");
-    expect(paused.querySelector("[data-tone]")).toBeNull();
-    expect(paused.closest("button, a")).toBeNull();
+    const cut = regime.getByText("Claude's size cuts: applied (paper), paused today.");
+    const word = regime.getByText("Cuts paused today");
+    // a flag word like "Suspended today": a status word in the flag tone, not a control, with the
+    // cause and the effect as a sentence beside it
+    expect(word.getAttribute("data-tone")).toBe("flag");
+    const line = word.closest("p");
+    expect(line).not.toBeNull();
+    expect(line?.textContent).toContain("The circuit breaker tripped");
+    expect(line?.textContent).toContain("recorded but not applied until tomorrow");
+    expect(word.closest("button, a")).toBeNull();
+    // it sits with the other flag lines, ahead of the regime blocks, so it is in the first screen
+    // at phone width instead of below both indices; the cut-mode sentence stays where it was
+    const spy = regime.getByRole("group", { name: "SPY regime" });
+    expect(word.compareDocumentPosition(spy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(word.compareDocumentPosition(cut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("stacks the flag lines in one order: off in config, suspended, cuts paused", async () => {
+    serve(base({ regime_enabled: false, suspended_today: true, claude_cut_breaker_tripped_today: true }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    const off = regime.getByText("Off in config");
+    const suspended = regime.getByText("Suspended today");
+    const paused = regime.getByText("Cuts paused today");
+    expect(off.compareDocumentPosition(suspended) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(suspended.compareDocumentPosition(paused) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const w of [off, suspended, paused]) expect(w.getAttribute("data-tone")).toBe("flag");
+  });
+
+  it("shows the breaker word in the same way as the suspended word, and no other state as plain text", async () => {
+    serve(base({ suspended_today: true, claude_cut_breaker_tripped_today: true }));
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    const suspended = regime.getByText("Suspended today");
+    const paused = regime.getByText("Cuts paused today");
+    expect(paused.getAttribute("data-tone")).toBe(suspended.getAttribute("data-tone"));
+    expect(paused.className).toBe(suspended.className);
+    // the old plain sentence is gone: the state is the word, not a colon-joined line of body ink
+    expect(regime.queryByText("Cuts paused today: the circuit breaker tripped.")).toBeNull();
+    expect(regime.queryByText(/today: the circuit/)).toBeNull();
   });
 
   it("says nothing about the breaker while it has not tripped", async () => {
@@ -502,13 +533,23 @@ describe("What Claude knows", () => {
     expect(regime.getByText("Claude's size cuts: applied (paper).")).toBeInTheDocument();
     expect(regime.queryByText(/circuit breaker/)).toBeNull();
     expect(regime.queryByText(/paused/i)).toBeNull();
+    expect(regime.queryByText("Cuts paused today")).toBeNull();
+  });
+
+  it("says nothing about the breaker when the field is absent (an older API)", async () => {
+    const older: Partial<ClaudeContext> = { ...base() };
+    delete older.claude_cut_breaker_tripped_today;
+    serve(older as ClaudeContext);
+    const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
+    expect(regime.getByText("Claude's size cuts: applied (paper).")).toBeInTheDocument();
+    expect(regime.queryByText("Cuts paused today")).toBeNull();
   });
 
   it("says the breaker tripped whatever the cut mode, and keeps the regime card whole", async () => {
     serve(base({ claude_cut_mode: "record_only", account_mode: "live", claude_cut_breaker_tripped_today: true }));
     const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
-    expect(regime.getByText("Claude's size cuts: recorded only (live).")).toBeInTheDocument();
-    expect(regime.getByText("Cuts paused today: the circuit breaker tripped.")).toBeInTheDocument();
+    expect(regime.getByText("Claude's size cuts: recorded only (live), paused today.")).toBeInTheDocument();
+    expect(regime.getByText("Cuts paused today").getAttribute("data-tone")).toBe("flag");
     expect(regime.getByText("Claude can lower the size of a put the system opens on its own. It can never raise it.")).toBeInTheDocument();
   });
 
@@ -516,7 +557,7 @@ describe("What Claude knows", () => {
     serve(base({ regime: null, limits: [], claude_cut_breaker_tripped_today: true }));
     const regime = within(await screen.findByRole("region", { name: "Regime and limits" }));
     expect(regime.getByText(/No regime recorded yet/)).toBeInTheDocument();
-    expect(regime.getByText("Cuts paused today: the circuit breaker tripped.")).toBeInTheDocument();
+    expect(regime.getByText("Cuts paused today").getAttribute("data-tone")).toBe("flag");
   });
 
   it("holds its place while loading", async () => {

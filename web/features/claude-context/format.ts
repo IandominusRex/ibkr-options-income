@@ -73,6 +73,7 @@ export function leveragedLines(rows: LeveragedLimit[]): string[] {
     );
 }
 
-export function cutSentence(mode: "applied" | "record_only", account: "paper" | "live"): string {
-  return `Claude's size cuts: ${mode === "applied" ? "applied" : "recorded only"} (${account}).`;
+/** The standing cut mode, said so it stays true on its own when today's circuit breaker has paused the cuts. */
+export function cutSentence(mode: "applied" | "record_only", account: "paper" | "live", pausedToday = false): string {
+  return `Claude's size cuts: ${mode === "applied" ? "applied" : "recorded only"} (${account})${pausedToday ? ", paused today" : ""}.`;
 }

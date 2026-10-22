@@ -109,4 +109,10 @@ describe("cutSentence", () => {
     expect(cutSentence("applied", "paper")).toBe("Claude's size cuts: applied (paper).");
     expect(cutSentence("record_only", "live")).toBe("Claude's size cuts: recorded only (live).");
   });
+
+  it("says so when today's circuit breaker has paused the cuts, so the line is true on its own", () => {
+    expect(cutSentence("applied", "paper", true)).toBe("Claude's size cuts: applied (paper), paused today.");
+    expect(cutSentence("record_only", "live", true)).toBe("Claude's size cuts: recorded only (live), paused today.");
+    expect(cutSentence("applied", "paper", false)).toBe("Claude's size cuts: applied (paper).");
+  });
 });

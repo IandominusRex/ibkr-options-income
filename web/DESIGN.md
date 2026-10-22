@@ -444,7 +444,7 @@ stock and News pages, which a phone reaches through More.
 
 **More**: the bot card, the theme toggle (Light, Dark, Follow OS, on the strategy-switch track), the income target card, links to Research, Universe, News, Ledger, How it works, What Claude knows and statement import, system status, and Credits (the chart library's licence link).
 
-**Regime and limits card** (What Claude knows): "Regime and limits", with when it was recorded at the right of the title. Per index (SPY, QQQ) a heading, the regime as a status word (flag amber above normal, neutral at normal), one plain line (the daily base, what raised it today, a bottoming-signal ease, or "Matches the daily base") and the CSP limits as figure lines under a perforation: Budget and Per trade as a percent of the normal limit, New puts a day ("No limit" or the count), Guaranteed lots a day. Two flag lines come first when they apply: "Suspended today" (`/regime off`, the limits shown are not applied) and "Off in config". Below the indices, the leveraged-ETF ceilings grouped by multiple ("3x (TQQQ, SOXL): 60% of the regime's size when calm, 30% when the name or its market is under stress") and Claude's size cuts as a sentence ("applied (paper)", "recorded only (live)"). When today's circuit breaker has tripped (Claude zeroed most of the day's auto puts, so cuts are recorded but not applied until tomorrow) a second plain sentence in body ink follows it: "Cuts paused today: the circuit breaker tripped." It is a sentence, not a status word and not a flag, because the operator asked for a plain line; the card's one flag line, "Suspended today", stays the only amber state there. What the limits mean sits in a closed plain Disclosure. No regime yet: "No regime recorded yet" with a hatched n/a.
+**Regime and limits card** (What Claude knows): "Regime and limits", with when it was recorded at the right of the title. Per index (SPY, QQQ) a heading, the regime as a status word (flag amber above normal, neutral at normal), one plain line (the daily base, what raised it today, a bottoming-signal ease, or "Matches the daily base") and the CSP limits as figure lines under a perforation: Budget and Per trade as a percent of the normal limit, New puts a day ("No limit" or the count), Guaranteed lots a day. Up to three flag lines come first when they apply, each a flag word with one sentence beside it, in this order: "Off in config", "Suspended today" (`/regime off`, the limits shown are not applied) and "Cuts paused today" (today's circuit breaker has tripped: "The circuit breaker tripped, so Claude's size cuts are recorded but not applied until tomorrow"). Below the indices, the leveraged-ETF ceilings grouped by multiple ("3x (TQQQ, SOXL): 60% of the regime's size when calm, 30% when the name or its market is under stress") and Claude's size cuts as a sentence ("applied (paper)", "recorded only (live)"). When today's circuit breaker has tripped (Claude zeroed most of the day's auto puts) the cut sentence says so itself ("applied (paper), paused today.") so it is true when read alone, and the flag line above carries the state. The breaker is a flag word, not a plain sentence: it is the one state on the card besides `/regime off` that changes what happens today, so it joins that stack, in the first screen at phone width, instead of sitting below both indices. What the limits mean sits in a closed plain Disclosure. No regime yet: "No regime recorded yet" with a hatched n/a.
 
 **Picture card** (What Claude knows): the stories first, each a bold title, "since Oct 12", and, when Claude wrote one, a "Claude's description" line and its evidence ids in the figure face; a stale picture says so above them in a flag line with the time and says to treat the stories as out of date. The numbers (figure lines numbered F1, F2 to match the evidence ids), SPY's seasonality (with a neutral "Weak signal" word) and the coming events sit in a closed plain Disclosure. The card's header says when it was rebuilt, in New York time; the other cards put their own time or window ("Recorded", "Last 7 days", a count) in the same place.
 
@@ -744,10 +744,11 @@ then the names), so da-vinci's structure workshop was skipped: pinned beats roll
   blocks each reads; the stories dropped as noise, with Claude's reason and any the market later
   promoted; then one row per name.
 - **FIRST VIEWPORT:** a back link to More, the title and a one-sentence dek, then the Regime and
-  limits card: SPY and QQQ as status words with a plain line each (base, raised today, eased), the
-  suspended flag when it applies, and each index's CSP limits as figure lines (budget, per trade,
-  new puts a day, guaranteed lots), then the leveraged-ETF ceilings and Claude's cut mode as
-  sentences (with a second sentence when today's circuit breaker has paused the cuts). One column up to 720px wide at every size; two limit blocks side by side from 640px.
+  limits card: the flag lines that apply first (off in config, suspended today, cuts paused today),
+  then SPY and QQQ as status words with a plain line each (base, raised today, eased) and each
+  index's CSP limits as figure lines (budget, per trade, new puts a day, guaranteed lots), then the leveraged-ETF
+  ceilings and Claude's cut mode as sentences (the cut sentence adds "paused today" when the circuit
+  breaker has tripped). One column up to 720px wide at every size; two limit blocks side by side from 640px.
 - **FORM:** one column in this DOM order on every viewport: Regime and limits, Market picture, What
   each call reads (a row per call, its blocks as non-interactive status-word chips, not a tile
   grid), Dropped as noise (the first five rows, the rest on request), Names (a row per name: ticker,
@@ -795,6 +796,19 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-22 (later still): **What Claude knows**, Regime and limits card: today's circuit breaker is
+  now an amber flag word, "Cuts paused today", with "The circuit breaker tripped, so Claude's size
+  cuts are recorded but not applied until tomorrow" beside it, replacing the plain sentence added
+  earlier today (operator decision in the open-items walk-through, plan Task 23 Step 0c; the
+  earlier entry's "if it proves easy to miss, a flag word is the next step" is taken). It reuses
+  `StatusWord` in the flag tone, as "Suspended today" does; no new component, colour, font, radius,
+  elevation or token. The critique first placed it where the sentence was, after the cut-mode line;
+  rendered at 390px that put it about a screen below the fold, under both index blocks, while
+  "Suspended today" is in the first screen. So it joins the flag stack at the top (order: Off in
+  config, Suspended today, Cuts paused today) and the cut-mode sentence gains ", paused today" when
+  the breaker has tripped, so the standing line never says "applied" on its own while the pill says
+  otherwise. Contrast measured: flag word 7.59:1 light (`#6b4500` on `#fff1d6`) and 8.92:1 dark
+  (`#f5cf7a` on `#3a2e12`), the sentence 15.08:1 on the dark card; no horizontal scroll at 390.
 - 2026-10-22 (later): **What Claude knows** gained two things, both from the operator's open-items
   walk-through (docs/superpowers/plans/2026-10-20-market-picture.md, Task 23 Step 0b). (1) The
   Regime and limits card says "Cuts paused today: the circuit breaker tripped." after the cut-mode

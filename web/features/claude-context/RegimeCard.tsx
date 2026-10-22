@@ -64,6 +64,17 @@ export function RegimeCard({ ctx }: { ctx: ClaudeContext }) {
           <span>/regime off was sent. The regime limits below are not applied today.</span>
         </p>
       )}
+      {ctx.claude_cut_breaker_tripped_today && (
+        // The day's circuit breaker: Claude zeroed most of the day's auto puts, so cuts are recorded
+        // but not applied until tomorrow. The one state here that changes what happens today besides
+        // /regime off, so it is a flag word in the same stack (a state is a word), whatever the cut
+        // mode below says and whether or not a regime is recorded. Self-contained: the sentence
+        // names Claude's size cuts, which the card explains lower down.
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <StatusWord tone="flag">Cuts paused today</StatusWord>
+          <span>The circuit breaker tripped, so Claude&apos;s size cuts are recorded but not applied until tomorrow.</span>
+        </p>
+      )}
 
       {ctx.regime ? (
         <>
@@ -93,12 +104,7 @@ export function RegimeCard({ ctx }: { ctx: ClaudeContext }) {
         ) : (
           <p className="mt-1 text-sm">Leveraged-ETF ceilings are switched off.</p>
         )}
-        <p className="mt-2 text-sm">{cutSentence(ctx.claude_cut_mode, ctx.account_mode)}</p>
-        {ctx.claude_cut_breaker_tripped_today && (
-          // The day's circuit breaker: Claude zeroed most of the day's auto puts, so cuts are
-          // recorded but not applied until tomorrow. A plain sentence, whatever the mode above says.
-          <p className="mt-1 text-sm">Cuts paused today: the circuit breaker tripped.</p>
-        )}
+        <p className="mt-2 text-sm">{cutSentence(ctx.claude_cut_mode, ctx.account_mode, ctx.claude_cut_breaker_tripped_today)}</p>
         <p className="mt-1 text-[0.8125rem] text-muted">
           Claude can lower the size of a put the system opens on its own. It can never raise it.
         </p>
