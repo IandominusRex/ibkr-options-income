@@ -11,6 +11,9 @@ sentiment; it is for the one name a deep-dive or a roll is about. The word budge
 not left to the builder: facts give way first, then extra events, then extra reported figures,
 then the story is shortened, and only then is the last reported figure dropped.
 
+A dated event prints as ``<id> <title> (title: Claude; date <day> found in <cluster>)``: the date
+was checked against the cited news, the title is Claude's, and the line says which is which.
+
 Figures quoted from the news (``TickerDossier.reported``, OI-E10) print on **their own line**,
 labelled "Reported in news (not computed by the system)", under the story and never inside it: the
 story carries only the system's numbers, the reader must be able to tell the two apart.
@@ -72,7 +75,10 @@ def _fact_line(f: DossierFact) -> str:
 
 
 def _event_line(e: DossierEvent) -> str:
-    return f"{e.id} {e.title} on {e.on:%Y-%m-%d} ({e.evidence})"
+    """One dated event, labelled honestly: only the **date** was checked by Python (it is written
+    in the cited cluster's shown text); the **title** is Claude's own words and unverified, so the
+    line says so instead of reading like a computed fact."""
+    return f"{e.id} {e.title} (title: Claude; date {e.on:%Y-%m-%d} found in {e.evidence})"
 
 
 def _reported_line(items: list[DossierReported]) -> str:

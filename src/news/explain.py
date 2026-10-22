@@ -93,16 +93,18 @@ def validated_items_call[I: BaseModel](
 
     Each element is parsed into *item_model* on its own: those that fail their limits or their
     schema come back in the second list as ``(raw element, error)`` and never cost the others.
-    The call is counted once. Only a reply that is not usable at all (no JSON object, or *key*
-    not a list) is retried once with the problem shown, like `validated_call`; a second failure,
-    no answer or a spent budget returns None. A reply without *key* is an empty list.
+    The call is counted once. Only a reply that is not usable at all (no JSON object, *key*
+    missing, or *key* not a list) is retried once with the problem shown, like `validated_call`;
+    a second failure, no answer or a spent budget returns None. A reply with no *key* is **not**
+    an empty list (``{}``, ``{"error": "..."}`` and a wrong key are not answers): only an explicit
+    ``[]`` says "nothing to return".
     """
     res = call_llm(prompt, schema=schema, prefix=prefix, now=now, purpose=purpose)
     for attempt in (0, 1):
         if res is None:
             return None
         payload = _parse_dict_payload(res.text, prefix)
-        raw = payload.get(key, []) if payload is not None else None
+        raw = payload.get(key) if payload is not None else None
         if isinstance(raw, list):
             accepted: list[I] = []
             rejected: list[tuple[object, str]] = []
@@ -112,9 +114,12 @@ def validated_items_call[I: BaseModel](
                 except ValidationError as exc:
                     rejected.append((element, str(exc)))
             return accepted, rejected
-        problem = (
-            "the reply was not a JSON object" if payload is None else f'"{key}" must be a list'
-        )
+        if payload is None:
+            problem = "the reply was not a JSON object"
+        elif key not in payload:
+            problem = f'"{key}" is missing'
+        else:
+            problem = f'"{key}" must be a list'
         if attempt == 1:
             log.info("%s: unusable output after retry: %s", prefix, problem)
             return None

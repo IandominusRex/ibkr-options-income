@@ -350,6 +350,26 @@ describe("What Claude knows", () => {
     expect(tqqq.queryByText("Held")).toBeNull();
   });
 
+  it("says an upcoming event's title is Claude's and where its date was found", async () => {
+    // Only the date is checked against the cited news; the title is Claude's own words, so the
+    // row says so (the same labels the prompt carries: "title: Claude; date ... found in C123").
+    serve(base());
+    const meta = within(await screen.findByRole("listitem", { name: "META" }));
+    const item = meta.getByText("Oct 29 · Product launch event").closest("li") as HTMLElement;
+    expect(item.textContent).toBe("Oct 29 · Product launch event (title: Claude; date found in C8123)");
+    // the cluster id is a figure, like every evidence id on the page
+    const id = within(item).getByText("C8123");
+    expect(id.className).toContain("font-mono");
+    expect(id.className).toContain("whitespace-nowrap");
+  });
+
+  it("shows no upcoming line, and so no Claude title label, for a name with no events", async () => {
+    serve(base({ dossiers: [dossier("ZZZ", { events: [] })] }));
+    const zzz = within(await screen.findByRole("listitem", { name: "ZZZ" }));
+    expect(zzz.queryByText("Upcoming")).toBeNull();
+    expect(zzz.queryByText(/title: Claude/)).toBeNull();
+  });
+
   it("hatches only the n/a, not the words, when a stock's health could not be worked out", async () => {
     serve(base({ dossiers: [dossier("ZZZ", { health: "unknown", health_why: ["no fundamentals"] })] }));
     const zzz = within(await screen.findByRole("listitem", { name: "ZZZ" }));

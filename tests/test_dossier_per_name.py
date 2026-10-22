@@ -7,7 +7,7 @@ name's prose unbuilt. Now a name that breaks its limits or its schema is rejecte
 names in the reply are accepted, the rejected one keeps its previous prose (marked stale) and the
 call is counted once. A name whose draft was rejected waits ``prose_min_interval_hours`` before its
 next attempt, so a persistently bad answer costs one call per interval. A reply that is not usable
-at all (no JSON object, or ``names`` not a list) is still retried once as a whole.
+at all (no JSON object, no ``names`` key, or ``names`` not a list) is still retried once as a whole.
 
 OI-P5, the bottom of this file: when the whole batch fails (no answer, or an unusable reply after
 that one retry) the loop makes no further model call for an hour, so a down or rate-limited CLI
@@ -220,11 +220,15 @@ def test_a_retry_that_answers_properly_saves_the_batch(news_db, scripted, monkey
     assert calls() == 2 and latest("AAA").story == "AAA announces a product."
 
 
-def test_a_reply_without_names_is_an_empty_list_and_leaves_every_name_out(
+def test_an_explicit_empty_names_list_is_a_usable_answer_that_leaves_every_name_out(
     news_db, scripted, monkeypatch
 ) -> None:
+    """The model said "nothing to write" in the shape that was asked for: usable, so each name is
+    left out (empty story, `prose_at` now), the call is counted once and nothing waits.
+    (R6 replaced this test's old premise, that a reply with no ``names`` key at all is the same
+    thing: it is not; see the R6 tests at the bottom.)"""
     setup(monkeypatch, ["AAA"])
-    scripted.answer = {}
+    scripted.answer = {"names": []}
     assert D.build_dossier_prose(NOW) == 1
     assert calls() == 1 and latest("AAA").story == "" and latest("AAA").prose_at == NOW
 
@@ -524,3 +528,83 @@ def test_the_wait_survives_a_restart(news_db, down, monkeypatch) -> None:
     assert get_state("dossier_batch_failed") is not None
     D.build_dossier_prose(at(10))  # a fresh process would read the same row
     assert len(down.prompts) == 1
+
+
+# --------------------------------------------------------------------------- #
+# R6 (whole-branch review): valid JSON with no usable "names" is not an answer
+# --------------------------------------------------------------------------- #
+
+NO_NAMES = [
+    pytest.param({}, id="empty-object"),
+    pytest.param({"error": "overloaded, try again later"}, id="error-object"),
+    pytest.param({"name": [{"symbol": "AAA", "story": "wrong key"}]}, id="wrong-key"),
+    pytest.param({"names": "x"}, id="names-a-string"),
+    pytest.param({"names": None}, id="names-null"),
+    pytest.param({"names": {"AAA": {"story": "x"}}}, id="names-an-object"),
+]
+
+
+@pytest.mark.parametrize("reply", NO_NAMES)
+def test_a_reply_without_a_names_list_is_retried_once_then_the_batch_fails(
+    news_db, scripted, monkeypatch, reply
+) -> None:
+    """Before: `{}` was read as "no names", so every name in the batch was left out: its story
+    emptied, `prose_at` set (a six-hour wait), the previous story lost, the failure wait cleared."""
+    setup(monkeypatch, ["AAA", "BBB"])
+    scripted.answer = reply
+    assert D.build_dossier_prose(at(0)) == 0
+    assert calls() == 2 and len(scripted.prompts) == 2  # the call and its one retry
+    assert "not usable" in scripted.prompts[1]
+    for name in ("AAA", "BBB"):
+        got = latest(name)
+        assert got.stale is True  # marked, not emptied
+        assert got.story.startswith("OLDSTORY") and got.prose_at == NOW - OLD
+    assert failed_at() == at(0)  # the one-hour wait is recorded
+    for minutes in (10, 30, 59):
+        D.build_dossier_prose(at(minutes))
+    assert calls() == 2  # and nothing is called inside it
+
+
+def test_the_retry_says_what_was_wrong_with_the_reply(news_db, scripted, monkeypatch) -> None:
+    setup(monkeypatch, ["AAA"])
+    scripted.answer = {"error": "boom"}
+    D.build_dossier_prose(NOW)
+    assert '"names" is missing' in scripted.prompts[1]
+    scripted.prompts.clear()
+    scripted.answer = {"names": "x"}
+    D.build_dossier_prose(at(120))
+    assert '"names" must be a list' in scripted.prompts[1]
+
+
+@pytest.mark.parametrize("reply", NO_NAMES)
+def test_a_good_retry_after_a_reply_without_names_saves_the_batch(
+    news_db, scripted, monkeypatch, reply
+) -> None:
+    setup(monkeypatch, ["AAA"])
+    replies = iter([reply, names_answer(good("AAA", 0))])
+    scripted.answer = lambda prompt: next(replies)
+    assert D.build_dossier_prose(NOW) == 1
+    assert calls() == 2 and latest("AAA").story == "AAA announces a product."
+    assert failed_at() is None  # a usable answer clears the wait
+
+
+@pytest.mark.parametrize("reply", NO_NAMES)
+def test_validated_items_call_is_none_for_a_reply_without_a_names_list(
+    news_db, scripted, reply
+) -> None:
+    scripted.answer = reply
+    assert (
+        explain.validated_items_call(
+            DossierNameDraft, "p", key="names", schema={}, prefix="t", now=NOW, purpose="dossier"
+        )
+        is None
+    )
+    assert calls() == 2  # the call and the one retry, both counted
+
+
+def test_validated_items_call_still_returns_an_explicit_empty_list(news_db, scripted) -> None:
+    scripted.answer = {"names": []}
+    assert explain.validated_items_call(
+        DossierNameDraft, "p", key="names", schema={}, prefix="t", now=NOW, purpose="dossier"
+    ) == ([], [])
+    assert calls() == 1

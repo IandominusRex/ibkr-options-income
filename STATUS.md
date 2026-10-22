@@ -373,7 +373,10 @@ minutes after stop-outs.
   regime limit (`/regime off` leaves it on). The sizer and the gate call the same pure functions
   (`src/engine/regime_limits.py`), and the order poll re-reads the regime at send time and can only trim a
   queued put. Missing or stale market data never reads as calm. Closes, profit-takes, loss exits and rolls are
-  never limited.
+  never limited, and a regime setting that cannot be read (a mistyped key in a typed block, or a `delta_min`
+  raised to a guard's cap) holds only new puts and calls: the order poll still sends queued rolls (no sizing
+  context), leaves every put and call QUEUED, and alerts once an ET day, and the approval service checks the
+  blocks at start-up and alerts but still starts (whole-branch review R1, OI-T1).
 - **The scale-in ladder and the same-day loss-exit block.** In a stressed market, or whenever a name-level
   trigger holds (the name fell hard, a short put on it is at or near the money, or it had a loss exit
   lately), a further CSP lot on a name is accepted only once the price has fallen into a support-based zone
@@ -386,7 +389,9 @@ minutes after stop-outs.
   levels in the replay are not comparable with the spec's (no option marks are stored, so open legs are
   intrinsic-only).
 - **The bottoming signal.** A deterministic sign that a bottom is forming eases a market regime one notch and
-  lets one guarded lot into a falling name (delta at most 0.25, one per name per 3 sessions). **Only that
+  lets one guarded lot into a falling name (delta at most 0.25, one per name per 3 sessions; the one-per-name
+  guard is judged from the fresh signal at decision time and again at send time from the lots recorded as
+  sent, whole-branch review R3, OI-T3). **Only that
   name-level signal lot is exempt from the variance-premium floor** (`premium_below_fair_value`, operator
   decision 2026-10-22, OI-B3): one rule (`regime_limits.vrp_waiver`) used by the generator and the gate,
   tagged on the card (`bottoming-signal lot: fair-value floor waived`), recorded in the sizing record, and
@@ -442,8 +447,9 @@ any Claude power over covered calls, rolls, closes, strikes, prices or exits, an
 - **Shadow marks are an approximation.** The counterfactual's shadow values are Black-Scholes at the entry IV
   on daily closes, not real fills (`shadow_pnl_rules` exits at the system's own profit-take line, and a loss
   line for leveraged ETFs only, the only names the system stops out); a row with no entry IV is counted but has
-  no rules mark. An order that never filled is moot (0 lots withheld). Only exact values (some contracts
-  traded) are real P&L.
+  no rules mark. An order that never filled is moot (0 lots withheld), and so is a trim or floor-lot row the scan
+  recorded for a card that never became an order (whole-branch review R4, OI-T5). Only exact values (some
+  contracts traded) are real P&L.
 - **The variance-premium floor still bites everywhere but name-level signal lots.** In the replay week it
   rejected 2,831 of 12,242 SOXL and TQQQ candidate evaluations (23%); it is waived for name-level signal lots
   only. Read how often the waiver fires (post-restart list).
@@ -457,12 +463,23 @@ any Claude power over covered calls, rolls, closes, strikes, prices or exits, an
   `2026-10-22` and the like), checked against the text the model was shown (the headline and the first two
   items, summaries cut at 200 characters), never against the whole cluster; "next Tuesday" is not a date.
 - **The dossier profile is unchecked general knowledge** (labelled so); Python checks the facts, the health
-  label, the events and the quoted figures, not the profile. The story may use only the name's own numbers, so
+  label, each event's date and the quoted figures, not the profile or an event's title (the title is Claude's, and
+  the prompts and the page label it so: whole-branch review R7). The story may use only the name's own numbers, so
   a model that cannot help quoting a figure outside `reported` loses the story; the first day builds a backlog
   of about 33 names at 24 a day, so a few wait for the second day; the refresh and the prose builds run only
   from the pre-market to the close digest time on trading days, so a name added at night has no notes until 08:00 ET; a whole-batch
   failure makes the loop wait an hour (also for alert- and earnings-triggered builds; deleting the
   `dossier_batch_failed` row in `news_state` ends it early).
+- **A send-time trim to zero skips the per-trade trim (OI-S1, whole-branch review R5).** When the scaled budget
+  fits none of a queued put, `trim_for_send` returns 0 and the order stays at its full card size, so the gate
+  refuses it as `regime_ceiling` where a floor lot at the per-trade cap would have been allowed. It fails closed
+  (less trading); the next scan proposes a fresh card. Deferred by the operator 2026-10-22.
+- **The market bottoming ease can flap (OI-S2, whole-branch review R8).** The ease must re-fire on every refresh,
+  so a failed or stale fetch puts the regime back to its stricter state with a "bottoming signal ended" notice
+  and the next good refresh announces it again; outside RTH every eased day ends with an "ended" change. The flips
+  only go toward the stricter state, so they are safe, but notices can repeat. Deferred by the operator
+  2026-10-22; watch it on the first live days (post-restart list). Fix idea: keep the ease for the rest of the ET
+  day unless an escalation threshold is breached.
 - **Held-stock risk is out of scope.** The shares already owned (the week of 10-13 took them from +$3.8k to
   -$59k unrealised) are not managed by anything here.
 - **The `close:delta_missing` forced close is a separate bug and still open** (spec section 14): two exits on
@@ -471,8 +488,9 @@ any Claude power over covered calls, rolls, closes, strikes, prices or exits, an
   breaker limits a bad day (OI-D1, review below).
 - **Send-time re-checks are decision-time-light.** At send time no bars are fetched: the ladder re-check uses
   the zone frozen on the card against the live underlying price (`modelGreeks.undPrice`, else the price
-  provider's last price; stub-tested only, OI-A3, OI-B6); the one-lot-per-3-sessions guard of a signal lot is
-  decision-time only (its delta cap is re-checked); in live mode the send-time context is built before the
+  provider's last price; stub-tested only, OI-A3, OI-B6); a signal lot's delta cap and its one-lot-per-3-sessions
+  guard are both re-checked at send time (from the tag frozen on the card, the live delta and the recorded lots),
+  but the signal itself is not re-derived (no bars at send time); in live mode the send-time context is built before the
   confirm wait, so a loss exit during that wait is not seen (OI-B7); `/scan TICKER` records no counterfactual
   rows (OI-P2).
 - **The breakout is worked out from completed daily bars**, so a breakout that happens today is first applied
@@ -499,6 +517,8 @@ restart (paper data from `scripts/sizing_report` and `claude_usage`).
 | First scans | The breakout on real bars: every held name with 100+ shares loads 60+ sessions with a Volume column, a card shows the Breakout line only after a real breakout, and how often it fires (spec section 17 measured 0 to 7% of days per name). | OI-E5 |
 | First day | `GET /claude/context` and `/more/claude` against the real `news.db` and trading DB (the picture, the dropped list, the dossiers, the limits; an old `news.db` still answers); the real length of the 33-name list, long stories, and how the picture's fact labels read. | OI-F2, OI-F7 |
 | First day | The news prompts, the counterfactual resolver and the hourly dossier refresh against real providers: first run duration and any yfinance rate limiting. | OI-C6, OI-D9, OI-E8 |
+| First restart | If a typed block in the private `risk_limits.yaml` was typed by hand: no alert saying new puts and calls are on hold at start-up, and none during the day (R1; the alert names the bad block). | OI-T1, OI-A1 |
+| First live days | Whether "bottoming signal ended" and the next "bottoming:" notice repeat on one index (a failed or stale fetch, or the close) and whether the order poll's send-time sizes flip with it. | OI-S2 |
 | After a day | Measured prompt sizes: `python -m scripts.claude_usage`. Offline fixture measurements are in the plan's Task 23 row (words times 1.3 as a token estimate); the notes add at most about 640 words to a full-scan review and the picture a few hundred. | OI-D4, OI-E14 |
 | After about 4 weeks | **Ladder over-blocking:** read `scripts/sizing_report` `scale_in_zone` rows and the replay-week evidence, and tune `regime.ladder.recovery_closes` / `min_gap_*` if it blocks more winners than losers. | OI-B2 |
 | After about 4 weeks | **Claude's floor-lot vetoes:** the `claude_overrides` group and the never-sent shadow P&L; decide `claude_cut.apply_live` (also a live-cutover gate step). | OI-D1 |

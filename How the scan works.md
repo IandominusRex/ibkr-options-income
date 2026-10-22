@@ -931,7 +931,7 @@ the price has fallen into a zone below the price at its last lot, built from its
 average and the support that last broke lift the ladder, and a recovered name stops being treated as falling.
 Separately, a **loss exit on a name blocks any new put on it for the rest of that ET day** (`loss_exit_cooldown`);
 `/regime off` does not lift that block. A deterministic **bottoming signal** can ease an index's regime one notch
-and let one guarded lot into a falling name (a delta of at most 0.25, one such lot per name per 3 sessions,
+and let one guarded lot into a falling name (a delta of at most 0.25, one such lot per name per 3 sessions, both checked again at send time,
 `bottoming_delta_too_high` / `bottoming_lot_recent`); that name-level lot alone is exempt from the variance-premium
 floor (`premium_below_fair_value`) and says so on its card. Every scan that stops a put *only* for these ladder reasons records
 it once per name and day in `sizing_actions` (`python -m scripts.sizing_report`), also when nothing else passed.

@@ -97,7 +97,13 @@ function Name({ d }: { d: Dossier }) {
           <ul className="grid min-w-0 gap-0.5">
             {events.map((e) => (
               <li key={e.id} className="break-words">
-                {`${shortDay(e.on)} · ${e.title}`}
+                {`${shortDay(e.on)} · ${e.title}`}{" "}
+                {/* Only the date was checked against the cited news; the title is Claude's own words, so
+                    the row says so, as the prompt's note does. */}
+                <span className="text-[0.8125rem] text-muted">
+                  (title: Claude; date found in{" "}
+                  <span className="tabular whitespace-nowrap font-mono">{e.evidence}</span>)
+                </span>
               </li>
             ))}
           </ul>

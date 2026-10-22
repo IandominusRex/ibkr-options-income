@@ -105,7 +105,8 @@ Each stage links to its full technical writeup in **[ARCHITECTURE.md](ARCHITECTU
 - **[The market regime](ARCHITECTURE.md#position-sizing-and-risk--the-rulebook)** — a deterministic
   SPY/QQQ regime and a scale-in ladder make the system open fewer, smaller new puts in a falling
   market, and wait for a lower price before adding to a name that is dropping (a small guaranteed
-  lot keeps it from freezing); it never touches closes, profit-takes, loss exits or rolls.
+  lot keeps it from freezing); it never touches closes, profit-takes, loss exits or rolls (a mistyped
+  regime setting holds new puts and calls, with a Telegram alert, but queued rolls still go).
 - **[Claude's second opinion](ARCHITECTURE.md#claudes-second-opinion)** — a plain-English review of
   the survivors; advisory only, can never open a trade or raise a size (its one say on size is a
   smaller number for a put the system opens by itself).

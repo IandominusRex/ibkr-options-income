@@ -12,6 +12,8 @@ import ast
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from src.common.dossier_text import render_dossier, render_dossiers
 from src.common.schemas import DossierEvent, DossierFact, TickerDossier
 from tests.test_dossier_store import dossier
@@ -121,6 +123,36 @@ def test_compact_shows_health_story_events_and_three_preferred_facts() -> None:
     shown = [line for line in text.splitlines() if line.startswith("META:F")]
     assert [line.split(" ", 1)[0] for line in shown] == ["META:F5", "META:F4", "META:F8"]
     assert "Profile" not in text and "Sentiment" not in text
+
+
+@pytest.mark.parametrize("compact", [True, False])
+def test_an_event_says_its_title_is_claudes_and_where_the_date_was_found(compact: bool) -> None:
+    """R7: only the event's date is checked against the cited news; its title is Claude's. The
+    line must not read as a Python-verified fact (`AMD:E1 Investor day on 2026-11-11 (C123)`)."""
+    d = fat()  # one event: META:E1, on 2026-10-23, found in C8121
+    text = render_dossier(d, symbol="META", now=NOW, staleness_hours=STALENESS, compact=compact)
+    (line,) = [ln for ln in text.splitlines() if ln.startswith("META:E1")]
+    assert line == (
+        "META:E1 MUSE launch event number 1 with a long descriptive title text here "
+        "(title: Claude; date 2026-10-23 found in C8121)"
+    )
+    assert " on 2026-10-23 (C8121)" not in text
+
+
+@pytest.mark.parametrize("compact", [True, False])
+def test_every_event_line_carries_the_label(compact: bool) -> None:
+    d = fat(long=True)
+    text = render_dossier(d, symbol="META", now=NOW, staleness_hours=STALENESS, compact=compact)
+    event_lines = [ln for ln in text.splitlines() if ln.startswith("META:E")]
+    assert event_lines  # at least one fits the budget
+    assert all("(title: Claude; date " in ln and " found in C" in ln for ln in event_lines)
+
+
+@pytest.mark.parametrize("compact", [True, False])
+def test_no_events_renders_no_event_line_and_no_label(compact: bool) -> None:
+    d = fat(events=[])
+    text = render_dossier(d, symbol="META", now=NOW, staleness_hours=STALENESS, compact=compact)
+    assert "META:E" not in text and "title: Claude" not in text
 
 
 def test_full_adds_the_profile_every_fact_and_the_sentiment() -> None:

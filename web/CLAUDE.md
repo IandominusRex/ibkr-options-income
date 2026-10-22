@@ -845,7 +845,7 @@ features/claude-context/  What Claude knows (read-only): ClaudeContextPage (reac
                     Python's health, Claude's story and summary labelled as Claude's, the figures
                     Claude quoted from the news under "Reported in news (not computed by the
                     system)" apart from the story, each with its cluster id as evidence, and
-                    verified events), FigureLines (the perforated figure lines), format.ts (New York times,
+                    upcoming events: the date found in the news, the title labelled as Claude's), FigureLines (the perforated figure lines), format.ts (New York times,
                     percents, the regime line, the leveraged sentences) and types.ts (aliases of
                     the generated api-types). Nothing here writes or reaches a command.
 features/more/      TargetCard + target.ts (the income-target form's rules: text in, a validated

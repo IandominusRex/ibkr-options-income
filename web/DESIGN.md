@@ -452,7 +452,7 @@ stock and News pages, which a phone reaches through More.
 
 **Dropped row** (What Claude knows): the story's headline, a muted line "Claude's reason: ..." with the judgement time, and for a story the market promoted afterwards a flag word "Promoted" with "The market moved +1.2% after it." The first five show; "Show all N" reveals the rest. A line says how many stories nobody reviewed.
 
-**Name row** (What Claude knows): ticker bold, then words (Held; Stock, ETF or Leveraged ETF; Health with its first reason on the next line, flag amber for weak, "Health" with a hatched n/a when a stock's fundamentals could not be read, and no health word at all for a fund, which has none), then an inline "Claude's story" label ahead of the story and its evidence ids (or a hatched n/a and "No story right now."), a small label "Reported in news (not computed by the system)" above a short list of figures Claude quoted from the cited news (at most three, one per line with a gap between them, each ending in "Evidence: C8123" in the figure face on one unbroken run; the list is a labelled `ul`), shown only when there are some and never inside the story's own line, an inline "Upcoming" label ahead of each verified date and title, and a muted line "Notes rebuilt 1:00 PM ET" or, when the last rebuild failed, a flag word "Stale" with the time of the notes. A plain Disclosure ("Profile and numbers") holds "Claude's summary, general knowledge" and the numbered facts.
+**Name row** (What Claude knows): ticker bold, then words (Held; Stock, ETF or Leveraged ETF; Health with its first reason on the next line, flag amber for weak, "Health" with a hatched n/a when a stock's fundamentals could not be read, and no health word at all for a fund, which has none), then an inline "Claude's story" label ahead of the story and its evidence ids (or a hatched n/a and "No story right now."), a small label "Reported in news (not computed by the system)" above a short list of figures Claude quoted from the cited news (at most three, one per line with a gap between them, each ending in "Evidence: C8123" in the figure face on one unbroken run; the list is a labelled `ul`), shown only when there are some and never inside the story's own line, an inline "Upcoming" label ahead of each verified date and title, each followed by a small muted note "(title: Claude; date found in C8123)" with the cluster id in the figure face on one unbroken run (only the date is checked against the cited news; the title is Claude's own words, and the note says so, as the prompt's note does), and a muted line "Notes rebuilt 1:00 PM ET" or, when the last rebuild failed, a flag word "Stale" with the time of the notes. A plain Disclosure ("Profile and numbers") holds "Claude's summary, general knowledge" and the numbered facts.
 
 **Disclosure**: a summary row with a round chevron chip that rotates 180°, `aria-expanded` on a
 real button, focus ring in ink. The whole pressed-sage block is the button (at least 44px tall);
@@ -733,7 +733,8 @@ then the names), so da-vinci's structure workshop was skipped: pinned beats roll
   Python's numbers in the stub face (figure lines under a perforation); regimes and states as words
   (a regime is a status word, flag amber for anything above normal); every piece of Claude's prose
   carries a label that says it is Claude's ("Claude's description", "Claude's reason", "Claude's
-  story", "Claude's summary, general knowledge"), and a figure Claude quoted from the news carries
+  story", "Claude's summary, general knowledge", and an upcoming event's title, "title: Claude;
+  date found in C8123"), and a figure Claude quoted from the news carries
   the label "Reported in news (not computed by the system)" and sits apart from the story, which
   holds only the system's numbers; none of it sits on a button; a story Claude has not
   written, a health label that could not be worked out and a missing number are hatched `n/a`, never blank
@@ -796,6 +797,15 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-22 (whole-branch review R7): **What Claude knows**, Name row: each upcoming event now
+  carries a small muted note, "(title: Claude; date found in C8123)", after its date and title. The
+  review found that only the date is checked against the cited news cluster (Python), while the
+  title is Claude's and could be invented, yet the row showed both with the same weight and no
+  label, and the prompt rendered the same event as if Python had verified it (`dossier_text.py` is
+  fixed in the same pass). The note uses the page's existing words for Claude's text and the
+  evidence-id style (figure face, one unbroken run); no new component, colour, font, radius,
+  elevation or token. Small edit inside an existing surface: no workshop, no capture round; the
+  muted text on the white card was measured earlier at 6.77:1 and no new pair is introduced.
 - 2026-10-22 (later still): **What Claude knows**, Regime and limits card: today's circuit breaker is
   now an amber flag word, "Cuts paused today", with "The circuit breaker tripped, so Claude's size
   cuts are recorded but not applied until tomorrow" beside it, replacing the plain sentence added
