@@ -18,6 +18,11 @@ Two kinds of value, kept apart and never blended:
   mark does not invent a stop for it). Marking to expiry alone would flatter every block made in a
   selloff, because it ignores the loss exits.
 
+A third case, **moot**, is valued at nothing: an order that never filled (a trim the gate later
+refused, a floor lot that was cancelled) and a trim or floor lot the scan recorded for a card that
+never became an order at all (``order_id`` still unset, see ``_SCAN_TIME_KINDS``), because no
+trade existed for the action to have shrunk or let through.
+
 A positive value is what the withheld contracts would have **earned**: the trim, block or cut cost
 that much (for ``regime_floor_lot`` the contracts valued are the lots the floor *let through*, so
 positive means letting them through paid).
@@ -55,6 +60,26 @@ _SUGGESTED = re.compile(r"Claude suggested (\d+)")
 _HOLIDAY_SLACK_DAYS = 7
 
 
+# The kinds the scan writes for a card it merely *surfaced*, keyed by the card's id, before any
+# order exists: a trim (under whichever limit bound it) and a guaranteed floor lot. Such a row is
+# tied to an order only when one is sent (`regime.actions.link_order`, at send time), so a row with
+# contracts "sent" and no order is a card nobody approved (manual or observe mode, a name
+# `may_auto_open` refuses, a strike the next scan replaced): nothing traded and nothing was
+# withheld from a trade. Claude's rows are not in this set on purpose: one that sent contracts is
+# written in the same transaction as its order (`sender._auto_queue_candidates`), and a cut to zero
+# queues no order by design (its `sent` is 0). `cc_breakout_floor` and the never-sent rows have
+# `sent == 0`.
+_SCAN_TIME_KINDS = frozenset(
+    {
+        "regime_ceiling",
+        "leveraged_ceiling",
+        "regime_budget",
+        "escalation_trim",
+        "regime_floor_lot",
+    }
+)
+
+
 @dataclass(frozen=True)
 class _Effect:
     """What an action's order did, as far as the valuation is concerned."""
@@ -64,6 +89,8 @@ class _Effect:
 
 
 def _effect(row: SizingActionRow, order: OrderRow | None) -> _Effect:
+    if row.order_id is None and row.kind in _SCAN_TIME_KINDS and row.sent_contracts > 0:
+        return _Effect("moot", 0)  # surfaced on a scan, never sent: valued at nothing
     if row.order_id is None or order is None:
         return _Effect("none", row.sent_contracts)
     filled = int(order.filled_qty or 0)
@@ -336,7 +363,8 @@ def summarize(since: date) -> dict[str, dict[str, float]]:
     the traded contract's realised P&L, the rest are shadow values); ``pnl_expiry`` and
     ``pnl_rules`` (the sums of the two marks, positive = the action cost that much); and
     ``rules_missing`` (resolved rows with no exit-rule mark, for want of an entry IV). Rows that
-    are not resolved yet count and are not valued.
+    are not resolved yet count and are not valued. A moot row (see the module docstring) is
+    counted in its group with 0 contracts withheld and values of 0.
     """
     out: dict[str, dict[str, float]] = {}
     with session_scope() as s:

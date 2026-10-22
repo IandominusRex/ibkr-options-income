@@ -480,8 +480,15 @@ def _set(db, rid: int, **cols) -> None:
 
 
 def test_the_sent_smaller_never_sent_and_pushed_out_split(db) -> None:
-    # Trimmed from 10 to 3 (an order went out), valued exactly.
-    a = _row(db, candidate_id="a", record_key="a", kind="regime_ceiling")
+    # Trimmed from 10 to 3 (an order went out: the row carries it, as `link_order` leaves it),
+    # valued exactly.
+    a = _row(
+        db,
+        candidate_id="a",
+        record_key="a",
+        kind="regime_ceiling",
+        order_id=_order(db, "a", filled=3),
+    )
     _set(
         db,
         a,
@@ -661,3 +668,137 @@ def test_the_report_says_so_when_there_is_nothing(db, capsys) -> None:
 
     assert main(["--since", "2026-01-01"]) == 0
     assert "no sizing actions" in capsys.readouterr().out.lower()
+
+
+# --------------------------------------------------------------------------- #
+# R4 (whole-branch review): a trim or floor lot recorded at scan time for a card that never
+# became an order is moot, not valued as if its `sent` contracts had traded
+# --------------------------------------------------------------------------- #
+
+TRIM_KINDS = ["regime_ceiling", "leveraged_ceiling", "regime_budget", "escalation_trim"]
+
+
+@pytest.mark.parametrize("kind", TRIM_KINDS)
+def test_an_unlinked_trim_is_moot_not_valued_as_if_it_traded(db, kind) -> None:
+    """The review's repro: a card trimmed 10 -> 6 and shown on a scan, never approved, so no order
+    exists. Valuing the 4 withheld contracts against a trade that never happened booked $600."""
+    _flat("AAPL", db, 62.0)  # expires worthless: the shadow mark would be the whole premium
+    rid = _row(db, kind=kind, deterministic_contracts=10, sent_contracts=6)  # order_id is None
+    assert resolve_actions(NOW) == 1
+    row = _get(db, rid)
+    assert (row.shadow_pnl_expiry, row.shadow_pnl_rules) == (0.0, 0.0)
+    assert row.realized_pnl_per_contract is None
+    assert row.resolved_at is not None
+
+
+def test_an_unlinked_floor_lot_is_moot(db) -> None:
+    """A floor lot surfaced on a scan and never sent: nothing was let through, so letting it
+    through earned nothing (it was valued at the lot's premium, $150, before)."""
+    _flat("AAPL", db, 62.0)
+    rid = _row(db, kind="regime_floor_lot", deterministic_contracts=1, sent_contracts=1)
+    assert resolve_actions(NOW) == 1
+    row = _get(db, rid)
+    assert (row.shadow_pnl_expiry, row.shadow_pnl_rules) == (0.0, 0.0)
+    assert row.realized_pnl_per_contract is None and row.resolved_at is not None
+
+
+def test_one_card_shown_with_three_strikes_is_not_valued_three_times(db) -> None:
+    """The scan writes a row per surfaced contract; none of them was sent."""
+    _flat("AAPL", db, 62.0)
+    for i, strike in enumerate((58.0, 60.0, 61.0)):
+        _row(
+            db,
+            candidate_id=f"tqqq-{i}",
+            record_key=f"tqqq-{i}",
+            strike=strike,
+            kind="leveraged_ceiling",
+            deterministic_contracts=10,
+            sent_contracts=6,
+        )
+    assert resolve_actions(NOW) == 3
+    group = summarize(ACTION_DAY)["leveraged_ceiling:sent_smaller"]
+    assert group["count"] == 3 and group["resolved"] == 3
+    assert group["contracts_withheld"] == 0
+    assert (group["pnl_expiry"], group["pnl_rules"]) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("kind", TRIM_KINDS)
+def test_the_same_trim_linked_to_a_filled_order_keeps_its_exact_value(db, kind) -> None:
+    oid = _order(db, filled=6)
+    _fills(db, oid, sold=(6, 1.5), bought=(6, 0.5))
+    rid = _row(db, kind=kind, order_id=oid, deterministic_contracts=10, sent_contracts=6)
+    assert resolve_actions(NOW) == 1
+    row = _get(db, rid)
+    assert row.realized_pnl_per_contract == pytest.approx(100.0)
+    assert row.shadow_pnl_expiry == pytest.approx(100.0 * 4)  # the 4 withheld at the traded rate
+    assert row.shadow_pnl_rules == pytest.approx(100.0 * 4)
+
+
+def test_the_same_floor_lot_linked_to_a_filled_order_keeps_its_exact_value(db) -> None:
+    oid = _order(db, filled=1)
+    _fills(db, oid, sold=(1, 1.5), bought=(1, 1.0))
+    rid = _row(
+        db, kind="regime_floor_lot", order_id=oid, deterministic_contracts=1, sent_contracts=1
+    )
+    resolve_actions(NOW)
+    row = _get(db, rid)
+    assert row.realized_pnl_per_contract == pytest.approx(50.0)
+    assert row.shadow_pnl_expiry == pytest.approx(50.0)
+
+
+def test_a_trim_linked_to_a_working_order_still_waits(db) -> None:
+    oid = _order(db, state="submitted", filled=0)
+    rid = _row(db, kind="regime_ceiling", order_id=oid)
+    assert resolve_actions(NOW) == 0
+    assert _get(db, rid).resolved_at is None
+
+
+@pytest.mark.parametrize("kind", TRIM_KINDS + ["regime_daily_limit", "scale_in_zone"])
+def test_a_never_sent_row_is_still_shadow_valued(db, kind) -> None:
+    """`sent_contracts == 0` means the name was refused outright: nothing was withheld from a
+    trade that existed, but the refusal itself is the action and is valued as before."""
+    _flat("AAPL", db, 62.0)
+    rid = _row(
+        db,
+        kind=kind,
+        candidate_id="name",
+        record_key=f"csp:AAPL:{kind}:{ACTION_DAY.isoformat()}",
+        deterministic_contracts=2,
+        sent_contracts=0,
+    )
+    assert resolve_actions(NOW) == 1
+    assert _get(db, rid).shadow_pnl_expiry == pytest.approx(1.5 * 100 * 2)
+
+
+def test_a_cut_to_zero_is_still_shadow_valued(db) -> None:
+    """Claude's cut to zero queues no order, so it has none by design (the row's `sent` is 0)."""
+    _flat("AAPL", db, 62.0)
+    rid = _row(db, kind="claude_cut", deterministic_contracts=3, sent_contracts=0)
+    assert resolve_actions(NOW) == 1
+    assert _get(db, rid).shadow_pnl_expiry == pytest.approx(1.5 * 100 * 3)
+
+
+@pytest.mark.parametrize("kind", ["claude_cut", "claude_cut_unapplied"])
+def test_the_rule_is_for_scan_time_trims_and_floor_lots_only(db, kind) -> None:
+    """Claude's rows that sent something are written in the same transaction as their order
+    (`sender._auto_queue_candidates`), so the rule does not reach them."""
+    _flat("AAPL", db, 62.0)
+    rid = _row(
+        db,
+        kind=kind,
+        deterministic_contracts=10,
+        sent_contracts=3,
+        reason="live_record_only: Claude suggested 3: x",
+    )
+    assert resolve_actions(NOW) == 1
+    assert _get(db, rid).shadow_pnl_expiry != 0.0
+
+
+def test_summarize_shows_a_moot_row_with_no_lots_withheld(db) -> None:
+    _row(db, kind="regime_ceiling", deterministic_contracts=10, sent_contracts=6)
+    before = summarize(ACTION_DAY)["regime_ceiling:sent_smaller"]  # not resolved yet
+    assert before["count"] == 1 and before["contracts_withheld"] == 0 and before["resolved"] == 0
+    resolve_actions(NOW)
+    after = summarize(ACTION_DAY)["regime_ceiling:sent_smaller"]
+    assert after["count"] == 1 and after["resolved"] == 1
+    assert (after["contracts_withheld"], after["pnl_expiry"], after["pnl_rules"]) == (0, 0.0, 0.0)
