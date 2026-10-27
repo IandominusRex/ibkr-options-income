@@ -647,6 +647,11 @@ Operate. Dials as the project default.
 - **FORM:** the payslip, candidate 1 of 7 (Claude's pick), roll seed 1090290943, revised by the
   user: Why collapsible above the stub, pay card collapsible, positions beneath it.
 - **FINISH:** unreviewed and undocumented is unfinished.
+- **Market card (2026-10-23):** a white card between the pay card and Positions: SPY and QQQ as status
+  words (flag amber above normal) with a plain line each and what that does to new puts, the
+  "Suspended today" / "Cuts paused today" flag words, three stories ("since" dates, the descriptions
+  stay on What Claude knows) and a link there. A position row gains "Weak health" (flag) and a near
+  "Event <date>" word from its name's notes. Read-only; no lime.
 
 ### Position
 Operate. Dials as the project default. Added 2026-10-15 at the operator's request: pressing a
@@ -670,6 +675,9 @@ news directly under it), so da-vinci's structure workshop was skipped: pinned be
 - **FORM:** one grid placed by CSS so the DOM order is the phone order: chart, trade, headlines.
   Mirrors Home's two columns (content left, a 340px column right).
 - **FINISH:** unreviewed and undocumented is unfinished.
+- **Name notes (2026-10-23):** under the headlines, a card with the name's notes exactly as What Claude knows
+  lists them (Python's health and numbers, Claude's story and summary labelled as Claude's). The stock page
+  and a news ticker page carry the same card.
 
 ### Trades
 Operate. Dials as the project default. Built in web overhaul Part 2
@@ -701,6 +709,12 @@ Operate. Dials as the project default. Built in web overhaul Part 2
   a failed command hands it back.
 - **FINISH:** unreviewed and undocumented is unfinished.
 
+- **Market and sizing (2026-10-23):** the Proposals view opens with the Market card (regimes only). History
+  gains "Held back or trimmed" between Traded and Not traded: one row per put the regime, the ladder, the
+  leveraged-ETF limit or Claude's cut held back or made smaller, a status word for the rule, "Sent 1 of 3
+  contracts" or "Held back: 0 of 2 contracts sent", and the reason with its codes in words. Claude's
+  cut is the flag tone and its reason is labelled as carrying Claude's words.
+
 ### Portfolio
 Operate. Positions, Campaigns, Expiry calendar. Position rows as on Home; "Propose a roll" moves
 onto the short-option rows.
@@ -713,7 +727,9 @@ Ledger and stubs use the figure face.
 Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6.
 
 ### News
-Read. Feed and calendar; ticker briefs.
+Read. Feed and calendar; ticker briefs. The feed opens with the Market card: regimes, up to six stories
+with each description labelled as Claude's, and one line on the last 7 days of triage (judged as noise,
+promoted, not reviewed). A ticker page carries that name's notes.
 
 ### More
 Read and Operate. How it works (the System Explanation pages), What Claude knows (a link to its own surface), Bot controls, Theme, the monthly income target, Ledger import, Credits.
@@ -797,6 +813,14 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-23: **Market picture on the working surfaces.** The Market card (Home, Trades Proposals, News),
+  name notes (position, stock and news ticker pages), "Weak health" and "Event" words on position rows
+  and Trades History's "Held back or trimmed" list now show the market picture build where the operator
+  already looks, instead of only on /more/claude. Everything is composed from existing parts (`Card`,
+  `StatusWord`, the `Name` row, the perforated rules): no new colour, font, radius, elevation or token, so
+  no workshop. Home's order (hero, pay, then market, then positions) keeps "what is the account doing"
+  ahead of "what is the market doing". Verified in the running app against real data on Home, News and a
+  stock page; Trades History needs the API restarted to serve `/claude/sizing`.
 - 2026-10-22 (whole-branch review R7): **What Claude knows**, Name row: each upcoming event now
   carries a small muted note, "(title: Claude; date found in C8123)", after its date and title. The
   review found that only the date is checked against the cited news cluster (Python), while the

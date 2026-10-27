@@ -3175,6 +3175,62 @@
         ]
       }
     },
+    "/claude/sizing": {
+      "get": {
+        "tags": [
+          "claude"
+        ],
+        "summary": "Sizing",
+        "description": "The day's sizing record: puts the regime, the ladder or Claude's cut trimmed or held back.",
+        "operationId": "sizing_claude_sizing_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizingActionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/spreads/positions": {
       "get": {
         "tags": [
@@ -12726,6 +12782,115 @@
         ],
         "title": "SignalCorrelation",
         "description": "How one signal relates to realized P&L over closed trades.\n\n`pearson_r` is the linear correlation of the signal with realized P&L; the low/high split\ncontrasts mean P&L for the bottom vs top half of the signal's range \u2014 a coarse, robust\nread that doesn't assume linearity."
+      },
+      "SizingActionOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "right": {
+            "type": "string",
+            "title": "Right"
+          },
+          "strike": {
+            "type": "number",
+            "title": "Strike"
+          },
+          "expiry": {
+            "type": "string",
+            "format": "date",
+            "title": "Expiry"
+          },
+          "premium": {
+            "type": "number",
+            "title": "Premium"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "regime": {
+            "type": "string",
+            "title": "Regime"
+          },
+          "deterministic_contracts": {
+            "type": "integer",
+            "title": "Deterministic Contracts"
+          },
+          "sent_contracts": {
+            "type": "integer",
+            "title": "Sent Contracts"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "underlying",
+          "right",
+          "strike",
+          "expiry",
+          "premium",
+          "kind",
+          "regime",
+          "deterministic_contracts",
+          "sent_contracts",
+          "reason"
+        ],
+        "title": "SizingActionOut",
+        "description": "One row of the sizing record (``sizing_actions``): a cash-secured put the regime, the\nscale-in ladder, the leveraged-ETF ceiling or Claude's cut trimmed or held back."
+      },
+      "SizingActionsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/SizingActionOut"
+            },
+            "type": "array",
+            "title": "Actions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "day"
+        ],
+        "title": "SizingActionsResponse"
       },
       "Source": {
         "type": "string",

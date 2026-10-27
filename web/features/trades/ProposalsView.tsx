@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import type { ApprovalSummary } from "@/components/options/types";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { MarketCard } from "@/features/market/MarketCard";
 import { usePendingApprovals } from "@/features/home/NeedsYou";
 import { ProposalCard } from "@/features/home/ProposalCard";
 import { ReviewSheet } from "@/features/home/ReviewSheet";
@@ -78,6 +79,9 @@ export function ProposalsView({
       <h2 id="proposals-title" className="sr-only">
         Proposals
       </h2>
+      <div className="mb-4">
+        <MarketCard variant="trades" />
+      </div>
       {body}
       <ReviewSheet
         approval={reviewing}

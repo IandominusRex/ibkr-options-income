@@ -1,18 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { apiFetch } from "@/lib/api";
 import { CallsCard } from "./CallsCard";
 import { DroppedCard } from "./DroppedCard";
 import { NamesCard } from "./NamesCard";
 import { PictureCard } from "./PictureCard";
 import { RegimeCard } from "./RegimeCard";
-import type { ClaudeContext } from "./types";
+import { useClaudeContext } from "./useClaudeContext";
 
 function Shell({ children }: { children: ReactNode }) {
   return (
@@ -48,11 +46,7 @@ function Loading() {
 }
 
 export function ClaudeContextPage() {
-  const { data, isError, refetch, isFetching } = useQuery({
-    queryKey: ["claude-context"],
-    queryFn: () => apiFetch<ClaudeContext>("/claude/context"),
-    refetchInterval: 60_000,
-  });
+  const { data, isError, refetch, isFetching } = useClaudeContext();
 
   if (isError && !data) {
     return (

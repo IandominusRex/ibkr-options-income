@@ -848,6 +848,15 @@ features/claude-context/  What Claude knows (read-only): ClaudeContextPage (reac
                     upcoming events: the date found in the news, the title labelled as Claude's), FigureLines (the perforated figure lines), format.ts (New York times,
                     percents, the regime line, the leveraged sentences) and types.ts (aliases of
                     the generated api-types). Nothing here writes or reaches a command.
+features/market/    The market picture where the work happens (2026-10-23), read-only. MarketCard (the SPY and
+                    QQQ regimes as words with what each does to new puts, the flag words, and the picture's
+                    stories: three on Home, six with Claude's description and the 7-day triage line on News,
+                    none on Trades' Proposals view), NameNotes (one name's notes: the claude-context `Name`
+                    row on the position page, the stock page and a news ticker page; silent while loading,
+                    "No notes yet" when the name has none), NameFlags ("Weak health" and a "Event <date>" word
+                    on a Home position row), HeldBack (Trades History: the day's `GET /claude/sizing` rows
+                    as "Held back or trimmed", kinds and reason codes in words) and market.ts (the pure
+                    rules). All share `useClaudeContext` (features/claude-context/), one query key.
 features/more/      TargetCard + target.ts (the income-target form's rules: text in, a validated
                     `set_income_target` payload out, mirroring `IncomeTarget` and its bounds).
 lib/

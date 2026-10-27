@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
+import { MarketCard } from "@/features/market/MarketCard";
 import { CalendarColumn } from "./CalendarColumn";
 import { NewsCard } from "./NewsCard";
 import type { NewsFeedResponse } from "./types";
@@ -32,6 +33,7 @@ export function NewsFeed() {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]" data-testid="news-feed">
       <div className="space-y-4">
+        <MarketCard variant="news" />
         <div className="flex flex-wrap items-center gap-2">
           {GROUPS.map((g) => (
             <button key={g.label} type="button" onClick={() => setGroup(g.key)} aria-pressed={group === g.key}

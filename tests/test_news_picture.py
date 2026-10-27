@@ -769,3 +769,11 @@ def test_seasonality_ignores_the_month_still_forming_and_counts_down_years(monke
     assert Z_sep is not None and Z_sep.up_share == 0.0 and Z_sep.avg_return_pct < 0
     with pytest.raises(ValueError):
         Z.month_seasonality(13)
+
+
+def test_tnx_divisor_reads_both_yahoo_quotes() -> None:
+    """^TNX was quoted x10 (43.1 = 4.31%) and now directly (4.95 = 4.95%)."""
+    from src.analytics.market_conditions import tnx_divisor
+
+    assert tnx_divisor(43.1) == 10.0
+    assert tnx_divisor(4.953) == 1.0

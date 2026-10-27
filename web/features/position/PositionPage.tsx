@@ -14,6 +14,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { formatMoneyCell } from "@/lib/money";
 import { Headlines } from "./Headlines";
 import { RollCard } from "./RollCard";
+import { NameNotes } from "@/features/market/NameNotes";
 import { UnderlyingChart } from "./UnderlyingChart";
 import { chartLines, nowLines, openedOn, positionTitle, subline } from "./position";
 import type { PositionDetail } from "./types";
@@ -212,6 +213,9 @@ export function PositionPage({ underlying, slug }: { underlying: string; slug: s
 
         <div className="min-w-0 lg:col-start-1 lg:row-start-2">
           <Headlines symbol={symbol} />
+          <div className="mt-5">
+            <NameNotes symbol={symbol} />
+          </div>
         </div>
       </div>
     </Shell>

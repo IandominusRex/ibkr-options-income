@@ -1074,6 +1074,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claude/sizing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sizing
+         * @description The day's sizing record: puts the regime, the ladder or Claude's cut trimmed or held back.
+         */
+        get: operations["sizing_claude_sizing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/spreads/positions": {
         parameters: {
             query?: never;
@@ -4834,6 +4854,60 @@ export interface components {
             high_half_mean_pnl?: number | null;
         };
         /**
+         * SizingActionOut
+         * @description One row of the sizing record (``sizing_actions``): a cash-secured put the regime, the
+         *     scale-in ladder, the leveraged-ETF ceiling or Claude's cut trimmed or held back.
+         */
+        SizingActionOut: {
+            /** Id */
+            id: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Underlying */
+            underlying: string;
+            /** Right */
+            right: string;
+            /** Strike */
+            strike: number;
+            /**
+             * Expiry
+             * Format: date
+             */
+            expiry: string;
+            /** Premium */
+            premium: number;
+            /** Kind */
+            kind: string;
+            /** Regime */
+            regime: string;
+            /** Deterministic Contracts */
+            deterministic_contracts: number;
+            /** Sent Contracts */
+            sent_contracts: number;
+            /** Reason */
+            reason: string;
+            /** Order Id */
+            order_id?: number | null;
+        };
+        /** SizingActionsResponse */
+        SizingActionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Actions */
+            actions?: components["schemas"]["SizingActionOut"][];
+        };
+        /**
          * Source
          * @description Where a number came from. A Black-Scholes delta must not look like an IBKR one.
          * @enum {string}
@@ -6856,6 +6930,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClaudeContextResponse"];
+                };
+            };
+        };
+    };
+    sizing_claude_sizing_get: {
+        parameters: {
+            query?: {
+                day?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SizingActionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

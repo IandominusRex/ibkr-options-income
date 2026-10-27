@@ -435,6 +435,14 @@ minutes after stop-outs.
   the regime and its limits, the cut mode and whether today's breaker has tripped, what each of the seven
   Claude calls reads, the stories dropped as noise and the per-name notes, with every piece of Claude's text
   labelled as Claude's.
+- **Where it shows on the web (2026-10-23).** A Market card on Home (regimes, flags, three stories), on
+  Trades' Proposals view (regimes) and on News (stories with Claude's descriptions, the 7-day triage line); a
+  name's notes on its position page, stock page and news ticker page; "Weak health" and a near "Event" word on
+  Home position rows; and Trades History's "Held back or trimmed" list from `GET /claude/sizing`. Limits: a position
+  row's event word only knows the dates in the name's dossier (verified from the news), not the earnings calendar.
+- **Fixed 2026-10-23: the 10-year yield.** `^TNX` now quotes the yield directly (4.95), not x10; the code divided by
+  10, so the picture and the macro backdrop told Claude "10y 0.50%" with the 5-day change a tenth of its size.
+  `tnx_divisor` reads both quotes. Needs `./ibkr restart` to reach the running daemons.
 - **Fences and checks.** `tests/test_regime_fence.py` (the regime family stays deterministic; the clamped cut is the only
   LLM value that reaches a size; no covered-call hold), the news and eval fences extended to the new modules,
   and `tests/test_claude_calls_render.py`.

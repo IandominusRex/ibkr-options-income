@@ -6,7 +6,7 @@ by Python; the picture and the dossiers carry Claude's text, which the page labe
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -103,3 +103,27 @@ class ClaudeContextResponse(Envelope):
     not_reviewed_7d: int = 0
     dossiers: list[DossierOut] = Field(default_factory=list)
     without_notes: list[str] = Field(default_factory=list)  # covered names with no dossier yet
+
+
+class SizingActionOut(BaseModel):
+    """One row of the sizing record (``sizing_actions``): a cash-secured put the regime, the
+    scale-in ladder, the leveraged-ETF ceiling or Claude's cut trimmed or held back."""
+
+    id: int
+    created_at: datetime
+    underlying: str
+    right: str
+    strike: float
+    expiry: date
+    premium: float
+    kind: str  # regime_budget | scale_in_zone | loss_exit_cooldown | claude_cut | ...
+    regime: str
+    deterministic_contracts: int  # what the rules alone would have sent
+    sent_contracts: int  # what was sent (0 when the put was held back)
+    reason: str
+    order_id: int | None = None
+
+
+class SizingActionsResponse(Envelope):
+    day: date  # the New York day shown
+    actions: list[SizingActionOut] = Field(default_factory=list)

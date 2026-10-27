@@ -33,7 +33,7 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.analytics.market_conditions import get_market_conditions
+from src.analytics.market_conditions import get_market_conditions, tnx_divisor
 from src.analytics.regime import classify_base, fetch_daily_inputs
 from src.analytics.seasonality import month_seasonality
 from src.common.config import NewsDigestCfg, get_config, get_regime_cfg
@@ -104,7 +104,7 @@ def _trend_line(inp: RegimeInputs) -> str | None:
 
 
 def _ten_year_history() -> pd.Series | None:
-    """^TNX closes (the yield times ten), about two months of them."""
+    """^TNX closes (see ``tnx_divisor`` for the scale), about two months of them."""
     hist = get_price_provider().get_ohlcv("^TNX", lookback_days=60)
     if hist is None or hist.empty or "Close" not in hist:
         return None
@@ -169,12 +169,17 @@ def picture_facts(
     history = _safe(_ten_year_history, None, "the 10-year history")
     if backdrop.ten_year_yield is None and history is not None:
         backdrop = backdrop.model_copy(
-            update={"ten_year_yield": round(float(history.iloc[-1]) / 10.0, 2)}
+            update={
+                "ten_year_yield": round(
+                    float(history.iloc[-1]) / tnx_divisor(float(history.iloc[-1])), 2
+                )
+            }
         )
     for f in build_market_facts({}, backdrop).facts:  # VIX, VIX/VIX3M, the 10-year and its 5 days
         sheet.add(f.label, f.value, f.display)
     if history is not None and len(history) >= 22:
-        bp = (float(history.iloc[-1]) - float(history.iloc[-22])) * 10.0  # x10 quote, then x100 bp
+        last = float(history.iloc[-1])
+        bp = (last - float(history.iloc[-22])) / tnx_divisor(last) * 100.0
         sheet.add("10y 1m change", round(bp), f"10y {bp:+.0f}bp 1m")
     return sheet, regimes, source
 

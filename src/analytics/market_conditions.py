@@ -89,13 +89,22 @@ def _fetch_index_level(symbol: str) -> float | None:
     return None
 
 
+def tnx_divisor(last_close: float) -> float:
+    """What to divide a ``^TNX`` close by to get the yield in percent.
+
+    Yahoo used to quote the yield x10 (43.1 = 4.31%) and now quotes it directly (4.31). A 10-year
+    yield above 20% is not a thing, so a close above 20 is the old quote and anything below is
+    the yield itself. Without this the picture told Claude the yield was 0.50% (2026-10-22).
+    """
+    return 10.0 if last_close > 20.0 else 1.0
+
+
 @daily_cached
 def _fetch_ten_year() -> tuple[float | None, float | None]:
     """Return ``(10y yield %, 5-session change in bp)``.
 
-    ``^TNX`` quotes the yield ×10 (43.1 = 4.31%), so both figures are scaled down by 10.
-    Rates matter to a premium seller mainly as a regime signal — a fast repricing tends to
-    move equity vol and correlation together.
+    Rates matter to a premium seller mainly as a regime signal - a fast repricing tends to
+    move equity vol and correlation together. See ``tnx_divisor`` for the quote's scale.
     """
     try:
         from src.data.factory import get_price_provider
@@ -106,10 +115,11 @@ def _fetch_ten_year() -> tuple[float | None, float | None]:
         closes = hist["Close"].dropna()
         if closes.empty:
             return None, None
-        level = round(float(closes.iloc[-1]) / 10.0, 2)
+        div = tnx_divisor(float(closes.iloc[-1]))
+        level = round(float(closes.iloc[-1]) / div, 2)
         change_bp = None
         if len(closes) >= 6:
-            prior = float(closes.iloc[-6]) / 10.0
+            prior = float(closes.iloc[-6]) / div
             change_bp = round((level - prior) * 100, 1)
         return level, change_bp
     except Exception as exc:

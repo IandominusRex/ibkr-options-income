@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { StatusWord, type StatusTone } from "@/components/ui/StatusWord";
 import { usePendingApprovals } from "@/features/home/NeedsYou";
+import { HeldBack } from "@/features/market/HeldBack";
 import { proposalTitle } from "@/features/home/ProposalCard";
 import { TradeCard } from "@/features/home/TradeCard";
 import type { DayTradesResponse } from "@/features/home/types";
@@ -315,6 +316,8 @@ export function HistoryView({
         </h2>
         {traded}
       </section>
+
+      <HeldBack day={day} strategy={strategy} isToday={isToday} />
 
       <NotTraded strategy={strategy} day={day} />
 

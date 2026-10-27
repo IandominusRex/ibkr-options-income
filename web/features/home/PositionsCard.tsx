@@ -9,6 +9,7 @@ import type { ShortListResponse } from "@/components/options/types";
 import { Card } from "@/components/ui/Card";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { StatusWord } from "@/components/ui/StatusWord";
+import { NameFlags } from "@/features/market/NameFlags";
 import { formatStubValue } from "@/components/ui/Stub";
 import { FreshnessLabel } from "@/components/portfolio/FreshnessLabel";
 import type { PositionsResponse } from "@/components/portfolio/types";
@@ -179,6 +180,7 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
                       <StatusWord tone="flag">Roll alert</StatusWord>
                     </span>
                   )}
+                  {r.underlying && <NameFlags symbol={r.underlying} />}
                   <div className="text-[0.8125rem] text-muted">{r.sub}</div>
                 </div>
                 <div className="tabular text-right font-semibold">

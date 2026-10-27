@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { BriefRequest } from "./BriefRequest";
 import { NewsCard } from "./NewsCard";
+import { NameNotes } from "@/features/market/NameNotes";
 import { dayLabel } from "./format";
 import type { NewsPostDetail, NewsTickerResponse } from "./types";
 
@@ -30,6 +31,7 @@ export function NewsTicker({ symbol }: { symbol: string }) {
       {t.data && !t.data.available && <p className="text-sm text-muted">The news service has not written anything yet.</p>}
       {t.data?.available && !t.data.latest_brief && <p className="text-sm text-muted">No brief yet. Request one above.</p>}
       {t.data?.latest_brief && <NewsCard post={t.data.latest_brief} chartUri={detail.data?.chart_data_uri ?? null} />}
+      <NameNotes symbol={sym} />
       {t.data && t.data.clusters.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-medium text-content">Recent stories</h2>

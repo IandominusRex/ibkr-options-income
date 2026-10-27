@@ -762,3 +762,43 @@ def test_the_api_process_still_does_not_load_the_news_process_engine() -> None:
         env={**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"},
     )
     assert out.stdout.strip() == "False False False", out.stderr
+
+
+def test_sizing_lists_the_days_actions_newest_first(news_client) -> None:
+    from src.storage.db import session_scope
+    from src.storage.models import SizingActionRow
+
+    def row(sym: str, kind: str, day: date, minute: int, sent: int) -> SizingActionRow:
+        return SizingActionRow(
+            created_at=datetime(2026, 10, 22, 15, minute),
+            candidate_id=f"c-{sym}",
+            record_key=f"csp:{sym}:{kind}:{day}",
+            underlying=sym,
+            strategy="cash_secured_put",
+            right="P",
+            strike=35.0,
+            expiry=date(2026, 11, 13),
+            premium=2.0,
+            kind=kind,
+            regime="stressed",
+            deterministic_contracts=2,
+            sent_contracts=sent,
+            reason="stopped by the scale-in ladder",
+            action_day=day,
+        )
+
+    with session_scope() as s:
+        s.add_all(
+            [
+                row("ASTS", "scale_in_zone", TODAY_ET, 1, 0),
+                row("NVDA", "claude_cut", TODAY_ET, 2, 1),
+                row("OLD", "scale_in_zone", date(2026, 10, 21), 3, 0),
+            ]
+        )
+
+    body = news_client.get("/claude/sizing", headers=OWNER).json()
+    assert body["day"] == TODAY_ET.isoformat()
+    assert [a["underlying"] for a in body["actions"]] == ["NVDA", "ASTS"]
+    assert body["actions"][0]["sent_contracts"] == 1
+    past = news_client.get("/claude/sizing?day=2026-10-21", headers=OWNER).json()
+    assert [a["underlying"] for a in past["actions"]] == ["OLD"]

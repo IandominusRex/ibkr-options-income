@@ -38,7 +38,7 @@ function Notes({ d }: { d: Dossier }) {
   return <p className="mt-2 text-[0.8125rem] text-muted">Notes rebuilt {etLabel(d.prose_at)}</p>;
 }
 
-function Name({ d }: { d: Dossier }) {
+export function Name({ d }: { d: Dossier }) {
   const events = d.events ?? [];
   const evidence = d.story_evidence ?? [];
   const reported = d.reported ?? [];

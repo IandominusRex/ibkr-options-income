@@ -1600,3 +1600,20 @@ block shows no limits for it.
 "Covered" is `would_own` + `actively_wheeling` from the effective universe (web overrides
 included) + every held underlying from the portfolio reading, spreads-book underlyings out: the
 same set the news process builds notes for.
+
+### `GET /claude/sizing?day=YYYY-MM-DD`
+
+The sizing record for one New York day (default today), newest first, capped at 200 rows: the cash-secured puts
+the market regime, the scale-in ladder, the leveraged-ETF ceiling, the bottoming rule or Claude's reduce-only
+cut trimmed or held back, and the covered calls the breakout rule pushed out. Read-only and owner-only
+(`src/api/routers/claude_context.py`), straight from the trading DB's `sizing_actions` table (written only by
+`src/regime/actions.py`; nothing in the engine, execution or sizing path reads it back). The web Trades History
+view shows it as "Held back or trimmed".
+
+**Response — `SizingActionsResponse`:** `as_of`, `day`, and `actions: SizingActionOut[]`, each `{ id,
+created_at, underlying, right, strike, expiry, premium, kind (regime_budget | regime_ceiling |
+leveraged_ceiling | regime_daily_limit | regime_floor_lot | escalation_trim | scale_in_zone |
+loss_exit_cooldown | bottoming_lot | claude_cut | claude_cut_unapplied | cc_breakout_floor), regime,
+deterministic_contracts (what the rules alone would have sent), sent_contracts (0 when held back), reason, order_id }`.
+For a `claude_cut` row the `reason` carries Claude's stated reason. An empty day answers `actions: []`.
+

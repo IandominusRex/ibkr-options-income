@@ -4,6 +4,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { STRATEGY_FILTERS, STRATEGY_LABEL, kindOf } from "@/lib/strategy";
 import { useHydrated } from "@/lib/useHydrated";
 import { useStrategyFilter } from "@/lib/useStrategyFilter";
+import { MarketCard } from "@/features/market/MarketCard";
 import { AccountHero } from "./AccountHero";
 import { NeedsYou, usePendingApprovals } from "./NeedsYou";
 import { PayCard } from "./PayCard";
@@ -46,6 +47,9 @@ export function HomePage() {
             <ProposalsBanner strategy={strategy} />
           </div>
           <PayCard strategy={strategy} />
+          <div className="mt-4">
+            <MarketCard variant="home" />
+          </div>
           <PositionsCard strategy={strategy} />
         </div>
         <div className="hidden lg:col-start-2 lg:row-start-1 lg:block">

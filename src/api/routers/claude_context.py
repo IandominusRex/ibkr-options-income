@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -31,6 +31,8 @@ from src.api.models.claude_context import (
     DroppedOut,
     LeveragedLimitOut,
     RegimeLimitOut,
+    SizingActionOut,
+    SizingActionsResponse,
 )
 from src.api.models.common import as_utc, as_utc_opt
 from src.api.news_db import news_read_session
@@ -47,6 +49,7 @@ from src.common.schemas import RegimeState
 from src.common.universe import effective_universe
 from src.news.schemas import TriageView
 from src.news.store import queries
+from src.storage.models import SizingActionRow
 from src.storage.regime_state import STATE_KEY, SUSPENDED_KEY
 
 log = logging.getLogger(__name__)
@@ -299,3 +302,39 @@ def context(_: OwnerUser, db: TradingDb) -> ClaudeContextResponse:
                 "without_notes": without_notes,
             }
         )
+
+
+@router.get("/sizing", response_model=SizingActionsResponse)
+def sizing(_: OwnerUser, db: TradingDb, day: date | None = None) -> SizingActionsResponse:
+    """The day's sizing record: puts the regime, the ladder or Claude's cut trimmed or held back."""
+    now = _now()
+    shown = day or now.astimezone(ET).date()
+    rows = (
+        db.query(SizingActionRow)
+        .filter(SizingActionRow.action_day == shown)
+        .order_by(SizingActionRow.created_at.desc(), SizingActionRow.id.desc())
+        .limit(200)
+        .all()
+    )
+    return SizingActionsResponse(
+        as_of=now,
+        day=shown,
+        actions=[
+            SizingActionOut(
+                id=r.id,
+                created_at=as_utc(r.created_at),
+                underlying=r.underlying,
+                right=r.right,
+                strike=r.strike,
+                expiry=r.expiry,
+                premium=r.premium,
+                kind=r.kind,
+                regime=r.regime,
+                deterministic_contracts=r.deterministic_contracts,
+                sent_contracts=r.sent_contracts,
+                reason=r.reason,
+                order_id=r.order_id,
+            )
+            for r in rows
+        ],
+    )
