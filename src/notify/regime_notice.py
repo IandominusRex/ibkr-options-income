@@ -16,11 +16,11 @@ from datetime import date
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
-from telegram import Bot
 
 from src.analytics.regime import ORDER
 from src.common.config import RegimeCfg, get_config, get_regime_cfg
 from src.common.schemas import MarketRegime, OrderState, RegimeChange, RegimeState, Strategy
+from src.notify.robust_bot import RobustBot as Bot
 from src.notify.sender import thread_id
 from src.storage.db import session_scope
 from src.storage.models import OrderRow

@@ -80,6 +80,7 @@ from src.ibkr.connection import (
 )
 from src.notify.command_drain import drain_once
 from src.notify.regime_notice import format_regime_status
+from src.notify.robust_bot import RobustBot
 from src.notify.sender import thread_id
 from src.regime.refresh import refresh_regime_cached
 from src.storage.approvals import expire_stale_approvals
@@ -1988,7 +1989,8 @@ async def _run_service(token: str, chat_id: str) -> None:
             "/scan, /positions, /account, /status will be unavailable"
         )
 
-    app = Application.builder().token(token).build()
+    # RobustBot: sends retry on a timeout and long replies are split (src/notify/robust_bot.py).
+    app = Application.builder().bot(RobustBot(token=token)).build()
     app.bot_data["ib_exec"] = ib
     app.bot_data["ib_scan"] = ib_scan
 

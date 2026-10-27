@@ -35,6 +35,18 @@ def week_bars(symbol: str) -> Any:
 
 
 @pytest.fixture(autouse=True)
+def _no_usd_basis_cutoff(monkeypatch):
+    """The reporting tier drops net liquidations from before the SGD->USD switch (2026-10-09).
+    Most tests seed journal days from any date, so the cutoff is off here; the cutoff's own tests
+    (tests/test_reporting_usd_basis.py) put the real one back."""
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+
+    monkeypatch.setattr("src.reporting.pnl.NET_LIQ_USD_FROM", _datetime.min)
+    monkeypatch.setattr("src.reporting.pnl.NET_LIQ_USD_FROM_DAY", _date.min)
+
+
+@pytest.fixture(autouse=True)
 def _clear_daily_caches():
     """Reset the process-local daily caches around every test.
 

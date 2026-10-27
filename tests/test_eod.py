@@ -666,13 +666,15 @@ def test_format_eod_summary_no_narrative() -> None:
     assert "🧠" not in format_eod_summary(_make_eod_summary(), None)
 
 
-def test_format_eod_summary_truncated_gracefully() -> None:
+def test_format_eod_summary_is_not_cut_and_splits_to_fit() -> None:
     from src.notify.formatters import format_eod_summary
+    from src.notify.splitting import LIMIT, _units, split_message
 
     text = format_eod_summary(_make_eod_summary(), "A" * 5000)
-    # Body is truncated to _MAX_MESSAGE_LEN; source footer appended after, so allow overage.
-    assert "\\.\\.\\." in text
+    assert "A" * 5000 in text  # the formatter no longer slices; the bot splits what it sends
     assert "Sources:" in text
+    chunks = split_message(text)
+    assert len(chunks) > 1 and all(_units(c) <= LIMIT for c in chunks)
 
 
 def test_format_eod_summary_negative_realized_uses_minus() -> None:

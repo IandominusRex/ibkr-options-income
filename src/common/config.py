@@ -1251,6 +1251,8 @@ class NewsPictureCfg(BaseModel):
 
     enabled: bool = True
     max_rebuilds_per_day: int = Field(default=4, ge=1)
+    # A market touch (a /scan or a review) rebuilds the picture once it is this old (still capped).
+    touch_min_age_min: int = Field(default=90, ge=0)
     max_stories: int = Field(default=5, ge=1, le=5)  # the model's answer schema holds five
     story_window_days: int = Field(default=7, ge=1)  # a story needs support inside this window
     story_min_new_clusters: int = Field(default=2, ge=1)  # ... of at least this many new clusters
@@ -1290,6 +1292,12 @@ class NewsDossierCfg(BaseModel):
     staleness_hours: float = Field(default=26.0, gt=0)  # readers are told old prose is old
     max_names_in_review: int = Field(default=8, ge=1)  # compact notes in a full-scan prompt
     keep_days: int = Field(default=30, ge=1)  # older rows are deleted
+    # A /scan, a trade review or a roll review "touches" a name (src/news/touches.py): its prose is
+    # then due again, ahead of the other names, once this long after its last prose. Still under
+    # max_calls_per_day. touch_enabled=false ignores every touch (and the picture's).
+    touch_enabled: bool = True
+    researched_min_interval_min: int = Field(default=180, ge=0)
+    touch_keep_days: int = Field(default=3, ge=1)  # touches older than this are deleted
     health: NewsDossierHealthCfg = Field(default_factory=NewsDossierHealthCfg)
 
 

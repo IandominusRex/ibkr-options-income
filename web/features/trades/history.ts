@@ -4,8 +4,12 @@ import { decisionWords } from "@/features/home/proposal";
 import { STRATEGY_EYEBROW, type StrategyFilter, kindOf, matchesFilter } from "@/lib/strategy";
 import { newYorkDay, timeET } from "./time";
 
-/** Order states that are still in flight. Filled, cancelled and rejected orders are history. */
-export const IN_FLIGHT_STATES = new Set(["queued", "submitted", "partial"]);
+/**
+ * Order states that are still in flight. Filled, partial, cancelled and rejected orders are history:
+ * a partial order is one the executor already cancelled the rest of at its fill timeout, so the
+ * broker holds nothing for it (2026-10-27: six stale partials from Sep 30 on read as "in flight").
+ */
+export const IN_FLIGHT_STATES = new Set(["queued", "submitted"]);
 
 /** "$190 cash-secured put". An order carries the strategy name, not the option right. */
 export function orderContract(o: { strategy: string; strike: number }): string {

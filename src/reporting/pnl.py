@@ -456,6 +456,15 @@ def build_summary(
     )
 
 
+# The account snapshot was captured in the account's base currency (SGD, about 1.0M) until
+# 2026-10-09 17:00 UTC, when it switched to USD (099fd0a, "report the account snapshot in USD").
+# A net liquidation from before then is in another currency: the account-value series, the pay
+# stub's month start and the equity curve drop it rather than plot SGD beside USD.
+# Naive UTC: the last SGD capture was 16:46, the first USD one 17:03.
+NET_LIQ_USD_FROM = datetime(2026, 10, 9, 17, 0)
+NET_LIQ_USD_FROM_DAY = date(2026, 10, 9)  # the first journal day written in USD
+
+
 def _net_liquidation_from_payload(payload: dict) -> float | None:
     """journal.payload["eod_summary"]["account"], validated through AccountSnapshot.
 
@@ -513,7 +522,11 @@ def equity_curve(
         points.append(
             EquityPoint(
                 entry_date=r.entry_date,
-                net_liquidation=_net_liquidation_from_payload(r.payload),
+                net_liquidation=(
+                    _net_liquidation_from_payload(r.payload)
+                    if r.entry_date >= NET_LIQ_USD_FROM_DAY
+                    else None
+                ),
                 unrealized_pnl=r.unrealized_pnl,
                 cumulative_realized=cumulative,
                 premium_cashflow=r.realized_pnl,

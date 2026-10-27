@@ -89,6 +89,8 @@ from src.news.store.models import (
 from src.news.store.queries import aware_utc, naive_utc
 from src.news.store.session import news_session
 from src.news.store.state import get_state, set_state
+from src.news.touches import consume as consume_touches
+from src.news.touches import touched_since
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -587,7 +589,9 @@ def dossier_due(symbol: str, last: TickerDossier | None, *, now: datetime, s: Se
     * ``news`` - a pile 1 or 2 story naming it was judged (or promoted late) after the last prose;
     * ``alert`` - a non-digest post about it went out after the last prose;
     * ``earnings`` - its earnings were released after the last prose;
-    * ``profile`` - the profile is missing or older than ``profile_days`` (it is then requested).
+    * ``profile`` - the profile is missing or older than ``profile_days`` (it is then requested);
+    * ``researched`` - the trading side touched it (`briefs.note_researched`: a /scan or a review)
+      after the last prose, and ``researched_min_interval_min`` have passed since that prose.
 
     There is no ``age`` reason: old prose is shown labelled with its age, never rebuilt for being
     old (ruling 43). ``news`` and ``profile`` wait until ``prose_min_interval_hours`` have passed
@@ -622,13 +626,25 @@ def dossier_due(symbol: str, last: TickerDossier | None, *, now: datetime, s: Se
         return []
     if not waiting and _profile_wanted(last, now, cfg):
         reasons.append("profile")
+    try:
+        if (
+            cfg.touch_enabled
+            and now - aware_utc(last.prose_at) >= timedelta(minutes=cfg.researched_min_interval_min)
+            and touched_since(s, symbol, last.prose_at)
+        ):
+            reasons.append("researched")
+    except OperationalError:
+        pass  # a news.db from before the touch table: no touch reasons
     return reasons
 
 
 def order_due(items: list[tuple[str, list[str]]]) -> list[tuple[str, list[str]]]:
-    """Due names, held ones first, then the ones with more reasons, then by symbol."""
+    """Due names, held ones first, then the ones the trading side just researched, then the ones
+    with more reasons, then by symbol."""
     held = held_underlyings()
-    return sorted(items, key=lambda it: (it[0] not in held, -len(it[1]), it[0]))
+    return sorted(
+        items, key=lambda it: (it[0] not in held, "researched" not in it[1], -len(it[1]), it[0])
+    )
 
 
 def in_dossier_window(now: datetime) -> bool:
@@ -941,6 +957,7 @@ def _write_prose(
             _save(s, row, current.model_copy(update=update), now)
             _clear_rejected(s, p.symbol)
             written += 1
+        consume_touches(s, [p.symbol for p in batch], now)
     return written
 
 

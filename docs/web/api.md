@@ -853,7 +853,7 @@ order, never `0.0`. `detail` carries the humanised reason for a `rejected`/`canc
 order (e.g. a live-mode order-send-time re-gate rejection) — never a raw Python list
 repr of the gate codes.
 
-**Query params:** `state=working` (default), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `limit` (1-200, default 50).
+**Query params:** `state=working` (default; queued and submitted — a `partial` order is final, the executors cancel its remainder), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `limit` (1-200, default 50).
 
 **Response — `OrderListResponse`:** `{ as_of, orders: OrderSummary[] }`.
 
@@ -1072,6 +1072,9 @@ Degradation behaviour: the `none` rung returns `days: []` with
 Account value (net liquidation) over a range, for the Home hero's number and scrubbable chart.
 A thin render over `src/reporting/account_value.py::account_value_series`: the route computes
 nothing itself. Owner-only; reads through the `mode=ro` trading engine; never reaches IBKR.
+
+USD only: before 2026-10-09 17:00 UTC the account snapshot was captured in SGD, so earlier
+snapshots and journal closes are left out (`all` starts at the 2026-10-09 close).
 
 | Param | Type | Notes |
 |---|---|---|

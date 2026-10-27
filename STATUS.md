@@ -346,6 +346,41 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 ---
 
+## Fixed (2026-10-27 — week log review: lost Telegram sends, cut-off messages, SGD in the account value, "in flight")
+
+From a review of the week's logs (Oct 20-27):
+
+- **Wheel Telegram sends retry** (`src/notify/robust_bot.py`): 11 roll alerts and 3 auto-queue notices
+  were lost to a single `TimedOut` because every caller logged the failure and moved on (and the roll
+  alert was still saved as sent). The wheel's bots are now `RobustBot`: 3 attempts, flood-control
+  waits, timeouts raised from 5 s to 20 s. A timed-out send that had in fact been delivered can post
+  a duplicate. **Not covered:** `src/news/` and `src/spreads/` (their own bots).
+- **No message is cut off** (`src/notify/splitting.py`): the formatters sliced at 4000 characters
+  (`/scan GOOGL` lost its Levels section). They no longer truncate; `RobustBot` splits MarkdownV2/plain
+  text at paragraph/line boundaries, closing and reopening any open entity so each piece parses alone.
+- **Account value is USD only:** SGD-era net liquidations (before 2026-10-09 17:00 UTC) are dropped
+  from `/portfolio/value`, the pay stub's month start and the equity curve (`pnl.NET_LIQ_USD_FROM`).
+  The October pay stub's "percent of account" target has no month-start value (the `pct_of_amount`
+  mode in use is unaffected).
+- **A /scan or a Claude review now updates "what Claude knows"** (`src/news/touches.py`): `/scan SYM`,
+  `review_candidates` and `review_roll` call `briefs.note_researched`, which opens one row per name in
+  news.db's `dossier_touches` (and one for the market). The news process then pulls that name's fresh
+  headlines, and its dossier is due again 3 h after its last prose (`dossier.researched_min_interval_min`),
+  ahead of the other names after the held ones; the market picture is rebuilt once it is 90 min old
+  (`picture.touch_min_age_min`). A rebuild replaces the story and the reported figures and drops past
+  events, so outdated lines go. **Limits:** the existing caps still apply (`dossier.max_calls_per_day`
+  4 calls x 6 names, `picture.max_rebuilds_per_day` 4), so on a busy day a touch can wait until
+  tomorrow; the dossier loop only runs from the pre-market digest to the close on trading days;
+  names outside the universe and the book have no dossier, so their touch is only pruned.
+- **`partial` orders are no longer "in flight":** the executors cancel the unfilled rest at the fill
+  timeout, so `partial` is final. `GET /options/orders?state=working`, the web `IN_FLIGHT_STATES` and
+  the monitor's pending-roll check now count `queued`/`submitted` only (six stale `partial` orders,
+  the oldest from Sep 30, had been showing as in flight). **Still open:** `has_active_order` keeps
+  `FILLED`/`PARTIAL` as "active" on purpose (an idempotency guard per candidate id), so a half-filled
+  roll cannot be re-queued under the same candidate id. HIMS 2026-10-23 rolled 3 of 10 after a
+  `Duplicate order id` error from IBKR and its Oct 30 $28 put shows as +10 in the account snapshot:
+  the operator should look at it by hand.
+
 ## Built (2026-10-22 — market picture, regime sizing and the news expert)
 
 `docs/superpowers/plans/2026-10-20-market-picture.md` (spec `docs/superpowers/specs/2026-10-20-market-picture-design.md`,

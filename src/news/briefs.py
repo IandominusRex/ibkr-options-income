@@ -4,6 +4,7 @@ the trading bot's process."""
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -11,10 +12,13 @@ from typing import Literal
 from sqlalchemy import select
 
 from src.common.config import get_config
-from src.news.store.models import NewsPostRow, NewsRequestRow, NewsStateRow
+from src.news.store.models import DossierTouchRow, NewsPostRow, NewsRequestRow, NewsStateRow
 from src.news.store.queries import naive_utc
 from src.news.store.session import init_news_db, news_session
 from src.news.store.state import HEARTBEAT_KEY
+from src.news.touches import MARKET
+
+log = logging.getLogger(__name__)
 
 SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 
@@ -53,6 +57,34 @@ def enqueue_brief(
         s.add(row)
         s.flush()
         return row.id
+
+
+def note_researched(symbol: str | None, origin: str, *, now: datetime | None = None) -> None:
+    """Tell the news process the trading side just researched *symbol* (``None``: the market).
+
+    A `/scan`, a trade review or a roll review calls this so the name's dossier (or the market
+    picture) is rebuilt ahead of its schedule (``src/news/touches.py``). One open touch per
+    symbol: a second call only moves its time. An insert and nothing else, and **never raises**:
+    a news.db that is locked, missing or off must not touch a scan.
+    """
+    try:
+        if not get_config().news.dossier.touch_enabled:
+            return
+        sym = MARKET if symbol is None else normalize_symbol(symbol)
+        now_n = naive_utc(now or datetime.now(UTC))
+        init_news_db()
+        with news_session() as s:
+            row = s.scalar(
+                select(DossierTouchRow).where(
+                    DossierTouchRow.symbol == sym, DossierTouchRow.consumed_at.is_(None)
+                )
+            )
+            if row is None:
+                s.add(DossierTouchRow(symbol=sym, origin=origin[:12], touched_at=now_n))
+            else:
+                row.touched_at = now_n
+    except Exception:
+        log.debug("news: could not note %s as researched", symbol or "the market", exc_info=True)
 
 
 def claim_next(now: datetime) -> tuple[int, str] | None:

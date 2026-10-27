@@ -21,6 +21,7 @@ from src.common.schemas import (
     AccountValueRange,
     AccountValueSeries,
 )
+from src.reporting import pnl
 from src.reporting.pnl import _net_liquidation_from_payload
 from src.storage.models import JournalRow, PortfolioSnapshotRow
 
@@ -45,7 +46,16 @@ def _known(value: float | None) -> float | None:
     return value if value is not None and value > 0 else None
 
 
+def _journal_value(entry_date: date, payload: dict) -> float | None:
+    """A journal day's net liquidation, USD only: earlier days were written in SGD."""
+    if entry_date < pnl.NET_LIQ_USD_FROM_DAY:
+        return None
+    return _known(_net_liquidation_from_payload(payload))
+
+
 def _snap_value(row: PortfolioSnapshotRow) -> float | None:
+    if _naive_utc(row.captured_at) < pnl.NET_LIQ_USD_FROM:
+        return None  # captured in SGD
     try:
         return _known(AccountSnapshot.model_validate(row.account).net_liquidation)
     except Exception:
@@ -86,7 +96,7 @@ def account_value_series(
                 ).scalars()
             )
 
-    daily = [(r.entry_date, _known(_net_liquidation_from_payload(r.payload))) for r in journal]
+    daily = [(r.entry_date, _journal_value(r.entry_date, r.payload)) for r in journal]
     # A journal day is a close only once its 16:00 ET has passed: a row for today written early
     # is not yet a close, so it neither plots nor competes with a live snapshot.
     closes = [(d, v) for d, v in daily if v is not None and _close_at(d) <= now_utc]
@@ -155,8 +165,8 @@ def account_value_series(
 
 
 def month_start_value(session: _SessionFactory, first_day: date) -> float | None:
-    """Net liquidation at the last journal close before `first_day` with a known (> 0) value;
-    None when there is none."""
+    """Net liquidation at the last journal close before `first_day` with a known (> 0) USD value;
+    None when there is none (the days before 2026-10-09 were written in SGD and are not used)."""
     with session() as sess:
         rows = sess.execute(
             select(JournalRow)
@@ -164,7 +174,7 @@ def month_start_value(session: _SessionFactory, first_day: date) -> float | None
             .order_by(JournalRow.entry_date.desc())
         ).scalars()
         for r in rows:
-            v = _known(_net_liquidation_from_payload(r.payload))
+            v = _journal_value(r.entry_date, r.payload)
             if v is not None:
                 return v
     return None

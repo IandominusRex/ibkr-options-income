@@ -22,8 +22,6 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from telegram import Bot
-
 from src.claude.eval.assignment import assigned_shorts
 from src.claude.eval.reconcile import reconcile
 from src.claude.eval.sizing_counterfactual import resolve_actions
@@ -47,6 +45,7 @@ from src.ibkr.portfolio import (
     get_positions,
 )
 from src.notify.formatters import format_eod_summary
+from src.notify.robust_bot import RobustBot as Bot
 from src.orchestrator.eod_facts import (
     Baseline,
     assignment_trades,

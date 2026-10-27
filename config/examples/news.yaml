@@ -100,6 +100,7 @@ triage:
 picture:
   enabled: true
   max_rebuilds_per_day: 4
+  touch_min_age_min: 90        # a /scan or a review rebuilds a picture at least this old (still capped)
   max_stories: 5
   story_window_days: 7
   story_min_new_clusters: 2
@@ -119,6 +120,9 @@ dossier:
   staleness_hours: 26
   max_names_in_review: 8
   keep_days: 30
+  touch_enabled: true          # a /scan or a review of a name makes its prose due again (still under max_calls_per_day)
+  researched_min_interval_min: 180   # ... but not within this long of its last prose
+  touch_keep_days: 3
   health: {de_strong: 100.0, de_weak: 200.0}   # debt/equity in yfinance's unit (percent: 150 = 1.5x)
 sentiment: {model: vader, lookback_hours: 72, half_life_hours: 24}
 grounding: {rel_tol: 0.02}

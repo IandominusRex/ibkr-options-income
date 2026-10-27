@@ -885,7 +885,7 @@ async def run(stop_event: asyncio.Event | None = None) -> None:
     if not token or not chat_id:
         raise RuntimeError("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set")
 
-    from telegram import Bot
+    from src.notify.robust_bot import RobustBot as Bot
 
     ib = IB()
     try:

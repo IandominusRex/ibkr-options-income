@@ -2445,6 +2445,11 @@ async def run_ticker_scan(
         except Exception:
             log.warning("ticker_scan: Claude/Ollama review failed for %s", ticker, exc_info=True)
 
+    # The scan pulled the name's headlines and analytics: its dossier (and the picture) follow.
+    from src.claude.runner import note_researched
+
+    await loop.run_in_executor(None, note_researched, [ticker])
+
     # 9. Format and edit the progress message.
     # Greeks provenance for the footer: did any contract's Greeks fall back to yfinance BS?
     greeks_fallback = any(q.greeks_source == "black_scholes" for q in quotes)

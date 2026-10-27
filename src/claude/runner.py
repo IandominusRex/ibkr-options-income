@@ -164,6 +164,23 @@ def _run_cli_outcome[T](
     return None, ("timeout" if timed_out else error)
 
 
+def note_researched(symbols: list[str]) -> None:
+    """Tell the news process these names, and the market, were just researched.
+
+    A review is research on the name: its dossier (and the market picture) are rebuilt ahead of
+    their schedule (``src/news/touches.py``), so what Claude learned here is not left out of what
+    it knows next time. One insert per name; never raises, never blocks a review.
+    """
+    try:
+        import src.news.briefs as briefs
+
+        for symbol in sorted({s for s in symbols if s}):
+            briefs.note_researched(symbol, "review")
+        briefs.note_researched(None, "review")
+    except Exception:
+        log.debug("could not note %s as researched", symbols, exc_info=True)
+
+
 def review_candidates(
     candidates: list[TradeCandidate],
     account: AccountSnapshot,
@@ -194,6 +211,7 @@ def review_candidates(
     suggestion from ever being applied (``engine.regime_limits.claude_cut``).
     """
     cfg = get_config().claude
+    note_researched([c.underlying for c in candidates])
     kwargs = dict(
         candidates=candidates,
         account=account,
@@ -351,6 +369,7 @@ def review_roll(
     """
     cfg = get_config().claude
     now = datetime.now(UTC)
+    note_researched([alert.underlying or pos.underlying or pos.symbol])
     if picture_block is None:
         picture_block = load_picture_block(now)
     if dossier_block is None:

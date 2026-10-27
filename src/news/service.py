@@ -22,6 +22,7 @@ from src.common.market_hours import is_rth, is_trading_day
 from src.common.schemas import MarketConditions, MarketPicture
 from src.data.breaker import breaker_states
 from src.data.factory import get_intraday_price_provider
+from src.news import touches
 from src.news import triggers as T
 from src.news.alerts import AlertContext, build_card, plan_alert
 from src.news.collectors import Collector, held_positions, held_underlyings, watch_symbols
@@ -144,6 +145,7 @@ class NewsService:
             ("picture", 120, self._picture),
             ("noise_check", 300, self._noise_check),
             ("dossier_facts", 300, self._dossier_facts),
+            ("touches", 120, self._touches),
             ("dossier", 600, self._dossier),
             ("digests", 60, self._digests),
             ("followup", 30, self._followup),
@@ -378,6 +380,20 @@ class NewsService:
         sentiment; the prose is copied forward."""
         if self._dossier_active(now):
             await asyncio.to_thread(refresh_facts, now, an=self.an)
+
+    async def _touches(self, now: datetime) -> None:
+        """A name the trading side just researched: pull its fresh headlines now (no model call)
+        so the dossier rebuild that follows (`dossier_due` ``researched``) reads them; and drop
+        touches nobody will ever consume."""
+        if not self.ncfg.dossier.touch_enabled:
+            return
+        for symbol in await asyncio.to_thread(touches.due_for_collection, now):
+            try:
+                await asyncio.to_thread(self.collector.collect_symbol, symbol, now)
+            except Exception:
+                log.debug("news: could not pull headlines for %s", symbol, exc_info=True)
+            await asyncio.to_thread(touches.mark_collected, symbol, now)
+        await asyncio.to_thread(touches.prune_touches, now)
 
     async def _dossier(self, now: datetime) -> None:
         """Rebuild the model's part (profile, story, events) of the dossiers that are due, in

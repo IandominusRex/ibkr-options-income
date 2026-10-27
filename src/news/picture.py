@@ -59,6 +59,8 @@ from src.news.store.models import MarketPictureRow, PictureStoryRow, StoryTriage
 from src.news.store.queries import aware_utc, naive_utc
 from src.news.store.session import news_session
 from src.news.stories import match_clusters, story_alive
+from src.news.touches import MARKET, touched_since
+from src.news.touches import consume as consume_touches
 from src.storage.regime_state import load_regime_state, regime_suspended
 
 log = logging.getLogger(__name__)
@@ -257,7 +259,12 @@ def picture_due(now: datetime) -> bool:
                 StoryTriageRow.pile == 1, StoryTriageRow.judged_at > last
             )
         )
-    return bool(new_story) or _slot_passed(now, last, cfg.digests)
+        touched = (
+            cfg.dossier.touch_enabled
+            and now - aware_utc(last) >= timedelta(minutes=cfg.picture.touch_min_age_min)
+            and touched_since(s, MARKET, last)
+        )
+    return bool(new_story) or bool(touched) or _slot_passed(now, last, cfg.digests)
 
 
 # --- the model's drafts ---------------------------------------------------------------------
@@ -496,6 +503,7 @@ def build_picture(now: datetime) -> MarketPicture | None:
                 stale=stale,
             )
         )
+        consume_touches(s, [MARKET], now)
     return picture
 
 

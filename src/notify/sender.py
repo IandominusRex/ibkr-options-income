@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot as TelegramBot
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.common.config import ClaudeCutCfg, get_claude_cut_cfg, get_config
 from src.common.market_hours import today_et
@@ -43,6 +44,7 @@ from src.notify.formatters import (
     format_order_notification,
     format_unchanged_cards_digest,
 )
+from src.notify.robust_bot import RobustBot as Bot
 from src.regime.actions import record_action
 from src.storage.db import session_scope
 from src.storage.models import ApprovalRow, OrderRow, SizingActionRow
@@ -98,7 +100,7 @@ def _screen_hash(keys: list[tuple]) -> str:
 
 
 async def _append_status(
-    bot: Bot,
+    bot: TelegramBot,
     *,
     chat_id: str,
     thread_id_val: int | None,
@@ -529,10 +531,7 @@ def _plan_claude_cut(
 
 
 def _join_notifications(base: str, extra: str) -> str:
-    """*base* then *extra*, within Telegram's limit (the base is cut at a line break if need be)."""
-    room = 4000 - len(extra) - 2
-    if len(base) > room:
-        base = base[:room].rsplit("\n", 1)[0]
+    """*base* then *extra*; the bot splits the result if it runs past Telegram's limit."""
     return f"{base}\n\n{extra}" if base else extra
 
 

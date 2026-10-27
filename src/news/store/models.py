@@ -152,6 +152,22 @@ class NewsRequestRow(NewsBase):
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
+class DossierTouchRow(NewsBase):
+    """A name the trading side just researched (a /scan, a trade review, a roll review), or the
+    market (symbol ``*``): the dossier (or picture) is then due ahead of its schedule
+    (``src/news/touches.py``). One open row per symbol; ``consumed_at`` closes it when the prose is
+    rebuilt. Written by ``briefs.note_researched``, the only call the trading process makes."""
+
+    __tablename__ = "dossier_touches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    origin: Mapped[str] = mapped_column(String(12))  # scan | review | roll
+    touched_at: Mapped[datetime] = mapped_column(DateTime)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class NewsStateRow(NewsBase):
     __tablename__ = "news_state"
 

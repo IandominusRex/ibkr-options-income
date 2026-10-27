@@ -209,7 +209,7 @@ def test_format_empty_tags_no_tags_line():
     assert "Tags:" not in text
 
 
-def test_format_truncates_long_message():
+def test_format_keeps_a_long_message_whole_and_it_splits_to_fit():
     review = ClaudeReview(
         candidate_id="test-001",
         priority=1,
@@ -220,9 +220,12 @@ def test_format_truncates_long_message():
         assignment_considerations="",
     )
     text = format_candidate(_make_candidate(), review)
-    # Body is truncated to _MAX_MESSAGE_LEN; footer is appended after, so allow a small overage.
-    assert len(text) <= 4100
+    from src.notify.splitting import LIMIT, _units, split_message
+
+    assert "x" * 1500 in text and "z" * 1500 in text  # nothing sliced off
     assert "Sources:" in text
+    chunks = split_message(text)
+    assert len(chunks) > 1 and all(_units(c) <= LIMIT for c in chunks)
 
 
 def test_md_escapes_all_special_chars():
@@ -2650,14 +2653,17 @@ def test_format_account_snapshot_zero_cost_basis_is_na():
     assert "\\(N/A\\)" in text
 
 
-def test_format_account_snapshot_truncates_long_message():
+def test_format_account_snapshot_long_message_splits_to_fit():
     account = _snapshot_account()
     positions = [_snapshot_stock(symbol=f"SYM{i}") for i in range(200)]
     text = format_account_snapshot(account, positions, "09:30 ET")
 
-    # Body is truncated; source footer is appended after the truncation marker.
-    assert "\\.\\.\\." in text
+    from src.notify.splitting import LIMIT, _units, split_message
+
     assert "Source: IBKR" in text
+    chunks = split_message(text)
+    assert all(_units(c) <= LIMIT for c in chunks)
+    assert "SYM199" in "".join(chunks)  # the last position survives the split
 
 
 # --------------------------------------------------------------------------- #

@@ -880,7 +880,7 @@ def list_orders(
         "working", "all", "queued", "submitted", "filled", "partial", "cancelled", "rejected"
     ] = Query(
         default="working",
-        description="`working` (queued/submitted/partial), `all`, or a specific state.",
+        description="`working` (queued/submitted), `all`, or a specific state.",
     ),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> OrderListResponse:
@@ -891,7 +891,7 @@ def list_orders(
     from src.storage.models import CandidateRow, OrderRow
 
     now = datetime.now(UTC)
-    _WORKING = {"queued", "submitted", "partial"}
+    _WORKING = {"queued", "submitted"}  # `partial` is final: the executors cancel the rest
 
     stmt = select(OrderRow)
     if state == "working":

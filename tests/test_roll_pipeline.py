@@ -90,3 +90,33 @@ def test_a_working_roll_order_blocks_a_second_queue(db) -> None:
     assert first is not None
     _process_button(first, "approve")
     assert queue_roll_candidate(_cand(), chat_id="9", ttl_minutes=120) is None
+
+
+def test_a_partial_roll_order_is_not_a_pending_roll(db) -> None:
+    """`partial` is final (the executor cancels the remainder at its timeout), so the monitor may
+    re-evaluate the position. 2026-10-23: HIMS rolled 3 of 10 and sat as `partial`."""
+    from src.common.schemas import OrderState, PositionSnapshot
+    from src.execution.roll_pipeline import pending_roll_approval_for, queue_roll_candidate
+    from src.notify.approval_service import _process_button
+    from src.storage.db import session_scope
+    from src.storage.models import OrderRow
+
+    pos = PositionSnapshot(
+        symbol="AAPL",
+        sec_type="OPT",
+        position=-1,
+        avg_cost=5.0,
+        right=OptionRight.PUT,
+        strike=200.0,
+        expiry=_OLD,
+        underlying="AAPL",
+        con_id=8,
+    )
+    first = queue_roll_candidate(_cand(), chat_id="9", ttl_minutes=120)
+    assert first is not None
+    _process_button(first, "approve")
+    assert pending_roll_approval_for(pos) is not None  # queued, still pending
+    with session_scope() as s:
+        for order in s.query(OrderRow).all():
+            order.state = OrderState.PARTIAL
+    assert pending_roll_approval_for(pos) is None

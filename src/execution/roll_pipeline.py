@@ -159,9 +159,7 @@ def pending_roll_approval_for(pos: PositionSnapshot) -> int | None:
                 return int(row.id)
         working = (
             s.query(OrderRow)
-            .filter(
-                OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED, OrderState.PARTIAL])
-            )
+            .filter(OrderRow.state.in_([OrderState.QUEUED, OrderState.SUBMITTED]))
             .all()
         )
         for order in working:

@@ -58,8 +58,6 @@ def fmt_strike(strike: float) -> str:
 
 _ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
 
-_MAX_MESSAGE_LEN = 4000
-
 
 def _md(text: str) -> str:
     """Escape all MarkdownV2 special characters."""
@@ -172,7 +170,7 @@ def format_claude_cut_lines(cuts: list[tuple[TradeCandidate, int, str]]) -> str:
             lines.append(f"• {_md(f'Claude: not sending {label} ({c.contracts} lots){because}')}")
         else:
             lines.append(f"• {_md(f'Claude cut {label} {c.contracts} → {sent}{because}')}")
-    return "\n".join(lines)[:_MAX_MESSAGE_LEN]
+    return "\n".join(lines)
 
 
 def format_claude_cut_breaker_alert(zeroed: int, reviewed: int) -> str:
@@ -302,8 +300,6 @@ def format_candidate(
     if observe_only:
         footer += "\n_📋 Proposal only \\— OBSERVE rung: no auto\\-open, no approve/reject\\._"
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + footer
 
 
@@ -484,8 +480,6 @@ def format_buy_list(candidates: list[BuyCandidate]) -> str:
             lines.append("")
 
     text = "\n".join(lines).rstrip()
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return (
         text
         + "\n_Sources: yfinance \\(prices · IV · technicals · fundamentals\\) · IBKR \\(IV rank history\\)_"
@@ -598,8 +592,6 @@ def format_account_snapshot(
             parts.append(_format_option_snapshot_line(p, show_symbol=True))
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + f"\n_Source: IBKR · last updated {_md(updated_at)}_"
 
 
@@ -1354,8 +1346,6 @@ def format_ticker_scan_result(
     )
 
     text = "\n".join(lines)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text
 
 
@@ -1645,7 +1635,7 @@ def format_auto_trade_notification(candidates: list[TradeCandidate]) -> str:
     if any(c.greeks_source != "ibkr" for c in candidates):
         all_src.append("yfinance Greeks \\(fallback\\)")
     lines += ["", f"_Sources: {' · '.join(all_src)}_"]
-    return "\n".join(lines)[:_MAX_MESSAGE_LEN]
+    return "\n".join(lines)
 
 
 def format_profit_alert(
@@ -1759,8 +1749,6 @@ def format_positions(
             )
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text
 
 
@@ -1893,8 +1881,6 @@ def format_status(
         parts += ["", line]
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text
 
 
@@ -2031,8 +2017,6 @@ def format_eod_summary(summary: EODSummary, narrative: str | None) -> str:
         parts += ["", f"🧠 _{_md(narrative)}_"]
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + "\n_Sources: IBKR fills · positions · news calendar_"
 
 
@@ -2202,8 +2186,6 @@ def format_roll_decision(
         if review.risks:
             parts.append(f"Risk: {_md(review.risks)}")
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + "\n_Source: IBKR · roll policy_"
 
 
@@ -2259,8 +2241,6 @@ def format_roll_alert(
         parts += ["", "_Claude review unavailable — manual evaluation required_"]
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + "\n_Source: IBKR_"
 
 
@@ -2309,8 +2289,6 @@ def format_assignment_alert(
         parts += ["", "_Claude review unavailable — manual evaluation required_"]
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text + "\n_Source: IBKR_"
 
 
@@ -2359,8 +2337,6 @@ def format_pending_approvals(pending: list[dict]) -> str:
         parts.append(f"   _{' · '.join(meta_parts)}_")
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text
 
 
@@ -2404,8 +2380,6 @@ def format_fills_history(fills: list[dict]) -> str:
         )
 
     text = "\n".join(parts)
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text
 
 
@@ -2459,6 +2433,4 @@ def format_campaigns(campaigns: list[dict]) -> str:
         parts.append("")
 
     text = "\n".join(parts).rstrip()
-    if len(text) > _MAX_MESSAGE_LEN:
-        text = text[: _MAX_MESSAGE_LEN - 3] + "\\.\\.\\."
     return text

@@ -881,11 +881,11 @@
                 "rejected"
               ],
               "type": "string",
-              "description": "`working` (queued/submitted/partial), `all`, or a specific state.",
+              "description": "`working` (queued/submitted), `all`, or a specific state.",
               "default": "working",
               "title": "State"
             },
-            "description": "`working` (queued/submitted/partial), `all`, or a specific state."
+            "description": "`working` (queued/submitted), `all`, or a specific state."
           },
           {
             "name": "limit",

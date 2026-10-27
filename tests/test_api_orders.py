@@ -129,9 +129,9 @@ def test_orders_working_by_default(client) -> None:
     r = client.get("/options/orders", headers=AUTH)
     assert r.status_code == 200
     states = {o["state"] for o in r.json()["orders"]}
-    # working = queued, submitted, partial — filled is excluded.
-    assert states <= {"queued", "submitted", "partial"}
-    assert "filled" not in states
+    # working = queued, submitted — filled and partial (the rest was cancelled) are excluded.
+    assert states <= {"queued", "submitted"}
+    assert "filled" not in states and "partial" not in states
 
 
 def test_orders_all_returns_everything(client) -> None:
