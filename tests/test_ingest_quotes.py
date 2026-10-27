@@ -267,10 +267,35 @@ def test_refresh_warm_news_isolates_a_failing_symbol(db, monkeypatch) -> None:
 
 def test_refresh_warm_tier_runs_both_parts_and_never_raises(db, monkeypatch) -> None:
     _seed_warm(["AAPL"])
+    monkeypatch.setattr("src.research.ingest.quotes.book_symbols", lambda: [])
     monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", lambda sym: 5)
     monkeypatch.setattr("src.research.ingest.quotes.ingest_news", lambda sym, **_: 2)
     out = refresh_warm_tier()
     assert out == {"symbols": 1, "bars": 5, "news": 2}
+
+
+def test_the_nightly_bars_also_cover_the_wheels_names(db, monkeypatch) -> None:
+    """A held name nobody opened in Research still gets fresh bars (2026-10-27: GOOGL froze at
+    Oct 15); the wheel's names get bars only, not the warm tier's quotes and news."""
+    _seed_warm(["AAPL"])
+    fetched: list[str] = []
+    monkeypatch.setattr("src.research.ingest.quotes.book_symbols", lambda: ["AAPL", "GOOGL"])
+    monkeypatch.setattr(
+        "src.research.ingest.quotes.ingest_daily_bars", lambda sym: fetched.append(sym) or 5
+    )
+    monkeypatch.setattr("src.research.ingest.quotes.ingest_news", lambda sym, **_: 2)
+    out = refresh_warm_tier()
+    assert sorted(fetched) == ["AAPL", "GOOGL"]
+    assert out == {"symbols": 1, "bars": 10, "news": 2}
+
+
+def test_book_symbols_are_the_traded_universe_lists() -> None:
+    from src.common.config import get_config
+    from src.research.ingest.quotes import book_symbols
+
+    uni = get_config().universe
+    want = {str(s).upper() for k in ("would_own", "actively_wheeling") for s in uni.get(k) or []}
+    assert set(book_symbols()) == want and want
 
 
 def test_refresh_warm_tier_survives_a_total_part_failure(db, monkeypatch) -> None:
@@ -280,6 +305,7 @@ def test_refresh_warm_tier_survives_a_total_part_failure(db, monkeypatch) -> Non
     def boom(symbol: str) -> int:
         raise RuntimeError("provider down")
 
+    monkeypatch.setattr("src.research.ingest.quotes.book_symbols", lambda: [])
     monkeypatch.setattr("src.research.ingest.quotes.ingest_daily_bars", boom)
     monkeypatch.setattr("src.research.ingest.quotes.ingest_news", boom)
     out = refresh_warm_tier()

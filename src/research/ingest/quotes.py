@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
+from src.common.config import get_config
 from src.common.market_hours import is_rth, today_et
 from src.data.factory import get_price_provider
 from src.research.ingest.news import ingest_news
@@ -57,6 +58,22 @@ def warm_symbols() -> list[str]:
             .all()
         }
     return sorted(watched | viewed)
+
+
+def book_symbols() -> list[str]:
+    """The names the wheel trades (``would_own`` + ``actively_wheeling`` in universe.yaml).
+
+    Their daily bars are refreshed every night with the warm tier's, so a position page opens on
+    a current chart without waiting for the on-demand refresh in ``GET /research/{symbol}/bars``.
+    """
+    universe = get_config().universe
+    return sorted(
+        {
+            str(s).upper()
+            for key in ("would_own", "actively_wheeling")
+            for s in universe.get(key) or []
+        }
+    )
 
 
 def _prior_close(symbol: str) -> float | None:
@@ -210,11 +227,13 @@ def refresh_warm_tier() -> dict[str, int]:
     skipped inside the two part functions).
     """
     symbols = warm_symbols()
-    bars = refresh_warm_bars(symbols)
+    bar_symbols = sorted(set(symbols) | set(book_symbols()))
+    bars = refresh_warm_bars(bar_symbols)
     news = refresh_warm_news(symbols)
     log.info(
-        "Warm-tier refresh: %d symbols, %d bars, %d news rows",
+        "Warm-tier refresh: %d symbols (%d with bars), %d bars, %d news rows",
         len(symbols),
+        len(bar_symbols),
         bars,
         news,
     )

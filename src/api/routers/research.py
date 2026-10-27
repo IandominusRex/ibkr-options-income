@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func, or_, select
@@ -28,6 +29,7 @@ from src.api.models.research import (
     SummaryOut,
     SummaryResponse,
 )
+from src.common.market_hours import is_trading_day, previous_session, session_close
 from src.common.schemas import FundamentalStats, IVStats, SentimentDetail, TechnicalStats
 from src.common.universe import effective_universe
 from src.research.checks.metrics import build_metrics
@@ -301,6 +303,31 @@ def _sma(closes: list[float], n: int) -> list[float | None]:
     return out
 
 
+_BARS_REFRESH_COOLDOWN = timedelta(minutes=30)
+_bars_refreshed_at: dict[str, datetime] = {}  # per symbol, this process: when we last tried
+
+
+def _last_closed_session(now: datetime) -> date:
+    """The newest trading day whose regular session has already closed (New York time)."""
+    et = now.astimezone(ZoneInfo("America/New_York"))
+    close = session_close(et.date())
+    if is_trading_day(et.date()) and close is not None and et.time() >= close:
+        return et.date()
+    return previous_session(et.date())
+
+
+def _bars_need_refresh(symbol: str, newest: date | None, now: datetime) -> bool:
+    """True for a symbol with no bars, or whose newest bar is older than the last closed session
+    and has not been tried in the last ``_BARS_REFRESH_COOLDOWN`` (so a provider that has not
+    published the day's bar yet is asked twice an hour, not on every page load)."""
+    if newest is None:
+        return True
+    if newest >= _last_closed_session(now):
+        return False
+    tried = _bars_refreshed_at.get(symbol)
+    return tried is None or now - tried >= _BARS_REFRESH_COOLDOWN
+
+
 @router.get("/{symbol}/bars", response_model=BarsResponse)
 def bars(
     symbol: str,
@@ -321,23 +348,23 @@ def bars(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown symbol {upper}")
 
-    # Cold symbol: daily_bars is otherwise only populated by the nightly warm-tier cron
-    # (research.ingest.jobs), which only covers symbols already "warm" (watchlisted, or
-    # viewed on a *prior* day) — a symbol viewed here for the first time today would
-    # otherwise render a permanently blank chart until tomorrow night's run. One on-demand
-    # fetch makes this endpoint self-sufficient, the same way `materialize()` already does a
-    # synchronous cold-path fetch for fundamentals. `ingest_daily_bars` degrades to a no-op
-    # on a provider failure (never raises in normal operation), but the guard stays so a
-    # transient error still falls through to the existing "no bars -> empty lists" contract
-    # instead of 500ing the whole chart.
-    has_any_bars = (
-        db.query(DailyBarRow.symbol).filter(DailyBarRow.symbol == upper).first() is not None
-    )
-    if not has_any_bars:
+    # daily_bars is otherwise only filled by the nightly warm-tier cron (research.ingest.quotes),
+    # which covers watchlisted and recently *analysed* symbols plus the wheel's own names. A
+    # symbol outside that set (a position page never counts as a view) used to freeze at its last
+    # warm refresh: GOOGL's chart still closed at $350.47 on 2026-10-15 on 2026-10-27. So the
+    # bars are fetched here, once, when the symbol has none (the first view of a cold symbol
+    # would otherwise render a blank chart until the next night's run) and again when the newest
+    # bar is older than the last closed session. `ingest_daily_bars` degrades to a no-op on a
+    # provider failure and never deletes history, but the guard stays so a transient error still
+    # falls through to the existing "no bars -> empty lists" contract instead of 500ing the chart.
+    newest = db.query(func.max(DailyBarRow.date)).filter(DailyBarRow.symbol == upper).scalar()
+    if _bars_need_refresh(upper, newest, now):
+        _bars_refreshed_at[upper] = now
         try:
             ingest_daily_bars(upper)
         except Exception:
-            log.warning("On-demand daily-bar backfill failed for %s", upper, exc_info=True)
+            log.warning("On-demand daily-bar refresh failed for %s", upper, exc_info=True)
+        db.expire_all()
 
     days = _RANGE_DAYS.get(range, 365)
     display_cutoff = date.today().toordinal() - days

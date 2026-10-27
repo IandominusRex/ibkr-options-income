@@ -372,6 +372,13 @@ From a review of the week's logs (Oct 20-27):
   4 calls x 6 names, `picture.max_rebuilds_per_day` 4), so on a busy day a touch can wait until
   tomorrow; the dossier loop only runs from the pre-market digest to the close on trading days;
   names outside the universe and the book have no dossier, so their touch is only pruned.
+- **Position-page charts no longer freeze** (2026-10-27): `/positions/GOOGL/shares` showed "GOOGL close
+  $350.47" (Oct 15). The chart reads `research.db` `daily_bars`, which only the nightly warm tier
+  refreshed (watchlist + names opened in Research in the last 7 days); a position page never counts as a
+  view, so GOOGL (Oct 15), AMZN (Oct 14), AVGO (Oct 19) and AAPL (Sep 18) froze. Now `GET /research/{symbol}/bars`
+  re-fetches a symbol whose newest bar is older than the last closed session (30-minute cooldown), and the
+  nightly refresh also covers `would_own` + `actively_wheeling`. The shares card's "Last price" and the P&L
+  come from the live portfolio snapshot and were always current; only the chart header was stale.
 - **`partial` orders are no longer "in flight":** the executors cancel the unfilled rest at the fill
   timeout, so `partial` is final. `GET /options/orders?state=working`, the web `IN_FLIGHT_STATES` and
   the monitor's pending-roll check now count `queued`/`submitted` only (six stale `partial` orders,

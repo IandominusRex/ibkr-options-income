@@ -26,6 +26,8 @@ def client(monkeypatch, tmp_path):
     init_research_db()
     with research_session() as s:
         s.add(SymbolRow(symbol="AAPL", cik="0000320193", name="Apple Inc."))
+    # The fixture bars are from January, so the route would fetch: never over the network.
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", lambda symbol: 0)
     return TestClient(create_app())
 
 
@@ -176,3 +178,73 @@ def test_a_warm_symbol_with_existing_bars_does_not_re_fetch(client, monkeypatch)
     r = client.get("/research/AAPL/bars?range=1y", headers=AUTH)
     assert r.status_code == 200
     assert len(r.json()["bars"]) == 1
+
+
+# --- a stale symbol is refreshed on demand (2026-10-27: GOOGL's chart closed at $350.47 on Oct 15)
+
+
+@pytest.fixture()
+def fetches(monkeypatch) -> list[str]:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "src.api.routers.research.ingest_daily_bars", lambda s: calls.append(s) or 0
+    )
+    monkeypatch.setattr(
+        "src.api.routers.research._last_closed_session", lambda now: date(2026, 10, 27)
+    )
+    monkeypatch.setattr("src.api.routers.research._bars_refreshed_at", {})
+    return calls
+
+
+def test_a_stale_symbol_is_fetched_once_per_cooldown(client, fetches) -> None:
+    with research_session() as s:
+        s.add(_bar("2026-10-15", 350.47))
+    client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    assert fetches == ["AAPL"]  # the second load is inside the 30-minute cooldown
+
+
+def test_a_current_symbol_is_not_fetched(client, fetches) -> None:
+    with research_session() as s:
+        s.add(_bar("2026-10-27", 316.8))
+    client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    assert fetches == []
+
+
+def test_a_symbol_with_no_bars_is_fetched(client, fetches) -> None:
+    client.get("/research/AAPL/bars?range=1y", headers=AUTH)
+    assert fetches == ["AAPL"]
+
+
+def test_the_bars_fetched_on_demand_are_in_the_same_response(client, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.api.routers.research._last_closed_session", lambda now: date(2026, 10, 27)
+    )
+    monkeypatch.setattr("src.api.routers.research._bars_refreshed_at", {})
+
+    def fetch(symbol: str) -> int:
+        with research_session() as s:
+            s.add(_bar("2026-10-27", 316.8))
+        return 1
+
+    monkeypatch.setattr("src.api.routers.research.ingest_daily_bars", fetch)
+    with research_session() as s:
+        s.add(_bar("2026-10-15", 350.47))
+    bars = client.get("/research/AAPL/bars?range=1y", headers=AUTH).json()["bars"]
+    assert [b["time"] for b in bars] == ["2026-10-15", "2026-10-27"]
+
+
+def test_the_last_closed_session_follows_the_new_york_clock() -> None:
+    from datetime import UTC, datetime
+
+    from src.api.routers.research import _last_closed_session
+
+    assert _last_closed_session(datetime(2026, 10, 27, 19, 0, tzinfo=UTC)) == date(
+        2026, 10, 26
+    )  # 15:00 ET
+    assert _last_closed_session(datetime(2026, 10, 27, 20, 30, tzinfo=UTC)) == date(
+        2026, 10, 27
+    )  # 16:30 ET
+    assert _last_closed_session(datetime(2026, 10, 31, 15, 0, tzinfo=UTC)) == date(
+        2026, 10, 30
+    )  # Saturday

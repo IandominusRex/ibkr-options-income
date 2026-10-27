@@ -327,6 +327,11 @@ Daily OHLCV for the price chart, with server-side SMA 50/200 overlays so the cha
 
 **Path parameter:** `symbol` (case-insensitive).
 
+**Freshness (2026-10-27):** the bars are fetched on the request when the symbol has none, or when
+its newest bar is older than the last closed New York session and has not been tried in the last
+30 minutes (a position page never counts as a "view", so a held name used to freeze at its last
+nightly warm refresh). A provider failure leaves the stored bars as they were.
+
 **Query parameters:**
 
 | Param | Type | Default | Constraint |
