@@ -1315,10 +1315,10 @@ rules_missing, applied, unapplied }`.
 |---|---|
 | `key`, `kind`, `split` | one line per kind of action: `<kind>:<split>`, or `claude_overrides` for Claude's cuts (`kind` `claude_cut`); `split` is `sent_smaller`, `never_sent`, `pushed_out` or `overrides` |
 | `count` | rows counted, valued or not |
-| `contracts_withheld` | contracts the action held back; `null` for a `pushed_out` line |
+| `contracts_withheld` | contracts the action held back; `null` for a `pushed_out` line. **For `regime_floor_lot` these are the lots the floor let through**, not lots it held back |
 | `resolved` | rows valued so far; **rows not yet valued count in `count` and are never valued** |
 | `exact` | of the resolved, those valued at the traded contract's realised P&L |
-| `pnl_expiry`, `pnl_rules` | what the held-back contracts would have earned, marked at expiry and walked through the daily closes under the system's own exit rules. **A positive number is what the action cost**; negative is a loss it avoided. `null` when nothing is valued, never `0` |
+| `pnl_expiry`, `pnl_rules` | what the held-back contracts would have earned, marked at expiry and walked through the daily closes under the system's own exit rules. **A positive number is what the action cost**; negative is a loss it avoided. **`regime_floor_lot` reads the other way:** the contracts valued are the lots the floor let through, so a positive number is what they earned (letting them through paid). `null` when nothing is valued, never `0` |
 | `rules_missing` | valued rows with no entry IV, left out of `pnl_rules` |
 | `applied`, `unapplied` | Claude's cuts only: how many were applied and how many were recorded only |
 
@@ -1570,9 +1570,10 @@ API never imports `src.spreads`). Owner-only; writes nothing; never reaches IBKR
 | `days` | int, 1-365, default 30 | orders created in the last N days |
 | `limit` | int, 1-500, default 200 | |
 
-- **`available`** is `false` only when `data/spreads.db` does not exist or cannot be read. An older file without
-  the `spread_orders` table answers `available: true` with no orders, as `GET /spreads/picks` does for the
-  picker. Unavailable is never "no orders".
+- **`available`** is `false` when `data/spreads.db` does not exist or cannot be read, **and when the
+  `spread_orders` table exists but cannot be read** (schema drift, a damaged or locked table). An older file
+  without the `spread_orders` table at all answers `available: true` with no orders, as `GET /spreads/picks`
+  does for the picker. Unavailable is never "no orders".
 - Each order is joined to its spread: **`mode`, `side`, `expiry`, `short_strike` and `long_strike` are `null`**
   when the spread's position row is missing.
 

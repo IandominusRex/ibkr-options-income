@@ -111,4 +111,27 @@ describe("SizingRecord", () => {
     const r = await row("Scale-in ladder · never sent");
     expect(within(r).getByText("to expiry").closest(".tabular")).toHaveClass("shrink-0");
   });
+  it("words a guaranteed-lot line as lots let through, and leaves held back for the other kinds", async () => {
+    serve(
+      body([
+        group({
+          key: "regime_floor_lot:sent_smaller", kind: "regime_floor_lot", split: "sent_smaller", count: 2,
+          contracts_withheld: 2, resolved: 2, pnl_expiry: 120, pnl_rules: 80,
+        }),
+        group(),
+      ]),
+    );
+    const floor = await row("Guaranteed lot · sent smaller");
+    expect(within(floor).getByText("2 actions · 2 valued so far · 2 contracts let through")).toBeInTheDocument();
+    expect(within(floor).queryByText(/held back/)).toBeNull();
+    expect(within(floor).getByText(/letting them through paid/)).toBeInTheDocument();
+    const ladder = await row("Scale-in ladder · never sent");
+    expect(within(ladder).getByText("2 actions · 1 valued so far · 4 contracts held back")).toBeInTheDocument();
+    expect(within(ladder).queryByText(/let through/)).toBeNull();
+  });
+
+  it("tells the reader, in the header, that guaranteed lots read the other way", async () => {
+    serve(body([group()]));
+    expect(await screen.findByText(/For guaranteed lots the contracts counted are the ones the floor let through/)).toBeInTheDocument();
+  });
 });

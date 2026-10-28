@@ -16,14 +16,20 @@ export function groupTitle(g: Pick<SizingGroup, "kind" | "split">): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** "2 actions · 1 valued so far · 4 contracts held back". */
+/**
+ * A guaranteed lot is the one kind that counts the other way: the contracts valued are the lots
+ * the floor let through, not lots it held back (`sizing_counterfactual.py`).
+ */
+const isFloorLot = (g: Pick<SizingGroup, "kind">) => g.kind === "regime_floor_lot";
+
+/** "2 actions · 1 valued so far · 4 contracts held back" ("let through" for a guaranteed lot). */
 export function groupSub(g: SizingGroup): string {
   const actions = plural(g.count, "action", "actions");
   if (g.split === "pushed_out") return `${actions} · counted, not valued`;
   return [
     actions,
     `${g.resolved ?? 0} valued so far`,
-    `${plural(g.contracts_withheld ?? 0, "contract", "contracts")} held back`,
+    `${plural(g.contracts_withheld ?? 0, "contract", "contracts")} ${isFloorLot(g) ? "let through" : "held back"}`,
   ].join(" · ");
 }
 
@@ -33,13 +39,19 @@ export function groupNote(g: SizingGroup): string | null {
   if (g.split === "pushed_out") {
     return "A covered call was still sold on the name that day, so the breakout rule only pushed it out.";
   }
+  const notes: string[] = [];
+  if (isFloorLot(g)) {
+    notes.push("A positive number here is what the guaranteed lots earned: letting them through paid.");
+  }
   const exact = g.exact ?? 0;
   if (exact > 0) {
-    return exact === 1
-      ? "1 of the valued rows is valued at the realised P&L of the contract that did trade."
-      : `${exact} of the valued rows are valued at the realised P&L of the contracts that did trade.`;
+    notes.push(
+      exact === 1
+        ? "1 of the valued rows is valued at the realised P&L of the contract that did trade."
+        : `${exact} of the valued rows are valued at the realised P&L of the contracts that did trade.`,
+    );
   }
-  return null;
+  return notes.length > 0 ? notes.join(" ") : null;
 }
 
 export type Marks = { expiry: number | null; rules: number | null };

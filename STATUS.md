@@ -371,10 +371,11 @@ response shapes extended, no schema change, nothing written, and nothing in the 
   pages leading back to it (`/ledger` redirects, 307, to `/activity?view=ledger`). **Fills and orders**
   is three lists that are never merged: the system's orders (each with the sizing that shaped it:
   "Claude's cut, Sent 1 of 3 contracts"), the system's fills (the credit-spread book's filled orders
-  beside the wheel's; an unreadable file is "unavailable", never "none") and IBKR's own executions from
+  beside the wheel's; an unreadable file or table is "unavailable", never "none") and IBKR's own executions from
   the ledger, newest first, tagged by book. **System** is the sizing record (what the regime limits, the
   scale-in ladder, the leveraged-ETF ceiling and Claude's size cut held back, and what that would have
-  earned, with the positive number worded as what the action cost; the review the live-cutover gate asks
+  earned, with the positive number worded as what the action cost, and for a guaranteed lot as what the
+  lots the floor let through earned; the review the live-cutover gate asks
   for) above the score against outcome, whose read-only sentences are unchanged.
 - **Three routes and two extended shapes** (`docs/web/api.md`): `GET /pnl/sizing` (read behind the eval
   fence, recomputing nothing), `GET /ledger/executions` and `GET /spreads/orders`; orders carry `sizing`
@@ -391,7 +392,7 @@ response shapes extended, no schema change, nothing written, and nothing in the 
   into the sentence under it, and its monthly chart named two bars by colour alone. No new colour, font,
   radius, elevation or token; the decide, confirm, receipt, halt, autonomy and roll-mode components and
   `lib/commands.ts` and `lib/receipt.ts` are byte-identical to `main`.
-- Tests: pytest 4962 to 4992 (+30), vitest 1027 to 1257.
+- Tests: pytest 4962 to 4993 (+31), vitest 1027 to 1267.
 
 **Operator checks owed:** `./ibkr restart`. The **API** serves the new routes and shapes only after a
 restart (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing` and the fill
@@ -410,7 +411,8 @@ fill with no contract says "Contract not on record".
   the same days.
 - An IBKR execution with a commission of 0 reads "none recorded", because the feed cannot tell a free
   execution (an assignment, say) from one whose commission has not arrived.
-- Lists are capped: 200 orders, 500 fills and 200 executions per window.
+- Lists are capped: 200 orders, 500 fills and 200 executions per window. The spread-fills list is capped at
+  200 with no `truncated` flag, so a window with more reads as complete.
 - Activity has no strategy switcher (P&L and the ledger carry their own filters, and the broker ledger spans
   both books).
 - A working order cannot be cancelled from the web until Part 5 (Order control); Fills and orders says it is

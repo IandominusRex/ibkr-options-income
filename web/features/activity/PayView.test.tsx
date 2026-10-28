@@ -232,4 +232,47 @@ describe("PayView", () => {
     await screen.findByRole("group", { name: /pay stub$/ });
     expect(container.firstElementChild).toHaveClass("grid-cols-1");
   });
+  // The stepper's floor is the month the system began. The Legs filters belong to the cards under
+  // the stepper, so a "Since" later than that start must not move it: the unfiltered curve answers
+  // "/pnl/equity?book=all", and any filtered curve starts at its own (later) first journal row.
+  const curveFrom = (startsAt: string) => ({
+    as_of: now(), filters,
+    curve: {
+      points: [{ entry_date: startsAt, net_liquidation: 250000, unrealized_pnl: 100, cumulative_realized: 0, premium_cashflow: 42 }],
+      gaps: [], starts_at: startsAt,
+    },
+  });
+  const serveFilteredStart = () =>
+    renderWithQuery(<PayView />, {
+      "/pnl/month": monthBody(),
+      "/pnl/summary": summary(),
+      "/pnl/equity": curveFrom("2026-09-01"),
+      "/pnl/equity?book=all": curveFrom("2026-06-24"),
+      "/pnl/ledger": ledgerBody(),
+    });
+  // Wait until the filtered curve has landed (the curve card says it began on the filtered date),
+  // so an assertion on the stepper cannot pass just because the new response is still on its way.
+  const setSince = async (day: string) => {
+    await screen.findByText(/since 24 June 2026/i);
+    fireEvent.change(await screen.findByLabelText("Since"), { target: { value: day } });
+    await screen.findByText(/since 1 September 2026/i);
+  };
+
+  it("keeps going back to the month the system began when the Legs filters start later", async () => {
+    nav.params = new URLSearchParams("month=2026-07");
+    serveFilteredStart();
+    await screen.findByRole("heading", { name: "July 2026 pay" });
+    await setSince("2026-09-01");
+    expect(screen.getByRole("button", { name: "Previous month" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/activity?month=2026-06", { scroll: false });
+  });
+
+  it("stops at the month the system began, not at the filtered start, with a Since filter set", async () => {
+    nav.params = new URLSearchParams("month=2026-06");
+    serveFilteredStart();
+    await screen.findByRole("heading", { name: "June 2026 pay" });
+    await setSince("2026-09-01");
+    expect(screen.getByRole("button", { name: "Previous month" })).toBeDisabled();
+  });
 });

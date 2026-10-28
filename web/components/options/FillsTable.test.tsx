@@ -54,4 +54,14 @@ describe("FillsTable", () => {
     renderWithQuery(<FillsTable />, {});
     expect(await screen.findByText("Could not load fills")).toBeInTheDocument();
   });
+  it("calls a contract with no recorded side an option, never a put", async () => {
+    serve([fill({ right: null })]);
+    expect(await screen.findByText("AAPL $185 option")).toBeInTheDocument();
+    expect(screen.queryByText(/put/)).toBeNull();
+  });
+
+  it("names a call a call", async () => {
+    serve([fill({ right: "C", strategy: "covered_call" })]);
+    expect(await screen.findByText("AAPL $185 call")).toBeInTheDocument();
+  });
 });

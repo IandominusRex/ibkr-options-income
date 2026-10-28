@@ -593,7 +593,8 @@ spreads file says "unavailable", never "none".
 **Sizing record** (Activity, System): one line per kind of action ("Scale-in ladder · never sent", "Claude's
 size cut") with its counts in words ("5 actions · 2 valued so far · 8 contracts held back") and two marks at
 the right in the stub face, "to expiry" and "exit rules". A mark carries no gain or loss colour, because a
-positive number is what the action cost, not what the account earned. A mark we cannot value is a hatched
+positive number is what the action cost, not what the account earned. A guaranteed lot reads the other way
+and says so: its line counts "contracts let through", and a positive number is what those lots earned. A mark we cannot value is a hatched
 n/a, a pushed-out line carries no money, and rows not yet valued are counted and never valued. An empty
 record says "No sizing actions on record yet." and shows no zeros.
 

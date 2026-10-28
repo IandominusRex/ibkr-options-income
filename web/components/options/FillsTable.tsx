@@ -15,7 +15,8 @@ const lastWindow = (days: number) => (days === 365 ? "the last year" : `the last
 function title(f: FillSummary): string {
   if (!f.underlying) return "Contract not on record";
   const strike = typeof f.strike === "number" ? usd(f.strike) : "strike n/a";
-  return `${f.underlying} ${strike} ${f.right === "C" ? "call" : "put"}`;
+  const side = f.right === "P" ? "put" : f.right === "C" ? "call" : "option";
+  return `${f.underlying} ${strike} ${side}`;
 }
 
 /**

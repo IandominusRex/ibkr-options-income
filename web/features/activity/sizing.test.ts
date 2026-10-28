@@ -86,3 +86,31 @@ describe("rulesNote", () => {
     expect(rulesNote(group({ rules_missing: null }))).toBeNull();
   });
 });
+
+describe("a guaranteed-lot line counts the lots the floor let through", () => {
+  const floor = (over: Record<string, unknown> = {}) =>
+    group({ key: "regime_floor_lot:sent_smaller", kind: "regime_floor_lot", split: "sent_smaller", ...over });
+
+  it("says let through, not held back, in the counts", () => {
+    expect(groupSub(floor({ count: 2, resolved: 2, contracts_withheld: 2 }))).toBe(
+      "2 actions · 2 valued so far · 2 contracts let through",
+    );
+    expect(groupSub(floor({ count: 1, resolved: 1, contracts_withheld: 1 }))).toBe(
+      "1 action · 1 valued so far · 1 contract let through",
+    );
+  });
+
+  it("keeps held back for every other kind", () => {
+    expect(groupSub(group({ kind: "regime_budget", split: "sent_smaller" }))).toContain("contracts held back");
+  });
+
+  it("says a positive number is what the guaranteed lots earned", () => {
+    expect(groupNote(floor())).toBe("A positive number here is what the guaranteed lots earned: letting them through paid.");
+  });
+
+  it("keeps the exact-value note beside it", () => {
+    expect(groupNote(floor({ exact: 1, resolved: 1 }))).toBe(
+      "A positive number here is what the guaranteed lots earned: letting them through paid. 1 of the valued rows is valued at the realised P&L of the contract that did trade.",
+    );
+  });
+});

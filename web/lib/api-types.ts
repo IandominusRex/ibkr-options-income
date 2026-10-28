@@ -1195,8 +1195,9 @@ export interface paths {
         /**
          * Spread Orders
          * @description The book's filled orders, newest first (web overhaul Part 3). An older file without the
-         *     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker;
-         *     only a missing or unreadable file is ``available: false``.
+         *     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker.
+         *     A missing file, or a table that exists but cannot be read, is ``available: false`` and never
+         *     an empty list: "unavailable" is not "none".
          */
         get: operations["spread_orders_spreads_orders_get"];
         put?: never;

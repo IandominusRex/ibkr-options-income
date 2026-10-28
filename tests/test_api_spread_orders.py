@@ -155,3 +155,30 @@ def test_an_older_file_without_the_orders_table_is_available_with_no_orders(
     _make_db(spreads_file, positions=[_position()], with_orders_table=False)
     body = client.get("/spreads/orders", headers=OWNER).json()
     assert body["available"] is True and body["orders"] == []
+
+
+def test_a_table_that_exists_but_cannot_be_read_is_unavailable_not_none(
+    client, spreads_file
+) -> None:
+    # A spread_orders table the SELECT cannot read (schema drift: no `commission` column) is a
+    # failed read. It must not render as "no orders", which only an older file without the table is.
+    from sqlalchemy import text
+
+    eng = create_engine(f"sqlite:///{spreads_file}")
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE spread_orders (id INTEGER PRIMARY KEY, spread_id VARCHAR, "
+                "kind VARCHAR, created_at DATETIME)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO spread_orders (spread_id, kind, created_at) "
+                "VALUES ('x', 'open', '2026-10-15 13:46:00.000000')"
+            )
+        )
+    eng.dispose()
+    body = client.get("/spreads/orders", headers=OWNER).json()
+    assert body["available"] is False
+    assert body["orders"] == []

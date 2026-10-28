@@ -11,6 +11,9 @@ import { useEquity } from "./useEquity";
 import { useLegFilters } from "./useLegFilters";
 import { useMonthParam } from "./useMonthParam";
 
+/** `useLegFilters`' query string with no filter set. */
+const UNFILTERED = "book=all";
+
 /**
  * Pay: a month as a stub, one row of filters, then what they narrow: the totals since the system
  * began, the equity curve and the legs. The month is the page's (`?month=`); the filters are local
@@ -20,7 +23,13 @@ export function PayView() {
   const current = currentMonth(todayInNewYork());
   const [month, setMonth] = useMonthParam(current);
   const legs = useLegFilters();
-  const equity = useEquity(legs.qsString);
+  // The stepper's floor is the month the system began, which the Legs filters (they belong to the
+  // cards under the stepper) must not move: a "Since" later than the start would otherwise refuse
+  // every earlier month. So it reads the unfiltered curve, all books, which is exactly the query
+  // string the Curve card sends when no filter is set (one fetch, one query key). With a filter set
+  // it is one extra request, and "all books" is deliberate: a book filter narrows what the cards
+  // show, not when the system began.
+  const equity = useEquity(UNFILTERED);
   const floor = earliestMonth(equity.data?.curve.starts_at);
 
   return (

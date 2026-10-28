@@ -11,7 +11,8 @@ import { groupNote, groupSub, groupTitle, marks, rulesNote, signedMark } from ".
 import type { SizingGroup, SizingRecordResponse } from "./types";
 
 function Mark({ label, value }: { label: string; value: number | null }) {
-  // No gain or loss colour: a positive number here is what an action COST, so green would mislead.
+  // No gain or loss colour: a positive number here is usually what an action COST (what a guaranteed
+  // lot EARNED, for that one kind), so green would mislead either way.
   return (
     <div>
       <span className={clsx(value === null && "hatch text-unknown")}>{value === null ? UNKNOWN : signedMark(value)}</span>{" "}
@@ -69,8 +70,9 @@ export function SizingRecord({ since }: { since?: string }) {
       <p className="mt-1 text-[0.8125rem] text-muted">
         What the market-regime limits, the scale-in ladder, the leveraged-ETF ceiling, the guaranteed lots and
         Claude&apos;s size cut held back or changed, and what that would have earned. A positive number is what the
-        held-back contracts would have earned: the action cost that much. A negative number is a loss it avoided. This
-        is the review the live cutover asks for before Claude&apos;s cut applies in live trading.
+        held-back contracts would have earned: the action cost that much. A negative number is a loss it avoided. For
+        guaranteed lots the contracts counted are the ones the floor let through, so a positive number is what they
+        earned. This is the review the live cutover asks for before Claude&apos;s cut applies in live trading.
       </p>
       {ctx?.available && (
         <p className="mt-2 text-sm">
@@ -98,8 +100,8 @@ export function SizingRecord({ since }: { since?: string }) {
         )}
       </div>
       <p className="mt-3 text-[0.8125rem] text-muted">
-        Rows not yet valued are counted and wait for their expiry. &quot;To expiry&quot; marks each held-back option
-        at its expiry close. &quot;Exit rules&quot; walks the daily closes and exits at the system&apos;s own
+        Rows not yet valued are counted and wait for their expiry. &quot;To expiry&quot; marks each option a line
+        counts at its expiry close. &quot;Exit rules&quot; walks the daily closes and exits at the system&apos;s own
         profit-take line (and, for a leveraged ETF, its loss line).
       </p>
     </Card>

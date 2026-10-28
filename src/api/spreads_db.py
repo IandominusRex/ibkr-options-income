@@ -219,7 +219,24 @@ def try_read_spread_order_rows(
 ) -> list[dict[str, Any]] | None:
     """spread_orders rows created at or after *start* (naive UTC, as stored), newest first, each
     joined to its position for `mode`, `side`, `expiry` and the strikes (None when the position
-    row is missing), or None when the read failed (an older file without the table)."""
+    row is missing).
+
+    An older file that has no `spread_orders` table at all has nothing to read: an empty list.
+    None means the read failed (the table exists and cannot be read, or the check itself failed),
+    which the caller must not present as "no orders"."""
+    try:
+        present = (
+            session.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'spread_orders'")
+            ).first()
+            is not None
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable schema is a failed read, not an empty one
+        log.debug("api spreads_db: order table check failed: %s", exc)
+        session.rollback()
+        return None
+    if not present:
+        return []
     sql = text(
         "SELECT o.id, o.spread_id, o.kind, o.ib_order_id, o.perm_id, o.filled_qty, o.price, "
         "o.commission, o.reason, o.created_at, p.mode, p.side, p.expiry, p.short_strike, "
