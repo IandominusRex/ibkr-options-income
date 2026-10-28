@@ -96,7 +96,8 @@ count.
 | **Section B entry** | done | (none) | B1-B5 pass (run by the orchestrator); re-run by the orchestrator after Section A: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (no rulings) |
 | **Task 4: contracts, the Account card, `useViewParam`, two restyles** | done | 44541a8 `feat(web): Portfolio and Activity contracts, the Account card, useViewParam` (hash filled in by Task 5's commit; a commit cannot name itself) | vitest 1040 passed (110 files: baseline 1027 + 4 `useViewParam` + 9 `SummaryCard`); tsc clean; eslint clean; the targeted run (`lib features/portfolio components/portfolio`) passed 20 files / 158 tests, with the 6 existing `RefreshControl` tests and the other legacy portfolio tests unmodified; `design_md_check.py web/DESIGN.md` exit 0; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/lib/useViewParam.ts`, `DegradedNotice.tsx`, `RefreshControl.tsx` | 2026-10-28 | (1) Step 1: da-vinci loaded (sync check `OK 16`, `web/DESIGN.md` status `ratified`); no new colour, font, radius, elevation or token was needed, so nothing is proposed. (2) The code blocks (both test files, `useViewParam.ts`, `SummaryCard.tsx`) were extracted from this plan with `sed` by line range and not retyped; the DESIGN.md block was diffed against the plan's text (identical). (3) Step 5: the two implementation files were moved aside for the run, so both test files failed with "Failed to resolve import" as expected, then put back. (4) Steps 8 and 9 applied as `Edit`s of exactly the quoted old text (the `DegradedNotice` return and the "an elevated surface and plain text" wording, which wraps over two comment lines; the `RefreshControl` import and `return (...)`). (5) The existing `RefreshControl` test prints two React "not wrapped in act(...)" stderr warnings; it printed the same two on the file before the restyle (checked), so they are not new. (6) Section B entry B1-B5 were not re-run by the implementer: the orchestrator ran them and the row above records that. |
 | **Task 5: Positions, name cards over Home's rows** | done | 144e11d `feat(web): Portfolio Positions - name cards over Home's rows, totals that never hide an n/a` (hash filled in by Task 6's commit; a commit cannot name itself) | vitest 1073 passed (113 files: Task 4's 1040 + 5 `PositionRowItem` + 14 `positions` + 14 `PositionsView`); the 20 existing `PositionsCard` tests passed unmodified after the row extraction; tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `PositionRowItem.tsx`, `PositionsCard.tsx` | 2026-10-28 | (1) Code blocks extracted from the plan by line range, not retyped (test files, `PositionRowItem.tsx`, `positions.ts`, `PositionsView.tsx`). (2) Step 3: all three new test files failed with "Failed to resolve import" before the implementations existed. (3) Step 4's `visible.map` replacement was done by line range after asserting the first and last lines of the old block (`{visible.map((r) => {` ... `})}`, the only child of the `<ul>`); the old row markup is in `PositionRowItem` unchanged apart from the two additions the plan gives (`flags` and `detail`). The new import `PositionRowItem` sits above the `./positions` import; the plan does not say where. (4) The import list in `PositionsCard.tsx` matched the plan's instructions exactly: `tsc` and `next lint` named no missed import. |
-| **Task 6: Campaigns and Calendar** | done | Task 6 commit `feat(web): Portfolio Campaigns and Calendar - threads before commissions, event words on expiries` (hash filled in by Task 7's commit) | vitest 1104 passed (117 files: Task 5's 1073 + 4 `campaigns` + 8 `CampaignsView` + 4 `calendar` + 12 `CalendarView` + 3 `eventBefore`); every existing `market` test passed unmodified (20 in the file: 17 existing + 3 appended); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/components/ui/field.ts`, `web/features/market/market.ts` | 2026-10-28 | (1) Code blocks extracted from the plan by line range, not retyped. (2) Step 3: the four new test files failed with "Failed to resolve import" and the three appended `eventBefore` tests failed with "eventBefore is not a function" before the implementations existed. (3) `market.test.tsx`: the `eventBefore` describe was appended after one blank line, and `eventBefore` was added to the `./market` import in alphabetical position (`actionTitle, eventBefore, limitSentence, ...`); the plan does not say where in the import. (4) `eventBefore` was appended to `market.ts` after `nameFlags` (the last function in the file) with one blank line between. |
+| **Task 6: Campaigns and Calendar** | done | 8de60eb `feat(web): Portfolio Campaigns and Calendar - threads before commissions, event words on expiries` (hash filled in by Task 7's commit; a commit cannot name itself) | vitest 1104 passed (117 files: Task 5's 1073 + 4 `campaigns` + 8 `CampaignsView` + 4 `calendar` + 12 `CalendarView` + 3 `eventBefore`); every existing `market` test passed unmodified (20 in the file: 17 existing + 3 appended); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/components/ui/field.ts`, `web/features/market/market.ts` | 2026-10-28 | (1) Code blocks extracted from the plan by line range, not retyped. (2) Step 3: the four new test files failed with "Failed to resolve import" and the three appended `eventBefore` tests failed with "eventBefore is not a function" before the implementations existed. (3) `market.test.tsx`: the `eventBefore` describe was appended after one blank line, and `eventBefore` was added to the `./market` import in alphabetical position (`actionTitle, eventBefore, limitSentence, ...`); the plan does not say where in the import. (4) `eventBefore` was appended to `market.ts` after `nameFlags` (the last function in the file) with one blank line between. |
+| **Task 7: the Portfolio page at `/portfolio`** | done | Task 7 commit `feat(web): the Portfolio page - Account card, Positions, Campaigns, Calendar in the URL` (the next section's first commit fills in its hash; `git log --oneline main..HEAD` shows seven commits at the end of Section B) | vitest 1108 passed (118 files: Task 6's 1104 + 4 `PortfolioPage`); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio` and `web/app/portfolio`. Section B exit: pytest 4992 passed + 1 skipped (unchanged from Section A, the section adds no Python; no `tests/test_scan_timeout.py` flake this run), ruff clean, mypy clean (297 files); `git diff --stat main --` over the six protected components and `lib/commands.ts`, `lib/receipt.ts` prints nothing; `grep -rn "submitCommand\|confirmCommand" web/features` prints only `features/more/TargetCard.tsx` and `features/more/TargetCard.test.tsx`; the nine legacy `components/portfolio/*.test.tsx` files, `PortfolioShell.tsx`, `SummaryPanel.tsx` and `PositionsPanel.tsx` are byte-identical to `main` and the full vitest run is green; `PortfolioShell` is no longer imported anywhere (three comments still name it) | 2026-10-28 | (1) The test file, `views.ts`, `PortfolioPage.tsx` and `app/portfolio/page.tsx` were extracted from the plan by line range, not retyped. (2) Step 3: the test failed with "Failed to resolve import ./PortfolioPage" before the implementation existed. (3) Step 5's `npx vitest run` is the whole suite, so the legacy portfolio tests ran unmodified in the same pass. (4) No browser pass was done in this section (not asked for; the page-level visual check is Section D's da-vinci finish), so the page has been exercised by its tests and type-checked but not looked at in a rendered viewport. |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -3972,10 +3973,10 @@ git commit -m "feat(web): Portfolio Campaigns and Calendar - threads before comm
   `CampaignsView`, `CalendarView` (Task 6), `RefreshControl`, `SegmentedControl`.
 - Produces: `PortfolioPage()`; `PORTFOLIO_VIEWS`, `VIEW_LABEL`, `PortfolioView` (`views.ts`).
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only; the title
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only; the title
   with Refresh at its right, the Account card, the view chips, the view.
 
-- [ ] **Step 2: Write the failing tests** — create `web/features/portfolio/PortfolioPage.test.tsx`:
+- [x] **Step 2: Write the failing tests** — create `web/features/portfolio/PortfolioPage.test.tsx`:
 
 ```tsx
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -4088,12 +4089,12 @@ describe("PortfolioPage", () => {
 });
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 Run: `cd web && npx vitest run features/portfolio/PortfolioPage.test.tsx`
 Expected: FAIL (module not found).
 
-- [ ] **Step 4: Implement** — `web/features/portfolio/views.ts`:
+- [x] **Step 4: Implement** — `web/features/portfolio/views.ts`:
 
 ```ts
 /** The Portfolio page's views (web/DESIGN.md Surfaces → Portfolio). */
@@ -4173,18 +4174,18 @@ export default function Page() {
   `components/portfolio/PortfolioShell.tsx` is now unmounted; it and its legacy panels stay for
   their tests until Part 4 (ruling 12). Do not edit them.
 
-- [ ] **Step 5: Run the tests, then the gate**
+- [x] **Step 5: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run && npx tsc --noEmit && npm run lint`
 Expected: PASS: 4 new tests; every legacy portfolio test (`PortfolioShell`, `SummaryPanel`,
 `PositionGroup`, `CalendarPanel`, `CampaignThread`, `RefreshControl`) still green and unmodified.
 
-- [ ] **Step 6: da-vinci lint**
+- [x] **Step 6: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/app/portfolio`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 7: Commit** (with the Progress log row for Task 7 filled in)
+- [x] **Step 7: Commit** (with the Progress log row for Task 7 filled in)
 
 ```bash
 git add web/features/portfolio/views.ts web/features/portfolio/PortfolioPage.tsx \
