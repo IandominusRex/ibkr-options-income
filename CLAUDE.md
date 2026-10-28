@@ -140,7 +140,9 @@ draft reasoning playbooks from this labeled history (`src/claude/skills/`, `scri
 were both deleted — the verdict they measured is deliberately inert in auto mode and needed years of
 closed trades to produce a meaningful held-out score. The outcome ledger and reconciler above were
 kept; they are cheap and still useful. There is no promotion mechanism to gate anymore — everything
-`eval/` produces is read by a human, never auto-applied.
+`eval/` produces is read by a human, never auto-applied. The web reads two of those human-facing reports,
+both display only: `GET /pnl/system` (the score-vs-outcome report) and `GET /pnl/sizing` (web overhaul
+Part 3, over `src/claude/eval/sizing_counterfactual.py::summarize`, recomputing nothing).
 
 ## Analytics tiers — which signals may influence ranking
 
@@ -310,7 +312,7 @@ credit spreads in the **same IBKR account and Gateway** as the wheel, with its o
   path, `src.notify`, `src.ledger` or `src.storage`, and reaches Claude only through
   `src.claude.cli` (which imports nothing from `src/`). Enforced by `tests/test_spreads_fence.py`.
 - **The web API reads `data/spreads.db` only through `src/api/spreads_db.py`** (SQLite `mode=ro`,
-  plain SQL; `GET /spreads/positions`, `GET /spreads/picks` and `GET /pnl/month`), never by importing `src.spreads`;
+  plain SQL; `GET /spreads/positions`, `GET /spreads/picks`, `GET /spreads/orders` and `GET /pnl/month`), never by importing `src.spreads`;
   asserted by `tests/test_web_fence.py::test_only_spreads_db_opens_the_spreads_file_in_the_api`.
 - `src/spreads/` imports nothing from `src.claude`, `src.engine`, `src.execution`,
   `src.strategies`, `src.orchestrator`, `src.monitor`, `src.notify`, `src.reporting`, `src.api`,
@@ -485,7 +487,10 @@ schema's `Literal` type, and the composer's byte-identical passthrough for every
 
 P3 and P4 (portfolio, P&L, and `GET /pnl/system`'s read behind the `src/claude/eval/` fence)
 added no write beyond the `refresh` command (Task 1.4) — the API still writes exactly one table
-(`tests/test_web_fence.py::test_the_api_still_writes_exactly_one_table`, P3-P4 M6 Task 6.3).
+(`tests/test_web_fence.py::test_the_api_still_writes_exactly_one_table`, P3-P4 M6 Task 6.3). Part 3 of the web
+overhaul (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing` and fill
+contract fields) adds no write either: `GET /ledger/executions` only reads the ledger tables, and nothing in
+`src/ledger/` changes.
 
 ## How Claude is invoked in production (not the API)
 

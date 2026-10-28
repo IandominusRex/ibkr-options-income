@@ -221,7 +221,7 @@ components:
     backgroundColor: "{colors.ink}"
     textColor: "{colors.ground}"
 ---
-<!-- da-vinci schema=1 status=ratified updated=2026-10-19 -->
+<!-- da-vinci schema=1 status=ratified updated=2026-10-28 -->
 # Design System: IBKR Income
 
 ## Overview
@@ -553,6 +553,56 @@ reaches an order, so no confirmation step.
 
 **Meter**: an 8px sage track with a lime fill; unknown is the hatched track with no fill, never 0%.
 
+**Account card** (Portfolio): the title, with the age of the reading in words at its right ("Updated 7m
+ago") and a flag word "Delayed" when it is older than 30 minutes or degraded; the API's note verbatim in
+a pressed-sage block; then two blocks of figure lines under perforations, side by side from 640px and
+stacked on a phone. A figure we do not have is a hatched n/a, and a stale one says "stale".
+
+**Name card** (Portfolio, Positions): one card per underlying. The ticker bold with its flag words ("Weak
+health", "Event <date>") and the name's open P&L at the right, which is n/a when any row's figure is
+unknown, never the sum of the known ones. Home's position rows sit beneath it, each opening the
+contract's page, and under each option a muted figure line: delta (and where it came from), the mark and
+the value. Credit spreads are one more card, "SPY credit spreads".
+
+**Campaign thread** (Portfolio, Campaigns): the symbol and a status word, the net premium at the right
+labelled "net premium, before commissions", the opening date and leg count beneath; an assigned thread adds
+its adjusted cost basis and realised stock P&L as figure lines under a perforation. The legs sit behind a
+disclosure, and a leg whose candidate was pruned reads "Leg unavailable".
+
+**Expiry day** (Portfolio, Calendar): the date and the days left in the title row; each contract a row with
+its status words and, at the right, what happens at expiry in a sentence ("Expires worthless",
+"Consequence unknown"). A short whose name has a verified event date before the expiry carries "Event
+<date> before expiry" as a neutral status word; only the date is shown, because the event's title is
+Claude's.
+
+**Month stepper** (Activity, Pay): previous, the month, "This month" when away from it, and next, each arrow
+44px. Next stops at this month and previous at the month the system began. The month is a stub, always open:
+the title, the meter when a target is set, the lines (Premium collected, Bought back, Commissions) and a
+total, "Net so far" with the days left for this month and "Net for the month" for a past one. A month in
+which nothing was opened or closed shows its genuine zeros and says so in a sentence.
+
+**Order row**, **Fill row** and **Execution row** (Activity, Fills and orders): the contract bold with its
+state words, a muted line (when, in New York time, and the book), and figures in the stub face (limit,
+filled, average fill, commission) with n/a hatched where a price is unknown. Each list is headed by whose
+record it is ("The system's record", "IBKR's record") and the three are never merged. An order that a rule
+or Claude's cut sized carries one line in words under its figures: "Claude's cut" in the flag tone beside
+"Sent 1 of 3 contracts", with the reason labelled "Claude's reason:" when it is Claude's and "Rule:" (its
+codes spelled out) for every other kind. A credit spread is "SPY 763/758 put spread", and an unreadable
+spreads file says "unavailable", never "none".
+
+**Sizing record** (Activity, System): one line per kind of action ("Scale-in ladder · never sent", "Claude's
+size cut") with its counts in words ("5 actions · 2 valued so far · 8 contracts held back") and two marks at
+the right in the stub face, "to expiry" and "exit rules". A mark carries no gain or loss colour, because a
+positive number is what the action cost, not what the account earned. A mark we cannot value is a hatched
+n/a, a pushed-out line carries no money, and rows not yet valued are counted and never valued. An empty
+record says "No sizing actions on record yet." and shows no zeros.
+
+**Ledger figure lines** (Activity, Ledger, and the ledger's own pages): the ledger's tiles as figure lines in
+the stub face under a perforation, outcomes as status words, and a trade's detail in the Sheet. A table
+that is wider than a phone scrolls inside its own card and says "Scroll sideways to see every column." on a
+phone, and a chart names each series in words. The pages lead back to Activity, Ledger with a back link in
+place of a sub-navigation.
+
 ## Do's and Don'ts
 
 - Do end every trade and every income figure in a stub or a sentence; never a bare percentage.
@@ -862,7 +912,7 @@ sibling keys; re-run the check after edits.
   `HaltControl` and `AutonomyControl`.
 - **A disabled quiet button (proposed 2026-10-19):** the Buttons rule drops every disabled button to
   muted ink on sunk, so a quiet button that cannot be pressed (History's and Spreads' day arrows at
-  the end of the range) shows a filled circle while the live one is bare, which reads backwards.
+  the end of the range, and Activity's month stepper at the first month and at this month) shows a filled circle while the live one is bare, which reads backwards.
   Proposed: a disabled quiet button stays transparent and only dims. It changes a shared
   component's rule, so it waits for the operator.
 - **The unknown grey: RESOLVED 2026-10-14.** The light `unknown` is now `#61685d` (4.72:1 on
@@ -871,6 +921,24 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-28: **Web overhaul Part 3, Portfolio and Activity, built**
+  (docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md; the operator asked for it to be
+  planned with its own rulings). Portfolio: three views in `?view=` and the Account card; Positions grouped
+  by name over Home's rows, with totals that never hide an n/a; Campaigns with their money before
+  commissions; the Calendar with event words on the expiries they precede. Activity: four views in
+  `?view=`; Pay a month at a time (`?month=`) with the totals, the curve and the legs under one set of
+  filters; the Ledger overview in the figure face, with its trades, ticker and import pages leading back to
+  it; Fills and orders as three lists that are never merged; System with the sizing record above the score
+  against outcome. `/ledger` redirects into Activity. New components: Account card, Name card, Campaign
+  thread, Expiry day, Month stepper, Order row, Fill row and Execution row, Sizing record, Ledger figure
+  lines. No new colour, font, radius, elevation or token, so no workshop. The da-vinci finish (Playwright at
+  320, 390 and 1440px, light and dark, over a synthetic API) found what the tests could not see and fixed
+  it without changing the system: a page-level grid with no column template sized its one column to its
+  widest table, so the System view, Pay with a thread open and the ledger's pages clipped on a phone
+  (they are now one `minmax(0, 1fr)` column and a table scrolls inside its card); tables that scroll on a
+  phone say so; the ledger's chart axis ran into the sentence beneath it and its monthly chart named two
+  bars by colour alone. The month stepper's disabled arrows join the open "disabled quiet button" decision.
+  Protected files unchanged.
 - 2026-10-23: **Market picture on the working surfaces.** The Market card (Home, Trades Proposals, News),
   name notes (position, stock and news ticker pages), "Weak health" and "Event" words on position rows
   and Trades History's "Held back or trimmed" list now show the market picture build where the operator
