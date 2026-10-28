@@ -2025,6 +2025,59 @@
         }
       }
     },
+    "/pnl/sizing": {
+      "get": {
+        "summary": "Pnl Sizing",
+        "description": "What the regime limits, the scale-in ladder, the leveraged-ETF ceiling, the floor lots and\nClaude's size cut held back, and what that would have earned (web overhaul Part 3, Task 1).\n\nReads behind the `src/claude/eval/` fence, like `/pnl/system`: this is the human reader\n`CLAUDE.md` says everything `eval/` produces is for. It calls `summarize` and returns what it\ngets, grouped and ordered; no figure is recomputed here, and nothing on the route can change a\nlimit, a size or a weight. `since` is the first action day counted (default: every action on\nrecord). Rows not yet valued count and are not valued.",
+        "operationId": "pnl_sizing_pnl_sizing_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizingRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/pnl/target": {
       "get": {
         "summary": "Pnl Target",
@@ -12891,6 +12944,158 @@
           "day"
         ],
         "title": "SizingActionsResponse"
+      },
+      "SizingGroupOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "split": {
+            "type": "string",
+            "title": "Split"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "contracts_withheld": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts Withheld"
+          },
+          "resolved": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved"
+          },
+          "exact": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact"
+          },
+          "pnl_expiry": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Expiry"
+          },
+          "pnl_rules": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Rules"
+          },
+          "rules_missing": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Missing"
+          },
+          "applied": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied"
+          },
+          "unapplied": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unapplied"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "split",
+          "count"
+        ],
+        "title": "SizingGroupOut",
+        "description": "One line of the sizing record: a kind of action and what it withheld, as\n``src/claude/eval/sizing_counterfactual.py::summarize`` reports it (key ``<kind>:<split>``,\nor ``claude_overrides`` for Claude's cuts, whose ``kind`` is ``claude_cut``).\n\nA positive P&L is what the withheld contracts would have **earned**: the action cost that\nmuch (for ``regime_floor_lot`` the valued contracts are the lots the floor let through, so\npositive means letting them through paid). Rows not yet valued count in ``count`` and not\nin ``resolved``. A ``pushed_out`` line is counted and never valued, so its figures are None."
+      },
+      "SizingRecordResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SizingGroupOut"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "groups"
+        ],
+        "title": "SizingRecordResponse",
+        "description": "The sizing record, read by a human (the live-cutover gate's step 4). Display only."
       },
       "Source": {
         "type": "string",

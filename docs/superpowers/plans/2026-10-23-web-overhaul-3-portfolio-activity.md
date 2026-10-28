@@ -53,10 +53,10 @@ surface contracts are written into `web/DESIGN.md` in Task 4 before any Part 3 U
 
 | Section | Tasks | Model | Why this model |
 |---|---|---|---|
-| **A — The API** | 1–3 | **opus** | Three read-only routes, but Task 1 reads behind the eval fence, Task 2 changes two response shapes that two web surfaces already read, and Task 3 opens the ledger tables and the spreads file. Every line of code and every test is given; this section gets the most capable model because a fence slip here is the failure to avoid. |
-| **B — Portfolio** | 4–7 | **sonnet** | New components in `web/features/portfolio/` against interfaces that Parts 1 and 2 and Section A pinned; the two small restyles carry full replacement code under their existing tests. |
-| **C — Activity** | 8–14 | **sonnet** | New views plus restyles in place. Every restyle is given as exact replacements and has an existing test suite that must pass unmodified: that is the proof the restyle changed no behaviour. |
-| **D — Docs and finish** | 15 | **sonnet**, then an **opus** whole-branch review | The doc sweep and the da-vinci finish are checklists; the whole-branch review at the end (superpowers:requesting-code-review) runs on the most capable model. |
+| **A — The API** | 1–3 | **sonnet** (effort xhigh) | Three read-only routes. Task 1 reads behind the eval fence, Task 2 changes two response shapes that two web surfaces already read, and Task 3 opens the ledger tables and the spreads file, so the fence tests run in every task. Every line of code and every test is given and was run against `main` at c692a1b (2026-10-28 re-verification), so the section is transcription plus the gates, not design. |
+| **B — Portfolio** | 4–7 | **sonnet** (effort xhigh) | New components in `web/features/portfolio/` against interfaces that Parts 1 and 2 and Section A pinned; the two small restyles carry full replacement code under their existing tests. |
+| **C — Activity** | 8–14 | **sonnet** (effort xhigh) | New views plus restyles in place. Every restyle is given as exact replacements and has an existing test suite that must pass unmodified: that is the proof the restyle changed no behaviour. |
+| **D — Docs and finish** | 15 | **sonnet** (effort xhigh), then an **opus** whole-branch review | The doc sweep and the da-vinci finish are checklists; the whole-branch review at the end (superpowers:requesting-code-review) is a review, not implementation, and runs on the most capable model (the operator's token-light method). |
 
 **How a section runs (native):**
 
@@ -68,17 +68,29 @@ surface contracts are written into `web/DESIGN.md` in Task 4 before any Part 3 U
    result, date) and start the first task. No operator confirmation is needed between green
    sections.
 4. An orchestrator delegating instead of running natively spawns one subagent per section on
-   the labelled model, hands it this plan plus `web/DESIGN.md`, tells it to invoke `da-vinci`
-   before any UI code, and runs the next section's entry checks itself before spawning the next.
+   the labelled model and effort (sonnet, xhigh), hands it this plan plus `web/DESIGN.md`, tells it
+   to invoke `da-vinci` before any UI code, and runs the next section's entry checks itself before
+   spawning the next.
 
-**Commit counts.** Each task is one commit (Task 1's also adds this plan file). A review fix pass
-adds one commit; record it in the Progress log and add one to every later entry check's count.
+**How to apply a step (for the implementer).** Every code block is the exact text to write. A
+"create" or "replace `<file>` with" step is the whole file. An "append inside `describe(...)`" step
+goes before that `describe`'s closing `});` (the last line of the file in every case here). An
+"add after `<name>`" step goes after the end of that function or class. A "replace the lines" step
+names old text that occurs exactly once in the file today: if it does not, stop and report rather
+than guess. Copy blocks byte for byte. Do not reformat them by hand; the formatter steps do that.
+
+**Commit counts.** Each task is one commit (Task 1's also carries the plan's Progress log). A review
+fix pass adds one commit; record it in the Progress log and add one to every later entry check's
+count.
 
 ## Progress log
 
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | n/a | 2026-10-23 | Operator asked for Part 3 in the style of Parts 1 and 2 with the market-picture additions where relevant, and to make the calls itself rather than ask. Every call is a ruling below, with the evidence it rests on; the operator may overturn any of them. Tasks numbered 1–15. |
+| **Plan re-verified** | done | (plan file only) | Tasks 1–14 replayed from this text onto a scratch worktree of `main` at c692a1b: pytest 4963 → 4993 (+30), vitest 1242 passed (135 files), tsc, eslint, ruff, mypy, fences, `test_openapi_current` and the da-vinci lint (non-test files) clean; `next build` green | 2026-10-28 | Operator asked for the plan to be checked against the system as it now stands and made executable by a Sonnet subagent at xhigh. (1) The plan file and the market-picture web work were committed together in 353cdd8, so A1 now expects a clean tree. (2) **f4af002 (2026-10-27) made `partial` final** (the executors cancel the rest at the fill timeout): `/options/orders?state=working` is queued and submitted only. Task 2's replacement `list_orders` re-added `partial` and would have undone that fix silently (no existing test seeds a partial order). Fixed in the task's code, and a ninth test, `test_a_partial_order_is_history_not_working`, pins it (it fails against the old text). Counts updated (+9, total +30). (3) Every section is now labelled sonnet at xhigh; the whole-branch review stays on opus. (4) A "how to apply a step" paragraph was added, the flaky `tests/test_scan_timeout.py` is named in A2 so a lone intermittent failure there does not stop the run, and Task 15's root `CLAUDE.md` and restart instructions now name exact anchors (`./ibkr restart` restarts the whole supervised stack; there is no API-only restart). (5) f4af002's USD-only account value needs no plan change: Pay's month stub already says "needs the month's opening account value" when the API's `month_start_value` is null (every month before November 2026 with a percent target), and the equity curve already leaves gaps for a null net liquidation. |
+| **Section A entry** | done | (none) | A1-A5 pass (run by the orchestrator); baseline pytest 4962 passed + 1 skipped (4963 collected), ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | Work is in the worktree `.claude/worktrees/web-overhaul-3` (branch `feat/web-overhaul-3`, based on main c692a1b); the plan file there carries the operator's uncommitted 2026-10-28 re-verification edits and Task 1's commit includes them. A1 says "`git branch --show-current` prints `main`": here the branch is `feat/web-overhaul-3` by design (a worktree), so Task 1 Step 1's `git switch -c` was not needed. |
+| **Task 1: `GET /pnl/sizing`** | done | Task 1 commit (`feat(api): GET /pnl/sizing ...`; its hash is filled in by Task 2's commit, a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -156,6 +168,8 @@ same days. That is what an audit page is for, and why neither list stands in for
    with a back link to Activity → Ledger. The rail still marks Activity current on them.
 10. **Fills and orders is three lists with named sources, never merged.** **Orders**: the system's
     own `orders` (Working, All, Rejected, over a window), each with the sizing words (ruling 5c).
+    Working is queued and submitted only: a `partial` order is final since 2026-10-27 (the rest
+    was cancelled at the fill timeout), so it shows under All with the "Partial" flag word.
     **Fills**: the system's own `fills` with the contract named (they carried only a candidate
     id), plus the credit-spread book's filled orders from `GET /spreads/orders`, which is
     "unavailable" when the file cannot be read, never "none". **At IBKR**: the ledger's real
@@ -288,7 +302,7 @@ src/
   api/models/spreads.py             MODIFY  SpreadOrderOut, SpreadOrdersResponse
   api/routers/spreads.py            MODIFY  GET /spreads/orders
 tests/test_api_pnl_sizing.py        CREATE  (10 tests)
-tests/test_api_orders.py            MODIFY  +8
+tests/test_api_orders.py            MODIFY  +9
 tests/test_api_ledger.py            MODIFY  +5
 tests/test_api_spread_orders.py     CREATE  (6 tests)
 docs/web/openapi.json               MODIFY  regenerated (Tasks 1-3)
@@ -332,35 +346,43 @@ ARCHITECTURE.md, STATUS.md, SETUP.md, CLAUDE.md, docs/web/api.md   MODIFY (Task 
 
 ---
 
-## Section A — The API (Tasks 1–3) · model: opus
+## Section A — The API (Tasks 1–3) · model: sonnet (effort xhigh)
 
 Three read-only routes and two enriched shapes. Nothing here touches the web app except the
 regenerated `api-types.ts` and one hand-written type file that gains optional fields.
 
 **Entry checks (the baseline; run from the repo root on `main` before Task 1 Step 1):**
 
-- [ ] **A1. Clean starting point, and the market-picture web work is committed.**
-  `git status --short` shows nothing except this plan file (untracked) and, optionally,
-  `web/design-preview.html`; `git branch --show-current` prints `main`. The 2026-10-23 web
-  follow-up of the market-picture build (the Market card, `NameNotes`, `NameFlags`, `HeldBack`,
-  `GET /claude/sizing`, `useClaudeContext`) is the base this plan builds on, so this prints
-  two lines:
+- [ ] **A1. Clean starting point, on the commits this plan was verified against.**
+  `git status --short` shows nothing (optionally `web/design-preview.html`, untracked);
+  `git branch --show-current` prints `main`. The plan file itself is tracked (it was committed
+  with the market-picture web work in 353cdd8). Each of these prints at least one line:
 
   ```bash
   git ls-files web/features/market/NameFlags.tsx web/features/claude-context/useClaudeContext.ts
+  git merge-base --is-ancestor c692a1b HEAD && echo "c692a1b is in main"
+  grep -n '_WORKING = {"queued", "submitted"}' src/api/routers/options.py
   ```
 
-  If it prints nothing, or `git status` shows that work as modified or untracked, **stop**: it
-  is the operator's to commit first, as its own change. Do not commit it into this branch.
+  The first is the 2026-10-23 web follow-up of the market-picture build (the Market card,
+  `NameNotes`, `NameFlags`, `HeldBack`, `GET /claude/sizing`, `useClaudeContext`) that this plan
+  builds on; the second is the commit the plan was last replayed against (2026-10-28); the third
+  is f4af002's rule that a `partial` order is final, which Task 2 keeps. If any prints nothing,
+  **stop** and report: `main` has moved in a way this plan has not been checked against.
 - [ ] **A2. Baseline is green.** All of these pass; record the pytest and vitest counts in the
-  Progress log row, because every later gate compares against them:
+  Progress log row, because every later gate compares against them (on 2026-10-28: pytest 4963,
+  vitest 1027; your counts may be higher if `main` moved):
 
   ```bash
   python -m pytest -q && ruff check . && mypy src
   cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..
   ```
 
-  A red baseline is not this plan's to fix: stop and report it.
+  A red baseline is not this plan's to fix: stop and report it. One known exception:
+  `tests/test_scan_timeout.py` is flaky (one of its cases fails intermittently with a
+  `TimeoutError`, a different one each run; logged 2026-10-27). If that file is the only failure,
+  re-run it alone (`python -m pytest tests/test_scan_timeout.py -q`); if it passes, note "scan
+  timeout flake" in the Progress log and continue. The same rule applies at every later gate.
 - [ ] **A3. The spec is valid.** `python3 ~/.claude/skills/da-vinci/scripts/design_md_check.py web/DESIGN.md`
   exits 0.
 - [ ] **A4. The pieces Section A builds on exist.** Each command prints at least one line:
@@ -393,7 +415,7 @@ regenerated `api-types.ts` and one hand-written type file that gains optional fi
 - Modify: `src/api/models/pnl.py`, `src/api/routers/pnl.py`
 - Create: `tests/test_api_pnl_sizing.py`
 - Modify: `docs/web/openapi.json`, `web/lib/api-types.ts` (both regenerated)
-- Add: this plan file (first commit of the branch)
+- Modify: this plan file (its Progress log rows; it is already tracked)
 
 **Interfaces:**
 - Consumes: `summarize(since: date) -> dict[str, dict[str, float]]` from
@@ -403,7 +425,7 @@ regenerated `api-types.ts` and one hand-written type file that gains optional fi
   SizingGroupOut[]}`; `SizingGroupOut{key, kind, split, count, contracts_withheld?, resolved?,
   exact?, pnl_expiry?, pnl_rules?, rules_missing?, applied?, unapplied?}`. Task 13 reads it.
 
-- [ ] **Step 1: Branch and worktree**
+- [x] **Step 1: Branch and worktree**
 
 Run from the repo root:
 
@@ -415,7 +437,7 @@ If executing in a separate worktree (superpowers:using-git-worktrees), symlink t
 and `web/node_modules` into it and run `python -c "from src.storage.db import init_db; init_db()"`
 (a fresh worktree otherwise fails four monitor tests with "no such table: fills").
 
-- [ ] **Step 2: Write the failing tests** — create `tests/test_api_pnl_sizing.py`:
+- [x] **Step 2: Write the failing tests** — create `tests/test_api_pnl_sizing.py`:
 
 ```python
 """GET /pnl/sizing - the sizing record's totals (web overhaul Part 3, Task 1).
@@ -602,12 +624,12 @@ def test_a_non_owner_is_refused(client, monkeypatch) -> None:
     assert client.get("/pnl/sizing", headers=OWNER).status_code == 403
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_pnl_sizing.py -q`
 Expected: FAIL (every route test answers 404; the spy test fails on the missing attribute).
 
-- [ ] **Step 4: Add the models** — in `src/api/models/pnl.py`, directly after
+- [x] **Step 4: Add the models** — in `src/api/models/pnl.py`, directly after
   `SystemPerformanceResponse`:
 
 ```python
@@ -643,7 +665,7 @@ class SizingRecordResponse(Envelope):
     groups: list[SizingGroupOut]
 ```
 
-- [ ] **Step 5: Add the route** — in `src/api/routers/pnl.py`: add `SizingGroupOut` and
+- [x] **Step 5: Add the route** — in `src/api/routers/pnl.py`: add `SizingGroupOut` and
   `SizingRecordResponse` to the `src.api.models.pnl` import list (alphabetical), add
   `from src.claude.eval.sizing_counterfactual import summarize as summarize_sizing` beside the
   other `src.claude.eval` imports, and add after `pnl_system`:
@@ -699,12 +721,12 @@ def pnl_sizing(
     )
 ```
 
-- [ ] **Step 6: Run the tests, then the fences**
+- [x] **Step 6: Run the tests, then the fences**
 
 Run: `python -m pytest tests/test_api_pnl_sizing.py tests/test_web_fence.py tests/test_eval_skills.py tests/test_regime_fence.py -q`
 Expected: PASS (10 new tests; every fence test unchanged).
 
-- [ ] **Step 7: Regenerate the contract**
+- [x] **Step 7: Regenerate the contract**
 
 ```bash
 python -c "import json; from src.api.main import create_app; print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
@@ -715,14 +737,14 @@ python -m pytest tests/test_openapi_current.py -q
 Expected: PASS; `git diff --stat` shows `docs/web/openapi.json` and `web/lib/api-types.ts` changed
 by the two new schemas and the new path only.
 
-- [ ] **Step 8: Format and the gate**
+- [x] **Step 8: Format and the gate**
 
 Run: `ruff format src/api/models/pnl.py src/api/routers/pnl.py tests/test_api_pnl_sizing.py`. These files
 are formatted on `main`, so this changes only what this task wrote. Then
 `python -m pytest -q && ruff check . && mypy src && cd web && npx tsc --noEmit && cd ..`
-Expected: pytest = baseline + 10; everything else clean.
+Expected: pytest = baseline + 10; everything else clean (the scan-timeout flake rule in A2 applies).
 
-- [ ] **Step 9: Commit** (with the Progress log row for Task 1 filled in and this plan file added)
+- [x] **Step 9: Commit** (with the Section A entry row and the Task 1 row of the Progress log filled in)
 
 ```bash
 git add src/api/models/pnl.py src/api/routers/pnl.py tests/test_api_pnl_sizing.py \
@@ -736,7 +758,7 @@ git commit -m "feat(api): GET /pnl/sizing - the sizing record's totals, read beh
 
 **Files:**
 - Modify: `src/api/models/options.py`, `src/api/routers/options.py`
-- Modify: `tests/test_api_orders.py` (+8 tests)
+- Modify: `tests/test_api_orders.py` (+9 tests)
 - Modify: `web/components/options/types.ts` (hand-written mirrors)
 - Modify: `docs/web/openapi.json`, `web/lib/api-types.ts` (both regenerated)
 
@@ -748,6 +770,10 @@ git commit -m "feat(api): GET /pnl/sizing - the sizing record's totals, read beh
   `FillSummary.underlying | strategy | right | strike | expiry` (each `None` when neither the
   order's snapshot nor its candidate is on record, never `""` or `0`); `GET /options/orders` gains
   `days` (1 to 365); `GET /options/fills` takes `days` up to 365.
+- Keeps: `state=working` is `queued` and `submitted` only. Since f4af002 (2026-10-27) a `partial`
+  order is final (the executors cancel the rest at the fill timeout), so it is history, listed
+  under `all` and `partial`, never `working`. The replacement code below keeps that line and its
+  comment exactly; do not "restore" `partial` to `_WORKING`.
 
 - [ ] **Step 1: Write the failing tests** — append to `tests/test_api_orders.py` (the module's
   `client` fixture seeds orders 1 to 3 (`c1` NVDA submitted, `c2` AAPL filled with one fill, `c3`
@@ -876,13 +902,33 @@ def test_a_fill_with_no_order_and_no_candidate_has_an_unknown_contract_not_a_zer
 def test_fills_reach_back_a_year_and_no_further(client) -> None:
     assert client.get("/options/fills?days=365", headers=AUTH).status_code == 200
     assert client.get("/options/fills?days=366", headers=AUTH).status_code == 422
+
+def test_a_partial_order_is_history_not_working(client) -> None:
+    """`partial` is final (the executors cancel the rest at the fill timeout, 2026-10-27): the
+    rewritten route must keep it out of `working`, as the route it replaces did."""
+    with session_scope() as s:
+        s.add(
+            OrderRow(
+                candidate_id="half",
+                state="partial",
+                filled_qty=1.0,
+                is_live=False,
+                snapshot=_snap(underlying="HALF"),
+            )
+        )
+    working = {o["candidate_id"] for o in client.get("/options/orders", headers=AUTH).json()["orders"]}
+    every = {o["candidate_id"] for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]}
+    assert "half" not in working and "half" in every
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_orders.py -q`
-Expected: FAIL (the 8 new tests: no `sizing`, no contract fields, `days` ignored on orders, 366
-accepted by... no: `le=90` today, so `days=365` answers 422).
+Expected: 8 of the 9 new tests FAIL (no `sizing`, no contract fields, `days` ignored on orders,
+and `/options/fills?days=365` answers 422 because the route caps `days` at 90 today).
+`test_a_partial_order_is_history_not_working` already passes on `main` and must still pass after
+Step 4: it guards f4af002's rule (a `partial` order is final, never `working`) that the
+replacement route has to keep.
 
 - [ ] **Step 3: Models** — in `src/api/models/options.py`:
 
@@ -967,7 +1013,7 @@ def list_orders(
         "working", "all", "queued", "submitted", "filled", "partial", "cancelled", "rejected"
     ] = Query(
         default="working",
-        description="`working` (queued/submitted/partial), `all`, or a specific state.",
+        description="`working` (queued/submitted), `all`, or a specific state.",
     ),
     days: int | None = Query(
         default=None, ge=1, le=365, description="Only orders created in the last N days."
@@ -983,7 +1029,7 @@ def list_orders(
     from src.storage.models import CandidateRow, OrderRow, SizingActionRow
 
     now = datetime.now(UTC)
-    _WORKING = {"queued", "submitted", "partial"}
+    _WORKING = {"queued", "submitted"}  # `partial` is final: the executors cancel the rest
 
     stmt = select(OrderRow)
     if state == "working":
@@ -1147,7 +1193,7 @@ python -c "import json; from src.api.main import create_app; print(json.dumps(cr
 python -m pytest tests/test_openapi_current.py -q
 ```
 
-Expected: PASS (every existing orders, fills and approval-detail test unchanged, plus the 8 new
+Expected: PASS (every existing orders, fills and approval-detail test unchanged, plus the 9 new
 ones); the contract diff adds `OrderSizingOut`, the `sizing` and contract fields, and the
 `days` parameter.
 
@@ -1155,7 +1201,7 @@ ones); the contract diff adds `OrderSizingOut`, the `sizing` and contract fields
 
 Run: `ruff format src/api/models/options.py src/api/routers/options.py tests/test_api_orders.py`, then
 `python -m pytest -q && ruff check . && mypy src && cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..`
-Expected: pytest = Task 1's count + 8; vitest unchanged; everything else clean.
+Expected: pytest = Task 1's count + 9; vitest unchanged; everything else clean.
 
 - [ ] **Step 8: Commit**
 
@@ -1716,7 +1762,7 @@ git commit -m "feat(api): GET /ledger/executions and GET /spreads/orders - the a
 
 ---
 
-## Section B — Portfolio (Tasks 4–7) · model: sonnet
+## Section B — Portfolio (Tasks 4–7) · model: sonnet (effort xhigh)
 
 The Portfolio surface contract goes into `web/DESIGN.md` first (with Activity's), then the
 Account card, Positions, Campaigns, Calendar and the page. Every new component is a client
@@ -4143,7 +4189,7 @@ git commit -m "feat(web): the Portfolio page - Account card, Positions, Campaign
 
 ---
 
-## Section C — Activity (Tasks 8–14) · model: sonnet
+## Section C — Activity (Tasks 8–14) · model: sonnet (effort xhigh)
 
 Pay (a month, the totals, the curve, the legs), Ledger, Fills and orders, System, then the page.
 Where a legacy component keeps its job it is restyled **in place and its existing tests pass
@@ -5042,7 +5088,7 @@ git commit -m "feat(web): Activity Pay - a month at a time as a stub, then the t
 - Modify: `web/features/activity/PayView.tsx`, `web/features/activity/PayView.test.tsx` (+8 tests)
 - Modify (restyle in place): `web/components/pnl/LedgerFilters.tsx` (whole file),
   `web/components/pnl/CampaignRow.tsx` (whole file), `web/components/pnl/LegRow.tsx` (whole file),
-  `web/components/pnl/EquityChart.tsx` (three classes)
+  `web/components/pnl/EquityChart.tsx` (four classes and one comment)
 
 **Interfaces:**
 - Consumes: `useLegFilters`, `useEquity` (Task 8), `LedgerResponseData` (`components/pnl/types.ts`),
@@ -9244,7 +9290,7 @@ git commit -m "feat(web): the Activity page - Pay, Ledger, Fills and orders, Sys
 
 ---
 
-## Section D — Docs and finish (Task 15) · model: sonnet, then an opus whole-branch review
+## Section D — Docs and finish (Task 15) · model: sonnet (effort xhigh), then an opus whole-branch review
 
 Looks at the result in a browser, runs the da-vinci finish, sweeps the docs and runs every gate.
 
@@ -9537,13 +9583,21 @@ which is fine: the check is Portfolio, Activity and the ledger's own pages.
     from More); what was sent, filled and executed → Activity → Fills and orders; the sizing record
     and the score against outcome → Activity → System. Find the existing rows with
     `grep -n "Portfolio\|P&L\|/pnl\|/ledger\|Ledger" SETUP.md`.
-  - **Root `CLAUDE.md`**: in the spreads-fence bullet that says the web API reads `data/spreads.db`
-    only through `src/api/spreads_db.py`, list `GET /spreads/orders` beside `GET /spreads/positions`,
-    `GET /spreads/picks` and `GET /pnl/month`; in the "fence" section, after the sentence about
-    `GET /pnl/system`, add one: `GET /pnl/sizing` is a second read behind the fence, over
-    `src/claude/eval/sizing_counterfactual.py::summarize`, display only. Under "The web layer and
-    the trading database", add: the API still writes exactly one table; `GET /ledger/executions`
-    reads the ledger tables and nothing in `src/ledger/` changes.
+  - **Root `CLAUDE.md`** (three edits, each at an anchor that occurs once):
+    1. In "The spreads fence", the bullet that begins "**The web API reads `data/spreads.db` only
+       through `src/api/spreads_db.py`**": change `` `GET /spreads/positions`, `GET /spreads/picks`
+       and `GET /pnl/month` `` to `` `GET /spreads/positions`, `GET /spreads/picks`,
+       `GET /spreads/orders` and `GET /pnl/month` ``.
+    2. In "## The fence — the enrichment learning loop may not touch the deterministic layer", the
+       paragraph that ends "everything `eval/` produces is read by a human, never auto-applied.":
+       append the sentence "The web reads two of those human-facing reports, both display only:
+       `GET /pnl/system` (the score-vs-outcome report) and `GET /pnl/sizing` (web overhaul Part 3,
+       over `src/claude/eval/sizing_counterfactual.py::summarize`, recomputing nothing)."
+    3. In "## The web layer and the trading database", the paragraph that begins "P3 and P4
+       (portfolio, P&L, and `GET /pnl/system`'s read": append the sentence "Part 3 of the web
+       overhaul (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order
+       `sizing` and fill contract fields) adds no write either: `GET /ledger/executions` only reads
+       the ledger tables, and nothing in `src/ledger/` changes."
   - **`README.md`**: no change (no new Telegram command or top-level directory). Confirm and say
     so in the Progress log.
 
@@ -9561,7 +9615,7 @@ git diff --stat main -- web/components/options/DecideControls.tsx web/components
   web/lib/commands.ts web/lib/receipt.ts                          # prints nothing
 ```
 
-and the scratch-copy `next build` from C2. Expected: pytest = baseline + 29 (10 + 8 + 11); vitest
+and the scratch-copy `next build` from C2. Expected: pytest = baseline + 30 (10 + 9 + 11); vitest
 green with every new test; everything else clean.
 
 - [ ] **Step 6: Commit the docs, then the Progress log**
@@ -9579,12 +9633,15 @@ this point; check `git status` first).
 - [ ] **Step 7: Hand off.** Run the whole-branch review on the most capable model (opus):
   superpowers:requesting-code-review over `main..HEAD`, with this plan, `web/DESIGN.md` and the
   Review Focus above as its brief. Fix what it finds as one review fix pass (a commit, a Progress
-  log line). Then superpowers:finishing-a-development-branch. Tell the operator that the **API**
-  needs a restart (`./ibkr restart` for the API process) before the new routes and shapes appear
-  (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing` and the
-  fill contract fields); the trading service, the scan loop and the monitor are unchanged, so they
-  need none. The console still shows the old shapes' absence gracefully: an order with no `sizing`
-  field shows no sizing words, a fill with no contract says "Contract not on record".
+  log line). Then superpowers:finishing-a-development-branch (no merge or push without the
+  operator). Tell the operator that the **API** needs a restart before the new routes and shapes
+  appear (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing`
+  and the fill contract fields). `./ibkr restart` is the command: it stops and starts the whole
+  supervised stack, since there is no API-only restart. Only the API's code changed, so the
+  trading service, the scan loop and the monitor come back on the same behaviour. Processes do
+  not hot-reload, so after the restart check with `ps -eo lstart,command | grep run_` that the
+  API started after the merge. Until then the console degrades gracefully: an order with no
+  `sizing` field shows no sizing words, a fill with no contract says "Contract not on record".
 
 ---
 
@@ -9625,3 +9682,19 @@ this point; check `git status` first).
   tests, which are the proof the restyle changed no behaviour. Nothing here is a guess about what
   the code looks like: each legacy file was read before its replacement was written.
 
+
+## Re-verification (2026-10-28, before execution)
+
+- **What was checked.** Every task's text was applied as written (whole files from their blocks,
+  insertions at the named anchors) to a scratch worktree of `main` at c692a1b, with the gates the
+  tasks name run after each one: Section A's pytest, fences, ruff, mypy and the regenerated
+  contract; each web task's vitest scope, `tsc`, eslint and the da-vinci lint; then the full suites
+  and a scratch-copy `next build`. Results are in the Progress log's "Plan re-verified" row.
+- **What had moved under the plan.** Only f4af002's `partial` rule touched code the plan replaces
+  (Task 2's `list_orders`); it is now kept and pinned by a test. f4af002's USD-only account value
+  and c692a1b's research chart refresh touch nothing the plan writes. Every other anchor (the
+  DESIGN.md surface entries, `PositionsCard`'s row, the ledger and P&L components, the router
+  import lists, `next.config.ts`, the More page) still occurs exactly once as the plan quotes it.
+- **Execution.** Each section is sized for one Sonnet subagent at xhigh, with the next section's
+  entry checks run between sections as "How a section runs" says; the whole-branch review stays
+  on Opus.

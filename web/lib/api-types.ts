@@ -764,6 +764,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pnl/sizing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Sizing
+         * @description What the regime limits, the scale-in ladder, the leveraged-ETF ceiling, the floor lots and
+         *     Claude's size cut held back, and what that would have earned (web overhaul Part 3, Task 1).
+         *
+         *     Reads behind the `src/claude/eval/` fence, like `/pnl/system`: this is the human reader
+         *     `CLAUDE.md` says everything `eval/` produces is for. It calls `summarize` and returns what it
+         *     gets, grouped and ordered; no figure is recomputed here, and nothing on the route can change a
+         *     limit, a size or a weight. `since` is the first action day counted (default: every action on
+         *     record). Rows not yet valued count and are not valued.
+         */
+        get: operations["pnl_sizing_pnl_sizing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pnl/target": {
         parameters: {
             query?: never;
@@ -4908,6 +4935,58 @@ export interface components {
             actions?: components["schemas"]["SizingActionOut"][];
         };
         /**
+         * SizingGroupOut
+         * @description One line of the sizing record: a kind of action and what it withheld, as
+         *     ``src/claude/eval/sizing_counterfactual.py::summarize`` reports it (key ``<kind>:<split>``,
+         *     or ``claude_overrides`` for Claude's cuts, whose ``kind`` is ``claude_cut``).
+         *
+         *     A positive P&L is what the withheld contracts would have **earned**: the action cost that
+         *     much (for ``regime_floor_lot`` the valued contracts are the lots the floor let through, so
+         *     positive means letting them through paid). Rows not yet valued count in ``count`` and not
+         *     in ``resolved``. A ``pushed_out`` line is counted and never valued, so its figures are None.
+         */
+        SizingGroupOut: {
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Split */
+            split: string;
+            /** Count */
+            count: number;
+            /** Contracts Withheld */
+            contracts_withheld?: number | null;
+            /** Resolved */
+            resolved?: number | null;
+            /** Exact */
+            exact?: number | null;
+            /** Pnl Expiry */
+            pnl_expiry?: number | null;
+            /** Pnl Rules */
+            pnl_rules?: number | null;
+            /** Rules Missing */
+            rules_missing?: number | null;
+            /** Applied */
+            applied?: number | null;
+            /** Unapplied */
+            unapplied?: number | null;
+        };
+        /**
+         * SizingRecordResponse
+         * @description The sizing record, read by a human (the live-cutover gate's step 4). Display only.
+         */
+        SizingRecordResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Since */
+            since?: string | null;
+            /** Groups */
+            groups: components["schemas"]["SizingGroupOut"][];
+        };
+        /**
          * Source
          * @description Where a number came from. A Black-Scholes delta must not look like an IBKR one.
          * @enum {string}
@@ -5952,7 +6031,7 @@ export interface operations {
     list_orders_options_orders_get: {
         parameters: {
             query?: {
-                /** @description `working` (queued/submitted/partial), `all`, or a specific state. */
+                /** @description `working` (queued/submitted), `all`, or a specific state. */
                 state?: "working" | "all" | "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
                 limit?: number;
             };
@@ -6437,6 +6516,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemPerformanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pnl_sizing_pnl_sizing_get: {
+        parameters: {
+            query?: {
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SizingRecordResponse"];
                 };
             };
             /** @description Validation Error */
