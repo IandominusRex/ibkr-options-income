@@ -857,7 +857,7 @@
           "options"
         ],
         "summary": "List Orders",
-        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list).",
+        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list). Each order carries\nthe sizing actions linked to it (``sizing``), so an auditor can see why 1 contract went out\nwhen the scan said 3.",
         "operationId": "list_orders_options_orders_get",
         "security": [
           {
@@ -886,6 +886,26 @@
               "title": "State"
             },
             "description": "`working` (queued/submitted), `all`, or a specific state."
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 365,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only orders created in the last N days.",
+              "title": "Days"
+            },
+            "description": "Only orders created in the last N days."
           },
           {
             "name": "limit",
@@ -930,7 +950,7 @@
           "options"
         ],
         "summary": "List Fills",
-        "description": "Recent fills within the last ``days`` days.",
+        "description": "Recent fills within the last ``days`` days, each naming its contract (from the order's\nfrozen snapshot, then its candidate; unknown stays null).",
         "operationId": "list_fills_options_fills_get",
         "security": [
           {
@@ -944,7 +964,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 90,
+              "maximum": 365,
               "minimum": 1,
               "default": 7,
               "title": "Days"
@@ -7648,6 +7668,66 @@
             "type": "string",
             "format": "date-time",
             "title": "Filled At"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "C",
+                  "P"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
           }
         },
         "type": "object",
@@ -7663,7 +7743,7 @@
           "filled_at"
         ],
         "title": "FillSummary",
-        "description": "One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)\nbecause ``ApprovalDetail`` below references it for the approval-to-fill lineage."
+        "description": "One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)\nbecause ``ApprovalDetail`` below references it for the approval-to-fill lineage.\n\nThe contract fields (web overhaul Part 3) come from the order's frozen snapshot, then its\ncandidate; each is ``None`` when neither is on record, never ``\"\"`` or ``0``."
       },
       "HTTPValidationError": {
         "properties": {
@@ -10803,6 +10883,35 @@
         ],
         "title": "OrderListResponse"
       },
+      "OrderSizingOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "deterministic_contracts": {
+            "type": "integer",
+            "title": "Deterministic Contracts"
+          },
+          "sent_contracts": {
+            "type": "integer",
+            "title": "Sent Contracts"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "deterministic_contracts",
+          "sent_contracts"
+        ],
+        "title": "OrderSizingOut",
+        "description": "One sizing action linked to an order (``sizing_actions.order_id``): what the rules alone\nwould have sent, what was sent, and the reason as it was recorded (web overhaul Part 3)."
+      },
       "OrderSummary": {
         "properties": {
           "as_of": {
@@ -10915,6 +11024,13 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "sizing": {
+            "items": {
+              "$ref": "#/components/schemas/OrderSizingOut"
+            },
+            "type": "array",
+            "title": "Sizing"
           }
         },
         "type": "object",

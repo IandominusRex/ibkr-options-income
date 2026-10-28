@@ -90,7 +90,8 @@ count.
 | **Plan written** | done | (plan file only) | n/a | 2026-10-23 | Operator asked for Part 3 in the style of Parts 1 and 2 with the market-picture additions where relevant, and to make the calls itself rather than ask. Every call is a ruling below, with the evidence it rests on; the operator may overturn any of them. Tasks numbered 1–15. |
 | **Plan re-verified** | done | (plan file only) | Tasks 1–14 replayed from this text onto a scratch worktree of `main` at c692a1b: pytest 4963 → 4993 (+30), vitest 1242 passed (135 files), tsc, eslint, ruff, mypy, fences, `test_openapi_current` and the da-vinci lint (non-test files) clean; `next build` green | 2026-10-28 | Operator asked for the plan to be checked against the system as it now stands and made executable by a Sonnet subagent at xhigh. (1) The plan file and the market-picture web work were committed together in 353cdd8, so A1 now expects a clean tree. (2) **f4af002 (2026-10-27) made `partial` final** (the executors cancel the rest at the fill timeout): `/options/orders?state=working` is queued and submitted only. Task 2's replacement `list_orders` re-added `partial` and would have undone that fix silently (no existing test seeds a partial order). Fixed in the task's code, and a ninth test, `test_a_partial_order_is_history_not_working`, pins it (it fails against the old text). Counts updated (+9, total +30). (3) Every section is now labelled sonnet at xhigh; the whole-branch review stays on opus. (4) A "how to apply a step" paragraph was added, the flaky `tests/test_scan_timeout.py` is named in A2 so a lone intermittent failure there does not stop the run, and Task 15's root `CLAUDE.md` and restart instructions now name exact anchors (`./ibkr restart` restarts the whole supervised stack; there is no API-only restart). (5) f4af002's USD-only account value needs no plan change: Pay's month stub already says "needs the month's opening account value" when the API's `month_start_value` is null (every month before November 2026 with a percent target), and the equity curve already leaves gaps for a null net liquidation. |
 | **Section A entry** | done | (none) | A1-A5 pass (run by the orchestrator); baseline pytest 4962 passed + 1 skipped (4963 collected), ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | Work is in the worktree `.claude/worktrees/web-overhaul-3` (branch `feat/web-overhaul-3`, based on main c692a1b); the plan file there carries the operator's uncommitted 2026-10-28 re-verification edits and Task 1's commit includes them. A1 says "`git branch --show-current` prints `main`": here the branch is `feat/web-overhaul-3` by design (a worktree), so Task 1 Step 1's `git switch -c` was not needed. |
-| **Task 1: `GET /pnl/sizing`** | done | Task 1 commit (`feat(api): GET /pnl/sizing ...`; its hash is filled in by Task 2's commit, a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
+| **Task 1: `GET /pnl/sizing`** | done | 463d742 `feat(api): GET /pnl/sizing - the sizing record's totals, read behind the eval fence` (hash filled in by Task 2's commit; a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
+| **Task 2: orders carry their sizing; fills name their contract** | done | Task 2 commit (`feat(api): orders carry the sizing that shaped them; fills name their contract`; hash filled in by Task 3's commit) | pytest 4981 passed + 1 skipped (Task 1's 4972 + 9 new); vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; `test_openapi_current` passes after regeneration | 2026-10-28 | (1) Step 2 as predicted: 8 of the 9 new tests failed before the change and `test_a_partial_order_is_history_not_working` passed on the old route and still passes on the new one (`_WORKING` is still `{"queued", "submitted"}`, comment unchanged). (2) Step 6's first command includes `test_openapi_current`, which fails until the contract is regenerated (it ran before the regeneration, as the step is ordered): 67 passed and that one failed, then it passed after the regeneration. (3) In `types.ts` the plan gives the five new `FillSummary` fields as one inline-code list in prose; they are written one field per line, like the rest of the file. (4) The pasted test block had one blank line before `test_a_partial_order_is_history_not_working`; `ruff format` made it two, the only change the formatter made to the task's text besides line wrapping. (5) The `api-types.ts` and `openapi.json` diffs drop only the old docstring lines, the old `maximum: 90` on `days` and the old FillSummary docstring, all replaced by this task's text. |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -775,7 +776,7 @@ git commit -m "feat(api): GET /pnl/sizing - the sizing record's totals, read beh
   under `all` and `partial`, never `working`. The replacement code below keeps that line and its
   comment exactly; do not "restore" `partial` to `_WORKING`.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_api_orders.py` (the module's
+- [x] **Step 1: Write the failing tests** — append to `tests/test_api_orders.py` (the module's
   `client` fixture seeds orders 1 to 3 (`c1` NVDA submitted, `c2` AAPL filled with one fill, `c3`
   MSFT queued)). Add `SizingActionRow` to the `src.storage.models` import:
 
@@ -921,7 +922,7 @@ def test_a_partial_order_is_history_not_working(client) -> None:
     assert "half" not in working and "half" in every
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_orders.py -q`
 Expected: 8 of the 9 new tests FAIL (no `sizing`, no contract fields, `days` ignored on orders,
@@ -930,7 +931,7 @@ and `/options/fills?days=365` answers 422 because the route caps `days` at 90 to
 Step 4: it guards f4af002's rule (a `partial` order is final, never `working`) that the
 replacement route has to keep.
 
-- [ ] **Step 3: Models** — in `src/api/models/options.py`:
+- [x] **Step 3: Models** — in `src/api/models/options.py`:
 
   Replace `class FillSummary(Envelope)` (the whole class) with:
 
@@ -977,7 +978,7 @@ class OrderSizingOut(BaseModel):
     sizing: list[OrderSizingOut] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Routes** — in `src/api/routers/options.py` add `OrderSizingOut` to the
+- [x] **Step 4: Routes** — in `src/api/routers/options.py` add `OrderSizingOut` to the
   `src.api.models.options` import list (alphabetical); the routes import the storage models
   lazily inside their bodies, as the originals do, so nothing else changes at module level. Then
   replace `list_orders` and `list_fills` (everything from `@router.get("/orders"` through the end
@@ -1169,7 +1170,7 @@ def list_fills(
     return FillListResponse(as_of=now, fills=fills)
 ```
 
-- [ ] **Step 5: Hand-written mirrors** — in `web/components/options/types.ts`, add to `OrderSummary`
+- [x] **Step 5: Hand-written mirrors** — in `web/components/options/types.ts`, add to `OrderSummary`
   the line `sizing?: OrderSizing[];` after `updated_at: string;`, add to `FillSummary` the lines
   `underlying?: string | null; strategy?: string | null; right?: "C" | "P" | null; strike?: number | null; expiry?: string | null;`
   after `filled_at: string;`, and add above `OrderSummary`:
@@ -1184,7 +1185,7 @@ export type OrderSizing = {
 };
 ```
 
-- [ ] **Step 6: Run the tests, then regenerate the contract**
+- [x] **Step 6: Run the tests, then regenerate the contract**
 
 ```bash
 python -m pytest tests/test_api_orders.py tests/test_api_approvals.py tests/test_openapi_current.py -q
@@ -1197,13 +1198,13 @@ Expected: PASS (every existing orders, fills and approval-detail test unchanged,
 ones); the contract diff adds `OrderSizingOut`, the `sizing` and contract fields, and the
 `days` parameter.
 
-- [ ] **Step 7: Format and the gate**
+- [x] **Step 7: Format and the gate**
 
 Run: `ruff format src/api/models/options.py src/api/routers/options.py tests/test_api_orders.py`, then
 `python -m pytest -q && ruff check . && mypy src && cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..`
 Expected: pytest = Task 1's count + 9; vitest unchanged; everything else clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/api/models/options.py src/api/routers/options.py tests/test_api_orders.py \

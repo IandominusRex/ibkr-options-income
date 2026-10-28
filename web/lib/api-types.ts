@@ -364,7 +364,9 @@ export interface paths {
          * List Orders
          * @description Working orders by default. ``state=all`` returns everything.
          *
-         *     An unknown state value is rejected with 422 (not a silent empty list).
+         *     An unknown state value is rejected with 422 (not a silent empty list). Each order carries
+         *     the sizing actions linked to it (``sizing``), so an auditor can see why 1 contract went out
+         *     when the scan said 3.
          */
         get: operations["list_orders_options_orders_get"];
         put?: never;
@@ -384,7 +386,8 @@ export interface paths {
         };
         /**
          * List Fills
-         * @description Recent fills within the last ``days`` days.
+         * @description Recent fills within the last ``days`` days, each naming its contract (from the order's
+         *     frozen snapshot, then its candidate; unknown stays null).
          */
         get: operations["list_fills_options_fills_get"];
         put?: never;
@@ -2826,6 +2829,9 @@ export interface components {
          * FillSummary
          * @description One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)
          *     because ``ApprovalDetail`` below references it for the approval-to-fill lineage.
+         *
+         *     The contract fields (web overhaul Part 3) come from the order's frozen snapshot, then its
+         *     candidate; each is ``None`` when neither is on record, never ``""`` or ``0``.
          */
         FillSummary: {
             /**
@@ -2854,6 +2860,16 @@ export interface components {
              * Format: date-time
              */
             filled_at: string;
+            /** Underlying */
+            underlying?: string | null;
+            /** Strategy */
+            strategy?: string | null;
+            /** Right */
+            right?: ("C" | "P") | null;
+            /** Strike */
+            strike?: number | null;
+            /** Expiry */
+            expiry?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -4093,6 +4109,24 @@ export interface components {
             /** Orders */
             orders?: components["schemas"]["OrderSummary"][];
         };
+        /**
+         * OrderSizingOut
+         * @description One sizing action linked to an order (``sizing_actions.order_id``): what the rules alone
+         *     would have sent, what was sent, and the reason as it was recorded (web overhaul Part 3).
+         */
+        OrderSizingOut: {
+            /** Kind */
+            kind: string;
+            /** Deterministic Contracts */
+            deterministic_contracts: number;
+            /** Sent Contracts */
+            sent_contracts: number;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** OrderSummary */
         OrderSummary: {
             /**
@@ -4139,6 +4173,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Sizing */
+            sizing?: components["schemas"]["OrderSizingOut"][];
         };
         /**
          * PeriodStatement
@@ -6033,6 +6069,8 @@ export interface operations {
             query?: {
                 /** @description `working` (queued/submitted), `all`, or a specific state. */
                 state?: "working" | "all" | "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
+                /** @description Only orders created in the last N days. */
+                days?: number | null;
                 limit?: number;
             };
             header?: never;
