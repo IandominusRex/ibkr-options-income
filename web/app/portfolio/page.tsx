@@ -1,5 +1,11 @@
-import { PortfolioShell } from "@/components/portfolio/PortfolioShell";
+import { Suspense } from "react";
+import { PortfolioPage } from "@/features/portfolio/PortfolioPage";
 
-export default function PortfolioPage() {
-  return <PortfolioShell />;
+// useSearchParams (the view) needs a Suspense boundary under the App Router.
+export default function Page() {
+  return (
+    <Suspense>
+      <PortfolioPage />
+    </Suspense>
+  );
 }

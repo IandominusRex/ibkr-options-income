@@ -53,10 +53,10 @@ surface contracts are written into `web/DESIGN.md` in Task 4 before any Part 3 U
 
 | Section | Tasks | Model | Why this model |
 |---|---|---|---|
-| **A — The API** | 1–3 | **opus** | Three read-only routes, but Task 1 reads behind the eval fence, Task 2 changes two response shapes that two web surfaces already read, and Task 3 opens the ledger tables and the spreads file. Every line of code and every test is given; this section gets the most capable model because a fence slip here is the failure to avoid. |
-| **B — Portfolio** | 4–7 | **sonnet** | New components in `web/features/portfolio/` against interfaces that Parts 1 and 2 and Section A pinned; the two small restyles carry full replacement code under their existing tests. |
-| **C — Activity** | 8–14 | **sonnet** | New views plus restyles in place. Every restyle is given as exact replacements and has an existing test suite that must pass unmodified: that is the proof the restyle changed no behaviour. |
-| **D — Docs and finish** | 15 | **sonnet**, then an **opus** whole-branch review | The doc sweep and the da-vinci finish are checklists; the whole-branch review at the end (superpowers:requesting-code-review) runs on the most capable model. |
+| **A — The API** | 1–3 | **sonnet** (effort xhigh) | Three read-only routes. Task 1 reads behind the eval fence, Task 2 changes two response shapes that two web surfaces already read, and Task 3 opens the ledger tables and the spreads file, so the fence tests run in every task. Every line of code and every test is given and was run against `main` at c692a1b (2026-10-28 re-verification), so the section is transcription plus the gates, not design. |
+| **B — Portfolio** | 4–7 | **sonnet** (effort xhigh) | New components in `web/features/portfolio/` against interfaces that Parts 1 and 2 and Section A pinned; the two small restyles carry full replacement code under their existing tests. |
+| **C — Activity** | 8–14 | **sonnet** (effort xhigh) | New views plus restyles in place. Every restyle is given as exact replacements and has an existing test suite that must pass unmodified: that is the proof the restyle changed no behaviour. |
+| **D — Docs and finish** | 15 | **sonnet** (effort xhigh), then an **opus** whole-branch review | The doc sweep and the da-vinci finish are checklists; the whole-branch review at the end (superpowers:requesting-code-review) is a review, not implementation, and runs on the most capable model (the operator's token-light method). |
 
 **How a section runs (native):**
 
@@ -68,17 +68,47 @@ surface contracts are written into `web/DESIGN.md` in Task 4 before any Part 3 U
    result, date) and start the first task. No operator confirmation is needed between green
    sections.
 4. An orchestrator delegating instead of running natively spawns one subagent per section on
-   the labelled model, hands it this plan plus `web/DESIGN.md`, tells it to invoke `da-vinci`
-   before any UI code, and runs the next section's entry checks itself before spawning the next.
+   the labelled model and effort (sonnet, xhigh), hands it this plan plus `web/DESIGN.md`, tells it
+   to invoke `da-vinci` before any UI code, and runs the next section's entry checks itself before
+   spawning the next.
 
-**Commit counts.** Each task is one commit (Task 1's also adds this plan file). A review fix pass
-adds one commit; record it in the Progress log and add one to every later entry check's count.
+**How to apply a step (for the implementer).** Every code block is the exact text to write. A
+"create" or "replace `<file>` with" step is the whole file. An "append inside `describe(...)`" step
+goes before that `describe`'s closing `});` (the last line of the file in every case here). An
+"add after `<name>`" step goes after the end of that function or class. A "replace the lines" step
+names old text that occurs exactly once in the file today: if it does not, stop and report rather
+than guess. Copy blocks byte for byte. Do not reformat them by hand; the formatter steps do that.
+
+**Commit counts.** Each task is one commit (Task 1's also carries the plan's Progress log). A review
+fix pass adds one commit; record it in the Progress log and add one to every later entry check's
+count.
 
 ## Progress log
 
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **Plan written** | done | (plan file only) | n/a | 2026-10-23 | Operator asked for Part 3 in the style of Parts 1 and 2 with the market-picture additions where relevant, and to make the calls itself rather than ask. Every call is a ruling below, with the evidence it rests on; the operator may overturn any of them. Tasks numbered 1–15. |
+| **Plan re-verified** | done | (plan file only) | Tasks 1–14 replayed from this text onto a scratch worktree of `main` at c692a1b: pytest 4963 → 4993 (+30), vitest 1242 passed (135 files), tsc, eslint, ruff, mypy, fences, `test_openapi_current` and the da-vinci lint (non-test files) clean; `next build` green | 2026-10-28 | Operator asked for the plan to be checked against the system as it now stands and made executable by a Sonnet subagent at xhigh. (1) The plan file and the market-picture web work were committed together in 353cdd8, so A1 now expects a clean tree. (2) **f4af002 (2026-10-27) made `partial` final** (the executors cancel the rest at the fill timeout): `/options/orders?state=working` is queued and submitted only. Task 2's replacement `list_orders` re-added `partial` and would have undone that fix silently (no existing test seeds a partial order). Fixed in the task's code, and a ninth test, `test_a_partial_order_is_history_not_working`, pins it (it fails against the old text). Counts updated (+9, total +30). (3) Every section is now labelled sonnet at xhigh; the whole-branch review stays on opus. (4) A "how to apply a step" paragraph was added, the flaky `tests/test_scan_timeout.py` is named in A2 so a lone intermittent failure there does not stop the run, and Task 15's root `CLAUDE.md` and restart instructions now name exact anchors (`./ibkr restart` restarts the whole supervised stack; there is no API-only restart). (5) f4af002's USD-only account value needs no plan change: Pay's month stub already says "needs the month's opening account value" when the API's `month_start_value` is null (every month before November 2026 with a percent target), and the equity curve already leaves gaps for a null net liquidation. |
+| **Section A entry** | done | (none) | A1-A5 pass (run by the orchestrator); baseline pytest 4962 passed + 1 skipped (4963 collected), ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | Work is in the worktree `.claude/worktrees/web-overhaul-3` (branch `feat/web-overhaul-3`, based on main c692a1b); the plan file there carries the operator's uncommitted 2026-10-28 re-verification edits and Task 1's commit includes them. A1 says "`git branch --show-current` prints `main`": here the branch is `feat/web-overhaul-3` by design (a worktree), so Task 1 Step 1's `git switch -c` was not needed. |
+| **Task 1: `GET /pnl/sizing`** | done | 463d742 `feat(api): GET /pnl/sizing - the sizing record's totals, read behind the eval fence` (hash filled in by Task 2's commit; a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
+| **Task 2: orders carry their sizing; fills name their contract** | done | 606aa70 `feat(api): orders carry the sizing that shaped them; fills name their contract` (hash filled in by Task 3's commit) | pytest 4981 passed + 1 skipped (Task 1's 4972 + 9 new); vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; `test_openapi_current` passes after regeneration | 2026-10-28 | (1) Step 2 as predicted: 8 of the 9 new tests failed before the change and `test_a_partial_order_is_history_not_working` passed on the old route and still passes on the new one (`_WORKING` is still `{"queued", "submitted"}`, comment unchanged). (2) Step 6's first command includes `test_openapi_current`, which fails until the contract is regenerated (it ran before the regeneration, as the step is ordered): 67 passed and that one failed, then it passed after the regeneration. (3) In `types.ts` the plan gives the five new `FillSummary` fields as one inline-code list in prose; they are written one field per line, like the rest of the file. (4) The pasted test block had one blank line before `test_a_partial_order_is_history_not_working`; `ruff format` made it two, the only change the formatter made to the task's text besides line wrapping. (5) The `api-types.ts` and `openapi.json` diffs drop only the old docstring lines, the old `maximum: 90` on `days` and the old FillSummary docstring, all replaced by this task's text. |
+| **Task 3: `GET /ledger/executions` and `GET /spreads/orders`** | done | ae79b47 `feat(api): GET /ledger/executions and GET /spreads/orders - the audit lists` (hash filled in by Task 4's commit; a commit cannot name itself; `git log --oneline c692a1b..HEAD` showed three Section A commits) | pytest 4992 passed + 1 skipped (Task 2's 4981 + 11 new: 5 ledger, 6 spreads); `test_web_fence`, `test_spreads_fence`, `test_wheel_spreads_isolation` pass with the new tests (64 passed); the five fence files (`test_web_fence`, `test_eval_skills`, `test_regime_fence`, `test_news_fence`, `test_spreads_fence`) pass (60 passed); `test_openapi_current` passes; vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; the B3 loop over `web/lib/api-types.ts` prints nothing | 2026-10-28 | (1) Step 3 as predicted: all 11 new tests failed on 404 bodies before the change (the two `require_owner` cases answered 404 where 401 is expected). (2) The pasted ledger tests were appended after `test_nav_has_a_ledger_section` with the `datetime` import placed above `pathlib` (isort order); ruff's check needed no `--fix`. (3) Route and model imports were added exactly as the task says (`LedgerExecutionRowOut` and `LedgerExecutionsResponse` sit after `LedgerExecutionOut`, and `ruff check` accepts the order). (4) The contract regeneration removes no existing line from `openapi.json` or `api-types.ts`: it only adds the two ledger schemas, the two spreads schemas and the two paths. (5) No documentation file was touched in Section A on purpose: the plan puts the ARCHITECTURE.md / STATUS.md / SETUP.md / CLAUDE.md / `docs/web/api.md` sweep in Task 15, so the CLAUDE.md doc-update reminder fired after each `src/api` edit and is satisfied there. |
+| **Section B entry** | done | (none) | B1-B5 pass (run by the orchestrator); re-run by the orchestrator after Section A: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (no rulings) |
+| **Task 4: contracts, the Account card, `useViewParam`, two restyles** | done | 44541a8 `feat(web): Portfolio and Activity contracts, the Account card, useViewParam` (hash filled in by Task 5's commit; a commit cannot name itself) | vitest 1040 passed (110 files: baseline 1027 + 4 `useViewParam` + 9 `SummaryCard`); tsc clean; eslint clean; the targeted run (`lib features/portfolio components/portfolio`) passed 20 files / 158 tests, with the 6 existing `RefreshControl` tests and the other legacy portfolio tests unmodified; `design_md_check.py web/DESIGN.md` exit 0; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/lib/useViewParam.ts`, `DegradedNotice.tsx`, `RefreshControl.tsx` | 2026-10-28 | (1) Step 1: da-vinci loaded (sync check `OK 16`, `web/DESIGN.md` status `ratified`); no new colour, font, radius, elevation or token was needed, so nothing is proposed. (2) The code blocks (both test files, `useViewParam.ts`, `SummaryCard.tsx`) were extracted from this plan with `sed` by line range and not retyped; the DESIGN.md block was diffed against the plan's text (identical). (3) Step 5: the two implementation files were moved aside for the run, so both test files failed with "Failed to resolve import" as expected, then put back. (4) Steps 8 and 9 applied as `Edit`s of exactly the quoted old text (the `DegradedNotice` return and the "an elevated surface and plain text" wording, which wraps over two comment lines; the `RefreshControl` import and `return (...)`). (5) The existing `RefreshControl` test prints two React "not wrapped in act(...)" stderr warnings; it printed the same two on the file before the restyle (checked), so they are not new. (6) Section B entry B1-B5 were not re-run by the implementer: the orchestrator ran them and the row above records that. |
+| **Task 5: Positions, name cards over Home's rows** | done | 144e11d `feat(web): Portfolio Positions - name cards over Home's rows, totals that never hide an n/a` (hash filled in by Task 6's commit; a commit cannot name itself) | vitest 1073 passed (113 files: Task 4's 1040 + 5 `PositionRowItem` + 14 `positions` + 14 `PositionsView`); the 20 existing `PositionsCard` tests passed unmodified after the row extraction; tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `PositionRowItem.tsx`, `PositionsCard.tsx` | 2026-10-28 | (1) Code blocks extracted from the plan by line range, not retyped (test files, `PositionRowItem.tsx`, `positions.ts`, `PositionsView.tsx`). (2) Step 3: all three new test files failed with "Failed to resolve import" before the implementations existed. (3) Step 4's `visible.map` replacement was done by line range after asserting the first and last lines of the old block (`{visible.map((r) => {` ... `})}`, the only child of the `<ul>`); the old row markup is in `PositionRowItem` unchanged apart from the two additions the plan gives (`flags` and `detail`). The new import `PositionRowItem` sits above the `./positions` import; the plan does not say where. (4) The import list in `PositionsCard.tsx` matched the plan's instructions exactly: `tsc` and `next lint` named no missed import. |
+| **Task 6: Campaigns and Calendar** | done | 8de60eb `feat(web): Portfolio Campaigns and Calendar - threads before commissions, event words on expiries` (hash filled in by Task 7's commit; a commit cannot name itself) | vitest 1104 passed (117 files: Task 5's 1073 + 4 `campaigns` + 8 `CampaignsView` + 4 `calendar` + 12 `CalendarView` + 3 `eventBefore`); every existing `market` test passed unmodified (20 in the file: 17 existing + 3 appended); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/components/ui/field.ts`, `web/features/market/market.ts` | 2026-10-28 | (1) Code blocks extracted from the plan by line range, not retyped. (2) Step 3: the four new test files failed with "Failed to resolve import" and the three appended `eventBefore` tests failed with "eventBefore is not a function" before the implementations existed. (3) `market.test.tsx`: the `eventBefore` describe was appended after one blank line, and `eventBefore` was added to the `./market` import in alphabetical position (`actionTitle, eventBefore, limitSentence, ...`); the plan does not say where in the import. (4) `eventBefore` was appended to `market.ts` after `nameFlags` (the last function in the file) with one blank line between. |
+| **Task 7: the Portfolio page at `/portfolio`** | done | 34deff2 `feat(web): the Portfolio page - Account card, Positions, Campaigns, Calendar in the URL` (hash filled in by Task 8's commit, the first of Section C; `git log --oneline main..HEAD` showed seven commits at the end of Section B) | vitest 1108 passed (118 files: Task 6's 1104 + 4 `PortfolioPage`); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/portfolio` and `web/app/portfolio`. Section B exit: pytest 4992 passed + 1 skipped (unchanged from Section A, the section adds no Python; no `tests/test_scan_timeout.py` flake this run), ruff clean, mypy clean (297 files); `git diff --stat main --` over the six protected components and `lib/commands.ts`, `lib/receipt.ts` prints nothing; `grep -rn "submitCommand\|confirmCommand" web/features` prints only `features/more/TargetCard.tsx` and `features/more/TargetCard.test.tsx`; the nine legacy `components/portfolio/*.test.tsx` files, `PortfolioShell.tsx`, `SummaryPanel.tsx` and `PositionsPanel.tsx` are byte-identical to `main` and the full vitest run is green; `PortfolioShell` is no longer imported anywhere (three comments still name it) | 2026-10-28 | (1) The test file, `views.ts`, `PortfolioPage.tsx` and `app/portfolio/page.tsx` were extracted from the plan by line range, not retyped. (2) Step 3: the test failed with "Failed to resolve import ./PortfolioPage" before the implementation existed. (3) Step 5's `npx vitest run` is the whole suite, so the legacy portfolio tests ran unmodified in the same pass. (4) No browser pass was done in this section (not asked for; the page-level visual check is Section D's da-vinci finish), so the page has been exercised by its tests and type-checked but not looked at in a rendered viewport. |
+| **Section C entry** | done | (none) | C1-C5 pass (run by the orchestrator); re-run by the orchestrator after Section B: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1108 passed (118 files), tsc clean, eslint clean; scratch-copy `next build` green (`/portfolio` built) | 2026-10-28 | (no rulings) |
+| **Task 8: Pay, a month at a time, and the totals** | done | 4042a02 `feat(web): Activity Pay - a month at a time as a stub, then the totals since the start` (hash filled in by Task 9's commit; a commit cannot name itself) | vitest 1139 passed (123 files: Section B's 1108 + 31 new: 6 `month`, 4 `useMonthParam`, 5 `MonthStepper`, 5 `useLegFilters`, 11 `PayView`); tsc clean; eslint clean; the existing `SummaryPanel`, `BreakdownTable`, `Money`, `EquityChart`, `RefreshControl` and legacy portfolio tests pass unmodified (targeted run `features/activity components/pnl components/portfolio`: 18 files / 150 tests); da-vinci `lint.py` exit 0 on `web/features/activity`, `SummaryPanel.tsx`, `BreakdownTable.tsx`, `Money.tsx` | 2026-10-28 | (1) Step 1: da-vinci loaded (sync check `OK 16`, `web/DESIGN.md` status `ratified`); the task composes existing parts only (`Card`, `Stub`, `Meter`, `StatusWord`, `SegmentedControl`, `Button`), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Every code block (five test files, `month.ts`, `useMonthParam.ts`, `MonthStepper.tsx`, `useLegFilters.ts`, `useEquity.ts`, `PayMonth.tsx`, `PayView.tsx`, the `BreakdownTable.tsx` replacement and the `SegmentedControl` snippet) was extracted from a pristine copy of this plan by fence line number with a helper kept outside the repo, not retyped. (3) Step 3: all five new test files failed with "Failed to resolve import" before the implementations existed. (4) Step 7: both `Money` label spans carried the identical old class string and both were replaced (`replace_all`). (5) Step 9: the `<fieldset>` block (lines 56 to 73 of `SummaryPanel.tsx`) was replaced by script after asserting its first and last lines and that `<fieldset` occurs once; the `SegmentedControl` import sits directly after the `EmptyState` import, as told; the heading, list and button class edits each matched exactly once. The existing 422 book-choice test passed unmodified against the `SegmentedControl` (role `group`, label "Book", two `aria-pressed` buttons). (6) The `RefreshControl` test prints its two React act warnings and `EquityChart` its zero-width chart warnings in jsdom, exactly as before this task (not new). (7) No browser pass was done (the page is not mounted until Task 14); `PayView` is exercised by its tests only. |
+| **Task 9: Pay, the filters, the equity curve and the legs** | done | ef081a7 `feat(web): Activity Pay - one set of filters over the totals, the curve and the legs` (hash filled in by Task 10's commit; a commit cannot name itself) | vitest 1147 passed (123 files: Task 8's 1139 + 8 new `PayView`, 19 in the file); tsc clean; eslint clean; the targeted run (`features/activity components/pnl`) passed 9 files / 84 tests, with every existing `LedgerTable` (`LegRow`, `CampaignRow`, `LedgerTable`), `EquityChart`, `SummaryPanel` and `SystemPanel` test unmodified; da-vinci `lint.py` over `web/features/activity web/components/pnl` finds nothing in any non-test source file (exit 1 only for the two em dashes in the legacy test titles at `SystemPanel.test.tsx:20` and `:82`, which the step expects and which are not copy) | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `FIELD`, `FIELD_LABEL`, `StatusWord`, the hairline row recipe), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Step 2: the `leg`, `campaign` and `ledgerBody` helpers went in directly below `equity` and the `"/pnl/ledger"` entry of `serve` was replaced, both by script with an exactly-once assertion; the eight new tests were appended before the closing `});` of the describe. Code blocks were extracted from a pristine copy of the plan by fence line, not retyped (one first attempt used the wrong fence line, the helper refused it and wrote nothing). (3) Step 3: the eight new tests failed (no Symbol field, no filter sentence, no curve, no legs, no campaign threads); the eleven from Task 8 still passed. (4) Steps 4 and 5: `LedgerFilters`, `LegRow` and `CampaignRow` were replaced by the plan's whole-file blocks; `CampaignRow`'s thread button label, `data-testid`s and leg count text are the old ones, so the existing tests pass unmodified. (5) Step 6: the five `EquityChart` edits (four classes and the comment) each matched exactly once; the file still has five other em dashes in code comments, which the lint does not read as copy and the plan does not ask to change. (6) Step 11: the lint exit 1 is the two legacy test titles above, not source; the plan's expected result names exactly this case. (7) No browser pass (the page mounts in Task 14). |
+| **Task 10: Ledger, the overview in the figure face, without a sub-navigation** | done | 71b75cf `feat(web): the ledger overview in the figure face, with no sub-navigation` (hash filled in by Task 11's commit; a commit cannot name itself) | vitest 1157 passed (126 files: Task 9's 1147 + 10 new: 2 `Tile`, 3 `OutcomePill`, 1 `BackToLedger`, 4 appended to `LedgerOverview`); tsc clean; eslint clean; the targeted run (`components/ledger`) passed 7 files / 28 tests, with the existing `LedgerOverview` (5), `TickerView`, `TradesView` and `ImportView` tests unmodified; da-vinci `lint.py` exit 0 on `web/components/ledger` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `StatusWord`, the perforated figure-line recipe, the existing `--chart-line` token), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Code blocks (the three new test files, the four appended `LedgerOverview` tests, `Tile.tsx`, `OutcomePill.tsx`, `BackToLedger.tsx`, `LedgerShell.tsx`, `TickerTable.tsx`, `LedgerOverview.tsx`) were extracted from a pristine copy of the plan by fence line, not retyped. (3) Step 3: not every new test failed before the change, and the plan's expectation names only the missing modules and the overview's old behaviour. Failing: `Tile` (2, no `TileList`), `BackToLedger` (file did not resolve), and 2 of the 4 appended overview tests (the sub-navigation and the missing links and source sentence). Already passing on the old code: all 3 `OutcomePill` tests and the other 2 appended overview tests (upcoming expiries, could not load). They pin behaviour the restyle has to keep, so they are kept as written and pass after it too. (4) Step 4: the `Charts.tsx` stroke (`var(--color-gain)` to `var(--chart-line)`) matched once, on the `PnlCurve` line only; `MonthlyBars` keeps `var(--color-gain)` as the plan says nothing else changes. (5) Step 7: `TickerView`'s tile container was swapped by script (the opening `<div className="grid grid-cols-2 ...">` and the `</div>` directly before `<p className="text-xs text-muted">`), with the import changed to `Tile, TileList`; `TickerView` still renders `LedgerNav` until Task 11, as the plan says. (6) The old `LedgerOverview.test.tsx` still mocks `usePathname` for the `LedgerNav` that the overview no longer renders; left as is (existing tests unmodified). (7) No browser pass (the Ledger view mounts in Task 14). |
+| **Task 11: Ledger, the trades, ticker and import pages** | done | 08b92b6 `feat(web): the ledger's trades, ticker and import pages - sheet, fields, back link` (hash filled in by Task 12's commit; a commit cannot name itself) | vitest 1165 passed (126 files: Task 10's 1157 + 8 new: 4 `TradesView`, 2 `TickerView`, 2 `ImportView`); tsc clean; eslint clean; the targeted run (`components/ledger`) passed 7 files / 36 tests, with every existing `TradesView`, `TickerView`, `ImportView` and `LedgerOverview` test unmodified (save notes, filters into the request, CSV link, upload, oversize, PDF, review-and-refresh and no-history cases); da-vinci `lint.py` exit 0 on `web/components/ledger` and `web/app/ledger`; `LedgerNav.tsx` is imported nowhere now and is byte-identical to `main` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Sheet`, `Card`, `Button`, `FIELD`, `FIELD_LABEL`, the figure-line recipe), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) All code blocks (the three test appends and the eight whole-file replacements: `TradesTable`, `TradesView`, `TradePanel`, `TickerView`, `ImportView` and the three ledger pages) were extracted from a pristine copy of the plan by fence line, not retyped; `within` was added to `TradesView.test.tsx`'s `@testing-library/react` import (alphabetical, after `waitFor`) as the plan says. (3) Step 3: 6 of the 8 new tests failed (no back link on the three views, no keyboard `tabindex` on a row, no `Trade` dialog); the other 2 already passed on the old code and pin behaviour the restyle keeps: "has neither the back link nor the heading when pinned to a ticker" and "says a feed that is failing, in words". (4) Step 6: `TradePanel` becomes a `Sheet`; its form state, resync rule and `ledger_annotate` flow are the plan's block, which the plan states is the old code unchanged, and its existing save-notes test passes unmodified. The `submitCommand` calls in `TradePanel` and `ImportView` are under `components/ledger`, not `web/features`, so the fence grep is unaffected. (5) The old `usePathname` mocks in the three existing test files are left as they are (existing tests unmodified). (6) No browser pass (the Ledger view mounts in Task 14, and the three routes are reached from it). |
+| **Task 12: Fills and orders, three lists each naming its source** | done | a106cd0 `feat(web): Activity Fills and orders - the system's orders and fills, IBKR's executions, apart` (hash filled in by Task 13's commit; a commit cannot name itself) | vitest 1202 passed (131 files: Task 11's 1165 + 37 new: 3 `whenET` in `time.test.ts`, 6 `fills`, 7 `FillsTable`, 5 appended to `OrdersTable`, 6 `ExecutionsList`, 5 `SpreadFills`, 5 `FillsView`); tsc clean; eslint clean; the targeted run (`features components/options`) passed 67 files / 752 tests, with the five existing `OrdersTable` tests (empty Working state, n/a for a null fill price, state label, no roll button, rejected detail) unmodified; da-vinci `lint.py` exit 0 on `web/features/activity`, `OrdersTable.tsx`, `FillsTable.tsx` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `StatusWord`, `SegmentedControl`, the hairline row recipe, the figure face), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) All code blocks (the test files, the two appends, `whenET`, `types.ts`, `fills.ts`, the two whole-file restyles, `ExecutionsList`, `SpreadFills`, `FillsView`) were extracted from a pristine copy of the plan by fence line, not retyped. `whenET` was added to `time.test.ts`'s import after `todayInNewYork`, and its describe appended after the existing one with one blank line. (3) `OrdersTable.test.tsx` ends with `});` and no trailing newline (the plan says the describe's closing `});` is the last line of the file); the five tests were inserted before that line by script and the file still ends without a newline, so the diff is only the added lines. The appended tests use `as any` for the `apiFetch` mock exactly as the plan writes them, and `next lint` accepts them. (4) Step 3: `whenET` (3), `FillsTable` (6 of 7) and all five new `OrdersTable` cases failed on the old code, and the four new modules' test files failed to resolve their imports; `FillsTable`'s seventh case ("says it could not load") already passed on the old table, which also printed "Could not load fills". It pins behaviour the restyle keeps. (5) `components/options/OrdersTable.tsx` and `FillsTable.tsx` are not imported by any mounted page yet (Task 14 mounts `FillsView`); the web CLAUDE.md `components/options` entry says they were unmounted until Part 3, and this task mounts them only through `FillsView`. (6) No browser pass (the view mounts in Task 14). |
+| **Task 13: System, the sizing record over the score against outcome** | done | cc799d6 `feat(web): Activity System - the sizing record over the score against outcome` (hash filled in by Task 14's commit; a commit cannot name itself) | vitest 1235 passed (134 files: Task 12's 1202 + 33 new: 15 `sizing`, 12 `SizingRecord`, 4 `SystemView`, 2 appended to `SystemPanel`); tsc clean; eslint clean; the targeted run (`features/activity components/pnl`) passed 16 files / 139 tests, with the ten existing `SystemPanel` tests (the notes in order, no control that could change a weight, the small-sample label, buckets and correlations with n/a, the agreement block) unmodified; da-vinci `lint.py` over `web/features/activity web/components/pnl` finds nothing in any non-test source file (exit 1 only for the same two legacy test-title em dashes at `SystemPanel.test.tsx:20` and `:82`, which the step expects) | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `FIELD`, `FIELD_LABEL`, the stub face), so no new colour, font, radius, elevation or token was needed and none is proposed. The sizing marks use no gain or loss colour on purpose (a positive number is what the action cost), as the plan's component comment says. (2) All code blocks (the three new test files, the two `SystemPanel` test appends, `sizing.ts`, `SizingRecord.tsx`, the three whole-file restyles and `SystemView.tsx`) were extracted from a pristine copy of the plan by fence line, not retyped. `WindowControls` was added to `SystemPanel.test.tsx`'s `./SystemPanel` import as the plan says; the two tests were appended before the describe's closing `});`. (3) Step 3: the two `SystemPanel` cases failed (the date controls still rendered with `windowControls={false}`; `WindowControls` was undefined) and the three new test files failed to resolve their imports. (4) Step 6: `SystemPanel`'s `since` and `until` inputs keep `data-role="window-control"` and their `aria-label`s, so the existing "only controls on the surface" test passes unmodified; `SystemPanel` is no longer wrapped by `PnlShell` (unmounted, ruling 12). (5) `SizingRecord` reads `GET /pnl/sizing` and the existing `GET /claude/context` through `useClaudeContext`; nothing under `features/activity` sends a command (the fence grep is checked at the section end). (6) No browser pass (the view mounts in Task 14). |
+| **Task 14: the Activity page at `/activity`, and `/ledger` joins it** | done | 2246d00 `feat(web): the Activity page - Pay, Ledger, Fills and orders, System; /ledger redirects into it` (hash filled in by Section D's first commit; `git log --oneline main..HEAD` shows fourteen commits at the end of Section C) | vitest 1242 passed (135 files: Task 13's 1235 + 7 `ActivityPage`; the `next.config` and More changes edit existing tests in place, as the plan says); tsc clean; eslint clean; da-vinci `lint.py` exit 0 on `web/features/activity`, `web/app/activity`, `web/app/more`; `design_md_check.py web/DESIGN.md` exit 0; scratch-copy production build green, listing `/activity`, `/portfolio`, `/ledger/trades`, `/ledger/import` and `/ledger/ticker/[symbol]` and no `/ledger`. Section C exit: pytest 4992 passed + 1 skipped (unchanged, the section adds no Python; no `tests/test_scan_timeout.py` flake this run), ruff clean, mypy clean (297 files); `git diff --stat main --` over the six protected components and `lib/commands.ts`, `lib/receipt.ts` prints nothing; `grep -rn "submitCommand\|confirmCommand" web/features` prints only `features/more/TargetCard.tsx` and `features/more/TargetCard.test.tsx`; the legacy files of ruling 12 (`components/portfolio/{PortfolioShell,SummaryPanel,PositionsPanel,PositionGroup,StockLegRow,OptionLegRow,CampaignsPanel,CampaignThread,CalendarPanel}.tsx`, `components/pnl/PnlShell.tsx`, `components/ledger/LedgerNav.tsx`) are byte-identical to `main`; of them only `PortfolioShell.test.tsx` still imports one (`PortfolioShell`), `PnlShell` and `LedgerNav` are imported nowhere | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task is the page frame only (title, the four view chips, the view), composed from `SegmentedControl`, so no new colour, font, radius, elevation or token was needed and none is proposed. (2) The test file, `views.ts`, `ActivityPage.tsx` and `app/activity/page.tsx` were extracted from a pristine copy of the plan by fence line, not retyped. The `/ledger` redirect sits after the `/pnl` entry in `next.config.ts` and its assertion after the `/pnl` assertion in `next.config.test.ts` (the plan names the redirect's place, not the assertion's). The More test's title and Ledger assertion were changed as quoted (the assertion was on line 48); the Ledger row's `href` changed and its label and sub-line did not, and `Import a statement` keeps `/ledger/import`. (3) Step 3: `ActivityPage.test.tsx` failed to resolve `./ActivityPage`; the `/ledger` redirect assertion failed (`map["/ledger"]` undefined); the More Ledger-link case failed on the old `/ledger` href. The other seven tests in those two files passed throughout. (4) `web/app/ledger/page.tsx` was removed with `git rm`. (5) Step 5: the scratch-copy build was run as the plan's snippet writes it, with `TMPDIR` exported to the scratchpad path first; macOS `mktemp -d` still created the directory under `/var/folders/.../T` and not under `TMPDIR`, so the copy lived outside both the repo and the scratchpad. It was never inside `web/`, `web/.next` was not touched, and the copy was deleted afterwards (its `node_modules` symlink removed first, so nothing in `node_modules` was affected). The build log is in the scratchpad (`t14_build.log`). (6) Section C exit: the plan counts "seven more commits"; the branch has fourteen beyond c692a1b, none of them a review fix pass. (7) No browser pass was done in this section (not asked for; the page-level visual check at 1440px and 390px, both themes, is Section D's da-vinci finish), so `/activity` and the three restyled `/ledger/*` routes have been exercised by their tests and a production build only, not looked at in a rendered viewport. (8) The next section's first commit should fill in this row's hash (and Section D's entry check C-count). |
+| **Section D entry** | done | (none) | D1-D4 pass (run by the orchestrator); re-run by the orchestrator after Section C: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1242 passed (135 files), tsc clean, eslint clean; scratch-copy `next build` green (`/activity`, `/portfolio`, `/ledger/trades`, `/ledger/import`, `/ledger/ticker/[symbol]`, no `/ledger`); protected-file diff empty; `submitCommand` grep prints only `TargetCard` | 2026-10-28 | (no rulings) |
+| **Task 15: docs, the da-vinci finish, the full gate** | done (Steps 1-6 by the Task 15 implementer; Step 7 by the orchestrator on 2026-10-28: one Opus whole-branch review run as a subagent (ruling 16 asks for in-thread unless the operator allows a subagent; the operator's token-light method for this plan allows it), then the fix pass in the next row, then the handoff; no merge and no push) | c828a54 `fix(web): da-vinci finish of Portfolio and Activity` (also carries the Task 14 hash fill-in and the Section D entry row), 4c79c6f `docs: web overhaul Part 3 - Portfolio, Activity, the sizing record, the audit lists`, and the Progress-log commit `docs(plan): web overhaul Part 3 Progress log` (a commit cannot name itself) | pytest 4992 passed + 1 skipped (unchanged: no Python changed in Section D; 229 s, no `test_scan_timeout` flake), ruff clean, mypy clean (297 files); vitest 1257 passed (136 files: Task 14's 1242 + 15 finish tests), tsc clean, eslint clean; da-vinci `lint.py` over `web/features web/components/{pnl,ledger,portfolio,options,ui}` exits 1 with 22 `EM_DASH` lines, all in eight legacy test files (`ApprovalCard`, `ApprovalsList`, `AssessedRow`, `AutonomyControl`, `CommandReceipt`, `HaltControl`, `ShortsTable`, `SystemPanel` `.test.tsx`, none of those lines edited on this branch; `SystemPanel.test.tsx` lines 20 and 82 are the two the plan already names), and no finding in any non-test source file or in any file this branch added; `design_md_check.py web/DESIGN.md` exit 0; `grep -rn "submitCommand\|confirmCommand" web/features` prints only `features/more/TargetCard.tsx` and its test; `git diff --stat main --` over the six protected components and `lib/commands.ts`, `lib/receipt.ts` prints nothing; scratch-copy production build green, listing `/activity`, `/portfolio`, `/ledger/trades`, `/ledger/import` and `/ledger/ticker/[symbol]` and no `/ledger` (log `scratchpad/d/final_build.log`). Screenshots: about 200 PNGs in the session scratchpad (`.../scratchpad/d/shots/`, never in the repo): every listed route at 1440px and 390px in light and dark (the first pass `*-1440-light|dark`, `*-390-light|dark`, the open states `*-open-*`, `*-legopen-*`, `*-sheet-*`), then 320px for `/portfolio` (all three views) and every Activity view, and a final set (`end-*`, `fin-*`) of the finished code. | 2026-10-28 | (1) Step 1: the mock API is the plan's text, extracted by line range and unmodified, run on 8799; the scratch `next dev` ran on 3100 from a copy of `web/` under the scratchpad (`dev-copy/web`, `node_modules` symlinked), not `mktemp`, so nothing was ever built or served inside `web/`. The operator's dev server on 3000 was never touched. (2) Step 2 viewing tool: the Playwright MCP could navigate, resize, click and read the console, but `browser_take_screenshot` refuses paths outside the repo root and its `.playwright-mcp`, so screenshots were written with `page.screenshot({ path })` through `browser_run_code_unsafe` straight into the scratchpad. The tool's own console and snapshot logs went to its long-standing, git-ignored `.playwright-mcp/` in the main checkout (its default output directory; nothing in the worktree). `main` is the scroll container (the root row is `h-dvh overflow-hidden`), so each capture enlarged the viewport to the content's height to show the whole page. Every image was opened and looked at. (3) The mock has no ledger trade, ticker history or import-history rows (`/ledger/trades` is empty and `/ledger/tickers/NVDA` and `/ledger/imports` answer 404), so "open a trade: the sheet", the ticker page and the import history could not show their real states from the mock alone. They were checked with `page.route()` overlays (synthetic trades, one ticker, two import runs) on top of the unchanged mock. The Orders list showing a filled order under "Working" is the mock ignoring `?state=`, not the app. (4) Console: the only errors on any route, viewport or theme were `/favicon.ico` 404 (DESIGN.md: no favicon exists) and 404s from routes the mock lacks (`/api/ledger/tickers/NVDA`, `/api/ledger/imports`); no React, hydration or unhandled-exception message, before or after the fixes. (5) Step 3 ran in-thread by the implementer (ruling 16), not as a fresh finish-reviewer subagent: da-vinci `critique` (single context, design review written before the lint and DOM evidence, rendered at 1440 and 390), `audit` (accessibility by DOM scan: no nameless control, no duplicate id, one `h1` and ordered headings per page, focus ring a 2px ink outline, phone targets 44px through the chips' hit area, so only the stub-line exception reads 24px; responsive by `scrollWidth` at 320, 390 and 1440; theming by both themes on every route) and `polish`. Critique, in brief: the payslip system is applied coherently; the register pages answer one question per card; unknowns are hatched `n/a`; no new colour, font, radius, elevation or token was needed, so none is proposed. (6) Finish findings and fixes (each with a test written red first, in the same commit; no existing test edited, only tests appended): **P1** the System view, Pay with a leg thread open and the ledger's overview, trades, ticker and import pages clipped on a phone (a page-level `grid` with no column template is sized by its widest table: `main` was 449px wide on System, 591px on Pay and 1091px on `/ledger/trades` at a 390px viewport), against ruling 15; the six view roots and the P&L summary's breakdown grid are now `grid-cols-1`, so a table scrolls inside its card. **P2** a table that scrolls on a phone said nothing, so the import history's Counts column and the score tables' last columns were cut off unannounced; the legs, the P&L breakdowns, the three score-evidence tables and the import history now carry "Scroll sideways to see every column." as the ledger's tables already did. **P2** the ledger's two charts overflowed their `h-64` figure by the caption's height, so the cumulative curve's axis labels ran into the sentence below it; each figure is now a flex column and the chart takes the room under its caption. **P2** the monthly premium chart named its two bars by colour alone; a legend names them. **P3** a ledger bucket table with no rows showed only its headings (now "None yet."); the sizing record's "to expiry" and "exit rules" marks wrapped onto two lines on a phone (now `shrink-0`). Observed and not fixed (copy and design that the plan does not ask this finish to change): Pay's by-strategy table shows the raw label `cash_secured_put` (the API's label, pinned by the legacy tests), a ledger trade's null stock gain reads blank where `n/a` is meant, the page `<title>` is "IBKR Income" on every route (app-wide), and the month stepper's disabled arrows draw as a filled circle, which the Decision Log now adds to the existing open "disabled quiet button" decision. (7) Step 4: every edit anchored on text that occurs exactly once and was checked by grep after it landed; `design_md_check.py` exit 0 with `updated=2026-10-28` and `status=ratified`. The Decision Log entry is dated 2026-10-28. `docs/web/api.md` also corrects `GET /options/orders`'s introduction, which still named a `partial` order as working (the params line had been fixed in f4af002). `web/CLAUDE.md` has no `ledger/` component entry on `main`, so one was added beside the app-level `ledger/` entry. **`README.md` is unchanged**: no Telegram command and no top-level directory was added (its one `/ledger` sentence is still true, since `/ledger` redirects to the overview). (8) `web/.next` exists in this worktree as `web/.next/cache/eslint` only (the lint cache `next lint` writes, created at 13:39 before Section D, git-ignored); `next build` and `next dev` never ran inside `web/`. All scratch copies (dev, build) were removed symlink first. |
+| **Review fix pass (Opus whole-branch review)** | done | 04eb351 `fix(web,api): review fixes - floor-lot sign, unreadable spread orders, month floor` (the Task 15 Progress-log commit is e1ffab3; the commit after this one only fills these two hashes in) | pytest 4993 passed + 1 skipped (4992 + 1 new; 239 s, no `test_scan_timeout` flake), ruff clean on the changed files (`ruff format` left them unchanged; the six files `ruff format --check .` still lists were not touched here), mypy clean (297 files); vitest 1267 passed (136 files: 1257 + 10 new: 4 `sizing`, 2 `SizingRecord`, 2 `PayView`, 2 `FillsTable`), tsc clean, eslint clean; `test_openapi_current` passes after regenerating `docs/web/openapi.json` and `web/lib/api-types.ts` (only the `GET /spreads/orders` description changed); da-vinci `lint.py` over `web/features/activity` and `FillsTable.tsx` exits 0; `design_md_check.py web/DESIGN.md` exit 0; `git diff --stat main --` over the six protected components and `lib/commands.ts`, `lib/receipt.ts` prints nothing; `grep -rn "submitCommand\|confirmCommand" web/features` lists only `features/more/TargetCard.tsx` and its test. `next build` was not run in this pass (copy-only changes plus one hook argument; nothing was built or served inside `web/`) | 2026-10-28 | The Opus whole-branch review found three Important defects and the orchestrator confirmed each in the code; each was fixed test-first. **I1, the sizing record read a Guaranteed lot (`regime_floor_lot`) backwards.** `sizing_counterfactual._withheld` values the lots the floor *let through*, so a positive number is what they earned, but the console said "held back" and "the action cost that much" for every kind. Fixed: `groupSub` says "contracts let through" for that kind, `groupNote` leads with "A positive number here is what the guaranteed lots earned: letting them through paid." (joined to the exact-value note when both apply), and the header paragraph gained one sentence for guaranteed lots (the existing sentences, and the existing test that pins them, are unchanged). Beyond the three named places: the footer sentence under the list no longer says "each held-back option" (now "each option a line counts"), the `Mark` code comment no longer claims every positive number is a cost, and the same caveat is in `docs/web/api.md` (`contracts_withheld`, `pnl_expiry`/`pnl_rules`), `ARCHITECTURE.md` (the `routers/pnl.py` entry), `STATUS.md` and `web/DESIGN.md` (Sizing record paragraph; `design_md_check` still exit 0). The per-line mark labels ("to expiry", "exit rules") never said "cost", so no label needed to change. **I2, `GET /spreads/orders` showed an unreadable table as "none".** `try_read_spread_order_rows` returned `None` for any failure and the route turned `None` into `available: true` with no orders. Now the helper first looks for `spread_orders` in `sqlite_master`: absent is `[]` (an older file, still `available: true`, the existing test passes unmodified); present but the SELECT raises is `None`; and so is a failed check. The check does not use `_columns_of`, because that helper returns an empty set when its PRAGMA fails, which would read a locked or damaged file as "no table" and bring the bug back through the side door. The route answers `available: false` for `None`. The new test (a `spread_orders` table without the `commission` column) failed before the change with `available` true. The route description changed, so `openapi.json` and `api-types.ts` were regenerated; `docs/web/api.md`, `ARCHITECTURE.md` and `STATUS.md` now say unavailable is a missing file or an unreadable table, and `STATUS.md`'s caps line notes that the spread-fills list is capped at 200 with no `truncated` flag. **I3, Pay's month-stepper floor followed the Legs filters.** `PayView` read the floor from `useEquity(legs.qsString)`, and `starts_at` is the first journal row on or after `since`, so a Since of 2026-09-01 stopped the stepper at September. The floor now reads `useEquity("book=all")`, the string `useLegFilters` builds with no filter set, so with no filter it shares the Curve card's query key and adds no request (with a filter set it is one extra request); `book=all` is deliberate (a book filter narrows the cards, not when the system began). Curve, Legs and the totals keep `legs.qsString`. A `?month=` before the start is still not clamped. Of the two new tests, the first (Previous stays enabled in July with Since set to September, and steps to June) failed before the fix with Previous disabled; the second (June stays the stop) passes before and after the fix, because a later filtered start also disables June, so it pins the boundary and cannot be red. **Extra, `FillsTable` `title()`** said "put" for a fill with no recorded side; it now says "option" as `legTitle` does (the red test is the "option" one; the "call" one is a pin that was already green). **Minor findings deliberately not fixed:** (a) the spread-fills list has no `truncated` flag (now noted in `STATUS.md`); (b) `/ledger/executions` filters `trade_date >= today_ET - days`, so it covers days + 1 calendar days while the other lists use a rolling window; (c) a name card's open P&L under a type chip is the sum of the visible legs only; (d) with `source: none` and open spreads, Positions shows only the spreads card; (e) the da-vinci-finish tests assert class names (layout pins); (f) SpreadFills shows the raw `mode` word; (g) a `?month=` before the system start is not clamped (it shows honest zeros and Previous is disabled). |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -156,6 +186,8 @@ same days. That is what an audit page is for, and why neither list stands in for
    with a back link to Activity → Ledger. The rail still marks Activity current on them.
 10. **Fills and orders is three lists with named sources, never merged.** **Orders**: the system's
     own `orders` (Working, All, Rejected, over a window), each with the sizing words (ruling 5c).
+    Working is queued and submitted only: a `partial` order is final since 2026-10-27 (the rest
+    was cancelled at the fill timeout), so it shows under All with the "Partial" flag word.
     **Fills**: the system's own `fills` with the contract named (they carried only a candidate
     id), plus the credit-spread book's filled orders from `GET /spreads/orders`, which is
     "unavailable" when the file cannot be read, never "none". **At IBKR**: the ledger's real
@@ -288,7 +320,7 @@ src/
   api/models/spreads.py             MODIFY  SpreadOrderOut, SpreadOrdersResponse
   api/routers/spreads.py            MODIFY  GET /spreads/orders
 tests/test_api_pnl_sizing.py        CREATE  (10 tests)
-tests/test_api_orders.py            MODIFY  +8
+tests/test_api_orders.py            MODIFY  +9
 tests/test_api_ledger.py            MODIFY  +5
 tests/test_api_spread_orders.py     CREATE  (6 tests)
 docs/web/openapi.json               MODIFY  regenerated (Tasks 1-3)
@@ -332,35 +364,43 @@ ARCHITECTURE.md, STATUS.md, SETUP.md, CLAUDE.md, docs/web/api.md   MODIFY (Task 
 
 ---
 
-## Section A — The API (Tasks 1–3) · model: opus
+## Section A — The API (Tasks 1–3) · model: sonnet (effort xhigh)
 
 Three read-only routes and two enriched shapes. Nothing here touches the web app except the
 regenerated `api-types.ts` and one hand-written type file that gains optional fields.
 
 **Entry checks (the baseline; run from the repo root on `main` before Task 1 Step 1):**
 
-- [ ] **A1. Clean starting point, and the market-picture web work is committed.**
-  `git status --short` shows nothing except this plan file (untracked) and, optionally,
-  `web/design-preview.html`; `git branch --show-current` prints `main`. The 2026-10-23 web
-  follow-up of the market-picture build (the Market card, `NameNotes`, `NameFlags`, `HeldBack`,
-  `GET /claude/sizing`, `useClaudeContext`) is the base this plan builds on, so this prints
-  two lines:
+- [ ] **A1. Clean starting point, on the commits this plan was verified against.**
+  `git status --short` shows nothing (optionally `web/design-preview.html`, untracked);
+  `git branch --show-current` prints `main`. The plan file itself is tracked (it was committed
+  with the market-picture web work in 353cdd8). Each of these prints at least one line:
 
   ```bash
   git ls-files web/features/market/NameFlags.tsx web/features/claude-context/useClaudeContext.ts
+  git merge-base --is-ancestor c692a1b HEAD && echo "c692a1b is in main"
+  grep -n '_WORKING = {"queued", "submitted"}' src/api/routers/options.py
   ```
 
-  If it prints nothing, or `git status` shows that work as modified or untracked, **stop**: it
-  is the operator's to commit first, as its own change. Do not commit it into this branch.
+  The first is the 2026-10-23 web follow-up of the market-picture build (the Market card,
+  `NameNotes`, `NameFlags`, `HeldBack`, `GET /claude/sizing`, `useClaudeContext`) that this plan
+  builds on; the second is the commit the plan was last replayed against (2026-10-28); the third
+  is f4af002's rule that a `partial` order is final, which Task 2 keeps. If any prints nothing,
+  **stop** and report: `main` has moved in a way this plan has not been checked against.
 - [ ] **A2. Baseline is green.** All of these pass; record the pytest and vitest counts in the
-  Progress log row, because every later gate compares against them:
+  Progress log row, because every later gate compares against them (on 2026-10-28: pytest 4963,
+  vitest 1027; your counts may be higher if `main` moved):
 
   ```bash
   python -m pytest -q && ruff check . && mypy src
   cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..
   ```
 
-  A red baseline is not this plan's to fix: stop and report it.
+  A red baseline is not this plan's to fix: stop and report it. One known exception:
+  `tests/test_scan_timeout.py` is flaky (one of its cases fails intermittently with a
+  `TimeoutError`, a different one each run; logged 2026-10-27). If that file is the only failure,
+  re-run it alone (`python -m pytest tests/test_scan_timeout.py -q`); if it passes, note "scan
+  timeout flake" in the Progress log and continue. The same rule applies at every later gate.
 - [ ] **A3. The spec is valid.** `python3 ~/.claude/skills/da-vinci/scripts/design_md_check.py web/DESIGN.md`
   exits 0.
 - [ ] **A4. The pieces Section A builds on exist.** Each command prints at least one line:
@@ -393,7 +433,7 @@ regenerated `api-types.ts` and one hand-written type file that gains optional fi
 - Modify: `src/api/models/pnl.py`, `src/api/routers/pnl.py`
 - Create: `tests/test_api_pnl_sizing.py`
 - Modify: `docs/web/openapi.json`, `web/lib/api-types.ts` (both regenerated)
-- Add: this plan file (first commit of the branch)
+- Modify: this plan file (its Progress log rows; it is already tracked)
 
 **Interfaces:**
 - Consumes: `summarize(since: date) -> dict[str, dict[str, float]]` from
@@ -403,7 +443,7 @@ regenerated `api-types.ts` and one hand-written type file that gains optional fi
   SizingGroupOut[]}`; `SizingGroupOut{key, kind, split, count, contracts_withheld?, resolved?,
   exact?, pnl_expiry?, pnl_rules?, rules_missing?, applied?, unapplied?}`. Task 13 reads it.
 
-- [ ] **Step 1: Branch and worktree**
+- [x] **Step 1: Branch and worktree**
 
 Run from the repo root:
 
@@ -415,7 +455,7 @@ If executing in a separate worktree (superpowers:using-git-worktrees), symlink t
 and `web/node_modules` into it and run `python -c "from src.storage.db import init_db; init_db()"`
 (a fresh worktree otherwise fails four monitor tests with "no such table: fills").
 
-- [ ] **Step 2: Write the failing tests** — create `tests/test_api_pnl_sizing.py`:
+- [x] **Step 2: Write the failing tests** — create `tests/test_api_pnl_sizing.py`:
 
 ```python
 """GET /pnl/sizing - the sizing record's totals (web overhaul Part 3, Task 1).
@@ -602,12 +642,12 @@ def test_a_non_owner_is_refused(client, monkeypatch) -> None:
     assert client.get("/pnl/sizing", headers=OWNER).status_code == 403
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_pnl_sizing.py -q`
 Expected: FAIL (every route test answers 404; the spy test fails on the missing attribute).
 
-- [ ] **Step 4: Add the models** — in `src/api/models/pnl.py`, directly after
+- [x] **Step 4: Add the models** — in `src/api/models/pnl.py`, directly after
   `SystemPerformanceResponse`:
 
 ```python
@@ -643,7 +683,7 @@ class SizingRecordResponse(Envelope):
     groups: list[SizingGroupOut]
 ```
 
-- [ ] **Step 5: Add the route** — in `src/api/routers/pnl.py`: add `SizingGroupOut` and
+- [x] **Step 5: Add the route** — in `src/api/routers/pnl.py`: add `SizingGroupOut` and
   `SizingRecordResponse` to the `src.api.models.pnl` import list (alphabetical), add
   `from src.claude.eval.sizing_counterfactual import summarize as summarize_sizing` beside the
   other `src.claude.eval` imports, and add after `pnl_system`:
@@ -699,12 +739,12 @@ def pnl_sizing(
     )
 ```
 
-- [ ] **Step 6: Run the tests, then the fences**
+- [x] **Step 6: Run the tests, then the fences**
 
 Run: `python -m pytest tests/test_api_pnl_sizing.py tests/test_web_fence.py tests/test_eval_skills.py tests/test_regime_fence.py -q`
 Expected: PASS (10 new tests; every fence test unchanged).
 
-- [ ] **Step 7: Regenerate the contract**
+- [x] **Step 7: Regenerate the contract**
 
 ```bash
 python -c "import json; from src.api.main import create_app; print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
@@ -715,14 +755,14 @@ python -m pytest tests/test_openapi_current.py -q
 Expected: PASS; `git diff --stat` shows `docs/web/openapi.json` and `web/lib/api-types.ts` changed
 by the two new schemas and the new path only.
 
-- [ ] **Step 8: Format and the gate**
+- [x] **Step 8: Format and the gate**
 
 Run: `ruff format src/api/models/pnl.py src/api/routers/pnl.py tests/test_api_pnl_sizing.py`. These files
 are formatted on `main`, so this changes only what this task wrote. Then
 `python -m pytest -q && ruff check . && mypy src && cd web && npx tsc --noEmit && cd ..`
-Expected: pytest = baseline + 10; everything else clean.
+Expected: pytest = baseline + 10; everything else clean (the scan-timeout flake rule in A2 applies).
 
-- [ ] **Step 9: Commit** (with the Progress log row for Task 1 filled in and this plan file added)
+- [x] **Step 9: Commit** (with the Section A entry row and the Task 1 row of the Progress log filled in)
 
 ```bash
 git add src/api/models/pnl.py src/api/routers/pnl.py tests/test_api_pnl_sizing.py \
@@ -736,7 +776,7 @@ git commit -m "feat(api): GET /pnl/sizing - the sizing record's totals, read beh
 
 **Files:**
 - Modify: `src/api/models/options.py`, `src/api/routers/options.py`
-- Modify: `tests/test_api_orders.py` (+8 tests)
+- Modify: `tests/test_api_orders.py` (+9 tests)
 - Modify: `web/components/options/types.ts` (hand-written mirrors)
 - Modify: `docs/web/openapi.json`, `web/lib/api-types.ts` (both regenerated)
 
@@ -748,8 +788,12 @@ git commit -m "feat(api): GET /pnl/sizing - the sizing record's totals, read beh
   `FillSummary.underlying | strategy | right | strike | expiry` (each `None` when neither the
   order's snapshot nor its candidate is on record, never `""` or `0`); `GET /options/orders` gains
   `days` (1 to 365); `GET /options/fills` takes `days` up to 365.
+- Keeps: `state=working` is `queued` and `submitted` only. Since f4af002 (2026-10-27) a `partial`
+  order is final (the executors cancel the rest at the fill timeout), so it is history, listed
+  under `all` and `partial`, never `working`. The replacement code below keeps that line and its
+  comment exactly; do not "restore" `partial` to `_WORKING`.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_api_orders.py` (the module's
+- [x] **Step 1: Write the failing tests** — append to `tests/test_api_orders.py` (the module's
   `client` fixture seeds orders 1 to 3 (`c1` NVDA submitted, `c2` AAPL filled with one fill, `c3`
   MSFT queued)). Add `SizingActionRow` to the `src.storage.models` import:
 
@@ -876,15 +920,35 @@ def test_a_fill_with_no_order_and_no_candidate_has_an_unknown_contract_not_a_zer
 def test_fills_reach_back_a_year_and_no_further(client) -> None:
     assert client.get("/options/fills?days=365", headers=AUTH).status_code == 200
     assert client.get("/options/fills?days=366", headers=AUTH).status_code == 422
+
+def test_a_partial_order_is_history_not_working(client) -> None:
+    """`partial` is final (the executors cancel the rest at the fill timeout, 2026-10-27): the
+    rewritten route must keep it out of `working`, as the route it replaces did."""
+    with session_scope() as s:
+        s.add(
+            OrderRow(
+                candidate_id="half",
+                state="partial",
+                filled_qty=1.0,
+                is_live=False,
+                snapshot=_snap(underlying="HALF"),
+            )
+        )
+    working = {o["candidate_id"] for o in client.get("/options/orders", headers=AUTH).json()["orders"]}
+    every = {o["candidate_id"] for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]}
+    assert "half" not in working and "half" in every
 ```
 
-- [ ] **Step 2: Run them to verify they fail**
+- [x] **Step 2: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_orders.py -q`
-Expected: FAIL (the 8 new tests: no `sizing`, no contract fields, `days` ignored on orders, 366
-accepted by... no: `le=90` today, so `days=365` answers 422).
+Expected: 8 of the 9 new tests FAIL (no `sizing`, no contract fields, `days` ignored on orders,
+and `/options/fills?days=365` answers 422 because the route caps `days` at 90 today).
+`test_a_partial_order_is_history_not_working` already passes on `main` and must still pass after
+Step 4: it guards f4af002's rule (a `partial` order is final, never `working`) that the
+replacement route has to keep.
 
-- [ ] **Step 3: Models** — in `src/api/models/options.py`:
+- [x] **Step 3: Models** — in `src/api/models/options.py`:
 
   Replace `class FillSummary(Envelope)` (the whole class) with:
 
@@ -931,7 +995,7 @@ class OrderSizingOut(BaseModel):
     sizing: list[OrderSizingOut] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Routes** — in `src/api/routers/options.py` add `OrderSizingOut` to the
+- [x] **Step 4: Routes** — in `src/api/routers/options.py` add `OrderSizingOut` to the
   `src.api.models.options` import list (alphabetical); the routes import the storage models
   lazily inside their bodies, as the originals do, so nothing else changes at module level. Then
   replace `list_orders` and `list_fills` (everything from `@router.get("/orders"` through the end
@@ -967,7 +1031,7 @@ def list_orders(
         "working", "all", "queued", "submitted", "filled", "partial", "cancelled", "rejected"
     ] = Query(
         default="working",
-        description="`working` (queued/submitted/partial), `all`, or a specific state.",
+        description="`working` (queued/submitted), `all`, or a specific state.",
     ),
     days: int | None = Query(
         default=None, ge=1, le=365, description="Only orders created in the last N days."
@@ -983,7 +1047,7 @@ def list_orders(
     from src.storage.models import CandidateRow, OrderRow, SizingActionRow
 
     now = datetime.now(UTC)
-    _WORKING = {"queued", "submitted", "partial"}
+    _WORKING = {"queued", "submitted"}  # `partial` is final: the executors cancel the rest
 
     stmt = select(OrderRow)
     if state == "working":
@@ -1123,7 +1187,7 @@ def list_fills(
     return FillListResponse(as_of=now, fills=fills)
 ```
 
-- [ ] **Step 5: Hand-written mirrors** — in `web/components/options/types.ts`, add to `OrderSummary`
+- [x] **Step 5: Hand-written mirrors** — in `web/components/options/types.ts`, add to `OrderSummary`
   the line `sizing?: OrderSizing[];` after `updated_at: string;`, add to `FillSummary` the lines
   `underlying?: string | null; strategy?: string | null; right?: "C" | "P" | null; strike?: number | null; expiry?: string | null;`
   after `filled_at: string;`, and add above `OrderSummary`:
@@ -1138,7 +1202,7 @@ export type OrderSizing = {
 };
 ```
 
-- [ ] **Step 6: Run the tests, then regenerate the contract**
+- [x] **Step 6: Run the tests, then regenerate the contract**
 
 ```bash
 python -m pytest tests/test_api_orders.py tests/test_api_approvals.py tests/test_openapi_current.py -q
@@ -1147,17 +1211,17 @@ python -c "import json; from src.api.main import create_app; print(json.dumps(cr
 python -m pytest tests/test_openapi_current.py -q
 ```
 
-Expected: PASS (every existing orders, fills and approval-detail test unchanged, plus the 8 new
+Expected: PASS (every existing orders, fills and approval-detail test unchanged, plus the 9 new
 ones); the contract diff adds `OrderSizingOut`, the `sizing` and contract fields, and the
 `days` parameter.
 
-- [ ] **Step 7: Format and the gate**
+- [x] **Step 7: Format and the gate**
 
 Run: `ruff format src/api/models/options.py src/api/routers/options.py tests/test_api_orders.py`, then
 `python -m pytest -q && ruff check . && mypy src && cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..`
-Expected: pytest = Task 1's count + 8; vitest unchanged; everything else clean.
+Expected: pytest = Task 1's count + 9; vitest unchanged; everything else clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/api/models/options.py src/api/routers/options.py tests/test_api_orders.py \
@@ -1190,7 +1254,7 @@ git commit -m "feat(api): orders carry the sizing that shaped them; fills name t
   - `GET /spreads/orders?days=30&limit=200` → `SpreadOrdersResponse{as_of, available,
     underlying, orders: SpreadOrderOut[]}`.
 
-- [ ] **Step 1: Write the failing ledger tests** — append to `tests/test_api_ledger.py`. Add
+- [x] **Step 1: Write the failing ledger tests** — append to `tests/test_api_ledger.py`. Add
   `from datetime import UTC, date, datetime` to its imports. The `seeded` CSV fixture only loads
   order-level statement rows, which is the exclusion case:
 
@@ -1308,7 +1372,7 @@ def test_executions_say_when_the_list_was_cut_short(client, api_db, frozen_ledge
     assert client.get("/ledger/executions?days=366", headers=OWNER).status_code == 422
 ```
 
-- [ ] **Step 2: Write the failing spreads tests** — create `tests/test_api_spread_orders.py`:
+- [x] **Step 2: Write the failing spreads tests** — create `tests/test_api_spread_orders.py`:
 
 ```python
 """GET /spreads/orders - the spreads book's filled orders (web overhaul Part 3, Task 3).
@@ -1466,12 +1530,12 @@ def test_an_older_file_without_the_orders_table_is_available_with_no_orders(clie
     assert body["available"] is True and body["orders"] == []
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_ledger.py tests/test_api_spread_orders.py -q`
 Expected: FAIL (both new routes answer 404).
 
-- [ ] **Step 4: Ledger models** — append to `src/api/models/ledger.py` (the file already imports
+- [x] **Step 4: Ledger models** — append to `src/api/models/ledger.py` (the file already imports
   `date`, `datetime`, `BaseModel` and `Envelope`):
 
 ```python
@@ -1509,7 +1573,7 @@ class LedgerExecutionsResponse(Envelope):
     executions: list[LedgerExecutionRowOut]
 ```
 
-- [ ] **Step 5: Ledger route** — in `src/api/routers/ledger.py`: change the datetime import to
+- [x] **Step 5: Ledger route** — in `src/api/routers/ledger.py`: change the datetime import to
   `from datetime import UTC, date, datetime, timedelta`, the fastapi import to
   `from fastapi import APIRouter, HTTPException, Query`, add `LedgerExecutionRowOut` and
   `LedgerExecutionsResponse` to the `src.api.models.ledger` import list, add
@@ -1586,7 +1650,7 @@ def get_executions(
 
   `LedgerBookName` is already imported in this module (it is used by `_filters`).
 
-- [ ] **Step 6: Spreads reader** — append to `src/api/spreads_db.py`:
+- [x] **Step 6: Spreads reader** — append to `src/api/spreads_db.py`:
 
 ```python
 def try_read_spread_order_rows(
@@ -1611,7 +1675,7 @@ def try_read_spread_order_rows(
     return [dict(r._mapping) for r in result]
 ```
 
-- [ ] **Step 7: Spreads models and route** — append to `src/api/models/spreads.py`:
+- [x] **Step 7: Spreads models and route** — append to `src/api/models/spreads.py`:
 
 ```python
 class SpreadOrderOut(BaseModel):
@@ -1685,7 +1749,7 @@ def spread_orders(
     return SpreadOrdersResponse(as_of=now, available=True, underlying=underlying, orders=orders)
 ```
 
-- [ ] **Step 8: Run the tests, the fences, then regenerate the contract**
+- [x] **Step 8: Run the tests, the fences, then regenerate the contract**
 
 ```bash
 python -m pytest tests/test_api_ledger.py tests/test_api_spread_orders.py tests/test_web_fence.py \
@@ -1699,13 +1763,13 @@ Expected: PASS (5 + 6 new tests; every fence test unchanged, including
 `test_only_spreads_db_opens_the_spreads_file_in_the_api` and
 `test_only_the_ledger_package_writes_the_ledger_tables`).
 
-- [ ] **Step 9: Format and the gate**
+- [x] **Step 9: Format and the gate**
 
 Run: `ruff format src/api/models/ledger.py src/api/routers/ledger.py src/api/spreads_db.py src/api/models/spreads.py src/api/routers/spreads.py tests/test_api_ledger.py tests/test_api_spread_orders.py`,
 then `python -m pytest -q && ruff check . && mypy src && cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..`
 Expected: pytest = Task 2's count + 11; everything else clean.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/api/models/ledger.py src/api/routers/ledger.py src/api/spreads_db.py \
@@ -1716,7 +1780,7 @@ git commit -m "feat(api): GET /ledger/executions and GET /spreads/orders - the a
 
 ---
 
-## Section B — Portfolio (Tasks 4–7) · model: sonnet
+## Section B — Portfolio (Tasks 4–7) · model: sonnet (effort xhigh)
 
 The Portfolio surface contract goes into `web/DESIGN.md` first (with Activity's), then the
 Account card, Positions, Campaigns, Calendar and the page. Every new component is a client
@@ -1773,11 +1837,11 @@ its tests still pass.
   (Tasks 7 and 14); `SummaryCard()` (Task 7), reading `GET /portfolio/summary` under the query key
   `["portfolio", "summary"]`.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: Operate surface, the
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: Operate surface, the
   payslip world, no new colour, font, radius, elevation or token; the Account card is a white
   card with two blocks of figure lines under a perforation; Delayed is the flag word.
 
-- [ ] **Step 2: Write the two surface contracts into `web/DESIGN.md`.** Replace these lines:
+- [x] **Step 2: Write the two surface contracts into `web/DESIGN.md`.** Replace these lines:
 
 ```markdown
 ### Portfolio
@@ -1859,12 +1923,12 @@ the figure face.
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
 ```
 
-- [ ] **Step 3: Check the design file**
+- [x] **Step 3: Check the design file**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/design_md_check.py web/DESIGN.md`
 Expected: exit 0.
 
-- [ ] **Step 4: Write the failing tests**
+- [x] **Step 4: Write the failing tests**
 
 Create `web/lib/useViewParam.test.tsx`:
 
@@ -2026,12 +2090,12 @@ describe("SummaryCard", () => {
 });
 ```
 
-- [ ] **Step 5: Run them to verify they fail**
+- [x] **Step 5: Run them to verify they fail**
 
 Run: `cd web && npx vitest run lib/useViewParam.test.tsx features/portfolio/SummaryCard.test.tsx`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 6: Implement `web/lib/useViewParam.ts`**
+- [x] **Step 6: Implement `web/lib/useViewParam.ts`**
 
 ```ts
 "use client";
@@ -2064,7 +2128,7 @@ export function useViewParam<T extends string>(views: readonly T[], fallback: T)
 }
 ```
 
-- [ ] **Step 7: Implement `web/features/portfolio/SummaryCard.tsx`**
+- [x] **Step 7: Implement `web/features/portfolio/SummaryCard.tsx`**
 
 ```tsx
 "use client";
@@ -2204,7 +2268,7 @@ export function SummaryCard() {
 }
 ```
 
-- [ ] **Step 8: Restyle `DegradedNotice`** — in `web/components/portfolio/DegradedNotice.tsx` replace
+- [x] **Step 8: Restyle `DegradedNotice`** — in `web/components/portfolio/DegradedNotice.tsx` replace
   the returned element (keep the file's doc comment and the props type) with:
 
 ```tsx
@@ -2220,7 +2284,7 @@ export function DegradedNotice({ note }: DegradedNoticeProps) {
   In the same file's doc comment, change "an elevated surface and plain text" to "a pressed-sage
   block and plain text".
 
-- [ ] **Step 9: Restyle `RefreshControl`** — in `web/components/portfolio/RefreshControl.tsx` add
+- [x] **Step 9: Restyle `RefreshControl`** — in `web/components/portfolio/RefreshControl.tsx` add
   `import { Button } from "@/components/ui/Button";` after the `CommandReceipt` import, and replace
   the component's returned element (everything from `return (` to the matching `);` before
   `function describeError`) with:
@@ -2254,18 +2318,18 @@ export function DegradedNotice({ note }: DegradedNoticeProps) {
   Nothing above `return (` changes: the command flow, the invalidation and the controls query are
   the protected behaviour.
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run lib features/portfolio components/portfolio && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 4 + 9 new tests, and every existing `RefreshControl`, `DegradedNotice` and
 legacy portfolio test **unmodified** (that is the proof the restyles changed no behaviour).
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/lib/useViewParam.ts web/components/portfolio/DegradedNotice.tsx web/components/portfolio/RefreshControl.tsx`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 4 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 4 filled in)
 
 ```bash
 git add web/DESIGN.md web/lib/useViewParam.ts web/lib/useViewParam.test.tsx web/features/portfolio \
@@ -2301,10 +2365,10 @@ git commit -m "feat(web): Portfolio and Activity contracts, the Account card, us
   - `PositionsView()` (Task 7), reading `["portfolio","positions"]`, `["spreads","positions","open"]`
     and `["options","shorts"]`, the keys Home's card reads, so both share one request each.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: name cards on paper, Home's
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: name cards on paper, Home's
   rows exactly, a muted figure line under each option, flags beside the ticker, no lime.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/features/home/PositionRowItem.test.tsx`:
 
@@ -2634,12 +2698,12 @@ describe("PositionsView", () => {
 });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/home/PositionRowItem.test.tsx features/portfolio`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 4: Extract the row** — create `web/features/home/PositionRowItem.tsx`:
+- [x] **Step 4: Extract the row** — create `web/features/home/PositionRowItem.tsx`:
 
 ```tsx
 import clsx from "clsx";
@@ -2738,7 +2802,7 @@ export function PositionRowItem({
   `import { formatStubValue } from "@/components/ui/Stub";` and `import { UNKNOWN } from "@/lib/format";`.
   (Run `npx tsc --noEmit` and `npm run lint` after: either names any import this list missed.)
 
-- [ ] **Step 5: Implement `web/features/portfolio/positions.ts`**
+- [x] **Step 5: Implement `web/features/portfolio/positions.ts`**
 
 ```ts
 import type { OptionLeg, PositionGroupData } from "@/components/portfolio/types";
@@ -2839,7 +2903,7 @@ export function countByFilter(
 }
 ```
 
-- [ ] **Step 6: Implement `web/features/portfolio/PositionsView.tsx`**
+- [x] **Step 6: Implement `web/features/portfolio/PositionsView.tsx`**
 
 ```tsx
 "use client";
@@ -3067,19 +3131,19 @@ export function PositionsView() {
 }
 ```
 
-- [ ] **Step 7: Run the tests, then the gate**
+- [x] **Step 7: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features/home features/portfolio && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 5 + 14 + 14 new tests, and **every existing `PositionsCard` test unmodified**
 (the proof the extraction changed no behaviour). A `PositionsCard` test that fails means the row
 markup was not moved verbatim: restore it, never edit that test.
 
-- [ ] **Step 8: da-vinci lint**
+- [x] **Step 8: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/features/home/PositionRowItem.tsx web/features/home/PositionsCard.tsx`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 9: Commit** (with the Progress log row for Task 5 filled in)
+- [x] **Step 9: Commit** (with the Progress log row for Task 5 filled in)
 
 ```bash
 git add web/features/home/PositionRowItem.tsx web/features/home/PositionRowItem.test.tsx \
@@ -3118,10 +3182,10 @@ git commit -m "feat(web): Portfolio Positions - name cards over Home's rows, tot
     status, symbol]`, Calendar `["portfolio","calendar",horizon]`: the keys `RefreshControl`
     invalidates by the `["portfolio"]` prefix.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: thread and expiry-day cards on
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: thread and expiry-day cards on
   paper, the legs behind a disclosure, sentences for consequences, status words not colours.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/features/portfolio/campaigns.test.ts`:
 
@@ -3449,12 +3513,12 @@ describe("eventBefore", () => {
 });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/portfolio features/market`
 Expected: FAIL (modules and `eventBefore` not found).
 
-- [ ] **Step 4: Implement the small files**
+- [x] **Step 4: Implement the small files**
 
 `web/components/ui/field.ts`:
 
@@ -3560,7 +3624,7 @@ export function eventBefore(d: Dossier | undefined, today: string, expiry: strin
 }
 ```
 
-- [ ] **Step 5: Implement `web/features/portfolio/CampaignsView.tsx`**
+- [x] **Step 5: Implement `web/features/portfolio/CampaignsView.tsx`**
 
 ```tsx
 "use client";
@@ -3730,7 +3794,7 @@ export function CampaignsView() {
 }
 ```
 
-- [ ] **Step 6: Implement `web/features/portfolio/CalendarView.tsx`**
+- [x] **Step 6: Implement `web/features/portfolio/CalendarView.tsx`**
 
 ```tsx
 "use client";
@@ -3887,18 +3951,18 @@ export function CalendarView() {
 }
 ```
 
-- [ ] **Step 7: Run the tests, then the gate**
+- [x] **Step 7: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features/portfolio features/market && npx tsc --noEmit && npm run lint`
 Expected: PASS: Campaigns (4 + 8) and Calendar (4 + 12) tests and the 3 `eventBefore` tests; every
 existing `market` test unchanged.
 
-- [ ] **Step 8: da-vinci lint**
+- [x] **Step 8: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/components/ui/field.ts web/features/market/market.ts`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 9: Commit** (with the Progress log row for Task 6 filled in)
+- [x] **Step 9: Commit** (with the Progress log row for Task 6 filled in)
 
 ```bash
 git add web/components/ui/field.ts web/features/portfolio web/features/market/market.ts \
@@ -3920,10 +3984,10 @@ git commit -m "feat(web): Portfolio Campaigns and Calendar - threads before comm
   `CampaignsView`, `CalendarView` (Task 6), `RefreshControl`, `SegmentedControl`.
 - Produces: `PortfolioPage()`; `PORTFOLIO_VIEWS`, `VIEW_LABEL`, `PortfolioView` (`views.ts`).
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only; the title
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only; the title
   with Refresh at its right, the Account card, the view chips, the view.
 
-- [ ] **Step 2: Write the failing tests** — create `web/features/portfolio/PortfolioPage.test.tsx`:
+- [x] **Step 2: Write the failing tests** — create `web/features/portfolio/PortfolioPage.test.tsx`:
 
 ```tsx
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -4036,12 +4100,12 @@ describe("PortfolioPage", () => {
 });
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 Run: `cd web && npx vitest run features/portfolio/PortfolioPage.test.tsx`
 Expected: FAIL (module not found).
 
-- [ ] **Step 4: Implement** — `web/features/portfolio/views.ts`:
+- [x] **Step 4: Implement** — `web/features/portfolio/views.ts`:
 
 ```ts
 /** The Portfolio page's views (web/DESIGN.md Surfaces → Portfolio). */
@@ -4121,18 +4185,18 @@ export default function Page() {
   `components/portfolio/PortfolioShell.tsx` is now unmounted; it and its legacy panels stay for
   their tests until Part 4 (ruling 12). Do not edit them.
 
-- [ ] **Step 5: Run the tests, then the gate**
+- [x] **Step 5: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run && npx tsc --noEmit && npm run lint`
 Expected: PASS: 4 new tests; every legacy portfolio test (`PortfolioShell`, `SummaryPanel`,
 `PositionGroup`, `CalendarPanel`, `CampaignThread`, `RefreshControl`) still green and unmodified.
 
-- [ ] **Step 6: da-vinci lint**
+- [x] **Step 6: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/app/portfolio`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 7: Commit** (with the Progress log row for Task 7 filled in)
+- [x] **Step 7: Commit** (with the Progress log row for Task 7 filled in)
 
 ```bash
 git add web/features/portfolio/views.ts web/features/portfolio/PortfolioPage.tsx \
@@ -4143,7 +4207,7 @@ git commit -m "feat(web): the Portfolio page - Account card, Positions, Campaign
 
 ---
 
-## Section C — Activity (Tasks 8–14) · model: sonnet
+## Section C — Activity (Tasks 8–14) · model: sonnet (effort xhigh)
 
 Pay (a month, the totals, the curve, the legs), Ledger, Fills and orders, System, then the page.
 Where a legacy component keeps its job it is restyled **in place and its existing tests pass
@@ -4225,10 +4289,10 @@ redirects into it and the ledger's own pages say how to get back.
   - `useEquity(qsString)` (the equity query under the shared key `["pnl","equity",qs]`)
   - `PayMonth({ month, current, floor, onMonth })`, `PayView()` (Task 14 mounts it; Task 9 extends it)
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the month as a stub, always open
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the month as a stub, always open
   here; a month stepper of quiet round buttons; totals as a card of figure lines; no new colour.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/features/activity/month.test.ts`:
 
@@ -4544,12 +4608,12 @@ describe("PayView", () => {
 });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/activity`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 4: Implement the small modules**
+- [x] **Step 4: Implement the small modules**
 
 `web/features/activity/month.ts`:
 
@@ -4736,7 +4800,7 @@ export function useEquity(qsString: string) {
 }
 ```
 
-- [ ] **Step 5: Implement `web/features/activity/PayMonth.tsx`**
+- [x] **Step 5: Implement `web/features/activity/PayMonth.tsx`**
 
 ```tsx
 "use client";
@@ -4866,7 +4930,7 @@ export function PayMonth({
   `payStubLines` returns `StubLineData[]` whose `total: true` line is "Net so far"; the map above
   renames it for a past month only.
 
-- [ ] **Step 6: Implement `web/features/activity/PayView.tsx`** (Task 9 extends it):
+- [x] **Step 6: Implement `web/features/activity/PayView.tsx`** (Task 9 extends it):
 
 ```tsx
 "use client";
@@ -4912,12 +4976,12 @@ export function PayView() {
 }
 ```
 
-- [ ] **Step 7: Restyle `Money`'s two label spans** — in `web/components/portfolio/Money.tsx` change
+- [x] **Step 7: Restyle `Money`'s two label spans** — in `web/components/portfolio/Money.tsx` change
   both `className="ml-1 text-[10px] uppercase tracking-wide text-muted"` to
   `className="ml-1 text-xs text-muted"` (the kind label and the "gross" label; the text is already
   lowercase, so nothing a test reads changes).
 
-- [ ] **Step 8: Restyle `BreakdownTable`** — replace `web/components/pnl/BreakdownTable.tsx` with:
+- [x] **Step 8: Restyle `BreakdownTable`** — replace `web/components/pnl/BreakdownTable.tsx` with:
 
 ```tsx
 "use client";
@@ -4984,7 +5048,7 @@ export function BreakdownTable({ buckets, label }: { buckets: PnlBucketData[]; l
 }
 ```
 
-- [ ] **Step 9: Restyle `SummaryPanel`** (`web/components/pnl/SummaryPanel.tsx`; three edits, no
+- [x] **Step 9: Restyle `SummaryPanel`** (`web/components/pnl/SummaryPanel.tsx`; three edits, no
   text, test id or condition changes):
 
   1. Add `import { SegmentedControl } from "@/components/ui/SegmentedControl";` after the
@@ -5013,19 +5077,19 @@ export function BreakdownTable({ buckets, label }: { buckets: PnlBucketData[]; l
      with
      `className="inline-flex min-h-11 items-center font-mono text-content underline decoration-dotted underline-offset-2 hover:decoration-solid md:min-h-6"`.
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features/activity components/pnl components/portfolio && npx tsc --noEmit && npm run lint`
 Expected: PASS: the new tests (month 6, useMonthParam 4, MonthStepper 5, useLegFilters 5, PayView 11),
 and every existing `SummaryPanel`, `BreakdownTable`, `Money` and legacy portfolio test
 **unmodified**.
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/activity web/components/pnl/SummaryPanel.tsx web/components/pnl/BreakdownTable.tsx web/components/portfolio/Money.tsx`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 8 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 8 filled in)
 
 ```bash
 git add web/features/activity web/components/portfolio/Money.tsx web/components/pnl/BreakdownTable.tsx \
@@ -5042,7 +5106,7 @@ git commit -m "feat(web): Activity Pay - a month at a time as a stub, then the t
 - Modify: `web/features/activity/PayView.tsx`, `web/features/activity/PayView.test.tsx` (+8 tests)
 - Modify (restyle in place): `web/components/pnl/LedgerFilters.tsx` (whole file),
   `web/components/pnl/CampaignRow.tsx` (whole file), `web/components/pnl/LegRow.tsx` (whole file),
-  `web/components/pnl/EquityChart.tsx` (three classes)
+  `web/components/pnl/EquityChart.tsx` (four classes and one comment)
 
 **Interfaces:**
 - Consumes: `useLegFilters`, `useEquity` (Task 8), `LedgerResponseData` (`components/pnl/types.ts`),
@@ -5051,11 +5115,11 @@ git commit -m "feat(web): Activity Pay - a month at a time as a stub, then the t
 - Produces: `Curve({ qsString })`, `LegsFilters({ filters, formKey, onFilters })`,
   `LegsCard({ qsString })`; the finished `PayView`.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: one filter row for the totals,
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: one filter row for the totals,
   the curve and the legs; thread cards with the legs behind a chevron; hairline leg rows in the
   figure face; no lime.
 
-- [ ] **Step 2: Write the failing tests** — in `web/features/activity/PayView.test.tsx` replace the
+- [x] **Step 2: Write the failing tests** — in `web/features/activity/PayView.test.tsx` replace the
   `serve` helper's `"/pnl/ledger"` entry with `"/pnl/ledger": ledgerBody()` and add these helpers
   below `equity`:
 
@@ -5157,12 +5221,12 @@ const ledgerBody = (campaigns: unknown[] = []) => ({
   });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/activity/PayView.test.tsx`
 Expected: FAIL (the 8 new tests: no filters, no curve, no legs).
 
-- [ ] **Step 4: Restyle `LedgerFilters`** — replace `web/components/pnl/LedgerFilters.tsx` with the file
+- [x] **Step 4: Restyle `LedgerFilters`** — replace `web/components/pnl/LedgerFilters.tsx` with the file
   below. Every id, label text, option and the `data-testid` are the old ones; only the layout and
   the field classes change, and the doc comment is kept.
 
@@ -5310,7 +5374,7 @@ export function LedgerFilters({
 }
 ```
 
-- [ ] **Step 5: Restyle `LegRow` and `CampaignRow`** — replace `web/components/pnl/LegRow.tsx` with:
+- [x] **Step 5: Restyle `LegRow` and `CampaignRow`** — replace `web/components/pnl/LegRow.tsx` with:
 
 ```tsx
 "use client";
@@ -5441,7 +5505,7 @@ export function CampaignRow({ campaign }: { campaign: CampaignPnlData }) {
   The `campaign-leg-count` test reads `toHaveTextContent("2 legs")`: the chevron is an `svg`
   with no text, so the content is unchanged.
 
-- [ ] **Step 6: Restyle `EquityChart`** (`web/components/pnl/EquityChart.tsx`; four class edits and
+- [x] **Step 6: Restyle `EquityChart`** (`web/components/pnl/EquityChart.tsx`; four class edits and
   one comment edit, the data, the mirrors and every string unchanged): `<div className="h-80 w-full">`
   becomes `<div className="h-64 w-full md:h-80">`; the legend wrapper
   `className="mt-2 flex flex-wrap gap-4"` becomes `className="mt-2 flex flex-wrap gap-x-4 gap-y-1"`
@@ -5452,7 +5516,7 @@ export function CampaignRow({ campaign }: { campaign: CampaignPnlData }) {
   `records its actual props here — one element per series, asserted` to
   `records its actual props here, one element per series, asserted`.
 
-- [ ] **Step 7: Implement `web/features/activity/Curve.tsx`**
+- [x] **Step 7: Implement `web/features/activity/Curve.tsx`**
 
 ```tsx
 "use client";
@@ -5486,7 +5550,7 @@ export function Curve({ qsString }: { qsString: string }) {
 }
 ```
 
-- [ ] **Step 8: Implement `web/features/activity/Legs.tsx`** — the filters and the legs card are two
+- [x] **Step 8: Implement `web/features/activity/Legs.tsx`** — the filters and the legs card are two
   exports because the totals and the curve sit between them on the page:
 
 ```tsx
@@ -5564,7 +5628,7 @@ export function LegsCard({ qsString }: { qsString: string }) {
   `LedgerTable` keeps its own words ("no marks available", "No trades match the current filters.",
   the filter echo); none of them changes.
 
-- [ ] **Step 9: Extend `PayView`** — replace `web/features/activity/PayView.tsx` with:
+- [x] **Step 9: Extend `PayView`** — replace `web/features/activity/PayView.tsx` with:
 
 ```tsx
 "use client";
@@ -5616,19 +5680,19 @@ export function PayView() {
 }
 ```
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features/activity components/pnl && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 8 new tests and the 11 from Task 8; every existing `LedgerTable.test.tsx`
 (`LegRow`, `CampaignRow`, `LedgerTable`), `EquityChart` and `SummaryPanel` test **unmodified**.
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/activity web/components/pnl`
 Expected: exit 0 over every non-test source file (the legacy test titles' em dashes, if any, are
 not copy), or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 9 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 9 filled in)
 
 ```bash
 git add web/features/activity web/components/pnl/LedgerFilters.tsx web/components/pnl/CampaignRow.tsx \
@@ -5656,11 +5720,11 @@ git commit -m "feat(web): Activity Pay - one set of filters over the totals, the
   tone? })` as a figure line and `TileList({ children, testId? })` (a `dl` under a perforation).
   `LedgerOverview()` no longer renders a sub-navigation; Task 14 mounts it as Activity's Ledger view.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the ledger's tiles become
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the ledger's tiles become
   figure lines under a perforation (no KPI-tile grid), states are words, charts keep their data
   and take the ink line.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/components/ledger/Tile.test.tsx`:
 
@@ -5781,13 +5845,13 @@ describe("BackToLedger", () => {
   });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run components/ledger`
 Expected: FAIL (new modules missing; the overview still renders its sub-navigation and has no
 links or source sentence).
 
-- [ ] **Step 4: Implement the small components**
+- [x] **Step 4: Implement the small components**
 
 `web/components/ledger/Tile.tsx`:
 
@@ -5878,7 +5942,7 @@ In `web/components/ledger/Charts.tsx`, in `PnlCurve` change `stroke="var(--color
 `stroke="var(--chart-line)"` (the ink line every chart in the app uses). Nothing else in the file
 changes.
 
-- [ ] **Step 5: Restyle `TickerTable`** — replace `web/components/ledger/TickerTable.tsx` with:
+- [x] **Step 5: Restyle `TickerTable`** — replace `web/components/ledger/TickerTable.tsx` with:
 
 ```tsx
 "use client";
@@ -5970,7 +6034,7 @@ export function TickerTable({ tickers }: { tickers: LedgerTicker[] }) {
 }
 ```
 
-- [ ] **Step 6: Restyle `LedgerOverview`** — replace `web/components/ledger/LedgerOverview.tsx` with:
+- [x] **Step 6: Restyle `LedgerOverview`** — replace `web/components/ledger/LedgerOverview.tsx` with:
 
 ```tsx
 "use client";
@@ -6151,26 +6215,26 @@ export function LedgerOverview() {
   The `data-testid` values (`ledger-overview`, `ledger-tiles`, `curve-caption`, `buckets-strategy`,
   `buckets-book`) and every sentence the old tests read are the old ones.
 
-- [ ] **Step 7: Put `TickerView`'s tiles in a `TileList`** — in `web/components/ledger/TickerView.tsx`
+- [x] **Step 7: Put `TickerView`'s tiles in a `TileList`** — in `web/components/ledger/TickerView.tsx`
   change `import { Tile } from "./Tile";` to `import { Tile, TileList } from "./Tile";`, and replace
   the tile grid's opening `<div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">`
   with `<TileList>` and its closing `</div>` (the one directly before
   `<p className="text-xs text-muted">` ) with `</TileList>`. The page itself is restyled in the next
   task; this keeps the `Tile` lines valid HTML in the meantime.
 
-- [ ] **Step 8: Run the tests, then the gate**
+- [x] **Step 8: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run components/ledger && npx tsc --noEmit && npm run lint`
 Expected: PASS: 2 + 3 + 1 + 4 new tests; every existing `LedgerOverview`, `TickerView`, `TradesView`
 and `ImportView` test **unmodified** (they still render `LedgerNav`, which is unmounted from the
 overview only; the others lose it in Task 11).
 
-- [ ] **Step 9: da-vinci lint**
+- [x] **Step 9: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/components/ledger`
 Expected: exit 0 over every non-test source file, or every finding fixed in the code.
 
-- [ ] **Step 10: Commit** (with the Progress log row for Task 10 filled in)
+- [x] **Step 10: Commit** (with the Progress log row for Task 10 filled in)
 
 ```bash
 git add web/components/ledger docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md
@@ -6197,11 +6261,11 @@ git commit -m "feat(web): the ledger overview in the figure face, with no sub-na
   `LedgerNav`. `TradePanel` is a `Sheet` (a right sheet on a desktop, a bottom sheet on a phone)
   instead of a fixed panel with its own shadow.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the same data and the same
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the same data and the same
   flows in the payslip world: the trade detail in the app's sheet, fields in the `field` look,
   tables with hairline rows in the figure face that scroll inside their own box.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
   Append inside `describe("TradesView", ...)` in `TradesView.test.tsx` (the file's helpers `aTrade`,
   `ISO` and its `next/navigation` mock stay; the mock is no longer needed once `LedgerNav` is
@@ -6284,12 +6348,12 @@ git commit -m "feat(web): the ledger overview in the figure face, with no sub-na
   });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run components/ledger/TradesView.test.tsx components/ledger/TickerView.test.tsx components/ledger/ImportView.test.tsx`
 Expected: FAIL (the 8 new tests: no back link, no heading, no dialog, no keyboard).
 
-- [ ] **Step 4: Restyle `TradesTable`** — replace `web/components/ledger/TradesTable.tsx` with:
+- [x] **Step 4: Restyle `TradesTable`** — replace `web/components/ledger/TradesTable.tsx` with:
 
 ```tsx
 "use client";
@@ -6365,7 +6429,7 @@ export function TradesTable({ trades, onSelect }: { trades: LedgerTrade[]; onSel
 }
 ```
 
-- [ ] **Step 5: Restyle `TradesView`** — replace `web/components/ledger/TradesView.tsx` with:
+- [x] **Step 5: Restyle `TradesView`** — replace `web/components/ledger/TradesView.tsx` with:
 
 ```tsx
 "use client";
@@ -6497,7 +6561,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
 }
 ```
 
-- [ ] **Step 6: Restyle `TradePanel` as a sheet** — replace `web/components/ledger/TradePanel.tsx` with
+- [x] **Step 6: Restyle `TradePanel` as a sheet** — replace `web/components/ledger/TradePanel.tsx` with
   the file below. The form state, the resync rule and the `ledger_annotate` flow above `return`
   are the old code, unchanged; the shell is `Sheet`, the fields are `field`s and Save is a
   secondary `Button`.
@@ -6654,7 +6718,7 @@ export function TradePanel({ orderKey, onClose }: { orderKey: string; onClose: (
 }
 ```
 
-- [ ] **Step 7: Restyle `TickerView`** — replace `web/components/ledger/TickerView.tsx` with:
+- [x] **Step 7: Restyle `TickerView`** — replace `web/components/ledger/TickerView.tsx` with:
 
 ```tsx
 "use client";
@@ -6805,7 +6869,7 @@ export function TickerView({ symbol }: { symbol: string }) {
 }
 ```
 
-- [ ] **Step 8: Restyle `ImportView`** — replace `web/components/ledger/ImportView.tsx` with the file
+- [x] **Step 8: Restyle `ImportView`** — replace `web/components/ledger/ImportView.tsx` with the file
   below. The upload flow, the size and type checks, the messages and the corporate-action review
   are the old code, unchanged; only the shell and the controls are new.
 
@@ -7020,7 +7084,7 @@ export function ImportView() {
 }
 ```
 
-- [ ] **Step 9: Frame the three pages** — replace the three page files:
+- [x] **Step 9: Frame the three pages** — replace the three page files:
 
   `web/app/ledger/trades/page.tsx`:
 
@@ -7071,7 +7135,7 @@ export default function LedgerTickerPage({ params }: { params: Promise<{ symbol:
 }
 ```
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run components/ledger && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 8 new tests, and every existing `TradesView`, `TickerView`, `ImportView` and
@@ -7079,12 +7143,12 @@ Expected: PASS: the 8 new tests, and every existing `TradesView`, `TickerView`, 
 oversize, PDF, review-and-refresh and no-history cases are the proof the flows are untouched).
 `LedgerNav.tsx` is now unmounted and stays for Part 4 (ruling 12).
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/components/ledger web/app/ledger`
 Expected: exit 0 over every non-test source file, or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 11 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 11 filled in)
 
 ```bash
 git add web/components/ledger web/app/ledger docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md
@@ -7119,11 +7183,11 @@ git commit -m "feat(web): the ledger's trades, ticker and import pages - sheet, 
     `FillsTable({ days? })` (default 7, so its old path is unchanged), `ExecutionsList({ days })`,
     `SpreadFills({ days })`, `FillsView()` (Task 14 mounts it)
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: rows without table chrome, a
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: rows without table chrome, a
   state word on every order, the figure face for prices and counts, a labelled source on every list,
   unknown as a hatched n/a, a flag word only where something needs attention (a partial fill, Claude's cut).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `web/features/trades/time.test.ts` (add `whenET` to its import from `./time`):
 
@@ -7507,12 +7571,12 @@ describe("FillsView", () => {
 });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/trades/time.test.ts features/activity components/options/OrdersTable.test.tsx components/options/FillsTable.test.tsx`
 Expected: FAIL (modules and `whenET` missing; the 5 new `OrdersTable` cases fail on the old table).
 
-- [ ] **Step 4: Implement `whenET`** — append to `web/features/trades/time.ts`:
+- [x] **Step 4: Implement `whenET`** — append to `web/features/trades/time.ts`:
 
 ```ts
 /** "Thu, Oct 22 · 2:31 PM ET": an instant as a New York day and time; "time n/a" when it cannot be read. */
@@ -7522,7 +7586,7 @@ export function whenET(iso: string): string {
 }
 ```
 
-- [ ] **Step 5: Implement `web/features/activity/types.ts` and `fills.ts`**
+- [x] **Step 5: Implement `web/features/activity/types.ts` and `fills.ts`**
 
 `types.ts`:
 
@@ -7585,7 +7649,7 @@ export function spreadOrderTitle(
 }
 ```
 
-- [ ] **Step 6: Restyle `OrdersTable`** — replace `web/components/options/OrdersTable.tsx` with:
+- [x] **Step 6: Restyle `OrdersTable`** — replace `web/components/options/OrdersTable.tsx` with:
 
 ```tsx
 "use client";
@@ -7732,7 +7796,7 @@ export function OrdersTable({ days }: { days?: number } = {}) {
   `findByText("TSLA")` finds the ticker alone in its span; the rejected detail is rendered as
   written (never a raw code list); no button is named "roll".
 
-- [ ] **Step 7: Restyle `FillsTable`** — replace `web/components/options/FillsTable.tsx` with:
+- [x] **Step 7: Restyle `FillsTable`** — replace `web/components/options/FillsTable.tsx` with:
 
 ```tsx
 "use client";
@@ -7819,7 +7883,7 @@ export function FillsTable({ days = 7 }: { days?: number } = {}) {
   `FillsTable` is in `components/options`, which must not import `features/activity`, so it keeps
   its own one-line `lastWindow` rather than the one in `fills.ts`.
 
-- [ ] **Step 8: Implement `web/features/activity/ExecutionsList.tsx`**
+- [x] **Step 8: Implement `web/features/activity/ExecutionsList.tsx`**
 
 ```tsx
 "use client";
@@ -7912,7 +7976,7 @@ export function ExecutionsList({ days }: { days: number }) {
   The empty sentence is built from JSX text pieces; the test reads it as one string, which
   `getByText` matches because it joins the adjacent text nodes of one element.
 
-- [ ] **Step 9: Implement `web/features/activity/SpreadFills.tsx`**
+- [x] **Step 9: Implement `web/features/activity/SpreadFills.tsx`**
 
 ```tsx
 "use client";
@@ -7980,7 +8044,7 @@ export function SpreadFills({ days }: { days: number }) {
 }
 ```
 
-- [ ] **Step 10: Implement `web/features/activity/FillsView.tsx`**
+- [x] **Step 10: Implement `web/features/activity/FillsView.tsx`**
 
 ```tsx
 "use client";
@@ -8083,7 +8147,7 @@ export function FillsView() {
   The window chips read "7 days", "30 days", "90 days" and "A year" (`windowLabel`); the empty
   sentences read "the last 30 days" and "the last year" (`lastWindow`).
 
-- [ ] **Step 11: Run the tests, then the gate**
+- [x] **Step 11: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features components/options && npx tsc --noEmit && npm run lint`
 Expected: PASS: the new tests (`time` 3, `fills` 6, `FillsTable` 7, `OrdersTable` 5,
@@ -8091,12 +8155,12 @@ Expected: PASS: the new tests (`time` 3, `fills` 6, `FillsTable` 7, `OrdersTable
 empty Working state, the n/a for a null fill price, the state label, no roll button, the rejected
 detail) **unmodified**.
 
-- [ ] **Step 12: da-vinci lint**
+- [x] **Step 12: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/activity web/components/options/OrdersTable.tsx web/components/options/FillsTable.tsx`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 13: Commit** (with the Progress log row for Task 12 filled in)
+- [x] **Step 13: Commit** (with the Progress log row for Task 12 filled in)
 
 ```bash
 git add web/features/activity web/features/trades/time.ts web/features/trades/time.test.ts \
@@ -8127,11 +8191,11 @@ git commit -m "feat(web): Activity Fills and orders - the system's orders and fi
   `SystemPanel({ ..., windowControls? })` (`components/pnl/SystemPanel.tsx`); `SystemView()`
   (Task 14 mounts it).
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: a reference sheet: one idea per
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: a reference sheet: one idea per
   card, Python's figures in the stub face, words that say what a positive number means, nothing
   that can change a limit, a size or a weight, no lime.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/features/activity/sizing.test.ts`:
 
@@ -8420,12 +8484,12 @@ describe("SystemView", () => {
 
   (add `WindowControls` to the `./SystemPanel` import.)
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/activity components/pnl/SystemPanel.test.tsx`
 Expected: FAIL (modules and exports missing).
 
-- [ ] **Step 4: Implement `web/features/activity/sizing.ts`**
+- [x] **Step 4: Implement `web/features/activity/sizing.ts`**
 
 ```ts
 import { formatStubValue } from "@/components/ui/Stub";
@@ -8496,7 +8560,7 @@ export function rulesNote(g: SizingGroup): string | null {
 export const signedMark = (v: number): string => formatStubValue(v, "signed-money");
 ```
 
-- [ ] **Step 5: Implement `web/features/activity/SizingRecord.tsx`**
+- [x] **Step 5: Implement `web/features/activity/SizingRecord.tsx`**
 
 ```tsx
 "use client";
@@ -8608,7 +8672,7 @@ export function SizingRecord({ since }: { since?: string }) {
 }
 ```
 
-- [ ] **Step 6: Restyle `SystemPanel`, `ScoreBucketTable` and `CorrelationTable`** — replace
+- [x] **Step 6: Restyle `SystemPanel`, `ScoreBucketTable` and `CorrelationTable`** — replace
   `web/components/pnl/SystemPanel.tsx` with the file below. The notes, the agreement block and
   the two tables are the old content in the same order; the window controls become a named export
   (and can be turned off by a page that places them itself); the since and until inputs keep
@@ -8871,7 +8935,7 @@ export function CorrelationTable({ correlations }: { correlations: SignalCorrela
 }
 ```
 
-- [ ] **Step 7: Implement `web/features/activity/SystemView.tsx`**
+- [x] **Step 7: Implement `web/features/activity/SystemView.tsx`**
 
 ```tsx
 "use client";
@@ -8935,19 +8999,19 @@ export function SystemView() {
 }
 ```
 
-- [ ] **Step 8: Run the tests, then the gate**
+- [x] **Step 8: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run features/activity components/pnl && npx tsc --noEmit && npm run lint`
 Expected: PASS: `sizing` 15, `SizingRecord` 12, `SystemView` 4, the 2 new `SystemPanel` tests;
 every existing `SystemPanel` test (the notes in order, no control that could change a weight, the
 small-sample label, the buckets and correlations with n/a, the agreement block) **unmodified**.
 
-- [ ] **Step 9: da-vinci lint**
+- [x] **Step 9: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/activity web/components/pnl`
 Expected: exit 0 over every non-test source file, or every finding fixed in the code.
 
-- [ ] **Step 10: Commit** (with the Progress log row for Task 13 filled in)
+- [x] **Step 10: Commit** (with the Progress log row for Task 13 filled in)
 
 ```bash
 git add web/features/activity web/components/pnl/SystemPanel.tsx web/components/pnl/SystemPanel.test.tsx \
@@ -8973,10 +9037,10 @@ git commit -m "feat(web): Activity System - the sizing record over the score aga
 - Produces: `ActivityPage()`; `ACTIVITY_VIEWS`, `VIEW_LABEL`, `ActivityView` (`views.ts`); the
   redirect `/ledger` → `/activity?view=ledger`.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only: the title,
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the page frame only: the title,
   the four view chips, the view.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `web/features/activity/ActivityPage.test.tsx`:
 
@@ -9126,12 +9190,12 @@ describe("ActivityPage", () => {
   `expect(screen.getByRole("link", { name: /^Ledger/ })).toHaveAttribute("href", "/activity?view=ledger");`
   (the "Import a statement" row keeps `/ledger/import`).
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run features/activity/ActivityPage.test.tsx next.config.test.ts app/more`
 Expected: FAIL (`ActivityPage` missing; no `/ledger` redirect; More still links `/ledger`).
 
-- [ ] **Step 4: Implement** — `web/features/activity/views.ts`:
+- [x] **Step 4: Implement** — `web/features/activity/views.ts`:
 
 ```ts
 /** The Activity page's views (web/DESIGN.md Surfaces → Activity). */
@@ -9214,7 +9278,7 @@ and `/ledger/trades`, `/ledger/import` and `/ledger/ticker/:symbol` keep their o
 `components/pnl/PnlShell.tsx` is now unmounted; it and `components/ledger/LedgerNav.tsx` stay for
 Part 4 (ruling 12).
 
-- [ ] **Step 5: Run the tests, then the gate and a production build**
+- [x] **Step 5: Run the tests, then the gate and a production build**
 
 Run: `cd web && npx vitest run && npx tsc --noEmit && npm run lint`, then the scratch-copy build
 from C2:
@@ -9228,12 +9292,12 @@ Expected: PASS: 7 new `ActivityPage` tests (the `it.each` is three) and the conf
 changes; the whole suite green; the build lists `/activity`, `/portfolio`, `/ledger/trades`,
 `/ledger/import` and `/ledger/ticker/[symbol]` and no `/ledger`.
 
-- [ ] **Step 6: da-vinci lint**
+- [x] **Step 6: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/activity web/app/activity web/app/more`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 7: Commit** (with the Progress log row for Task 14 filled in)
+- [x] **Step 7: Commit** (with the Progress log row for Task 14 filled in)
 
 ```bash
 git add web/features/activity web/app/activity/page.tsx web/next.config.ts web/next.config.test.ts \
@@ -9244,7 +9308,7 @@ git commit -m "feat(web): the Activity page - Pay, Ledger, Fills and orders, Sys
 
 ---
 
-## Section D — Docs and finish (Task 15) · model: sonnet, then an opus whole-branch review
+## Section D — Docs and finish (Task 15) · model: sonnet (effort xhigh), then an opus whole-branch review
 
 Looks at the result in a browser, runs the da-vinci finish, sweeps the docs and runs every gate.
 
@@ -9278,7 +9342,7 @@ No merge or push without the operator.
 - Consumes: the whole branch.
 - Produces: the finished Part 3; the Progress log complete.
 
-- [ ] **Step 1: Run a synthetic API for the visual check.** Never point the console at the live
+- [x] **Step 1: Run a synthetic API for the visual check.** Never point the console at the live
   API for this. Write this script to the scratchpad (not the repo) and run it in the background:
 
 ```python
@@ -9425,7 +9489,7 @@ S="$(mktemp -d)/web" && rsync -a --exclude node_modules --exclude .next web/ "$S
 Run both in the background. A page that reads a route the mock lacks shows its error sentence,
 which is fine: the check is Portfolio, Activity and the ledger's own pages.
 
-- [ ] **Step 2: Look at it.** At 1440px and 390px wide, in light and in dark (More → theme), open:
+- [x] **Step 2: Look at it.** At 1440px and 390px wide, in light and in dark (More → theme), open:
   `/portfolio` (Positions: the AAPL card with its shares row, the NVDA card whose total is `n/a`
   because one leg is unknown, the "Weak health" and "Event" words on NVDA; then Campaigns, with the
   assigned thread open and the pruned leg; then Calendar, with the event word on NVDA and "Consequence
@@ -9438,7 +9502,7 @@ which is fine: the check is Portfolio, Activity and the ledger's own pages.
   and `main.scrollWidth` against the viewport). Take a screenshot of each; keep them in the
   scratchpad, not the repo.
 
-- [ ] **Step 3: da-vinci finish.** With da-vinci loaded, run its `critique` and `audit` over
+- [x] **Step 3: da-vinci finish.** With da-vinci loaded, run its `critique` and `audit` over
   `/portfolio` (all views), `/activity` (all views) and the three ledger pages, then `polish` what
   they find. Rules for the fixes:
   - every behaviour change gets a test (RED first, then GREEN), recorded in the Progress log;
@@ -9450,7 +9514,7 @@ which is fine: the check is Portfolio, Activity and the ledger's own pages.
     legacy test titles; that is not copy and not this plan's to reword).
   Commit the fixes on their own: `git commit -m "fix(web): da-vinci finish of Portfolio and Activity"`.
 
-- [ ] **Step 4: The doc sweep** (the root CLAUDE.md's mandatory doc-update table). Each item is a
+- [x] **Step 4: The doc sweep** (the root CLAUDE.md's mandatory doc-update table). Each item is a
   concrete edit:
   - **`web/DESIGN.md`**: under `## Components`, after **Meter**, add **Account card** (Portfolio:
     the title, the age of the reading in words with a Delayed flag word when it is older than 30
@@ -9537,17 +9601,25 @@ which is fine: the check is Portfolio, Activity and the ledger's own pages.
     from More); what was sent, filled and executed → Activity → Fills and orders; the sizing record
     and the score against outcome → Activity → System. Find the existing rows with
     `grep -n "Portfolio\|P&L\|/pnl\|/ledger\|Ledger" SETUP.md`.
-  - **Root `CLAUDE.md`**: in the spreads-fence bullet that says the web API reads `data/spreads.db`
-    only through `src/api/spreads_db.py`, list `GET /spreads/orders` beside `GET /spreads/positions`,
-    `GET /spreads/picks` and `GET /pnl/month`; in the "fence" section, after the sentence about
-    `GET /pnl/system`, add one: `GET /pnl/sizing` is a second read behind the fence, over
-    `src/claude/eval/sizing_counterfactual.py::summarize`, display only. Under "The web layer and
-    the trading database", add: the API still writes exactly one table; `GET /ledger/executions`
-    reads the ledger tables and nothing in `src/ledger/` changes.
+  - **Root `CLAUDE.md`** (three edits, each at an anchor that occurs once):
+    1. In "The spreads fence", the bullet that begins "**The web API reads `data/spreads.db` only
+       through `src/api/spreads_db.py`**": change `` `GET /spreads/positions`, `GET /spreads/picks`
+       and `GET /pnl/month` `` to `` `GET /spreads/positions`, `GET /spreads/picks`,
+       `GET /spreads/orders` and `GET /pnl/month` ``.
+    2. In "## The fence — the enrichment learning loop may not touch the deterministic layer", the
+       paragraph that ends "everything `eval/` produces is read by a human, never auto-applied.":
+       append the sentence "The web reads two of those human-facing reports, both display only:
+       `GET /pnl/system` (the score-vs-outcome report) and `GET /pnl/sizing` (web overhaul Part 3,
+       over `src/claude/eval/sizing_counterfactual.py::summarize`, recomputing nothing)."
+    3. In "## The web layer and the trading database", the paragraph that begins "P3 and P4
+       (portfolio, P&L, and `GET /pnl/system`'s read": append the sentence "Part 3 of the web
+       overhaul (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order
+       `sizing` and fill contract fields) adds no write either: `GET /ledger/executions` only reads
+       the ledger tables, and nothing in `src/ledger/` changes."
   - **`README.md`**: no change (no new Telegram command or top-level directory). Confirm and say
     so in the Progress log.
 
-- [ ] **Step 5: The full gate.** All of these, with the counts recorded:
+- [x] **Step 5: The full gate.** All of these, with the counts recorded:
 
 ```bash
 python -m pytest -q && ruff check . && mypy src
@@ -9561,10 +9633,10 @@ git diff --stat main -- web/components/options/DecideControls.tsx web/components
   web/lib/commands.ts web/lib/receipt.ts                          # prints nothing
 ```
 
-and the scratch-copy `next build` from C2. Expected: pytest = baseline + 29 (10 + 8 + 11); vitest
+and the scratch-copy `next build` from C2. Expected: pytest = baseline + 30 (10 + 9 + 11); vitest
 green with every new test; everything else clean.
 
-- [ ] **Step 6: Commit the docs, then the Progress log**
+- [x] **Step 6: Commit the docs, then the Progress log**
 
 ```bash
 git add web/DESIGN.md web/CLAUDE.md ARCHITECTURE.md STATUS.md SETUP.md CLAUDE.md docs/web/api.md
@@ -9576,15 +9648,18 @@ finish fix) and commit the plan file:
 `git commit -am "docs(plan): web overhaul Part 3 Progress log"` (only the plan file is modified at
 this point; check `git status` first).
 
-- [ ] **Step 7: Hand off.** Run the whole-branch review on the most capable model (opus):
+- [x] **Step 7: Hand off.** Run the whole-branch review on the most capable model (opus):
   superpowers:requesting-code-review over `main..HEAD`, with this plan, `web/DESIGN.md` and the
   Review Focus above as its brief. Fix what it finds as one review fix pass (a commit, a Progress
-  log line). Then superpowers:finishing-a-development-branch. Tell the operator that the **API**
-  needs a restart (`./ibkr restart` for the API process) before the new routes and shapes appear
-  (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing` and the
-  fill contract fields); the trading service, the scan loop and the monitor are unchanged, so they
-  need none. The console still shows the old shapes' absence gracefully: an order with no `sizing`
-  field shows no sizing words, a fill with no contract says "Contract not on record".
+  log line). Then superpowers:finishing-a-development-branch (no merge or push without the
+  operator). Tell the operator that the **API** needs a restart before the new routes and shapes
+  appear (`GET /pnl/sizing`, `GET /ledger/executions`, `GET /spreads/orders`, the order `sizing`
+  and the fill contract fields). `./ibkr restart` is the command: it stops and starts the whole
+  supervised stack, since there is no API-only restart. Only the API's code changed, so the
+  trading service, the scan loop and the monitor come back on the same behaviour. Processes do
+  not hot-reload, so after the restart check with `ps -eo lstart,command | grep run_` that the
+  API started after the merge. Until then the console degrades gracefully: an order with no
+  `sizing` field shows no sizing words, a fill with no contract says "Contract not on record".
 
 ---
 
@@ -9625,3 +9700,19 @@ this point; check `git status` first).
   tests, which are the proof the restyle changed no behaviour. Nothing here is a guess about what
   the code looks like: each legacy file was read before its replacement was written.
 
+
+## Re-verification (2026-10-28, before execution)
+
+- **What was checked.** Every task's text was applied as written (whole files from their blocks,
+  insertions at the named anchors) to a scratch worktree of `main` at c692a1b, with the gates the
+  tasks name run after each one: Section A's pytest, fences, ruff, mypy and the regenerated
+  contract; each web task's vitest scope, `tsc`, eslint and the da-vinci lint; then the full suites
+  and a scratch-copy `next build`. Results are in the Progress log's "Plan re-verified" row.
+- **What had moved under the plan.** Only f4af002's `partial` rule touched code the plan replaces
+  (Task 2's `list_orders`); it is now kept and pinned by a test. f4af002's USD-only account value
+  and c692a1b's research chart refresh touch nothing the plan writes. Every other anchor (the
+  DESIGN.md surface entries, `PositionsCard`'s row, the ledger and P&L components, the router
+  import lists, `next.config.ts`, the More page) still occurs exactly once as the plan quotes it.
+- **Execution.** Each section is sized for one Sonnet subagent at xhigh, with the next section's
+  entry checks run between sections as "How a section runs" says; the whole-branch review stays
+  on Opus.

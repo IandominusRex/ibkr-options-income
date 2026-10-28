@@ -1,22 +1,18 @@
 "use client";
 
-import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
-import { ChevronRight, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useId, useState } from "react";
 import type { ShortListResponse } from "@/components/options/types";
 import { Card } from "@/components/ui/Card";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { StatusWord } from "@/components/ui/StatusWord";
-import { NameFlags } from "@/features/market/NameFlags";
-import { formatStubValue } from "@/components/ui/Stub";
 import { FreshnessLabel } from "@/components/portfolio/FreshnessLabel";
 import type { PositionsResponse } from "@/components/portfolio/types";
 import { apiFetch } from "@/lib/api";
-import { UNKNOWN } from "@/lib/format";
-import { formatMoneyCell, isStale } from "@/lib/money";
+import { isStale } from "@/lib/money";
 import { STRATEGY_LABEL, type StrategyFilter } from "@/lib/strategy";
+import { PositionRowItem } from "./PositionRowItem";
 import { FRESH_FOR_MINUTES, buildPositionRows, matchesQuery, type PositionRow } from "./positions";
 import type { SpreadPositionsResponse } from "./types";
 
@@ -164,60 +160,9 @@ export function PositionsCard({ strategy }: { strategy: StrategyFilter }) {
         <p className="py-3 text-sm text-muted">{message}</p>
       ) : (
         <ul>
-          {visible.map((r) => {
-            const pnl = r.valueLabel === "open P&L";
-            const body = (
-              <>
-                <div className="min-w-0">
-                  <span className="font-bold">{r.title}</span>
-                  {r.status && (
-                    <span className="ml-1.5 align-[1px]">
-                      <StatusWord tone={r.status.tone}>{r.status.word}</StatusWord>
-                    </span>
-                  )}
-                  {r.alert && (
-                    <span className="ml-1.5 align-[1px]">
-                      <StatusWord tone="flag">Roll alert</StatusWord>
-                    </span>
-                  )}
-                  {r.underlying && <NameFlags symbol={r.underlying} />}
-                  <div className="text-[0.8125rem] text-muted">{r.sub}</div>
-                </div>
-                <div className="tabular text-right font-semibold">
-                  <span
-                    className={clsx(
-                      r.value === null && "hatch text-unknown",
-                      r.value !== null && pnl && r.value < 0 && "text-loss",
-                      r.value !== null && pnl && r.value > 0 && "text-gain",
-                    )}
-                  >
-                    {r.value === null
-                      ? UNKNOWN
-                      : pnl
-                        ? formatStubValue(r.value, "signed-money")
-                        : formatMoneyCell(r.value)}
-                  </span>
-                  <div className="text-[0.8125rem] font-normal text-muted">{r.valueLabel}</div>
-                </div>
-              </>
-            );
-            return (
-              <li key={r.key} className="border-t border-border first:border-t-0">
-                {r.href ? (
-                  // The whole row opens the contract. The chevron says so without a word.
-                  <Link
-                    href={r.href}
-                    className="-mx-2 grid grid-cols-[1fr_auto_16px] items-center gap-x-2.5 rounded-xl px-2 py-[11px] text-sm hover:bg-sunk"
-                  >
-                    {body}
-                    <ChevronRight size={16} aria-hidden="true" className="text-muted" />
-                  </Link>
-                ) : (
-                  <div className="grid grid-cols-[1fr_auto] gap-x-2.5 py-[11px] text-sm">{body}</div>
-                )}
-              </li>
-            );
-          })}
+          {visible.map((r) => (
+            <PositionRowItem key={r.key} row={r} />
+          ))}
         </ul>
       )}
       {filter === "all" && spreadsOut && positions.data && (

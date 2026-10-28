@@ -246,6 +246,14 @@ describe("SummaryPanel", () => {
     await screen.findByText("best-1");
     expect(screen.queryByRole("button", { name: /view nvda/i })).toBeNull();
   });
+
+  it("keeps the breakdown tables in one column that cannot outgrow the phone, so they scroll inside the card", async () => {
+    renderWithQuery(<SummaryPanel book="paper" qsString="book=paper" />, {
+      "/pnl/summary": aSummaryResponse(aSummary({ by_strategy: [aBucket()] })),
+    });
+    const heading = await screen.findByText("By strategy");
+    expect(heading.closest(".grid")).toHaveClass("grid-cols-1");
+  });
 });
 
 describe("BreakdownTable", () => {
@@ -268,4 +276,10 @@ describe("BreakdownTable", () => {
     expect(within(row).getAllByText(/n\/a/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("0%")).toBeNull();
   });
+
+  it("says a phone scrolls the table sideways", () => {
+    render(<BreakdownTable buckets={[aBucket()]} label="By strategy" />);
+    expect(screen.getByText("Scroll sideways to see every column.")).toBeInTheDocument();
+  });
+
 });

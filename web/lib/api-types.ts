@@ -364,7 +364,9 @@ export interface paths {
          * List Orders
          * @description Working orders by default. ``state=all`` returns everything.
          *
-         *     An unknown state value is rejected with 422 (not a silent empty list).
+         *     An unknown state value is rejected with 422 (not a silent empty list). Each order carries
+         *     the sizing actions linked to it (``sizing``), so an auditor can see why 1 contract went out
+         *     when the scan said 3.
          */
         get: operations["list_orders_options_orders_get"];
         put?: never;
@@ -384,7 +386,8 @@ export interface paths {
         };
         /**
          * List Fills
-         * @description Recent fills within the last ``days`` days.
+         * @description Recent fills within the last ``days`` days, each naming its contract (from the order's
+         *     frozen snapshot, then its candidate; unknown stays null).
          */
         get: operations["list_fills_options_fills_get"];
         put?: never;
@@ -764,6 +767,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pnl/sizing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pnl Sizing
+         * @description What the regime limits, the scale-in ladder, the leveraged-ETF ceiling, the floor lots and
+         *     Claude's size cut held back, and what that would have earned (web overhaul Part 3, Task 1).
+         *
+         *     Reads behind the `src/claude/eval/` fence, like `/pnl/system`: this is the human reader
+         *     `CLAUDE.md` says everything `eval/` produces is for. It calls `summarize` and returns what it
+         *     gets, grouped and ordered; no figure is recomputed here, and nothing on the route can change a
+         *     limit, a size or a weight. `since` is the first action day counted (default: every action on
+         *     record). Rows not yet valued count and are not valued.
+         */
+        get: operations["pnl_sizing_pnl_sizing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pnl/target": {
         parameters: {
             query?: never;
@@ -955,6 +985,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Executions
+         * @description IBKR's own executions, newest first: the ledger rows that are real fills (``exec``, not an
+         *     order-level statement row) and are not superseded by a twin from a higher-priority feed.
+         *     ``days`` counts US/Eastern trade days back from today; ``truncated`` says the window held
+         *     more than ``limit``. Read-only, like every ledger route (web overhaul Part 3).
+         */
+        get: operations["get_executions_ledger_executions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/imports": {
         parameters: {
             query?: never;
@@ -1124,6 +1177,29 @@ export interface paths {
          *     sent, and every spread any book opened that day. `day` defaults to today in New York.
          */
         get: operations["spread_picks_spreads_picks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spreads/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spread Orders
+         * @description The book's filled orders, newest first (web overhaul Part 3). An older file without the
+         *     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker.
+         *     A missing file, or a table that exists but cannot be read, is ``available: false`` and never
+         *     an empty list: "unavailable" is not "none".
+         */
+        get: operations["spread_orders_spreads_orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2799,6 +2875,9 @@ export interface components {
          * FillSummary
          * @description One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)
          *     because ``ApprovalDetail`` below references it for the approval-to-fill lineage.
+         *
+         *     The contract fields (web overhaul Part 3) come from the order's frozen snapshot, then its
+         *     candidate; each is ``None`` when neither is on record, never ``""`` or ``0``.
          */
         FillSummary: {
             /**
@@ -2827,6 +2906,16 @@ export interface components {
              * Format: date-time
              */
             filled_at: string;
+            /** Underlying */
+            underlying?: string | null;
+            /** Strategy */
+            strategy?: string | null;
+            /** Right */
+            right?: ("C" | "P") | null;
+            /** Strike */
+            strike?: number | null;
+            /** Expiry */
+            expiry?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3089,6 +3178,76 @@ export interface components {
             book: string;
             /** Superseded By */
             superseded_by: number | null;
+        };
+        /**
+         * LedgerExecutionRowOut
+         * @description One real IBKR execution (web overhaul Part 3): quantity is signed (bought +, sold −),
+         *     ``trade_time`` is UTC, ``trade_date`` the US/Eastern day. ``right`` is ``C`` or ``P`` for an
+         *     option and None for shares.
+         */
+        LedgerExecutionRowOut: {
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Exec Id */
+            exec_id: string | null;
+            /**
+             * Trade Time
+             * Format: date-time
+             */
+            trade_time: string;
+            /**
+             * Trade Date
+             * Format: date
+             */
+            trade_date: string;
+            /** Underlying */
+            underlying: string;
+            /** Sec Type */
+            sec_type: string;
+            /** Right */
+            right: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Multiplier */
+            multiplier: number;
+            /** Currency */
+            currency: string;
+            /** Quantity */
+            quantity: number;
+            /** Price */
+            price: number;
+            /** Proceeds */
+            proceeds: number;
+            /** Commission */
+            commission: number;
+            /** Codes */
+            codes: string;
+            /** Book */
+            book: string;
+            /** Ib Order Id */
+            ib_order_id: number | null;
+            /** Perm Id */
+            perm_id: number | null;
+        };
+        /** LedgerExecutionsResponse */
+        LedgerExecutionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Days */
+            days: number;
+            /** Limit */
+            limit: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Executions */
+            executions: components["schemas"]["LedgerExecutionRowOut"][];
         };
         /** LedgerFeedStatus */
         LedgerFeedStatus: {
@@ -4066,6 +4225,24 @@ export interface components {
             /** Orders */
             orders?: components["schemas"]["OrderSummary"][];
         };
+        /**
+         * OrderSizingOut
+         * @description One sizing action linked to an order (``sizing_actions.order_id``): what the rules alone
+         *     would have sent, what was sent, and the reason as it was recorded (web overhaul Part 3).
+         */
+        OrderSizingOut: {
+            /** Kind */
+            kind: string;
+            /** Deterministic Contracts */
+            deterministic_contracts: number;
+            /** Sent Contracts */
+            sent_contracts: number;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** OrderSummary */
         OrderSummary: {
             /**
@@ -4112,6 +4289,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Sizing */
+            sizing?: components["schemas"]["OrderSizingOut"][];
         };
         /**
          * PeriodStatement
@@ -4908,6 +5087,58 @@ export interface components {
             actions?: components["schemas"]["SizingActionOut"][];
         };
         /**
+         * SizingGroupOut
+         * @description One line of the sizing record: a kind of action and what it withheld, as
+         *     ``src/claude/eval/sizing_counterfactual.py::summarize`` reports it (key ``<kind>:<split>``,
+         *     or ``claude_overrides`` for Claude's cuts, whose ``kind`` is ``claude_cut``).
+         *
+         *     A positive P&L is what the withheld contracts would have **earned**: the action cost that
+         *     much (for ``regime_floor_lot`` the valued contracts are the lots the floor let through, so
+         *     positive means letting them through paid). Rows not yet valued count in ``count`` and not
+         *     in ``resolved``. A ``pushed_out`` line is counted and never valued, so its figures are None.
+         */
+        SizingGroupOut: {
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** Split */
+            split: string;
+            /** Count */
+            count: number;
+            /** Contracts Withheld */
+            contracts_withheld?: number | null;
+            /** Resolved */
+            resolved?: number | null;
+            /** Exact */
+            exact?: number | null;
+            /** Pnl Expiry */
+            pnl_expiry?: number | null;
+            /** Pnl Rules */
+            pnl_rules?: number | null;
+            /** Rules Missing */
+            rules_missing?: number | null;
+            /** Applied */
+            applied?: number | null;
+            /** Unapplied */
+            unapplied?: number | null;
+        };
+        /**
+         * SizingRecordResponse
+         * @description The sizing record, read by a human (the live-cutover gate's step 4). Display only.
+         */
+        SizingRecordResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Since */
+            since?: string | null;
+            /** Groups */
+            groups: components["schemas"]["SizingGroupOut"][];
+        };
+        /**
          * Source
          * @description Where a number came from. A Black-Scholes delta must not look like an IBKR one.
          * @enum {string}
@@ -4978,6 +5209,62 @@ export interface components {
             dist_em_multiple: number | null;
             /** Be Nominal Exits */
             be_nominal_exits: number | null;
+        };
+        /**
+         * SpreadOrderOut
+         * @description One filled order of the credit-spreads book (``spread_orders``: only filled orders are
+         *     recorded), joined to its spread. The spread's fields are None when its position row is
+         *     missing.
+         */
+        SpreadOrderOut: {
+            /** Spread Id */
+            spread_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "open" | "close";
+            /** Ib Order Id */
+            ib_order_id: number | null;
+            /** Perm Id */
+            perm_id: number | null;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Price */
+            price: number | null;
+            /** Commission */
+            commission: number;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Mode */
+            mode: string | null;
+            /** Side */
+            side: ("put" | "call") | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Short Strike */
+            short_strike: number | null;
+            /** Long Strike */
+            long_strike: number | null;
+        };
+        /** SpreadOrdersResponse */
+        SpreadOrdersResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Underlying */
+            underlying: string;
+            /** Orders */
+            orders?: components["schemas"]["SpreadOrderOut"][];
         };
         /**
          * SpreadPickOut
@@ -5952,8 +6239,10 @@ export interface operations {
     list_orders_options_orders_get: {
         parameters: {
             query?: {
-                /** @description `working` (queued/submitted/partial), `all`, or a specific state. */
+                /** @description `working` (queued/submitted), `all`, or a specific state. */
                 state?: "working" | "all" | "queued" | "submitted" | "filled" | "partial" | "cancelled" | "rejected";
+                /** @description Only orders created in the last N days. */
+                days?: number | null;
                 limit?: number;
             };
             header?: never;
@@ -6450,6 +6739,37 @@ export interface operations {
             };
         };
     };
+    pnl_sizing_pnl_sizing_get: {
+        parameters: {
+            query?: {
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SizingRecordResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     pnl_target_pnl_target_get: {
         parameters: {
             query?: never;
@@ -6747,6 +7067,40 @@ export interface operations {
             };
         };
     };
+    get_executions_ledger_executions_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                book?: ("system" | "manual" | "spreads") | null;
+                symbol?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerExecutionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_imports_ledger_imports_get: {
         parameters: {
             query?: never;
@@ -7016,6 +7370,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpreadPicksResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    spread_orders_spreads_orders_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpreadOrdersResponse"];
                 };
             };
             /** @description Validation Error */

@@ -850,25 +850,35 @@ this lists what to pick from). Excludes single-ticker runs the same way
 
 ### `GET /options/orders`
 
-Working orders by default. `state=working` means `queued`, `submitted` or
-`partial`; `state=all` returns everything. `underlying`/`strategy`/`strike` come
+Working orders by default. `state=working` means `queued` or `submitted` (a `partial`
+order is final, the executors cancel its remainder); `state=all` returns everything. `underlying`/`strategy`/`strike` come
 from the order's `snapshot`, falling back to the joined `CandidateRow` so a pruned
 candidate does not blank the row. `avg_fill_price` is `null` for an unfilled
 order, never `0.0`. `detail` carries the humanised reason for a `rejected`/`cancelled`
 order (e.g. a live-mode order-send-time re-gate rejection) — never a raw Python list
 repr of the gate codes.
 
-**Query params:** `state=working` (default; queued and submitted — a `partial` order is final, the executors cancel its remainder), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `limit` (1-200, default 50).
+**Query params:** `state=working` (default; queued and submitted — a `partial` order is final, the executors cancel its remainder), `all`, or a specific state (`queued`, `submitted`, `filled`, `partial`, `cancelled`, `rejected` — unknown returns **422**); `days` (1-365, optional: only orders created in the last N days); `limit` (1-200, default 50).
 
 **Response — `OrderListResponse`:** `{ as_of, orders: OrderSummary[] }`.
+
+*Web overhaul Part 3:* each `OrderSummary` carries **`sizing`**, the `sizing_actions` rows linked to the order
+(`order_id`), as `{ kind, deterministic_contracts, sent_contracts, reason }`: what the rules alone would have
+sent, what was sent, and the reason as recorded (Claude's words when `kind` is `claude_cut` or
+`claude_cut_unapplied`). It is empty when no action shaped the order. The Activity page's Orders list shows it in
+words, so an auditor sees why 1 contract went out when the scan said 3.
 
 ### `GET /options/fills`
 
 Recent fills within the last `days` days.
 
-**Query params:** `days` (1-90, default 7); `limit` (1-500, default 100).
+**Query params:** `days` (1-365, default 7); `limit` (1-500, default 100).
 
 **Response — `FillListResponse`:** `{ as_of, fills: FillSummary[] }`.
+
+*Web overhaul Part 3:* each `FillSummary` names its contract: `underlying`, `strategy`, `right` (`C` or `P`),
+`strike` and `expiry`, taken from the order's frozen snapshot and then from its candidate, and `null` (never `""`
+or `0`) when neither is on record.
 
 ### `GET /options/shorts`
 
@@ -1284,6 +1294,36 @@ closed rows in the window, never `0.0`, matching every other rate in this phase.
 closed trades, the response is the report's own empty case (`n_closed: 0` plus its own
 "nothing to correlate yet" note) — never a `404` or a hand-written empty message. Owner-only.
 
+### `GET /pnl/sizing` (web overhaul Part 3)
+
+The sizing record's totals: what the market-regime limits, the scale-in ladder, the leveraged-ETF ceiling, the
+guaranteed lots and Claude's size cut held back or changed, and what that would have earned. It is the review the
+live-cutover gate asks for, read by a human on Activity, System. Like `GET /pnl/system` it reads behind the
+`src/claude/eval/` fence, and for the same reason: it calls `sizing_counterfactual.py::summarize` and returns what
+it gets, recomputing nothing and writing nothing. Owner-only. Nothing in the engine, execution or sizing path
+reads it.
+
+**Query params:** `since` (`YYYY-MM-DD`, optional): only actions taken on or after that day.
+
+**Response — `SizingRecordResponse`:** `{ as_of, since, groups: SizingGroupOut[] }`. An empty record is
+`groups: []`.
+
+`SizingGroupOut`: `{ key, kind, split, count, contracts_withheld, resolved, exact, pnl_expiry, pnl_rules,
+rules_missing, applied, unapplied }`.
+
+| `SizingGroupOut` field | Meaning |
+|---|---|
+| `key`, `kind`, `split` | one line per kind of action: `<kind>:<split>`, or `claude_overrides` for Claude's cuts (`kind` `claude_cut`); `split` is `sent_smaller`, `never_sent`, `pushed_out` or `overrides` |
+| `count` | rows counted, valued or not |
+| `contracts_withheld` | contracts the action held back; `null` for a `pushed_out` line. **For `regime_floor_lot` these are the lots the floor let through**, not lots it held back |
+| `resolved` | rows valued so far; **rows not yet valued count in `count` and are never valued** |
+| `exact` | of the resolved, those valued at the traded contract's realised P&L |
+| `pnl_expiry`, `pnl_rules` | what the held-back contracts would have earned, marked at expiry and walked through the daily closes under the system's own exit rules. **A positive number is what the action cost**; negative is a loss it avoided. **`regime_floor_lot` reads the other way:** the contracts valued are the lots the floor let through, so a positive number is what they earned (letting them through paid). `null` when nothing is valued, never `0` |
+| `rules_missing` | valued rows with no entry IV, left out of `pnl_rules` |
+| `applied`, `unapplied` | Claude's cuts only: how many were applied and how many were recorded only |
+
+A `pushed_out` line (the covered-call breakout rule moving a strike out) is counted and carries no figures.
+
 ### `GET /pnl/month` (web overhaul Part 1)
 
 One month's options income as a pay stub, for Home's collapsible "October pay" card. A thin
@@ -1409,6 +1449,34 @@ the ledger). Owner-only.
 `complete` is `false` when a closed leg that day has no commission recorded (the figure is a
 lower bound on the cost, an upper bound on the result).
 
+## Ledger (trade ledger; web overhaul Part 3)
+
+The broker-truth ledger's routes are described in `ARCHITECTURE.md` (`routers/ledger.py`); Part 3 added one.
+
+### `GET /ledger/executions` (web overhaul Part 3)
+
+IBKR's own executions, newest first, for Activity, Fills and orders, *At IBKR*: the ledger rows that are real
+fills, from the live feed, the Flex query and statement imports, in every book. Order-level statement rows and
+rows a twin-pass supersession folded into a higher-priority feed's row are excluded. Owner-only and read-only: it
+reads the ledger tables and changes nothing in `src/ledger/`.
+
+| Param | Type | Notes |
+|---|---|---|
+| `days` | int, 1-365, default 30 | US/Eastern trade days back from today |
+| `book` | `system` \| `manual` \| `spreads` | optional |
+| `symbol` | string | optional, the underlying |
+| `limit` | int, 1-500, default 200 | |
+
+**Response — `LedgerExecutionsResponse`:** `{ as_of, days, limit, truncated, executions: LedgerExecutionRowOut[] }`.
+`truncated` is `true` when the window held more than `limit`.
+
+`LedgerExecutionRowOut`: `{ id, source, exec_id, trade_time, trade_date, underlying, sec_type, right, strike,
+expiry, multiplier, currency, quantity, price, proceeds, commission, codes, book, ib_order_id, perm_id }`.
+`quantity` is signed (bought +, sold −); `trade_time` is UTC and `trade_date` the US/Eastern day; `right` is `C`
+or `P` for an option and `null` for shares; `source` is `live`, `flex` or `csv`; `book` is `system`, `manual` or
+`spreads`. The system's own fills and IBKR's executions are two records that can disagree; the route does not
+reconcile them.
+
 ## Spreads (web overhaul Part 1)
 
 ### `GET /spreads/positions`
@@ -1490,6 +1558,30 @@ Every figure was computed by `src/spreads/menu.py` when the menu was built; cred
 distance from spot (positive is out of the money), `dist_em_multiple` the same in expected
 moves, `be_nominal_exits` the break-even win rate (0 to 1) under the configured exits;
 `short_delta`, `dist_em_multiple` and `be_nominal_exits` may be `null`. `dist_spot_pts` never is.
+
+### `GET /spreads/orders` (web overhaul Part 3)
+
+The credit-spreads book's filled orders, newest first, for Activity, Fills and orders (the book records filled
+orders only). Same access path as `GET /spreads/positions` (`src/api/spreads_db.py`, `mode=ro`, plain SQL; the
+API never imports `src.spreads`). Owner-only; writes nothing; never reaches IBKR.
+
+| Param | Type | Notes |
+|---|---|---|
+| `days` | int, 1-365, default 30 | orders created in the last N days |
+| `limit` | int, 1-500, default 200 | |
+
+- **`available`** is `false` when `data/spreads.db` does not exist or cannot be read, **and when the
+  `spread_orders` table exists but cannot be read** (schema drift, a damaged or locked table). An older file
+  without the `spread_orders` table at all answers `available: true` with no orders, as `GET /spreads/picks`
+  does for the picker. Unavailable is never "no orders".
+- Each order is joined to its spread: **`mode`, `side`, `expiry`, `short_strike` and `long_strike` are `null`**
+  when the spread's position row is missing.
+
+**Response — `SpreadOrdersResponse`:** `{ as_of, available, underlying, orders: SpreadOrderOut[] }`.
+
+`SpreadOrderOut`: `{ spread_id, kind: "open" | "close", ib_order_id, perm_id, filled_qty, price, commission,
+reason, created_at, mode, side: "put" | "call", expiry, short_strike, long_strike }`. `price` is per share and
+`null` when none was recorded; `reason` says why a close was sent (profit take, stop, expiry); `created_at` is UTC.
 
 ## News (news thread, spec §7.6)
 

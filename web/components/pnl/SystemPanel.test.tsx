@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { SystemPanel } from "./SystemPanel";
+import { SystemPanel, WindowControls } from "./SystemPanel";
 import type {
   ScoreBucketData,
   SignalCorrelationData,
@@ -175,4 +175,23 @@ describe("SystemPanel", () => {
     expect(within(block).getAllByText(/n\/a/i).length).toBeGreaterThan(0);
     expect(within(block).queryByText("0%")).toBeNull();
   });
+
+  it("can leave its window controls to its page", () => {
+    const { container } = render(<SystemPanel data={aReport()} windowControls={false} />);
+    expect(container.querySelectorAll('[data-role="window-control"]')).toHaveLength(0);
+    expect(screen.getByText(READONLY_NOTE)).toBeInTheDocument();
+  });
+
+  it("exports the two date controls on their own, labelled, for the System view", () => {
+    render(<WindowControls since="2026-10-01" until="" />);
+    expect(screen.getByLabelText("since")).toHaveValue("2026-10-01");
+    expect(screen.getByLabelText("until")).toHaveValue("");
+  });
+
+  it("says a phone scrolls each evidence table sideways", () => {
+    render(<SystemPanel data={aReport()} />);
+    // the blended-score table, the component table and the correlation table
+    expect(screen.getAllByText("Scroll sideways to see every column.")).toHaveLength(3);
+  });
+
 });

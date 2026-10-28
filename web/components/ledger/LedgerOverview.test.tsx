@@ -78,4 +78,69 @@ describe("LedgerOverview", () => {
     expect(await screen.findByText(/2 closing trades have no opening/)).toBeInTheDocument();
     expect(screen.getByText(/no FX rate yet/)).toBeInTheDocument();
   });
+
+  it("leads to the trades list and the statement import, and has no sub-navigation of its own", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary() },
+      "/ledger/tickers": { as_of: ISO, tickers: [] },
+    });
+    expect(await screen.findByRole("link", { name: "All trades" })).toHaveAttribute("href", "/ledger/trades");
+    expect(screen.getByRole("link", { name: "Import a statement" })).toHaveAttribute("href", "/ledger/import");
+    expect(screen.queryByRole("navigation", { name: "Ledger sections" })).toBeNull();
+  });
+
+  it("says where its figures come from, and that they can differ from the system's own", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary() },
+      "/ledger/tickers": { as_of: ISO, tickers: [] },
+    });
+    expect(
+      await screen.findByText(/What IBKR reports, from the live feed, the Flex query and statement imports/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/It can differ from the system's own record under Pay/)).toBeInTheDocument();
+  });
+
+  it("lists upcoming expiries with a link to the ticker and the outcome in words", async () => {
+    const upcoming = {
+      order_key: "k1", underlying: "NVDA", side: "Sell", lots: 1, strike: 138, right: "P",
+      expiry: "2099-11-20", outcome: "Open", outcome_overridden: false,
+    };
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary({ upcoming: [upcoming as never] }) },
+      "/ledger/tickers": { as_of: ISO, tickers: [] },
+    });
+    const link = await screen.findByRole("link", { name: "NVDA" });
+    expect(link).toHaveAttribute("href", "/ledger/ticker/NVDA");
+    const row = link.closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("Sell 1 x 138P");
+    expect(row).toHaveTextContent("Open");
+  });
+
+  it("says it could not load the ledger, and shows nothing else, when the summary fails", async () => {
+    renderWithQuery(<LedgerOverview />, { "/ledger/tickers": { as_of: ISO, tickers: [] } });
+    expect(await screen.findByText("Could not load the ledger.")).toBeInTheDocument();
+    expect(screen.queryByTestId("ledger-tiles")).toBeNull();
+  });
+
+  it("keeps the page in one column that cannot outgrow the phone, so its tables scroll inside their cards", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary() },
+      "/ledger/tickers": { as_of: ISO, tickers: [aTicker()] },
+    });
+    expect(await screen.findByTestId("ledger-overview")).toHaveClass("grid-cols-1");
+  });
+
+  it("says a bucket table is empty instead of showing only its headings", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": {
+        as_of: ISO,
+        summary: aSummary({ by_strategy: [{ label: "CSP", n_closed: 4, realized_usd: 900, win_rate: 0.75 }], by_book: [] }),
+      },
+      "/ledger/tickers": { as_of: ISO, tickers: [] },
+    });
+    const book = await screen.findByTestId("buckets-book");
+    expect(within(book).getByText("None yet.")).toBeInTheDocument();
+    expect(within(book).queryByRole("table")).toBeNull();
+    expect(within(await screen.findByTestId("buckets-strategy")).getByRole("table")).toBeInTheDocument();
+  });
 });

@@ -1,7 +1,11 @@
 "use client";
 
+import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/Button";
+import { FIELD, FIELD_LABEL } from "@/components/ui/field";
+import { Sheet } from "@/components/ui/Sheet";
 import { apiFetch } from "@/lib/api";
 import { submitCommand, useCommandStatus } from "@/lib/commands";
 import { money, pct } from "./format";
@@ -60,71 +64,86 @@ export function TradePanel({ orderKey, onClose }: { orderKey: string; onClose: (
   }
 
   const state = status.data?.status;
+  const t = data?.trade;
   return (
-    <aside className="fixed inset-y-0 right-0 z-20 w-full max-w-md space-y-4 overflow-y-auto bg-surface p-5 shadow-lg" aria-label="Trade detail">
-      <div className="flex items-start justify-between">
-        <h2 className="text-base text-content">Trade</h2>
-        <button type="button" onClick={onClose} className="text-sm text-muted hover:text-content">Close</button>
-      </div>
+    <Sheet open onClose={onClose} title="Trade">
       {!data && <p className="text-sm text-muted">Loading</p>}
-      {data && (
-        <>
-          <div className="space-y-1 text-sm">
-            <div className="font-mono text-content">
-              {data.trade.side} {data.trade.lots} x {data.trade.underlying} {data.trade.expiry} {data.trade.strike}{data.trade.right}
-            </div>
-            <OutcomePill outcome={data.trade.outcome} overridden={data.trade.outcome_overridden} />
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 pt-2 text-muted">
-              <dt>Premium</dt><dd className="tabular text-content">{money(data.trade.premium, data.trade.currency)}</dd>
-              <dt>Net P&L</dt><dd className="tabular text-content">{money(data.trade.net_pnl, data.trade.currency)}</dd>
-              <dt>% Profit (sheet)</dt><dd className="tabular text-content">{pct(data.trade.pct_profit)}</dd>
-              <dt>Annualised net</dt><dd className="tabular text-content">{pct(data.trade.annualised_net_pct)}</dd>
-              <dt>IBKR realised</dt><dd className="tabular text-content">{money(data.trade.ibkr_realized_pnl, data.trade.currency)}</dd>
-              {data.trade.rolled_from && (<><dt>Rolled from</dt><dd className="font-mono text-content">{data.trade.rolled_from}</dd></>)}
-              {data.trade.rolled_to && (<><dt>Rolled to</dt><dd className="font-mono text-content">{data.trade.rolled_to}</dd></>)}
+      {data && t && (
+        <div className="grid gap-5">
+          <div className="grid gap-2">
+            <p className="font-mono text-sm font-semibold">
+              {t.side} {t.lots} x {t.underlying} {t.expiry} {t.strike}
+              {t.right}
+            </p>
+            <p>
+              <OutcomePill outcome={t.outcome} overridden={t.outcome_overridden} />
+            </p>
+            <dl className="tabular border-t-2 border-dashed border-perforation pt-2 font-mono text-[0.84375rem] font-medium">
+              {[
+                ["Premium", money(t.premium, t.currency)],
+                ["Net P&L", money(t.net_pnl, t.currency)],
+                ["% Profit (sheet)", pct(t.pct_profit)],
+                ["Annualised net", pct(t.annualised_net_pct)],
+                ["IBKR realised", money(t.ibkr_realized_pnl, t.currency)],
+                ...(t.rolled_from ? [["Rolled from", t.rolled_from]] : []),
+                ...(t.rolled_to ? [["Rolled to", t.rolled_to]] : []),
+              ].map(([label, value]) => (
+                <div key={label} className="flex min-h-6 items-baseline justify-between gap-3">
+                  <dt className="min-w-0 font-sans font-normal text-muted">{label}</dt>
+                  <dd className={clsx("text-right", value === "n/a" && "hatch text-unknown")}>{value}</dd>
+                </div>
+              ))}
             </dl>
           </div>
-          <section className="space-y-1">
-            <h3 className="text-sm text-content">Executions</h3>
-            <ul className="space-y-1 text-xs text-muted">
+          <section className="grid gap-1">
+            <h3 className="text-[1.0625rem] font-bold">Executions</h3>
+            <ul className="tabular font-mono text-xs text-muted">
               {data.executions.map((e) => (
-                <li key={e.id} className="tabular">
+                <li key={e.id} className="border-t border-border py-1.5 first:border-t-0">
                   {e.trade_time.slice(0, 19).replace("T", " ")} {e.quantity} @ {e.price} {e.codes} ({e.source}
                   {e.superseded_by ? ", superseded" : ""})
                 </li>
               ))}
             </ul>
           </section>
-          <section className="space-y-3">
-            <label className="block text-sm">
-              <span className="text-muted">Notes</span>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="mt-1 w-full rounded bg-elevated p-2 text-content" />
+          <section className="grid gap-3">
+            <label className="grid gap-1 text-sm">
+              <span className={FIELD_LABEL}>Notes</span>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={clsx(FIELD, "w-full py-2")} />
             </label>
-            <label className="block text-sm">
-              <span className="text-muted">Tags (comma separated)</span>
-              <input value={tags} onChange={(e) => setTags(e.target.value)} className="mt-1 w-full rounded bg-elevated p-2 text-content" />
+            <label className="grid gap-1 text-sm">
+              <span className={FIELD_LABEL}>Tags (comma separated)</span>
+              <input value={tags} onChange={(e) => setTags(e.target.value)} className={clsx(FIELD, "w-full")} />
             </label>
-            <label className="block text-sm">
-              <span className="text-muted">Outcome override</span>
-              <select value={override} onChange={(e) => setOverride(e.target.value)} className="mt-1 w-full rounded bg-elevated p-2 text-content">
-                <option value="">Use computed ({data.trade.computed_outcome})</option>
-                {OUTCOMES.map((o) => <option key={o} value={o}>{o}</option>)}
+            <label className="grid gap-1 text-sm">
+              <span className={FIELD_LABEL}>Outcome override</span>
+              <select value={override} onChange={(e) => setOverride(e.target.value)} className={clsx(FIELD, "w-full")}>
+                <option value="">Use computed ({t.computed_outcome})</option>
+                {OUTCOMES.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <input type="checkbox" checked={exclude} onChange={(e) => setExclude(e.target.checked)} />
+            <label className="flex min-h-11 items-center gap-2 text-sm text-muted">
+              <input type="checkbox" checked={exclude} onChange={(e) => setExclude(e.target.checked)} className="h-5 w-5" />
               Exclude from win rate and averages (still counted in money totals)
             </label>
-            <div className="flex items-center gap-3">
-              <button type="button" onClick={save} className="rounded-md bg-elevated px-3 py-1.5 text-sm text-content hover:bg-focus/20">Save</button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant="secondary" onClick={save}>
+                Save
+              </Button>
               {state === "pending" && <span className="text-sm text-muted">Saving</span>}
               {state === "applied" && <span className="text-sm text-gain">Saved</span>}
-              {state === "failed" && <span className="text-sm text-loss">Not saved: {String(status.data?.result?.reason ?? "error")}</span>}
+              {state === "failed" && (
+                <span className="text-sm text-loss">Not saved: {String(status.data?.result?.reason ?? "error")}</span>
+              )}
               {error && <span className="text-sm text-loss">{error}</span>}
             </div>
           </section>
-        </>
+        </div>
       )}
-    </aside>
+    </Sheet>
   );
 }

@@ -1,14 +1,18 @@
 "use client";
 
+import clsx from "clsx";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { apiFetch } from "@/lib/api";
 import { submitCommand, useCommandStatus } from "@/lib/commands";
-import { LedgerNav } from "./LedgerNav";
+import { BackToLedger } from "./BackToLedger";
 import type { LedgerFeedStatus, LedgerImportsResponse } from "./types";
 
 // Client-side UX hint only; the server enforces ledger.upload_max_bytes (ruling F6).
 const MAX_BYTES = 5 * 1024 * 1024;
+const H2 = "text-[1.0625rem] font-bold";
 
 // FileReader rather than File.text(): same result, and it exists in every browser and in jsdom.
 function readText(f: File): Promise<string> {
@@ -22,8 +26,17 @@ function readText(f: File): Promise<string> {
 
 function Feed({ label, s }: { label: string; s: LedgerFeedStatus }) {
   let text = "not set up (see SETUP.md, Trade ledger)";
-  if (s.configured) text = s.last_error ? `failing: ${s.last_error}` : s.last_run ? `last run ${s.last_run.slice(0, 16).replace("T", " ")} UTC${s.last_status ? ` (${s.last_status})` : ""}` : "set up, not run yet";
-  return <li className="text-sm text-muted">{label}: {text}</li>;
+  if (s.configured)
+    text = s.last_error
+      ? `failing: ${s.last_error}`
+      : s.last_run
+        ? `last run ${s.last_run.slice(0, 16).replace("T", " ")} UTC${s.last_status ? ` (${s.last_status})` : ""}`
+        : "set up, not run yet";
+  return (
+    <li className="text-sm text-muted">
+      {label}: {text}
+    </li>
+  );
 }
 
 export function ImportView() {
@@ -92,60 +105,103 @@ export function ImportView() {
   }
 
   return (
-    <div className="space-y-6" data-testid="import-view">
-      <LedgerNav />
-      <section className="space-y-2 rounded-lg bg-surface p-5">
-        <h2 className="text-sm text-content">Upload an IBKR Activity Statement</h2>
-        <p className="text-xs text-muted">Client Portal, Performance and Reports, Statements, Activity, format CSV. Re-uploading the same file changes nothing.</p>
-        <label className="block text-sm text-muted">
+    <div className="grid grid-cols-1 gap-4" data-testid="import-view">
+      <div className="grid gap-1">
+        <BackToLedger />
+        <h1 className="text-2xl font-extrabold tracking-[-0.015em]">Import a statement</h1>
+      </div>
+      <Card as="section" aria-labelledby="upload-title">
+        <h2 id="upload-title" className={H2}>
+          Upload an IBKR Activity Statement
+        </h2>
+        <p className="mt-1 text-[0.8125rem] text-muted">
+          Client Portal, Performance and Reports, Statements, Activity, format CSV. Re-uploading the same file changes nothing.
+        </p>
+        <label className="mt-3 grid gap-2 text-sm text-muted">
           Activity Statement CSV
-          <input type="file" accept=".csv,text/csv" aria-label="Activity Statement CSV" onChange={(e) => void onFile(e.target.files?.[0])} className="mt-2 block text-sm text-content" />
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            aria-label="Activity Statement CSV"
+            onChange={(e) => void onFile(e.target.files?.[0])}
+            className="block min-h-11 text-sm text-content"
+          />
         </label>
-        {message && <p className="text-sm text-content" role="status">{message}</p>}
-      </section>
+        {message && (
+          <p className="mt-2 text-sm text-content" role="status">
+            {message}
+          </p>
+        )}
+      </Card>
 
       {data && (
         <>
-          <ul className="space-y-1">
+          <ul className="grid gap-1">
             <Feed label="Flex pull" s={data.flex} />
             <Feed label="Google Sheet mirror" s={data.sheets} />
           </ul>
 
           {data.corporate_actions.length > 0 && (
-            <section className="space-y-2">
-              <h2 className="text-sm text-content">Corporate actions</h2>
-              <p className="text-xs text-muted">These are stored but never applied to cost basis automatically. Check each one, then mark it reviewed.</p>
-              <ul className="space-y-2 text-sm">
+            <Card as="section" aria-labelledby="corporate-actions">
+              <h2 id="corporate-actions" className={H2}>
+                Corporate actions
+              </h2>
+              <p className="mt-1 text-[0.8125rem] text-muted">
+                These are stored but never applied to cost basis automatically. Check each one, then mark it reviewed.
+              </p>
+              <ul className="mt-2 text-sm">
                 {data.corporate_actions.map((a) => (
-                  <li key={a.id} className="flex flex-wrap items-center gap-3">
-                    <span className="tabular text-muted">{a.event_date}</span>
+                  <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border py-2 first:border-t-0">
+                    <span className="tabular font-mono text-muted">{a.event_date}</span>
                     <span className="text-content">{a.description}</span>
-                    {a.reviewed ? <span className="text-xs text-muted">reviewed</span> : (
-                      <button type="button" disabled={reviewPending} onClick={() => void markReviewed(a.id)} className="rounded bg-elevated px-2 py-0.5 text-xs text-content">{reviewPending && reviewId?.action === a.id ? "Marking" : "Mark reviewed"}</button>
+                    {a.reviewed ? (
+                      <span className="text-xs text-muted">reviewed</span>
+                    ) : (
+                      <Button variant="secondary" disabled={reviewPending} onClick={() => void markReviewed(a.id)}>
+                        {reviewPending && reviewId?.action === a.id ? "Marking" : "Mark reviewed"}
+                      </Button>
                     )}
                   </li>
                 ))}
               </ul>
-            </section>
+            </Card>
           )}
 
-          <section className="space-y-2">
-            <h2 className="text-sm text-content">Import history</h2>
-            <table className="w-full text-sm">
-              <thead className="text-left text-muted"><tr><th className="py-1 pr-4">When</th><th className="py-1 pr-4">Source</th><th className="py-1 pr-4">File</th><th className="py-1 pr-4">Result</th><th className="py-1 pr-4">Counts</th></tr></thead>
-              <tbody>
-                {data.runs.map((r) => (
-                  <tr key={r.id} className="border-t border-border align-top">
-                    <td className="tabular py-1 pr-4">{r.started_at.slice(0, 16).replace("T", " ")}</td>
-                    <td className="py-1 pr-4">{r.source}</td>
-                    <td className="py-1 pr-4">{r.filename}</td>
-                    <td className={`py-1 pr-4 ${r.status === "ok" ? "text-gain" : "text-loss"}`}>{r.status}{r.reason ? ` (${r.reason})` : ""}</td>
-                    <td className="tabular py-1 pr-4 text-muted">{Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(", ")}</td>
+          <Card as="section" aria-labelledby="import-history">
+            <h2 id="import-history" className={H2}>
+              Import history
+            </h2>
+            <p className="mt-2 text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-[0.8125rem]">
+                <thead className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
+                  <tr>
+                    <th className="py-1.5 pr-4 font-semibold">When</th>
+                    <th className="py-1.5 pr-4 font-semibold">Source</th>
+                    <th className="py-1.5 pr-4 font-semibold">File</th>
+                    <th className="py-1.5 pr-4 font-semibold">Result</th>
+                    <th className="py-1.5 pr-4 font-semibold">Counts</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+                </thead>
+                <tbody>
+                  {data.runs.map((r) => (
+                    <tr key={r.id} className="border-t border-border align-top">
+                      <td className="tabular py-2 pr-4 font-mono">{r.started_at.slice(0, 16).replace("T", " ")}</td>
+                      <td className="py-2 pr-4">{r.source}</td>
+                      <td className="py-2 pr-4">{r.filename}</td>
+                      <td className={clsx("py-2 pr-4", r.status === "ok" ? "text-gain" : "text-loss")}>
+                        {r.status}
+                        {r.reason ? ` (${r.reason})` : ""}
+                      </td>
+                      <td className="tabular py-2 pr-4 font-mono text-muted">
+                        {Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join(", ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
     </div>

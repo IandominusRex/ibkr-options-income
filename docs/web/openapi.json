@@ -857,7 +857,7 @@
           "options"
         ],
         "summary": "List Orders",
-        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list).",
+        "description": "Working orders by default. ``state=all`` returns everything.\n\nAn unknown state value is rejected with 422 (not a silent empty list). Each order carries\nthe sizing actions linked to it (``sizing``), so an auditor can see why 1 contract went out\nwhen the scan said 3.",
         "operationId": "list_orders_options_orders_get",
         "security": [
           {
@@ -886,6 +886,26 @@
               "title": "State"
             },
             "description": "`working` (queued/submitted), `all`, or a specific state."
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 365,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only orders created in the last N days.",
+              "title": "Days"
+            },
+            "description": "Only orders created in the last N days."
           },
           {
             "name": "limit",
@@ -930,7 +950,7 @@
           "options"
         ],
         "summary": "List Fills",
-        "description": "Recent fills within the last ``days`` days.",
+        "description": "Recent fills within the last ``days`` days, each naming its contract (from the order's\nfrozen snapshot, then its candidate; unknown stays null).",
         "operationId": "list_fills_options_fills_get",
         "security": [
           {
@@ -944,7 +964,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 90,
+              "maximum": 365,
               "minimum": 1,
               "default": 7,
               "title": "Days"
@@ -2025,6 +2045,59 @@
         }
       }
     },
+    "/pnl/sizing": {
+      "get": {
+        "summary": "Pnl Sizing",
+        "description": "What the regime limits, the scale-in ladder, the leveraged-ETF ceiling, the floor lots and\nClaude's size cut held back, and what that would have earned (web overhaul Part 3, Task 1).\n\nReads behind the `src/claude/eval/` fence, like `/pnl/system`: this is the human reader\n`CLAUDE.md` says everything `eval/` produces is for. It calls `summarize` and returns what it\ngets, grouped and ordered; no figure is recomputed here, and nothing on the route can change a\nlimit, a size or a weight. `since` is the first action day counted (default: every action on\nrecord). Rows not yet valued count and are not valued.",
+        "operationId": "pnl_sizing_pnl_sizing_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SizingRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/pnl/target": {
       "get": {
         "summary": "Pnl Target",
@@ -2848,6 +2921,106 @@
         }
       }
     },
+    "/ledger/executions": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Get Executions",
+        "description": "IBKR's own executions, newest first: the ledger rows that are real fills (``exec``, not an\norder-level statement row) and are not superseded by a twin from a higher-priority feed.\n``days`` counts US/Eastern trade days back from today; ``truncated`` says the window held\nmore than ``limit``. Read-only, like every ledger route (web overhaul Part 3).",
+        "operationId": "get_executions_ledger_executions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "default": 30,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "book",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "system",
+                    "manual",
+                    "spreads"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Book"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerExecutionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/ledger/imports": {
       "get": {
         "tags": [
@@ -3350,6 +3523,69 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SpreadPicksResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/spreads/orders": {
+      "get": {
+        "tags": [
+          "spreads"
+        ],
+        "summary": "Spread Orders",
+        "description": "The book's filled orders, newest first (web overhaul Part 3). An older file without the\ntable answers ``available: true`` with no orders, as `/spreads/picks` does for the picker.\nA missing file, or a table that exists but cannot be read, is ``available: false`` and never\nan empty list: \"unavailable\" is not \"none\".",
+        "operationId": "spread_orders_spreads_orders_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "default": 30,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpreadOrdersResponse"
                 }
               }
             }
@@ -7595,6 +7831,66 @@
             "type": "string",
             "format": "date-time",
             "title": "Filled At"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "C",
+                  "P"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
           }
         },
         "type": "object",
@@ -7610,7 +7906,7 @@
           "filled_at"
         ],
         "title": "FillSummary",
-        "description": "One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)\nbecause ``ApprovalDetail`` below references it for the approval-to-fill lineage."
+        "description": "One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)\nbecause ``ApprovalDetail`` below references it for the approval-to-fill lineage.\n\nThe contract fields (web overhaul Part 3) come from the order's frozen snapshot, then its\ncandidate; each is ``None`` when neither is on record, never ``\"\"`` or ``0``."
       },
       "HTTPValidationError": {
         "properties": {
@@ -8196,6 +8492,197 @@
           "superseded_by"
         ],
         "title": "LedgerExecutionOut"
+      },
+      "LedgerExecutionRowOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "exec_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exec Id"
+          },
+          "trade_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Trade Time"
+          },
+          "trade_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Trade Date"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "sec_type": {
+            "type": "string",
+            "title": "Sec Type"
+          },
+          "right": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right"
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
+          },
+          "multiplier": {
+            "type": "number",
+            "title": "Multiplier"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "quantity": {
+            "type": "number",
+            "title": "Quantity"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          },
+          "proceeds": {
+            "type": "number",
+            "title": "Proceeds"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission"
+          },
+          "codes": {
+            "type": "string",
+            "title": "Codes"
+          },
+          "book": {
+            "type": "string",
+            "title": "Book"
+          },
+          "ib_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ib Order Id"
+          },
+          "perm_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perm Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "exec_id",
+          "trade_time",
+          "trade_date",
+          "underlying",
+          "sec_type",
+          "right",
+          "strike",
+          "expiry",
+          "multiplier",
+          "currency",
+          "quantity",
+          "price",
+          "proceeds",
+          "commission",
+          "codes",
+          "book",
+          "ib_order_id",
+          "perm_id"
+        ],
+        "title": "LedgerExecutionRowOut",
+        "description": "One real IBKR execution (web overhaul Part 3): quantity is signed (bought +, sold \u2212),\n``trade_time`` is UTC, ``trade_date`` the US/Eastern day. ``right`` is ``C`` or ``P`` for an\noption and None for shares."
+      },
+      "LedgerExecutionsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "days": {
+            "type": "integer",
+            "title": "Days"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerExecutionRowOut"
+            },
+            "type": "array",
+            "title": "Executions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "days",
+          "limit",
+          "truncated",
+          "executions"
+        ],
+        "title": "LedgerExecutionsResponse"
       },
       "LedgerFeedStatus": {
         "properties": {
@@ -10750,6 +11237,35 @@
         ],
         "title": "OrderListResponse"
       },
+      "OrderSizingOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "deterministic_contracts": {
+            "type": "integer",
+            "title": "Deterministic Contracts"
+          },
+          "sent_contracts": {
+            "type": "integer",
+            "title": "Sent Contracts"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "deterministic_contracts",
+          "sent_contracts"
+        ],
+        "title": "OrderSizingOut",
+        "description": "One sizing action linked to an order (``sizing_actions.order_id``): what the rules alone\nwould have sent, what was sent, and the reason as it was recorded (web overhaul Part 3)."
+      },
       "OrderSummary": {
         "properties": {
           "as_of": {
@@ -10862,6 +11378,13 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "sizing": {
+            "items": {
+              "$ref": "#/components/schemas/OrderSizingOut"
+            },
+            "type": "array",
+            "title": "Sizing"
           }
         },
         "type": "object",
@@ -12892,6 +13415,158 @@
         ],
         "title": "SizingActionsResponse"
       },
+      "SizingGroupOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "split": {
+            "type": "string",
+            "title": "Split"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "contracts_withheld": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contracts Withheld"
+          },
+          "resolved": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved"
+          },
+          "exact": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exact"
+          },
+          "pnl_expiry": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Expiry"
+          },
+          "pnl_rules": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl Rules"
+          },
+          "rules_missing": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Missing"
+          },
+          "applied": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied"
+          },
+          "unapplied": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unapplied"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "split",
+          "count"
+        ],
+        "title": "SizingGroupOut",
+        "description": "One line of the sizing record: a kind of action and what it withheld, as\n``src/claude/eval/sizing_counterfactual.py::summarize`` reports it (key ``<kind>:<split>``,\nor ``claude_overrides`` for Claude's cuts, whose ``kind`` is ``claude_cut``).\n\nA positive P&L is what the withheld contracts would have **earned**: the action cost that\nmuch (for ``regime_floor_lot`` the valued contracts are the lots the floor let through, so\npositive means letting them through paid). Rows not yet valued count in ``count`` and not\nin ``resolved``. A ``pushed_out`` line is counted and never valued, so its figures are None."
+      },
+      "SizingRecordResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SizingGroupOut"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "groups"
+        ],
+        "title": "SizingRecordResponse",
+        "description": "The sizing record, read by a human (the live-cutover gate's step 4). Display only."
+      },
       "Source": {
         "type": "string",
         "enum": [
@@ -13069,6 +13744,189 @@
         ],
         "title": "SpreadMenuItemOut",
         "description": "One lettered spread on a pick menu, flattened from the stored SpreadMenuItem. Credits are\nper share; every figure was computed by src/spreads/menu.py when the menu was built."
+      },
+      "SpreadOrderOut": {
+        "properties": {
+          "spread_id": {
+            "type": "string",
+            "title": "Spread Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "open",
+              "close"
+            ],
+            "title": "Kind"
+          },
+          "ib_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ib Order Id"
+          },
+          "perm_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Perm Id"
+          },
+          "filled_qty": {
+            "type": "integer",
+            "title": "Filled Qty"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "put",
+                  "call"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Side"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiry"
+          },
+          "short_strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short Strike"
+          },
+          "long_strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Strike"
+          }
+        },
+        "type": "object",
+        "required": [
+          "spread_id",
+          "kind",
+          "ib_order_id",
+          "perm_id",
+          "filled_qty",
+          "price",
+          "commission",
+          "reason",
+          "created_at",
+          "mode",
+          "side",
+          "expiry",
+          "short_strike",
+          "long_strike"
+        ],
+        "title": "SpreadOrderOut",
+        "description": "One filled order of the credit-spreads book (``spread_orders``: only filled orders are\nrecorded), joined to its spread. The spread's fields are None when its position row is\nmissing."
+      },
+      "SpreadOrdersResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "underlying": {
+            "type": "string",
+            "title": "Underlying"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/SpreadOrderOut"
+            },
+            "type": "array",
+            "title": "Orders"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "underlying"
+        ],
+        "title": "SpreadOrdersResponse"
       },
       "SpreadPickOut": {
         "properties": {

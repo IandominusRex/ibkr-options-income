@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from src.api.main import create_app
 from src.storage.db import session_scope
-from src.storage.models import CandidateRow, FillRow, OrderRow
+from src.storage.models import CandidateRow, FillRow, OrderRow, SizingActionRow
 
 TOKEN = "correct-horse-battery"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -254,3 +254,171 @@ def test_specific_state_filter_returns_only_that_state(client) -> None:
     assert r.status_code == 200
     states = {o["state"] for o in r.json()["orders"]}
     assert states == {"filled"}
+
+
+def _sizing(
+    order_id: int, kind: str, *, wanted: int, sent: int, reason: str = ""
+) -> SizingActionRow:
+    return SizingActionRow(
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        candidate_id="c2",
+        record_key=f"c2-{kind}",
+        underlying="AAPL",
+        strategy="cash_secured_put",
+        right="P",
+        strike=185.0,
+        expiry=_EXPIRY,
+        premium=3.10,
+        kind=kind,
+        regime="stressed",
+        deterministic_contracts=wanted,
+        sent_contracts=sent,
+        reason=reason,
+        action_day=date.today(),
+        order_id=order_id,
+    )
+
+
+def test_an_order_carries_the_sizing_action_that_shaped_it(client) -> None:
+    with session_scope() as s:
+        s.add(_sizing(2, "claude_cut", wanted=3, sent=1, reason="Claude suggested 1"))
+    by_cid = {
+        o["candidate_id"]: o
+        for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]
+    }
+    assert by_cid["c2"]["sizing"] == [
+        {
+            "kind": "claude_cut",
+            "deterministic_contracts": 3,
+            "sent_contracts": 1,
+            "reason": "Claude suggested 1",
+        }
+    ]
+
+
+def test_an_order_no_action_touched_has_an_empty_sizing_list(client) -> None:
+    by_cid = {
+        o["candidate_id"]: o
+        for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]
+    }
+    assert by_cid["c1"]["sizing"] == []
+
+
+def test_two_actions_on_one_order_both_come_back_oldest_first(client) -> None:
+    with session_scope() as s:
+        s.add(_sizing(2, "regime_budget", wanted=3, sent=2))
+        s.add(_sizing(2, "claude_cut", wanted=2, sent=1))
+    by_cid = {
+        o["candidate_id"]: o
+        for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]
+    }
+    assert [a["kind"] for a in by_cid["c2"]["sizing"]] == ["regime_budget", "claude_cut"]
+
+
+def test_orders_can_be_windowed_by_days(client) -> None:
+    with session_scope() as s:
+        s.add(
+            OrderRow(
+                candidate_id="old",
+                state="filled",
+                filled_qty=1.0,
+                is_live=False,
+                snapshot=_snap(underlying="OLD"),
+                created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30),
+            )
+        )
+    week = {
+        o["candidate_id"]
+        for o in client.get("/options/orders?state=all&days=7", headers=AUTH).json()["orders"]
+    }
+    quarter = {
+        o["candidate_id"]
+        for o in client.get("/options/orders?state=all&days=90", headers=AUTH).json()["orders"]
+    }
+    assert "old" not in week and "old" in quarter
+    assert client.get("/options/orders?days=0", headers=AUTH).status_code == 422
+    assert client.get("/options/orders?days=366", headers=AUTH).status_code == 422
+
+
+def test_a_fill_names_its_contract(client) -> None:
+    (fill,) = client.get("/options/fills?days=7", headers=AUTH).json()["fills"]
+    assert (fill["underlying"], fill["strategy"], fill["right"], fill["strike"]) == (
+        "AAPL",
+        "cash_secured_put",
+        "P",
+        185.0,
+    )
+    assert fill["expiry"] == _EXPIRY.isoformat()
+
+
+def test_a_fill_falls_back_to_its_candidate_when_the_order_has_no_snapshot(client) -> None:
+    with session_scope() as s:
+        order = OrderRow(
+            candidate_id="c1", state="filled", filled_qty=1.0, is_live=False, snapshot=None
+        )
+        s.add(order)
+        s.flush()
+        s.add(
+            FillRow(
+                order_id=order.id,
+                candidate_id="c1",
+                action="SELL",
+                filled_qty=1.0,
+                avg_price=3.25,
+                is_live=False,
+                filled_at=datetime.now(UTC),
+            )
+        )
+    fills = client.get("/options/fills?days=7", headers=AUTH).json()["fills"]
+    nvda = next(f for f in fills if f["candidate_id"] == "c1")
+    assert (nvda["underlying"], nvda["strike"], nvda["right"]) == ("NVDA", 190.0, "P")
+
+
+def test_a_fill_with_no_order_and_no_candidate_has_an_unknown_contract_not_a_zero(client) -> None:
+    with session_scope() as s:
+        s.add(
+            FillRow(
+                order_id=999,
+                candidate_id="ghost",
+                action="SELL",
+                filled_qty=1.0,
+                avg_price=1.0,
+                is_live=False,
+                filled_at=datetime.now(UTC),
+            )
+        )
+    ghost = next(
+        f
+        for f in client.get("/options/fills?days=7", headers=AUTH).json()["fills"]
+        if f["candidate_id"] == "ghost"
+    )
+    for field in ("underlying", "strategy", "right", "strike", "expiry"):
+        assert ghost[field] is None, field
+
+
+def test_fills_reach_back_a_year_and_no_further(client) -> None:
+    assert client.get("/options/fills?days=365", headers=AUTH).status_code == 200
+    assert client.get("/options/fills?days=366", headers=AUTH).status_code == 422
+
+
+def test_a_partial_order_is_history_not_working(client) -> None:
+    """`partial` is final (the executors cancel the rest at the fill timeout, 2026-10-27): the
+    rewritten route must keep it out of `working`, as the route it replaces did."""
+    with session_scope() as s:
+        s.add(
+            OrderRow(
+                candidate_id="half",
+                state="partial",
+                filled_qty=1.0,
+                is_live=False,
+                snapshot=_snap(underlying="HALF"),
+            )
+        )
+    working = {
+        o["candidate_id"] for o in client.get("/options/orders", headers=AUTH).json()["orders"]
+    }
+    every = {
+        o["candidate_id"]
+        for o in client.get("/options/orders?state=all", headers=AUTH).json()["orders"]
+    }
+    assert "half" not in working and "half" in every

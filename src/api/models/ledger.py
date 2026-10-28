@@ -110,3 +110,37 @@ class LedgerImportsResponse(Envelope):
     flex: LedgerFeedStatus
     sheets: LedgerFeedStatus
     corporate_actions: list[LedgerCorporateActionOut]
+
+
+class LedgerExecutionRowOut(BaseModel):
+    """One real IBKR execution (web overhaul Part 3): quantity is signed (bought +, sold −),
+    ``trade_time`` is UTC, ``trade_date`` the US/Eastern day. ``right`` is ``C`` or ``P`` for an
+    option and None for shares."""
+
+    id: int
+    source: str  # live | flex | csv
+    exec_id: str | None
+    trade_time: datetime
+    trade_date: date
+    underlying: str
+    sec_type: str
+    right: str | None
+    strike: float | None
+    expiry: date | None
+    multiplier: float
+    currency: str
+    quantity: float
+    price: float
+    proceeds: float
+    commission: float
+    codes: str
+    book: str  # system | manual | spreads
+    ib_order_id: int | None
+    perm_id: int | None
+
+
+class LedgerExecutionsResponse(Envelope):
+    days: int
+    limit: int
+    truncated: bool  # more executions exist in the window than were returned
+    executions: list[LedgerExecutionRowOut]

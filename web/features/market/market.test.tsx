@@ -6,7 +6,7 @@ import { HeldBack } from "./HeldBack";
 import { MarketCard } from "./MarketCard";
 import { NameFlags } from "./NameFlags";
 import { NameNotes } from "./NameNotes";
-import { actionTitle, limitSentence, nameFlags, reasonWords, sentSentence } from "./market";
+import { actionTitle, eventBefore, limitSentence, nameFlags, reasonWords, sentSentence } from "./market";
 
 afterEach(cleanup);
 
@@ -192,5 +192,25 @@ describe("HeldBack", () => {
     const { container } = renderWithQuery(<HeldBack day="2026-10-22" strategy="cc" isToday />, { "/claude/sizing": sizing });
     await waitFor(() => expect(apiFetchMock.mock.calls.length).toBeGreaterThan(0));
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("eventBefore", () => {
+  const dossier = (...on: string[]) =>
+    ({
+      symbol: "AAPL",
+      events: on.map((o, i) => ({ id: `E${i}`, title: "t", on: o, evidence: "C1", quote: "q" })),
+    }) as never;
+  it("is the nearest verified event from today up to and including the expiry", () => {
+    expect(eventBefore(dossier("2026-11-10", "2026-10-27"), "2026-10-23", "2026-11-20")).toBe("2026-10-27");
+    expect(eventBefore(dossier("2026-11-20"), "2026-10-23", "2026-11-20")).toBe("2026-11-20");
+    expect(eventBefore(dossier("2026-10-23"), "2026-10-23", "2026-11-20")).toBe("2026-10-23");
+  });
+  it("ignores an event already past or after the expiry", () => {
+    expect(eventBefore(dossier("2026-10-20", "2026-11-25"), "2026-10-23", "2026-11-20")).toBeNull();
+  });
+  it("is null with no notes or no events", () => {
+    expect(eventBefore(undefined, "2026-10-23", "2026-11-20")).toBeNull();
+    expect(eventBefore(dossier(), "2026-10-23", "2026-11-20")).toBeNull();
   });
 });

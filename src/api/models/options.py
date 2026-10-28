@@ -66,7 +66,10 @@ class AlternativeStrike(BaseModel):
 
 class FillSummary(Envelope):
     """One fill against an order. Defined here (ahead of Task 2.3's orders/fills section)
-    because ``ApprovalDetail`` below references it for the approval-to-fill lineage."""
+    because ``ApprovalDetail`` below references it for the approval-to-fill lineage.
+
+    The contract fields (web overhaul Part 3) come from the order's frozen snapshot, then its
+    candidate; each is ``None`` when neither is on record, never ``""`` or ``0``."""
 
     id: int
     order_id: int
@@ -77,6 +80,11 @@ class FillSummary(Envelope):
     commission: float | None = None
     is_live: bool
     filled_at: datetime
+    underlying: str | None = None
+    strategy: str | None = None
+    right: Literal["C", "P"] | None = None
+    strike: float | None = None
+    expiry: date | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +216,16 @@ class AssessedRunsResponse(Envelope):
 OrderStateLit = Literal["queued", "submitted", "filled", "partial", "cancelled", "rejected"]
 
 
+class OrderSizingOut(BaseModel):
+    """One sizing action linked to an order (``sizing_actions.order_id``): what the rules alone
+    would have sent, what was sent, and the reason as it was recorded (web overhaul Part 3)."""
+
+    kind: str
+    deterministic_contracts: int
+    sent_contracts: int
+    reason: str = ""
+
+
 class OrderSummary(Envelope):
     id: int
     candidate_id: str
@@ -224,6 +242,7 @@ class OrderSummary(Envelope):
     detail: str | None = None
     created_at: datetime
     updated_at: datetime
+    sizing: list[OrderSizingOut] = Field(default_factory=list)
 
 
 class OrderListResponse(Envelope):

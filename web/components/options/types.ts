@@ -127,6 +127,14 @@ export type AssessedResponse = {
   groups: AssessedGroup[];
 };
 
+/** A sizing action linked to an order (src/api/models/options.py OrderSizingOut). */
+export type OrderSizing = {
+  kind: string;
+  deterministic_contracts: number;
+  sent_contracts: number;
+  reason: string;
+};
+
 export type OrderSummary = {
   as_of: string;
   id: number;
@@ -144,6 +152,7 @@ export type OrderSummary = {
   detail: string | null;
   created_at: string;
   updated_at: string;
+  sizing?: OrderSizing[];
 };
 
 export type OrderListResponse = { as_of: string; orders: OrderSummary[] };
@@ -159,6 +168,11 @@ export type FillSummary = {
   commission: number | null;
   is_live: boolean;
   filled_at: string;
+  underlying?: string | null;
+  strategy?: string | null;
+  right?: "C" | "P" | null;
+  strike?: number | null;
+  expiry?: string | null;
 };
 
 export type FillListResponse = { as_of: string; fills: FillSummary[] };

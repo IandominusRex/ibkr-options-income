@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/lib/api";
 import { EmptyState } from "@/components/options/EmptyState";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Money } from "@/components/portfolio/Money";
 import { BreakdownTable } from "./BreakdownTable";
 import type { PnlLegData, PnlSummaryResponse } from "./types";
@@ -53,24 +54,16 @@ export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
           This summary would total both the paper and the live book. A total across
           both books is not a number that means anything, so pick one.
         </p>
-        <fieldset className="flex flex-wrap gap-2" role="group" aria-label="book">
-          {["paper", "live"].map((b) => (
-            <button
-              key={b}
-              type="button"
-              onClick={() => onBookChange?.(b)}
-              aria-pressed={book === b}
-              className={
-                "rounded border px-3 py-1 text-xs " +
-                (book === b
-                  ? "border-focus bg-elevated text-content"
-                  : "border-border bg-surface text-muted hover:text-content")
-              }
-            >
-              {b} book
-            </button>
-          ))}
-        </fieldset>
+        <SegmentedControl
+          label="Book"
+          appearance="chips"
+          options={[
+            { value: "paper", label: "paper book" },
+            { value: "live", label: "live book" },
+          ]}
+          value={book as "paper" | "live"}
+          onChange={(b) => onBookChange?.(b)}
+        />
       </div>
     );
   }
@@ -116,15 +109,15 @@ export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
         </Headline>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <BreakdownTable buckets={s.by_strategy ?? []} label="By strategy" />
         <BreakdownTable buckets={s.by_symbol ?? []} label="By symbol" />
       </div>
 
       {(s.best || s.worst) && (
         <div className="space-y-2">
-          <h3 className="text-xs uppercase tracking-wide text-muted">Best and worst closed legs</h3>
-          <ul className="space-y-1 text-xs">
+          <h3 className="text-xs font-semibold tracking-[0.04em] text-muted">Best and worst closed legs</h3>
+          <ul className="space-y-1 text-[0.8125rem]">
             {s.best && <BestWorstRow leg={s.best} which="best" onSelect={onSelectLeg} />}
             {s.worst && <BestWorstRow leg={s.worst} which="worst" onSelect={onSelectLeg} />}
           </ul>
@@ -162,7 +155,7 @@ function BestWorstRow({
             type="button"
             onClick={() => onSelect(leg)}
             aria-label={`View ${contract} in the ledger`}
-            className="font-mono text-content underline decoration-dotted underline-offset-2 hover:decoration-solid"
+            className="inline-flex min-h-11 items-center font-mono text-content underline decoration-dotted underline-offset-2 hover:decoration-solid md:min-h-6"
           >
             {contract}
           </button>

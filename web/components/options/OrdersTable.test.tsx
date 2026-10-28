@@ -135,4 +135,57 @@ describe("OrdersTable", () => {
     // Never a raw Python list repr like "['live_premium_collapse']".
     expect(screen.queryByText(/live_premium_collapse/)).toBeNull();
   });
+
+  const order = (over: Record<string, unknown> = {}) => ({
+    as_of: "x", id: 1, candidate_id: "c1", approval_id: null, underlying: "NVDA", strategy: "cash_secured_put",
+    strike: 190.0, expiry: null, state: "filled", limit_price: 3.25, filled_qty: 1, avg_fill_price: 3.2,
+    is_live: false, detail: null, created_at: "2026-10-22T18:31:00Z", updated_at: "x", sizing: [], ...over,
+  });
+  const serveOrders = async (orders: unknown[]) => {
+    const { apiFetch } = await import("@/lib/api");
+    (apiFetch as any).mockImplementation(async () => ({ as_of: "x", orders }));
+    return apiFetch as any;
+  };
+
+  it("says what shaped an order's size, in words, and labels Claude's reason as Claude's", async () => {
+    await serveOrders([order({ sizing: [{ kind: "claude_cut", deterministic_contracts: 3, sent_contracts: 1, reason: "Claude suggested 1" }] })]);
+    withClient(<OrdersTable />);
+    fireEvent.click(await screen.findByRole("button", { name: "All" }));
+    expect(await screen.findByText("Claude's cut")).toBeInTheDocument();
+    expect(screen.getByText("Sent 1 of 3 contracts.")).toBeInTheDocument();
+    expect(screen.getByText(/Claude's reason:/)).toHaveTextContent("Claude's reason: Claude suggested 1");
+  });
+
+  it("words a rule's reason codes and does not call them Claude's", async () => {
+    await serveOrders([order({ sizing: [{ kind: "regime_budget", deterministic_contracts: 2, sent_contracts: 1, reason: "trimmed (regime_budget)" }] })]);
+    withClient(<OrdersTable />);
+    fireEvent.click(await screen.findByRole("button", { name: "All" }));
+    expect(await screen.findByText(/Rule:/)).toHaveTextContent("the market regime has shrunk the put budget");
+    expect(screen.queryByText(/Claude's reason/)).toBeNull();
+  });
+
+  it("asks for the window on All and Rejected, never on Working", async () => {
+    const api = await serveOrders([]);
+    withClient(<OrdersTable days={90} />);
+    await screen.findByText(/No working orders/i);
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await screen.findByText(/No orders\./i);
+    const paths = api.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(paths).toContain("/options/orders?state=working&limit=200");
+    expect(paths).toContain("/options/orders?state=all&days=90&limit=200");
+  });
+
+  it("says a working order is cancelled in IBKR for now", async () => {
+    await serveOrders([]);
+    withClient(<OrdersTable />);
+    expect(await screen.findByText("A working order is cancelled in IBKR for now. The web cannot cancel one yet.")).toBeInTheDocument();
+  });
+
+  it("makes a partial fill the one flag word, and says when the list was cut at 200", async () => {
+    await serveOrders(Array.from({ length: 200 }, (_, i) => order({ id: i + 1, candidate_id: `c${i}`, state: i === 0 ? "partial" : "filled" })));
+    withClient(<OrdersTable />);
+    fireEvent.click(await screen.findByRole("button", { name: "All" }));
+    expect(await screen.findByText("Partial")).toHaveAttribute("data-tone", "flag");
+    expect(screen.getByText("Showing the latest 200 orders. Choose a shorter window to see every order in it.")).toBeInTheDocument();
+  });
 });

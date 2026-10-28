@@ -88,4 +88,29 @@ describe("ImportView", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Mark/ })).toBeNull(), { timeout: 4000 });
     expect(screen.getByText("reviewed")).toBeInTheDocument();
   });
+
+  it("leads back to the Ledger view and has a heading of its own", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    expect(await screen.findByRole("link", { name: "Back to Activity, Ledger" })).toHaveAttribute("href", "/activity?view=ledger");
+    expect(screen.getByRole("heading", { level: 1, name: "Import a statement" })).toBeInTheDocument();
+  });
+
+  it("says a feed that is failing, in words", async () => {
+    renderWithQuery(<ImportView />, {
+      "/ledger/imports": { ...IMPORTS, flex: { configured: true, last_run: null, last_status: null, last_error: "token expired" } },
+    });
+    expect(await screen.findByText(/Flex pull: failing: token expired/)).toBeInTheDocument();
+  });
+
+  it("keeps the page in one column that cannot outgrow the phone, so the history scrolls inside its card", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    expect(await screen.findByTestId("import-view")).toHaveClass("grid-cols-1");
+  });
+
+  it("says a phone scrolls the import history sideways", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    await screen.findByText("stmt.csv");
+    expect(screen.getByText("Scroll sideways to see every column.")).toBeInTheDocument();
+  });
+
 });

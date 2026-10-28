@@ -36,6 +36,7 @@ from src.api.models.options import (
     FillSummary,
     IdealZonePayload,
     OrderListResponse,
+    OrderSizingOut,
     OrderSummary,
     RollAlertSummary,
     ShortListResponse,
@@ -872,6 +873,27 @@ def _order_underlying_strategy_strike(
     return underlying, strategy, strike, expiry
 
 
+def _contract_of(
+    snap: dict[str, Any] | None, cand: Any | None
+) -> tuple[str | None, str | None, Literal["C", "P"] | None, float | None, Any]:
+    """Underlying / strategy / right / strike / expiry from the order's snapshot, then its
+    candidate. Unknown stays ``None``: a fill must never claim a strike of 0."""
+    snap = snap or {}
+
+    def pick(key: str) -> Any:
+        v = snap.get(key)
+        return v if v is not None else (getattr(cand, key, None) if cand is not None else None)
+
+    right = pick("right")
+    return (
+        pick("underlying") or None,
+        pick("strategy") or None,
+        _right_lit(right) if right else None,
+        pick("strike"),
+        pick("expiry"),
+    )
+
+
 @router.get("/orders", response_model=OrderListResponse)
 def list_orders(
     _user: OwnerUser,
@@ -882,13 +904,18 @@ def list_orders(
         default="working",
         description="`working` (queued/submitted), `all`, or a specific state.",
     ),
+    days: int | None = Query(
+        default=None, ge=1, le=365, description="Only orders created in the last N days."
+    ),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> OrderListResponse:
     """Working orders by default. ``state=all`` returns everything.
 
-    An unknown state value is rejected with 422 (not a silent empty list).
+    An unknown state value is rejected with 422 (not a silent empty list). Each order carries
+    the sizing actions linked to it (``sizing``), so an auditor can see why 1 contract went out
+    when the scan said 3.
     """
-    from src.storage.models import CandidateRow, OrderRow
+    from src.storage.models import CandidateRow, OrderRow, SizingActionRow
 
     now = datetime.now(UTC)
     _WORKING = {"queued", "submitted"}  # `partial` is final: the executors cancel the rest
@@ -899,6 +926,8 @@ def list_orders(
     elif state != "all":
         # A specific state: validate by the literal above, then filter directly.
         stmt = stmt.where(OrderRow.state == state)
+    if days is not None:
+        stmt = stmt.where(OrderRow.created_at >= now - timedelta(days=days))
     stmt = stmt.order_by(OrderRow.created_at.desc()).limit(limit)
 
     orders = db.execute(stmt).scalars().all()
@@ -914,6 +943,23 @@ def list_orders(
             .all()
         )
         cand_map = {c.candidate_id: c for c in cands}
+
+    sizing: dict[int, list[OrderSizingOut]] = {}
+    for a in db.execute(
+        select(SizingActionRow)
+        .where(SizingActionRow.order_id.in_([o.id for o in orders]))
+        .order_by(SizingActionRow.id)
+    ).scalars():
+        if a.order_id is None:
+            continue
+        sizing.setdefault(a.order_id, []).append(
+            OrderSizingOut(
+                kind=a.kind,
+                deterministic_contracts=a.deterministic_contracts,
+                sent_contracts=a.sent_contracts,
+                reason=a.reason or "",
+            )
+        )
 
     out: list[OrderSummary] = []
     for o in orders:
@@ -940,6 +986,7 @@ def list_orders(
                 detail=o.detail,
                 created_at=as_utc_opt(o.created_at) or now,
                 updated_at=as_utc_opt(o.updated_at) or now,
+                sizing=sizing.get(o.id, []),
             )
         )
     return OrderListResponse(as_of=now, orders=out)
@@ -949,11 +996,12 @@ def list_orders(
 def list_fills(
     _user: OwnerUser,
     db: TradingDb,
-    days: int = Query(default=7, ge=1, le=90),
+    days: int = Query(default=7, ge=1, le=365),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> FillListResponse:
-    """Recent fills within the last ``days`` days."""
-    from src.storage.models import FillRow
+    """Recent fills within the last ``days`` days, each naming its contract (from the order's
+    frozen snapshot, then its candidate; unknown stays null)."""
+    from src.storage.models import CandidateRow, FillRow, OrderRow
 
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=days)
@@ -968,21 +1016,47 @@ def list_fills(
         .scalars()
         .all()
     )
-    fills = [
-        FillSummary(
-            as_of=now,
-            id=r.id,
-            order_id=r.order_id,
-            candidate_id=r.candidate_id,
-            action=r.action,
-            filled_qty=r.filled_qty,
-            avg_price=r.avg_price,
-            commission=r.commission,
-            is_live=bool(r.is_live),
-            filled_at=as_utc_opt(r.filled_at) or now,
+    order_map = {
+        o.id: o
+        for o in db.execute(select(OrderRow).where(OrderRow.id.in_({r.order_id for r in rows})))
+        .scalars()
+        .all()
+    }
+    cand_map = {
+        c.candidate_id: c
+        for c in db.execute(
+            select(CandidateRow).where(
+                CandidateRow.candidate_id.in_({r.candidate_id for r in rows})
+            )
         )
-        for r in rows
-    ]
+        .scalars()
+        .all()
+    }
+    fills: list[FillSummary] = []
+    for r in rows:
+        order = order_map.get(r.order_id)
+        underlying, strategy, right, strike, expiry = _contract_of(
+            order.snapshot if order is not None else None, cand_map.get(r.candidate_id)
+        )
+        fills.append(
+            FillSummary(
+                as_of=now,
+                id=r.id,
+                order_id=r.order_id,
+                candidate_id=r.candidate_id,
+                action=r.action,
+                filled_qty=r.filled_qty,
+                avg_price=r.avg_price,
+                commission=r.commission,
+                is_live=bool(r.is_live),
+                filled_at=as_utc_opt(r.filled_at) or now,
+                underlying=underlying,
+                strategy=strategy,
+                right=right,
+                strike=strike,
+                expiry=expiry,
+            )
+        )
     return FillListResponse(as_of=now, fills=fills)
 
 

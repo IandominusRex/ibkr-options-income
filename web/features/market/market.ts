@@ -80,3 +80,12 @@ export function nameFlags(d: Dossier | undefined, today: string): { weak: boolea
   const dates = (d.events ?? []).map((e) => e.on).filter((on) => on >= today && on <= limit).sort();
   return { weak: d.health === "weak", event: dates[0] ?? null };
 }
+
+/**
+ * The nearest verified event date from today up to and including an expiry, or null. The dates are
+ * the ones Python checked against the cited news; an event's title is Claude's and is not read here.
+ */
+export function eventBefore(d: Dossier | undefined, today: string, expiry: string): string | null {
+  const dates = (d?.events ?? []).map((e) => e.on).filter((on) => on >= today && on <= expiry).sort();
+  return dates[0] ?? null;
+}

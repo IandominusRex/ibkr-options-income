@@ -38,3 +38,9 @@ export function shiftDay(isoDate: string, n: number): string {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+
+/** "Thu, Oct 22 · 2:31 PM ET": an instant as a New York day and time; "time n/a" when it cannot be read. */
+export function whenET(iso: string): string {
+  const day = newYorkDay(iso);
+  return day === null ? "time n/a" : `${dayLabel(day)} · ${timeET(iso)}`;
+}

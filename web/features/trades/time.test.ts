@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dayLabel, isCalendarDay, newYorkDay, shiftDay, timeET, todayInNewYork } from "./time";
+import { dayLabel, isCalendarDay, newYorkDay, shiftDay, timeET, todayInNewYork, whenET } from "./time";
 
 describe("time", () => {
   it("shows a time in New York", () => {
@@ -27,5 +27,17 @@ describe("time", () => {
   it("shifts a day across a month end", () => {
     expect(shiftDay("2026-10-31", 1)).toBe("2026-11-01");
     expect(shiftDay("2026-11-01", -1)).toBe("2026-10-31");
+  });
+});
+
+describe("whenET", () => {
+  it("writes an instant as a New York day and time", () => {
+    expect(whenET("2026-10-22T18:31:00Z")).toBe("Thu, Oct 22 · 2:31 PM ET");
+  });
+  it("uses the New York day, not the UTC one", () => {
+    expect(whenET("2026-10-23T02:31:00Z")).toBe("Thu, Oct 22 · 10:31 PM ET");
+  });
+  it("says when it cannot read the time", () => {
+    expect(whenET("nope")).toBe("time n/a");
   });
 });

@@ -57,6 +57,8 @@ from src.api.models.pnl import (
     LedgerResponse,
     MonthPayResponse,
     RealisedCalendarResponse,
+    SizingGroupOut,
+    SizingRecordResponse,
     SummaryResponse,
     SystemPerformanceResponse,
     VerdictAgreement,
@@ -65,6 +67,7 @@ from src.api.portfolio_source import read_portfolio
 from src.api.spread_inputs import spread_day_inputs, spread_pay_inputs
 from src.claude.eval.ledger import load_records
 from src.claude.eval.score_metrics import score_outcome_report
+from src.claude.eval.sizing_counterfactual import summarize as summarize_sizing
 from src.common.config import get_config
 from src.common.income_target import INCOME_TARGET_KEY, TargetSource, resolve_income_target
 from src.common.schemas import (
@@ -446,6 +449,56 @@ def pnl_system(
         agreement=agreement,
         since=since,
         until=until,
+    )
+
+
+def _sizing_groups(summary: dict[str, dict[str, float]]) -> list[SizingGroupOut]:
+    """`summarize`'s dict as ordered lines. A line without `pnl_expiry` is counted, not valued."""
+    groups: list[SizingGroupOut] = []
+    for key in sorted(summary):
+        b = summary[key]
+        if key == "claude_overrides":
+            kind, split = "claude_cut", "overrides"
+        else:
+            kind, _, split = key.partition(":")
+        valued = "pnl_expiry" in b
+        groups.append(
+            SizingGroupOut(
+                key=key,
+                kind=kind,
+                split=split,
+                count=int(b["count"]),
+                contracts_withheld=int(b["contracts_withheld"]) if valued else None,
+                resolved=int(b["resolved"]) if valued else None,
+                exact=int(b["exact"]) if valued else None,
+                pnl_expiry=round(b["pnl_expiry"], 2) if valued else None,
+                pnl_rules=round(b["pnl_rules"], 2) if valued else None,
+                rules_missing=int(b["rules_missing"]) if valued else None,
+                applied=int(b["applied"]) if "applied" in b else None,
+                unapplied=int(b["unapplied"]) if "unapplied" in b else None,
+            )
+        )
+    return groups
+
+
+@router.get("/sizing", response_model=SizingRecordResponse)
+def pnl_sizing(
+    user: OwnerUser,  # noqa: ARG001
+    since: date | None = None,
+) -> SizingRecordResponse:
+    """What the regime limits, the scale-in ladder, the leveraged-ETF ceiling, the floor lots and
+    Claude's size cut held back, and what that would have earned (web overhaul Part 3, Task 1).
+
+    Reads behind the `src/claude/eval/` fence, like `/pnl/system`: this is the human reader
+    `CLAUDE.md` says everything `eval/` produces is for. It calls `summarize` and returns what it
+    gets, grouped and ordered; no figure is recomputed here, and nothing on the route can change a
+    limit, a size or a weight. `since` is the first action day counted (default: every action on
+    record). Rows not yet valued count and are not valued.
+    """
+    return SizingRecordResponse(
+        as_of=datetime.now(UTC),
+        since=since,
+        groups=_sizing_groups(summarize_sizing(since or date.min)),
     )
 
 

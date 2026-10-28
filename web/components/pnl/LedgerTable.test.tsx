@@ -146,6 +146,14 @@ describe("CampaignRow", () => {
     expect(legs[0]).toHaveTextContent("100");
     expect(legs[1]).toHaveTextContent("200");
   });
+
+  it("says a phone scrolls the legs sideways, once the thread is open", () => {
+    render(<CampaignRow campaign={aCampaign({ legs: [aLeg()] })} />);
+    expect(screen.queryByText("Scroll sideways to see every column.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /NVDA/i }));
+    expect(screen.getByText("Scroll sideways to see every column.")).toBeInTheDocument();
+  });
+
 });
 
 describe("LedgerTable", () => {

@@ -8,6 +8,7 @@ describe("redirects", () => {
     expect(map["/options"].destination).toBe("/trades");
     expect(map["/options/:approvalId"].destination).toBe("/trades/:approvalId");
     expect(map["/pnl"].destination).toBe("/activity");
+    expect(map["/ledger"].destination).toBe("/activity?view=ledger");
     expect(map["/universe"].destination).toBe("/research/universe");
   });
   it("uses temporary redirects while the overhaul is in flight", async () => {

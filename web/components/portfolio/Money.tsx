@@ -41,10 +41,10 @@ export function Money({ value, kind, complete = true, signed = false, asOf }: Mo
         {formatMoneyCell(value)}
       </span>
       {kindLabel && (
-        <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">{kindLabel}</span>
+        <span className="ml-1 text-xs text-muted">{kindLabel}</span>
       )}
       {!complete && (
-        <span className="ml-1 text-[10px] uppercase tracking-wide text-muted">gross</span>
+        <span className="ml-1 text-xs text-muted">gross</span>
       )}
     </span>
   );

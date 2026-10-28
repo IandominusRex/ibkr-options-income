@@ -14,34 +14,29 @@ import type { PnlLegData } from "./types";
  * `commissions_complete: false` renders the gross qualifier — the figure
  * excludes commissions and says so, rather than silently overclaiming "net".
  * Both money columns render through `portfolio/Money`, not a second money
- * component (per web/CLAUDE.md's pnl/ note) — `complete` carries the gross
- * qualifier itself, so the row does not also hand-roll a "gross" span.
+ * component — `complete` carries the gross qualifier itself.
  */
 export function LegRow({ leg }: { leg: PnlLegData }) {
+  const cell = "py-2 pr-3";
   return (
-    <tr data-testid="leg-row" className="text-xs">
-      <td className="px-3 py-2 font-mono text-content">{leg.underlying}</td>
-      <td className="px-3 py-2 text-muted">
-        {leg.strategy === "covered_call" ? "CC" : leg.strategy === "roll" ? "roll" : "CSP"}{" "}
-        {leg.right} {leg.strike != null ? leg.strike.toFixed(2) : "n/a"}
+    <tr data-testid="leg-row" className="border-t border-border text-[0.8125rem] first:border-t-0">
+      <td className={`${cell} font-mono text-content`}>{leg.underlying}</td>
+      <td className={`${cell} text-muted`}>
+        {leg.strategy === "covered_call" ? "CC" : leg.strategy === "roll" ? "roll" : "CSP"} {leg.right}{" "}
+        {leg.strike != null ? leg.strike.toFixed(2) : "n/a"}
       </td>
-      <td className="px-3 py-2 text-muted tabular">{leg.expiry ?? "n/a"}</td>
-      <td className="px-3 py-2 text-content tabular">{leg.contracts}</td>
-      <td className="px-3 py-2 text-muted tabular">{leg.days_held}</td>
+      <td className={`${cell} tabular font-mono text-muted`}>{leg.expiry ?? "n/a"}</td>
+      <td className={`${cell} tabular text-right font-mono text-content`}>{leg.contracts}</td>
+      <td className={`${cell} tabular text-right font-mono text-muted`}>{leg.days_held}</td>
       {/* Realised — null while open, never $0.00. */}
-      <td data-testid="realized" className="px-3 py-2">
-        <Money
-          value={leg.net_pnl}
-          kind="realized"
-          signed
-          complete={leg.commissions_complete}
-        />
+      <td data-testid="realized" className={`${cell} text-right font-mono`}>
+        <Money value={leg.net_pnl} kind="realized" signed complete={leg.commissions_complete} />
       </td>
       {/* Unrealised — filled by the parent from marks; null when no marks exist. */}
-      <td data-testid="unrealized" className="px-3 py-2">
+      <td data-testid="unrealized" className={`${cell} text-right font-mono`}>
         <Money value={leg.unrealized_pnl} kind="unrealized" signed />
       </td>
-      <td className="px-3 py-2 text-muted tabular">{leg.outcome.replace(/_/g, " ")}</td>
+      <td className={`${cell} tabular text-muted`}>{leg.outcome.replace(/_/g, " ")}</td>
     </tr>
   );
 }

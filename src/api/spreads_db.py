@@ -212,3 +212,42 @@ def read_activity_days(session: Session) -> set[date]:
     except Exception:  # noqa: BLE001
         session.rollback()
     return days
+
+
+def try_read_spread_order_rows(
+    session: Session, *, start: datetime, limit: int
+) -> list[dict[str, Any]] | None:
+    """spread_orders rows created at or after *start* (naive UTC, as stored), newest first, each
+    joined to its position for `mode`, `side`, `expiry` and the strikes (None when the position
+    row is missing).
+
+    An older file that has no `spread_orders` table at all has nothing to read: an empty list.
+    None means the read failed (the table exists and cannot be read, or the check itself failed),
+    which the caller must not present as "no orders"."""
+    try:
+        present = (
+            session.execute(
+                text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'spread_orders'")
+            ).first()
+            is not None
+        )
+    except Exception as exc:  # noqa: BLE001 - an unreadable schema is a failed read, not an empty one
+        log.debug("api spreads_db: order table check failed: %s", exc)
+        session.rollback()
+        return None
+    if not present:
+        return []
+    sql = text(
+        "SELECT o.id, o.spread_id, o.kind, o.ib_order_id, o.perm_id, o.filled_qty, o.price, "
+        "o.commission, o.reason, o.created_at, p.mode, p.side, p.expiry, p.short_strike, "
+        "p.long_strike FROM spread_orders o LEFT JOIN spread_positions p "
+        "ON p.spread_id = o.spread_id WHERE o.created_at >= :start "
+        "ORDER BY o.created_at DESC, o.id DESC LIMIT :limit"
+    ).columns(created_at=DateTime, expiry=Date)
+    try:
+        result = session.execute(sql, {"start": _stamp(start), "limit": limit})
+    except Exception as exc:  # noqa: BLE001 - the caller decides what unreadable means
+        log.debug("api spreads_db: order read failed: %s", exc)
+        session.rollback()
+        return None
+    return [dict(r._mapping) for r in result]
