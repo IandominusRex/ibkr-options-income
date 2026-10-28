@@ -187,4 +187,11 @@ describe("SystemPanel", () => {
     expect(screen.getByLabelText("since")).toHaveValue("2026-10-01");
     expect(screen.getByLabelText("until")).toHaveValue("");
   });
+
+  it("says a phone scrolls each evidence table sideways", () => {
+    render(<SystemPanel data={aReport()} />);
+    // the blended-score table, the component table and the correlation table
+    expect(screen.getAllByText("Scroll sideways to see every column.")).toHaveLength(3);
+  });
+
 });

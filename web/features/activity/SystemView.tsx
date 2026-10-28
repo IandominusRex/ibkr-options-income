@@ -29,7 +29,7 @@ export function SystemView() {
   });
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <section aria-label="Window" className="grid gap-2">
         <WindowControls since={since} until={until} onSinceChange={setSince} onUntilChange={setUntil} />
         <p className="text-[0.8125rem] text-muted">

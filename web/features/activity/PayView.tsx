@@ -24,7 +24,7 @@ export function PayView() {
   const floor = earliestMonth(equity.data?.curve.starts_at);
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <PayMonth month={month} current={current} floor={floor} onMonth={setMonth} />
       <LegsFilters filters={legs.filters} formKey={legs.formKey} onFilters={legs.setFilters} />
       <Card aria-labelledby="totals-title">

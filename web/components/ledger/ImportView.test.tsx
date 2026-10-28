@@ -101,4 +101,16 @@ describe("ImportView", () => {
     });
     expect(await screen.findByText(/Flex pull: failing: token expired/)).toBeInTheDocument();
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so the history scrolls inside its card", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    expect(await screen.findByTestId("import-view")).toHaveClass("grid-cols-1");
+  });
+
+  it("says a phone scrolls the import history sideways", async () => {
+    renderWithQuery(<ImportView />, { "/ledger/imports": IMPORTS });
+    await screen.findByText("stmt.csv");
+    expect(screen.getByText("Scroll sideways to see every column.")).toBeInTheDocument();
+  });
+
 });

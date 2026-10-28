@@ -42,7 +42,7 @@ export function TickerView({ symbol }: { symbol: string }) {
   const d = data.detail;
   const t = d.ticker;
   return (
-    <div className="grid gap-4" data-testid="ticker-view">
+    <div className="grid grid-cols-1 gap-4" data-testid="ticker-view">
       <div className="grid gap-1">
         <BackToLedger />
         <h1 className="font-mono text-2xl font-extrabold tracking-[-0.015em]">{t.symbol}</h1>

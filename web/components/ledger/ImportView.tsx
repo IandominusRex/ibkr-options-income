@@ -105,7 +105,7 @@ export function ImportView() {
   }
 
   return (
-    <div className="grid gap-4" data-testid="import-view">
+    <div className="grid grid-cols-1 gap-4" data-testid="import-view">
       <div className="grid gap-1">
         <BackToLedger />
         <h1 className="text-2xl font-extrabold tracking-[-0.015em]">Import a statement</h1>
@@ -171,6 +171,7 @@ export function ImportView() {
             <h2 id="import-history" className={H2}>
               Import history
             </h2>
+            <p className="mt-2 text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
             <div className="mt-2 overflow-x-auto">
               <table className="w-full text-[0.8125rem]">
                 <thead className="text-left text-xs font-semibold tracking-[0.04em] text-muted">

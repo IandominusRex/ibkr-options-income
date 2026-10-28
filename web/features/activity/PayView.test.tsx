@@ -226,4 +226,10 @@ describe("PayView", () => {
     expect(await screen.findByText("Could not load the ledger.")).toBeInTheDocument();
     expect(screen.getAllByText("It tries again every 30 seconds.").length).toBeGreaterThanOrEqual(2);
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so a wide table scrolls inside its card", async () => {
+    const { container } = serve();
+    await screen.findByRole("group", { name: /pay stub$/ });
+    expect(container.firstElementChild).toHaveClass("grid-cols-1");
+  });
 });

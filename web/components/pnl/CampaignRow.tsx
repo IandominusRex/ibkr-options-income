@@ -52,23 +52,26 @@ export function CampaignRow({ campaign }: { campaign: CampaignPnlData }) {
       </button>
 
       {isOpen && (
-        <div className="overflow-x-auto border-t border-border px-4 pb-3" data-testid="campaign-legs">
-          <table className="w-full">
-            <thead>
-              <tr className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
-                {LEG_HEADERS.map((h) => (
-                  <th key={h} className={clsx("py-2 pr-3 font-semibold", RIGHT.has(h) && "text-right")}>
-                    {h}
-                  </th>
+        <div className="border-t border-border px-4 pb-3">
+          <p className="pt-2 text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
+          <div className="overflow-x-auto" data-testid="campaign-legs">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
+                  {LEG_HEADERS.map((h) => (
+                    <th key={h} className={clsx("py-2 pr-3 font-semibold", RIGHT.has(h) && "text-right")}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(campaign.legs ?? []).map((leg) => (
+                  <LegRow key={leg.candidate_id} leg={leg} />
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {(campaign.legs ?? []).map((leg) => (
-                <LegRow key={leg.candidate_id} leg={leg} />
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

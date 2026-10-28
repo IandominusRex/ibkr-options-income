@@ -36,7 +36,7 @@ function Line({ g }: { g: SizingGroup }) {
           ))}
         </div>
         {g.split !== "pushed_out" && (
-          <div className="tabular text-right font-mono font-semibold">
+          <div className="tabular shrink-0 text-right font-mono font-semibold">
             <Mark label="to expiry" value={m.expiry} />
             <Mark label="exit rules" value={m.rules} />
           </div>

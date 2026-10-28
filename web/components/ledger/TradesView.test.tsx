@@ -104,4 +104,9 @@ describe("TradesView", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so the sheet scrolls inside its card", async () => {
+    renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
+    expect(await screen.findByTestId("trades-view")).toHaveClass("grid-cols-1");
+  });
 });

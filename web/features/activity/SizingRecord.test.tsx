@@ -105,4 +105,10 @@ describe("SizingRecord", () => {
     expect(await screen.findByText("Could not load the sizing record.")).toBeInTheDocument();
     expect(screen.getByText("It tries again every minute.")).toBeInTheDocument();
   });
+
+  it("keeps each mark's label on one line beside its figure, so a phone narrows the words and not the marks", async () => {
+    serve(body([group()]));
+    const r = await row("Scale-in ladder · never sent");
+    expect(within(r).getByText("to expiry").closest(".tabular")).toHaveClass("shrink-0");
+  });
 });

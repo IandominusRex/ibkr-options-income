@@ -109,7 +109,7 @@ export function SummaryPanel({ book, qsString, onBookChange, onSelectLeg }: {
         </Headline>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <BreakdownTable buckets={s.by_strategy ?? []} label="By strategy" />
         <BreakdownTable buckets={s.by_symbol ?? []} label="By symbol" />
       </div>

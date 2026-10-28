@@ -60,4 +60,12 @@ describe("TickerView", () => {
     expect(await screen.findByText(/No ledger history for ZZZZ/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to Activity, Ledger" })).toBeInTheDocument();
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so its tables scroll inside their cards", async () => {
+    renderWithQuery(<TickerView symbol="amzn" />, {
+      "/ledger/tickers/AMZN": { as_of: ISO, detail: DETAIL },
+      "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} },
+    });
+    expect(await screen.findByTestId("ticker-view")).toHaveClass("grid-cols-1");
+  });
 });

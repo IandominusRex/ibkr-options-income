@@ -55,4 +55,10 @@ describe("SystemView", () => {
     expect(await screen.findByText("Could not load the score-vs-outcome report.")).toBeInTheDocument();
     expect(await screen.findByText("No sizing actions on record yet.")).toBeInTheDocument();
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so a wide table scrolls inside its card", async () => {
+    const { container } = renderWithQuery(<SystemView />, world());
+    await screen.findByRole("heading", { name: "Sizing record" });
+    expect(container.firstElementChild).toHaveClass("grid-cols-1");
+  });
 });

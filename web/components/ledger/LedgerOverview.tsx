@@ -32,30 +32,34 @@ function Buckets({ title, rows }: { title: string; rows: LedgerBucket[] }) {
   return (
     <Card as="section" aria-label={title} data-testid={`buckets-${title.split(" ")[1]}`}>
       <h2 className={H2}>{title}</h2>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full text-[0.8125rem]">
-          <thead className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
-            <tr>
-              <th className="py-1.5 pr-4 font-semibold">Group</th>
-              <th className="py-1.5 pr-4 text-right font-semibold">Closed</th>
-              <th className="py-1.5 pr-4 text-right font-semibold">Realised</th>
-              <th className="py-1.5 pr-4 text-right font-semibold">Win rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((b) => (
-              <tr key={b.label} className="border-t border-border">
-                <td className="py-2 pr-4">{b.label}</td>
-                <td className="tabular py-2 pr-4 text-right font-mono">{b.n_closed}</td>
-                <td className={`tabular py-2 pr-4 text-right font-mono ${signClass(b.realized_usd)}`}>
-                  {money(b.realized_usd)}
-                </td>
-                <td className="tabular py-2 pr-4 text-right font-mono">{rate(b.win_rate)}</td>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">None yet.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-[0.8125rem]">
+            <thead className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
+              <tr>
+                <th className="py-1.5 pr-4 font-semibold">Group</th>
+                <th className="py-1.5 pr-4 text-right font-semibold">Closed</th>
+                <th className="py-1.5 pr-4 text-right font-semibold">Realised</th>
+                <th className="py-1.5 pr-4 text-right font-semibold">Win rate</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.label} className="border-t border-border">
+                  <td className="py-2 pr-4">{b.label}</td>
+                  <td className="tabular py-2 pr-4 text-right font-mono">{b.n_closed}</td>
+                  <td className={`tabular py-2 pr-4 text-right font-mono ${signClass(b.realized_usd)}`}>
+                    {money(b.realized_usd)}
+                  </td>
+                  <td className="tabular py-2 pr-4 text-right font-mono">{rate(b.win_rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }
@@ -78,7 +82,7 @@ export function LedgerOverview() {
   const s = summary.data?.summary;
 
   return (
-    <div className="grid gap-4" data-testid="ledger-overview">
+    <div className="grid grid-cols-1 gap-4" data-testid="ledger-overview">
       <div className="grid gap-1">
         <p className="text-[0.8125rem] text-muted">
           What IBKR reports, from the live feed, the Flex query and statement imports. It can differ from the

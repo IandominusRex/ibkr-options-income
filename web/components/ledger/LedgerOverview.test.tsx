@@ -121,4 +121,26 @@ describe("LedgerOverview", () => {
     expect(await screen.findByText("Could not load the ledger.")).toBeInTheDocument();
     expect(screen.queryByTestId("ledger-tiles")).toBeNull();
   });
+
+  it("keeps the page in one column that cannot outgrow the phone, so its tables scroll inside their cards", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": { as_of: ISO, summary: aSummary() },
+      "/ledger/tickers": { as_of: ISO, tickers: [aTicker()] },
+    });
+    expect(await screen.findByTestId("ledger-overview")).toHaveClass("grid-cols-1");
+  });
+
+  it("says a bucket table is empty instead of showing only its headings", async () => {
+    renderWithQuery(<LedgerOverview />, {
+      "/ledger/summary": {
+        as_of: ISO,
+        summary: aSummary({ by_strategy: [{ label: "CSP", n_closed: 4, realized_usd: 900, win_rate: 0.75 }], by_book: [] }),
+      },
+      "/ledger/tickers": { as_of: ISO, tickers: [] },
+    });
+    const book = await screen.findByTestId("buckets-book");
+    expect(within(book).getByText("None yet.")).toBeInTheDocument();
+    expect(within(book).queryByRole("table")).toBeNull();
+    expect(within(await screen.findByTestId("buckets-strategy")).getByRole("table")).toBeInTheDocument();
+  });
 });

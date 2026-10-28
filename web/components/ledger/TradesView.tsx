@@ -50,7 +50,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
   const select = clsx(FIELD, "w-full");
 
   return (
-    <div className="grid gap-4" data-testid="trades-view">
+    <div className="grid grid-cols-1 gap-4" data-testid="trades-view">
       {!fixedSymbol && (
         <div className="grid gap-1">
           <BackToLedger />

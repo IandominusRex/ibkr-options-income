@@ -18,6 +18,7 @@ export function ScoreBucketTable({ buckets, label }: { buckets: ScoreBucketData[
   return (
     <div className="space-y-2">
       <h3 className="text-xs font-semibold tracking-[0.04em] text-muted">{label}</h3>
+      <p className="text-xs text-muted md:hidden">Scroll sideways to see every column.</p>
       <div className="overflow-x-auto">
         <table className="w-full text-[0.8125rem]">
           <thead>
