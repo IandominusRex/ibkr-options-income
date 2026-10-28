@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/lib/api";
 import { submitCommand, useCommandStatus, type CommandStatus } from "@/lib/commands";
 import { CommandReceipt } from "@/components/options/CommandReceipt";
+import { Button } from "@/components/ui/Button";
 import type { ControlsResponse } from "@/components/options/types";
 
 /**
@@ -90,18 +91,14 @@ export function RefreshControl() {
   }
 
   return (
-    <div data-testid="refresh-control" className="flex items-center gap-2">
-      <button
-        type="button"
-        disabled={inFlight}
-        onClick={onRefresh}
-        className="rounded-sm border border-border bg-background px-3 py-1.5 text-sm text-content enabled:hover:bg-elevated disabled:cursor-default disabled:opacity-50 focus-visible:ring-focus"
-      >
+    <div data-testid="refresh-control" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {/* Secondary, not lime: a refresh reads the broker and writes one snapshot; it decides nothing. */}
+      <Button variant="secondary" disabled={inFlight} onClick={onRefresh}>
         Refresh
-      </button>
+      </Button>
 
       {error && (
-        <p className="text-xs text-loss" data-testid="command-error" role="alert">
+        <p className="text-[0.8125rem] text-loss" data-testid="command-error" role="alert">
           {error}
         </p>
       )}

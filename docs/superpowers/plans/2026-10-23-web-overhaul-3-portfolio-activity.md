@@ -92,7 +92,9 @@ count.
 | **Section A entry** | done | (none) | A1-A5 pass (run by the orchestrator); baseline pytest 4962 passed + 1 skipped (4963 collected), ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | Work is in the worktree `.claude/worktrees/web-overhaul-3` (branch `feat/web-overhaul-3`, based on main c692a1b); the plan file there carries the operator's uncommitted 2026-10-28 re-verification edits and Task 1's commit includes them. A1 says "`git branch --show-current` prints `main`": here the branch is `feat/web-overhaul-3` by design (a worktree), so Task 1 Step 1's `git switch -c` was not needed. |
 | **Task 1: `GET /pnl/sizing`** | done | 463d742 `feat(api): GET /pnl/sizing - the sizing record's totals, read behind the eval fence` (hash filled in by Task 2's commit; a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
 | **Task 2: orders carry their sizing; fills name their contract** | done | 606aa70 `feat(api): orders carry the sizing that shaped them; fills name their contract` (hash filled in by Task 3's commit) | pytest 4981 passed + 1 skipped (Task 1's 4972 + 9 new); vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; `test_openapi_current` passes after regeneration | 2026-10-28 | (1) Step 2 as predicted: 8 of the 9 new tests failed before the change and `test_a_partial_order_is_history_not_working` passed on the old route and still passes on the new one (`_WORKING` is still `{"queued", "submitted"}`, comment unchanged). (2) Step 6's first command includes `test_openapi_current`, which fails until the contract is regenerated (it ran before the regeneration, as the step is ordered): 67 passed and that one failed, then it passed after the regeneration. (3) In `types.ts` the plan gives the five new `FillSummary` fields as one inline-code list in prose; they are written one field per line, like the rest of the file. (4) The pasted test block had one blank line before `test_a_partial_order_is_history_not_working`; `ruff format` made it two, the only change the formatter made to the task's text besides line wrapping. (5) The `api-types.ts` and `openapi.json` diffs drop only the old docstring lines, the old `maximum: 90` on `days` and the old FillSummary docstring, all replaced by this task's text. |
-| **Task 3: `GET /ledger/executions` and `GET /spreads/orders`** | done | Task 3 commit (`feat(api): GET /ledger/executions and GET /spreads/orders - the audit lists`; the first Section B commit fills in its hash; `git log --oneline c692a1b..HEAD` shows three Section A commits) | pytest 4992 passed + 1 skipped (Task 2's 4981 + 11 new: 5 ledger, 6 spreads); `test_web_fence`, `test_spreads_fence`, `test_wheel_spreads_isolation` pass with the new tests (64 passed); the five fence files (`test_web_fence`, `test_eval_skills`, `test_regime_fence`, `test_news_fence`, `test_spreads_fence`) pass (60 passed); `test_openapi_current` passes; vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; the B3 loop over `web/lib/api-types.ts` prints nothing | 2026-10-28 | (1) Step 3 as predicted: all 11 new tests failed on 404 bodies before the change (the two `require_owner` cases answered 404 where 401 is expected). (2) The pasted ledger tests were appended after `test_nav_has_a_ledger_section` with the `datetime` import placed above `pathlib` (isort order); ruff's check needed no `--fix`. (3) Route and model imports were added exactly as the task says (`LedgerExecutionRowOut` and `LedgerExecutionsResponse` sit after `LedgerExecutionOut`, and `ruff check` accepts the order). (4) The contract regeneration removes no existing line from `openapi.json` or `api-types.ts`: it only adds the two ledger schemas, the two spreads schemas and the two paths. (5) No documentation file was touched in Section A on purpose: the plan puts the ARCHITECTURE.md / STATUS.md / SETUP.md / CLAUDE.md / `docs/web/api.md` sweep in Task 15, so the CLAUDE.md doc-update reminder fired after each `src/api` edit and is satisfied there. |
+| **Task 3: `GET /ledger/executions` and `GET /spreads/orders`** | done | ae79b47 `feat(api): GET /ledger/executions and GET /spreads/orders - the audit lists` (hash filled in by Task 4's commit; a commit cannot name itself; `git log --oneline c692a1b..HEAD` showed three Section A commits) | pytest 4992 passed + 1 skipped (Task 2's 4981 + 11 new: 5 ledger, 6 spreads); `test_web_fence`, `test_spreads_fence`, `test_wheel_spreads_isolation` pass with the new tests (64 passed); the five fence files (`test_web_fence`, `test_eval_skills`, `test_regime_fence`, `test_news_fence`, `test_spreads_fence`) pass (60 passed); `test_openapi_current` passes; vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; the B3 loop over `web/lib/api-types.ts` prints nothing | 2026-10-28 | (1) Step 3 as predicted: all 11 new tests failed on 404 bodies before the change (the two `require_owner` cases answered 404 where 401 is expected). (2) The pasted ledger tests were appended after `test_nav_has_a_ledger_section` with the `datetime` import placed above `pathlib` (isort order); ruff's check needed no `--fix`. (3) Route and model imports were added exactly as the task says (`LedgerExecutionRowOut` and `LedgerExecutionsResponse` sit after `LedgerExecutionOut`, and `ruff check` accepts the order). (4) The contract regeneration removes no existing line from `openapi.json` or `api-types.ts`: it only adds the two ledger schemas, the two spreads schemas and the two paths. (5) No documentation file was touched in Section A on purpose: the plan puts the ARCHITECTURE.md / STATUS.md / SETUP.md / CLAUDE.md / `docs/web/api.md` sweep in Task 15, so the CLAUDE.md doc-update reminder fired after each `src/api` edit and is satisfied there. |
+| **Section B entry** | done | (none) | B1-B5 pass (run by the orchestrator); re-run by the orchestrator after Section A: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (no rulings) |
+| **Task 4: contracts, the Account card, `useViewParam`, two restyles** | done | Task 4 commit `feat(web): Portfolio and Activity contracts, the Account card, useViewParam` (hash filled in by Task 5's commit) | vitest 1040 passed (110 files: baseline 1027 + 4 `useViewParam` + 9 `SummaryCard`); tsc clean; eslint clean; the targeted run (`lib features/portfolio components/portfolio`) passed 20 files / 158 tests, with the 6 existing `RefreshControl` tests and the other legacy portfolio tests unmodified; `design_md_check.py web/DESIGN.md` exit 0; da-vinci `lint.py` exit 0 on `web/features/portfolio`, `web/lib/useViewParam.ts`, `DegradedNotice.tsx`, `RefreshControl.tsx` | 2026-10-28 | (1) Step 1: da-vinci loaded (sync check `OK 16`, `web/DESIGN.md` status `ratified`); no new colour, font, radius, elevation or token was needed, so nothing is proposed. (2) The code blocks (both test files, `useViewParam.ts`, `SummaryCard.tsx`) were extracted from this plan with `sed` by line range and not retyped; the DESIGN.md block was diffed against the plan's text (identical). (3) Step 5: the two implementation files were moved aside for the run, so both test files failed with "Failed to resolve import" as expected, then put back. (4) Steps 8 and 9 applied as `Edit`s of exactly the quoted old text (the `DegradedNotice` return and the "an elevated surface and plain text" wording, which wraps over two comment lines; the `RefreshControl` import and `return (...)`). (5) The existing `RefreshControl` test prints two React "not wrapped in act(...)" stderr warnings; it printed the same two on the file before the restyle (checked), so they are not new. (6) Section B entry B1-B5 were not re-run by the implementer: the orchestrator ran them and the row above records that. |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -1821,11 +1823,11 @@ its tests still pass.
   (Tasks 7 and 14); `SummaryCard()` (Task 7), reading `GET /portfolio/summary` under the query key
   `["portfolio", "summary"]`.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: Operate surface, the
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: Operate surface, the
   payslip world, no new colour, font, radius, elevation or token; the Account card is a white
   card with two blocks of figure lines under a perforation; Delayed is the flag word.
 
-- [ ] **Step 2: Write the two surface contracts into `web/DESIGN.md`.** Replace these lines:
+- [x] **Step 2: Write the two surface contracts into `web/DESIGN.md`.** Replace these lines:
 
 ```markdown
 ### Portfolio
@@ -1907,12 +1909,12 @@ the figure face.
   live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
 ```
 
-- [ ] **Step 3: Check the design file**
+- [x] **Step 3: Check the design file**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/design_md_check.py web/DESIGN.md`
 Expected: exit 0.
 
-- [ ] **Step 4: Write the failing tests**
+- [x] **Step 4: Write the failing tests**
 
 Create `web/lib/useViewParam.test.tsx`:
 
@@ -2074,12 +2076,12 @@ describe("SummaryCard", () => {
 });
 ```
 
-- [ ] **Step 5: Run them to verify they fail**
+- [x] **Step 5: Run them to verify they fail**
 
 Run: `cd web && npx vitest run lib/useViewParam.test.tsx features/portfolio/SummaryCard.test.tsx`
 Expected: FAIL (modules not found).
 
-- [ ] **Step 6: Implement `web/lib/useViewParam.ts`**
+- [x] **Step 6: Implement `web/lib/useViewParam.ts`**
 
 ```ts
 "use client";
@@ -2112,7 +2114,7 @@ export function useViewParam<T extends string>(views: readonly T[], fallback: T)
 }
 ```
 
-- [ ] **Step 7: Implement `web/features/portfolio/SummaryCard.tsx`**
+- [x] **Step 7: Implement `web/features/portfolio/SummaryCard.tsx`**
 
 ```tsx
 "use client";
@@ -2252,7 +2254,7 @@ export function SummaryCard() {
 }
 ```
 
-- [ ] **Step 8: Restyle `DegradedNotice`** — in `web/components/portfolio/DegradedNotice.tsx` replace
+- [x] **Step 8: Restyle `DegradedNotice`** — in `web/components/portfolio/DegradedNotice.tsx` replace
   the returned element (keep the file's doc comment and the props type) with:
 
 ```tsx
@@ -2268,7 +2270,7 @@ export function DegradedNotice({ note }: DegradedNoticeProps) {
   In the same file's doc comment, change "an elevated surface and plain text" to "a pressed-sage
   block and plain text".
 
-- [ ] **Step 9: Restyle `RefreshControl`** — in `web/components/portfolio/RefreshControl.tsx` add
+- [x] **Step 9: Restyle `RefreshControl`** — in `web/components/portfolio/RefreshControl.tsx` add
   `import { Button } from "@/components/ui/Button";` after the `CommandReceipt` import, and replace
   the component's returned element (everything from `return (` to the matching `);` before
   `function describeError`) with:
@@ -2302,18 +2304,18 @@ export function DegradedNotice({ note }: DegradedNoticeProps) {
   Nothing above `return (` changes: the command flow, the invalidation and the controls query are
   the protected behaviour.
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run lib features/portfolio components/portfolio && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 4 + 9 new tests, and every existing `RefreshControl`, `DegradedNotice` and
 legacy portfolio test **unmodified** (that is the proof the restyles changed no behaviour).
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/features/portfolio web/lib/useViewParam.ts web/components/portfolio/DegradedNotice.tsx web/components/portfolio/RefreshControl.tsx`
 Expected: exit 0, or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 4 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 4 filled in)
 
 ```bash
 git add web/DESIGN.md web/lib/useViewParam.ts web/lib/useViewParam.test.tsx web/features/portfolio \

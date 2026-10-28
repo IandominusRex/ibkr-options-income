@@ -716,12 +716,70 @@ Operate. Dials as the project default. Built in web overhaul Part 2
   cut is the flag tone and its reason is labelled as carrying Claude's words.
 
 ### Portfolio
-Operate. Positions, Campaigns, Expiry calendar. Position rows as on Home; "Propose a roll" moves
-onto the short-option rows.
+Operate. Dials as the project default. Built in web overhaul Part 3
+(docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md).
+- **THESIS:** what you hold, name by name, and how old that reading is. Home is the glance; this
+  page is the register. Refuses the brokerage positions grid: a name is a card with its shares,
+  its contracts as the rows Home shows, and one total that never hides a figure we do not have.
+- **OWN-WORLD:** the payslip. Sage paper, white cards, rows without table chrome, the account in
+  figure lines under a perforation. Lime only on an "Expires today" word. A figure we do not have
+  is a hatched n/a, and a total over a missing figure is n/a, not the rest added up.
+- **STORY:** how fresh is this reading and what is the account (the Account card); what do I hold
+  (Positions); how did each wheel go (Campaigns); what expires when, and what happens then
+  (Calendar).
+- **FIRST VIEWPORT:** the title with Refresh at its right; the Account card (the age of the
+  reading in words, a Delayed word when it is older than 30 minutes or degraded, the API's note
+  verbatim, then the account and the exposure as two blocks of figure lines, side by side from
+  640px); the view chips (Positions, Campaigns, Calendar); then the view. A phone is one column in
+  that order.
+- **FORM:** one page; the view lives in the URL (`?view=campaigns`). Positions: a search field,
+  the type chips (All, CSPs, CCs, Credit spreads, Shares) with counts, then one card per name,
+  two columns from 1024px: the ticker bold with its flag words ("Weak health", "Event <date>")
+  and the name's open P&L at the right, then Home's rows (shares, then each option contract, each
+  a link to the contract's page) with a muted figure line beneath each option (delta and where it
+  came from, the mark, the value). Credit spreads are one more card. Campaigns: Status chips
+  (All, Open, Closed), a labelled Symbol field, then one card per thread: the symbol, a status
+  word, the net premium labelled "before commissions", the legs behind a disclosure; an assigned
+  thread adds its adjusted cost basis and realised stock P&L. Calendar: horizon chips (14 to 180
+  days), then one card per expiry day (the date and the days left), each contract a row with its
+  moneyness and what happens at expiry in a sentence.
+- **FINISH:** unreviewed and undocumented is unfinished.
+- **Market picture (2026-10-23):** each name carries the same "Weak health" and near "Event
+  <date>" words it has on Home. A short option whose name has a verified event date before its
+  expiry carries "Event <date> before expiry" on the Calendar. The date is Python's (checked
+  against the cited news); the event's title is Claude's and is not shown here.
 
 ### Activity
-Operate. Pay (P&L summary and equity curve), Ledger, Fills and orders, System (score-vs-outcome).
-Ledger and stubs use the figure face.
+Operate. Dials as the project default. Built in web overhaul Part 3. Ledger and stub figures use
+the figure face.
+- **THESIS:** what the money did, and whether the records agree. Pay answers what the account
+  earned; Ledger what IBKR says happened; Fills and orders what the system sent, what it recorded
+  as filled and what IBKR executed, in three lists that are never merged; System how the scoring
+  and the size limits have done. Refuses a single merged feed: the sources can disagree, and
+  seeing that is the audit.
+- **OWN-WORLD:** the payslip, read as a ledger. Stubs for months, hairline rows in the figure
+  face for lists, no table chrome on phones, a labelled source on every list ("The system's
+  record", "At IBKR"), words for states. Lime only on the pay meter. Nothing here is an action
+  except the filters, the month stepper, the CSV links and the statement import (its own page).
+- **STORY:** what did I earn this month and since the start (Pay); what does the broker ledger say
+  (Ledger); what was sent, what filled, what IBKR executed (Fills and orders); how have the score
+  and the size limits paid (System).
+- **FIRST VIEWPORT:** the title and the view chips (Pay, Ledger, Fills and orders, System). Pay:
+  the month stepper (previous, the month, next, "This month"), the month's stub open (premium
+  collected, bought back, commissions, net so far, the pay meter when a target is set), then the
+  record since the system began, the equity curve and the legs.
+- **FORM:** one page; the view in `?view=`, the Pay month in `?month=YYYY-MM`. Ledger: the ledger's
+  overview (tiles as figure lines, the two charts, the tables by strategy, book and ticker, upcoming
+  expiries) with links to its Trades and Import pages; those pages and a ticker's page keep their
+  own routes under `/ledger/` and say how to get back. Fills and orders: three chips (Orders,
+  Fills, At IBKR) and a window (7, 30, 90 days, a year), each list headed by its source. System:
+  the sizing record first (one line per kind of action: rows, valued so far, contracts withheld, and
+  two marks, worded so that a positive number is what the action cost), then the score-vs-outcome
+  evidence with its read-only sentences first.
+- **FINISH:** unreviewed and undocumented is unfinished.
+- **Market and sizing (2026-10-23):** an order in the Orders list says what shaped its size
+  ("Claude's cut · Sent 1 of 3 contracts"). System opens with the sizing record, the review the
+  live-cutover gate asks for. Claude's cut is labelled as Claude's wherever its reason shows.
 
 ### Research
 Read. Search, watchlist, sectors, the stock page, and Universe. VARIANCE 3, DENSITY 6.
