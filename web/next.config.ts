@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
       { source: "/options", destination: "/trades", permanent: false },
       { source: "/options/:approvalId", destination: "/trades/:approvalId", permanent: false },
       { source: "/pnl", destination: "/activity", permanent: false },
+      { source: "/ledger", destination: "/activity?view=ledger", permanent: false },
       { source: "/universe", destination: "/research/universe", permanent: false },
     ];
   },

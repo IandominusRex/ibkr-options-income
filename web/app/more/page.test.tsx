@@ -42,10 +42,10 @@ describe("More page", () => {
     renderWithQuery(<MorePage />, served);
     expect(screen.getByRole("link", { name: /What Claude knows/ })).toHaveAttribute("href", "/more/claude");
   });
-  it("links to Universe and Ledger, which have no tab or rail entry", () => {
+  it("links to Universe, and to the Ledger view on Activity", () => {
     renderWithQuery(<MorePage />, served);
     expect(screen.getByRole("link", { name: /^Universe/ })).toHaveAttribute("href", "/research/universe");
-    expect(screen.getByRole("link", { name: /^Ledger/ })).toHaveAttribute("href", "/ledger");
+    expect(screen.getByRole("link", { name: /^Ledger/ })).toHaveAttribute("href", "/activity?view=ledger");
   });
   it("is where the monthly income target is set", async () => {
     renderWithQuery(<MorePage />, served);
