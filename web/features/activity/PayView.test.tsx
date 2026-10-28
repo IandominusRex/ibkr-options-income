@@ -34,12 +34,27 @@ const summary = (over: Record<string, unknown> = {}) => ({
 const equity = (startsAt: string | null = "2026-06-24") => ({
   as_of: now(), filters, curve: { points: [], gaps: [], starts_at: startsAt },
 });
+const leg = (over: Record<string, unknown> = {}) => ({
+  candidate_id: "cand-1", campaign_id: null, symbol: "NVDA 261016 00170000P", underlying: "NVDA",
+  strategy: "cash_secured_put", right: "P", strike: 170, expiry: "2026-10-16", contracts: 1,
+  opened_at: now(), closed_at: null, credit: 150, debit: 0, commissions: 1, commissions_complete: true,
+  net_pnl: null, unrealized_pnl: null, days_held: 5, roc_pct: 0.88, annualized_pct: null,
+  outcome: "still_open", is_live: false, ...over,
+});
+const campaign = (over: Record<string, unknown> = {}) => ({
+  campaign_id: "camp-1", symbol: "NVDA", status: "open", opened_date: "2026-09-01", closed_date: null,
+  legs: [leg()], option_realized: 0, option_unrealized: 115, stock_realized: null, stock_unrealized: null,
+  assigned: false, adjusted_cost_basis: null, total_net: 115, ...over,
+});
+const ledgerBody = (campaigns: unknown[] = []) => ({
+  as_of: now(), filters, campaigns, marks_as_of: null, n_legs: campaigns.length,
+});
 const serve = (month: unknown = monthBody(), eq: unknown = equity()) =>
   renderWithQuery(<PayView />, {
     "/pnl/month": month,
     "/pnl/summary": summary(),
     "/pnl/equity": eq,
-    "/pnl/ledger": { as_of: now(), filters, campaigns: [], marks_as_of: null, n_legs: 0 },
+    "/pnl/ledger": ledgerBody(),
   });
 const calls = () => apiFetchMock.mock.calls.map((c) => String(c[0]));
 
@@ -134,5 +149,81 @@ describe("PayView", () => {
     serve();
     expect(await screen.findByRole("heading", { name: "Since the system began" })).toBeInTheDocument();
     expect(await screen.findByText("Realized total")).toBeInTheDocument();
+  });
+
+  it("narrows the totals, the curve and the legs by one set of filters, and the CSV carries them", async () => {
+    serve();
+    fireEvent.change(await screen.findByLabelText("Symbol"), { target: { value: "nvda" } });
+    await waitFor(() => {
+      expect(calls()).toContain("/pnl/summary?book=all&symbol=NVDA");
+      expect(calls()).toContain("/pnl/equity?book=all&symbol=NVDA");
+      expect(calls()).toContain("/pnl/ledger?book=all&symbol=NVDA");
+    });
+    expect(screen.getByTestId("ledger-export-link")).toHaveAttribute("href", "/api/pnl/ledger.csv?book=all&symbol=NVDA");
+  });
+
+  it("says the filters apply to everything under them", async () => {
+    serve();
+    expect(await screen.findByText("These filters apply to the totals, the curve and the legs below.")).toBeInTheDocument();
+  });
+
+  it("narrows the legs by the symbol of the best leg the totals name", async () => {
+    renderWithQuery(<PayView />, {
+      "/pnl/month": monthBody(),
+      "/pnl/summary": summary({ best: leg({ candidate_id: "best-1", net_pnl: 149, outcome: "expired_worthless" }) }),
+      "/pnl/equity": equity(),
+      "/pnl/ledger": ledgerBody(),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /view nvda p 170\.00 in the ledger/i }));
+    await waitFor(() => expect(calls()).toContain("/pnl/ledger?symbol=NVDA&book=all"));
+    expect(screen.getByLabelText("Symbol")).toHaveValue("NVDA");
+  });
+
+  it("lists the legs as campaign threads that open to their legs", async () => {
+    renderWithQuery(<PayView />, {
+      "/pnl/month": monthBody(),
+      "/pnl/summary": summary(),
+      "/pnl/equity": equity(),
+      "/pnl/ledger": ledgerBody([campaign({ legs: [leg(), leg({ candidate_id: "c2", strike: 175 })] })]),
+    });
+    const thread = await screen.findByRole("button", { name: /NVDA campaign/ });
+    expect(thread).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("campaign-leg-count")).toHaveTextContent("2 legs");
+    fireEvent.click(thread);
+    expect(screen.getAllByTestId("leg-row")).toHaveLength(2);
+  });
+
+  it("says there are no trades for the filters, in words", async () => {
+    serve();
+    expect(await screen.findByText("No trades match the current filters.")).toBeInTheDocument();
+  });
+
+  it("says no marks are available rather than showing zeros", async () => {
+    serve();
+    expect(await screen.findByText("no marks available")).toBeInTheDocument();
+  });
+
+  it("draws the equity curve and says when it began", async () => {
+    renderWithQuery(<PayView />, {
+      "/pnl/month": monthBody(),
+      "/pnl/summary": summary(),
+      "/pnl/equity": {
+        as_of: now(), filters,
+        curve: {
+          points: [{ entry_date: "2026-09-01", net_liquidation: 250000, unrealized_pnl: 100, cumulative_realized: 0, premium_cashflow: 42 }],
+          gaps: [], starts_at: "2026-09-01",
+        },
+      },
+      "/pnl/ledger": ledgerBody(),
+    });
+    expect(await screen.findByText(/since 1 September 2026/i)).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: /legend/i })).toBeInTheDocument();
+  });
+
+  it("says it could not load the curve and the legs, and that it tries again", async () => {
+    renderWithQuery(<PayView />, { "/pnl/month": monthBody(), "/pnl/summary": summary() });
+    expect(await screen.findByText("Could not load the equity curve.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not load the ledger.")).toBeInTheDocument();
+    expect(screen.getAllByText("It tries again every 30 seconds.").length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -1,71 +1,69 @@
 "use client";
 
+import clsx from "clsx";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Money } from "@/components/portfolio/Money";
+import { StatusWord } from "@/components/ui/StatusWord";
 import { LegRow } from "./LegRow";
 import type { CampaignPnlData } from "./types";
 
 const LEG_HEADERS = ["Leg", "Contract", "Expiry", "Qty", "Days", "Realized", "Unrealized", "Outcome"];
+const RIGHT = new Set(["Qty", "Days", "Realized", "Unrealized"]);
 
 /**
  * One campaign thread of the P&L ledger: symbol, status, net and leg count
  * collapsed; expanding shows the legs in order through a real
- * `<button aria-expanded>` (the CampaignThread convention from M3 Task 3.4 —
- * each thread owns its own expand/collapse state so opening one never affects
- * another).
+ * `<button aria-expanded>` (each thread owns its own expand/collapse state so
+ * opening one never affects another). The legs are rendered only while open.
  *
- * The thread's net renders through `portfolio/Money` (kind "value" — it mixes
- * realised and unrealised legs, so neither label would be accurate), the same
- * null-discipline the legs use: a `null` `option_unrealized` is `n/a` with
- * texture, never `$0.00` — an unmarked open leg is not worth zero.
+ * The thread's net renders through `portfolio/Money` (kind "value": it mixes
+ * realised and unrealised legs, so neither label would be accurate), with the
+ * same null discipline the legs use: an unmarked open leg is not worth zero.
  */
 export function CampaignRow({ campaign }: { campaign: CampaignPnlData }) {
   const [isOpen, setIsOpen] = useState(false);
   const legCount = campaign.legs?.length ?? 0;
 
   return (
-    <div
-      className="overflow-hidden rounded-md border border-border bg-surface"
-      data-testid="campaign-row"
-    >
+    <div className="rounded-[18px] bg-surface" data-testid="campaign-row">
       <button
         type="button"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((open) => !open)}
-        className="flex w-full flex-wrap items-center justify-between gap-4 px-4 py-3 text-left"
+        className="flex min-h-11 w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-[18px] px-4 py-3 text-left"
         aria-label={`${campaign.symbol} campaign`}
       >
-        <span className="font-mono text-sm text-content">{campaign.symbol}</span>
-        <span
-          className="text-xs uppercase tracking-wide text-muted"
-          data-testid="campaign-status"
-        >
-          {campaign.status}
+        <span className="text-[1.0625rem] font-bold">{campaign.symbol}</span>
+        <span data-testid="campaign-status">
+          <StatusWord>{campaign.status === "open" ? "Open" : "Closed"}</StatusWord>
         </span>
-        <span data-testid="campaign-net">
+        <span data-testid="campaign-net" className="font-mono">
           <Money value={campaign.total_net} kind="value" signed />
         </span>
-        <span className="text-xs text-muted" data-testid="campaign-leg-count">
+        <span className="flex items-center gap-2 text-[0.8125rem] text-muted" data-testid="campaign-leg-count">
           {legCount} {legCount === 1 ? "leg" : "legs"}
+          <ChevronDown
+            size={16}
+            aria-hidden="true"
+            className={clsx("transition-transform duration-[180ms] ease-out motion-reduce:transition-none", isOpen && "rotate-180")}
+          />
         </span>
       </button>
 
       {isOpen && (
-        <div className="border-t border-border" data-testid="campaign-legs">
+        <div className="overflow-x-auto border-t border-border px-4 pb-3" data-testid="campaign-legs">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-border bg-elevated text-left">
+              <tr className="text-left text-xs font-semibold tracking-[0.04em] text-muted">
                 {LEG_HEADERS.map((h) => (
-                  <th
-                    key={h}
-                    className="px-3 py-2 text-[10px] font-normal uppercase tracking-wide text-muted"
-                  >
+                  <th key={h} className={clsx("py-2 pr-3 font-semibold", RIGHT.has(h) && "text-right")}>
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-border">
+            <tbody>
               {(campaign.legs ?? []).map((leg) => (
                 <LegRow key={leg.candidate_id} leg={leg} />
               ))}

@@ -111,7 +111,7 @@ export function EquityChart({ curve }: { curve: EquityCurveData }) {
     <div data-testid="equity-chart-frame" data-chart-points={JSON.stringify(data)}>
       {/* Real-prop mirrors for the tests: Recharts does not expose
           connectNulls/isAnimationActive as DOM attributes, so each series
-          records its actual props here — one element per series, asserted
+          records its actual props here, one element per series, asserted
           rather than trusted. `data-chart-points` on this frame mirrors the
           actual gap-inserted series data for the same reason: it proves a
           gap date landed a real null point at the right spot in the series,
@@ -125,7 +125,7 @@ export function EquityChart({ curve }: { curve: EquityCurveData }) {
           is-animation-active="false"
         />
       ))}
-      <div className="h-80 w-full">
+      <div className="h-64 w-full md:h-80">
         <ResponsiveContainer>
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
             <CartesianGrid stroke={colors["--bg-surface"] || undefined} strokeDasharray="3 3" />
@@ -168,9 +168,9 @@ export function EquityChart({ curve }: { curve: EquityCurveData }) {
       {/* The legend names both series in full — see SERIES' comment. Rendered
           as a real list (role=list) so a reader and a test agree on what the
           lines are called. */}
-      <div className="mt-2 flex flex-wrap gap-4" role="list" aria-label="legend">
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1" role="list" aria-label="legend">
         {SERIES.map((s) => (
-          <span key={s.key} role="listitem" className="flex items-center gap-2 text-xs text-muted">
+          <span key={s.key} role="listitem" className="flex items-center gap-2 text-[0.8125rem] text-muted">
             <span
               aria-hidden
               className="inline-block h-0.5 w-4"
@@ -182,7 +182,7 @@ export function EquityChart({ curve }: { curve: EquityCurveData }) {
       </div>
 
       {curve.starts_at && (
-        <p className="mt-2 text-xs text-muted" data-testid="equity-starts-at">
+        <p className="mt-2 text-[0.8125rem] text-muted" data-testid="equity-starts-at">
           The curve shows this system&apos;s recorded history, {startsInWords(curve.starts_at)}.
         </p>
       )}
