@@ -10,53 +10,45 @@ const SMALL_SAMPLE_THRESHOLD = 5;
  * A bucket with n below SMALL_SAMPLE_THRESHOLD is labelled in words - a win rate from a
  * handful of trades is not evidence and must not read as one.
  */
-export function ScoreBucketTable({
-  buckets,
-  label,
-}: {
-  buckets: ScoreBucketData[];
-  label: string;
-}) {
+export function ScoreBucketTable({ buckets, label }: { buckets: ScoreBucketData[]; label: string }) {
   if (buckets.length === 0) {
     return null;
   }
-
+  const head = "py-1.5 pr-3 text-right font-semibold";
   return (
     <div className="space-y-2">
-      <h3 className="text-xs uppercase tracking-wide text-muted">{label}</h3>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-muted">
-            <th className="px-2 py-1 font-normal">Band</th>
-            <th className="px-2 py-1 font-normal">n</th>
-            <th className="px-2 py-1 font-normal">Win rate</th>
-            <th className="px-2 py-1 font-normal">Mean P&amp;L</th>
-            <th className="px-2 py-1 font-normal">Total P&amp;L</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {buckets.map((b) => (
-            <tr key={b.label}>
-              <td className="px-2 py-1 font-mono text-content">{b.label}</td>
-              <td className="px-2 py-1 tabular text-content">
-                {b.n}
-                {b.n < SMALL_SAMPLE_THRESHOLD && (
-                  <span className="ml-1 text-[10px] uppercase tracking-wide text-unknown">
-                    small sample
-                  </span>
-                )}
-              </td>
-              <td className="px-2 py-1 tabular text-content">{Math.round(b.win_rate * 100)}%</td>
-              <td className="px-2 py-1 tabular">
-                <Money value={b.mean_pnl} kind="realized" signed />
-              </td>
-              <td className="px-2 py-1 tabular">
-                <Money value={b.total_pnl} kind="realized" signed />
-              </td>
+      <h3 className="text-xs font-semibold tracking-[0.04em] text-muted">{label}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[0.8125rem]">
+          <thead>
+            <tr className="border-b border-border text-left text-xs font-semibold tracking-[0.04em] text-muted">
+              <th className="py-1.5 pr-3 font-semibold">Band</th>
+              <th className={head}>n</th>
+              <th className={head}>Win rate</th>
+              <th className={head}>Mean P&amp;L</th>
+              <th className={head}>Total P&amp;L</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {buckets.map((b) => (
+              <tr key={b.label} className="border-t border-border first:border-t-0">
+                <td className="py-2 pr-3 font-mono text-content">{b.label}</td>
+                <td className="tabular py-2 pr-3 text-right font-mono text-content">
+                  {b.n}
+                  {b.n < SMALL_SAMPLE_THRESHOLD && <span className="ml-1 text-xs text-unknown">small sample</span>}
+                </td>
+                <td className="tabular py-2 pr-3 text-right font-mono text-content">{Math.round(b.win_rate * 100)}%</td>
+                <td className="tabular py-2 pr-3 text-right font-mono">
+                  <Money value={b.mean_pnl} kind="realized" signed />
+                </td>
+                <td className="tabular py-2 pr-3 text-right font-mono">
+                  <Money value={b.total_pnl} kind="realized" signed />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
