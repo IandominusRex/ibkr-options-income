@@ -2,17 +2,21 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { StatusWord } from "@/components/ui/StatusWord";
+import { kindWord, reasonWords, sentSentence } from "@/features/market/market";
+import { whenET } from "@/features/trades/time";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
 import { EmptyState } from "./EmptyState";
-import type { OrderListResponse } from "./types";
+import type { OrderListResponse, OrderSizing, OrderSummary } from "./types";
 
 type Filter = "working" | "all" | "rejected";
 
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: "working", label: "Working" },
-  { key: "all", label: "All" },
-  { key: "rejected", label: "Rejected" },
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: "working", label: "Working" },
+  { value: "all", label: "All" },
+  { value: "rejected", label: "Rejected" },
 ];
 
 const EMPTY_TEXT: Record<Filter, string> = {
@@ -21,37 +25,91 @@ const EMPTY_TEXT: Record<Filter, string> = {
   rejected: "No rejected orders.",
 };
 
-export function OrdersTable() {
+const STATE_LABEL: Record<string, string> = {
+  queued: "Queued",
+  submitted: "Submitted",
+  filled: "Filled",
+  partial: "Partial",
+  cancelled: "Cancelled",
+  rejected: "Rejected",
+};
+
+const STRATEGY: Record<string, string> = {
+  cash_secured_put: "cash-secured put",
+  covered_call: "covered call",
+  roll: "roll",
+};
+
+const CAP = 200;
+const isClaude = (kind: string) => kind === "claude_cut" || kind === "claude_cut_unapplied";
+const price = (v: number | null) =>
+  v === null ? <span className="hatch text-unknown">{UNKNOWN}</span> : `$${v.toFixed(2)}`;
+
+/** What shaped an order's size, in words. Claude's cut is the flag tone and its reason is labelled
+ *  as Claude's; a rule's reason has its codes spelled out. */
+function Sizing({ a }: { a: OrderSizing }) {
+  const claude = isClaude(a.kind);
+  return (
+    <div className="mt-1 text-[0.8125rem]">
+      <StatusWord tone={claude ? "flag" : "neutral"}>{kindWord(a.kind)}</StatusWord> <span>{sentSentence(a)}</span>
+      {a.reason && (
+        <p className="text-muted">
+          {claude ? "Claude's reason: " : "Rule: "}
+          {claude ? a.reason : reasonWords(a.reason)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Row({ o }: { o: OrderSummary }) {
+  const strike = `$${o.strike.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  return (
+    <li className="border-t border-border py-[11px] first:border-t-0">
+      <div className="text-sm">
+        <span className="font-bold">{o.underlying}</span>{" "}
+        <span className="font-bold">
+          {strike} {STRATEGY[o.strategy] ?? o.strategy.replace(/_/g, " ")}
+        </span>
+        <span className="ml-1.5 align-[1px]">
+          <StatusWord tone={o.state === "partial" ? "flag" : "neutral"}>{STATE_LABEL[o.state] ?? o.state}</StatusWord>
+        </span>
+        <div className="text-[0.8125rem] text-muted">
+          {whenET(o.created_at)} · {o.is_live ? "live" : "paper"}
+        </div>
+        <div className="tabular font-mono text-xs text-muted">
+          limit {price(o.limit_price)} · filled {o.filled_qty.toFixed(0)} · avg fill {price(o.avg_fill_price)}
+        </div>
+        {o.detail && <p className="mt-0.5 text-[0.8125rem] text-muted">{o.detail}</p>}
+        {(o.sizing ?? []).map((a, i) => (
+          <Sizing key={i} a={a} />
+        ))}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The system's own orders for the wheel. A window (`days`) narrows All and Rejected; Working is
+ * never windowed, so an order stuck for weeks cannot be hidden by it. Credit spreads record filled
+ * orders only, so they appear under Fills.
+ */
+export function OrdersTable({ days }: { days?: number } = {}) {
   const [filter, setFilter] = useState<Filter>("working");
+  const windowDays = filter === "working" ? undefined : days;
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["options", "orders", filter],
-    queryFn: () => apiFetch<OrderListResponse>(`/options/orders?state=${filter}`),
+    queryKey: ["options", "orders", filter, windowDays ?? null],
+    queryFn: () =>
+      apiFetch<OrderListResponse>(
+        `/options/orders?state=${filter}${windowDays ? `&days=${windowDays}` : ""}&limit=${CAP}`,
+      ),
     placeholderData: (prev) => prev,
   });
-
   const orders = data?.orders ?? [];
 
   return (
-    <div>
-      <div className="mb-3 flex gap-1" role="group" aria-label="Filter orders">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setFilter(f.key)}
-            aria-pressed={filter === f.key}
-            className={
-              "rounded-sm border px-2 py-1 text-xs transition-colors " +
-              (filter === f.key
-                ? "border-focus text-content"
-                : "border-border text-muted hover:text-content")
-            }
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
+    <div className="grid gap-3">
+      <SegmentedControl label="Filter orders" appearance="chips" options={FILTERS} value={filter} onChange={setFilter} />
       {isLoading ? (
         <p className="text-sm text-muted">Loading orders</p>
       ) : isError ? (
@@ -59,66 +117,22 @@ export function OrdersTable() {
       ) : orders.length === 0 ? (
         <EmptyState text={EMPTY_TEXT[filter]} />
       ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-muted">
-              <th className="py-2 font-medium">Underlying</th>
-              <th className="py-2 font-medium">Contract</th>
-              <th className="py-2 font-medium">State</th>
-              <th className="py-2 font-medium">Limit</th>
-              <th className="py-2 font-medium">Filled</th>
-              <th className="py-2 font-medium">Avg fill</th>
-              <th className="py-2 font-medium">Mode</th>
-              <th className="py-2 font-medium">Detail</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {orders.map((o) => (
-              <tr key={o.id}>
-                <td className="py-2 font-mono text-content">{o.underlying}</td>
-                <td className="py-2 tabular text-content">
-                  {o.strike.toFixed(2)} {o.strategy}
-                </td>
-                <td className="py-2">
-                  <StateBadge state={o.state} />
-                </td>
-                <td className="py-2 tabular">
-                  {o.limit_price != null ? `$${o.limit_price.toFixed(2)}` : UNKNOWN}
-                </td>
-                <td className="py-2 tabular text-content">{o.filled_qty.toFixed(0)}</td>
-                <td className="py-2 tabular">
-                  {o.avg_fill_price != null ? `$${o.avg_fill_price.toFixed(2)}` : UNKNOWN}
-                </td>
-                <td className="py-2 text-xs text-muted">{o.is_live ? "live" : "paper"}</td>
-                <td className="py-2 text-xs text-muted">{o.detail ?? UNKNOWN}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <ul>
+          {orders.map((o) => (
+            <Row key={o.id} o={o} />
+          ))}
+        </ul>
+      )}
+      {orders.length >= CAP && (
+        <p className="text-[0.8125rem] text-muted">
+          Showing the latest {CAP} orders. Choose a shorter window to see every order in it.
+        </p>
+      )}
+      {filter === "working" && (
+        <p className="text-[0.8125rem] text-muted">
+          A working order is cancelled in IBKR for now. The web cannot cancel one yet.
+        </p>
       )}
     </div>
-  );
-}
-
-function StateBadge({ state }: { state: string }) {
-  // State is never communicated by colour alone: a label plus a distinct fill.
-  const LABEL: Record<string, string> = {
-    queued: "Queued",
-    submitted: "Submitted",
-    filled: "Filled",
-    partial: "Partial",
-    cancelled: "Cancelled",
-    rejected: "Rejected",
-  };
-  const cls =
-    state === "filled"
-      ? "bg-gain text-background"
-      : state === "rejected" || state === "cancelled"
-        ? "border border-loss text-loss"
-        : "bg-elevated text-content";
-  return (
-    <span className={`inline-block rounded-sm px-2 py-0.5 text-xs ${cls}`}>
-      {LABEL[state] ?? state}
-    </span>
   );
 }
