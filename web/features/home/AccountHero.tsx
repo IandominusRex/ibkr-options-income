@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { apiFetch } from "@/lib/api";
@@ -40,7 +41,12 @@ export function AccountHero({ now }: { now?: Date } = {}) {
   });
 
   if (isError && !data) {
-    return <p className="text-sm text-muted">Account value is unavailable right now. This page keeps retrying.</p>;
+    return (
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">Account value is unavailable right now. This page keeps retrying.</p>
+        <RefreshButton scope="broker" label="Refresh the account" />
+      </div>
+    );
   }
   if (!data) {
     // Shaped like the loaded hero (label, number, delta, chart) so nothing jumps when it lands.
@@ -76,6 +82,8 @@ export function AccountHero({ now }: { now?: Date } = {}) {
             <span>{delay}</span>
           </>
         )}
+        {/* The icon is taller than the label row, so it hangs into the margins rather than grow the row. */}
+        <RefreshButton scope="broker" label="Refresh the account" className="-my-3 ml-auto" />
       </div>
       <div
         className={clsx(

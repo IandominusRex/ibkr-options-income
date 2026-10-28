@@ -2,9 +2,25 @@
 
 import clsx from "clsx";
 import { useState } from "react";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { FIELD, FIELD_LABEL } from "@/components/ui/field";
+import { Select } from "@/components/ui/Select";
 
 type BookFilter = "all" | "paper" | "live";
+
+const BOOKS = [
+  { value: "all", label: "All" },
+  { value: "paper", label: "Paper" },
+  { value: "live", label: "Live" },
+];
+
+const OUTCOMES = [
+  { value: "", label: "All" },
+  { value: "still_open", label: "Still open" },
+  { value: "expired_worthless", label: "Expired worthless" },
+  { value: "assigned", label: "Assigned" },
+  { value: "closed_early", label: "Closed early" },
+];
 
 /**
  * The filter strip above the ledger. Filters drive the query string, not
@@ -68,56 +84,45 @@ export function LedgerFilters({
         <label htmlFor="ledger-book-filter" className={FIELD_LABEL}>
           Book
         </label>
-        <select
+        <Select
           id="ledger-book-filter"
           value={book}
-          onChange={(e) => {
-            const nextBook = e.target.value as BookFilter;
+          onChange={(v) => {
+            const nextBook = v as BookFilter;
             setBook(nextBook);
             emit({ book: nextBook, outcome, since, until, symbol });
           }}
-          className={clsx(FIELD, "w-full")}
-        >
-          <option value="all">all</option>
-          <option value="paper">paper</option>
-          <option value="live">live</option>
-        </select>
+          options={BOOKS}
+        />
       </div>
 
       <div className="grid gap-1">
         <label htmlFor="ledger-outcome-filter" className={FIELD_LABEL}>
           Outcome
         </label>
-        <select
+        <Select
           id="ledger-outcome-filter"
           value={outcome}
-          onChange={(e) => {
-            setOutcome(e.target.value);
-            emit({ book, outcome: e.target.value, since, until, symbol });
+          onChange={(v) => {
+            setOutcome(v);
+            emit({ book, outcome: v, since, until, symbol });
           }}
-          className={clsx(FIELD, "w-full")}
-        >
-          <option value="">all</option>
-          <option value="still_open">still open</option>
-          <option value="expired_worthless">expired worthless</option>
-          <option value="assigned">assigned</option>
-          <option value="closed_early">closed early</option>
-        </select>
+          options={OUTCOMES}
+        />
       </div>
 
       <div className="grid gap-1">
         <label htmlFor="ledger-since-filter" className={FIELD_LABEL}>
           Since
         </label>
-        <input
+        <DatePicker
           id="ledger-since-filter"
-          type="date"
           value={since}
-          onChange={(e) => {
-            setSince(e.target.value);
-            emit({ book, outcome, since: e.target.value, until, symbol });
+          max={until || undefined}
+          onChange={(v) => {
+            setSince(v);
+            emit({ book, outcome, since: v, until, symbol });
           }}
-          className={clsx(FIELD, "w-full")}
         />
       </div>
 
@@ -125,15 +130,14 @@ export function LedgerFilters({
         <label htmlFor="ledger-until-filter" className={FIELD_LABEL}>
           Until
         </label>
-        <input
+        <DatePicker
           id="ledger-until-filter"
-          type="date"
           value={until}
-          onChange={(e) => {
-            setUntil(e.target.value);
-            emit({ book, outcome, since, until: e.target.value, symbol });
+          min={since || undefined}
+          onChange={(v) => {
+            setUntil(v);
+            emit({ book, outcome, since, until: v, symbol });
           }}
-          className={clsx(FIELD, "w-full")}
         />
       </div>
     </div>

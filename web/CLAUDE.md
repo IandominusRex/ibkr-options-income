@@ -108,7 +108,9 @@ app/                App Router pages and the root layout
                     chips), the view in `?view=` with a smart default (Proposals when
                     something in the strategy waits on you, History otherwise, decided once
                     per visit; `?view=working` and `?view=decided` open History), History's
-                    New York day in `?day=`, and the "not draining commands" warning
+                    New York day in `?day=` (Today sits left of the previous and next arrows so they
+                    never move; next from a past day goes to the following day with trades, or back
+                    to today when none is left), and the "not draining commands" warning
                     (<DrainWarning/>) above the view. The old tab bar, <ControlsStrip/>,
                     <TickerPillBar/>, the Working and Decided tabs and the Shorts tab are
                     gone: halt, resume, the autonomy rung and roll mode live in the bot
@@ -122,7 +124,7 @@ app/                App Router pages and the root layout
                     Fills and orders is three lists that are never merged (the system's orders and
                     fills, IBKR's executions); System is the sizing record above the score against
                     outcome. Nothing on the page sends a command: the CSV links are downloads and
-                    Refresh lives on Portfolio.
+                    the refresh icon beside the title only asks for the page's queries again.
   more/             More: the bot card (opens Bot controls), the theme toggle (Light /
                     Dark / Follow OS), <TargetCard/> (features/more/: the monthly income
                     target as none, a fixed amount, a percent of the account or a percent
@@ -233,7 +235,16 @@ components/
                     trapped by lib/useFocusTrap.ts, which hands Escape and Tab to a nested
                     ConfirmAction; the only shadow besides the confirm dialog). field.ts holds
                     FIELD and FIELD_LABEL, the `field` component's classes, shared by every labelled
-                    input and select (Portfolio, Activity and the ledger's forms).
+                    input and select (Portfolio, Activity and the ledger's forms). Select (the
+                    dropdown drawn in the console's face: the trigger is the `field`, the list a white
+                    panel on a control edge with no shadow, the chosen option a check; arrows, Home,
+                    End, type-ahead, Enter or Space, Escape; flips up when there is no room below;
+                    pair it with a `<label htmlFor>`) and DatePicker (a drop-in for `<input
+                    type="date">`: `YYYY-MM-DD` or `""`, a Monday-first month grid in 40px circles
+                    (44px on a phone), the chosen day an ink fill, today a ring, `min`/`max` grey
+                    days out, Today and Clear in the foot; dates.ts is its UTC day arithmetic).
+                    Activity's Book, Outcome, Since and Until and the ledger Trades page's filters use
+                    them; a test drives them with `lib/test-pick.ts` (`chooseOption`, `chooseDay`).
   shell/            Web overhaul Part 1: Rail (desktop, from 768px: the lib/nav.ts
                     destinations, the lime pending-count badge on Trades, BotCard at its
                     foot), TabBar (phones: five tabs; Research and News mark More
@@ -241,6 +252,13 @@ components/
                     not-draining line; aria-haspopup; a loading block) and BotSheet (the
                     unchanged HaltControl and AutonomyControl, with the DrainWarning above
                     them), HaltedBanner (global; wheel-scoped wording), ThemeToggle. And
+                    RefreshButton (2026-10-28: the refresh icon, quiet and round, 44px on a phone,
+                    spinning while it works. `scope="broker"` on Home's hero and a position's
+                    page sends the `refresh` command through portfolio/useBrokerRefresh, then asks
+                    for every query again, and says in words beside the icon when the broker is
+                    not connected, the command failed or the trading service is not draining;
+                    `scope="page"` on Stock, News, News ticker, Trades and Activity sends nothing
+                    and refetches the page's queries. Never lime). And
                     from before: SystemStatusCard (now mounted on More; react-query on GET /system/status,
                     `refetchInterval` 20s; renders one row per system with a state dot -
                     `bg-gain` for ok, a `border-loss` outline for down, `.hatch` texture
@@ -547,7 +565,9 @@ components/
                     CampaignThread (pure, renders symbol + rolled-up financials),
                     CalendarPanel (fetches GET /portfolio/calendar, renders freshness
                     and expiry grid with consequence text per entry, "unknown"
-                    consequence is a named state), RefreshControl (one click no dialog,
+                    consequence is a named state), useBrokerRefresh (2026-10-28: the refresh
+                    command's flow, extracted so the Portfolio button and the refresh icon share
+                    it) and RefreshControl (one click no dialog,
                     fires POST /commands kind "refresh", invalidates portfolio queries
                     on terminal, `broker_unavailable` renders as plain answer through
                     `CommandReceipt`'s `plainReasons` prop not red failed chrome,
@@ -866,11 +886,17 @@ features/portfolio/ Web overhaul Part 3: the Portfolio page. PortfolioPage (the 
                     the Account card, the view chips, then the view; the Account card sits outside the
                     switched view, so a view change never refetches it), views.ts (PORTFOLIO_VIEWS and
                     labels), SummaryCard (the Account card: `GET /portfolio/summary`, the age in words,
-                    "Delayed" at 30 minutes or when degraded, the API's note verbatim, the account and
-                    the exposure as figure lines), format.ts (`usd`, `shortDate`, `weekdayDate`, read as
+                    "Delayed" at 30 minutes or when degraded, the API's note verbatim, then
+                    AccountDonut + donut.ts: net liquidation at the centre of a two-ring donut, the
+                    outer ring buying power used and the inner ring cash as a share of the account,
+                    each percent written out with the sum behind it, a ring we cannot draw an empty
+                    track and an n/a; the rest as two blocks of figure lines under it), format.ts (`usd`, `shortDate`, `weekdayDate`, read as
                     written so no date shifts with the viewer's zone), PositionsView + positions.ts (one
-                    name card per underlying from Home's `buildPositionRows`, each option with a figure
-                    line (`legDetail`); `rowsPnl` adds a name's rows only when every one is known, else
+                    name card per underlying from Home's `buildPositionRows`: the price at the top right
+                    (`Last price`, or `Close <date>` for a name held only through options, from the
+                    API's `underlying_price`), the name's open P&L as the card's hero, a figure strip
+                    (`nameFigures`: value and cost basis of the shares, net delta in shares, next
+                    expiry, cash secured), then each option with a figure line (`legDetail`); `rowsPnl` adds a name's rows only when every one is known, else
                     n/a; a search, the type chips with counts, the "Weak health" and "Event" words from
                     the notes Home reads; an unreadable spreads book says so), CampaignsView +
                     campaigns.ts (Status and Symbol go to `GET /portfolio/campaigns` in the request; the

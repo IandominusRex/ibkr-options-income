@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
 import { formatMoneyCell } from "@/lib/money";
 import { BOOK_LABEL, bookRow, breakEven, dayLabel, itemDetail, itemLabel, itemOutcome, pickSentence, pickTitle, timeET } from "./spreads";
+import { todayInNewYork } from "./time";
 import type { SpreadMenuItem, SpreadPick, SpreadPicksResponse } from "./types";
 
 const H2 = "mb-2.5 text-[0.8125rem] font-semibold text-muted";
@@ -32,6 +33,8 @@ export function SpreadsView() {
     refetchInterval: day === null ? 60_000 : false,
   });
   const data = q.data;
+  // The day the next arrow goes to; null is today (the request carries no day for it).
+  const nextDay = data?.next_day && data.next_day < todayInNewYork() ? data.next_day : null;
 
   if (q.isError && !data) {
     return <p className="text-sm text-muted">The spreads picks could not be loaded right now.</p>;
@@ -52,6 +55,12 @@ export function SpreadsView() {
           {dayLabel(data.day)}
           {day === null ? " · today" : ""}
         </h2>
+        {/* Left of the arrows, so showing or hiding it never moves them. */}
+        {day !== null && (
+          <Button variant="secondary" onClick={() => setDay(null)}>
+            Today
+          </Button>
+        )}
         <Button
           variant="quiet"
           aria-label="Previous day with spreads activity"
@@ -60,19 +69,15 @@ export function SpreadsView() {
         >
           <ChevronLeft size={18} aria-hidden="true" />
         </Button>
+        {/* From a past day, next is the following day with activity, or today when none is left. */}
         <Button
           variant="quiet"
-          aria-label="Next day with spreads activity"
-          disabled={data.next_day === null}
-          onClick={() => setDay(data.next_day)}
+          aria-label={day === null || nextDay !== null ? "Next day with spreads activity" : "Back to today"}
+          disabled={day === null}
+          onClick={() => setDay(nextDay)}
         >
           <ChevronRight size={18} aria-hidden="true" />
         </Button>
-        {day !== null && (
-          <Button variant="secondary" onClick={() => setDay(null)}>
-            Today
-          </Button>
-        )}
       </div>
 
       {!data.available ? (

@@ -82,6 +82,12 @@ class PositionGroup(Envelope):
     underlying: str
     stock: StockLeg | None
     options: list[OptionLeg]
+    # The underlying's price for the card: the share position's own market price when the
+    # name is held as shares ("position"), else the latest settled close in `price_history`
+    # ("close", dated by `underlying_price_date`). None when neither exists - never 0.0.
+    underlying_price: float | None = None
+    underlying_price_basis: Literal["position", "close"] | None = None
+    underlying_price_date: date | None = None
 
 
 class PositionsResponse(Envelope):

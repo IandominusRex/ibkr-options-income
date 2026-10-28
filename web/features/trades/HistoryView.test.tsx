@@ -185,13 +185,25 @@ describe("HistoryView", () => {
   it("steps to the neighbouring days with trades, and back to today", async () => {
     serve({ previous: "2026-10-09", next: null });
     const { onDay } = mount({ day: "2026-10-12" });
-    const next = await screen.findByRole("button", { name: "Next day with trades" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Previous day with trades" })).toBeEnabled());
-    expect(next).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Previous day with trades" }));
     expect(onDay).toHaveBeenCalledWith("2026-10-09");
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     expect(onDay).toHaveBeenCalledWith(null);
+    // No later day has trades, so next goes back to today.
+    onDay.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Back to today" }));
+    expect(onDay).toHaveBeenCalledWith(null);
+  });
+
+  it("keeps Today left of the arrows, and next goes to the following day with trades", async () => {
+    serve({ previous: "2026-10-09", next: "2026-10-13" });
+    const { onDay } = mount({ day: "2026-10-12" });
+    const next = await screen.findByRole("button", { name: "Next day with trades" });
+    const names = screen.getAllByRole("button").map((b) => b.textContent || b.getAttribute("aria-label"));
+    expect(names.indexOf("Today")).toBeLessThan(names.indexOf("Previous day with trades"));
+    fireEvent.click(next);
+    expect(onDay).toHaveBeenCalledWith("2026-10-13");
   });
 
   it("counts what is in flight: sent approvals plus working orders in scope", async () => {

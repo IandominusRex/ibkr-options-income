@@ -125,7 +125,7 @@ describe("SpreadsView", () => {
 
   it("steps to the previous day with activity, and back to today", async () => {
     renderWithQuery(<SpreadsView />, {
-      "/spreads/picks?day=2026-10-09": day({ day: "2026-10-09", previous_day: null, next_day: "2026-10-15", picks: [], positions: [] }),
+      "/spreads/picks?day=2026-10-09": day({ day: "2026-10-09", previous_day: null, next_day: null, picks: [], positions: [] }),
       "/spreads/picks": day(),
     });
     expect(await screen.findByRole("heading", { name: /Thu, Oct 15/ })).toBeInTheDocument();
@@ -133,6 +133,11 @@ describe("SpreadsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous day with spreads activity" }));
     expect(await screen.findByRole("heading", { name: /Fri, Oct 9/ })).toBeInTheDocument();
     expect(apiFetchMock.mock.calls.some((c) => c[0] === "/spreads/picks?day=2026-10-09")).toBe(true);
+    // No later day has activity, so next goes back to today.
+    fireEvent.click(screen.getByRole("button", { name: "Back to today" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: /Thu, Oct 15/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Previous day with spreads activity" }));
+    expect(await screen.findByRole("heading", { name: /Fri, Oct 9/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: /Thu, Oct 15/ })).toBeInTheDocument());
   });

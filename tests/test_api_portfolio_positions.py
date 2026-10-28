@@ -124,6 +124,52 @@ def test_moneyness_falls_back_to_price_history_without_a_stock_leg(
     assert leg["moneyness"] == "itm"
 
 
+def test_a_held_name_reports_its_share_price_as_the_position_basis(
+    client, seed_portfolio_snapshot
+) -> None:
+    seed_portfolio_snapshot(positions=[stock(symbol="NVDA", market_price=176.0)])
+    group = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]
+    assert group["underlying_price"] == 176.0
+    assert group["underlying_price_basis"] == "position"
+    assert group["underlying_price_date"] is None
+
+
+def test_an_options_only_name_reports_the_last_close_with_its_date(
+    client, seed_portfolio_snapshot
+) -> None:
+    from src.storage.db import session_scope
+    from src.storage.models import PriceHistoryRow
+
+    with session_scope() as s:
+        for day, close in ((date(2026, 10, 26), 398.0), (date(2026, 10, 27), 400.5)):
+            s.add(
+                PriceHistoryRow(
+                    symbol="MSFT",
+                    obs_date=day,
+                    open=close,
+                    high=close,
+                    low=close,
+                    close=close,
+                    volume=1.0,
+                )
+            )
+    seed_portfolio_snapshot(positions=[short_put(underlying="MSFT", strike=380.0)])
+    group = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]
+    assert group["underlying_price"] == 400.5
+    assert group["underlying_price_basis"] == "close"
+    assert group["underlying_price_date"] == "2026-10-27"
+
+
+def test_a_name_with_no_price_anywhere_reports_none_never_zero(
+    client, seed_portfolio_snapshot
+) -> None:
+    seed_portfolio_snapshot(positions=[short_put(underlying="ZZZZ", strike=10.0)])
+    group = client.get("/portfolio/positions", headers=OWNER).json()["groups"][0]
+    assert group["underlying_price"] is None
+    assert group["underlying_price_basis"] is None
+    assert group["underlying_price_date"] is None
+
+
 def test_assignment_risk_uses_the_shared_predicate(client, seed_portfolio_snapshot) -> None:
     seed_portfolio_snapshot(
         positions=[

@@ -1018,7 +1018,8 @@ the account holds nothing.
 
 **Response — `PositionsResponse`:**
 `{ as_of, source, degraded, groups: PositionGroup[] }`.
-`PositionGroup`: `{ as_of, underlying, stock: StockLeg | null, options: OptionLeg[] }`.
+`PositionGroup`: `{ as_of, underlying, stock: StockLeg | null, options: OptionLeg[], underlying_price, underlying_price_basis, underlying_price_date }`.
+`underlying_price` is the name's price for its card: the share position's own `market_price` when the name is held as shares (`underlying_price_basis: "position"`, `underlying_price_date: null`), else the latest settled close in `price_history` (`"close"`, with that close's date), else `null` with a `null` basis and date. It is never `0`.
 `StockLeg`: `{ as_of, shares, avg_cost, adjusted_cost_basis: float | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, unrealized_pnl_adjusted: float | null }`.
 `OptionLeg`: `{ as_of, symbol, right: "C"|"P"|null, strike: float | null, expiry: date | null, dte: int | null, contracts, short, delta: float | null, delta_source: string | null, market_price: float | null, market_value: float | null, unrealized_pnl: float | null, moneyness: "itm"|"atm"|"otm"|null, assignment_risk }`. `right`/`strike` are `null` when the snapshot carried none — never a fabricated `"C"`/`0.0` pair, and `moneyness` is `null` with them (all three of spot/right/strike are needed; no guessing against a fabricated strike).
 

@@ -126,32 +126,38 @@ def _consequence(  # noqa: PLR0911
     return "called_away" if stock_held else "assigned"
 
 
+def _last_close(db: TradingDb, underlying: str) -> tuple[float, date] | None:
+    """The latest settled close in `price_history` and its date, or None when there is none.
+
+    The table `routers/research.py::_hv30_for` already reads, through the route's own
+    read-only engine. Never a second live-data path.
+    """
+    try:
+        from src.storage.models import PriceHistoryRow
+
+        row = db.execute(
+            select(PriceHistoryRow.close, PriceHistoryRow.obs_date)
+            .where(PriceHistoryRow.symbol == underlying)
+            .order_by(PriceHistoryRow.obs_date.desc())
+            .limit(1)
+        ).first()
+        return (float(row[0]), row[1]) if row is not None else None
+    except Exception:
+        return None
+
+
 def _underlying_price(
     db: TradingDb, underlying: str, groups_stock_price: float | None
 ) -> float | None:
     """The underlying's price for moneyness, from the reading itself when it has one.
 
     Precedence: a stock leg in the same reading (the operator's own holding, same
-    capture) — else the latest settled close in `price_history`, read through the
-    same read-only engine the route already holds (the table `routers/research.py::
-    _hv30_for` already reads). Never a second live-data path.
+    capture) - else the latest settled close (`_last_close`).
     """
     if groups_stock_price is not None:
         return groups_stock_price
-    try:
-        from src.storage.models import PriceHistoryRow
-
-        row = (
-            db.execute(
-                select(PriceHistoryRow.close)
-                .where(PriceHistoryRow.symbol == underlying)
-                .order_by(PriceHistoryRow.obs_date.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        return float(row) if row is not None else None
-    except Exception:
-        return None
+    close = _last_close(db, underlying)
+    return close[0] if close is not None else None
 
 
 def _moneyness(
@@ -554,15 +560,33 @@ def portfolio_positions(user: OwnerUser, db: TradingDb) -> PositionsResponse:  #
             delta_threshold=delta_threshold,
             dte_threshold=dte_threshold,
         )
+        price, basis, price_date = _group_price(db, g.underlying, stock_leg)
         out.append(
             PositionGroup(
-                as_of=as_of, underlying=g.underlying, stock=stock_leg, options=option_legs
+                as_of=as_of,
+                underlying=g.underlying,
+                stock=stock_leg,
+                options=option_legs,
+                underlying_price=price,
+                underlying_price_basis=basis,
+                underlying_price_date=price_date,
             )
         )
 
     return PositionsResponse(
         as_of=as_of, source=reading.source, degraded=reading.degraded, groups=out
     )
+
+
+def _group_price(
+    db: TradingDb, underlying: str, stock_leg: StockLeg | None
+) -> tuple[float | None, Literal["position", "close"] | None, date | None]:
+    """The card's price for a name, and where it came from: the share position's own market
+    price when held as shares, else the last settled close with its date, else nothing."""
+    if stock_leg is not None and stock_leg.market_price is not None:
+        return stock_leg.market_price, "position", None
+    close = _last_close(db, underlying)
+    return (close[0], "close", close[1]) if close is not None else (None, None, None)
 
 
 def _stock_leg(

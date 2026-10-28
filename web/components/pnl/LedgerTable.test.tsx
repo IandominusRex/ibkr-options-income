@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CampaignRow } from "./CampaignRow";
 import { LedgerFilters } from "./LedgerFilters";
 import { LegRow } from "./LegRow";
+import { chooseOption } from "@/lib/test-pick";
 import { LedgerTable } from "./LedgerTable";
 import type { CampaignPnlData, LedgerResponseData, PnlLegData } from "./types";
 
@@ -233,8 +234,8 @@ describe("LedgerFilters", () => {
 
   it("renders the book choices the summary refuses to guess", () => {
     render(<LedgerFilters filters={aFilterDraft()} onChange={() => {}} />);
-    const select = screen.getByLabelText(/^book/i) as HTMLSelectElement;
-    expect([...select.options].map((o) => o.value)).toEqual(["all", "paper", "live"]);
+    fireEvent.click(screen.getByLabelText(/^book/i));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["All", "Paper", "Live"]);
   });
 
   it("seeds every field from the filters prop, including book, on mount", () => {
@@ -245,8 +246,8 @@ describe("LedgerFilters", () => {
       />,
     );
     expect((screen.getByLabelText(/^symbol/i) as HTMLInputElement).value).toBe("NVDA");
-    expect((screen.getByLabelText(/^book/i) as HTMLSelectElement).value).toBe("paper");
-    expect((screen.getByLabelText(/^outcome/i) as HTMLSelectElement).value).toBe("assigned");
+    expect(screen.getByLabelText(/^book/i)).toHaveTextContent("Paper");
+    expect(screen.getByLabelText(/^outcome/i)).toHaveTextContent("Assigned");
   });
 
   it("emits the selected book so it actually reaches the query, not just the echo", () => {
@@ -257,7 +258,7 @@ describe("LedgerFilters", () => {
     // composition itself lives in PnlShell, which has no test file yet.
     let seen: Record<string, string> = {};
     render(<LedgerFilters filters={aFilterDraft()} onChange={(next) => { seen = next; }} />);
-    fireEvent.change(screen.getByLabelText(/^book/i), { target: { value: "paper" } });
+    chooseOption(screen.getByLabelText(/^book/i), "Paper");
     expect(seen["book"]).toBe("paper");
   });
 });

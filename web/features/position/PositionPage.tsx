@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { Card } from "@/components/ui/Card";
 import { StatusWord } from "@/components/ui/StatusWord";
 import { Stub, formatStubValue } from "@/components/ui/Stub";
@@ -135,7 +136,10 @@ export function PositionPage({ underlying, slug }: { underlying: string; slug: s
     return (
       <Shell>
         <BackLink />
-        <h1 className="mt-2 text-2xl font-extrabold tracking-[-0.015em]">{underlying.toUpperCase()}</h1>
+        <div className="mt-2 flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-extrabold tracking-[-0.015em]">{underlying.toUpperCase()}</h1>
+          <RefreshButton scope="broker" label="Refresh this position" className="-mr-2 -mt-1" />
+        </div>
         <p className="mt-3 text-sm">
           {missing
             ? "There is no record of this position. It may have closed and left the book before it was ever recorded here."
@@ -165,13 +169,16 @@ export function PositionPage({ underlying, slug }: { underlying: string; slug: s
   return (
     <Shell>
       <BackLink />
-      <header className="mt-1">
-        <h1 className="text-2xl font-extrabold tracking-[-0.015em]">{positionTitle(data)}</h1>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted">
-          {status && <StatusWord tone={status.tone}>{status.word}</StatusWord>}
-          {!data.held && <StatusWord tone="neutral">No longer held</StatusWord>}
-          {sub && <span>{sub}</span>}
-        </p>
+      <header className="mt-1 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-extrabold tracking-[-0.015em]">{positionTitle(data)}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted">
+            {status && <StatusWord tone={status.tone}>{status.word}</StatusWord>}
+            {!data.held && <StatusWord tone="neutral">No longer held</StatusWord>}
+            {sub && <span>{sub}</span>}
+          </p>
+        </div>
+        <RefreshButton scope="broker" label="Refresh this position" className="-mr-2 -mt-1" />
       </header>
 
       {/* One grid, placed by CSS so the DOM order is the phone order: chart, the trade, headlines.

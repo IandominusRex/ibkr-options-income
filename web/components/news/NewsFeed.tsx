@@ -1,5 +1,6 @@
 "use client";
 
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
@@ -43,6 +44,7 @@ export function NewsFeed() {
           ))}
           <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol"
             className="ml-auto w-28 rounded-sm bg-background px-2 py-1 font-mono text-sm text-content" aria-label="Filter by symbol" />
+          <RefreshButton label="Refresh the news" className="-my-2" />
         </div>
         {q.isError && <p className="text-sm text-muted">Could not load the news feed.</p>}
         {q.data && !q.data.available && <p className="text-sm text-muted">The news service has not written anything yet.</p>}

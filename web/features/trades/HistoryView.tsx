@@ -260,6 +260,9 @@ export function HistoryView({
     refetchInterval: isToday ? 60_000 : false,
   });
   const trades = (q.data?.trades ?? []).filter((t) => t.source === "wheel");
+  // The day the next arrow goes to; null is today (the URL carries no day for it).
+  const later = q.data?.next_day;
+  const nextDay = later && later < today ? later : null;
 
   let traded: ReactNode;
   if (q.isError && !q.data) {
@@ -285,6 +288,12 @@ export function HistoryView({
           {dayLabel(day)}
           {isToday ? " · today" : ""}
         </h2>
+        {/* Left of the arrows, so showing or hiding it never moves them. */}
+        {!isToday && (
+          <Button variant="secondary" onClick={() => onDay(null)}>
+            Today
+          </Button>
+        )}
         <Button
           variant="quiet"
           aria-label="Previous day with trades"
@@ -293,19 +302,15 @@ export function HistoryView({
         >
           <ChevronLeft size={18} aria-hidden="true" />
         </Button>
+        {/* From a past day, next is the following day with trades, or today when none is left. */}
         <Button
           variant="quiet"
-          aria-label="Next day with trades"
-          disabled={!q.data?.next_day}
-          onClick={() => q.data?.next_day && onDay(q.data.next_day === today ? null : q.data.next_day)}
+          aria-label={isToday || nextDay ? "Next day with trades" : "Back to today"}
+          disabled={isToday}
+          onClick={() => onDay(nextDay)}
         >
           <ChevronRight size={18} aria-hidden="true" />
         </Button>
-        {!isToday && (
-          <Button variant="secondary" onClick={() => onDay(null)}>
-            Today
-          </Button>
-        )}
       </div>
 
       {isToday && <InFlight strategy={strategy} submitted={submitted} onSettled={onSettled} />}

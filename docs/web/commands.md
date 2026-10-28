@@ -421,6 +421,7 @@ strike or expiry would rank on a fresh chain.
   `source="refresh"`. It ignores the monitor's interval gate — that gate is the monitor's
   cadence control, not a rate limit on the operator — but the row it writes still counts
   toward the gate, because the gate reads the table's newest `captured_at`.
+- **Sent from:** the Refresh button on Portfolio and the refresh icon (`components/shell/RefreshButton`, `scope="broker"`) on Home and on a position's page, through the one `useBrokerRefresh` flow. When the command ends the page asks for every query again; a `broker_unavailable` or `failed` result, or a drain that is not draining, is said in words beside the icon and the page keeps its last reading.
 - **Live mode:** No confirmation needed. A refresh creates no candidate, no approval, and no
   order — it is a data capture, not a trade intent, and it reaches no order path at any
   point (asserted by `tests/test_drain_refresh.py`).

@@ -38,16 +38,34 @@ const reading = (over: Record<string, unknown> = {}) => ({
 const serve = (body: unknown) => renderWithQuery(<SummaryCard />, { "/portfolio/summary": body });
 
 describe("SummaryCard", () => {
-  it("shows the account and the exposure as figure lines, with no Delayed word on a live reading", async () => {
+  it("puts net liquidation at the centre of a donut whose rings are buying power used and cash left", async () => {
     serve(reading());
-    const acct = await screen.findByRole("group", { name: "Account figures" });
-    expect(within(acct).getByText("Net liquidation")).toBeInTheDocument();
-    expect(within(acct).getByText("$125,000.00")).toBeInTheDocument();
-    const expo = screen.getByRole("group", { name: "Exposure figures" });
-    expect(within(expo).getByText("Open shorts")).toBeInTheDocument();
-    expect(within(expo).getByText("Shorts at assignment risk")).toBeInTheDocument();
-    expect(within(expo).getByText("−150")).toBeInTheDocument(); // a real minus, not a hyphen
-    expect(within(expo).getByText("22.5%")).toBeInTheDocument();
+    const donut = await screen.findByTestId("account-donut");
+    expect(within(donut).getByText("Net liquidation")).toBeInTheDocument();
+    expect(within(donut).getByText("$125,000")).toBeInTheDocument();
+    expect(within(donut).getByText(".00")).toBeInTheDocument();
+    expect(within(donut).getByRole("img")).toHaveAccessibleName(
+      "Net liquidation $125,000.00. Buying power used 22.5%. Cash 32.0% of the account.",
+    );
+    // Each ring's percent and the sum behind it are written out, not left to the arc.
+    expect(screen.getByText("Buying power used")).toBeInTheDocument();
+    expect(screen.getByText("22.5%")).toBeInTheDocument();
+    expect(screen.getByText("$18,000.00 secured against puts, of $80,000.00 buying power")).toBeInTheDocument();
+    expect(screen.getByText("Cash left")).toBeInTheDocument();
+    expect(screen.getByText("32.0%")).toBeInTheDocument();
+    expect(screen.getByText("$40,000.00 of $125,000.00 net liquidation")).toBeInTheDocument();
+  });
+
+  it("lists the rest as figure lines, with no Delayed word on a live reading", async () => {
+    serve(reading());
+    const risk = await screen.findByRole("group", { name: "Margin and risk figures" });
+    expect(within(risk).getByText("Maintenance margin")).toBeInTheDocument();
+    expect(within(risk).getByText("$12,000.00")).toBeInTheDocument();
+    expect(within(risk).getByText("Excess liquidity")).toBeInTheDocument();
+    expect(within(risk).getByText("Shorts at assignment risk")).toBeInTheDocument();
+    expect(within(risk).getByText("−150")).toBeInTheDocument(); // a real minus, not a hyphen
+    const book = screen.getByRole("group", { name: "Book figures" });
+    expect(within(book).getByText("Open shorts")).toBeInTheDocument();
     expect(screen.queryByText("Delayed")).toBeNull();
   });
 
@@ -67,7 +85,8 @@ describe("SummaryCard", () => {
   it("says why there is nothing when no snapshot has been captured, and shows no figures", async () => {
     serve(reading({ source: "none", degraded: true, account: null, exposure: null, note: null }));
     expect(await screen.findByText("No portfolio snapshot has been captured yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Account figures" })).toBeNull();
+    expect(screen.queryByTestId("account-donut")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Margin and risk figures" })).toBeNull();
     expect(screen.queryByText("Delayed")).toBeNull();
   });
 
@@ -77,24 +96,29 @@ describe("SummaryCard", () => {
   });
 
   it("renders a figure we do not have as a hatched n/a, never $0", async () => {
-    serve(reading({ account: account({ net_liquidation: sourced(null) }) }));
-    const acct = await screen.findByRole("group", { name: "Account figures" });
-    const na = within(acct).getAllByText("n/a")[0];
-    expect(na.closest("dd")).toHaveClass("hatch");
+    serve(reading({ account: account({ net_liquidation: sourced(null), maintenance_margin: sourced(null) }) }));
+    const donut = await screen.findByTestId("account-donut");
+    expect(within(donut).getByText("n/a")).toHaveClass("hatch");
+    const risk = screen.getByRole("group", { name: "Margin and risk figures" });
+    expect(within(risk).getByText("n/a").closest("dd")).toHaveClass("hatch");
     expect(screen.queryByText("$0")).toBeNull();
+    // Cash cannot be a share of an account we cannot value: n/a, not 0%.
+    expect(screen.queryByText("0.0%")).toBeNull();
   });
 
   it("says a stale figure is stale, in words", async () => {
-    serve(reading({ account: account({ buying_power: sourced(80_000, true) }) }));
-    const acct = await screen.findByRole("group", { name: "Account figures" });
-    expect(within(acct).getByText("stale")).toBeInTheDocument();
+    serve(reading({ account: account({ maintenance_margin: sourced(12_000, true), net_liquidation: sourced(125_000, true) }) }));
+    const risk = await screen.findByRole("group", { name: "Margin and risk figures" });
+    expect(within(risk).getByText("stale")).toBeInTheDocument();
+    expect(screen.getByText("Net liquidation · stale")).toBeInTheDocument();
   });
 
   it("renders an unknown buying-power use as n/a, not 0%", async () => {
     serve(reading({ exposure: exposure({ buying_power_utilisation_pct: null }) }));
-    const expo = await screen.findByRole("group", { name: "Exposure figures" });
-    expect(within(expo).queryByText("0.0%")).toBeNull();
-    expect(within(expo).getByText("n/a")).toBeInTheDocument();
+    const donut = await screen.findByTestId("account-donut");
+    expect(donut).not.toHaveTextContent("0.0%");
+    expect(screen.queryByText("0.0%")).toBeNull();
+    expect(screen.getAllByText("n/a").length).toBeGreaterThan(0);
   });
 
   it("says it could not load, and that it tries again, when the request fails", async () => {

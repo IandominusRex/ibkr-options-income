@@ -12068,6 +12068,44 @@
             },
             "type": "array",
             "title": "Options"
+          },
+          "underlying_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Price"
+          },
+          "underlying_price_basis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "position",
+                  "close"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Price Basis"
+          },
+          "underlying_price_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying Price Date"
           }
         },
         "type": "object",

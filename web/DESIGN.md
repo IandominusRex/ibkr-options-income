@@ -544,6 +544,32 @@ ask for several names; the chips' counts say what each would show with the searc
 error draws it in loss), 12px radius, the label above, the error below in words, an ink focus ring
 on the wrapper when the input has keyboard focus.
 
+**Select** (Activity's Book and Outcome, the ledger Trades filters): the `field` as its trigger with a
+chevron that turns 180ms ease-out; the list opens under it as a white panel on a `control-edge` border
+(tonal, no shadow; it opens upward when there is no room below), 12px radius, options 44px tall on a
+phone and 36px from 768px. The option under the pointer or the arrow keys is pressed sage; the chosen one
+is heavier and carries a check, so selection is never colour alone. Arrows, Home, End, type-ahead, Enter
+or Space to choose, Escape to close with focus back on the trigger. It replaces the browser's own list so
+that the dropdown looks like the rest of the console on every device.
+
+**Date picker** (Activity's Since and Until, System's window, the ledger Trades dates): the `field` as its
+trigger, the day written short ("Oct 28, 2026") or "Any day" in muted ink for no day, a calendar glyph at
+the right. The panel is the Select's panel: the month between two quiet arrows, the weekdays in 12px
+semibold muted, then the days Monday-first (the market week) as 40px circles, 44px on a phone. The chosen
+day is an ink fill (never lime), today is a hairline ring, a day outside `min` or `max` is struck through
+and cannot be chosen, and a blank is a blank, not a greyed day from the next month. A foot row carries Today
+and Clear as quiet text buttons. Arrows move a day or a week, Page Up and Down a month (with Shift a year),
+Home and End the week's ends, Escape closes.
+
+**Refresh button** (Home's hero, a position's page, Stock, News, a news ticker, Trades, Activity): a quiet
+round icon button (the circular arrows, muted ink, pressed sage on hover, 44px on a phone) that spins while
+it works and is named for what it refreshes ("Refresh the account", "Refresh this position"). On Home and on a
+position's page it sends the `refresh` command, which reads the live positions and account from the broker, and
+then asks for every query on the page again; elsewhere it only asks again. It says nothing when it worked; when
+it did not, a muted sentence sits beside it ("The broker is not connected. These figures are the last
+reading."). Never lime: a refresh decides nothing. Portfolio keeps its labelled Refresh button, now with the
+same glyph.
+
 **Income target card** (More): "Monthly income target": none, a fixed amount, a percent of the
 account, or a percent of an amount you name (chips); the fields of the chosen mode with a
 plain-English line saying what it means this month ("2% of $100,000 is $2,000 a month."); Save
@@ -555,14 +581,27 @@ reaches an order, so no confirmation step.
 
 **Account card** (Portfolio): the title, with the age of the reading in words at its right ("Updated 7m
 ago") and a flag word "Delayed" when it is older than 30 minutes or degraded; the API's note verbatim in
-a pressed-sage block; then two blocks of figure lines under perforations, side by side from 640px and
-stacked on a phone. A figure we do not have is a hatched n/a, and a stale one says "stale".
+a pressed-sage block; then the hero, a two-ring donut with net liquidation at its centre (the whole dollars
+large and the cents small and muted, "stale" in words when the figure is stale). The outer ring is buying
+power used (cash secured against short puts over buying power) and the inner ring is cash as a share of the
+account; each is written beside the donut as its title, its percent at 26px/800 and the sum behind it
+("$391,600.00 secured against puts, of $536,351.45 buying power"), so no number is read off an arc, and a
+miniature of each ring (thick ink, thin grey) keys it without colour. Under the donut, two blocks of figure
+lines under perforations (margin and risk; the book), side by side from 640px. On a phone the legend sits
+under the donut. A figure we do not have is a hatched n/a and its ring an empty track, never a zero; a ring
+never animates in.
 
-**Name card** (Portfolio, Positions): one card per underlying. The ticker bold with its flag words ("Weak
-health", "Event <date>") and the name's open P&L at the right, which is n/a when any row's figure is
-unknown, never the sum of the known ones. Home's position rows sit beneath it, each opening the
-contract's page, and under each option a muted figure line: delta (and where it came from), the mark and
-the value. Credit spreads are one more card, "SPY credit spreads".
+**Name card** (Portfolio, Positions): one card per underlying. The header holds the ticker bold with its
+flag words ("Weak health", "Event <date>") and a muted line of what the name is made of ("100 shares · avg
+$182.40 · 1 cash-secured put"), with the price at its right at 20px/800 and where it came from beneath it
+("Last price", or "Close Oct 27" for a name held only through options; a hatched n/a when there is none).
+Under it the name's open P&L as the card's hero (26px/800, signed, gain or loss with the sign and the words
+"open P&L"; n/a when any row's figure is unknown, never the sum of the known ones), then a strip of labelled
+figures with no boxes: the shares' value and cost basis (the premium-adjusted one, labelled so, when there is
+one), net delta in shares, next expiry with its days, and cash secured by the short puts. The strip follows
+the type chip, so a CSP view carries no shares figures. A perforation, then Home's position rows, each
+opening the contract's page, and under each option a muted figure line: delta (and where it came from), the
+mark and the value. Credit spreads are one more card, "SPY credit spreads".
 
 **Campaign thread** (Portfolio, Campaigns): the symbol and a status word, the net premium at the right
 labelled "net premium, before commissions", the opening date and leg count beneath; an assigned thread adds
@@ -752,7 +791,9 @@ Operate. Dials as the project default. Built in web overhaul Part 2
   commands, then the view. With no view in the URL the page opens on Proposals when something
   waits on you and on History otherwise, decided once per visit. Proposals: ticker chips (from
   two tickers up), then proposal cards, one column below 1024px and two from 1024px. History: the
-  day with previous, next and Today, then In flight (today only), Traded, Not traded. Credit
+  day with Today (away from today only, to the left of the arrows so they never move), previous and next
+  (next from a past day goes to the following day with trades, or back to today when none is left), then In
+  flight (today only), Traded, Not traded. Credit
   spreads has one view, so its chips are hidden and Spreads shows.
 - **FORM:** one page; the view and the day live in the URL (`?view=history&day=2026-10-09`)
   beside the strategy (`?strategy=csp`), so a link or a reload keeps all three. Review opens the
@@ -922,6 +963,15 @@ sibling keys; re-run the check after edits.
 
 ## Decision Log
 
+- 2026-10-28: **Portfolio, Trades, Activity and refresh follow-ups**, at the operator's request. The Account
+  card's hero is now a two-ring donut (net liquidation in the centre, buying power used outside, cash left
+  inside) in place of two long figure blocks; the name card gains the price at its top right, the open P&L as
+  its hero and a figure strip (`GET /portfolio/positions` gained `underlying_price`, its basis and date). The
+  History and Spreads day stepper puts Today left of the arrows so the arrows never jump, and next from a past
+  day returns to today when no later day has trades. Added **Select** and **Date picker** in place of the
+  browser's native controls on Activity and the ledger Trades page, and a **Refresh button** on Home, a
+  position's page, Stock, News, a news ticker, Trades and Activity. No new colour or token: the donut uses
+  `content`, `muted` and `sunk`, the pickers the Field's edge and the chip's ink fill.
 - 2026-10-28: **Web overhaul Part 3, Portfolio and Activity, built**
   (docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md; the operator asked for it to be
   planned with its own rulings). Portfolio: three views in `?view=` and the Account card; Positions grouped

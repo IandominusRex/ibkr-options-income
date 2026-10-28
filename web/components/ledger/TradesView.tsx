@@ -3,7 +3,9 @@
 import clsx from "clsx";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { FIELD, FIELD_LABEL } from "@/components/ui/field";
+import { Select } from "@/components/ui/Select";
 import { apiFetch } from "@/lib/api";
 import { BackToLedger } from "./BackToLedger";
 import { TradePanel } from "./TradePanel";
@@ -11,6 +13,26 @@ import { TradesTable } from "./TradesTable";
 import { OUTCOMES, type LedgerTradesResponse } from "./types";
 
 type Filters = { symbol: string; right: string; outcome: string; book: string; tag: string; since: string; until: string; sort: string };
+const RIGHTS = [
+  { value: "", label: "All" },
+  { value: "P", label: "Put" },
+  { value: "C", label: "Call" },
+];
+const BOOKS = [
+  { value: "", label: "All" },
+  { value: "system", label: "System" },
+  { value: "manual", label: "Manual" },
+  { value: "spreads", label: "Spreads" },
+];
+const SORTS = [
+  { value: "-order_date", label: "Newest first" },
+  { value: "order_date", label: "Oldest first" },
+  { value: "-pct_profit", label: "% Profit high to low" },
+  { value: "-net_pnl", label: "Net P&L high to low" },
+  { value: "net_pnl", label: "Net P&L low to high" },
+  { value: "expiry", label: "Expiry soonest" },
+];
+const OUTCOME_OPTIONS = [{ value: "", label: "All" }, ...OUTCOMES.map((o) => ({ value: o, label: o }))];
 const EMPTY: Filters = { symbol: "", right: "", outcome: "", book: "", tag: "", since: "", until: "", sort: "-order_date" };
 
 function Field({ label, children }: { label: string; children: (id: string) => ReactNode }) {
@@ -47,6 +69,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
     queryFn: () => apiFetch<LedgerTradesResponse>(`/ledger/trades?${qs}`),
   });
   const set = (k: keyof Filters) => (e: { target: { value: string } }) => setF((prev) => ({ ...prev, [k]: e.target.value }));
+  const pick = (k: keyof Filters) => (value: string) => setF((prev) => ({ ...prev, [k]: value }));
   const select = clsx(FIELD, "w-full");
 
   return (
@@ -64,50 +87,19 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
           </Field>
         )}
         <Field label="Put/Call">
-          {(id) => (
-            <select id={id} value={f.right} onChange={set("right")} className={select}>
-              <option value="">All</option>
-              <option value="P">Put</option>
-              <option value="C">Call</option>
-            </select>
-          )}
+          {(id) => <Select id={id} value={f.right} onChange={pick("right")} options={RIGHTS} />}
         </Field>
         <Field label="Outcome">
-          {(id) => (
-            <select id={id} value={f.outcome} onChange={set("outcome")} className={select}>
-              <option value="">All</option>
-              {OUTCOMES.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          )}
+          {(id) => <Select id={id} value={f.outcome} onChange={pick("outcome")} options={OUTCOME_OPTIONS} />}
         </Field>
         <Field label="Book">
-          {(id) => (
-            <select id={id} value={f.book} onChange={set("book")} className={select}>
-              <option value="">All</option>
-              <option value="system">System</option>
-              <option value="manual">Manual</option>
-              <option value="spreads">Spreads</option>
-            </select>
-          )}
+          {(id) => <Select id={id} value={f.book} onChange={pick("book")} options={BOOKS} />}
         </Field>
         <Field label="Tag">{(id) => <input id={id} value={f.tag} onChange={set("tag")} autoComplete="off" className={select} />}</Field>
-        <Field label="From">{(id) => <input id={id} type="date" value={f.since} onChange={set("since")} className={select} />}</Field>
-        <Field label="To">{(id) => <input id={id} type="date" value={f.until} onChange={set("until")} className={select} />}</Field>
+        <Field label="From">{(id) => <DatePicker id={id} value={f.since} max={f.until || undefined} onChange={pick("since")} />}</Field>
+        <Field label="To">{(id) => <DatePicker id={id} value={f.until} min={f.since || undefined} onChange={pick("until")} />}</Field>
         <Field label="Sort">
-          {(id) => (
-            <select id={id} value={f.sort} onChange={set("sort")} className={select}>
-              <option value="-order_date">Newest first</option>
-              <option value="order_date">Oldest first</option>
-              <option value="-pct_profit">% Profit high to low</option>
-              <option value="-net_pnl">Net P&L high to low</option>
-              <option value="net_pnl">Net P&L low to high</option>
-              <option value="expiry">Expiry soonest</option>
-            </select>
-          )}
+          {(id) => <Select id={id} value={f.sort} onChange={pick("sort")} options={SORTS} />}
         </Field>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">

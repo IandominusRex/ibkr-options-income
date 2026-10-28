@@ -5,6 +5,8 @@ import {
   buildNameCards,
   countByFilter,
   legDetail,
+  nameFigures,
+  nameSummary,
   narrow,
   rowsPnl,
   spreadRows,
@@ -105,5 +107,58 @@ describe("narrow and countByFilter", () => {
     const spreads = spreadRows([spread()], TODAY, "SPY");
     expect(countByFilter(cards, spreads, "")).toEqual({ all: 5, csp: 1, cc: 2, spread: 1, shares: 1 });
     expect(countByFilter(cards, spreads, "aapl")).toEqual({ all: 3, csp: 1, cc: 1, spread: 0, shares: 1 });
+  });
+});
+
+const priced = (g: PositionGroupData, price: Record<string, unknown>) => ({ ...g, ...price }) as unknown as PositionGroupData;
+const labelled = (figs: { label: string; value: string | null }[]) => Object.fromEntries(figs.map((f) => [f.label, f.value]));
+
+describe("a name card's price, summary and figures", () => {
+  it("carries the price and where it came from", () => {
+    const held = priced(group("HIMS", [leg()], stock()), { underlying_price: 28.42, underlying_price_basis: "position" });
+    expect(buildNameCards([held], TODAY)[0].price).toEqual({ value: 28.42, basis: "position", date: null });
+    const optionsOnly = priced(group("MSFT", [leg()]), {
+      underlying_price: 400.5, underlying_price_basis: "close", underlying_price_date: "2026-10-27",
+    });
+    expect(buildNameCards([optionsOnly], TODAY)[0].price).toEqual({ value: 400.5, basis: "close", date: "2026-10-27" });
+  });
+
+  it("has no price when the API gave none, never 0", () => {
+    expect(buildNameCards([group("ZZZ", [leg()])], TODAY)[0].price).toBeNull();
+  });
+
+  it("writes what the name is made of", () => {
+    const [card] = buildNameCards([group("AAPL", [leg(), leg({ symbol: "y", right: "C", strike: 200 })], stock())], TODAY);
+    expect(nameSummary(card)).toBe("100 shares · avg $182.40 · 1 cash-secured put · 1 covered call");
+  });
+
+  it("figures the shares' value and cost, the net delta in shares, the next expiry and the cash secured", () => {
+    const [card] = buildNameCards([group("AAPL", [leg()], stock())], TODAY);
+    const f = labelled(nameFigures(card));
+    expect(f["Value"]).toBe("$19,000.00");
+    expect(f["Cost basis"]).toBe("$18,240.00");
+    // 100 shares, plus a short put at delta -0.21 which is +21 shares long.
+    expect(f["Net delta"]).toBe("+121 sh");
+    expect(f["Next expiry"]).toMatch(/Nov 21 · 30d$/);
+    expect(f["Cash secured"]).toBe("$18,000.00");
+  });
+
+  it("measures against the premium-adjusted cost when there is one, as the P&L does", () => {
+    const [card] = buildNameCards([group("AAPL", [], stock({ adjusted_cost_basis: 175 }))], TODAY);
+    const f = labelled(nameFigures(card));
+    expect(f["Adjusted cost"]).toBe("$17,500.00");
+    expect(f["Cost basis"]).toBeUndefined();
+  });
+
+  it("makes the net delta unknown when any delta is, never the rest added up", () => {
+    const [card] = buildNameCards([group("AAPL", [leg({ delta: null })], stock())], TODAY);
+    expect(labelled(nameFigures(card))["Net delta"]).toBeNull();
+  });
+
+  it("leaves out the shares' figures when a type chip drops the shares row", () => {
+    const cards = narrow(buildNameCards([group("AAPL", [leg()], stock())], TODAY), "csp", "");
+    const f = labelled(nameFigures(cards[0]));
+    expect(f["Value"]).toBeUndefined();
+    expect(f["Net delta"]).toBe("+21 sh");
   });
 });

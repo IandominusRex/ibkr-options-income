@@ -4,6 +4,7 @@ import { AssessedBrowser } from "@/components/options/AssessedBrowser";
 import { DrainWarning } from "@/components/options/ControlsStrip";
 import { useControls } from "@/components/shell/BotCard";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { usePendingApprovals } from "@/features/home/NeedsYou";
 import { STRATEGY_FILTERS, STRATEGY_LABEL, kindOf } from "@/lib/strategy";
 import { useHydrated } from "@/lib/useHydrated";
@@ -55,7 +56,10 @@ export function TradesPage() {
 
   return (
     <div className={SHELL}>
-      {heading}
+      <div className="flex items-center justify-between gap-3">
+        {heading}
+        <RefreshButton label="Refresh trades" className="-mr-2" />
+      </div>
       {/* One null-rendering watcher per Approve in flight, so a failed or expired one comes back
           from any view (hooks cannot be looped, hence a component per id). */}
       {[...submitted].map(([approvalId, command]) => (

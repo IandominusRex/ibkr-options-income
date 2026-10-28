@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
+import { chooseDay } from "@/lib/test-pick";
 import { SystemView } from "./SystemView";
 
 const READONLY_NOTE =
@@ -39,8 +40,8 @@ describe("SystemView", () => {
   it("sends Since to both requests and Until to the score only", async () => {
     renderWithQuery(<SystemView />, world());
     await screen.findByRole("heading", { name: "Score against outcome" });
-    fireEvent.change(screen.getByLabelText("since"), { target: { value: "2026-10-01" } });
-    fireEvent.change(screen.getByLabelText("until"), { target: { value: "2026-10-20" } });
+    chooseDay(screen.getByLabelText("since"), "2026-10-01");
+    chooseDay(screen.getByLabelText("until"), "2026-10-20");
     const calls = () => apiFetchMock.mock.calls.map((c) => String(c[0]));
     await waitFor(() => expect(calls()).toContain("/pnl/system?since=2026-10-01&until=2026-10-20"));
     expect(calls()).toContain("/pnl/sizing?since=2026-10-01");

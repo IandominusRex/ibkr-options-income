@@ -16,14 +16,8 @@ import { FRESH_FOR_MINUTES } from "@/features/home/positions";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
 import { formatMoneyCell, isStale } from "@/lib/money";
-
-const ACCOUNT: { key: keyof Omit<AccountBlock, "as_of">; label: string }[] = [
-  { key: "net_liquidation", label: "Net liquidation" },
-  { key: "total_cash", label: "Total cash" },
-  { key: "buying_power", label: "Buying power" },
-  { key: "maintenance_margin", label: "Maintenance margin" },
-  { key: "excess_liquidity", label: "Excess liquidity" },
-];
+import { AccountDonut } from "./AccountDonut";
+import { cashPct } from "./donut";
 
 function moneyRow(label: string, f: SourcedFloat): FigureRow {
   const unknown = f.value === null || f.value === undefined;
@@ -47,19 +41,30 @@ function signed(n: number): string {
   return n > 0 ? `+${body}` : n < 0 ? `−${body}` : body;
 }
 
-function exposureRows(e: ExposureBlock): FigureRow[] {
-  const pct = e.buying_power_utilisation_pct;
-  const unknownPct = pct === null || pct === undefined;
+/** The lines under the donut: what margin leaves, then what the book holds. */
+function marginRows(a: AccountBlock | null | undefined, e: ExposureBlock | null | undefined): FigureRow[] {
+  const rows: FigureRow[] = [];
+  if (a) {
+    rows.push(moneyRow("Maintenance margin", a.maintenance_margin), moneyRow("Excess liquidity", a.excess_liquidity));
+  }
+  if (e) {
+    rows.push(
+      { label: "Shorts at assignment risk", value: String(e.shorts_at_assignment_risk) },
+      { label: "Net delta exposure", value: signed(e.net_delta_exposure) },
+    );
+  }
+  return rows;
+}
+
+function bookRows(e: ExposureBlock): FigureRow[] {
   return [
     { label: "Open positions", value: String(e.open_positions) },
     { label: "Open shorts", value: String(e.open_shorts) },
     { label: "Open campaigns", value: String(e.open_campaigns) },
-    { label: "Shorts at assignment risk", value: String(e.shorts_at_assignment_risk) },
-    { label: "Net delta exposure", value: signed(e.net_delta_exposure) },
-    { label: "Cash secured against puts", value: formatMoneyCell(e.cash_secured_against_puts) },
-    { label: "Buying power used", value: unknownPct ? UNKNOWN : `${pct.toFixed(1)}%`, unknown: unknownPct },
   ];
 }
+
+const known = (f: SourcedFloat | undefined): number | null => (f && f.value !== null && f.value !== undefined ? f.value : null);
 
 /**
  * The Account card: how old the portfolio reading is, in words, and what it says. Every figure
@@ -88,11 +93,17 @@ export function SummaryCard() {
   }
   if (!data) {
     return (
-      <Card as="div" className="h-[168px]" role="status" aria-busy="true" aria-label="Loading the account summary" />
+      <Card as="div" className="h-[440px] sm:h-[400px]" role="status" aria-busy="true" aria-label="Loading the account summary" />
     );
   }
 
   const none = data.source === "none";
+  const netLiq = known(data.account?.net_liquidation);
+  const cashValue = known(data.account?.total_cash);
+  const buyingPower = known(data.account?.buying_power);
+  const secured = data.exposure ? data.exposure.cash_secured_against_puts : null;
+  const usedPct = data.exposure?.buying_power_utilisation_pct ?? null;
+  const cash = cashPct(cashValue, netLiq);
   const delayed = !none && (data.degraded || isStale(data.as_of, FRESH_FOR_MINUTES));
 
   return (
@@ -119,14 +130,29 @@ export function SummaryCard() {
               <DegradedNotice note={data.note} />
             </div>
           )}
+          <div className="mt-4">
+            <AccountDonut
+              netLiq={netLiq}
+              netLiqStale={data.account?.net_liquidation.stale === true}
+              usedPct={usedPct}
+              cashPct={cash}
+              usedSum={
+                secured !== null && buyingPower !== null
+                  ? `${formatMoneyCell(secured)} secured against puts, of ${formatMoneyCell(buyingPower)} buying power`
+                  : null
+              }
+              cashSum={
+                cashValue !== null && netLiq !== null
+                  ? `${formatMoneyCell(cashValue)} of ${formatMoneyCell(netLiq)} net liquidation`
+                  : null
+              }
+            />
+          </div>
           <div className="grid gap-x-8 sm:grid-cols-2">
-            {data.account && (
-              <FigureLines
-                label="Account figures"
-                rows={ACCOUNT.map(({ key, label }) => moneyRow(label, data.account![key] as SourcedFloat))}
-              />
+            {(data.account || data.exposure) && (
+              <FigureLines label="Margin and risk figures" rows={marginRows(data.account, data.exposure)} />
             )}
-            {data.exposure && <FigureLines label="Exposure figures" rows={exposureRows(data.exposure)} />}
+            {data.exposure && <FigureLines label="Book figures" rows={bookRows(data.exposure)} />}
           </div>
         </>
       )}

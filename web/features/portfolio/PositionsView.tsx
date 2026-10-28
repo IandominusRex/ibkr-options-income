@@ -18,16 +18,20 @@ import { NameFlags } from "@/features/market/NameFlags";
 import { todayInNewYork } from "@/features/trades/time";
 import { apiFetch } from "@/lib/api";
 import { UNKNOWN } from "@/lib/format";
-import { isStale } from "@/lib/money";
+import { formatMoneyCell, isStale } from "@/lib/money";
+import { shortDate } from "./format";
 import {
   EMPTY,
   FILTERS,
   FILTER_LABEL,
   type DetailPart,
   type NameCard,
+  type NamePrice,
   type PositionsFilter,
   buildNameCards,
   countByFilter,
+  nameFigures,
+  nameSummary,
   narrow,
   narrowRows,
   rowsPnl,
@@ -47,9 +51,30 @@ function Detail({ parts }: { parts: DetailPart[] }): ReactNode {
   );
 }
 
+/** The price at the card's top right, and where it came from: "Close Oct 27" for a name held only through options. */
+function PriceBlock({ price }: { price: NamePrice | null }) {
+  if (price === null) {
+    return (
+      <div data-testid="name-price" className="text-right">
+        <span className="hatch tabular text-lg font-extrabold text-unknown">{UNKNOWN}</span>
+        <div className="text-[0.8125rem] text-muted">price</div>
+      </div>
+    );
+  }
+  return (
+    <div data-testid="name-price" className="text-right">
+      <div className="tabular text-xl font-extrabold leading-tight tracking-[-0.01em]">{formatMoneyCell(price.value)}</div>
+      <div className="text-[0.8125rem] text-muted">
+        {price.basis === "close" && price.date ? `Close ${shortDate(price.date).replace(/, \d{4}$/, "")}` : "Last price"}
+      </div>
+    </div>
+  );
+}
+
 function NameCardView({ card }: { card: NameCard }) {
   const pnl = rowsPnl(card.rows);
   const titleId = `name-${card.underlying}`;
+  const figures = nameFigures(card);
   return (
     <Card as="article" aria-labelledby={titleId}>
       <div className="flex items-start justify-between gap-3">
@@ -58,21 +83,36 @@ function NameCardView({ card }: { card: NameCard }) {
             {card.underlying}
           </h3>
           <NameFlags symbol={card.underlying} />
+          <p className="tabular mt-0.5 text-[0.8125rem] text-muted">{nameSummary(card)}</p>
         </div>
-        <div data-testid="name-pnl" className="tabular text-right font-mono font-semibold">
-          <span
-            className={clsx(
-              pnl === null && "hatch text-unknown",
-              pnl !== null && pnl < 0 && "text-loss",
-              pnl !== null && pnl > 0 && "text-gain",
-            )}
-          >
-            {pnl === null ? UNKNOWN : formatStubValue(pnl, "signed-money")}
-          </span>
-          <div className="font-sans text-[0.8125rem] font-normal text-muted">open P&amp;L</div>
-        </div>
+        <PriceBlock price={card.price} />
       </div>
-      <ul className="mt-1">
+      <div data-testid="name-pnl" className="mt-3 flex flex-wrap items-baseline gap-x-2">
+        <span
+          className={clsx(
+            "tabular text-[1.625rem] font-extrabold leading-none tracking-[-0.02em]",
+            pnl === null && "hatch text-unknown",
+            pnl !== null && pnl < 0 && "text-loss",
+            pnl !== null && pnl > 0 && "text-gain",
+          )}
+        >
+          {pnl === null ? UNKNOWN : formatStubValue(pnl, "signed-money")}
+        </span>
+        <span className="text-[0.8125rem] text-muted">open P&amp;L</span>
+      </div>
+      {figures.length > 0 && (
+        <dl className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(6.5rem,1fr))] gap-x-4 gap-y-2.5">
+          {figures.map((f) => (
+            <div key={f.label} className="min-w-0">
+              <dt className="text-xs font-semibold tracking-[0.04em] text-muted">{f.label}</dt>
+              <dd className={clsx("tabular text-sm font-semibold", f.value === null && "hatch w-fit text-unknown")}>
+                {f.value ?? UNKNOWN}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <ul className="mt-3 border-t-2 border-dashed border-perforation pt-1">
         {card.rows.map((r) => (
           <PositionRowItem
             key={r.key}

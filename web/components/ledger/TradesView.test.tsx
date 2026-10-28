@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
+import { chooseOption } from "@/lib/test-pick";
 import { TradesView } from "./TradesView";
 import type { LedgerTrade } from "./types";
 
@@ -33,7 +34,7 @@ describe("TradesView", () => {
   it("puts the filters into the request and the CSV link", async () => {
     renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
     fireEvent.change(await screen.findByLabelText("Ticker"), { target: { value: "amzn" } });
-    fireEvent.change(screen.getByLabelText("Outcome"), { target: { value: "Expired" } });
+    chooseOption(screen.getByLabelText("Outcome"), "Expired");
     await waitFor(() => {
       const paths = apiFetchMock.mock.calls.map((c) => String(c[0]));
       expect(paths.some((p) => p.includes("symbol=AMZN") && p.includes("outcome=Expired"))).toBe(true);
@@ -62,7 +63,7 @@ describe("TradesView", () => {
 
   it("filters by the spreads book", async () => {
     renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
-    fireEvent.change(await screen.findByLabelText("Book"), { target: { value: "spreads" } });
+    chooseOption(await screen.findByLabelText("Book"), "Spreads");
     await waitFor(() => {
       const paths = apiFetchMock.mock.calls.map((c) => String(c[0]));
       expect(paths.some((p) => p.includes("book=spreads"))).toBe(true);

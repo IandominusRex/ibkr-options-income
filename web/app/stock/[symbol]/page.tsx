@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { use } from "react";
 import { apiFetch } from "@/lib/api";
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { ChecksSection } from "@/components/checks/ChecksSection";
 import { NewsPanel } from "@/components/stock/NewsPanel";
 import { PriceChart } from "@/components/stock/PriceChart";
@@ -33,22 +34,25 @@ export default function StockPage({ params }: { params: Promise<{ symbol: string
 
   return (
     <div className="px-8 py-6">
-      <header className="mb-8">
-        <h1 className="font-mono text-2xl text-content">{upper}</h1>
-        <p className="mt-1 text-sm text-muted">
-          {data?.name ?? (isLoading ? "Loading" : "")}
-          {data?.exchange ? ` \u00b7 ${data.exchange}` : ""}
-          {data?.is_etf ? " \u00b7 ETF" : ""}
-        </p>
-        {quote?.value != null && (
-          <p className="mt-2 flex items-baseline gap-2">
-            <span className="tabular text-lg text-content">${quote.value.toFixed(2)}</span>
-            <span className={`text-xs ${quote.stale ? "text-unknown" : "text-muted"}`}>
-              {relativeAge(quote.as_of)}
-              {quote.stale ? " \u00b7 delayed" : ""}
-            </span>
+      <header className="mb-8 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="font-mono text-2xl text-content">{upper}</h1>
+          <p className="mt-1 text-sm text-muted">
+            {data?.name ?? (isLoading ? "Loading" : "")}
+            {data?.exchange ? ` \u00b7 ${data.exchange}` : ""}
+            {data?.is_etf ? " \u00b7 ETF" : ""}
           </p>
-        )}
+          {quote?.value != null && (
+            <p className="mt-2 flex items-baseline gap-2">
+              <span className="tabular text-lg text-content">${quote.value.toFixed(2)}</span>
+              <span className={`text-xs ${quote.stale ? "text-unknown" : "text-muted"}`}>
+                {relativeAge(quote.as_of)}
+                {quote.stale ? " \u00b7 delayed" : ""}
+              </span>
+            </p>
+          )}
+        </div>
+        <RefreshButton label={`Refresh ${upper}`} className="-mr-2" />
       </header>
 
       <section className="mb-10">

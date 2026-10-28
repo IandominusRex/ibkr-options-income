@@ -32,6 +32,29 @@ describe("PositionsView", () => {
     expect(screen.getByTestId("name-pnl")).toHaveTextContent("+$786.00");
   });
 
+  it("puts the price at the card's top right with where it came from, and the figures under the open P&L", async () => {
+    const held = { ...aapl, underlying_price: 190, underlying_price_basis: "position", underlying_price_date: null };
+    const optionsOnly = {
+      ...ko, underlying_price: 71.25, underlying_price_basis: "close", underlying_price_date: "2026-10-27",
+    };
+    renderWithQuery(<PositionsView />, { ...base, "/portfolio/positions": positions([held, optionsOnly]) });
+    const [aaplPrice, koPrice] = await screen.findAllByTestId("name-price");
+    expect(aaplPrice).toHaveTextContent("$190.00");
+    expect(aaplPrice).toHaveTextContent("Last price");
+    expect(koPrice).toHaveTextContent("$71.25");
+    expect(koPrice).toHaveTextContent("Close Oct 27");
+    expect(screen.getByText("100 shares · avg $182.40 · 1 cash-secured put · 1 covered call")).toBeInTheDocument();
+    const aaplCard = screen.getByRole("article", { name: /AAPL/ });
+    expect(within(aaplCard).getByText("Value").nextSibling).toHaveTextContent("$19,000.00");
+    expect(within(aaplCard).getByText("Cash secured").nextSibling).toHaveTextContent("$18,000.00");
+  });
+
+  it("says the price is n/a, hatched, when the API has none for a name", async () => {
+    renderWithQuery(<PositionsView />, { ...base, "/portfolio/positions": positions([ko]) });
+    const price = await screen.findByTestId("name-price");
+    expect(within(price).getByText("n/a")).toHaveClass("hatch");
+  });
+
   it("shows n/a for a name's total when one leg is unknown, never the sum of the rest", async () => {
     renderWithQuery(<PositionsView />, {
       ...base,

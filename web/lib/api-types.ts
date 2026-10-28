@@ -4552,6 +4552,12 @@ export interface components {
             stock: components["schemas"]["StockLeg"] | null;
             /** Options */
             options: components["schemas"]["OptionLeg"][];
+            /** Underlying Price */
+            underlying_price?: number | null;
+            /** Underlying Price Basis */
+            underlying_price_basis?: ("position" | "close") | null;
+            /** Underlying Price Date */
+            underlying_price_date?: string | null;
         };
         /** PositionsResponse */
         PositionsResponse: {

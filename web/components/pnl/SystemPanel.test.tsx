@@ -184,8 +184,8 @@ describe("SystemPanel", () => {
 
   it("exports the two date controls on their own, labelled, for the System view", () => {
     render(<WindowControls since="2026-10-01" until="" />);
-    expect(screen.getByLabelText("since")).toHaveValue("2026-10-01");
-    expect(screen.getByLabelText("until")).toHaveValue("");
+    expect(screen.getByLabelText("since")).toHaveTextContent("Oct 1, 2026");
+    expect(screen.getByLabelText("until")).toHaveTextContent("Any day");
   });
 
   it("says a phone scrolls each evidence table sideways", () => {

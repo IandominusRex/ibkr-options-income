@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { todayInNewYork } from "@/features/trades/time";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
+import { chooseDay } from "@/lib/test-pick";
 
 const nav = vi.hoisted(() => ({ replace: vi.fn(), params: new URLSearchParams() }));
 vi.mock("next/navigation", () => ({
@@ -254,7 +255,7 @@ describe("PayView", () => {
   // so an assertion on the stepper cannot pass just because the new response is still on its way.
   const setSince = async (day: string) => {
     await screen.findByText(/since 24 June 2026/i);
-    fireEvent.change(await screen.findByLabelText("Since"), { target: { value: day } });
+    chooseDay(await screen.findByLabelText("Since"), day);
     await screen.findByText(/since 1 September 2026/i);
   };
 

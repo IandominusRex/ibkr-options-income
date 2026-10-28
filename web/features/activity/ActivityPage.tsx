@@ -1,6 +1,7 @@
 "use client";
 
 import { LedgerOverview } from "@/components/ledger/LedgerOverview";
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useViewParam } from "@/lib/useViewParam";
 import { FillsView } from "./FillsView";
@@ -19,7 +20,10 @@ export function ActivityPage() {
   const options = ACTIVITY_VIEWS.map((v) => ({ value: v, label: VIEW_LABEL[v] }));
   return (
     <div className={SHELL}>
-      <h1 className="text-2xl font-extrabold tracking-[-0.015em]">Activity</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-extrabold tracking-[-0.015em]">Activity</h1>
+        <RefreshButton label="Refresh activity" className="-mr-2" />
+      </div>
       <div className="mt-4">
         <SegmentedControl label="View" appearance="chips" options={options} value={view} onChange={setView} />
       </div>

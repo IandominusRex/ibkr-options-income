@@ -1,5 +1,6 @@
 "use client";
 
+import { RefreshButton } from "@/components/shell/RefreshButton";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { BriefRequest } from "./BriefRequest";
@@ -23,7 +24,10 @@ export function NewsTicker({ symbol }: { symbol: string }) {
     <div className="space-y-4" data-testid="news-ticker">
       <header className="flex items-center justify-between gap-4">
         <h1 className="font-mono text-lg text-content">{sym}</h1>
-        <BriefRequest symbol={sym} />
+        <div className="flex items-center gap-2">
+          <BriefRequest symbol={sym} />
+          <RefreshButton label={`Refresh ${sym} news`} />
+        </div>
       </header>
       {t.data?.next_earnings && (
         <p className="text-sm text-muted">Next earnings {dayLabel(t.data.next_earnings.report_date)} {t.data.next_earnings.timing.toUpperCase()}</p>

@@ -75,7 +75,7 @@ describe("PortfolioPage", () => {
     expect(within(views).getByRole("button", { name: "Positions" })).toHaveAttribute("aria-pressed", "true");
     expect(within(views).getByRole("button", { name: "Campaigns" })).toHaveAttribute("aria-pressed", "false");
     expect(within(views).getByRole("button", { name: "Calendar" })).toHaveAttribute("aria-pressed", "false");
-    expect(await screen.findByText("$125,000.00")).toBeInTheDocument();
+    expect(await screen.findByTestId("account-donut")).toHaveTextContent("$125,000.00");
   });
 
   it("opens the view the URL asks for, and Positions for one it does not know", async () => {
@@ -98,7 +98,7 @@ describe("PortfolioPage", () => {
     // The mock's call log spans the whole file, so count from where this test starts.
     const before = summaryCalls();
     const page = mount();
-    await screen.findByText("$125,000.00");
+    await screen.findByTestId("account-donut");
     expect(summaryCalls() - before).toBe(1);
     nav.params = new URLSearchParams("view=calendar");
     page.rerenderPage();

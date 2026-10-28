@@ -1,8 +1,8 @@
 "use client";
 
-import clsx from "clsx";
 import type { ReactNode } from "react";
-import { FIELD, FIELD_LABEL } from "@/components/ui/field";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { FIELD_LABEL } from "@/components/ui/field";
 import { UNKNOWN } from "@/lib/format";
 import { CorrelationTable } from "./CorrelationTable";
 import { ScoreBucketTable } from "./ScoreBucketTable";
@@ -25,28 +25,14 @@ export function WindowControls({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <label className="grid gap-1">
+      <div className="grid gap-1">
         <span className={FIELD_LABEL}>Since</span>
-        <input
-          type="date"
-          data-role="window-control"
-          aria-label="since"
-          value={since ?? ""}
-          onChange={(e) => onSinceChange?.(e.target.value)}
-          className={clsx(FIELD, "w-full")}
-        />
-      </label>
-      <label className="grid gap-1">
+        <DatePicker data-role="window-control" aria-label="since" value={since ?? ""} max={until || undefined} onChange={(v) => onSinceChange?.(v)} />
+      </div>
+      <div className="grid gap-1">
         <span className={FIELD_LABEL}>Until</span>
-        <input
-          type="date"
-          data-role="window-control"
-          aria-label="until"
-          value={until ?? ""}
-          onChange={(e) => onUntilChange?.(e.target.value)}
-          className={clsx(FIELD, "w-full")}
-        />
-      </label>
+        <DatePicker data-role="window-control" aria-label="until" value={until ?? ""} min={since || undefined} onChange={(v) => onUntilChange?.(v)} />
+      </div>
     </div>
   );
 }
