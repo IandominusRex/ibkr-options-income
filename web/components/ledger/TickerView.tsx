@@ -5,7 +5,7 @@ import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { ApiError, apiFetch } from "@/lib/api";
 import { money, pct, rate, signClass } from "./format";
 import { LedgerNav } from "./LedgerNav";
-import { Tile } from "./Tile";
+import { Tile, TileList } from "./Tile";
 import { TradesView } from "./TradesView";
 import type { LedgerTickerResponse } from "./types";
 
@@ -29,7 +29,7 @@ export function TickerView({ symbol }: { symbol: string }) {
     <div className="space-y-6" data-testid="ticker-view">
       <LedgerNav />
       <h1 className="font-mono text-xl text-content">{t.symbol}</h1>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+      <TileList>
         <Tile id="total" label="Total realised" value={money(t.total_realized, t.currency)} tone={signClass(t.total_realized)} />
         <Tile id="options" label="Options net" value={money(t.option_net_pnl, t.currency)} />
         <Tile id="stock" label="Stock realised" value={money(t.stock_realized, t.currency)} />
@@ -38,7 +38,7 @@ export function TickerView({ symbol }: { symbol: string }) {
         <Tile id="win-rate" label="Win rate" value={rate(t.win_rate)} />
         <Tile id="broker-cost" label="Broker avg cost" value={money(t.broker_avg_cost, t.currency)} />
         <Tile id="wheel-basis" label="Wheel-adjusted basis" value={money(t.wheel_adjusted_basis, t.currency)} />
-      </div>
+      </TileList>
       <p className="text-xs text-muted">
         {t.n_trades} trades, {t.n_open} open. Annualised return on capital-days {pct(t.annualised_return_pct)}. Shares held {t.shares_held}.
       </p>

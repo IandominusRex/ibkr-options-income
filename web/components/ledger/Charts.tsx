@@ -17,7 +17,7 @@ export function PnlCurve({ points }: { points: LedgerCurvePoint[] }) {
           <XAxis dataKey="point_date" tick={{ fill: "var(--color-muted)", fontSize: 11 }} />
           <YAxis tick={{ fill: "var(--color-muted)", fontSize: 11 }} width={70} />
           <Tooltip formatter={(v) => money(Number(v))} />
-          <Line type="stepAfter" dataKey="cumulative_usd" stroke="var(--color-gain)" dot={false} isAnimationActive={false} />
+          <Line type="stepAfter" dataKey="cumulative_usd" stroke="var(--chart-line)" dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </figure>
