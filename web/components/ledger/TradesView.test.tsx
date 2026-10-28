@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { apiFetchMock, renderWithQuery } from "@/lib/test-query";
 import { TradesView } from "./TradesView";
@@ -67,5 +67,41 @@ describe("TradesView", () => {
       const paths = apiFetchMock.mock.calls.map((c) => String(c[0]));
       expect(paths.some((p) => p.includes("book=spreads"))).toBe(true);
     });
+  });
+
+  it("leads back to the Ledger view, and its page has a heading", async () => {
+    renderWithQuery(<TradesView />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
+    expect(await screen.findByRole("link", { name: "Back to Activity, Ledger" })).toHaveAttribute("href", "/activity?view=ledger");
+    expect(screen.getByRole("heading", { level: 1, name: "Ledger trades" })).toBeInTheDocument();
+  });
+
+  it("has neither the back link nor the heading when pinned to a ticker", async () => {
+    renderWithQuery(<TradesView fixedSymbol="NVDA" />, { "/ledger/trades": { as_of: ISO, n: 0, trades: [], filters: {} } });
+    await screen.findByText("0 trades");
+    expect(screen.queryByRole("link", { name: "Back to Activity, Ledger" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+
+  it("opens a trade from the keyboard as well as the mouse", async () => {
+    renderWithQuery(<TradesView />, {
+      "/ledger/trades/0123456789abcdef": { as_of: ISO, trade: aTrade(), executions: [] },
+      "/ledger/trades": { as_of: ISO, n: 1, trades: [aTrade()], filters: {} },
+    });
+    const row = (await screen.findByText("NVDA")).closest("tr") as HTMLElement;
+    expect(row).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Trade" })).toBeInTheDocument();
+  });
+
+  it("shows the trade in the app's sheet and closes it", async () => {
+    renderWithQuery(<TradesView />, {
+      "/ledger/trades/0123456789abcdef": { as_of: ISO, trade: aTrade(), executions: [] },
+      "/ledger/trades": { as_of: ISO, n: 1, trades: [aTrade()], filters: {} },
+    });
+    fireEvent.click(await screen.findByText("NVDA"));
+    const dialog = await screen.findByRole("dialog", { name: "Trade" });
+    expect(await within(dialog).findByLabelText("Notes")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

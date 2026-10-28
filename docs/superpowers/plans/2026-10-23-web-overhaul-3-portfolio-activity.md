@@ -101,7 +101,8 @@ count.
 | **Section C entry** | done | (none) | C1-C5 pass (run by the orchestrator); re-run by the orchestrator after Section B: pytest 4992 passed + 1 skipped, ruff clean, mypy clean (297 files); vitest 1108 passed (118 files), tsc clean, eslint clean; scratch-copy `next build` green (`/portfolio` built) | 2026-10-28 | (no rulings) |
 | **Task 8: Pay, a month at a time, and the totals** | done | 4042a02 `feat(web): Activity Pay - a month at a time as a stub, then the totals since the start` (hash filled in by Task 9's commit; a commit cannot name itself) | vitest 1139 passed (123 files: Section B's 1108 + 31 new: 6 `month`, 4 `useMonthParam`, 5 `MonthStepper`, 5 `useLegFilters`, 11 `PayView`); tsc clean; eslint clean; the existing `SummaryPanel`, `BreakdownTable`, `Money`, `EquityChart`, `RefreshControl` and legacy portfolio tests pass unmodified (targeted run `features/activity components/pnl components/portfolio`: 18 files / 150 tests); da-vinci `lint.py` exit 0 on `web/features/activity`, `SummaryPanel.tsx`, `BreakdownTable.tsx`, `Money.tsx` | 2026-10-28 | (1) Step 1: da-vinci loaded (sync check `OK 16`, `web/DESIGN.md` status `ratified`); the task composes existing parts only (`Card`, `Stub`, `Meter`, `StatusWord`, `SegmentedControl`, `Button`), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Every code block (five test files, `month.ts`, `useMonthParam.ts`, `MonthStepper.tsx`, `useLegFilters.ts`, `useEquity.ts`, `PayMonth.tsx`, `PayView.tsx`, the `BreakdownTable.tsx` replacement and the `SegmentedControl` snippet) was extracted from a pristine copy of this plan by fence line number with a helper kept outside the repo, not retyped. (3) Step 3: all five new test files failed with "Failed to resolve import" before the implementations existed. (4) Step 7: both `Money` label spans carried the identical old class string and both were replaced (`replace_all`). (5) Step 9: the `<fieldset>` block (lines 56 to 73 of `SummaryPanel.tsx`) was replaced by script after asserting its first and last lines and that `<fieldset` occurs once; the `SegmentedControl` import sits directly after the `EmptyState` import, as told; the heading, list and button class edits each matched exactly once. The existing 422 book-choice test passed unmodified against the `SegmentedControl` (role `group`, label "Book", two `aria-pressed` buttons). (6) The `RefreshControl` test prints its two React act warnings and `EquityChart` its zero-width chart warnings in jsdom, exactly as before this task (not new). (7) No browser pass was done (the page is not mounted until Task 14); `PayView` is exercised by its tests only. |
 | **Task 9: Pay, the filters, the equity curve and the legs** | done | ef081a7 `feat(web): Activity Pay - one set of filters over the totals, the curve and the legs` (hash filled in by Task 10's commit; a commit cannot name itself) | vitest 1147 passed (123 files: Task 8's 1139 + 8 new `PayView`, 19 in the file); tsc clean; eslint clean; the targeted run (`features/activity components/pnl`) passed 9 files / 84 tests, with every existing `LedgerTable` (`LegRow`, `CampaignRow`, `LedgerTable`), `EquityChart`, `SummaryPanel` and `SystemPanel` test unmodified; da-vinci `lint.py` over `web/features/activity web/components/pnl` finds nothing in any non-test source file (exit 1 only for the two em dashes in the legacy test titles at `SystemPanel.test.tsx:20` and `:82`, which the step expects and which are not copy) | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `FIELD`, `FIELD_LABEL`, `StatusWord`, the hairline row recipe), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Step 2: the `leg`, `campaign` and `ledgerBody` helpers went in directly below `equity` and the `"/pnl/ledger"` entry of `serve` was replaced, both by script with an exactly-once assertion; the eight new tests were appended before the closing `});` of the describe. Code blocks were extracted from a pristine copy of the plan by fence line, not retyped (one first attempt used the wrong fence line, the helper refused it and wrote nothing). (3) Step 3: the eight new tests failed (no Symbol field, no filter sentence, no curve, no legs, no campaign threads); the eleven from Task 8 still passed. (4) Steps 4 and 5: `LedgerFilters`, `LegRow` and `CampaignRow` were replaced by the plan's whole-file blocks; `CampaignRow`'s thread button label, `data-testid`s and leg count text are the old ones, so the existing tests pass unmodified. (5) Step 6: the five `EquityChart` edits (four classes and the comment) each matched exactly once; the file still has five other em dashes in code comments, which the lint does not read as copy and the plan does not ask to change. (6) Step 11: the lint exit 1 is the two legacy test titles above, not source; the plan's expected result names exactly this case. (7) No browser pass (the page mounts in Task 14). |
-| **Task 10: Ledger, the overview in the figure face, without a sub-navigation** | done | Task 10 commit `feat(web): the ledger overview in the figure face, with no sub-navigation` (hash filled in by Task 11's commit; a commit cannot name itself) | vitest 1157 passed (126 files: Task 9's 1147 + 10 new: 2 `Tile`, 3 `OutcomePill`, 1 `BackToLedger`, 4 appended to `LedgerOverview`); tsc clean; eslint clean; the targeted run (`components/ledger`) passed 7 files / 28 tests, with the existing `LedgerOverview` (5), `TickerView`, `TradesView` and `ImportView` tests unmodified; da-vinci `lint.py` exit 0 on `web/components/ledger` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `StatusWord`, the perforated figure-line recipe, the existing `--chart-line` token), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Code blocks (the three new test files, the four appended `LedgerOverview` tests, `Tile.tsx`, `OutcomePill.tsx`, `BackToLedger.tsx`, `LedgerShell.tsx`, `TickerTable.tsx`, `LedgerOverview.tsx`) were extracted from a pristine copy of the plan by fence line, not retyped. (3) Step 3: not every new test failed before the change, and the plan's expectation names only the missing modules and the overview's old behaviour. Failing: `Tile` (2, no `TileList`), `BackToLedger` (file did not resolve), and 2 of the 4 appended overview tests (the sub-navigation and the missing links and source sentence). Already passing on the old code: all 3 `OutcomePill` tests and the other 2 appended overview tests (upcoming expiries, could not load). They pin behaviour the restyle has to keep, so they are kept as written and pass after it too. (4) Step 4: the `Charts.tsx` stroke (`var(--color-gain)` to `var(--chart-line)`) matched once, on the `PnlCurve` line only; `MonthlyBars` keeps `var(--color-gain)` as the plan says nothing else changes. (5) Step 7: `TickerView`'s tile container was swapped by script (the opening `<div className="grid grid-cols-2 ...">` and the `</div>` directly before `<p className="text-xs text-muted">`), with the import changed to `Tile, TileList`; `TickerView` still renders `LedgerNav` until Task 11, as the plan says. (6) The old `LedgerOverview.test.tsx` still mocks `usePathname` for the `LedgerNav` that the overview no longer renders; left as is (existing tests unmodified). (7) No browser pass (the Ledger view mounts in Task 14). |
+| **Task 10: Ledger, the overview in the figure face, without a sub-navigation** | done | 71b75cf `feat(web): the ledger overview in the figure face, with no sub-navigation` (hash filled in by Task 11's commit; a commit cannot name itself) | vitest 1157 passed (126 files: Task 9's 1147 + 10 new: 2 `Tile`, 3 `OutcomePill`, 1 `BackToLedger`, 4 appended to `LedgerOverview`); tsc clean; eslint clean; the targeted run (`components/ledger`) passed 7 files / 28 tests, with the existing `LedgerOverview` (5), `TickerView`, `TradesView` and `ImportView` tests unmodified; da-vinci `lint.py` exit 0 on `web/components/ledger` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Card`, `StatusWord`, the perforated figure-line recipe, the existing `--chart-line` token), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) Code blocks (the three new test files, the four appended `LedgerOverview` tests, `Tile.tsx`, `OutcomePill.tsx`, `BackToLedger.tsx`, `LedgerShell.tsx`, `TickerTable.tsx`, `LedgerOverview.tsx`) were extracted from a pristine copy of the plan by fence line, not retyped. (3) Step 3: not every new test failed before the change, and the plan's expectation names only the missing modules and the overview's old behaviour. Failing: `Tile` (2, no `TileList`), `BackToLedger` (file did not resolve), and 2 of the 4 appended overview tests (the sub-navigation and the missing links and source sentence). Already passing on the old code: all 3 `OutcomePill` tests and the other 2 appended overview tests (upcoming expiries, could not load). They pin behaviour the restyle has to keep, so they are kept as written and pass after it too. (4) Step 4: the `Charts.tsx` stroke (`var(--color-gain)` to `var(--chart-line)`) matched once, on the `PnlCurve` line only; `MonthlyBars` keeps `var(--color-gain)` as the plan says nothing else changes. (5) Step 7: `TickerView`'s tile container was swapped by script (the opening `<div className="grid grid-cols-2 ...">` and the `</div>` directly before `<p className="text-xs text-muted">`), with the import changed to `Tile, TileList`; `TickerView` still renders `LedgerNav` until Task 11, as the plan says. (6) The old `LedgerOverview.test.tsx` still mocks `usePathname` for the `LedgerNav` that the overview no longer renders; left as is (existing tests unmodified). (7) No browser pass (the Ledger view mounts in Task 14). |
+| **Task 11: Ledger, the trades, ticker and import pages** | done | Task 11 commit `feat(web): the ledger's trades, ticker and import pages - sheet, fields, back link` (hash filled in by Task 12's commit; a commit cannot name itself) | vitest 1165 passed (126 files: Task 10's 1157 + 8 new: 4 `TradesView`, 2 `TickerView`, 2 `ImportView`); tsc clean; eslint clean; the targeted run (`components/ledger`) passed 7 files / 36 tests, with every existing `TradesView`, `TickerView`, `ImportView` and `LedgerOverview` test unmodified (save notes, filters into the request, CSV link, upload, oversize, PDF, review-and-refresh and no-history cases); da-vinci `lint.py` exit 0 on `web/components/ledger` and `web/app/ledger`; `LedgerNav.tsx` is imported nowhere now and is byte-identical to `main` | 2026-10-28 | (1) Step 1: da-vinci already loaded in this session; the task composes existing parts (`Sheet`, `Card`, `Button`, `FIELD`, `FIELD_LABEL`, the figure-line recipe), so no new colour, font, radius, elevation or token was needed and none is proposed. (2) All code blocks (the three test appends and the eight whole-file replacements: `TradesTable`, `TradesView`, `TradePanel`, `TickerView`, `ImportView` and the three ledger pages) were extracted from a pristine copy of the plan by fence line, not retyped; `within` was added to `TradesView.test.tsx`'s `@testing-library/react` import (alphabetical, after `waitFor`) as the plan says. (3) Step 3: 6 of the 8 new tests failed (no back link on the three views, no keyboard `tabindex` on a row, no `Trade` dialog); the other 2 already passed on the old code and pin behaviour the restyle keeps: "has neither the back link nor the heading when pinned to a ticker" and "says a feed that is failing, in words". (4) Step 6: `TradePanel` becomes a `Sheet`; its form state, resync rule and `ledger_annotate` flow are the plan's block, which the plan states is the old code unchanged, and its existing save-notes test passes unmodified. The `submitCommand` calls in `TradePanel` and `ImportView` are under `components/ledger`, not `web/features`, so the fence grep is unaffected. (5) The old `usePathname` mocks in the three existing test files are left as they are (existing tests unmodified). (6) No browser pass (the Ledger view mounts in Task 14, and the three routes are reached from it). |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -6254,11 +6255,11 @@ git commit -m "feat(web): the ledger overview in the figure face, with no sub-na
   `LedgerNav`. `TradePanel` is a `Sheet` (a right sheet on a desktop, a bottom sheet on a phone)
   instead of a fixed panel with its own shadow.
 
-- [ ] **Step 1: Load da-vinci** if it is not already loaded. Brief: the same data and the same
+- [x] **Step 1: Load da-vinci** if it is not already loaded. Brief: the same data and the same
   flows in the payslip world: the trade detail in the app's sheet, fields in the `field` look,
   tables with hairline rows in the figure face that scroll inside their own box.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
   Append inside `describe("TradesView", ...)` in `TradesView.test.tsx` (the file's helpers `aTrade`,
   `ISO` and its `next/navigation` mock stay; the mock is no longer needed once `LedgerNav` is
@@ -6341,12 +6342,12 @@ git commit -m "feat(web): the ledger overview in the figure face, with no sub-na
   });
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `cd web && npx vitest run components/ledger/TradesView.test.tsx components/ledger/TickerView.test.tsx components/ledger/ImportView.test.tsx`
 Expected: FAIL (the 8 new tests: no back link, no heading, no dialog, no keyboard).
 
-- [ ] **Step 4: Restyle `TradesTable`** — replace `web/components/ledger/TradesTable.tsx` with:
+- [x] **Step 4: Restyle `TradesTable`** — replace `web/components/ledger/TradesTable.tsx` with:
 
 ```tsx
 "use client";
@@ -6422,7 +6423,7 @@ export function TradesTable({ trades, onSelect }: { trades: LedgerTrade[]; onSel
 }
 ```
 
-- [ ] **Step 5: Restyle `TradesView`** — replace `web/components/ledger/TradesView.tsx` with:
+- [x] **Step 5: Restyle `TradesView`** — replace `web/components/ledger/TradesView.tsx` with:
 
 ```tsx
 "use client";
@@ -6554,7 +6555,7 @@ export function TradesView({ fixedSymbol }: { fixedSymbol?: string }) {
 }
 ```
 
-- [ ] **Step 6: Restyle `TradePanel` as a sheet** — replace `web/components/ledger/TradePanel.tsx` with
+- [x] **Step 6: Restyle `TradePanel` as a sheet** — replace `web/components/ledger/TradePanel.tsx` with
   the file below. The form state, the resync rule and the `ledger_annotate` flow above `return`
   are the old code, unchanged; the shell is `Sheet`, the fields are `field`s and Save is a
   secondary `Button`.
@@ -6711,7 +6712,7 @@ export function TradePanel({ orderKey, onClose }: { orderKey: string; onClose: (
 }
 ```
 
-- [ ] **Step 7: Restyle `TickerView`** — replace `web/components/ledger/TickerView.tsx` with:
+- [x] **Step 7: Restyle `TickerView`** — replace `web/components/ledger/TickerView.tsx` with:
 
 ```tsx
 "use client";
@@ -6862,7 +6863,7 @@ export function TickerView({ symbol }: { symbol: string }) {
 }
 ```
 
-- [ ] **Step 8: Restyle `ImportView`** — replace `web/components/ledger/ImportView.tsx` with the file
+- [x] **Step 8: Restyle `ImportView`** — replace `web/components/ledger/ImportView.tsx` with the file
   below. The upload flow, the size and type checks, the messages and the corporate-action review
   are the old code, unchanged; only the shell and the controls are new.
 
@@ -7077,7 +7078,7 @@ export function ImportView() {
 }
 ```
 
-- [ ] **Step 9: Frame the three pages** — replace the three page files:
+- [x] **Step 9: Frame the three pages** — replace the three page files:
 
   `web/app/ledger/trades/page.tsx`:
 
@@ -7128,7 +7129,7 @@ export default function LedgerTickerPage({ params }: { params: Promise<{ symbol:
 }
 ```
 
-- [ ] **Step 10: Run the tests, then the gate**
+- [x] **Step 10: Run the tests, then the gate**
 
 Run: `cd web && npx vitest run components/ledger && npx tsc --noEmit && npm run lint`
 Expected: PASS: the 8 new tests, and every existing `TradesView`, `TickerView`, `ImportView` and
@@ -7136,12 +7137,12 @@ Expected: PASS: the 8 new tests, and every existing `TradesView`, `TickerView`, 
 oversize, PDF, review-and-refresh and no-history cases are the proof the flows are untouched).
 `LedgerNav.tsx` is now unmounted and stays for Part 4 (ruling 12).
 
-- [ ] **Step 11: da-vinci lint**
+- [x] **Step 11: da-vinci lint**
 
 Run: `python3 ~/.claude/skills/da-vinci/scripts/lint.py web/components/ledger web/app/ledger`
 Expected: exit 0 over every non-test source file, or every finding fixed in the code.
 
-- [ ] **Step 12: Commit** (with the Progress log row for Task 11 filled in)
+- [x] **Step 12: Commit** (with the Progress log row for Task 11 filled in)
 
 ```bash
 git add web/components/ledger web/app/ledger docs/superpowers/plans/2026-10-23-web-overhaul-3-portfolio-activity.md
