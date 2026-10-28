@@ -91,7 +91,8 @@ count.
 | **Plan re-verified** | done | (plan file only) | Tasks 1–14 replayed from this text onto a scratch worktree of `main` at c692a1b: pytest 4963 → 4993 (+30), vitest 1242 passed (135 files), tsc, eslint, ruff, mypy, fences, `test_openapi_current` and the da-vinci lint (non-test files) clean; `next build` green | 2026-10-28 | Operator asked for the plan to be checked against the system as it now stands and made executable by a Sonnet subagent at xhigh. (1) The plan file and the market-picture web work were committed together in 353cdd8, so A1 now expects a clean tree. (2) **f4af002 (2026-10-27) made `partial` final** (the executors cancel the rest at the fill timeout): `/options/orders?state=working` is queued and submitted only. Task 2's replacement `list_orders` re-added `partial` and would have undone that fix silently (no existing test seeds a partial order). Fixed in the task's code, and a ninth test, `test_a_partial_order_is_history_not_working`, pins it (it fails against the old text). Counts updated (+9, total +30). (3) Every section is now labelled sonnet at xhigh; the whole-branch review stays on opus. (4) A "how to apply a step" paragraph was added, the flaky `tests/test_scan_timeout.py` is named in A2 so a lone intermittent failure there does not stop the run, and Task 15's root `CLAUDE.md` and restart instructions now name exact anchors (`./ibkr restart` restarts the whole supervised stack; there is no API-only restart). (5) f4af002's USD-only account value needs no plan change: Pay's month stub already says "needs the month's opening account value" when the API's `month_start_value` is null (every month before November 2026 with a percent target), and the equity curve already leaves gaps for a null net liquidation. |
 | **Section A entry** | done | (none) | A1-A5 pass (run by the orchestrator); baseline pytest 4962 passed + 1 skipped (4963 collected), ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | Work is in the worktree `.claude/worktrees/web-overhaul-3` (branch `feat/web-overhaul-3`, based on main c692a1b); the plan file there carries the operator's uncommitted 2026-10-28 re-verification edits and Task 1's commit includes them. A1 says "`git branch --show-current` prints `main`": here the branch is `feat/web-overhaul-3` by design (a worktree), so Task 1 Step 1's `git switch -c` was not needed. |
 | **Task 1: `GET /pnl/sizing`** | done | 463d742 `feat(api): GET /pnl/sizing - the sizing record's totals, read behind the eval fence` (hash filled in by Task 2's commit; a commit cannot name itself) | pytest 4972 passed + 1 skipped (baseline 4962 + 10 new); the 10 new tests, `test_web_fence.py`, `test_eval_skills.py`, `test_regime_fence.py` pass (48 passed); `test_openapi_current` passes; ruff clean, mypy clean (297 files); vitest 1027 passed (108 files), tsc clean, eslint clean | 2026-10-28 | (1) Step 1 (branch) not run: already on `feat/web-overhaul-3` in a worktree (see the entry row). (2) Step 7's regeneration used `IBKR_CONFIG_USE_EXAMPLES=1` in front of the `python -c` (the private config is not read). (3) `web/lib/api-types.ts` regeneration changed one line the task did not write: the `GET /options/orders` `state` description reads "(queued/submitted)" instead of "(queued/submitted/partial)". `docs/web/openapi.json` already carried the new text from f4af002 (2026-10-27); only the generated TypeScript comment had been left stale. Harmless, and the regenerated file is the one `test_openapi_current` pins. (4) The task's Step 8 lists only `npx tsc --noEmit` on the web side; vitest and eslint were run as well (the orchestrator's per-task gate) and are unchanged from the baseline. |
-| **Task 2: orders carry their sizing; fills name their contract** | done | Task 2 commit (`feat(api): orders carry the sizing that shaped them; fills name their contract`; hash filled in by Task 3's commit) | pytest 4981 passed + 1 skipped (Task 1's 4972 + 9 new); vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; `test_openapi_current` passes after regeneration | 2026-10-28 | (1) Step 2 as predicted: 8 of the 9 new tests failed before the change and `test_a_partial_order_is_history_not_working` passed on the old route and still passes on the new one (`_WORKING` is still `{"queued", "submitted"}`, comment unchanged). (2) Step 6's first command includes `test_openapi_current`, which fails until the contract is regenerated (it ran before the regeneration, as the step is ordered): 67 passed and that one failed, then it passed after the regeneration. (3) In `types.ts` the plan gives the five new `FillSummary` fields as one inline-code list in prose; they are written one field per line, like the rest of the file. (4) The pasted test block had one blank line before `test_a_partial_order_is_history_not_working`; `ruff format` made it two, the only change the formatter made to the task's text besides line wrapping. (5) The `api-types.ts` and `openapi.json` diffs drop only the old docstring lines, the old `maximum: 90` on `days` and the old FillSummary docstring, all replaced by this task's text. |
+| **Task 2: orders carry their sizing; fills name their contract** | done | 606aa70 `feat(api): orders carry the sizing that shaped them; fills name their contract` (hash filled in by Task 3's commit) | pytest 4981 passed + 1 skipped (Task 1's 4972 + 9 new); vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; `test_openapi_current` passes after regeneration | 2026-10-28 | (1) Step 2 as predicted: 8 of the 9 new tests failed before the change and `test_a_partial_order_is_history_not_working` passed on the old route and still passes on the new one (`_WORKING` is still `{"queued", "submitted"}`, comment unchanged). (2) Step 6's first command includes `test_openapi_current`, which fails until the contract is regenerated (it ran before the regeneration, as the step is ordered): 67 passed and that one failed, then it passed after the regeneration. (3) In `types.ts` the plan gives the five new `FillSummary` fields as one inline-code list in prose; they are written one field per line, like the rest of the file. (4) The pasted test block had one blank line before `test_a_partial_order_is_history_not_working`; `ruff format` made it two, the only change the formatter made to the task's text besides line wrapping. (5) The `api-types.ts` and `openapi.json` diffs drop only the old docstring lines, the old `maximum: 90` on `days` and the old FillSummary docstring, all replaced by this task's text. |
+| **Task 3: `GET /ledger/executions` and `GET /spreads/orders`** | done | Task 3 commit (`feat(api): GET /ledger/executions and GET /spreads/orders - the audit lists`; the first Section B commit fills in its hash; `git log --oneline c692a1b..HEAD` shows three Section A commits) | pytest 4992 passed + 1 skipped (Task 2's 4981 + 11 new: 5 ledger, 6 spreads); `test_web_fence`, `test_spreads_fence`, `test_wheel_spreads_isolation` pass with the new tests (64 passed); the five fence files (`test_web_fence`, `test_eval_skills`, `test_regime_fence`, `test_news_fence`, `test_spreads_fence`) pass (60 passed); `test_openapi_current` passes; vitest 1027 passed (108 files, unchanged); tsc, eslint, ruff, mypy (297 files) clean; the B3 loop over `web/lib/api-types.ts` prints nothing | 2026-10-28 | (1) Step 3 as predicted: all 11 new tests failed on 404 bodies before the change (the two `require_owner` cases answered 404 where 401 is expected). (2) The pasted ledger tests were appended after `test_nav_has_a_ledger_section` with the `datetime` import placed above `pathlib` (isort order); ruff's check needed no `--fix`. (3) Route and model imports were added exactly as the task says (`LedgerExecutionRowOut` and `LedgerExecutionsResponse` sit after `LedgerExecutionOut`, and `ruff check` accepts the order). (4) The contract regeneration removes no existing line from `openapi.json` or `api-types.ts`: it only adds the two ledger schemas, the two spreads schemas and the two paths. (5) No documentation file was touched in Section A on purpose: the plan puts the ARCHITECTURE.md / STATUS.md / SETUP.md / CLAUDE.md / `docs/web/api.md` sweep in Task 15, so the CLAUDE.md doc-update reminder fired after each `src/api` edit and is satisfied there. |
 
 *(Rows are added as each task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -1237,7 +1238,7 @@ git commit -m "feat(api): orders carry the sizing that shaped them; fills name t
   - `GET /spreads/orders?days=30&limit=200` → `SpreadOrdersResponse{as_of, available,
     underlying, orders: SpreadOrderOut[]}`.
 
-- [ ] **Step 1: Write the failing ledger tests** — append to `tests/test_api_ledger.py`. Add
+- [x] **Step 1: Write the failing ledger tests** — append to `tests/test_api_ledger.py`. Add
   `from datetime import UTC, date, datetime` to its imports. The `seeded` CSV fixture only loads
   order-level statement rows, which is the exclusion case:
 
@@ -1355,7 +1356,7 @@ def test_executions_say_when_the_list_was_cut_short(client, api_db, frozen_ledge
     assert client.get("/ledger/executions?days=366", headers=OWNER).status_code == 422
 ```
 
-- [ ] **Step 2: Write the failing spreads tests** — create `tests/test_api_spread_orders.py`:
+- [x] **Step 2: Write the failing spreads tests** — create `tests/test_api_spread_orders.py`:
 
 ```python
 """GET /spreads/orders - the spreads book's filled orders (web overhaul Part 3, Task 3).
@@ -1513,12 +1514,12 @@ def test_an_older_file_without_the_orders_table_is_available_with_no_orders(clie
     assert body["available"] is True and body["orders"] == []
 ```
 
-- [ ] **Step 3: Run them to verify they fail**
+- [x] **Step 3: Run them to verify they fail**
 
 Run: `python -m pytest tests/test_api_ledger.py tests/test_api_spread_orders.py -q`
 Expected: FAIL (both new routes answer 404).
 
-- [ ] **Step 4: Ledger models** — append to `src/api/models/ledger.py` (the file already imports
+- [x] **Step 4: Ledger models** — append to `src/api/models/ledger.py` (the file already imports
   `date`, `datetime`, `BaseModel` and `Envelope`):
 
 ```python
@@ -1556,7 +1557,7 @@ class LedgerExecutionsResponse(Envelope):
     executions: list[LedgerExecutionRowOut]
 ```
 
-- [ ] **Step 5: Ledger route** — in `src/api/routers/ledger.py`: change the datetime import to
+- [x] **Step 5: Ledger route** — in `src/api/routers/ledger.py`: change the datetime import to
   `from datetime import UTC, date, datetime, timedelta`, the fastapi import to
   `from fastapi import APIRouter, HTTPException, Query`, add `LedgerExecutionRowOut` and
   `LedgerExecutionsResponse` to the `src.api.models.ledger` import list, add
@@ -1633,7 +1634,7 @@ def get_executions(
 
   `LedgerBookName` is already imported in this module (it is used by `_filters`).
 
-- [ ] **Step 6: Spreads reader** — append to `src/api/spreads_db.py`:
+- [x] **Step 6: Spreads reader** — append to `src/api/spreads_db.py`:
 
 ```python
 def try_read_spread_order_rows(
@@ -1658,7 +1659,7 @@ def try_read_spread_order_rows(
     return [dict(r._mapping) for r in result]
 ```
 
-- [ ] **Step 7: Spreads models and route** — append to `src/api/models/spreads.py`:
+- [x] **Step 7: Spreads models and route** — append to `src/api/models/spreads.py`:
 
 ```python
 class SpreadOrderOut(BaseModel):
@@ -1732,7 +1733,7 @@ def spread_orders(
     return SpreadOrdersResponse(as_of=now, available=True, underlying=underlying, orders=orders)
 ```
 
-- [ ] **Step 8: Run the tests, the fences, then regenerate the contract**
+- [x] **Step 8: Run the tests, the fences, then regenerate the contract**
 
 ```bash
 python -m pytest tests/test_api_ledger.py tests/test_api_spread_orders.py tests/test_web_fence.py \
@@ -1746,13 +1747,13 @@ Expected: PASS (5 + 6 new tests; every fence test unchanged, including
 `test_only_spreads_db_opens_the_spreads_file_in_the_api` and
 `test_only_the_ledger_package_writes_the_ledger_tables`).
 
-- [ ] **Step 9: Format and the gate**
+- [x] **Step 9: Format and the gate**
 
 Run: `ruff format src/api/models/ledger.py src/api/routers/ledger.py src/api/spreads_db.py src/api/models/spreads.py src/api/routers/spreads.py tests/test_api_ledger.py tests/test_api_spread_orders.py`,
 then `python -m pytest -q && ruff check . && mypy src && cd web && npx vitest run && npx tsc --noEmit && npm run lint && cd ..`
 Expected: pytest = Task 2's count + 11; everything else clean.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/api/models/ledger.py src/api/routers/ledger.py src/api/spreads_db.py \

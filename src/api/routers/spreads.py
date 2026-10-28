@@ -14,6 +14,8 @@ from src.api.deps import OwnerUser
 from src.api.models.common import as_utc
 from src.api.models.spreads import (
     SpreadMenuItemOut,
+    SpreadOrderOut,
+    SpreadOrdersResponse,
     SpreadPickOut,
     SpreadPicksResponse,
     SpreadPositionsResponse,
@@ -24,6 +26,7 @@ from src.api.spreads_db import (
     read_spread_rows,
     spreads_read_session,
     try_read_pick_rows,
+    try_read_spread_order_rows,
     try_read_spread_rows_opened,
 )
 from src.common.config import get_config
@@ -160,3 +163,42 @@ def spread_picks(
             ],
         }
     )
+
+
+@router.get("/orders", response_model=SpreadOrdersResponse)
+def spread_orders(
+    user: OwnerUser,  # noqa: ARG001
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(200, ge=1, le=500),
+) -> SpreadOrdersResponse:
+    """The book's filled orders, newest first (web overhaul Part 3). An older file without the
+    table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker;
+    only a missing or unreadable file is ``available: false``."""
+    now = _now()
+    underlying = get_config().spreads.underlying
+    with spreads_read_session() as s:
+        if s is None:
+            return SpreadOrdersResponse(as_of=now, available=False, underlying=underlying)
+        rows = try_read_spread_order_rows(
+            s, start=(now - timedelta(days=days)).replace(tzinfo=None), limit=limit
+        )
+    orders = [
+        SpreadOrderOut(
+            spread_id=r["spread_id"],
+            kind=r["kind"],
+            ib_order_id=r["ib_order_id"],
+            perm_id=r["perm_id"],
+            filled_qty=r["filled_qty"],
+            price=r["price"],
+            commission=r["commission"],
+            reason=r["reason"],
+            created_at=as_utc(r["created_at"]),
+            mode=r["mode"],
+            side=r["side"],
+            expiry=r["expiry"],
+            short_strike=r["short_strike"],
+            long_strike=r["long_strike"],
+        )
+        for r in (rows or [])
+    ]
+    return SpreadOrdersResponse(as_of=now, available=True, underlying=underlying, orders=orders)

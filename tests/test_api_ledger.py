@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -93,3 +94,123 @@ def test_annotation_goes_through_post_commands(seeded) -> None:
 def test_nav_has_a_ledger_section(client) -> None:
     sections = {s["key"]: s for s in client.get("/nav", headers=OWNER).json()["sections"]}
     assert sections["ledger"]["available"] is True
+
+
+NOW = datetime(2026, 10, 22, 15, 0, tzinfo=UTC)
+
+
+def _exec(n: int, **over):
+    from src.storage.models import BrokerExecutionRow
+
+    base = dict(
+        dedupe_key=f"live-{n}",
+        source_kind="exec",
+        source="live",
+        exec_id=f"0000{n}",
+        perm_id=900 + n,
+        ib_order_id=10 + n,
+        account="DU1",
+        trade_time=datetime(2026, 10, 20, 14, 31, 7),
+        trade_date=date(2026, 10, 20),
+        contract_ident="NVDA 20261120 165 P",
+        underlying="NVDA",
+        sec_type="OPT",
+        right="P",
+        strike=165.0,
+        expiry=date(2026, 11, 20),
+        multiplier=100.0,
+        currency="USD",
+        quantity=-1.0,
+        price=2.35,
+        proceeds=235.0,
+        commission=-1.3,
+        codes="O",
+        book="system",
+    )
+    base.update(over)
+    return BrokerExecutionRow(**base)
+
+
+@pytest.fixture()
+def frozen_ledger_now(monkeypatch):
+    import src.api.routers.ledger as routes
+
+    monkeypatch.setattr(routes, "_now", lambda: NOW)
+
+
+def test_executions_require_owner(client) -> None:
+    assert client.get("/ledger/executions").status_code == 401
+
+
+def test_executions_list_real_fills_newest_first_with_their_contract(
+    client, api_db, frozen_ledger_now
+) -> None:
+    with api_db() as s:
+        s.add_all(
+            [
+                _exec(1, trade_time=datetime(2026, 10, 19, 14, 0), trade_date=date(2026, 10, 19)),
+                _exec(2, quantity=1.0, price=1.1, proceeds=-110.0, codes="C"),
+            ]
+        )
+    body = client.get("/ledger/executions", headers=OWNER).json()
+    assert [e["exec_id"] for e in body["executions"]] == ["00002", "00001"]
+    first = body["executions"][0]
+    assert (first["underlying"], first["right"], first["strike"], first["expiry"]) == (
+        "NVDA",
+        "P",
+        165.0,
+        "2026-11-20",
+    )
+    assert (first["quantity"], first["price"], first["commission"], first["book"]) == (
+        1.0,
+        1.1,
+        -1.3,
+        "system",
+    )
+    assert first["trade_time"].endswith(("Z", "+00:00"))
+    assert (body["days"], body["limit"], body["truncated"]) == (30, 200, False)
+
+
+def test_executions_leave_out_statement_rows_superseded_twins_and_old_days(
+    client, api_db, frozen_ledger_now
+) -> None:
+    with api_db() as s:
+        s.add_all(
+            [
+                _exec(1),
+                _exec(2, source_kind="order"),
+                _exec(3, superseded_by=1),
+                _exec(4, trade_date=date(2026, 8, 1), trade_time=datetime(2026, 8, 1, 14, 0)),
+            ]
+        )
+    ids = [
+        e["exec_id"] for e in client.get("/ledger/executions", headers=OWNER).json()["executions"]
+    ]
+    assert ids == ["00001"]
+    wide = client.get("/ledger/executions?days=120", headers=OWNER).json()["executions"]
+    assert {e["exec_id"] for e in wide} == {"00001", "00004"}
+
+
+def test_executions_filter_by_book_and_symbol(client, api_db, frozen_ledger_now) -> None:
+    with api_db() as s:
+        s.add_all(
+            [
+                _exec(1),
+                _exec(2, book="spreads", underlying="SPY", contract_ident="SPY 20261022 763 P"),
+                _exec(3, book="manual", underlying="AAPL", contract_ident="AAPL 20261120 185 P"),
+            ]
+        )
+    spreads = client.get("/ledger/executions?book=spreads", headers=OWNER).json()["executions"]
+    assert [e["underlying"] for e in spreads] == ["SPY"]
+    aapl = client.get("/ledger/executions?symbol=aapl", headers=OWNER).json()["executions"]
+    assert [e["book"] for e in aapl] == ["manual"]
+    assert client.get("/ledger/executions?book=bogus", headers=OWNER).status_code == 422
+
+
+def test_executions_say_when_the_list_was_cut_short(client, api_db, frozen_ledger_now) -> None:
+    with api_db() as s:
+        s.add_all([_exec(n) for n in range(1, 5)])
+    body = client.get("/ledger/executions?limit=3", headers=OWNER).json()
+    assert len(body["executions"]) == 3 and body["truncated"] is True
+    assert client.get("/ledger/executions?limit=0", headers=OWNER).status_code == 422
+    assert client.get("/ledger/executions?days=366", headers=OWNER).status_code == 422

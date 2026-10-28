@@ -985,6 +985,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ledger/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Executions
+         * @description IBKR's own executions, newest first: the ledger rows that are real fills (``exec``, not an
+         *     order-level statement row) and are not superseded by a twin from a higher-priority feed.
+         *     ``days`` counts US/Eastern trade days back from today; ``truncated`` says the window held
+         *     more than ``limit``. Read-only, like every ledger route (web overhaul Part 3).
+         */
+        get: operations["get_executions_ledger_executions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/imports": {
         parameters: {
             query?: never;
@@ -1154,6 +1177,28 @@ export interface paths {
          *     sent, and every spread any book opened that day. `day` defaults to today in New York.
          */
         get: operations["spread_picks_spreads_picks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/spreads/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spread Orders
+         * @description The book's filled orders, newest first (web overhaul Part 3). An older file without the
+         *     table answers ``available: true`` with no orders, as `/spreads/picks` does for the picker;
+         *     only a missing or unreadable file is ``available: false``.
+         */
+        get: operations["spread_orders_spreads_orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3133,6 +3178,76 @@ export interface components {
             /** Superseded By */
             superseded_by: number | null;
         };
+        /**
+         * LedgerExecutionRowOut
+         * @description One real IBKR execution (web overhaul Part 3): quantity is signed (bought +, sold −),
+         *     ``trade_time`` is UTC, ``trade_date`` the US/Eastern day. ``right`` is ``C`` or ``P`` for an
+         *     option and None for shares.
+         */
+        LedgerExecutionRowOut: {
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Exec Id */
+            exec_id: string | null;
+            /**
+             * Trade Time
+             * Format: date-time
+             */
+            trade_time: string;
+            /**
+             * Trade Date
+             * Format: date
+             */
+            trade_date: string;
+            /** Underlying */
+            underlying: string;
+            /** Sec Type */
+            sec_type: string;
+            /** Right */
+            right: string | null;
+            /** Strike */
+            strike: number | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Multiplier */
+            multiplier: number;
+            /** Currency */
+            currency: string;
+            /** Quantity */
+            quantity: number;
+            /** Price */
+            price: number;
+            /** Proceeds */
+            proceeds: number;
+            /** Commission */
+            commission: number;
+            /** Codes */
+            codes: string;
+            /** Book */
+            book: string;
+            /** Ib Order Id */
+            ib_order_id: number | null;
+            /** Perm Id */
+            perm_id: number | null;
+        };
+        /** LedgerExecutionsResponse */
+        LedgerExecutionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Days */
+            days: number;
+            /** Limit */
+            limit: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Executions */
+            executions: components["schemas"]["LedgerExecutionRowOut"][];
+        };
         /** LedgerFeedStatus */
         LedgerFeedStatus: {
             /** Configured */
@@ -5095,6 +5210,62 @@ export interface components {
             be_nominal_exits: number | null;
         };
         /**
+         * SpreadOrderOut
+         * @description One filled order of the credit-spreads book (``spread_orders``: only filled orders are
+         *     recorded), joined to its spread. The spread's fields are None when its position row is
+         *     missing.
+         */
+        SpreadOrderOut: {
+            /** Spread Id */
+            spread_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "open" | "close";
+            /** Ib Order Id */
+            ib_order_id: number | null;
+            /** Perm Id */
+            perm_id: number | null;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Price */
+            price: number | null;
+            /** Commission */
+            commission: number;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Mode */
+            mode: string | null;
+            /** Side */
+            side: ("put" | "call") | null;
+            /** Expiry */
+            expiry: string | null;
+            /** Short Strike */
+            short_strike: number | null;
+            /** Long Strike */
+            long_strike: number | null;
+        };
+        /** SpreadOrdersResponse */
+        SpreadOrdersResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Underlying */
+            underlying: string;
+            /** Orders */
+            orders?: components["schemas"]["SpreadOrderOut"][];
+        };
+        /**
          * SpreadPickOut
          * @description One menu Claude was shown, its choice, and what the service did with it.
          */
@@ -6895,6 +7066,40 @@ export interface operations {
             };
         };
     };
+    get_executions_ledger_executions_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                book?: ("system" | "manual" | "spreads") | null;
+                symbol?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerExecutionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_imports_ledger_imports_get: {
         parameters: {
             query?: never;
@@ -7164,6 +7369,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpreadPicksResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    spread_orders_spreads_orders_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpreadOrdersResponse"];
                 };
             };
             /** @description Validation Error */

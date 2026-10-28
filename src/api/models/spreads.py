@@ -92,3 +92,30 @@ class SpreadPicksResponse(Envelope):
     next_day: date | None = None
     picks: list[SpreadPickOut] = Field(default_factory=list)  # newest first
     positions: list[SpreadPositionOut] = Field(default_factory=list)  # every mode, oldest first
+
+
+class SpreadOrderOut(BaseModel):
+    """One filled order of the credit-spreads book (``spread_orders``: only filled orders are
+    recorded), joined to its spread. The spread's fields are None when its position row is
+    missing."""
+
+    spread_id: str
+    kind: Literal["open", "close"]
+    ib_order_id: int | None
+    perm_id: int | None
+    filled_qty: int
+    price: float | None  # per share; None when no price was recorded
+    commission: float
+    reason: str | None  # why a close was sent (profit take, stop, expiry...)
+    created_at: datetime
+    mode: str | None
+    side: Literal["put", "call"] | None
+    expiry: date | None
+    short_strike: float | None
+    long_strike: float | None
+
+
+class SpreadOrdersResponse(Envelope):
+    available: bool  # False when data/spreads.db does not exist or cannot be read
+    underlying: str
+    orders: list[SpreadOrderOut] = Field(default_factory=list)

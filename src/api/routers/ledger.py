@@ -10,19 +10,22 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from src.api.deps import OwnerUser, TradingDb
+from src.api.models.common import as_utc
 from src.api.models.ledger import (
     LedgerCorporateActionOut,
     LedgerExecutionOut,
+    LedgerExecutionRowOut,
+    LedgerExecutionsResponse,
     LedgerFeedStatus,
     LedgerImportRunOut,
     LedgerImportsResponse,
@@ -211,6 +214,72 @@ def get_trade(order_key: str, db: TradingDb, _user: OwnerUser) -> LedgerTradeRes
         for r in rows
     ]
     return LedgerTradeResponse(as_of=_now(), trade=trade, executions=executions)
+
+
+@router.get("/executions", response_model=LedgerExecutionsResponse)
+def get_executions(
+    db: TradingDb,
+    _user: OwnerUser,
+    days: int = Query(default=30, ge=1, le=365),
+    book: LedgerBookName | None = None,
+    symbol: str | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+) -> LedgerExecutionsResponse:
+    """IBKR's own executions, newest first: the ledger rows that are real fills (``exec``, not an
+    order-level statement row) and are not superseded by a twin from a higher-priority feed.
+    ``days`` counts US/Eastern trade days back from today; ``truncated`` says the window held
+    more than ``limit``. Read-only, like every ledger route (web overhaul Part 3)."""
+    now = _now()
+    since = (now.astimezone(_ET) - timedelta(days=days)).date()
+    stmt = select(BrokerExecutionRow).where(
+        BrokerExecutionRow.source_kind == "exec",
+        BrokerExecutionRow.superseded_by.is_(None),
+        BrokerExecutionRow.trade_date >= since,
+    )
+    if book is not None:
+        stmt = stmt.where(BrokerExecutionRow.book == book)
+    if symbol:
+        stmt = stmt.where(BrokerExecutionRow.underlying == symbol.upper())
+    rows = (
+        db.execute(
+            stmt.order_by(BrokerExecutionRow.trade_time.desc(), BrokerExecutionRow.id.desc()).limit(
+                limit + 1
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return LedgerExecutionsResponse(
+        as_of=now,
+        days=days,
+        limit=limit,
+        truncated=len(rows) > limit,
+        executions=[
+            LedgerExecutionRowOut(
+                id=r.id,
+                source=r.source,
+                exec_id=r.exec_id,
+                trade_time=as_utc(r.trade_time),
+                trade_date=r.trade_date,
+                underlying=r.underlying,
+                sec_type=r.sec_type,
+                right=r.right,
+                strike=r.strike,
+                expiry=r.expiry,
+                multiplier=r.multiplier,
+                currency=r.currency,
+                quantity=r.quantity,
+                price=r.price,
+                proceeds=r.proceeds,
+                commission=r.commission,
+                codes=r.codes,
+                book=r.book,
+                ib_order_id=r.ib_order_id,
+                perm_id=r.perm_id,
+            )
+            for r in rows[:limit]
+        ],
+    )
 
 
 @router.get("/imports", response_model=LedgerImportsResponse)
