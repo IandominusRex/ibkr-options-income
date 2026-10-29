@@ -92,7 +92,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 4 Universes, snapshots, the research worker's jobs | done | dfb76b6 | `test_value_universe.py` 10 + `test_research_materialize.py` + `test_research_worker.py` = 29 passed; ruff check/format clean; mypy clean (33 files). Snapshot run printed `S&P 500: 503 rows; S&P 100: 101 rows; as of 2026-10-29`. **Section A exit gate:** pytest 5034 passed + 1 skipped (baseline 4996 + 38), ruff check . clean, mypy src clean (303 files); protected-file diff empty | 2026-10-29 | Ruling: tests and code written together, first full run green (no red run observed). Ruling: Tasks 3-4's plan checkboxes and Tasks 2-3's log rows ride the following task's commit as the plan says; Task 4's row and ticks are this final `docs(plan)` commit, so the branch is 4 task commits + 1 docs commit = 5 ahead of main (the plan's exit text says 4; the extra commit is the one the section prompt requires). Cost if wrong: none |
 | **B entry checks** | done | (none) | B1–B4 pass; Section A exit re-verified by the orchestrator: pytest 5034 passed + 1 skipped, ruff clean, mypy clean (303 files), protected-file diff empty | 2026-10-29 | Ruling: Section A left 5 commits ahead of main (4 task commits + 1 `docs(plan)`), so B1's "prints 4" and B's exit "9 in all" become 5 and 11 (B adds 5 task commits + 1 final `docs(plan)` commit for Task 9's row; the B entry row rides Task 5's commit). Cost if wrong: none |
 | 5 Schemas, per-year metrics, test fixtures | done | 157c174 | test_value_metrics.py 8 passed; ruff check/format clean; mypy src/value clean (4 files) | 2026-10-29 | Ruling: code blocks were extracted verbatim from the plan and tests run together, so no red run was observed (8 green at once). Cost if wrong: none |
-| 6 Piotroski, Altman, Beneish | pending | | | | |
+| 6 Piotroski, Altman, Beneish | done | 56fda13 | test_value_scores.py 7 passed; ruff check/format clean; mypy src/value clean (5 files) | 2026-10-29 | Ruling: code extracted verbatim from the plan; tests green on first run, no red run observed. Cost if wrong: none |
 | 7 Classification, data quality, health gates | pending | | | | |
 | 8 Valuation: A, B, C, D, P/TBV | pending | | | | |
 | 9 Timing and the scorecard | pending | | | | |
@@ -4247,7 +4247,7 @@ def beneish_m(years: list[Year]) -> Score:
   `bank.rote_stdev`, `bank.tbv_growth`, `bank.nco`, `bank.cet1`, `bank.combined_ratio`,
   `bank.dilution`); `build_years_for(inputs)`; `latest_tbv_per_share(inputs, years)`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_gates.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_gates.py`
 
 ```python
 """Classification, data quality and the health gates (value book spec §6.3-6.5)."""
@@ -4461,10 +4461,10 @@ def test_edgar_shares_fall_back_for_a_multi_class_filer() -> None:
     assert gates.edgar_shares(inputs(fin=fin)) == 100.0  # the last fiscal year's
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.gates'`.
 
-- [ ] **Step 3: Create `src/value/gates.py`**
+- [x] **Step 3: Create `src/value/gates.py`**
 
 ```python
 """Classification, the data-quality gate and the health gates (spec §6.3-6.5). Pure: no I/O.
@@ -5008,13 +5008,13 @@ def latest_tbv_per_share(inputs: ValueInputs, years: list[Year]) -> float | None
     return tbv_per_share(years[0]) if years else None
 ```
 
-- [ ] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_gates.py` →
+- [x] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_gates.py` →
   28 passed.
 
-- [ ] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/gates.py
+- [x] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/gates.py
   tests/test_value_gates.py`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/gates.py tests/test_value_gates.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
