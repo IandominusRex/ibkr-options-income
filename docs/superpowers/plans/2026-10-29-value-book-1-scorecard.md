@@ -89,7 +89,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 1 Config, ruleset fingerprint, package | done | de09566 | `tests/test_value_config.py` 9 passed; with `test_private_config.py` + `test_spreads_config.py` 38 passed; ruff check/format clean, mypy clean (3 files) | 2026-10-29 | Ruling: the doc-update trigger table (new module, new config key) is deferred to Task 14 as the plan schedules it, not done per task. Cost if wrong: none (Task 14 sweeps ARCHITECTURE/SETUP/STATUS/CLAUDE) |
 | 2 Point in time: `as_of`, `select_ttm`, the concept map | done | 6f5ea05 | periods+concepts+units+materialize 45 passed (periods 17, concepts 11 as the plan expected); ruff check/format clean; mypy src/research clean (31 files) | 2026-10-29 | Ruling: the source edits (`select_periods(as_of)`, `select_ttm`, `TtmValue`) were applied before the new tests were first run, so only the concept-map test was observed red (the yaml came last); the periods tests were green on first run. Cost if wrong: none (the tests pin both as_of directions and TTM bases) |
 | 3 Value inputs: types and the read-only loader | done | c463698 | `tests/test_value_inputs.py` 11 passed; ruff check/format clean; mypy clean (2 files) | 2026-10-29 | Ruling: tests and code were written together and first run together (11 green at once), so no red run was observed; the tests carry the plan's pinned numbers verbatim. Cost if wrong: none |
-| 4 Universes, snapshots, the research worker's jobs | pending | | | | |
+| 4 Universes, snapshots, the research worker's jobs | done | dfb76b6 | `test_value_universe.py` 10 + `test_research_materialize.py` + `test_research_worker.py` = 29 passed; ruff check/format clean; mypy clean (33 files). Snapshot run printed `S&P 500: 503 rows; S&P 100: 101 rows; as of 2026-10-29`. **Section A exit gate:** pytest 5034 passed + 1 skipped (baseline 4996 + 38), ruff check . clean, mypy src clean (303 files); protected-file diff empty | 2026-10-29 | Ruling: tests and code written together, first full run green (no red run observed). Ruling: Tasks 3-4's plan checkboxes and Tasks 2-3's log rows ride the following task's commit as the plan says; Task 4's row and ticks are this final `docs(plan)` commit, so the branch is 4 task commits + 1 docs commit = 5 ahead of main (the plan's exit text says 4; the extra commit is the one the section prompt requires). Cost if wrong: none |
 | **B entry checks** | pending | (none) | | | |
 | 5 Schemas, per-year metrics, test fixtures | pending | | | | |
 | 6 Piotroski, Altman, Beneish | pending | | | | |
@@ -2508,7 +2508,7 @@ def fetch_market_facts(symbol: str) -> MarketFacts:
   id `value_sweep`; the snapshot script's `parse_constituents`, `sp500_rows`, `sp100_rows`,
   `write_snapshot`, `main`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_universe.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_universe.py`
 
 ```python
 """The value book's universes, the snapshot builder, and the research worker's sweep (Part 1)."""
@@ -2718,12 +2718,12 @@ def test_the_scheduler_adds_the_sweep_only_when_enabled(monkeypatch) -> None:
     assert "value_sweep" in {j.id for j in build_scheduler().get_jobs()}
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_universe.py`
   Expected: `ModuleNotFoundError: No module named 'src.common.value_universe'`.
 
-- [ ] **Step 3: Create `src/common/value_universe.py`**
+- [x] **Step 3: Create `src/common/value_universe.py`**
 
 ```python
 """The value book's two universes (spec §6.1). Neutral: the research worker's nightly sweep
@@ -2839,7 +2839,7 @@ def build_value_universe(cfg: ValueCfg, universe: dict[str, Any]) -> ValueUniver
     return out
 ```
 
-- [ ] **Step 4: Create `scripts/value_universe_snapshot.py`**
+- [x] **Step 4: Create `scripts/value_universe_snapshot.py`**
 
 ```python
 """Rebuild the value book's committed universe snapshots (spec §6.1).
@@ -3010,7 +3010,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Generate and inspect the snapshots**
+- [x] **Step 5: Generate and inspect the snapshots**
 
   ```bash
   .venv/bin/python -m py_compile scripts/value_universe_snapshot.py
@@ -3022,7 +3022,7 @@ if __name__ == "__main__":
   head shows `# as_of: …`, `symbol,name,sector,industry,cik`, then `AAPL,…`. If the API refuses,
   stop and report (do not hand-write the files).
 
-- [ ] **Step 6: Add the `prices` job kind.** In `src/research/ingest/materialize.py`, after line
+- [x] **Step 6: Add the `prices` job kind.** In `src/research/ingest/materialize.py`, after line
   35 add `from src.research.ingest.prices import ingest_daily_bars`; replace lines 406–412 (the
   `if kind == "fundamentals" and cik:` … `error = f"Cannot run job kind …"` block) with:
 
@@ -3043,7 +3043,7 @@ if __name__ == "__main__":
               error = f"Cannot run job kind {kind!r} for {symbol}"
   ```
 
-- [ ] **Step 7: Create `src/research/ingest/value_universe.py`**
+- [x] **Step 7: Create `src/research/ingest/value_universe.py`**
 
 ```python
 """The research worker's nightly sweep for the value book (spec §6.1, §6.9).
@@ -3118,7 +3118,7 @@ def enqueue_value_universe(
     return counts
 ```
 
-- [ ] **Step 8: Schedule the sweep.** In `src/research/ingest/jobs.py`, after line 20 add
+- [x] **Step 8: Schedule the sweep.** In `src/research/ingest/jobs.py`, after line 20 add
   `from src.research.ingest.value_universe import enqueue_value_universe`; immediately before
   the `sched.add_job(` whose first argument is `lambda: run_job("quotes", refresh_quotes),`
   (line 104) insert:
@@ -3135,12 +3135,12 @@ def enqueue_value_universe(
           )
   ```
 
-- [ ] **Step 9: Run the tests**
+- [x] **Step 9: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_universe.py tests/test_research_materialize.py tests/test_research_worker.py`
   Expected: all pass (`test_value_universe.py`: 10 passed).
 
-- [ ] **Step 10: Gates**
+- [x] **Step 10: Gates**
 
   ```bash
   .venv/bin/ruff check src/common/value_universe.py src/research scripts/value_universe_snapshot.py tests/test_value_universe.py
@@ -3148,7 +3148,7 @@ def enqueue_value_universe(
   .venv/bin/mypy src/common/value_universe.py src/research
   ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
   ```bash
   git add src/common/value_universe.py scripts/value_universe_snapshot.py src/research/ingest/value_universe.py src/research/ingest/materialize.py src/research/ingest/jobs.py tests/test_value_universe.py config/value_universe.csv config/value_evidence_universe.csv docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
