@@ -99,7 +99,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | **C entry checks** | done | (none) | C1–C4 pass; Section B exit re-verified by the orchestrator: 11 commits ahead of main, pytest 5111 passed + 1 skipped, ruff clean, mypy clean (310 files), protected-file diff empty, 77 new Section B tests | 2026-10-29 | Ruling: C3's grep matches the word "yfinance" in a `detail=` string (gates.py:128, :140) and a comment (timing.py:35) — no import, no I/O, so the scorecard is still pure. Ruling: counts shift by Section A/B's extra `docs(plan)` commits — C1's "prints 9" is 11, C's exit "14 in all" is 17 (5 task commits + 1 final `docs(plan)`), and C's pytest target is baseline 4996 + 141 = 5137. The C entry row rides Task 10's commit. Cost if wrong: none |
 | 10 Rank score and the relative-strength line | done | f73a288 | test_value_rank.py 5 passed; ruff check/format clean; mypy src/value/rank.py clean | 2026-10-29 | Ruling: code and tests extracted verbatim from the plan and run together, so no red run was observed (5 green at once, pinned numbers matched). Cost if wrong: none |
 | 11 `value.db` and the ticker file | done | 0c98576 | test_value_store.py 6 passed; ruff check/format clean; mypy src/value clean (12 files) | 2026-10-29 | Ruling: code and tests extracted verbatim and run together; no red run observed (6 green at once, the pinned fair value 46.853626592284414 matched). Cost if wrong: none |
-| 12 Funnel and fences | pending | | | | |
+| 12 Funnel and fences | done | 7f62b32 | test_value_funnel.py 2 + test_value_fence.py 10 + the five other fence suites (spreads, regime, news, web, eval_skills) = 72 passed; ruff check/format clean; mypy src/value clean (12 files) | 2026-10-29 | Ruling: code and tests extracted verbatim and run together, so the red run (funnel/fence failing before funnel.py existed) was not observed; Step 2's note that the other fence tests pass already was therefore not re-observed, but all 10 fence tests pass now, so Tasks 1-11 sit inside the fence. Ruling: `mypy tests/value_fixtures.py` reports a pre-existing arg-type error at line 83 (Task 5's fixture); the gate is `mypy src`, which tests are outside, so left alone. Cost if wrong: none |
 | 13 The dry-run script | pending | | | | |
 | 14 Docs | pending | | | | |
 | **Whole-branch review (opus)** | pending | | | | |
@@ -6851,7 +6851,7 @@ def stored_fingerprint(session: Session, symbol: str) -> Fingerprint | None:
 - Produces: `GateTally`, `ListFunnel`, `Funnel`; `build_funnel(cards) -> Funnel`;
   `render_funnel(funnel, title) -> str`; `render_name(card) -> str`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_funnel.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_funnel.py`
 
 ```python
 """The dry run's pass funnel (value book spec §17)."""
@@ -7116,13 +7116,13 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
     assert bad == []
 ```
 
-- [ ] **Step 2: Run them to see them fail** — the funnel tests fail with `ModuleNotFoundError: No
+- [x] **Step 2: Run them to see them fail** — the funnel tests fail with `ModuleNotFoundError: No
   module named 'src.value.funnel'`; of the fence tests only `test_the_pure_modules_do_no_io` and
   `test_the_value_scorecard_loads_no_wheel_layer_even_transitively` fail (both read
   `src/value/funnel.py`). Every other fence test passes already, because Tasks 1–11 were written
   inside the fence: record that in the Progress log.
 
-- [ ] **Step 3: Create `src/value/funnel.py`**
+- [x] **Step 3: Create `src/value/funnel.py`**
 
 ```python
 """The calibration dry run's pass funnel (spec §17). Pure: no I/O.
@@ -7296,15 +7296,15 @@ def render_name(card: ValueScorecard) -> str:
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_funnel.py
+- [x] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_funnel.py
   tests/test_value_fence.py tests/test_spreads_fence.py tests/test_regime_fence.py
   tests/test_news_fence.py tests/test_web_fence.py tests/test_eval_skills.py` → all pass
   (funnel 2, fence 10).
 
-- [ ] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/funnel.py
+- [x] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/funnel.py
   tests/test_value_funnel.py tests/test_value_fence.py`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/funnel.py tests/test_value_funnel.py tests/test_value_fence.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md

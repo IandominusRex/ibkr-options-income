@@ -197,3 +197,34 @@ BANK: dict[str, list[float | None]] = {
     "cash_and_equivalents": [200, 190, 180, 170, 160],
     "long_term_debt": [300, 290, 280, 270, 260],
 }
+
+
+def companyfacts(table: dict[str, list[float | None]] | None = None) -> dict:
+    """A companyfacts payload carrying *table* (default Steady Co) in dollars and shares, one
+    10-K per fiscal year filed the next 10 February, under each line item's first concept."""
+    from src.research.ingest.concepts import load_concept_map
+
+    concept_map = load_concept_map()
+    us_gaap: dict[str, dict] = {}
+    for item, values in (table or STEADY).items():
+        spec = concept_map[item]
+        unit = spec.units[0]
+        entries = []
+        for i, v in enumerate(values):
+            if v is None:
+                continue
+            end = YEAR_ENDS[i]
+            entry = {
+                "val": v * 1e6,
+                "end": end.isoformat(),
+                "filed": date(end.year + 1, 2, 10).isoformat(),
+                "form": "10-K",
+                "accn": f"0000000001-{(end.year + 1) % 100:02d}-000001",
+                "fy": end.year,
+                "fp": "FY",
+            }
+            if spec.kind == "duration":
+                entry["start"] = date(end.year, 1, 1).isoformat()
+            entries.append(entry)
+        us_gaap[spec.concepts[0]] = {"units": {unit: entries}}
+    return {"cik": 1, "entityName": "Steady Co", "facts": {"us-gaap": us_gaap, "dei": {}}}
