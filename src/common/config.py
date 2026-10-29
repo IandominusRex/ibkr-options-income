@@ -19,7 +19,7 @@ from typing import Any, ClassVar, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.common.schemas import MarketRegime
@@ -40,6 +40,7 @@ PRIVATE_CONFIG_FILES = (
     "universe.yaml",
     "spreads.yaml",
     "news.yaml",
+    "value.yaml",
 )
 USE_EXAMPLES_ENV = "IBKR_CONFIG_USE_EXAMPLES"
 
@@ -1381,6 +1382,241 @@ class WebCfg(BaseModel):
         return v
 
 
+# ── The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md) ─────────────
+# Every model forbids unknown keys: a misspelt threshold silently ignored would leave the
+# operator believing a rule changed when it did not.
+
+_REGIMES = (MarketRegime.NORMAL, MarketRegime.CAUTIOUS, MarketRegime.STRESSED, MarketRegime.CRISIS)
+
+
+class _ValueModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ValueDataQualityCfg(_ValueModel):
+    """Spec §6.3: a failure here is UNKNOWN, never FAIL."""
+
+    min_annual_periods: int = 5
+    max_filing_age_days: int = 200
+    market_cap_tolerance: float = 0.10  # EDGAR vs yfinance market cap, as a fraction
+    min_price_sessions: int = 210
+    stale_item_days: int = 200  # a line item this far behind the newest filing is dropped
+
+
+class ValueClassificationCfg(_ValueModel):
+    """Spec §6.4-6.5. Industry names are GICS sub-industries (the snapshot) and yfinance
+    industries (names outside it)."""
+
+    bank_industries: list[str] = Field(
+        default_factory=lambda: [
+            "Diversified Banks",
+            "Regional Banks",
+            "Banks - Diversified",
+            "Banks - Regional",
+        ]
+    )
+    insurer_industries: list[str] = Field(
+        default_factory=lambda: [
+            "Property & Casualty Insurance",
+            "Multi-line Insurance",
+            "Reinsurance",
+            "Life & Health Insurance",
+            "Insurance - Property & Casualty",
+            "Insurance - Diversified",
+            "Insurance - Reinsurance",
+            "Insurance - Specialty",
+            "Insurance - Life",
+        ]
+    )
+    combined_ratio_industries: list[str] = Field(
+        default_factory=lambda: [
+            "Property & Casualty Insurance",
+            "Multi-line Insurance",
+            "Reinsurance",
+            "Insurance - Property & Casualty",
+            "Insurance - Diversified",
+            "Insurance - Reinsurance",
+            "Insurance - Specialty",
+        ]
+    )
+    reit_marker: str = "REIT"
+    cyclical_industries: list[str] = Field(
+        default_factory=lambda: [
+            "Semiconductors",
+            "Semiconductor Materials & Equipment",
+            "Semiconductor Equipment & Materials",
+            "Steel",
+            "Copper",
+            "Gold",
+            "Commodity Chemicals",
+            "Chemicals",
+            "Fertilizers & Agricultural Chemicals",
+            "Agricultural Inputs",
+            "Integrated Oil & Gas",
+            "Oil & Gas Exploration & Production",
+            "Oil & Gas Equipment & Services",
+            "Oil & Gas Refining & Marketing",
+            "Oil & Gas Integrated",
+            "Oil & Gas E&P",
+            "Automobile Manufacturers",
+            "Auto Manufacturers",
+            "Homebuilding",
+            "Residential Construction",
+            "Construction Machinery & Heavy Transportation Equipment",
+            "Agricultural & Farm Machinery",
+            "Farm & Heavy Construction Machinery",
+            "Passenger Airlines",
+            "Airlines",
+        ]
+    )
+    cyclical_fcf_margin_stdev_pts: float = 8.0
+    preprofit_loss_years_min: int = 3  # net loss in this many of the last 5 years
+
+
+class ValueHealthCfg(_ValueModel):
+    """Spec §6.4, operating companies (the cyclical keys relax two counts, §6.4)."""
+
+    piotroski_min: int = 6
+    altman_z_min: float = 1.8
+    profitable_years_min: int = 4
+    fcf_positive_years_min: int = 3
+    net_debt_to_ebitda_max: float = 3.0
+    interest_coverage_min: float = 4.0
+    beneish_m_max: float = -1.78
+    dilution_max_pct: float = 3.0
+    assumed_interest_rate: float = 0.08  # implied coverage when interest expense is untagged
+    cyclical_profitable_years_min: int = 3
+    cyclical_fcf_positive_years_min: int = 3
+
+
+class ValueBankCfg(_ValueModel):
+    """Spec §6.4, banks and insurers."""
+
+    profitable_years_min: int = 4
+    rote_median_min_pct: float = 10.0
+    rote_stdev_max_pts: float = 4.0
+    nco_multiple_max: float = 1.5
+    require_cet1: bool = True
+    cet1_min_pct: float = 6.5  # the 4.5% regulatory minimum + 2 points
+    combined_ratio_max_pct: float = 100.0
+    combined_ratio_years_min: int = 4
+
+
+class ValueValuationCfg(_ValueModel):
+    """Spec §6.5."""
+
+    discount_rate_deep: float = 0.09
+    discount_rate_growth: float = 0.08
+    g_floor: float = 0.02
+    terminal_growth: float = 0.025
+    dcf_years: int = 10
+    reverse_dcf_haircut: float = 0.7
+    realised_cap_deep: float = 0.15
+    realised_cap_growth: float = 0.20
+    growth_sbc_share: float = 0.5
+    terminal_value_max_share: float = 0.75
+
+    @model_validator(mode="after")
+    def _rates_above_growth(self) -> ValueValuationCfg:
+        for name in ("discount_rate_deep", "discount_rate_growth"):
+            if getattr(self, name) <= self.terminal_growth:
+                raise ValueError(f"value valuation.{name} must exceed terminal_growth")
+        if self.discount_rate_deep <= self.g_floor:
+            raise ValueError("value valuation.discount_rate_deep must exceed g_floor")
+        if self.dcf_years < 2:
+            raise ValueError("value valuation.dcf_years must be at least 2")
+        return self
+
+
+class ValueGrowthListCfg(_ValueModel):
+    """Spec §6.0, the quality-growth entry rule."""
+
+    revenue_cagr_min_pct: float = 10.0
+    fcf_ps_cagr_min_pct: float = 10.0
+    roic_median_min_pct: float = 15.0
+    gross_margin_stdev_max_pts: float = 5.0
+
+
+class ValueMarginCfg(_ValueModel):
+    """Spec §6.0 and §9.6: the required margin of safety, in percent, by market regime."""
+
+    deep_value: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(zip(_REGIMES, (25.0, 30.0, 35.0, 40.0), strict=True))
+    )
+    quality_growth: dict[MarketRegime, float] = Field(
+        default_factory=lambda: dict(zip(_REGIMES, (10.0, 15.0, 20.0, 25.0), strict=True))
+    )
+    review_above_pct: float = 60.0
+
+    @model_validator(mode="after")
+    def _every_regime(self) -> ValueMarginCfg:
+        for name in ("deep_value", "quality_growth"):
+            missing = set(_REGIMES) - set(getattr(self, name))
+            if missing:
+                raise ValueError(f"value margin_of_safety.{name} lacks {sorted(missing)}")
+        return self
+
+
+class ValueTimingCfg(_ValueModel):
+    """Spec §6.6."""
+
+    earnings_window_sessions: int = 10
+    recent_report_days: int = 70  # a report this recent dates the next one past the window
+    rs_bottom_pct: float = 30.0
+    low_lookback_sessions: int = 63
+    new_low_window_sessions: int = 5
+
+
+class ValueRulesCfg(_ValueModel):
+    """Every key that can change a verdict. Hashed into the ruleset fingerprint (spec §6.8)."""
+
+    data_quality: ValueDataQualityCfg = Field(default_factory=ValueDataQualityCfg)
+    classification: ValueClassificationCfg = Field(default_factory=ValueClassificationCfg)
+    health: ValueHealthCfg = Field(default_factory=ValueHealthCfg)
+    banks: ValueBankCfg = Field(default_factory=ValueBankCfg)
+    valuation: ValueValuationCfg = Field(default_factory=ValueValuationCfg)
+    quality_growth: ValueGrowthListCfg = Field(default_factory=ValueGrowthListCfg)
+    margin_of_safety: ValueMarginCfg = Field(default_factory=ValueMarginCfg)
+    timing: ValueTimingCfg = Field(default_factory=ValueTimingCfg)
+
+
+class ValueUniverseCfg(_ValueModel):
+    """Spec §6.1. The trading universe is ``universe.yaml``'s would_own + watchlist plus the
+    trading snapshot; the evidence universe is the wider snapshot."""
+
+    trading_snapshot: str = "config/value_universe.csv"
+    evidence_snapshot: str = "config/value_evidence_universe.csv"
+    share_class_primary: dict[str, str] = Field(
+        default_factory=lambda: {"GOOG": "GOOGL", "FOX": "FOXA", "NWS": "NWSA"}
+    )
+
+
+class ValueTickerFileCfg(_ValueModel):
+    """Spec §6.9."""
+
+    follow_days: int = 30
+    mos_band_pts: float = 5.0  # a history row when the margin of safety crosses a band
+    fair_value_change_pct: float = 1.0  # ... or fair value moves by more than this
+
+
+class ValueResearchSweepCfg(_ValueModel):
+    """The research worker's nightly enqueue of every value name's filings and bars."""
+
+    enabled: bool = False
+    hour_et: int = 2
+
+
+class ValueCfg(_ValueModel):
+    """The value book (config/value.yaml). Part 1: the scorecard, nothing that trades."""
+
+    ruleset_version: str = "v0-dryrun"
+    db_url: str = "sqlite:///data/value.db"
+    universe: ValueUniverseCfg = Field(default_factory=ValueUniverseCfg)
+    ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)
+    research_sweep: ValueResearchSweepCfg = Field(default_factory=ValueResearchSweepCfg)
+    rules: ValueRulesCfg = Field(default_factory=ValueRulesCfg)
+
+
 class _KeyedCfg(BaseModel):
     """A config block whose YAML keys are listed by name in ``KEYS``.
 
@@ -1958,6 +2194,7 @@ class Config(BaseModel):
     spreads: SpreadsCfg = Field(default_factory=SpreadsCfg)
     news: NewsCfg = Field(default_factory=NewsCfg)
     web: WebCfg = Field(default_factory=WebCfg)
+    value: ValueCfg = Field(default_factory=ValueCfg)
     # These three stay as plain dicts — they are tuning tables, not typed schemas,
     # so users can extend them in YAML without touching code.
     risk: dict[str, Any]
@@ -2001,6 +2238,14 @@ class Config(BaseModel):
     def news_db_url_abs(self) -> str:
         """Resolve the relative news sqlite path against the project root."""
         url = self.news.db_url
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+            rel = url[len("sqlite:///") :]
+            return f"sqlite:///{(ROOT / rel).as_posix()}"
+        return url
+
+    def value_db_url_abs(self) -> str:
+        """Resolve the relative value-book sqlite path against the project root."""
+        url = self.value.db_url
         if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
             rel = url[len("sqlite:///") :]
             return f"sqlite:///{(ROOT / rel).as_posix()}"
@@ -2126,6 +2371,7 @@ def get_config() -> Config:
         spreads=SpreadsCfg(**_load_yaml("spreads.yaml")),
         news=NewsCfg(**_load_yaml("news.yaml")),
         web=WebCfg(**(settings.get("web") or {})),
+        value=ValueCfg(**_load_yaml("value.yaml")),
         risk=_load_yaml("risk_limits.yaml"),
         universe=_load_yaml("universe.yaml"),
         weights=_load_yaml("scoring_weights.yaml"),

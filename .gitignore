@@ -20,6 +20,7 @@ config/scoring_weights.yaml
 config/universe.yaml
 config/spreads.yaml
 config/news.yaml
+config/value.yaml
 
 # IBKR statements and exports (account numbers, real trades) — the ledger fixture is the
 # only statement-shaped file tracked, under tests/fixtures/

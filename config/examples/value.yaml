@@ -1,0 +1,142 @@
+# The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md).
+#
+# Copy to config/value.yaml (git-ignored) to tune it. Part 1 builds the scorecard only: nothing
+# here can place, size or gate an order.
+#
+# Everything under `rules:` can change a verdict, so it is hashed into the ruleset fingerprint
+# (src/value/ruleset.py). Once `ruleset_version` is frozen (v1, after the calibration dry run,
+# spec §17), changing any rule is a version bump with a written reason, at most quarterly.
+
+ruleset_version: v0-dryrun
+db_url: sqlite:///data/value.db
+
+universe:
+  # Committed snapshots, each with its as-of date on the first line. Rebuild with
+  # `python -m scripts.value_universe_snapshot`.
+  trading_snapshot: config/value_universe.csv            # S&P 100
+  evidence_snapshot: config/value_evidence_universe.csv  # S&P 500
+  # A second share class of one filer is scored once, under its primary ticker.
+  share_class_primary:
+    GOOG: GOOGL
+    FOX: FOXA
+    NWS: NWSA
+
+ticker_file:
+  follow_days: 30            # a looked-up name outside the universe is refreshed this long
+  mos_band_pts: 5.0          # a history row when the margin of safety crosses a 5-point band
+  fair_value_change_pct: 1.0 # ... or fair value moves by more than 1%
+
+research_sweep:
+  enabled: false             # the research worker's nightly enqueue (Part 2 turns it on)
+  hour_et: 2
+
+rules:
+  data_quality:              # spec §6.3: a failure is UNKNOWN, never FAIL
+    min_annual_periods: 5
+    max_filing_age_days: 200
+    market_cap_tolerance: 0.10
+    min_price_sessions: 210
+    stale_item_days: 200
+
+  classification:            # spec §6.4-6.5
+    bank_industries: [Diversified Banks, Regional Banks, Banks - Diversified, Banks - Regional]
+    insurer_industries:
+      - Property & Casualty Insurance
+      - Multi-line Insurance
+      - Reinsurance
+      - Life & Health Insurance
+      - Insurance - Property & Casualty
+      - Insurance - Diversified
+      - Insurance - Reinsurance
+      - Insurance - Specialty
+      - Insurance - Life
+    combined_ratio_industries:
+      - Property & Casualty Insurance
+      - Multi-line Insurance
+      - Reinsurance
+      - Insurance - Property & Casualty
+      - Insurance - Diversified
+      - Insurance - Reinsurance
+      - Insurance - Specialty
+    reit_marker: REIT
+    cyclical_industries:
+      - Semiconductors
+      - Semiconductor Materials & Equipment
+      - Semiconductor Equipment & Materials
+      - Steel
+      - Copper
+      - Gold
+      - Commodity Chemicals
+      - Chemicals
+      - Fertilizers & Agricultural Chemicals
+      - Agricultural Inputs
+      - Integrated Oil & Gas
+      - Oil & Gas Exploration & Production
+      - Oil & Gas Equipment & Services
+      - Oil & Gas Refining & Marketing
+      - Oil & Gas Integrated
+      - Oil & Gas E&P
+      - Automobile Manufacturers
+      - Auto Manufacturers
+      - Homebuilding
+      - Residential Construction
+      - Construction Machinery & Heavy Transportation Equipment
+      - Agricultural & Farm Machinery
+      - Farm & Heavy Construction Machinery
+      - Passenger Airlines
+      - Airlines
+    cyclical_fcf_margin_stdev_pts: 8.0
+    preprofit_loss_years_min: 3
+
+  health:                    # spec §6.4, operating companies: hard, a conjunction
+    piotroski_min: 6
+    altman_z_min: 1.8
+    profitable_years_min: 4
+    fcf_positive_years_min: 3
+    net_debt_to_ebitda_max: 3.0
+    interest_coverage_min: 4.0
+    beneish_m_max: -1.78
+    dilution_max_pct: 3.0
+    assumed_interest_rate: 0.08  # implied coverage when interest expense is not tagged
+    cyclical_profitable_years_min: 3
+    cyclical_fcf_positive_years_min: 3
+
+  banks:                     # spec §6.4, banks and insurers
+    profitable_years_min: 4
+    rote_median_min_pct: 10.0
+    rote_stdev_max_pts: 4.0
+    nco_multiple_max: 1.5
+    require_cet1: true       # CET1 is not tagged in companyfacts for BAC or JPM (2026-10-29)
+    cet1_min_pct: 6.5
+    combined_ratio_max_pct: 100.0
+    combined_ratio_years_min: 4
+
+  valuation:                 # spec §6.5
+    discount_rate_deep: 0.09
+    discount_rate_growth: 0.08
+    g_floor: 0.02
+    terminal_growth: 0.025
+    dcf_years: 10
+    reverse_dcf_haircut: 0.7
+    realised_cap_deep: 0.15
+    realised_cap_growth: 0.20
+    growth_sbc_share: 0.5
+    terminal_value_max_share: 0.75
+
+  quality_growth:            # spec §6.0, the entry rule
+    revenue_cagr_min_pct: 10.0
+    fcf_ps_cagr_min_pct: 10.0
+    roic_median_min_pct: 15.0
+    gross_margin_stdev_max_pts: 5.0
+
+  margin_of_safety:          # spec §6.0 and §9.6, percent, by market regime
+    deep_value: {normal: 25.0, cautious: 30.0, stressed: 35.0, crisis: 40.0}
+    quality_growth: {normal: 10.0, cautious: 15.0, stressed: 20.0, crisis: 25.0}
+    review_above_pct: 60.0
+
+  timing:                    # spec §6.6
+    earnings_window_sessions: 10
+    recent_report_days: 70   # a report this recent dates the next one past the window
+    rs_bottom_pct: 30.0
+    low_lookback_sessions: 63
+    new_low_window_sessions: 5
