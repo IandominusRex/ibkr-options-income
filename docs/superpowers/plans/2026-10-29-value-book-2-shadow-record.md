@@ -101,7 +101,7 @@ is the executing agent's own model name.
 | **A entry checks** | pass | 0 commits on `feat/value-book-2` (HEAD `23b1ef3`) | baseline pytest 5150 passed, 1 skipped; ruff clean; mypy 314 files clean; A3 greps all match plan line numbers; A4: hash `e1a1b3b096b1`, no Part 2 code | 2026-10-29 | disk 36 GiB free; value-book-1 worktree absent; section exit target = baseline 5150 + 8 = 5158 passed, 1 skipped |
 | 1 Ruleset v2: the exit rules, the service block, the sweep on | done | `8334bcb` | task tests 57 passed (`test_value_config.py` 14); ruff check/format and mypy clean; `ruleset_hash(ValueCfg().rules)` printed `d07717fe5348` as the plan says | 2026-10-30 | No deviation. Test edits were applied as the diffs gave them (the `test_v1_is_frozen` replacement, the dry-run `v2` assertion, the flipped scheduler test). Step 5's hash check was run before pinning `FROZEN["v2"]`. *Cost if wrong: none found (v2 pin is the plan's; reversing it is ruling 1's cost).* |
 | 2 Day bars and the readers the record needs | done | `4330f34` | task tests 26 passed (`test_value_inputs.py` 13, with `test_value_dry_run.py` and `test_value_fence.py`); ruff check/format and mypy clean on the touched files | 2026-10-30 | No deviation; tests seen failing first (`AttributeError ... build_day_bars`), then the plan's code applied verbatim. `read_bars` gains an `open` column (nullable, so `build_day_bars` yields `open=None` when a bar has none). *Cost if wrong: none found.* |
-| 3 The nightly sweep keeps every bar fresh, SPY's too | | | | | |
+| 3 The nightly sweep keeps every bar fresh, SPY's too | done | `53037fc` | task tests 34 passed (`test_value_universe.py` 12 + research worker/materialize + dry run); section exit full gate: pytest 5158 passed, 1 skipped (= baseline 5150 + 8); ruff clean; mypy 314 files clean; `py_compile scripts/value_dry_run.py` silent; protected-file diff empty; `BARS_MAX_AGE_DAYS` has no remaining reference | 2026-10-30 | No deviation. Section A: 3 task commits (`8334bcb`, `4330f34`, `53037fc`) + this docs(plan) commit; commit count on `main..HEAD` recorded in the report. Heads-up: the existing `test_the_sweep_queues_only_what_each_name_lacks` still passes unchanged. *Cost if wrong: the staleness rule is one constant/function.* |
 | **B entry checks** | | | | | |
 | 4 The exit engine | | | | | |
 | 5 The ranked arithmetic and the filed list (M5) | | | | | |
@@ -1098,7 +1098,7 @@ diff --git a/src/common/value_inputs.py b/src/common/value_inputs.py
   `names`) also queues `prices` for `BENCHMARKS`; bars are stale once older than
   `last_weekday_before(today)`.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_value_universe.py`:
+- [x] **Step 1: Write the failing tests** — append to `tests/test_value_universe.py`:
 
   ```python
 
@@ -1131,12 +1131,12 @@ diff --git a/src/common/value_inputs.py b/src/common/value_inputs.py
       assert jobs == [("OLD", "prices"), ("SPY", "prices")]  # SPY's bars, never its filings
   ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_universe.py`
   Expected: FAIL — `ImportError: cannot import name 'last_weekday_before'`.
 
-- [ ] **Step 3: The sweep** — apply to `src/research/ingest/value_universe.py` (the existing
+- [x] **Step 3: The sweep** — apply to `src/research/ingest/value_universe.py` (the existing
   `test_the_sweep_queues_only_what_each_name_lacks` keeps passing: its "fresh" bars end the day
   before a Thursday):
 
@@ -1203,13 +1203,13 @@ diff --git a/src/research/ingest/value_universe.py b/src/research/ingest/value_u
              counts["prices"] += 1
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_universe.py tests/test_research_worker.py tests/test_research_materialize.py tests/test_value_dry_run.py`
   Expected: PASS (`test_value_universe.py` 12). Ruff check/format and
   `.venv/bin/mypy src/research/ingest/value_universe.py` clean.
 
-- [ ] **Step 5: Commit, then the section's Progress-log commit**
+- [x] **Step 5: Commit, then the section's Progress-log commit**
 
   ```bash
   git add src/research/ingest/value_universe.py tests/test_value_universe.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
