@@ -343,8 +343,28 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
+| **Value book Parts 2–6** | The value process and shadow record, re-evaluation and Stage 1b, Claude as the analyst, Stage 3 money (paper), web and Telegram — the roadmap in the Part 1 plan; each part is planned after the previous one merges. |
 
 ---
+
+## Built (2026-10-29 — value book Part 1: the scorecard and the calibration dry run)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md`; spec:
+`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`. Deterministic only: no order, no
+Claude, no Telegram, no web, no daemon.
+
+- `src/value/`: the pure scorecard (data quality, the operating/cyclical and bank/insurer health
+  sets, methods A/B/D and justified P/TBV, the two lists' entry rules, timing, Python's baseline
+  verdict), the rank score, `value.db` with the ticker file's latest rows and history, the
+  funnel, the ruleset fingerprint.
+- `src/common/value_inputs.py` / `value_types.py` / `value_universe.py`; `select_periods(as_of=)`
+  and `select_ttm`; 23 value line items in `config/research_concepts.yaml`; the research
+  worker's `prices` job kind and `value_sweep` (off).
+- `scripts/value_dry_run.py`, `scripts/value_universe_snapshot.py`, the two snapshot CSVs.
+- Known limitations: CET1 is not tagged in companyfacts for BAC/JPM (`banks.require_cet1`
+  decides, Task 15); method C is absent until point-in-time prices exist; the combined ratio is
+  approximated from total benefits, losses and expenses; holidays are not known to the earnings
+  window; prices carry yfinance's survivorship bias.
 
 ## Built (2026-10-28 — web overhaul Part 3: Portfolio and Activity, the sizing record, the audit lists)
 

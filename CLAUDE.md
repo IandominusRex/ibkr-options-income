@@ -54,6 +54,7 @@ row that matches:
 | **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
 | **New module under `src/news/`** or a new key in `config/examples/news.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
 | **New module under `src/spreads/`** or a new key in `config/examples/spreads.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
+| **New module under `src/value/`** or a new key in `config/examples/value.yaml` | `ARCHITECTURE.md` `src/value/` section · `SETUP.md` §19 if operator-facing · root `CLAUDE.md` value-fence section if it changes what the package may import · a `rules:` key also bumps `ruleset_version` once v1 is frozen |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -371,6 +372,28 @@ against those numbers before it posts. Enforced by `tests/test_news_fence.py`
 `tests/test_eval_skills.py::test_news_and_tool_research_never_reach_the_deterministic_layer` and
 `tests/test_web_fence.py` — keep them green.
 
+### The value fence — `src/value/` is deterministic and its own database
+
+`src/value/` (docs/superpowers/specs/2026-10-28-value-swing-book-design.md) scores companies for
+the value book. It is **deterministic tier**:
+
+- It imports nothing from `src.claude`, `src.news`, `src.value_ai`, `src.spreads*`, `src.notify`,
+  `src.api`, `src.engine`, `src.execution`, `src.strategies`, `src.orchestrator`, `src.monitor`,
+  `src.ledger`, `src.reporting` or the enrichment analytics, and from `src.research` only
+  `src.research.ingest.concepts` and `src.research.schemas`.
+- Nothing on the trading path (engine, execution, strategies, orchestrator, monitor, notify) and
+  nothing in spreads, news or claude imports `src.value`.
+- Its scorecard modules are pure (no I/O): Part 6's API may import `src.value.scorecard` and
+  `src.value.schemas` and nothing else from `src.value`.
+- Inputs come from the neutral read-only `src/common/value_inputs.py` (plain shapes in
+  `value_types.py`), which imports no enrichment and no `src.value`. The research worker owns
+  every SEC and price fetch; `src/value/` opens no SEC client.
+- Only `src/value/` constructs `data/value.db` rows (`ValueBase`).
+- Part 1 places, sizes and gates nothing. The written exception for Claude's value verdict
+  (spec §8.2, §18) is added with Part 4.
+
+Enforced by `tests/test_value_fence.py` — keep it green.
+
 ## Reference documentation
 
 - **`ib_async_documentation.md`** (root) is the **official ib_async documentation** for this
@@ -398,7 +421,7 @@ orchestrator → market data (ibkr/) → analytics → strategies → decision e
 
 - Python ≥ 3.12. Config in `config/*.yaml`; **secrets only in `.env`** (gitignored) — never log or
   commit them. `settings.yaml`, `risk_limits.yaml`, `scoring_weights.yaml`, `universe.yaml`,
-  `spreads.yaml` and `news.yaml` are the operator's **private, git-ignored** copies; the repo commits
+  `spreads.yaml`, `news.yaml` and `value.yaml` are the operator's **private, git-ignored** copies; the repo commits
   a template of each in `config/examples/<name>.yaml` (`news_playbook.yaml` is committed reference
   data, not private).
   Never `git add` a private config file or anything holding an account number; tests read the

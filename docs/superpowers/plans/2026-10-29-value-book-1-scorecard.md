@@ -100,7 +100,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 10 Rank score and the relative-strength line | done | f73a288 | test_value_rank.py 5 passed; ruff check/format clean; mypy src/value/rank.py clean | 2026-10-29 | Ruling: code and tests extracted verbatim from the plan and run together, so no red run was observed (5 green at once, pinned numbers matched). Cost if wrong: none |
 | 11 `value.db` and the ticker file | done | 0c98576 | test_value_store.py 6 passed; ruff check/format clean; mypy src/value clean (12 files) | 2026-10-29 | Ruling: code and tests extracted verbatim and run together; no red run observed (6 green at once, the pinned fair value 46.853626592284414 matched). Cost if wrong: none |
 | 12 Funnel and fences | done | 7f62b32 | test_value_funnel.py 2 + test_value_fence.py 10 + the five other fence suites (spreads, regime, news, web, eval_skills) = 72 passed; ruff check/format clean; mypy src/value clean (12 files) | 2026-10-29 | Ruling: code and tests extracted verbatim and run together, so the red run (funnel/fence failing before funnel.py existed) was not observed; Step 2's note that the other fence tests pass already was therefore not re-observed, but all 10 fence tests pass now, so Tasks 1-11 sit inside the fence. Ruling: `mypy tests/value_fixtures.py` reports a pre-existing arg-type error at line 83 (Task 5's fixture); the gate is `mypy src`, which tests are outside, so left alone. Cost if wrong: none |
-| 13 The dry-run script | pending | | | | |
+| 13 The dry-run script | done | 57aa539 | test_value_dry_run.py 3 passed; ruff check clean, ruff format clean (after one blank line in the appended fixture); mypy scripts/value_dry_run.py clean; py_compile of both scripts silent | 2026-10-29 | Ruling: code and tests extracted verbatim and run together; no red run observed (3 green at once). Ruling: the appended `companyfacts` fixture needed a second blank line before it for ruff format; nothing else changed. Cost if wrong: none |
 | 14 Docs | pending | | | | |
 | **Whole-branch review (opus)** | pending | | | | |
 | **Review fix pass (sonnet)** | pending | | | | |
@@ -7327,7 +7327,7 @@ def render_name(card: ValueScorecard) -> str:
   `run`, `_universe(path)`, `_earnings(as_of)`, `_persist(...)`, `_storage_lines()` (the test
   patches `_universe` and `_earnings`).
 
-- [ ] **Step 1: Append the payload builder to `tests/value_fixtures.py`**
+- [x] **Step 1: Append the payload builder to `tests/value_fixtures.py`**
 
 ```python
 def companyfacts(table: dict[str, list[float | None]] | None = None) -> dict:
@@ -7361,7 +7361,7 @@ def companyfacts(table: dict[str, list[float | None]] | None = None) -> dict:
     return {"cik": 1, "entityName": "Steady Co", "facts": {"us-gaap": us_gaap, "dei": {}}}
 ```
 
-- [ ] **Step 2: Write the failing tests** — `tests/test_value_dry_run.py`
+- [x] **Step 2: Write the failing tests** — `tests/test_value_dry_run.py`
 
 ```python
 """scripts/value_dry_run.py end to end on temporary databases (value book spec §17).
@@ -7489,10 +7489,10 @@ def test_no_persist_leaves_value_db_alone(dbs, tmp_path) -> None:
     assert [c["symbol"] for c in cards] == ["STDY"]
 ```
 
-- [ ] **Step 3: Run them to see them fail** — `ImportError: cannot import name 'value_dry_run'
+- [x] **Step 3: Run them to see them fail** — `ImportError: cannot import name 'value_dry_run'
   from 'scripts'`.
 
-- [ ] **Step 4: Create `scripts/value_dry_run.py`** (it has a `__main__` guard and starts nothing
+- [x] **Step 4: Create `scripts/value_dry_run.py`** (it has a `__main__` guard and starts nothing
   on import; check it with `py_compile`, never by running it against `data/` of the main
   checkout)
 
@@ -7812,14 +7812,14 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_dry_run.py` →
+- [x] **Step 5: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_dry_run.py` →
   3 passed; `.venv/bin/python -m py_compile scripts/value_dry_run.py` → silent.
 
-- [ ] **Step 6: Gates** — `ruff check`, `ruff format --check` on `scripts/value_dry_run.py
+- [x] **Step 6: Gates** — `ruff check`, `ruff format --check` on `scripts/value_dry_run.py
   tests/test_value_dry_run.py tests/value_fixtures.py`; `.venv/bin/mypy src` (the script is
   outside `src`; `mypy scripts/value_dry_run.py` must also print `Success`).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add scripts/value_dry_run.py tests/test_value_dry_run.py tests/value_fixtures.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
@@ -7836,7 +7836,7 @@ top-level directory, no command kind, no route).
 
 Each step names its anchor; insert the text given, adjusting only line wraps.
 
-- [ ] **Step 1: `ARCHITECTURE.md`, `### \`config/\``** (line ~561). In the "Private vs.
+- [x] **Step 1: `ARCHITECTURE.md`, `### \`config/\``** (line ~561). In the "Private vs.
   committed" paragraph, "`universe.yaml`, `spreads.yaml` and `news.yaml`" becomes
   "`universe.yaml`, `spreads.yaml`, `news.yaml` and `value.yaml`". Add three rows to the file
   table:
@@ -7854,7 +7854,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   charge-offs, loans, CET1, earned premiums, total benefits/losses/expenses, shares
   outstanding)."
 
-- [ ] **Step 2: `ARCHITECTURE.md`, a new folder-guide section** immediately before `### \`src/ops/\``:
+- [x] **Step 2: `ARCHITECTURE.md`, a new folder-guide section** immediately before `### \`src/ops/\``:
 
   ```markdown
   ### `src/value/` — The value book (deterministic tier, its own database)
@@ -7885,7 +7885,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   worker owns every SEC and price fetch for it.
   ```
 
-- [ ] **Step 3: `ARCHITECTURE.md`, `### \`src/common/\``.** In the `config.py` row, "the six
+- [x] **Step 3: `ARCHITECTURE.md`, `### \`src/common/\``.** In the `config.py` row, "the six
   private files" becomes "the seven private files", and append "**Value book:** `ValueCfg` and
   its sub-models from `config/value.yaml`, `Config.value_db_url_abs()`." Add rows:
 
@@ -7895,7 +7895,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   | `value_universe.py` | The value book's trading universe (`would_own` + `watchlist` + the S&P 100 snapshot) and evidence universe (the S&P 500 snapshot), share-class aliases mapped to one ticker. |
   ```
 
-- [ ] **Step 4: `ARCHITECTURE.md`, `### \`src/research/\``.** In the `ingest/concepts.py` row,
+- [x] **Step 4: `ARCHITECTURE.md`, `### \`src/research/\``.** In the `ingest/concepts.py` row,
   append: "`select_periods(..., as_of=)` keeps only facts filed on or before `as_of` (point in
   time, value book §6.2); `select_ttm` gives trailing twelve months as fiscal year + this
   year-to-date − last year's (10-Q cash flows are year-to-date)." After the module table add the
@@ -7908,20 +7908,20 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   and in the `ingest/materialize.py` description note that `drain_ingest_jobs` runs two job
   kinds, `fundamentals` and `prices`.
 
-- [ ] **Step 5: `ARCHITECTURE.md`, `### \`scripts/\`` table.** Add:
+- [x] **Step 5: `ARCHITECTURE.md`, `### \`scripts/\`` table.** Add:
 
   ```markdown
   | `value_dry_run.py` | `python -m scripts.value_dry_run backfill\|run [...]` | The value book's calibration dry run (spec §17). `backfill` drains the research worker's own jobs for both universes in-process; `run` scores every name read-only, ranks both lists, writes the ticker files to `value.db` and prints the pass funnel, GOOGL/META/BAC/MU with every number, storage and run time. No IBKR, no Telegram. Run on database copies (`SETUP.md` §19). |
   | `value_universe_snapshot.py` | `python -m scripts.value_universe_snapshot` | Rebuilds `config/value_universe.csv` (S&P 100) and `config/value_evidence_universe.csv` (S&P 500) from Wikipedia's MediaWiki API. Review the diff before committing. |
   ```
 
-- [ ] **Step 6: `ARCHITECTURE.md`, `## Key invariants`.** Add a numbered item after the last:
+- [x] **Step 6: `ARCHITECTURE.md`, `## Key invariants`.** Add a numbered item after the last:
   "**The value fence.** `src/value/` is deterministic: it imports no enrichment, no other system
   and no trading-path module, nothing on the trading path imports it, and it is the only writer
   of `data/value.db`. Its scorecard is a pure function. Part 1 places no order. Enforced by
   `tests/test_value_fence.py`."
 
-- [ ] **Step 7: `SETUP.md`.** In §2b, the template list gains "`value.yaml` (the value book's
+- [x] **Step 7: `SETUP.md`.** In §2b, the template list gains "`value.yaml` (the value book's
   scorecard, Part 1 — §19)" and the `for f in …` line gains `value`. Insert a new section
   immediately before `## Troubleshooting`:
 
@@ -7952,7 +7952,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   | `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
   ```
 
-- [ ] **Step 8: `STATUS.md`.** Insert immediately before `## Built (2026-10-28 — web overhaul
+- [x] **Step 8: `STATUS.md`.** Insert immediately before `## Built (2026-10-28 — web overhaul
   Part 3…` (line ~349):
 
   ```markdown
@@ -7981,7 +7981,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   money (paper), web and Telegram — the roadmap in the Part 1 plan; each part is planned after
   the previous one merges. |`
 
-- [ ] **Step 9: Root `CLAUDE.md`.** In the doc-update table, after the `src/spreads/` row, add:
+- [x] **Step 9: Root `CLAUDE.md`.** In the doc-update table, after the `src/spreads/` row, add:
 
   ```markdown
   | **New module under `src/value/`** or a new key in `config/examples/value.yaml` | `ARCHITECTURE.md` `src/value/` section · `SETUP.md` §19 if operator-facing · root `CLAUDE.md` value-fence section if it changes what the package may import · a `rules:` key also bumps `ruleset_version` once v1 is frozen |
@@ -8013,7 +8013,7 @@ Each step names its anchor; insert the text given, adjusting only line wraps.
   Enforced by `tests/test_value_fence.py` — keep it green.
   ```
 
-- [ ] **Step 10: Check and commit**
+- [x] **Step 10: Check and commit**
 
   ```bash
   .venv/bin/python -m pytest -q

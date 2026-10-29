@@ -69,12 +69,13 @@ longer works — Reddit blocks it at the edge.)
 
 The repo ships **templates** in their own folder, `config/examples/`: `settings.yaml`,
 `risk_limits.yaml`, `scoring_weights.yaml`, `universe.yaml`, `spreads.yaml` (the daily
-credit-spread system, off by default) and `news.yaml` (the News thread, §17 — on by default).
+credit-spread system, off by default), `news.yaml` (the News thread, §17 — on by default) and `value.yaml` (the value book's
+scorecard, Part 1 — §19).
 Your own copies sit directly in `config/` under the same names and are **git-ignored**, so your
 account IDs, limits, weights and universe never reach GitHub:
 
 ```bash
-for f in settings risk_limits scoring_weights universe spreads news; do
+for f in settings risk_limits scoring_weights universe spreads news value; do
   cp config/examples/$f.yaml config/$f.yaml
 done
 ```
@@ -2028,6 +2029,31 @@ weeks later covers ladder over-blocking (`recovery_closes`, `min_gap_*`), Claude
 that survived checking.
 
 ---
+
+## 19. The value book, Part 1: the scorecard and the calibration dry run
+
+The value book scores healthy companies against what they are worth
+(`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
+a one-off **calibration dry run**: it places no order, sends no message and runs no daemon.
+
+1. `cp config/examples/value.yaml config/value.yaml` (git-ignored; every key has a code default).
+2. The research worker can refresh the value universes nightly (`research_sweep.enabled`), but
+   Part 1 ships it **off**: the dry run backfills a database copy itself.
+3. The dry run (normally run for you by the plan's orchestrator, on copies, from the branch's
+   worktree): `python -m scripts.value_dry_run backfill --env-file .env` then
+   `python -m scripts.value_dry_run run --report value_dry_run.txt`. It prints how many names
+   fall at each gate per list, GOOGL, META, BAC and MU with every number, the raw companyfacts
+   storage and the run time.
+4. You read the funnel and settle the thresholds; then `ruleset_version` is frozen at `v1` and
+   every later rule change is a version bump with a written reason.
+
+### Scripts
+
+| Script | What it does |
+|---|---|
+| `python -m scripts.value_dry_run backfill [--env-file PATH] [--universe-file PATH]` | Queues and drains companyfacts and daily-bar jobs for both value universes (~520 names; a few GB of raw payloads the first time). |
+| `python -m scripts.value_dry_run run [--as-of DATE] [--names A,B] [--limit N] [--no-persist] [--out cards.json] [--report report.txt]` | Scores every name, ranks both lists, writes `data/value.db`, prints the funnel. |
+| `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
 
 ## Troubleshooting
 
