@@ -93,7 +93,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | **B entry checks** | done | (none) | B1–B4 pass; Section A exit re-verified by the orchestrator: pytest 5034 passed + 1 skipped, ruff clean, mypy clean (303 files), protected-file diff empty | 2026-10-29 | Ruling: Section A left 5 commits ahead of main (4 task commits + 1 `docs(plan)`), so B1's "prints 4" and B's exit "9 in all" become 5 and 11 (B adds 5 task commits + 1 final `docs(plan)` commit for Task 9's row; the B entry row rides Task 5's commit). Cost if wrong: none |
 | 5 Schemas, per-year metrics, test fixtures | done | 157c174 | test_value_metrics.py 8 passed; ruff check/format clean; mypy src/value clean (4 files) | 2026-10-29 | Ruling: code blocks were extracted verbatim from the plan and tests run together, so no red run was observed (8 green at once). Cost if wrong: none |
 | 6 Piotroski, Altman, Beneish | done | 56fda13 | test_value_scores.py 7 passed; ruff check/format clean; mypy src/value clean (5 files) | 2026-10-29 | Ruling: code extracted verbatim from the plan; tests green on first run, no red run observed. Cost if wrong: none |
-| 7 Classification, data quality, health gates | pending | | | | |
+| 7 Classification, data quality, health gates | done | 4a3e95b | test_value_gates.py 28 passed; ruff check/format clean; mypy src/value clean (6 files) | 2026-10-29 | Ruling: code extracted verbatim; tests green on first run, no red run observed. Cost if wrong: none |
 | 8 Valuation: A, B, C, D, P/TBV | pending | | | | |
 | 9 Timing and the scorecard | pending | | | | |
 | **C entry checks** | pending | (none) | | | |
@@ -5035,7 +5035,7 @@ def latest_tbv_per_share(inputs: ValueInputs, years: list[Year]) -> float | None
   realised, cfg)`; `method_c()`; `method_ptbv(rote_median, tbv_ps, cfg)`; `fair_value(methods,
   use: tuple[str, ...]) -> float | None`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_valuation.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_valuation.py`
 
 ```python
 """Python's fair value, pinned (value book spec §6.5)."""
@@ -5132,10 +5132,10 @@ def test_fair_value_is_the_median_of_the_methods_present() -> None:
     assert fair_value([method_c()], ("C",)) is None
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.valuation'`.
 
-- [ ] **Step 3: Create `src/value/valuation.py`**
+- [x] **Step 3: Create `src/value/valuation.py`**
 
 ```python
 """Python's fair value (spec §6.5): methods A, B, D and justified P/TBV. Pure: no I/O.
@@ -5323,12 +5323,12 @@ def fair_value(methods: list[MethodValue], use: tuple[str, ...]) -> float | None
     return median(vals) if vals else None
 ```
 
-- [ ] **Step 4: Run the tests** — 10 passed.
+- [x] **Step 4: Run the tests** — 10 passed.
 
-- [ ] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/valuation.py
+- [x] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/valuation.py
   tests/test_value_valuation.py`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/valuation.py tests/test_value_valuation.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
