@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -30,6 +30,7 @@ from src.analytics.technicals import atr14_series, rsi14_series
 from src.common.config import get_config
 from src.common.value_types import (
     AnnualPeriod,
+    DayBar,
     InstantPoint,
     MarketFacts,
     PriceSeries,
@@ -195,6 +196,42 @@ def build_price_series(bars: pd.DataFrame, spy: pd.DataFrame | None) -> PriceSer
     )
 
 
+def _column(series: pd.Series, warmup: int = 0) -> list[float | None]:
+    """A series as floats, None where it is NaN or inside its first *warmup* rows."""
+    return [None if k + 1 < warmup or pd.isna(v) else float(v) for k, v in enumerate(series)]
+
+
+def build_day_bars(bars: pd.DataFrame, after: date | None = None) -> list[DayBar]:
+    """Every settled session after *after* (all of them when None) with the technicals the exit
+    engine reads at its close. *bars* is ``read_bars``'s frame: the whole history up to the
+    run's as_of, so a 50-day average is measured on real history, not on the days returned."""
+    if bars.empty:
+        return []
+    close = bars["close"].astype(float)
+    opens = _column(bars["open"]) if "open" in bars.columns else [None] * len(close)
+    sma20 = _column(close.rolling(20).mean())
+    sma50 = _column(close.rolling(50).mean())
+    rsi = _column(rsi14_series(close), 15)
+    atr = _column(atr14_series(bars["high"].astype(float), bars["low"].astype(float), close), 15)
+    out: list[DayBar] = []
+    for i, idx in enumerate(bars.index):
+        day = pd.Timestamp(idx).date()
+        if after is not None and day <= after:
+            continue
+        out.append(
+            DayBar(
+                date=day,
+                open=opens[i],
+                close=float(close.iloc[i]),
+                sma20=sma20[i],
+                sma50=sma50[i],
+                rsi14=rsi[i],
+                atr14=atr[i],
+            )
+        )
+    return out
+
+
 # ── I/O: read-only research.db ───────────────────────────────────────────────────────────────
 
 _engine: Engine | None = None
@@ -259,12 +296,56 @@ def read_bars(session: Session, symbol: str, as_of: date) -> pd.DataFrame:
         .order_by(DailyBarRow.date)
     ).scalars()
     data = [
-        (r.date, r.high, r.low, r.close, r.volume or 0.0)
+        (r.date, r.open, r.high, r.low, r.close, r.volume or 0.0)
         for r in rows
         if r.close is not None and r.high is not None and r.low is not None
     ]
-    frame = pd.DataFrame(data, columns=["date", "high", "low", "close", "volume"])
+    frame = pd.DataFrame(data, columns=["date", "open", "high", "low", "close", "volume"])
     return frame.set_index("date")
+
+
+def filings_coverage(session: Session, symbols: list[str]) -> tuple[int, int]:
+    """(names with a raw companyfacts payload, names asked about): how far the research worker's
+    sweep has filled research.db for a universe."""
+    if not symbols:
+        return 0, 0
+    have = session.scalar(
+        select(func.count())
+        .select_from(SymbolRow)
+        .join(CompanyFactsRawRow, CompanyFactsRawRow.cik == SymbolRow.cik)
+        .where(SymbolRow.symbol.in_(symbols))
+    )
+    return int(have or 0), len(symbols)
+
+
+def symbol_is_etf(session: Session, symbol: str) -> bool:
+    """The research directory's own ETF flag (spec §6.1: ETFs are not applicable)."""
+    row = session.get(SymbolRow, symbol)
+    return bool(row is not None and row.is_etf)
+
+
+def newest_bar_before(session: Session, symbol: str, before: date) -> date | None:
+    """The newest settled bar's date strictly before *before* (a bar dated today may still be
+    forming: the research page's on-demand refresh writes it during the session)."""
+    return session.execute(
+        select(DailyBarRow.date)
+        .where(DailyBarRow.symbol == symbol, DailyBarRow.date < before)
+        .order_by(DailyBarRow.date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def closes_on(session: Session, symbols: list[str], day: date) -> dict[str, float]:
+    """Each symbol's close on *day*, read from the bars as they stand now (one fetch, so a split
+    or dividend adjustment applies to both ends of a return alike). Missing names are absent."""
+    if not symbols:
+        return {}
+    rows = session.execute(
+        select(DailyBarRow.symbol, DailyBarRow.close).where(
+            DailyBarRow.date == day, DailyBarRow.symbol.in_(symbols)
+        )
+    )
+    return {symbol: float(close) for symbol, close in rows if close is not None}
 
 
 def current_fingerprint_parts(session: Session, symbol: str) -> dict[str, Any]:

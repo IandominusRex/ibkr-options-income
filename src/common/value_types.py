@@ -66,6 +66,19 @@ class PriceSeries(BaseModel):
     adv_dollar_20: float | None = None
 
 
+class DayBar(BaseModel):
+    """One settled session for the exit engine and the shadow record (spec §7, §6.8): the bar
+    and the technicals measured at its close. Unknown is None, never zero."""
+
+    date: date
+    open: float | None = None
+    close: float
+    sma20: float | None = None
+    sma50: float | None = None
+    rsi14: float | None = None
+    atr14: float | None = None
+
+
 class Classification(BaseModel):
     sector: str | None = None
     industry: str | None = None

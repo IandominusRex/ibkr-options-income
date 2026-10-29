@@ -99,7 +99,7 @@ is the executing agent's own model name.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **A entry checks** | pass | 0 commits on `feat/value-book-2` (HEAD `23b1ef3`) | baseline pytest 5150 passed, 1 skipped; ruff clean; mypy 314 files clean; A3 greps all match plan line numbers; A4: hash `e1a1b3b096b1`, no Part 2 code | 2026-10-29 | disk 36 GiB free; value-book-1 worktree absent; section exit target = baseline 5150 + 8 = 5158 passed, 1 skipped |
-| 1 Ruleset v2: the exit rules, the service block, the sweep on | | | | | |
+| 1 Ruleset v2: the exit rules, the service block, the sweep on | done | `8334bcb` | task tests 57 passed (`test_value_config.py` 14); ruff check/format and mypy clean; `ruleset_hash(ValueCfg().rules)` printed `d07717fe5348` as the plan says | 2026-10-30 | No deviation. Test edits were applied as the diffs gave them (the `test_v1_is_frozen` replacement, the dry-run `v2` assertion, the flipped scheduler test). Step 5's hash check was run before pinning `FROZEN["v2"]`. *Cost if wrong: none found (v2 pin is the plan's; reversing it is ruling 1's cost).* |
 | 2 Day bars and the readers the record needs | | | | | |
 | 3 The nightly sweep keeps every bar fresh, SPY's too | | | | | |
 | **B entry checks** | | | | | |
@@ -539,7 +539,7 @@ protected-file diff empty. Record the commit count from `git log --oneline main.
   `min_filings_coverage_pct`) at `ValueCfg.service`; `ValueCfg.ruleset_version == "v2"`;
   `FROZEN["v2"] == "d07717fe5348"`.
 
-- [ ] **Step 1: Write the failing tests** — apply this diff to `tests/test_value_config.py` (it
+- [x] **Step 1: Write the failing tests** — apply this diff to `tests/test_value_config.py` (it
   replaces `test_v1_is_frozen`):
 
 ```diff
@@ -649,13 +649,13 @@ diff --git a/tests/test_value_dry_run.py b/tests/test_value_dry_run.py
       assert "value_sweep" not in {j.id for j in build_scheduler().get_jobs()}
   ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_universe.py`
   Expected: FAIL — `AttributeError: 'ValueRulesCfg' object has no attribute 'exits'` (and the v2
   and sweep assertions).
 
-- [ ] **Step 3: The config models** — apply to `src/common/config.py`:
+- [x] **Step 3: The config models** — apply to `src/common/config.py`:
 
 ```diff
 diff --git a/src/common/config.py b/src/common/config.py
@@ -746,7 +746,7 @@ diff --git a/src/common/config.py b/src/common/config.py
  
 ```
 
-- [ ] **Step 4: The example file** — apply to `config/examples/value.yaml` (the keys must equal the
+- [x] **Step 4: The example file** — apply to `config/examples/value.yaml` (the keys must equal the
   model defaults: `test_the_example_spells_out_exactly_the_model_defaults`):
 
 ```diff
@@ -809,7 +809,7 @@ diff --git a/config/examples/value.yaml b/config/examples/value.yaml
 +    hold12_sessions: 252
 ```
 
-- [ ] **Step 5: Check the hash, then pin it.** Run:
+- [x] **Step 5: Check the hash, then pin it.** Run:
 
   ```bash
   .venv/bin/python -c "from src.common.config import ValueCfg; from src.value.ruleset import ruleset_hash; print(ruleset_hash(ValueCfg().rules))"
@@ -833,7 +833,7 @@ diff --git a/src/value/ruleset.py b/src/value/ruleset.py
  
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_universe.py tests/test_private_config.py tests/test_value_scorecard.py`
   Expected: PASS (`test_value_config.py` 14 tests). Then `.venv/bin/ruff check src/common/config.py
@@ -841,7 +841,7 @@ diff --git a/src/value/ruleset.py b/src/value/ruleset.py
   tests/test_value_universe.py`, `.venv/bin/ruff format --check` on the same files, and
   `.venv/bin/mypy src/common/config.py src/value/ruleset.py` — all clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md src/common/config.py config/examples/value.yaml src/value/ruleset.py tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_universe.py

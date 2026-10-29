@@ -180,6 +180,23 @@ def test_price_series_computes_the_fixed_window_technicals() -> None:
     assert ps.adv_dollar_20 == pytest.approx((close.iloc[-20:] * 1e6).mean())
 
 
+def test_day_bars_carry_the_technicals_measured_at_each_close() -> None:
+    bars, _ = _bars(60)
+    close = bars["close"]
+    bars.insert(0, "open", [c - 0.5 for c in close])
+    days = vi.build_day_bars(bars)
+    assert len(days) == 60 and days[0].open == pytest.approx(close.iloc[0] - 0.5)
+    assert days[18].sma20 is None and days[19].sma20 == pytest.approx(close.iloc[:20].mean())
+    assert days[48].sma50 is None and days[49].sma50 == pytest.approx(close.iloc[:50].mean())
+    assert days[13].atr14 is None and days[14].atr14 is not None
+    later = vi.build_day_bars(bars, after=days[57].date)
+    assert [d.date for d in later] == [days[58].date, days[59].date]
+    assert later[0].sma50 == days[58].sma50  # measured on the whole history, not the tail
+    no_open = vi.build_day_bars(bars.drop(columns=["open"]))
+    assert no_open[0].open is None  # unknown, never zero
+    assert vi.build_day_bars(bars.iloc[:0]) == []
+
+
 def test_price_series_is_none_without_bars() -> None:
     empty = pd.DataFrame(columns=["high", "low", "close", "volume"])
     assert vi.build_price_series(empty, None) is None
@@ -248,6 +265,20 @@ def test_reads_come_from_a_read_only_research_db(research_file) -> None:
         }
         with pytest.raises(OperationalError):
             s.execute(text("DELETE FROM symbols"))
+
+
+def test_the_shadow_records_readers(research_file) -> None:
+    with vi.research_read() as s:
+        assert s is not None
+        # 2025-09-01's bar may still be forming on 2025-09-01: the newest settled one is Friday's.
+        assert vi.newest_bar_before(s, "STDY", date(2025, 9, 1)) == date(2025, 8, 29)
+        assert vi.newest_bar_before(s, "NONE", date(2025, 9, 1)) is None
+        assert vi.closes_on(s, ["STDY", "NONE"], date(2025, 8, 27)) == {"STDY": 12.0}
+        assert vi.closes_on(s, [], date(2025, 8, 27)) == {}
+        assert list(vi.read_bars(s, "STDY", date(2025, 8, 26))["open"]) == [10.0, 10.0]
+        assert vi.symbol_is_etf(s, "STDY") is False and vi.symbol_is_etf(s, "NONE") is False
+        assert vi.filings_coverage(s, ["STDY", "NONE"]) == (1, 2)
+        assert vi.filings_coverage(s, []) == (0, 0)
 
 
 def test_a_missing_research_db_is_none_not_an_error(tmp_path, monkeypatch) -> None:
