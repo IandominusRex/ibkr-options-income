@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/lib/api";
 import { submitCommand, useCommandStatus, type CommandStatus } from "@/lib/commands";
@@ -36,10 +36,18 @@ export function useBrokerRefresh(scope: "portfolio" | "all" = "portfolio") {
   const commandQuery = useCommandStatus(command?.id ?? null);
   const current = (commandQuery.data ?? command) as CommandStatus | null;
 
+  // Once per command id: every GET /commands/{id} body carries a fresh `as_of`, so `current` is a new
+  // object on each refetch and keying on it would re-invalidate, and refetch, forever. The command
+  // queries are left out of "all" for the same reason (the poll that ended must not be asked again).
+  const handled = useRef<number | null>(null);
   useEffect(() => {
-    if (current && current.status !== "pending") {
-      qc.invalidateQueries(scope === "all" ? undefined : { queryKey: ["portfolio"] });
-    }
+    if (!current || current.status === "pending" || handled.current === current.id) return;
+    handled.current = current.id;
+    qc.invalidateQueries(
+      scope === "all"
+        ? { predicate: (q) => q.queryKey[0] !== "command" }
+        : { queryKey: ["portfolio"] },
+    );
   }, [current, qc, scope]);
 
   const inFlight = submitting || (current != null && current.status === "pending");
