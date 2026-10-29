@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from src.research.ingest.concepts import select_periods
+from src.research.ingest.concepts import select_periods, select_ttm
 from src.research.schemas import Fact
 
 
@@ -130,3 +130,148 @@ def test_instant_facts_are_rejected_when_duration_was_asked_for() -> None:
 
 def test_empty_input_is_empty_output() -> None:
     assert select_periods([], kind="duration", period_type="annual", limit=5) == []
+
+
+# ── as_of and TTM (value book spec §6.2) ─────────────────────────────────────────────────────
+
+
+def test_as_of_hides_a_restatement_filed_later() -> None:
+    """Point in time: the value the filings showed that day, never a later restatement."""
+    facts = [
+        _fact(
+            start=date(2023, 1, 1),
+            end=date(2023, 12, 31),
+            val=100,
+            filed=date(2024, 2, 1),
+            accn="original",
+        ),
+        _fact(
+            start=date(2023, 1, 1),
+            end=date(2023, 12, 31),
+            val=94,
+            filed=date(2025, 2, 1),
+            accn="restated",
+        ),
+    ]
+    before = select_periods(
+        facts, kind="duration", period_type="annual", limit=5, as_of=date(2024, 6, 30)
+    )
+    after = select_periods(
+        facts, kind="duration", period_type="annual", limit=5, as_of=date(2025, 3, 1)
+    )
+    assert [(f.value, f.accn) for f in before] == [(100, "original")]
+    assert [(f.value, f.accn) for f in after] == [(94, "restated")]
+
+
+def test_as_of_hides_a_period_not_yet_filed() -> None:
+    facts = [
+        _fact(start=date(2023, 1, 1), end=date(2023, 12, 31), val=1, filed=date(2024, 2, 1)),
+        _fact(start=date(2024, 1, 1), end=date(2024, 12, 31), val=2, filed=date(2025, 2, 1)),
+    ]
+    out = select_periods(
+        facts, kind="duration", period_type="annual", limit=5, as_of=date(2024, 12, 31)
+    )
+    assert [f.value for f in out] == [1]
+
+
+def _ttm_facts() -> list:
+    return [
+        _fact(
+            start=date(2024, 1, 1),
+            end=date(2024, 12, 31),
+            val=400,
+            filed=date(2025, 2, 1),
+            accn="k24",
+        ),
+        _fact(
+            start=date(2025, 1, 1),
+            end=date(2025, 3, 31),
+            val=110,
+            filed=date(2025, 5, 1),
+            form="10-Q",
+            accn="q1",
+        ),
+        _fact(
+            start=date(2024, 1, 1),
+            end=date(2024, 3, 31),
+            val=95,
+            filed=date(2025, 5, 1),
+            form="10-Q",
+            accn="q1",
+        ),
+        _fact(
+            start=date(2025, 1, 1),
+            end=date(2025, 6, 30),
+            val=230,
+            filed=date(2025, 8, 1),
+            form="10-Q",
+            accn="q2",
+        ),
+        _fact(
+            start=date(2024, 1, 1),
+            end=date(2024, 6, 30),
+            val=190,
+            filed=date(2025, 8, 1),
+            form="10-Q",
+            accn="q2",
+        ),
+        # a discrete second quarter: starts mid-year, so it is not a year-to-date figure
+        _fact(
+            start=date(2025, 4, 1),
+            end=date(2025, 6, 30),
+            val=120,
+            filed=date(2025, 8, 1),
+            form="10-Q",
+            accn="q2",
+        ),
+    ]
+
+
+def test_ttm_is_the_fiscal_year_plus_this_ytd_less_last_years_ytd() -> None:
+    ttm = select_ttm(_ttm_facts())
+    assert ttm is not None
+    assert (ttm.value, ttm.end, ttm.basis, ttm.accn) == (440.0, date(2025, 6, 30), "ytd", "q2")
+
+
+def test_ttm_respects_as_of() -> None:
+    q1 = select_ttm(_ttm_facts(), as_of=date(2025, 7, 1))
+    assert q1 is not None and (q1.value, q1.end) == (415.0, date(2025, 3, 31))
+    fy = select_ttm(_ttm_facts(), as_of=date(2025, 4, 1))
+    assert fy is not None and (fy.value, fy.basis) == (400.0, "fy")
+
+
+def test_ttm_without_a_prior_year_comparative_is_the_fiscal_year() -> None:
+    facts = [f for f in _ttm_facts() if f.value not in (95, 190)]
+    ttm = select_ttm(facts)
+    assert ttm is not None and (ttm.value, ttm.basis) == (400.0, "fy")
+
+
+def test_ttm_handles_a_52_53_week_fiscal_year() -> None:
+    facts = [
+        _fact(start=date(2023, 9, 1), end=date(2024, 8, 29), val=250, filed=date(2024, 10, 3)),
+        _fact(
+            start=date(2024, 8, 30),
+            end=date(2024, 11, 28),
+            val=87,
+            filed=date(2024, 12, 19),
+            form="10-Q",
+        ),
+        _fact(
+            start=date(2023, 9, 1),
+            end=date(2023, 11, 30),
+            val=47,
+            filed=date(2024, 12, 19),
+            form="10-Q",
+        ),
+    ]
+    ttm = select_ttm(facts)
+    assert ttm is not None and (ttm.value, ttm.end, ttm.basis) == (290.0, date(2024, 11, 28), "ytd")
+
+
+def test_ttm_is_none_without_an_annual_fact() -> None:
+    assert (
+        select_ttm(
+            [_fact(start=date(2025, 1, 1), end=date(2025, 3, 31), val=1, filed=date(2025, 5, 1))]
+        )
+        is None
+    )

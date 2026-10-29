@@ -142,3 +142,195 @@ line_items:
     concepts:
       - PaymentsOfDividendsCommonStock
       - PaymentsOfDividends
+
+  # ── Value book line items (docs/superpowers/specs/2026-10-28-value-swing-book-design.md §6.4-6.5).
+  # Aliases verified against BAC, JPM, TRV, GOOGL, META, MU, AAPL, NVDA, AMD and HOOD companyfacts
+  # (2026-10-29). Several concepts change name over the years (GOOGL and META stop tagging
+  # InterestExpense after 2023/2024 and tag InterestExpenseNonoperating instead); pooling the
+  # aliases keeps every year.
+
+  sbc:
+    statement: cash_flow
+    kind: duration
+    units: [USD]
+    concepts:
+      - ShareBasedCompensation
+      - AllocatedShareBasedCompensationExpense
+
+  interest_expense:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - InterestExpense
+      - InterestExpenseNonoperating
+      - InterestExpenseDebt
+
+  depreciation_amortization:
+    statement: cash_flow
+    kind: duration
+    units: [USD]
+    concepts:
+      - DepreciationDepletionAndAmortization
+      - DepreciationAmortizationAndAccretionNet
+      - DepreciationAndAmortization
+      - Depreciation
+
+  accounts_receivable:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - AccountsReceivableNetCurrent
+      - ReceivablesNetCurrent
+
+  ppe_net:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - PropertyPlantAndEquipmentNet
+      - PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization
+
+  sga:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - SellingGeneralAndAdministrativeExpense
+      - GeneralAndAdministrativeExpense
+
+  retained_earnings:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - RetainedEarningsAccumulatedDeficit
+
+  pretax_income:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments
+
+  income_tax:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - IncomeTaxExpenseBenefit
+
+  long_term_debt_current:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - LongTermDebtCurrent
+      - DebtCurrent
+
+  commercial_paper:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - CommercialPaper
+
+  short_term_borrowings:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - ShortTermBorrowings
+
+  marketable_securities:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - MarketableSecuritiesCurrent
+      - ShortTermInvestments
+      - AvailableForSaleSecuritiesDebtSecuritiesCurrent
+
+  goodwill:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - Goodwill
+
+  intangibles:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - IntangibleAssetsNetExcludingGoodwill
+
+  preferred_equity:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - PreferredStockIncludingAdditionalPaidInCapital
+      - PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount
+      - PreferredStockValue
+      - PreferredStockValueOutstanding
+
+  net_income_common:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - NetIncomeLossAvailableToCommonStockholdersBasic
+
+  net_charge_offs:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoffAfterRecovery
+      - FinancingReceivableAllowanceForCreditLossWriteoffAfterRecovery
+      - AllowanceForLoanAndLeaseLossesWriteoffsNet
+
+  loans:
+    statement: balance
+    kind: instant
+    units: [USD]
+    concepts:
+      - FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss
+      - LoansAndLeasesReceivableNetOfDeferredIncome
+      - LoansAndLeasesReceivableNetReportedAmount
+
+  # Not tagged by BAC or JPM in companyfacts (checked 2026-10-29): kept so a filer that does tag
+  # it is read, and so the bank set reports UNKNOWN rather than a silent pass (spec §6.4).
+  cet1_ratio:
+    statement: balance
+    kind: instant
+    units: [pure]
+    concepts:
+      - CommonEquityTierOneCapitalRatio
+      - CommonEquityTierOneCapitalToRiskWeightedAssets
+
+  premiums_earned:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - PremiumsEarnedNet
+
+  benefits_losses_expenses:
+    statement: income
+    kind: duration
+    units: [USD]
+    concepts:
+      - BenefitsLossesAndExpenses
+
+  # Instant, balance-sheet share count: the per-share fallback for a fiscal year whose weighted
+  # diluted count is not tagged without a class dimension (Alphabet before FY2022).
+  shares_outstanding:
+    statement: balance
+    kind: instant
+    units: [shares]
+    concepts:
+      - CommonStockSharesOutstanding

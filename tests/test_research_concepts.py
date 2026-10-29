@@ -320,3 +320,38 @@ def test_shipped_concept_map_covers_the_core_line_items() -> None:
     for name, spec in m.items():
         assert spec.kind in {"duration", "instant"}, name
         assert spec.concepts, name
+
+
+def test_the_concept_map_carries_the_value_books_line_items() -> None:
+    """Value book spec §6.4-6.5: every line item the scorecard reads is mapped."""
+    m = load_concept_map()
+    value_items = {
+        "sbc": "duration",
+        "interest_expense": "duration",
+        "depreciation_amortization": "duration",
+        "accounts_receivable": "instant",
+        "ppe_net": "instant",
+        "sga": "duration",
+        "retained_earnings": "instant",
+        "pretax_income": "duration",
+        "income_tax": "duration",
+        "long_term_debt_current": "instant",
+        "commercial_paper": "instant",
+        "short_term_borrowings": "instant",
+        "marketable_securities": "instant",
+        "goodwill": "instant",
+        "intangibles": "instant",
+        "preferred_equity": "instant",
+        "net_income_common": "duration",
+        "net_charge_offs": "duration",
+        "loans": "instant",
+        "cet1_ratio": "instant",
+        "premiums_earned": "duration",
+        "benefits_losses_expenses": "duration",
+        "shares_outstanding": "instant",
+    }
+    for name, kind in value_items.items():
+        assert name in m, name
+        assert m[name].kind == kind, name
+    assert m["interest_expense"].concepts[:2] == ["InterestExpense", "InterestExpenseNonoperating"]
+    assert m["cet1_ratio"].units == ["pure"]

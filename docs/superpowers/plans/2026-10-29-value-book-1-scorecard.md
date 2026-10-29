@@ -86,7 +86,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **A entry checks** | done | (none) | A0–A5 pass; baseline pytest 4996 passed + 1 skipped (4997 collected), ruff clean, mypy clean (297 files). A3 anchors all at the stated lines | 2026-10-29 | Ruling: pytest must run from the worktree root — run from the main checkout's cwd it shows 4 spurious failures (ledger wiring, openapi, web fence). Cost if wrong: none |
-| 1 Config, ruleset fingerprint, package | pending | | | | |
+| 1 Config, ruleset fingerprint, package | done | de09566 | `tests/test_value_config.py` 9 passed; with `test_private_config.py` + `test_spreads_config.py` 38 passed; ruff check/format clean, mypy clean (3 files) | 2026-10-29 | Ruling: the doc-update trigger table (new module, new config key) is deferred to Task 14 as the plan schedules it, not done per task. Cost if wrong: none (Task 14 sweeps ARCHITECTURE/SETUP/STATUS/CLAUDE) |
 | 2 Point in time: `as_of`, `select_ttm`, the concept map | pending | | | | |
 | 3 Value inputs: types and the read-only loader | pending | | | | |
 | 4 Universes, snapshots, the research worker's jobs | pending | | | | |
@@ -562,7 +562,7 @@ untouched.
   `Config.value_db_url_abs() -> str`; `ruleset_hash(rules: ValueRulesCfg) -> str` (12 hex);
   `ruleset_id(cfg: ValueCfg) -> tuple[str, str]`; `FROZEN: dict[str, str]`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_config.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_config.py`
 
 ```python
 """config/value.yaml: the typed model, its committed example and the ruleset hash (Part 1)."""
@@ -632,12 +632,12 @@ def test_a_frozen_version_refuses_rules_that_no_longer_match(monkeypatch) -> Non
     assert ruleset_id(ValueCfg()) == ("v0-dryrun", ruleset_hash(ValueCfg().rules))
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py`
   Expected: collection error, `ImportError: cannot import name 'ValueCfg' from 'src.common.config'`.
 
-- [ ] **Step 3: Wire the config model into `src/common/config.py`**
+- [x] **Step 3: Wire the config model into `src/common/config.py`**
 
   (a) Line 22 becomes:
 
@@ -911,7 +911,7 @@ class ValueCfg(_ValueModel):
           value=ValueCfg(**_load_yaml("value.yaml")),
   ```
 
-- [ ] **Step 4: Create `config/examples/value.yaml`** (it must equal the model defaults; a test
+- [x] **Step 4: Create `config/examples/value.yaml`** (it must equal the model defaults; a test
   says so)
 
 ```yaml
@@ -1059,10 +1059,10 @@ rules:
     new_low_window_sessions: 5
 ```
 
-- [ ] **Step 5: Ignore the private copy.** In `.gitignore`, after line 22 `config/news.yaml`, add
+- [x] **Step 5: Ignore the private copy.** In `.gitignore`, after line 22 `config/news.yaml`, add
   the line `config/value.yaml`. (`data/value.db` is already covered by `data/*.db`, line 42.)
 
-- [ ] **Step 6: Create the package and the ruleset module** — `src/value/__init__.py`:
+- [x] **Step 6: Create the package and the ruleset module** — `src/value/__init__.py`:
 
 ```python
 """The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md).
@@ -1113,7 +1113,7 @@ def ruleset_id(cfg: ValueCfg) -> tuple[str, str]:
     return cfg.ruleset_version, digest
 ```
 
-- [ ] **Step 7: Stage the example (the private-config test checks it is tracked) and run**
+- [x] **Step 7: Stage the example (the private-config test checks it is tracked) and run**
 
   ```bash
   git add config/examples/value.yaml .gitignore
@@ -1122,7 +1122,7 @@ def ruleset_id(cfg: ValueCfg) -> tuple[str, str]:
 
   Expected: all pass (`test_value_config.py`: 9 passed).
 
-- [ ] **Step 8: Gates**
+- [x] **Step 8: Gates**
 
   ```bash
   .venv/bin/ruff check src/common/config.py src/value tests/test_value_config.py
@@ -1133,7 +1133,7 @@ def ruleset_id(cfg: ValueCfg) -> tuple[str, str]:
   Expected: `All checks passed!`, every file already formatted (run `ruff format` on exactly
   these files if not), `Success: no issues found`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
   ```bash
   git add src/common/config.py .gitignore config/examples/value.yaml src/value/__init__.py src/value/ruleset.py tests/test_value_config.py docs/superpowers/specs/2026-10-28-value-swing-book-design.md docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md

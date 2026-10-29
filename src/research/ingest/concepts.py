@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import functools
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import yaml
 from pydantic import BaseModel, field_validator
 
 from src.common.config import CONFIG_DIR
-from src.research.schemas import Fact
+from src.research.schemas import Fact, TtmValue
 
 log = logging.getLogger(__name__)
 
@@ -122,17 +122,23 @@ def select_periods(
     kind: str,
     period_type: str,
     limit: int,
+    as_of: date | None = None,
 ) -> list[Fact]:
     """Pick one fact per reporting period, newest first.
 
-    Two rules carry the correctness of this function:
+    Three rules carry the correctness of this function:
 
     1. `kind` is enforced. A duration fact can never satisfy an instant line item and vice
        versa. Summing four quarterly durations into "total assets", or reading an instant as
        a year of revenue, produces plausible nonsense.
     2. When two filings report the same period, the one filed LATER wins. That is how a
        restatement becomes the current answer instead of silently reverting.
+    3. With `as_of`, only facts filed on or before that date exist (value book spec §6.2):
+       the answer is what the filings said that day, so a restatement filed later never
+       leaks into a past verdict. Without it (display), every filing counts.
     """
+    if as_of is not None:
+        facts = [f for f in facts if f.filed <= as_of]
     if kind == "duration":
         lo, hi = _ANNUAL_DAYS if period_type == "annual" else _QUARTER_DAYS
         candidates = [
@@ -153,6 +159,61 @@ def select_periods(
             by_period[fact.end] = fact
 
     return sorted(by_period.values(), key=lambda f: f.end, reverse=True)[:limit]
+
+
+# How far a year-to-date fact's start may sit from the fiscal year's first day, in days. 52/53
+# week fiscal years (Apple, Micron) start on a different weekday each year.
+_YTD_START_TOLERANCE_DAYS = 10
+_YTD_DAYS = (60, 300)
+
+
+def select_ttm(facts: list[Fact], *, as_of: date | None = None) -> TtmValue | None:
+    """The trailing-twelve-month value of a duration line item, as known on `as_of`.
+
+    10-Q cash-flow statements report year-to-date figures (3, 6, 9 months), not quarters, so
+    four quarters cannot be summed. TTM = latest fiscal year + the current year-to-date - the
+    same year-to-date a year earlier. With no year-to-date figure since the last fiscal year
+    (a 10-K just filed), or no prior-year comparative, the fiscal year stands alone and the
+    result says so (``basis="fy"``). None when the item has no annual fact at all.
+    """
+    pool = [f for f in facts if f.start is not None and (as_of is None or f.filed <= as_of)]
+    annual = select_periods(pool, kind="duration", period_type="annual", limit=1)
+    if not annual:
+        return None
+    fy = annual[0]
+    fy_only = TtmValue(value=fy.value, end=fy.end, basis="fy", accn=fy.accn, filed=fy.filed)
+    lo, hi = _YTD_DAYS
+    year_start = fy.end + timedelta(days=1)
+    ytd_pool = [
+        f
+        for f in pool
+        if f.start is not None
+        and abs((f.start - year_start).days) <= _YTD_START_TOLERANCE_DAYS
+        and lo <= (f.end - f.start).days <= hi
+    ]
+    if not ytd_pool:
+        return fy_only
+    ytd_end = max(f.end for f in ytd_pool)
+    ytd = max((f for f in ytd_pool if f.end == ytd_end), key=lambda f: f.filed)
+    assert ytd.start is not None and fy.start is not None
+    length = (ytd.end - ytd.start).days
+    prior_pool = [
+        f
+        for f in pool
+        if f.start is not None
+        and abs((f.start - fy.start).days) <= _YTD_START_TOLERANCE_DAYS
+        and abs((f.end - f.start).days - length) <= _YTD_START_TOLERANCE_DAYS
+    ]
+    if not prior_pool:
+        return fy_only
+    prior = max(prior_pool, key=lambda f: f.filed)
+    return TtmValue(
+        value=fy.value + ytd.value - prior.value,
+        end=ytd.end,
+        basis="ytd",
+        accn=ytd.accn,
+        filed=max(ytd.filed, fy.filed),
+    )
 
 
 SUPPORTED_UNITS = frozenset({"USD", "USD/shares", "shares", "pure"})

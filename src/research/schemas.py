@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -29,6 +30,18 @@ class Fact:
     # concept rather than one label borrowed from whichever alias happened to be checked
     # first.
     concept: str
+
+
+@dataclass(frozen=True, slots=True)
+class TtmValue:
+    """A trailing-twelve-month figure (value book spec §6.2). ``basis`` is ``"ytd"`` when it is
+    fiscal year + year-to-date - prior year-to-date, ``"fy"`` when the fiscal year stands alone."""
+
+    value: float
+    end: date
+    basis: Literal["ytd", "fy"]
+    accn: str
+    filed: date
 
 
 class LineItemValue(BaseModel):
