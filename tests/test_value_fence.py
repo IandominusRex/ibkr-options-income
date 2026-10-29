@@ -29,6 +29,9 @@ PURE = (
     "rank",
     "funnel",
     "ruleset",
+    "exits",
+    "ranked",
+    "report",
 )
 
 FORBIDDEN_FOR_VALUE = (
@@ -162,7 +165,15 @@ def test_the_trading_path_never_imports_the_value_book() -> None:
 
 
 def test_only_src_value_constructs_value_rows() -> None:
-    rows = ("ValueTickerFileRow(", "ValueTickerHistoryRow(", "ValueRunRow(")
+    rows = (
+        "ValueTickerFileRow(",
+        "ValueTickerHistoryRow(",
+        "ValueRunRow(",
+        "ValueShadowRow(",
+        "ValueShadowLegRow(",
+        "ValueShadowEventRow(",
+        "ValueRankedRow(",
+    )
     offenders = []
     for p in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
         if (ROOT / "src" / "value") in p.parents:
@@ -176,6 +187,7 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
     probe = (
         "import json, sys\n"
         "import src.value.scorecard, src.value.store, src.value.ticker_file, src.value.funnel\n"
+        "import src.value.exits, src.value.shadow, src.value.service, src.value.report\n"
         "import src.common.value_inputs, src.common.value_universe\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('src.'))))\n"
     )
@@ -195,3 +207,58 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
         if m == f or m.startswith(f + ".")
     ]
     assert bad == []
+
+
+def test_only_the_value_entrypoint_may_import_value_ai() -> None:
+    """Spec §5/§16: scripts/run_value.py is the only importer of src.value_ai (Part 4)."""
+    outside = [
+        p for p in (ROOT / "src").rglob("*.py") if (ROOT / "src" / "value_ai") not in p.parents
+    ]
+    scripts = [p for p in (ROOT / "scripts").glob("*.py") if p.stem != "run_value"]
+    offenders = [
+        str(p.relative_to(ROOT))
+        for p in [*outside, *scripts]
+        if _reaches(imported_modules(p), "src.value_ai")
+    ]
+    assert offenders == []
+
+
+def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
+    """scripts/run_value.py is never imported (it starts a service), so its own imports are
+    checked by name; everything it reaches is in the sys.modules probe below."""
+    allowed = (
+        "logging",
+        "signal",
+        "threading",
+        "scripts.value_feed",
+        "src.common.config",
+        "src.common.logging",
+        "src.value.service",
+    )
+    mods = imported_modules(ROOT / "scripts" / "run_value.py")
+    extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))
+    assert extra == []
+
+
+def test_the_value_process_loads_no_wheel_layer_and_no_ibkr() -> None:
+    """Everything the value process imports, including the news.db readers its feed uses for
+    earnings dates: no wheel layer, no Claude, no IBKR client, and never news.db's read-write
+    engine."""
+    probe = (
+        "import importlib, json, pkgutil, sys\n"
+        "import src.value as v\n"
+        "for m in pkgutil.walk_packages(v.__path__, 'src.value.'):\n"
+        "    importlib.import_module(m.name)\n"
+        "import scripts.value_feed\n"
+        "import src.news.store.readonly, src.news.store.queries, src.data.factory\n"
+        "print(json.dumps(sorted(sys.modules)))\n"
+    )
+    env = {**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"}
+    out = subprocess.run(
+        [sys.executable, "-c", probe], cwd=ROOT, env=env, capture_output=True, text=True, check=True
+    )
+    loaded = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    forbidden = [f for f in FORBIDDEN_FOR_VALUE if f != "src.news"]
+    assert [m for m in forbidden if _reaches(loaded, m)] == []
+    assert not _reaches(loaded, "src.news.store.session")
+    assert not _reaches(loaded, "ib_async")

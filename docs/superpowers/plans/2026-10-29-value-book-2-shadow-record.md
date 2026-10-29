@@ -108,7 +108,7 @@ is the executing agent's own model name.
 | 6 The shadow tables and the shadow record | done | `a7d8003` | task tests 29 passed (`test_value_shadow.py` 12, `test_value_store.py`, `test_value_fence.py` 10); `ruff check src/value`, ruff format and `mypy src/value` (17 files) clean. **Section B exit full gate: pytest 5197 passed, 1 skipped (= 5150 baseline + 47); ruff clean; mypy 318 files clean; protected-file diff empty; 8 commits on `main..HEAD` after this docs commit** | 2026-10-30 | No deviation: tests verbatim (seen failing on import of `src.value.shadow`), tables, `report.py` stub and `shadow.py` as the plan gave them. **Ruling (arithmetic):** the section's target was stated as 5150 + 8 + 47 = 5205, but the plan's "baseline + 47 (8 + 24 + 3 + 12)" already counts Section A's 8, so the right target is 5150 + 47 = 5197 = 5158 + 39 (24 + 3 + 12); Section C's and D's targets follow from 5197, not 5205. *Cost if wrong: none; a miscount of tests, not of behaviour.* *Cost if wrong: the record's rules are the plan's rulings 10-13, each one function in `shadow.py`.* |
 | **C entry checks** | pass | 8 commits on `feat/value-book-2` (HEAD `e3c3500`) | pytest 5197 passed, 1 skipped (baseline 5150 + 47); ruff, mypy (318 files) clean; protected diff empty; C3/C4 greps match | 2026-10-30 | section exit target = baseline 5150 + 62 = 5212 passed, 1 skipped (5197 + 7 + 5 + 3); the orchestrator's B-section target of 5205 was an arithmetic slip (double-counted A's 8) |
 | 7 The nightly run | done | `d559bc2` | task tests 26 passed (`test_value_service.py` 7, `test_value_shadow.py` 12, `test_value_store.py` 7); `ruff check src/value`, ruff format and `mypy src/value` (18 files) clean | 2026-10-30 | No deviation: tests verbatim, seen failing (`cannot import name 'service' from 'src.value'`), service verbatim. The orchestrator's C-entry row rode in this commit. *Cost if wrong: the hour, the poll and the coverage gate are config values; the as-of rule is `newest_bar_before` in one place.* |
-| 8 The entrypoint, its feed and the supervisor | | | | | |
+| 8 The entrypoint, its feed and the supervisor | done | `da69f89` | task tests 44 passed (`test_value_feed.py` 4, `test_start_launcher.py`, `test_watchdog.py`); `py_compile scripts/run_value.py scripts/value_feed.py` silent; `bash -n ibkr` silent; ruff check/format on the five Python files and `mypy scripts/value_feed.py scripts/run_value.py` clean | 2026-10-30 | No deviation: tests seen failing first (`cannot import name 'value_feed' from 'scripts'`), then feed, entrypoint, `scripts/start.py` and `ibkr` edits as the plan gave them. The one launcher test was appended with a shell append rather than the Edit tool (the contents are the plan's). *Cost if wrong: the supervisor entry and the flag are three lines each.* |
 | 9 The fences | | | | | |
 | **D entry checks** | | | | | |
 | 10 The report and the postmortem | | | | | |
@@ -3856,7 +3856,7 @@ diff --git a/ibkr b/ibkr
   value process loads no wheel layer, no Claude, no `ib_async` and never `news.db`'s read-write
   engine.
 
-- [ ] **Step 1: Write the tests** — apply to `tests/test_value_fence.py`:
+- [x] **Step 1: Write the tests** — apply to `tests/test_value_fence.py`:
 
 ```diff
 diff --git a/tests/test_value_fence.py b/tests/test_value_fence.py
@@ -3951,7 +3951,7 @@ diff --git a/tests/test_value_fence.py b/tests/test_value_fence.py
 +    assert not _reaches(loaded, "ib_async")
 ```
 
-- [ ] **Step 2: Run them.** They pass at once if Tasks 1–8 sit inside the fence — that is the
+- [x] **Step 2: Run them.** They pass at once if Tasks 1–8 sit inside the fence — that is the
   point. To see the new tests bite, temporarily add `import src.engine.risk_engine` to
   `src/value/exits.py` (`test_value_imports_no_enrichment_and_no_other_system` and the process
   probe fail), then remove it; and temporarily add `import os` to `scripts/run_value.py` (the
@@ -3960,7 +3960,7 @@ diff --git a/tests/test_value_fence.py b/tests/test_value_fence.py
   Run: `.venv/bin/python -m pytest -q tests/test_value_fence.py tests/test_spreads_fence.py tests/test_news_fence.py tests/test_regime_fence.py tests/test_web_fence.py tests/test_eval_skills.py`
   Expected: PASS (`test_value_fence.py` 13).
 
-- [ ] **Step 3: Commit, then the section's Progress-log commit**
+- [x] **Step 3: Commit, then the section's Progress-log commit**
 
   ```bash
   git add tests/test_value_fence.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
