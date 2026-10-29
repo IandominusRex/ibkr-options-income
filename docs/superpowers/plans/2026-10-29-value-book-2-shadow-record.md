@@ -107,7 +107,7 @@ is the executing agent's own model name.
 | 5 The ranked arithmetic and the filed list (M5) | done | `c10ba05` | task tests 21 passed (`test_value_ranked.py` 3, `test_value_rank.py` 5, `test_value_dry_run.py` 3, `test_value_fence.py` 10); ruff check/format and mypy clean on the touched files | 2026-10-30 | No deviation. Seen failing first (`No module named 'src.value.ranked'`; M5 test alone: `assert 'ETF' not in {...}`). The dry run still passes unchanged after M5. *Cost if wrong: M5 is one guard in `filed_lists`.* |
 | 6 The shadow tables and the shadow record | done | `a7d8003` | task tests 29 passed (`test_value_shadow.py` 12, `test_value_store.py`, `test_value_fence.py` 10); `ruff check src/value`, ruff format and `mypy src/value` (17 files) clean. **Section B exit full gate: pytest 5197 passed, 1 skipped (= 5150 baseline + 47); ruff clean; mypy 318 files clean; protected-file diff empty; 8 commits on `main..HEAD` after this docs commit** | 2026-10-30 | No deviation: tests verbatim (seen failing on import of `src.value.shadow`), tables, `report.py` stub and `shadow.py` as the plan gave them. **Ruling (arithmetic):** the section's target was stated as 5150 + 8 + 47 = 5205, but the plan's "baseline + 47 (8 + 24 + 3 + 12)" already counts Section A's 8, so the right target is 5150 + 47 = 5197 = 5158 + 39 (24 + 3 + 12); Section C's and D's targets follow from 5197, not 5205. *Cost if wrong: none; a miscount of tests, not of behaviour.* *Cost if wrong: the record's rules are the plan's rulings 10-13, each one function in `shadow.py`.* |
 | **C entry checks** | pass | 8 commits on `feat/value-book-2` (HEAD `e3c3500`) | pytest 5197 passed, 1 skipped (baseline 5150 + 47); ruff, mypy (318 files) clean; protected diff empty; C3/C4 greps match | 2026-10-30 | section exit target = baseline 5150 + 62 = 5212 passed, 1 skipped (5197 + 7 + 5 + 3); the orchestrator's B-section target of 5205 was an arithmetic slip (double-counted A's 8) |
-| 7 The nightly run | | | | | |
+| 7 The nightly run | done | `d559bc2` | task tests 26 passed (`test_value_service.py` 7, `test_value_shadow.py` 12, `test_value_store.py` 7); `ruff check src/value`, ruff format and `mypy src/value` (18 files) clean | 2026-10-30 | No deviation: tests verbatim, seen failing (`cannot import name 'service' from 'src.value'`), service verbatim. The orchestrator's C-entry row rode in this commit. *Cost if wrong: the hour, the poll and the coverage gate are config values; the as-of rule is `newest_bar_before` in one place.* |
 | 8 The entrypoint, its feed and the supervisor | | | | | |
 | 9 The fences | | | | | |
 | **D entry checks** | | | | | |
@@ -3063,7 +3063,7 @@ count.
   `run_nightly(plan, *, facts: dict[str, MarketFacts], earnings: dict[str, date], now=None) ->
   dict[str, Any]` (the summary also written to `value_runs.summary_json`).
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_service.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_value_service.py`:
 
 ```python
 """The value process's nightly run (value book spec §6.8, §6.9): when a run is due, what it
@@ -3263,12 +3263,12 @@ def _file(symbol: str, universe: str, *, viewed: datetime | None) -> ValueTicker
     )
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_service.py`
   Expected: collection error, `ImportError: cannot import name 'service' from 'src.value'`.
 
-- [ ] **Step 3: The service** — `src/value/service.py` (rulings 5–9; persisting with
+- [x] **Step 3: The service** — `src/value/service.py` (rulings 5–9; persisting with
   `session_row=tag != "lookup"` gives every universe and shadow name its compact history row per
   session, spec §6.9):
 
@@ -3561,12 +3561,12 @@ def run_nightly(
     return summary
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_service.py tests/test_value_shadow.py tests/test_value_store.py`
   Expected: PASS (`test_value_service.py` 7). Ruff and `.venv/bin/mypy src/value` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add src/value/service.py tests/test_value_service.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
@@ -3588,7 +3588,7 @@ modify `scripts/start.py` (after lines 21, 95 and 422), `ibkr` (lines 26 and 68)
   MarketFacts]`; `scripts/run_value.py::main()`; `SERVICES["value"]` = `value_service`,
   `scripts.run_value`, `logs/value.log`; `--no-value`; `./ibkr logs value`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_feed.py` (the entrypoint itself is
+- [x] **Step 1: Write the failing tests** — `tests/test_value_feed.py` (the entrypoint itself is
   only compiled, never imported):
 
 ```python
@@ -3647,13 +3647,13 @@ def test_market_facts_are_fetched_per_name(monkeypatch) -> None:
       assert "value" not in active and "news" in active
   ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_feed.py tests/test_start_launcher.py`
   Expected: FAIL — `ImportError: cannot import name 'value_feed' from 'scripts'` and
   `KeyError: 'value'`.
 
-- [ ] **Step 3: The feed** — `scripts/value_feed.py`:
+- [x] **Step 3: The feed** — `scripts/value_feed.py`:
 
 ```python
 """The plain data the value process hands to ``src/value/`` (spec §6.6, §6.9): earnings dates
@@ -3704,7 +3704,7 @@ def market_facts(names: list[str], workers: int) -> dict[str, MarketFacts]:
         return dict(zip(names, pool.map(fetch_market_facts, names), strict=True))
 ```
 
-- [ ] **Step 4: The entrypoint** — `scripts/run_value.py` (the `scripts/run_research_worker.py`
+- [x] **Step 4: The entrypoint** — `scripts/run_value.py` (the `scripts/run_research_worker.py`
   pattern: a thread event, two signal handlers, no IBKR, no asyncio):
 
 ```python
@@ -3773,7 +3773,7 @@ if __name__ == "__main__":
   Check it without importing it: `.venv/bin/python -m py_compile scripts/run_value.py` prints
   nothing.
 
-- [ ] **Step 5: Register it** — apply to `scripts/start.py`:
+- [x] **Step 5: Register it** — apply to `scripts/start.py`:
 
 ```diff
 diff --git a/scripts/start.py b/scripts/start.py
@@ -3829,13 +3829,13 @@ diff --git a/ibkr b/ibkr
 
   `bash -n ibkr` prints nothing.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_feed.py tests/test_start_launcher.py tests/test_watchdog.py`
   Expected: PASS (4 + 8). Ruff check/format on the four Python files; `.venv/bin/mypy
   scripts/value_feed.py scripts/run_value.py` clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add scripts/value_feed.py scripts/run_value.py scripts/start.py ibkr tests/test_value_feed.py tests/test_start_launcher.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
