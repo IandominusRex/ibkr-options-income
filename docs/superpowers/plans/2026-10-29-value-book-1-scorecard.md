@@ -94,7 +94,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 5 Schemas, per-year metrics, test fixtures | done | 157c174 | test_value_metrics.py 8 passed; ruff check/format clean; mypy src/value clean (4 files) | 2026-10-29 | Ruling: code blocks were extracted verbatim from the plan and tests run together, so no red run was observed (8 green at once). Cost if wrong: none |
 | 6 Piotroski, Altman, Beneish | done | 56fda13 | test_value_scores.py 7 passed; ruff check/format clean; mypy src/value clean (5 files) | 2026-10-29 | Ruling: code extracted verbatim from the plan; tests green on first run, no red run observed. Cost if wrong: none |
 | 7 Classification, data quality, health gates | done | 4a3e95b | test_value_gates.py 28 passed; ruff check/format clean; mypy src/value clean (6 files) | 2026-10-29 | Ruling: code extracted verbatim; tests green on first run, no red run observed. Cost if wrong: none |
-| 8 Valuation: A, B, C, D, P/TBV | pending | | | | |
+| 8 Valuation: A, B, C, D, P/TBV | done | 7171170 | test_value_valuation.py 10 passed; ruff check/format clean; mypy src/value clean (7 files) | 2026-10-29 | Ruling: code extracted verbatim; tests green on first run, no red run observed. Cost if wrong: none |
 | 9 Timing and the scorecard | pending | | | | |
 | **C entry checks** | pending | (none) | | | |
 | 10 Rank score and the relative-strength line | pending | | | | |
@@ -5356,7 +5356,7 @@ def fair_value(methods: list[MethodValue], use: tuple[str, ...]) -> float | None
   `normalised_fcf_ps`, `growth_fcf_ps`, `per_share_count`, `net_debt`, `roic_median_5y`,
   `gross_margin_stdev_5y`, `revenue_cagr_5y` (+ `rote_median_5y`, `tbv_ps` for banks/insurers).
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_scorecard.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_scorecard.py`
 
 ```python
 """Timing and the scorecard's baseline verdicts (value book spec §6.6-6.7, §6.9)."""
@@ -5545,10 +5545,10 @@ def test_the_scorecard_is_a_pure_function_of_its_inputs() -> None:
     )
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.timing'`.
 
-- [ ] **Step 3: Create `src/value/timing.py`**
+- [x] **Step 3: Create `src/value/timing.py`**
 
 ```python
 """Entry timing (spec §6.6): strict for deep value, soft for quality growth. Pure: no I/O.
@@ -5703,7 +5703,7 @@ def growth_timing(price: PriceSeries | None, cfg: ValueTimingCfg) -> list[Check]
     ]
 ```
 
-- [ ] **Step 4: Create `src/value/scorecard.py`**
+- [x] **Step 4: Create `src/value/scorecard.py`**
 
 ```python
 """The scorecard: one pure function from inputs and config to Part 1 of a ticker file.
@@ -6044,14 +6044,14 @@ def build_scorecard(inputs: ValueInputs, cfg: ValueCfg) -> ValueScorecard:
     )
 ```
 
-- [ ] **Step 5: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_scorecard.py`
+- [x] **Step 5: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_scorecard.py`
   → 24 passed; then every value test so far: `.venv/bin/python -m pytest -q tests/test_value_*.py`
   → 107 passed.
 
-- [ ] **Step 6: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value
+- [x] **Step 6: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value
   tests/test_value_scorecard.py`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add src/value/timing.py src/value/scorecard.py tests/test_value_scorecard.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
