@@ -91,7 +91,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 3 Value inputs: types and the read-only loader | done | c463698 | `tests/test_value_inputs.py` 11 passed; ruff check/format clean; mypy clean (2 files) | 2026-10-29 | Ruling: tests and code were written together and first run together (11 green at once), so no red run was observed; the tests carry the plan's pinned numbers verbatim. Cost if wrong: none |
 | 4 Universes, snapshots, the research worker's jobs | done | dfb76b6 | `test_value_universe.py` 10 + `test_research_materialize.py` + `test_research_worker.py` = 29 passed; ruff check/format clean; mypy clean (33 files). Snapshot run printed `S&P 500: 503 rows; S&P 100: 101 rows; as of 2026-10-29`. **Section A exit gate:** pytest 5034 passed + 1 skipped (baseline 4996 + 38), ruff check . clean, mypy src clean (303 files); protected-file diff empty | 2026-10-29 | Ruling: tests and code written together, first full run green (no red run observed). Ruling: Tasks 3-4's plan checkboxes and Tasks 2-3's log rows ride the following task's commit as the plan says; Task 4's row and ticks are this final `docs(plan)` commit, so the branch is 4 task commits + 1 docs commit = 5 ahead of main (the plan's exit text says 4; the extra commit is the one the section prompt requires). Cost if wrong: none |
 | **B entry checks** | done | (none) | B1–B4 pass; Section A exit re-verified by the orchestrator: pytest 5034 passed + 1 skipped, ruff clean, mypy clean (303 files), protected-file diff empty | 2026-10-29 | Ruling: Section A left 5 commits ahead of main (4 task commits + 1 `docs(plan)`), so B1's "prints 4" and B's exit "9 in all" become 5 and 11 (B adds 5 task commits + 1 final `docs(plan)` commit for Task 9's row; the B entry row rides Task 5's commit). Cost if wrong: none |
-| 5 Schemas, per-year metrics, test fixtures | pending | | | | |
+| 5 Schemas, per-year metrics, test fixtures | done | 157c174 | test_value_metrics.py 8 passed; ruff check/format clean; mypy src/value clean (4 files) | 2026-10-29 | Ruling: code blocks were extracted verbatim from the plan and tests run together, so no red run was observed (8 green at once). Cost if wrong: none |
 | 6 Piotroski, Altman, Beneish | pending | | | | |
 | 7 Classification, data quality, health gates | pending | | | | |
 | 8 Valuation: A, B, C, D, P/TBV | pending | | | | |
@@ -3962,7 +3962,7 @@ def roic(y: Year) -> float | None:
 - Produces: `Score(value, parts, missing)`; `piotroski(years, max_missing=2) -> Score`;
   `altman_z(year, market_cap) -> Score`; `beneish_m(years) -> Score`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_scores.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_scores.py`
 
 ```python
 """Piotroski, Altman and Beneish on the Steady Co fixture, pinned (value book spec §6.4)."""
@@ -4029,10 +4029,10 @@ def test_beneish_falls_back_to_neutral_for_the_light_indices() -> None:
     assert "sgai" in m.missing and m.value is not None
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.scores'`.
 
-- [ ] **Step 3: Create `src/value/scores.py`**
+- [x] **Step 3: Create `src/value/scores.py`**
 
 ```python
 """Piotroski F-score, Altman Z and Beneish M (spec §6.4). Pure: no I/O.
@@ -4212,13 +4212,13 @@ def beneish_m(years: list[Year]) -> Score:
     return Score(m, parts, missing)
 ```
 
-- [ ] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_scores.py` →
+- [x] **Step 4: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_scores.py` →
   7 passed.
 
-- [ ] **Step 5: Gates** — `ruff check`, `ruff format --check` and `mypy` on `src/value/scores.py
+- [x] **Step 5: Gates** — `ruff check`, `ruff format --check` and `mypy` on `src/value/scores.py
   tests/test_value_scores.py` (mypy on the `src` path).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/scores.py tests/test_value_scores.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
