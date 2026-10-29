@@ -1,13 +1,15 @@
 # The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md).
 #
-# Copy to config/value.yaml (git-ignored) to tune it. Part 1 builds the scorecard only: nothing
-# here can place, size or gate an order.
+# Copy to config/value.yaml (git-ignored) to tune it. Parts 1-2 build the scorecard and the shadow
+# record only: nothing here can place, size or gate an order.
 #
 # Everything under `rules:` can change a verdict, so it is hashed into the ruleset fingerprint
-# (src/value/ruleset.py). Once `ruleset_version` is frozen (v1, after the calibration dry run,
-# spec §17), changing any rule is a version bump with a written reason, at most quarterly.
+# (src/value/ruleset.py). Once `ruleset_version` is frozen, changing any rule is a version bump
+# with a written reason, at most quarterly. v1 (2026-10-29) froze the entry rules after the
+# calibration dry run; v2 (Part 2) adds `rules.exits` before the shadow ledger's first row and
+# changes no entry rule.
 
-ruleset_version: v1
+ruleset_version: v2
 db_url: sqlite:///data/value.db
 
 universe:
@@ -27,8 +29,14 @@ ticker_file:
   fair_value_change_pct: 1.0 # ... or fair value moves by more than 1%
 
 research_sweep:
-  enabled: false             # the research worker's nightly enqueue (Part 2 turns it on)
+  enabled: true              # the research worker's nightly enqueue of filings and daily bars
   hour_et: 2
+
+service:                     # scripts/run_value.py: no IBKR connection, no clientId
+  run_hour_et: 6             # score once the 02:00 sweep has drained (ET)
+  poll_seconds: 600          # how often the process checks whether a new session has closed
+  market_facts_workers: 4    # parallel yfinance reads (market cap, next earnings)
+  min_filings_coverage_pct: 90.0  # no night until the sweep has filings for 90% of the names
 
 rules:
   data_quality:              # spec §6.3: a failure is UNKNOWN, never FAIL
@@ -146,3 +154,19 @@ rules:
     rs_bottom_pct: 30.0
     low_lookback_sessions: 63
     new_low_window_sessions: 5
+
+  exits:                     # spec §7: three policies shadowed side by side; percent where a %
+    live_policy: value       # pre-registered (revision 3); full and hold12 are diagnostics only
+    initial_stop_atr: 3.0    # full: average cost - 3 x ATR(14) ...
+    initial_stop_max_pct: 15.0   # ... never wider than 15% below it
+    arm_at_pct: 50.0         # full: the trail arms at entry + 50% of the way to fair value
+    trail_atr: 3.0           # full: highest close - 3 x ATR(14), never below the average cost
+    trail_atr_after_half: 2.0    # ... 2 x ATR(14) once half is sold
+    half_sell_pct: 50.0      # full and value: sold at the first close at or above fair value
+    peak_rsi_high: 75.0      # full: RSI(14) above 75 while armed ...
+    peak_rsi_cross: 70.0     # ... then back below 70 sells the rest
+    thesis_piotroski_max: 3  # every policy: F-score <= 3 is a thesis exit
+    thesis_altman_z_below: 1.8   # ... Altman Z below 1.8 (distress)
+    thesis_fv_below_price_pct: 90.0  # ... fair value below 90% of the price, under the 50-day SMA
+    catastrophe_stop_pct: 30.0   # value and hold12: a close 30% below the average cost
+    hold12_sessions: 252

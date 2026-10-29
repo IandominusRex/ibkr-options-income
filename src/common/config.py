@@ -1569,6 +1569,37 @@ class ValueTimingCfg(_ValueModel):
     new_low_window_sessions: int = 5
 
 
+class ValueExitsCfg(_ValueModel):
+    """Spec §7: the exit engine's three policies. Under ``rules:``, so every key is in the
+    ruleset fingerprint: changing an exit, or the live policy, is a version bump (spec §7)."""
+
+    live_policy: Literal["full", "value", "hold12"] = "value"  # pre-registered (revision 3)
+    initial_stop_atr: float = 3.0  # full: average cost - 3 x ATR(14) ...
+    initial_stop_max_pct: float = 15.0  # ... never wider than 15% below it
+    arm_at_pct: float = 50.0  # full: arm the trail at entry + 50% of the way to fair value
+    trail_atr: float = 3.0  # full: highest close since entry - 3 x ATR(14), never below cost
+    trail_atr_after_half: float = 2.0  # ... tightened to 2 x ATR(14) once half is sold
+    half_sell_pct: float = 50.0  # full and value: the share sold at the first close >= fair value
+    peak_rsi_high: float = 75.0  # full: RSI(14) above this while armed ...
+    peak_rsi_cross: float = 70.0  # ... then back below this sells the rest
+    thesis_piotroski_max: int = 3  # every policy: F-score at or below this is a thesis exit
+    thesis_altman_z_below: float = 1.8  # ... Altman Z below this (distress)
+    thesis_fv_below_price_pct: float = 90.0  # ... fair value below 90% of the price, under SMA50
+    catastrophe_stop_pct: float = 30.0  # value and hold12: close 30% below the average cost
+    hold12_sessions: int = 252
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueExitsCfg:
+        for name in ("initial_stop_max_pct", "arm_at_pct", "half_sell_pct"):
+            if not 0.0 < getattr(self, name) <= 100.0:
+                raise ValueError(f"value exits.{name} must be in (0, 100]")
+        if not 0.0 < self.catastrophe_stop_pct < 100.0:
+            raise ValueError("value exits.catastrophe_stop_pct must be in (0, 100)")
+        if self.peak_rsi_cross >= self.peak_rsi_high:
+            raise ValueError("value exits.peak_rsi_cross must be below peak_rsi_high")
+        return self
+
+
 class ValueRulesCfg(_ValueModel):
     """Every key that can change a verdict. Hashed into the ruleset fingerprint (spec §6.8)."""
 
@@ -1580,6 +1611,7 @@ class ValueRulesCfg(_ValueModel):
     quality_growth: ValueGrowthListCfg = Field(default_factory=ValueGrowthListCfg)
     margin_of_safety: ValueMarginCfg = Field(default_factory=ValueMarginCfg)
     timing: ValueTimingCfg = Field(default_factory=ValueTimingCfg)
+    exits: ValueExitsCfg = Field(default_factory=ValueExitsCfg)
 
 
 class ValueUniverseCfg(_ValueModel):
@@ -1604,18 +1636,39 @@ class ValueTickerFileCfg(_ValueModel):
 class ValueResearchSweepCfg(_ValueModel):
     """The research worker's nightly enqueue of every value name's filings and bars."""
 
-    enabled: bool = False
+    enabled: bool = True
     hour_et: int = 2
 
 
-class ValueCfg(_ValueModel):
-    """The value book (config/value.yaml). Part 1: the scorecard, nothing that trades."""
+class ValueServiceCfg(_ValueModel):
+    """The value process (``scripts/run_value.py``, Part 2): no IBKR connection, no clientId."""
 
-    ruleset_version: str = "v1"
+    run_hour_et: int = 6  # score once the research worker's 02:00 sweep has drained
+    poll_seconds: int = 600  # how often the process checks whether a new session has closed
+    market_facts_workers: int = 4  # parallel yfinance reads for market cap and earnings
+    min_filings_coverage_pct: float = 90.0  # wait until the sweep has filed this share of names
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueServiceCfg:
+        if not 0 <= self.run_hour_et <= 23:
+            raise ValueError("value service.run_hour_et must be 0-23")
+        if not 0.0 <= self.min_filings_coverage_pct <= 100.0:
+            raise ValueError("value service.min_filings_coverage_pct must be 0-100")
+        if self.poll_seconds < 30 or self.market_facts_workers < 1:
+            raise ValueError("value service.poll_seconds >= 30 and market_facts_workers >= 1")
+        return self
+
+
+class ValueCfg(_ValueModel):
+    """The value book (config/value.yaml). Parts 1-2: the scorecard and the shadow record,
+    nothing that trades."""
+
+    ruleset_version: str = "v2"
     db_url: str = "sqlite:///data/value.db"
     universe: ValueUniverseCfg = Field(default_factory=ValueUniverseCfg)
     ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)
     research_sweep: ValueResearchSweepCfg = Field(default_factory=ValueResearchSweepCfg)
+    service: ValueServiceCfg = Field(default_factory=ValueServiceCfg)
     rules: ValueRulesCfg = Field(default_factory=ValueRulesCfg)
 
 

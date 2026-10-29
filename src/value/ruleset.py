@@ -13,7 +13,9 @@ from src.common.config import ValueCfg, ValueRulesCfg
 
 # value_rules v1, frozen 2026-10-29 by the operator after the calibration dry run (Part 1,
 # Task 16). A rule change is a new version with a written reason, at most quarterly (spec §6.8).
-FROZEN: dict[str, str] = {"v1": "e1a1b3b096b1"}
+# v2 (Part 2): v1's entry rules unchanged, plus `rules.exits` (spec §7), frozen before the shadow
+# ledger's first row so every shadow entry carries the exit rules it was simulated under.
+FROZEN: dict[str, str] = {"v1": "e1a1b3b096b1", "v2": "d07717fe5348"}
 
 
 def ruleset_hash(rules: ValueRulesCfg) -> str:

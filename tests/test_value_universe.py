@@ -200,6 +200,7 @@ def test_the_scheduler_adds_the_sweep_only_when_enabled(monkeypatch) -> None:
     from src.common.config import get_config
     from src.research.ingest.jobs import build_scheduler
 
-    assert "value_sweep" not in {j.id for j in build_scheduler().get_jobs()}
-    monkeypatch.setattr(get_config().value.research_sweep, "enabled", True)
+    assert get_config().value.research_sweep.enabled  # on since Part 2
     assert "value_sweep" in {j.id for j in build_scheduler().get_jobs()}
+    monkeypatch.setattr(get_config().value.research_sweep, "enabled", False)
+    assert "value_sweep" not in {j.id for j in build_scheduler().get_jobs()}
