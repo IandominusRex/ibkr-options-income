@@ -104,8 +104,8 @@ is the executing agent's own model name.
 | 3 The nightly sweep keeps every bar fresh, SPY's too | done | `53037fc` | task tests 34 passed (`test_value_universe.py` 12 + research worker/materialize + dry run); section exit full gate: pytest 5158 passed, 1 skipped (= baseline 5150 + 8); ruff clean; mypy 314 files clean; `py_compile scripts/value_dry_run.py` silent; protected-file diff empty; `BARS_MAX_AGE_DAYS` has no remaining reference | 2026-10-30 | No deviation. Section A: 3 task commits (`8334bcb`, `4330f34`, `53037fc`) + this docs(plan) commit; commit count on `main..HEAD` recorded in the report. Heads-up: the existing `test_the_sweep_queues_only_what_each_name_lacks` still passes unchanged. *Cost if wrong: the staleness rule is one constant/function.* |
 | **B entry checks** | pass | 4 commits on `feat/value-book-2` (HEAD `ea3066b`) | pytest 5158 passed, 1 skipped (baseline 5150 + 8); ruff, mypy clean; FROZEN = v1 `e1a1b3b096b1`, v2 `d07717fe5348`; B3/B4 greps match | 2026-10-30 | section exit target = 5150 + 8 + 47 = 5205 passed, 1 skipped |
 | 4 The exit engine | done | `972e4ee` | task tests 24 passed (`test_value_exits.py`) + `test_value_fence.py` 10 passed; ruff check/format and mypy clean on `src/value/exits.py` | 2026-10-30 | No deviation: test file written verbatim, seen failing (`No module named 'src.value.exits'`), then the plan's engine verbatim. The orchestrator's B-entry row rode in this commit. *Cost if wrong: each exit rule is one branch in `step`/`_full`, all pinned by the tests.* |
-| 5 The ranked arithmetic and the filed list (M5) | | | | | |
-| 6 The shadow tables and the shadow record | | | | | |
+| 5 The ranked arithmetic and the filed list (M5) | done | `c10ba05` | task tests 21 passed (`test_value_ranked.py` 3, `test_value_rank.py` 5, `test_value_dry_run.py` 3, `test_value_fence.py` 10); ruff check/format and mypy clean on the touched files | 2026-10-30 | No deviation. Seen failing first (`No module named 'src.value.ranked'`; M5 test alone: `assert 'ETF' not in {...}`). The dry run still passes unchanged after M5. *Cost if wrong: M5 is one guard in `filed_lists`.* |
+| 6 The shadow tables and the shadow record | done | the Task 6 commit (see `git log`) | task tests 29 passed (`test_value_shadow.py` 12, `test_value_store.py`, `test_value_fence.py` 10); `ruff check src/value`, ruff format and `mypy src/value` (17 files) clean; section exit full gate in the Section B report | 2026-10-30 | No deviation: tests verbatim (seen failing on import of `src.value.shadow`), tables, `report.py` stub and `shadow.py` as the plan gave them. *Cost if wrong: the record's rules are the plan's rulings 10-13, each one function in `shadow.py`.* |
 | **C entry checks** | | | | | |
 | 7 The nightly run | | | | | |
 | 8 The entrypoint, its feed and the supervisor | | | | | |
@@ -1995,7 +1995,7 @@ diff --git a/src/value/rank.py b/src/value/rank.py
   `process(vs, rs, cards, *, tags, atr, evidence, as_of, cfg, version, digest, now) ->
   ShadowSummary`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_shadow.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_value_shadow.py`:
 
 ```python
 """The shadow record (value book spec §6.8, §7, §12): READY entries at the next open, control
@@ -2316,12 +2316,12 @@ def test_process_runs_a_night_in_order(value_db, research) -> None:
     assert out.events == 0  # the entry session's close is read; nothing fires
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_shadow.py`
   Expected: collection error, `ImportError: cannot import name 'ValueRankedRow'`.
 
-- [ ] **Step 3: The tables** — apply to `src/value/store.py` (the existing three tables are
+- [x] **Step 3: The tables** — apply to `src/value/store.py` (the existing three tables are
   untouched; `init_value_db` creates the new ones on the live `value.db` at the first start):
 
 ```diff
@@ -2469,7 +2469,7 @@ diff --git a/src/value/store.py b/src/value/store.py
  _SessionLocal: sessionmaker[Session] | None = None
 ```
 
-- [ ] **Step 4: The `report.py` stub** so `HORIZONS` has one home — create `src/value/report.py`
+- [x] **Step 4: The `report.py` stub** so `HORIZONS` has one home — create `src/value/report.py`
   with exactly:
 
   ```python
@@ -2478,7 +2478,7 @@ diff --git a/src/value/store.py b/src/value/store.py
   HORIZONS = (21, 63, 126)  # sessions after the entry session (spec §6.8, §12)
   ```
 
-- [ ] **Step 5: The record** — `src/value/shadow.py`:
+- [x] **Step 5: The record** — `src/value/shadow.py`:
 
 ```python
 """The shadow record (spec §6.8, §7, §12): hypothetical entries, the exit engine's three policies,
@@ -2966,13 +2966,13 @@ def process(
     return out
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_shadow.py tests/test_value_store.py tests/test_value_fence.py`
   Expected: PASS (`test_value_shadow.py` 12). Ruff check/format and `.venv/bin/mypy src/value`
   clean.
 
-- [ ] **Step 7: Commit, then the section's Progress-log commit**
+- [x] **Step 7: Commit, then the section's Progress-log commit**
 
   ```bash
   git add src/value/store.py src/value/shadow.py src/value/report.py tests/test_value_shadow.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
