@@ -98,7 +98,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 9 Timing and the scorecard | done | e5af279 | test_value_scorecard.py 24 passed; all tests/test_value_*.py 107 passed. **Section B exit gate:** pytest 5111 passed + 1 skipped (baseline 4996 + 115), ruff check . clean, mypy src clean (310 files); protected-file diff empty | 2026-10-29 | Ruling: code extracted verbatim; no red run observed, every pinned number matched first time. Ruling: the section prompt's 'baseline-plus-115 = 5034 + 115 = 5149' double-counted Section A; the 115 new tests (8+7+28+10+24 = 77 in B, plus A's 38) are relative to the 4996 baseline, so the exit count is 5111 (5034 + 77). Branch is 5 (A) + 5 task commits + 1 docs commit = 11 ahead of main. Cost if wrong: none |
 | **C entry checks** | done | (none) | C1–C4 pass; Section B exit re-verified by the orchestrator: 11 commits ahead of main, pytest 5111 passed + 1 skipped, ruff clean, mypy clean (310 files), protected-file diff empty, 77 new Section B tests | 2026-10-29 | Ruling: C3's grep matches the word "yfinance" in a `detail=` string (gates.py:128, :140) and a comment (timing.py:35) — no import, no I/O, so the scorecard is still pure. Ruling: counts shift by Section A/B's extra `docs(plan)` commits — C1's "prints 9" is 11, C's exit "14 in all" is 17 (5 task commits + 1 final `docs(plan)`), and C's pytest target is baseline 4996 + 141 = 5137. The C entry row rides Task 10's commit. Cost if wrong: none |
 | 10 Rank score and the relative-strength line | done | f73a288 | test_value_rank.py 5 passed; ruff check/format clean; mypy src/value/rank.py clean | 2026-10-29 | Ruling: code and tests extracted verbatim from the plan and run together, so no red run was observed (5 green at once, pinned numbers matched). Cost if wrong: none |
-| 11 `value.db` and the ticker file | pending | | | | |
+| 11 `value.db` and the ticker file | done | 0c98576 | test_value_store.py 6 passed; ruff check/format clean; mypy src/value clean (12 files) | 2026-10-29 | Ruling: code and tests extracted verbatim and run together; no red run observed (6 green at once, the pinned fair value 46.853626592284414 matched). Cost if wrong: none |
 | 12 Funnel and fences | pending | | | | |
 | 13 The dry-run script | pending | | | | |
 | 14 Docs | pending | | | | |
@@ -6379,7 +6379,7 @@ def rs_cutoff(prices: list[PriceSeries | None], bottom_pct: float) -> float | No
   universe, ranks, filed, cfg, session_row) -> WriteResult`; `is_fresh(stored, current) -> bool`;
   `stored_fingerprint(session, symbol) -> Fingerprint | None`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_store.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_store.py`
 
 ```python
 """value.db and the ticker file: latest row, history on change, one session row, freshness
@@ -6490,10 +6490,10 @@ def test_freshness_is_fingerprint_equality(value_db) -> None:
     assert not is_fresh(None, card.fingerprint)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.store'`.
 
-- [ ] **Step 3: Create `src/value/store.py`**
+- [x] **Step 3: Create `src/value/store.py`**
 
 ```python
 """The value book's own SQLite database (``data/value.db``), spec §6.9 and §9.7.
@@ -6641,7 +6641,7 @@ def value_session() -> Iterator[Session]:
         s.close()
 ```
 
-- [ ] **Step 4: Create `src/value/ticker_file.py`**
+- [x] **Step 4: Create `src/value/ticker_file.py`**
 
 ```python
 """The ticker file (spec §6.9): every name ever scored keeps Part 1, fresh on search.
@@ -6827,12 +6827,12 @@ def stored_fingerprint(session: Session, symbol: str) -> Fingerprint | None:
     return None if row is None else Fingerprint.model_validate_json(row.fingerprint_json)
 ```
 
-- [ ] **Step 5: Run the tests** — 6 passed.
+- [x] **Step 5: Run the tests** — 6 passed.
 
-- [ ] **Step 6: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/store.py
+- [x] **Step 6: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/store.py
   src/value/ticker_file.py tests/test_value_store.py`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add src/value/store.py src/value/ticker_file.py tests/test_value_store.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
