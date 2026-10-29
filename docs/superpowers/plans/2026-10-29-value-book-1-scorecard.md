@@ -90,7 +90,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 2 Point in time: `as_of`, `select_ttm`, the concept map | done | 6f5ea05 | periods+concepts+units+materialize 45 passed (periods 17, concepts 11 as the plan expected); ruff check/format clean; mypy src/research clean (31 files) | 2026-10-29 | Ruling: the source edits (`select_periods(as_of)`, `select_ttm`, `TtmValue`) were applied before the new tests were first run, so only the concept-map test was observed red (the yaml came last); the periods tests were green on first run. Cost if wrong: none (the tests pin both as_of directions and TTM bases) |
 | 3 Value inputs: types and the read-only loader | done | c463698 | `tests/test_value_inputs.py` 11 passed; ruff check/format clean; mypy clean (2 files) | 2026-10-29 | Ruling: tests and code were written together and first run together (11 green at once), so no red run was observed; the tests carry the plan's pinned numbers verbatim. Cost if wrong: none |
 | 4 Universes, snapshots, the research worker's jobs | done | dfb76b6 | `test_value_universe.py` 10 + `test_research_materialize.py` + `test_research_worker.py` = 29 passed; ruff check/format clean; mypy clean (33 files). Snapshot run printed `S&P 500: 503 rows; S&P 100: 101 rows; as of 2026-10-29`. **Section A exit gate:** pytest 5034 passed + 1 skipped (baseline 4996 + 38), ruff check . clean, mypy src clean (303 files); protected-file diff empty | 2026-10-29 | Ruling: tests and code written together, first full run green (no red run observed). Ruling: Tasks 3-4's plan checkboxes and Tasks 2-3's log rows ride the following task's commit as the plan says; Task 4's row and ticks are this final `docs(plan)` commit, so the branch is 4 task commits + 1 docs commit = 5 ahead of main (the plan's exit text says 4; the extra commit is the one the section prompt requires). Cost if wrong: none |
-| **B entry checks** | pending | (none) | | | |
+| **B entry checks** | done | (none) | B1–B4 pass; Section A exit re-verified by the orchestrator: pytest 5034 passed + 1 skipped, ruff clean, mypy clean (303 files), protected-file diff empty | 2026-10-29 | Ruling: Section A left 5 commits ahead of main (4 task commits + 1 `docs(plan)`), so B1's "prints 4" and B's exit "9 in all" become 5 and 11 (B adds 5 task commits + 1 final `docs(plan)` commit for Task 9's row; the B entry row rides Task 5's commit). Cost if wrong: none |
 | 5 Schemas, per-year metrics, test fixtures | pending | | | | |
 | 6 Piotroski, Altman, Beneish | pending | | | | |
 | 7 Classification, data quality, health gates | pending | | | | |
@@ -3226,7 +3226,7 @@ value block (Task 1), `src/research/ingest/concepts.py` (`load_concept_map` only
   yf_market_cap=None, next_earnings=AS_OF+60d, regime="normal", rs_cutoff_6m=-0.10)`.
   (`companyfacts()` is appended in Task 13.)
 
-- [ ] **Step 1: Create the fixtures** — `tests/value_fixtures.py` (a helper, not a test file):
+- [x] **Step 1: Create the fixtures** — `tests/value_fixtures.py` (a helper, not a test file):
 
 ```python
 """Synthetic companies for the value book's tests (Part 1). Values in $ millions, shares in
@@ -3430,7 +3430,7 @@ BANK: dict[str, list[float | None]] = {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests** — `tests/test_value_metrics.py`
+- [x] **Step 2: Write the failing tests** — `tests/test_value_metrics.py`
 
 ```python
 """src/value/metrics.py: per-year figures, split normalisation, series helpers (Part 1)."""
@@ -3521,12 +3521,12 @@ def test_roic_is_nopat_over_invested_capital() -> None:
     assert roic(years[0]) == pytest.approx(0.18575851393188855)
 ```
 
-- [ ] **Step 3: Run them to see them fail**
+- [x] **Step 3: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_metrics.py`
   Expected: `ModuleNotFoundError: No module named 'src.value.metrics'`.
 
-- [ ] **Step 4: Create `src/value/schemas.py`**
+- [x] **Step 4: Create `src/value/schemas.py`**
 
 ```python
 """The value book's output shapes (spec §6.7, §6.9). Pydantic only: the API may import this
@@ -3654,7 +3654,7 @@ class ValueScorecard(BaseModel):
         return ev.verdict if ev is not None else "NO"
 ```
 
-- [ ] **Step 5: Create `src/value/metrics.py`**
+- [x] **Step 5: Create `src/value/metrics.py`**
 
 ```python
 """Per-year figures derived from filed line items (spec §6.4-6.5). Pure: no I/O.
@@ -3933,10 +3933,10 @@ def roic(y: Year) -> float | None:
     return y.operating_income * (1.0 - rate) / invested
 ```
 
-- [ ] **Step 6: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_metrics.py` →
+- [x] **Step 6: Run the tests** — `.venv/bin/python -m pytest -q tests/test_value_metrics.py` →
   8 passed.
 
-- [ ] **Step 7: Gates**
+- [x] **Step 7: Gates**
 
   ```bash
   .venv/bin/ruff check src/value tests/value_fixtures.py tests/test_value_metrics.py
@@ -3944,7 +3944,7 @@ def roic(y: Year) -> float | None:
   .venv/bin/mypy src/value
   ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
   ```bash
   git add src/value/schemas.py src/value/metrics.py tests/value_fixtures.py tests/test_value_metrics.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
