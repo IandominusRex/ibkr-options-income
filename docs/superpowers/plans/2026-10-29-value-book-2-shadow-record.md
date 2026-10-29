@@ -100,7 +100,7 @@ is the executing agent's own model name.
 |---|---|---|---|---|---|
 | **A entry checks** | pass | 0 commits on `feat/value-book-2` (HEAD `23b1ef3`) | baseline pytest 5150 passed, 1 skipped; ruff clean; mypy 314 files clean; A3 greps all match plan line numbers; A4: hash `e1a1b3b096b1`, no Part 2 code | 2026-10-29 | disk 36 GiB free; value-book-1 worktree absent; section exit target = baseline 5150 + 8 = 5158 passed, 1 skipped |
 | 1 Ruleset v2: the exit rules, the service block, the sweep on | done | `8334bcb` | task tests 57 passed (`test_value_config.py` 14); ruff check/format and mypy clean; `ruleset_hash(ValueCfg().rules)` printed `d07717fe5348` as the plan says | 2026-10-30 | No deviation. Test edits were applied as the diffs gave them (the `test_v1_is_frozen` replacement, the dry-run `v2` assertion, the flipped scheduler test). Step 5's hash check was run before pinning `FROZEN["v2"]`. *Cost if wrong: none found (v2 pin is the plan's; reversing it is ruling 1's cost).* |
-| 2 Day bars and the readers the record needs | | | | | |
+| 2 Day bars and the readers the record needs | done | `4330f34` | task tests 26 passed (`test_value_inputs.py` 13, with `test_value_dry_run.py` and `test_value_fence.py`); ruff check/format and mypy clean on the touched files | 2026-10-30 | No deviation; tests seen failing first (`AttributeError ... build_day_bars`), then the plan's code applied verbatim. `read_bars` gains an `open` column (nullable, so `build_day_bars` yields `open=None` when a bar has none). *Cost if wrong: none found.* |
 | 3 The nightly sweep keeps every bar fresh, SPY's too | | | | | |
 | **B entry checks** | | | | | |
 | 4 The exit engine | | | | | |
@@ -867,7 +867,7 @@ diff --git a/src/value/ruleset.py b/src/value/ruleset.py
   `filings_coverage(session, symbols: list[str]) -> tuple[int, int]`;
   `symbol_is_etf(session, symbol: str) -> bool`.
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_inputs.py`:
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_inputs.py`:
 
 ```diff
 diff --git a/tests/test_value_inputs.py b/tests/test_value_inputs.py
@@ -916,13 +916,13 @@ diff --git a/tests/test_value_inputs.py b/tests/test_value_inputs.py
      monkeypatch.setattr(vi, "_resolve_path", lambda: str(tmp_path / "absent.db"))
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py`
   Expected: FAIL — `AttributeError: module 'src.common.value_inputs' has no attribute
   'build_day_bars'` (and `newest_bar_before`).
 
-- [ ] **Step 3: The shape** — apply to `src/common/value_types.py`:
+- [x] **Step 3: The shape** — apply to `src/common/value_types.py`:
 
 ```diff
 diff --git a/src/common/value_types.py b/src/common/value_types.py
@@ -948,7 +948,7 @@ diff --git a/src/common/value_types.py b/src/common/value_types.py
      sector: str | None = None
 ```
 
-- [ ] **Step 4: The readers** — apply to `src/common/value_inputs.py` (everything stays read-only
+- [x] **Step 4: The readers** — apply to `src/common/value_inputs.py` (everything stays read-only
   and imports no `src.value`; `build_day_bars` measures each technical on the whole history it is
   given, then returns only the sessions after `after`):
 
@@ -1071,13 +1071,13 @@ diff --git a/src/common/value_inputs.py b/src/common/value_inputs.py
      """The cheap half of the ticker-file fingerprint (spec §6.9): the newest accession in
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py tests/test_value_dry_run.py tests/test_value_fence.py`
   Expected: PASS (`test_value_inputs.py` 13). Then ruff check, ruff format --check and
   `.venv/bin/mypy src/common/value_inputs.py src/common/value_types.py` on the touched files — clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/common/value_types.py src/common/value_inputs.py tests/test_value_inputs.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md

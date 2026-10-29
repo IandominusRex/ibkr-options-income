@@ -24,7 +24,17 @@ log = logging.getLogger(__name__)
 
 MIN_BARS = 260
 FACTS_MAX_AGE = timedelta(days=1)
-BARS_MAX_AGE_DAYS = 4  # a long weekend is not stale
+# The value book's benchmark (spec §6.8): its bars are refreshed with the universe's, never its
+# filings (an ETF has none). SPY is the spreads book's underlying, so it is never in universe.yaml.
+BENCHMARKS = ("SPY",)
+
+
+def last_weekday_before(today: date) -> date:
+    """The newest weekday strictly before *today*: the session a nightly sweep must have."""
+    day = today - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
 
 
 def value_names() -> list[str]:
@@ -35,11 +45,22 @@ def value_names() -> list[str]:
 
 
 def enqueue_value_universe(
-    names: list[str] | None = None, *, today: date | None = None
+    names: list[str] | None = None,
+    *,
+    today: date | None = None,
+    bars_only: tuple[str, ...] | None = None,
 ) -> dict[str, int]:
-    """Queue what each name lacks. Returns counts: fundamentals, prices, no_cik."""
-    names = names if names is not None else value_names()
+    """Queue what each name lacks. Returns counts: fundamentals, prices, no_cik.
+
+    Bars are stale once the newest is older than the last weekday before *today* (the value
+    book marks its shadow record every session). The nightly call (no *names*) also refreshes
+    the benchmark's bars (*bars_only*, default ``BENCHMARKS``)."""
+    if names is None:
+        names = value_names()
+        bars_only = BENCHMARKS if bars_only is None else bars_only
+    extra = [s for s in (bars_only or ()) if s not in names]
     today = today or datetime.now(UTC).date()
+    due = last_weekday_before(today)
     now = datetime.now(UTC).replace(tzinfo=None)
     counts = {"fundamentals": 0, "prices": 0, "no_cik": 0}
     with research_session() as s:
@@ -52,7 +73,7 @@ def enqueue_value_universe(
             sym: (n, last)
             for sym, n, last in s.execute(
                 select(DailyBarRow.symbol, func.count(), func.max(DailyBarRow.date))
-                .where(DailyBarRow.symbol.in_(names))
+                .where(DailyBarRow.symbol.in_([*names, *extra]))
                 .group_by(DailyBarRow.symbol)
             )
         }
@@ -65,8 +86,9 @@ def enqueue_value_universe(
             if at is None or now - at.replace(tzinfo=None) > FACTS_MAX_AGE:
                 enqueue(symbol, "fundamentals")
                 counts["fundamentals"] += 1
+    for symbol in [*names, *extra]:
         n, last = bars.get(symbol, (0, None))
-        if n < MIN_BARS or last is None or (today - last).days > BARS_MAX_AGE_DAYS:
+        if n < MIN_BARS or last is None or last < due:
             enqueue(symbol, "prices")
             counts["prices"] += 1
     log.info("Value sweep queued %s for %d names", counts, len(names))

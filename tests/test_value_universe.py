@@ -204,3 +204,31 @@ def test_the_scheduler_adds_the_sweep_only_when_enabled(monkeypatch) -> None:
     assert "value_sweep" in {j.id for j in build_scheduler().get_jobs()}
     monkeypatch.setattr(get_config().value.research_sweep, "enabled", False)
     assert "value_sweep" not in {j.id for j in build_scheduler().get_jobs()}
+
+
+def test_bars_are_stale_once_they_miss_the_last_weekday() -> None:
+    from src.research.ingest.value_universe import last_weekday_before
+
+    assert last_weekday_before(date(2026, 11, 2)) == date(2026, 10, 30)  # Monday -> Friday
+    assert last_weekday_before(date(2026, 11, 4)) == date(2026, 11, 3)
+
+
+def test_the_nightly_sweep_refreshes_yesterdays_bars_and_spys(research_db, monkeypatch) -> None:
+    from src.research.ingest import value_universe as sweep
+    from src.research.store.models import DailyBarRow, IngestJobRow
+    from src.research.store.session import research_session
+
+    monday = date(2026, 11, 2)
+    with research_session() as s:
+        for symbol, last in (("FRESH", date(2026, 10, 30)), ("OLD", date(2026, 10, 29))):
+            for i in range(260):
+                s.add(DailyBarRow(symbol=symbol, date=last - timedelta(days=i), close=1.0))
+    monkeypatch.setattr(sweep, "value_names", lambda: ["FRESH", "OLD"])
+    assert sweep.enqueue_value_universe(today=monday) == {
+        "fundamentals": 0,
+        "prices": 2,
+        "no_cik": 2,
+    }
+    with research_session() as s:
+        jobs = sorted((j.symbol, j.kind) for j in s.query(IngestJobRow))
+    assert jobs == [("OLD", "prices"), ("SPY", "prices")]  # SPY's bars, never its filings
