@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from src.common.config import get_config
 from src.research.checks.payload import ChecksPayload, build_checks_payload
 from src.research.ingest.fundamentals import ingest_fundamentals, load_cached_financials
+from src.research.ingest.prices import ingest_daily_bars
 from src.research.schemas import NormalizedFinancials
 from src.research.store.models import IngestJobRow, QuoteRow, SymbolRow
 from src.research.store.session import research_session
@@ -406,6 +407,13 @@ def drain_ingest_jobs(max_jobs: int = 20) -> int:
         if kind == "fundamentals" and cik:
             try:
                 ingest_fundamentals(symbol, cik)
+            except Exception as exc:
+                error = str(exc)
+        elif kind == "prices":
+            # Daily bars for a name no warm tier covers (the value book's universes, spec §6.1).
+            try:
+                if ingest_daily_bars(symbol) == 0:
+                    error = f"No daily bars returned for {symbol}"
             except Exception as exc:
                 error = str(exc)
         else:

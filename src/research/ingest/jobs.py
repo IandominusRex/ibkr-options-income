@@ -18,6 +18,7 @@ from src.common.config import get_config
 from src.research.ingest.materialize import drain_ingest_jobs
 from src.research.ingest.quotes import refresh_quotes, refresh_warm_tier
 from src.research.ingest.symbols import refresh_symbol_directory
+from src.research.ingest.value_universe import enqueue_value_universe
 from src.research.store.models import WorkerHeartbeatRow
 from src.research.store.session import research_session
 
@@ -101,6 +102,15 @@ def build_scheduler() -> BackgroundScheduler:
         id="warm_refresh",
         replace_existing=True,
     )
+    sweep = get_config().value.research_sweep
+    if sweep.enabled:
+        # The value book's two universes (spec §6.1): companyfacts and bars for ~520 names.
+        sched.add_job(
+            lambda: run_job("value_sweep", enqueue_value_universe),
+            CronTrigger(hour=sweep.hour_et, minute=0),
+            id="value_sweep",
+            replace_existing=True,
+        )
     sched.add_job(
         lambda: run_job("quotes", refresh_quotes),
         IntervalTrigger(minutes=15),

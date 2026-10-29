@@ -88,7 +88,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | **A entry checks** | done | (none) | A0–A5 pass; baseline pytest 4996 passed + 1 skipped (4997 collected), ruff clean, mypy clean (297 files). A3 anchors all at the stated lines | 2026-10-29 | Ruling: pytest must run from the worktree root — run from the main checkout's cwd it shows 4 spurious failures (ledger wiring, openapi, web fence). Cost if wrong: none |
 | 1 Config, ruleset fingerprint, package | done | de09566 | `tests/test_value_config.py` 9 passed; with `test_private_config.py` + `test_spreads_config.py` 38 passed; ruff check/format clean, mypy clean (3 files) | 2026-10-29 | Ruling: the doc-update trigger table (new module, new config key) is deferred to Task 14 as the plan schedules it, not done per task. Cost if wrong: none (Task 14 sweeps ARCHITECTURE/SETUP/STATUS/CLAUDE) |
 | 2 Point in time: `as_of`, `select_ttm`, the concept map | done | 6f5ea05 | periods+concepts+units+materialize 45 passed (periods 17, concepts 11 as the plan expected); ruff check/format clean; mypy src/research clean (31 files) | 2026-10-29 | Ruling: the source edits (`select_periods(as_of)`, `select_ttm`, `TtmValue`) were applied before the new tests were first run, so only the concept-map test was observed red (the yaml came last); the periods tests were green on first run. Cost if wrong: none (the tests pin both as_of directions and TTM bases) |
-| 3 Value inputs: types and the read-only loader | pending | | | | |
+| 3 Value inputs: types and the read-only loader | done | c463698 | `tests/test_value_inputs.py` 11 passed; ruff check/format clean; mypy clean (2 files) | 2026-10-29 | Ruling: tests and code were written together and first run together (11 green at once), so no red run was observed; the tests carry the plan's pinned numbers verbatim. Cost if wrong: none |
 | 4 Universes, snapshots, the research worker's jobs | pending | | | | |
 | **B entry checks** | pending | (none) | | | |
 | 5 Schemas, per-year metrics, test fixtures | pending | | | | |
@@ -1715,7 +1715,7 @@ def select_ttm(facts: list[Fact], *, as_of: date | None = None) -> TtmValue | No
   close, volume`); `current_fingerprint_parts(session, symbol) -> dict`; `load_regime() -> str`;
   `fetch_market_facts(symbol) -> MarketFacts`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_inputs.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_inputs.py`
 
 ```python
 """src/common/value_inputs.py: the neutral, read-only loader (value book spec §6.9)."""
@@ -2023,12 +2023,12 @@ def test_the_regime_is_spys_effective_regime_or_unknown(monkeypatch) -> None:
     assert vi.load_regime() == "unknown"
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py`
   Expected: `ModuleNotFoundError: No module named 'src.common.value_inputs'`.
 
-- [ ] **Step 3: Create `src/common/value_types.py`**
+- [x] **Step 3: Create `src/common/value_types.py`**
 
 ```python
 """Plain input shapes for the value book's scorecard.
@@ -2132,7 +2132,7 @@ class ValueInputs(BaseModel):
     rs_cutoff_6m: float | None = None  # the run's 30th percentile of 6-month excess return
 ```
 
-- [ ] **Step 4: Create `src/common/value_inputs.py`**
+- [x] **Step 4: Create `src/common/value_inputs.py`**
 
 ```python
 """The value book's input loader: one neutral, read-only module (spec §6.9, revision 3).
@@ -2465,12 +2465,12 @@ def fetch_market_facts(symbol: str) -> MarketFacts:
     )
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py`
   Expected: 11 passed.
 
-- [ ] **Step 6: Gates**
+- [x] **Step 6: Gates**
 
   ```bash
   .venv/bin/ruff check src/common/value_types.py src/common/value_inputs.py tests/test_value_inputs.py
@@ -2478,7 +2478,7 @@ def fetch_market_facts(symbol: str) -> MarketFacts:
   .venv/bin/mypy src/common/value_types.py src/common/value_inputs.py
   ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add src/common/value_types.py src/common/value_inputs.py tests/test_value_inputs.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md

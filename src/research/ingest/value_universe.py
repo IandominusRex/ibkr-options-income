@@ -1,0 +1,70 @@
+"""The research worker's nightly sweep for the value book (spec §6.1, §6.9).
+
+The research worker owns every SEC and price fetch; the value process only reads research.db.
+This queues a ``fundamentals`` job (companyfacts, ETag-reused) for every name whose raw payload
+is missing or older than a day, and a ``prices`` job for every name whose daily bars are short
+or stale, across both value universes. ``drain_ingest_jobs`` runs them at its own pace (EDGAR is
+rate-limited to 10 requests a second in ``EdgarClient``).
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import func, select
+
+from src.common.config import get_config
+from src.common.value_universe import build_value_universe
+from src.research.ingest.materialize import enqueue
+from src.research.store.models import CompanyFactsRawRow, DailyBarRow, SymbolRow
+from src.research.store.session import research_session
+
+log = logging.getLogger(__name__)
+
+MIN_BARS = 260
+FACTS_MAX_AGE = timedelta(days=1)
+BARS_MAX_AGE_DAYS = 4  # a long weekend is not stale
+
+
+def value_names() -> list[str]:
+    from src.common.universe import effective_universe
+
+    cfg = get_config()
+    return build_value_universe(cfg.value, effective_universe()).all_names()
+
+
+def enqueue_value_universe(
+    names: list[str] | None = None, *, today: date | None = None
+) -> dict[str, int]:
+    """Queue what each name lacks. Returns counts: fundamentals, prices, no_cik."""
+    names = names if names is not None else value_names()
+    today = today or datetime.now(UTC).date()
+    now = datetime.now(UTC).replace(tzinfo=None)
+    counts = {"fundamentals": 0, "prices": 0, "no_cik": 0}
+    with research_session() as s:
+        ciks = {r.symbol: r.cik for r in s.query(SymbolRow).filter(SymbolRow.symbol.in_(names))}
+        fetched = {r.cik: r.fetched_at for r in s.query(CompanyFactsRawRow)}
+        bars = {
+            sym: (n, last)
+            for sym, n, last in s.execute(
+                select(DailyBarRow.symbol, func.count(), func.max(DailyBarRow.date))
+                .where(DailyBarRow.symbol.in_(names))
+                .group_by(DailyBarRow.symbol)
+            )
+        }
+    for symbol in names:
+        cik = ciks.get(symbol)
+        if not cik:
+            counts["no_cik"] += 1
+        else:
+            at = fetched.get(cik)
+            if at is None or now - at.replace(tzinfo=None) > FACTS_MAX_AGE:
+                enqueue(symbol, "fundamentals")
+                counts["fundamentals"] += 1
+        n, last = bars.get(symbol, (0, None))
+        if n < MIN_BARS or last is None or (today - last).days > BARS_MAX_AGE_DAYS:
+            enqueue(symbol, "prices")
+            counts["prices"] += 1
+    log.info("Value sweep queued %s for %d names", counts, len(names))
+    return counts
