@@ -87,7 +87,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 |---|---|---|---|---|---|
 | **A entry checks** | done | (none) | A0–A5 pass; baseline pytest 4996 passed + 1 skipped (4997 collected), ruff clean, mypy clean (297 files). A3 anchors all at the stated lines | 2026-10-29 | Ruling: pytest must run from the worktree root — run from the main checkout's cwd it shows 4 spurious failures (ledger wiring, openapi, web fence). Cost if wrong: none |
 | 1 Config, ruleset fingerprint, package | done | de09566 | `tests/test_value_config.py` 9 passed; with `test_private_config.py` + `test_spreads_config.py` 38 passed; ruff check/format clean, mypy clean (3 files) | 2026-10-29 | Ruling: the doc-update trigger table (new module, new config key) is deferred to Task 14 as the plan schedules it, not done per task. Cost if wrong: none (Task 14 sweeps ARCHITECTURE/SETUP/STATUS/CLAUDE) |
-| 2 Point in time: `as_of`, `select_ttm`, the concept map | pending | | | | |
+| 2 Point in time: `as_of`, `select_ttm`, the concept map | done | 6f5ea05 | periods+concepts+units+materialize 45 passed (periods 17, concepts 11 as the plan expected); ruff check/format clean; mypy src/research clean (31 files) | 2026-10-29 | Ruling: the source edits (`select_periods(as_of)`, `select_ttm`, `TtmValue`) were applied before the new tests were first run, so only the concept-map test was observed red (the yaml came last); the periods tests were green on first run. Cost if wrong: none (the tests pin both as_of directions and TTM bases) |
 | 3 Value inputs: types and the read-only loader | pending | | | | |
 | 4 Universes, snapshots, the research worker's jobs | pending | | | | |
 | **B entry checks** | pending | (none) | | | |
@@ -1159,7 +1159,7 @@ def ruleset_id(cfg: ValueCfg) -> tuple[str, str]:
   `TtmValue(value: float, end: date, basis: Literal["ytd","fy"], accn: str, filed: date)` in
   `src/research/schemas.py`; 23 new line items (names in the test below).
 
-- [ ] **Step 1: Write the failing tests.** In `tests/test_research_periods.py`, line 7 becomes
+- [x] **Step 1: Write the failing tests.** In `tests/test_research_periods.py`, line 7 becomes
   `from src.research.ingest.concepts import select_periods, select_ttm`, and append:
 
 ```python
@@ -1346,12 +1346,12 @@ def test_the_concept_map_carries_the_value_books_line_items() -> None:
     assert m["cet1_ratio"].units == ["pure"]
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_periods.py tests/test_research_concepts.py`
   Expected: collection error, `ImportError: cannot import name 'select_ttm'`.
 
-- [ ] **Step 3: Add `TtmValue` to `src/research/schemas.py`.** After line 6 (`from datetime import
+- [x] **Step 3: Add `TtmValue` to `src/research/schemas.py`.** After line 6 (`from datetime import
   date`) add `from typing import Literal`; insert before `class LineItemValue(BaseModel):` (line 34):
 
 ```python
@@ -1367,7 +1367,7 @@ class TtmValue:
     filed: date
 ```
 
-- [ ] **Step 4: Edit `src/research/ingest/concepts.py`.** Line 13 becomes `from datetime import
+- [x] **Step 4: Edit `src/research/ingest/concepts.py`.** Line 13 becomes `from datetime import
   date, datetime, timedelta`; line 19 becomes `from src.research.schemas import Fact, TtmValue`;
   replace everything from line 119 (`def select_periods(`) up to, not including, line 158
   (`SUPPORTED_UNITS = …`) with the block below, followed by two blank lines:
@@ -1473,7 +1473,7 @@ def select_ttm(facts: list[Fact], *, as_of: date | None = None) -> TtmValue | No
     )
 ```
 
-- [ ] **Step 5: Map the value line items.** The file ends without a newline after
+- [x] **Step 5: Map the value line items.** The file ends without a newline after
   `      - PaymentsOfDividends`. Append a newline and one blank line, then this block (it ends
   with a newline):
 
@@ -1671,12 +1671,12 @@ def select_ttm(facts: list[Fact], *, as_of: date | None = None) -> TtmValue | No
       - CommonStockSharesOutstanding
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_periods.py tests/test_research_concepts.py tests/test_research_units.py tests/test_research_materialize.py`
   Expected: all pass (periods 17, concepts 11).
 
-- [ ] **Step 7: Gates**
+- [x] **Step 7: Gates**
 
   ```bash
   .venv/bin/ruff check src/research tests/test_research_periods.py tests/test_research_concepts.py
@@ -1684,7 +1684,7 @@ def select_ttm(facts: list[Fact], *, as_of: date | None = None) -> TtmValue | No
   .venv/bin/mypy src/research
   ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
   ```bash
   git add src/research/schemas.py src/research/ingest/concepts.py config/research_concepts.yaml tests/test_research_periods.py tests/test_research_concepts.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
