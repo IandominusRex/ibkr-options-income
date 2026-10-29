@@ -343,9 +343,30 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
-| **Value book Parts 2–6** | The value process and shadow record, re-evaluation and Stage 1b, Claude as the analyst, Stage 3 money (paper), web and Telegram — the roadmap in the Part 1 plan; each part is planned after the previous one merges. |
+| **Value book Parts 3–6** | Re-evaluation, shock stops, the corporate-action rebase and Stage 1b; Claude as the analyst (and the Claude track of the shadow record); Stage 3 money (paper); web and Telegram (with the follow window's `last_viewed_at`, digests, review cards and a watchdog check) — the roadmap in the Part 2 plan; each part is planned after the previous one merges. |
 
 ---
+
+## Built (2026-10-29 — value book Part 2: the value process and the shadow record)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md`. Deterministic only: no
+order, no Claude, no Telegram, no web, no IBKR connection.
+
+- `scripts/run_value.py` (`value_service`, supervised, `--no-value`), `scripts/value_feed.py`,
+  `src/value/service.py`: one transaction a night once a session has settled.
+- The shadow record (`src/value/shadow.py`, `exits.py`, `ranked.py`; four `value.db` tables):
+  baseline READY entries and control groups, the three exit policies, 21/63/126-session returns
+  against SPY, the ranked monthly record. `scripts/value_report.py` with postmortems.
+- `value_rules: v2` = v1's entry rules + `rules.exits`, frozen at `d07717fe5348`; `research_sweep`
+  on, now refreshing every name's bars and SPY's nightly. M5 fixed (unscored names are filed on no
+  list); M1–M4, M6–M8 still deferred (plan rulings 2 and 4).
+- Known limitations: the baseline track only (Claude's is Part 4); no shock stops, re-evaluations or
+  going-concern exit (Part 3); a split during a holding freezes the entry as `rebase_needed` until
+  Part 3's rebase; missed sessions are not back-filled (the next night scores the newest one; the
+  exit legs still step every bar); controls carry fixed-horizon returns only; the ranked record forms
+  on the first run of each month and its first period is partial; returns use yfinance bars with
+  their survivorship bias; nothing sets `last_viewed_at` until Part 6, so no name is followed yet;
+  the v1 fraction-valued keys stay fractions (M6).
 
 ## Built (2026-10-29 — value book Part 1: the scorecard and the calibration dry run)
 

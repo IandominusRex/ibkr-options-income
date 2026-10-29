@@ -111,7 +111,7 @@ is the executing agent's own model name.
 | 8 The entrypoint, its feed and the supervisor | done | `da69f89` | task tests 44 passed (`test_value_feed.py` 4, `test_start_launcher.py`, `test_watchdog.py`); `py_compile scripts/run_value.py scripts/value_feed.py` silent; `bash -n ibkr` silent; ruff check/format on the five Python files and `mypy scripts/value_feed.py scripts/run_value.py` clean | 2026-10-30 | No deviation: tests seen failing first (`cannot import name 'value_feed' from 'scripts'`), then feed, entrypoint, `scripts/start.py` and `ibkr` edits as the plan gave them. The one launcher test was appended with a shell append rather than the Edit tool (the contents are the plan's). *Cost if wrong: the supervisor entry and the flag are three lines each.* |
 | 9 The fences | done | `0ac7fd8` | fence suites 73 passed (`test_value_fence.py` 13 + spreads, news, regime, web, eval_skills). **Section C exit full gate: pytest 5212 passed, 1 skipped (= 5150 baseline + 62); ruff clean; mypy 319 files clean; `py_compile scripts/run_value.py scripts/value_feed.py` silent; `bash -n ibkr` silent; protected-file diff empty; 12 commits on `main..HEAD` after this docs commit** | 2026-10-30 | No deviation. The new tests passed at once; red runs recorded: with `import src.engine.risk_engine` added to `src/value/exits.py`, 3 tests failed (`test_value_imports_no_enrichment_and_no_other_system`, `test_the_value_scorecard_loads_no_wheel_layer_even_transitively`, `test_the_value_process_loads_no_wheel_layer_and_no_ibkr`); with `import os` added to `scripts/run_value.py`, `test_the_value_entrypoint_imports_only_its_feed_and_the_service` failed (4 failed, 9 passed in all); both probes removed, worktree clean. *Cost if wrong: the allowlist is one tuple.* |
 | **D entry checks** | pass | 12 commits on `feat/value-book-2` (HEAD `3811ba9`) | pytest 5212 passed, 1 skipped (baseline 5150 + 62); ruff, mypy (319 files) clean; py_compile and `bash -n ibkr` silent; protected diff empty; D3 doc anchors all match | 2026-10-30 | section exit target = baseline 5150 + 69 = 5219 passed, 1 skipped (5212 + 7 for Task 10) |
-| 10 The report and the postmortem | | | | | |
+| 10 The report and the postmortem | done | `44febd9` | task tests 32 passed (`test_value_report.py` 7, `test_value_shadow.py` 12, `test_value_fence.py` 13); ruff check/format and mypy clean on `src/value/report.py`, `scripts/value_report.py`; `py_compile scripts/value_report.py` silent | 2026-10-30 | No deviation: tests verbatim, seen failing (`cannot import name 'value_report' from 'scripts'`), then report and script verbatim. The orchestrator's D-entry row rode in this commit. *Cost if wrong: the statistics are pure functions pinned by hand-computed numbers; the closest-gate rule is one function.* |
 | 11 Docs | | | | | |
 | **Whole-branch review (opus)** | | | | | |
 | **Review fix pass (sonnet)** | | | | | |
@@ -4041,7 +4041,7 @@ diff empty. Record the commit count.
   `postmortem(entry, legs, events, fair_value_now) -> list[str]`, `render(...) -> str`;
   `scripts.value_report.main(argv) -> int`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_report.py` (the clustered standard
+- [x] **Step 1: Write the failing tests** — `tests/test_value_report.py` (the clustered standard
   error is pinned by hand: n 4, mean 0.045, residual sums 0.07 / −0.065 / −0.005,
   SE = √(3/2 × 0.00915 / 16) = 0.0292884; the closest gates are the fixture's 30.00 close against
   its 27.52 SMA200, 9.005% of room, just under ROIC's 16.36 vs 15, 9.04%):
@@ -4272,13 +4272,13 @@ def test_the_script_reads_value_db_and_prints_the_record(value_db, capsys) -> No
     assert "## STDY deep_value #1" in out and "2026-01-07 fill 100% @ 33.00" in out
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py`
   Expected: collection error, `ImportError: cannot import name 'SURVIVORSHIP' from
   'src.value.report'` (or `cannot import name 'value_report' from 'scripts'`).
 
-- [ ] **Step 3: The report** — replace `src/value/report.py` with:
+- [x] **Step 3: The report** — replace `src/value/report.py` with:
 
 ```python
 """The shadow record's report (spec §6.8, §7, §11, §12). Pure: no I/O.
@@ -4619,7 +4619,7 @@ def render(
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: The script** — `scripts/value_report.py`:
+- [x] **Step 4: The script** — `scripts/value_report.py`:
 
 ```python
 """The value book's shadow record, printed for a human (spec §6.8, §7, §11, §12).
@@ -4757,13 +4757,13 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py tests/test_value_shadow.py tests/test_value_fence.py`
   Expected: PASS (`test_value_report.py` 7). Ruff check/format, `.venv/bin/mypy src/value/report.py
   scripts/value_report.py` clean; `.venv/bin/python -m py_compile scripts/value_report.py` silent.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/report.py scripts/value_report.py tests/test_value_report.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
@@ -4783,7 +4783,7 @@ process table and SETUP's launcher paragraph; a feature built → STATUS). `READ
 `.opencode/` files are unchanged (no top-level directory, Telegram command, command kind, route,
 scan-loop or universe change; no fence restated there) — record that as a ruling.
 
-- [ ] **Step 1: ARCHITECTURE.md** — apply:
+- [x] **Step 1: ARCHITECTURE.md** — apply:
 
 ```diff
 diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
@@ -4866,7 +4866,7 @@ diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
  
 ```
 
-- [ ] **Step 2: SETUP.md** — apply:
+- [x] **Step 2: SETUP.md** — apply:
 
 ```diff
 diff --git a/SETUP.md b/SETUP.md
@@ -4937,7 +4937,7 @@ diff --git a/SETUP.md b/SETUP.md
  ## Troubleshooting
 ```
 
-- [ ] **Step 3: STATUS.md** — apply:
+- [x] **Step 3: STATUS.md** — apply:
 
 ```diff
 diff --git a/STATUS.md b/STATUS.md
@@ -4976,7 +4976,7 @@ diff --git a/STATUS.md b/STATUS.md
  
 ```
 
-- [ ] **Step 4: CLAUDE.md** — apply:
+- [x] **Step 4: CLAUDE.md** — apply:
 
 ```diff
 diff --git a/CLAUDE.md b/CLAUDE.md

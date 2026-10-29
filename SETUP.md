@@ -635,11 +635,12 @@ python -m scripts.start
 ```
 
 Logs are written to `logs/approval.log`, `logs/monitor.log`, `logs/api.log`,
-`logs/research.log`, `logs/spreads.log` and `logs/news.log`. Stop with Ctrl-C (only when run in a
+`logs/research.log`, `logs/spreads.log`, `logs/news.log` and `logs/value.log`. Stop with Ctrl-C (only when run in a
 terminal; under `./ibkr`, use `./ibkr stop`). Flags: `--no-monitor`, `--no-approval`, `--no-api`,
-`--no-research`, `--no-spreads`, `--no-news`, each skipping one service (`--no-eod` skips the
+`--no-research`, `--no-spreads`, `--no-news`, `--no-value`, each skipping one service (`--no-eod` skips the
 built-in EOD scheduler — see §7). The news service (§17) holds no IBKR connection and starts by
-default; set `enabled: false` in `config/news.yaml` (it then idles) or pass `--no-news`.
+default; set `enabled: false` in `config/news.yaml` (it then idles) or pass `--no-news`. The value
+service (§19) holds no IBKR connection either and scores once a night; `--no-value` skips it.
 
 > The web API and research worker need the `web` extra (`pip install -e ".[web,dev]"`, §6a)
 > and `WEB_API_TOKEN`/`SEC_CONTACT_EMAIL` in `.env`. If you haven't set those up yet, pass
@@ -2030,22 +2031,37 @@ that survived checking.
 
 ---
 
-## 19. The value book, Part 1: the scorecard and the calibration dry run
+## 19. The value book, Parts 1–2: the scorecard, the nightly process and the shadow record
 
 The value book scores healthy companies against what they are worth
 (`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
-a one-off **calibration dry run**: it places no order, sends no message and runs no daemon.
+a one-off **calibration dry run**; Part 2 adds a nightly process and the **shadow record**. Neither
+places an order or sends a message.
 
 1. `cp config/examples/value.yaml config/value.yaml` (git-ignored; every key has a code default).
-2. The research worker can refresh the value universes nightly (`research_sweep.enabled`), but
-   Part 1 ships it **off**: the dry run backfills a database copy itself.
+2. The research worker refreshes the value universes nightly (`research_sweep.enabled`, on since
+   Part 2; Part 1 shipped it off and the dry run backfilled a database copy itself).
 3. The dry run (normally run for you by the plan's orchestrator, on copies, from the branch's
    worktree): `python -m scripts.value_dry_run backfill --env-file .env` then
    `python -m scripts.value_dry_run run --report value_dry_run.txt`. It prints how many names
    fall at each gate per list, GOOGL, META, BAC and MU with every number, the raw companyfacts
    storage and the run time.
-4. `ruleset_version` is frozen at `v1` (`src/value/ruleset.py::FROZEN`); a rule change is a
-   version bump with a written reason.
+4. `ruleset_version` is frozen at `v2` (`src/value/ruleset.py::FROZEN`: v1 = the entry rules the
+   operator froze after the dry run, v2 = v1 + `rules.exits`); a rule change is a version bump with
+   a written reason. **After pulling Part 2, refresh the private copy before restarting:**
+   `cp config/examples/value.yaml config/value.yaml` (a private file still saying v1 makes the
+   value process idle with a CRITICAL line in `logs/value.log`).
+5. **The nightly process (Part 2).** `scripts.start` / `./ibkr restart` runs `value_service`
+   (`python -m scripts.run_value`; `--no-value` skips it). With `research_sweep.enabled: true` the
+   research worker fetches every value name's filings and bars at 02:00 ET (the first sweep stores
+   ~2 GB of raw companyfacts in `data/research.db`). From `service.run_hour_et` (06:00 ET) the value
+   process scores the newest settled session once — no night until the sweep has filings for 90% of
+   the universe — writes the ticker files and runs the **shadow record**: Python's READY verdicts
+   enter at the next session's open with control groups beside them, each READY entry is carried
+   under the three exit policies (`value` is the live one; `full` and `hold12` are diagnostics), and
+   returns are marked at 21, 63 and 126 sessions against SPY. Nothing is ever ordered.
+6. **Read the record:** `python -m scripts.value_report` (add `--postmortems` for one postmortem per
+   closed position). It proves nothing for months; spec §12 says what it can and cannot show.
 
 ### Scripts
 
@@ -2054,6 +2070,8 @@ a one-off **calibration dry run**: it places no order, sends no message and runs
 | `python -m scripts.value_dry_run backfill [--env-file PATH] [--universe-file PATH]` | Queues and drains companyfacts and daily-bar jobs for both value universes (~520 names; a few GB of raw payloads the first time). |
 | `python -m scripts.value_dry_run run [--as-of DATE] [--names A,B] [--limit N] [--no-persist] [--out cards.json] [--report report.txt]` | Scores every name, ranks both lists, writes `data/value.db`, prints the funnel. |
 | `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
+| `python -m scripts.run_value` | The value process. Normally started by `scripts.start` / `./ibkr restart`; `--no-value` skips it. Logs to `logs/value.log` (`./ibkr logs value`). |
+| `python -m scripts.value_report [--track baseline] [--universe all\|trading\|evidence] [--ruleset V] [--postmortems]` | Prints the shadow record from `data/value.db` (read only). |
 
 ## Troubleshooting
 

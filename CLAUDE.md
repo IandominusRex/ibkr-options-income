@@ -390,8 +390,15 @@ the value book. It is **deterministic tier**:
   every SEC and price fetch; `src/value/` opens no SEC client.
 - Only `src/value/` constructs `data/value.db` rows (`ValueBase`); `scripts/` is scanned too, and the
   dry-run script logs its run through `src.value.store.record_run`.
-- Part 1 places, sizes and gates nothing. The written exception for Claude's value verdict
-  (spec §8.2, §18) is added with Part 4.
+- The value process (`scripts/run_value.py`, Part 2) holds no IBKR connection: it hands
+  `src/value/` earnings dates from `news.db` and yfinance market facts as plain data
+  (`scripts/value_feed.py`), so `src/value/` never imports `src.news` or `src.data`. It is the only
+  module that may import `src.value_ai` (Part 4), it is never imported itself, and its whole
+  process loads no wheel layer, no Claude and no `ib_async` (a `sys.modules` test).
+- The exit engine (`src/value/exits.py`) is pure; every exit that would send reads Python's fair
+  value, and an exit only Claude's value would fire is a tap proposal (spec §7, revision 3).
+- Parts 1–2 place, size and gate nothing: every shadow row is hypothetical. The written exception
+  for Claude's value verdict (spec §8.2, §18) is added with Part 4.
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 
