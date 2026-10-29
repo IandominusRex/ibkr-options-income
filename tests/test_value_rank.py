@@ -48,7 +48,7 @@ def test_a_name_on_both_lists_is_filed_where_it_ranks_higher() -> None:
     assert filed["CHEAP"] == "deep_value"  # ties go to deep value
     deep["MID"] = deep["MID"].model_copy(update={"score": 0.1})
     assert filed_lists(cards, deep, growth)["MID"] == "quality_growth"
-    assert filed["ETF"] == "deep_value" and filed["BAD"] == "deep_value"
+    assert "ETF" not in filed and "BAD" not in filed  # not scored: filed on neither list
 
 
 def test_a_name_off_the_growth_list_is_never_filed_there() -> None:

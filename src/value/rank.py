@@ -116,9 +116,12 @@ def filed_lists(
     growth: dict[str, RankEntry],
 ) -> dict[str, ListName]:
     """Deep value, unless the name passes health and the quality-growth entry rule and ranks
-    higher there (spec §6.0: filed on the list where its rank score is higher)."""
+    higher there (spec §6.0: filed on the list where its rank score is higher). A name that is
+    not scored (an ETF, a REIT, pre-profit, or data quality not passing) is filed on neither."""
     out: dict[str, ListName] = {}
     for c in cards:
+        if c.data_quality != "pass" or c.not_applicable_reason is not None:
+            continue
         ev = c.lists.get("quality_growth")
         qualifies = c.health == "pass" and ev is not None and ev.entry == "pass"
         g = growth.get(c.symbol)

@@ -103,7 +103,7 @@ is the executing agent's own model name.
 | 2 Day bars and the readers the record needs | done | `4330f34` | task tests 26 passed (`test_value_inputs.py` 13, with `test_value_dry_run.py` and `test_value_fence.py`); ruff check/format and mypy clean on the touched files | 2026-10-30 | No deviation; tests seen failing first (`AttributeError ... build_day_bars`), then the plan's code applied verbatim. `read_bars` gains an `open` column (nullable, so `build_day_bars` yields `open=None` when a bar has none). *Cost if wrong: none found.* |
 | 3 The nightly sweep keeps every bar fresh, SPY's too | done | `53037fc` | task tests 34 passed (`test_value_universe.py` 12 + research worker/materialize + dry run); section exit full gate: pytest 5158 passed, 1 skipped (= baseline 5150 + 8); ruff clean; mypy 314 files clean; `py_compile scripts/value_dry_run.py` silent; protected-file diff empty; `BARS_MAX_AGE_DAYS` has no remaining reference | 2026-10-30 | No deviation. Section A: 3 task commits (`8334bcb`, `4330f34`, `53037fc`) + this docs(plan) commit; commit count on `main..HEAD` recorded in the report. Heads-up: the existing `test_the_sweep_queues_only_what_each_name_lacks` still passes unchanged. *Cost if wrong: the staleness rule is one constant/function.* |
 | **B entry checks** | pass | 4 commits on `feat/value-book-2` (HEAD `ea3066b`) | pytest 5158 passed, 1 skipped (baseline 5150 + 8); ruff, mypy clean; FROZEN = v1 `e1a1b3b096b1`, v2 `d07717fe5348`; B3/B4 greps match | 2026-10-30 | section exit target = 5150 + 8 + 47 = 5205 passed, 1 skipped |
-| 4 The exit engine | | | | | |
+| 4 The exit engine | done | `972e4ee` | task tests 24 passed (`test_value_exits.py`) + `test_value_fence.py` 10 passed; ruff check/format and mypy clean on `src/value/exits.py` | 2026-10-30 | No deviation: test file written verbatim, seen failing (`No module named 'src.value.exits'`), then the plan's engine verbatim. The orchestrator's B-entry row rode in this commit. *Cost if wrong: each exit rule is one branch in `step`/`_full`, all pinned by the tests.* |
 | 5 The ranked arithmetic and the filed list (M5) | | | | | |
 | 6 The shadow tables and the shadow record | | | | | |
 | **C entry checks** | | | | | |
@@ -1310,7 +1310,7 @@ The transitions `step` implements, in the order it applies them on each session 
 | 11b | re-marked and only the effective FV < close | `proposal` | value |
 | 12 | 252 sessions held | `time`: sell everything | hold12 |
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_exits.py` (every number below was
+- [x] **Step 1: Write the failing tests** — `tests/test_value_exits.py` (every number below was
   computed by hand and matched by the prototype):
 
 ```python
@@ -1502,12 +1502,12 @@ def test_the_benchmark_return_matches_the_fills() -> None:
     assert benchmark_return([], opens, 500.0) is None
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_exits.py`
   Expected: collection error, `ModuleNotFoundError: No module named 'src.value.exits'`.
 
-- [ ] **Step 3: The engine** — `src/value/exits.py`:
+- [x] **Step 3: The engine** — `src/value/exits.py`:
 
 ```python
 """The exit engine (spec §7): a deterministic state machine, one leg per policy. Pure: no I/O.
@@ -1798,12 +1798,12 @@ def benchmark_return(
     return proceeds / entry - 1.0
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_exits.py`
   Expected: 24 passed. Ruff check/format and `.venv/bin/mypy src/value/exits.py` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add src/value/exits.py tests/test_value_exits.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
@@ -1824,7 +1824,7 @@ def benchmark_return(
   None, int]` (mean return, members dropped); `is_new_month(last_formed: date | None, as_of: date)
   -> bool`. `filed_lists` returns no entry for an unscored name.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_ranked.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_value_ranked.py`:
 
 ```python
 """The ranked monthly record's arithmetic (value book spec §6.8): tenths, ties, dropped members
@@ -1882,13 +1882,13 @@ diff --git a/tests/test_value_rank.py b/tests/test_value_rank.py
  
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_ranked.py tests/test_value_rank.py`
   Expected: collection error (`No module named 'src.value.ranked'`) and, once that exists, the M5
   assertion fails (`assert "ETF" not in filed`).
 
-- [ ] **Step 3: The arithmetic** — `src/value/ranked.py`:
+- [x] **Step 3: The arithmetic** — `src/value/ranked.py`:
 
 ```python
 """The ranked monthly record's arithmetic (spec §6.8). Pure: no I/O.
@@ -1938,7 +1938,7 @@ def is_new_month(last_formed: date | None, as_of: date) -> bool:
     return last_formed is None or (as_of.year, as_of.month) != (last_formed.year, last_formed.month)
 ```
 
-- [ ] **Step 4: M5** — apply to `src/value/rank.py`:
+- [x] **Step 4: M5** — apply to `src/value/rank.py`:
 
 ```diff
 diff --git a/src/value/rank.py b/src/value/rank.py
@@ -1958,12 +1958,12 @@ diff --git a/src/value/rank.py b/src/value/rank.py
          qualifies = c.health == "pass" and ev is not None and ev.entry == "pass"
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_ranked.py tests/test_value_rank.py tests/test_value_dry_run.py`
   Expected: PASS (3 + 5 + 3). Ruff and `.venv/bin/mypy src/value/ranked.py src/value/rank.py` clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/ranked.py src/value/rank.py tests/test_value_ranked.py tests/test_value_rank.py docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md
