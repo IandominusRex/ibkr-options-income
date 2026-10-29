@@ -4,13 +4,21 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 
 import pytest
 
 import src.value.store as store
 from src.common.config import get_config
 from src.value.scorecard import build_scorecard
-from src.value.store import ValueTickerFileRow, ValueTickerHistoryRow, init_value_db, value_session
+from src.value.store import (
+    ValueRunRow,
+    ValueTickerFileRow,
+    ValueTickerHistoryRow,
+    init_value_db,
+    record_run,
+    value_session,
+)
 from src.value.ticker_file import is_fresh, persist, stored_fingerprint, what_changed
 from tests.value_fixtures import inputs
 
@@ -104,3 +112,23 @@ def test_freshness_is_fingerprint_equality(value_db) -> None:
     assert is_fresh(stored, card.fingerprint)
     assert not is_fresh(stored, build_scorecard(inputs(close=31.0), CFG).fingerprint)
     assert not is_fresh(None, card.fingerprint)
+
+
+def test_record_run_adds_one_value_runs_row(value_db) -> None:
+    with value_session() as s:
+        record_run(
+            s,
+            kind="dry_run",
+            started_at=datetime(2026, 10, 29, 9, 0),
+            finished_at=datetime(2026, 10, 29, 9, 5),
+            as_of=date(2026, 10, 29),
+            ruleset_version="v0",
+            ruleset_hash="abc123def456",
+            names=3,
+            rs_cutoff_6m=-0.02,
+            summary_json="{}",
+        )
+    with value_session() as s:
+        row = s.query(ValueRunRow).one()
+        assert (row.kind, row.names, row.rs_cutoff_6m) == ("dry_run", 3, -0.02)
+        assert row.as_of == date(2026, 10, 29)

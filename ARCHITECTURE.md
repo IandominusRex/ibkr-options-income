@@ -1226,13 +1226,13 @@ the only writer of `data/value.db` (its own `ValueBase`). Enforced by `tests/tes
 |---|---|
 | `scorecard.py` | `build_scorecard(ValueInputs, ValueCfg) -> ValueScorecard`: a pure function (no I/O) — ETF → data quality → REIT / pre-profit → health → each list's fair value, margin of safety, entry ceiling, timing and Python's baseline verdict (READY / WATCH / WAIT / NO / UNKNOWN / NOT_APPLICABLE). |
 | `schemas.py` | `Check` (one gate: actual, bar, state), `combine`, `MethodValue`, `ListEvaluation`, `Fingerprint`, `ValueScorecard`. Pydantic only. |
-| `metrics.py` | Per-year figures (`Year`), split normalisation of share counts, `cagr`, medians, standard deviations, ROIC. |
+| `metrics.py` | Per-year figures (`Year`), split normalisation of share counts (a ratio within 5% of a split factor, the 3-for-2 at 1.5 included, rescales older years; any other move under 1.8x is left alone), `cagr`, medians, standard deviations, ROIC (None for a year whose debt is untagged while an older year's is tagged). |
 | `scores.py` | Piotroski F-score, Altman Z, Beneish M, each reporting what it could not compute. |
-| `gates.py` | Classification (operating, cyclical, bank, insurer, REIT, ETF), the data-quality gate (UNKNOWN, never FAIL), the operating/cyclical health set and the bank/insurer set. |
+| `gates.py` | Classification (operating, cyclical, bank, insurer, REIT, ETF), the data-quality gate (UNKNOWN, never FAIL), the operating/cyclical health set and the bank/insurer set. A missing profit or FCF year is UNKNOWN when it could still have cleared the bar, never a loss; debt untagged in the latest year (tagged earlier) is UNKNOWN for net debt, not net cash. |
 | `valuation.py` | The fading DCF, the reverse DCF, methods A (earnings power), B (haircut DCF), C (absent until point-in-time prices exist), D (growth DCF) and justified P/TBV; fair value = median of the list's methods. |
 | `timing.py` | The earnings window, deep value's strict timing, quality growth's soft timing. |
 | `rank.py` | The cross-sectional rank score per list, the filed list, the run's relative-strength line. |
-| `store.py` | `value.db`: `value_ticker_files` (latest), `value_ticker_history` (append-only), `value_runs`. |
+| `store.py` | `value.db`: `value_ticker_files` (latest), `value_ticker_history` (append-only), `value_runs`; `record_run` is the one way the dry-run script logs a run. |
 | `ticker_file.py` | Writes the latest row and history (a full row on any verdict, fair value, margin band or gate change; a compact row once a session); `is_fresh` compares fingerprints. |
 | `funnel.py` | The calibration dry run's pass funnel and per-name detail. |
 | `ruleset.py` | The ruleset fingerprint: `ruleset_version` + a hash of the `rules:` block; `FROZEN` pins a frozen version's hash. |

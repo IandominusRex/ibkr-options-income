@@ -164,7 +164,7 @@ def test_the_trading_path_never_imports_the_value_book() -> None:
 def test_only_src_value_constructs_value_rows() -> None:
     rows = ("ValueTickerFileRow(", "ValueTickerHistoryRow(", "ValueRunRow(")
     offenders = []
-    for p in (ROOT / "src").rglob("*.py"):
+    for p in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
         if (ROOT / "src" / "value") in p.parents:
             continue
         text = p.read_text(encoding="utf-8")

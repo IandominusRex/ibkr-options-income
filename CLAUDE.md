@@ -388,7 +388,8 @@ the value book. It is **deterministic tier**:
 - Inputs come from the neutral read-only `src/common/value_inputs.py` (plain shapes in
   `value_types.py`), which imports no enrichment and no `src.value`. The research worker owns
   every SEC and price fetch; `src/value/` opens no SEC client.
-- Only `src/value/` constructs `data/value.db` rows (`ValueBase`).
+- Only `src/value/` constructs `data/value.db` rows (`ValueBase`); `scripts/` is scanned too, and the
+  dry-run script logs its run through `src.value.store.record_run`.
 - Part 1 places, sizes and gates nothing. The written exception for Claude's value verdict
   (spec §8.2, §18) is added with Part 4.
 

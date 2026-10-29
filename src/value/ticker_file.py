@@ -80,7 +80,7 @@ def what_changed(
         if old_gates.get(gate) != new_gates.get(gate):
             out.append(f"gate:{gate}")
     for name in LISTS:
-        a, b = prev["lists"].get(name, {}), new["lists"].get(name, {})
+        a, b = prev.get("lists", {}).get(name, {}), new["lists"].get(name, {})
         for key in ("verdict", "entry", "timing"):
             if a.get(key) != b.get(key):
                 out.append(f"{name}.{key}")

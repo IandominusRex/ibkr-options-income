@@ -187,9 +187,29 @@ def gross_debt_latest(inputs: ValueInputs) -> float | None:
     return sum(present) if present else None
 
 
+_DEBT_ITEMS = (
+    "long_term_debt",
+    "long_term_debt_current",
+    "commercial_paper",
+    "short_term_borrowings",
+)
+
+
+def debt_untagged(inputs: ValueInputs) -> bool:
+    """True when the newest balance sheet carries no debt line although a fiscal year in the
+    window does: the debt is untagged (or dropped as stale) there, which is not the same as none."""
+    fin = inputs.financials
+    if fin is None or any(_latest(inputs, k) is not None for k in _DEBT_ITEMS):
+        return False
+    return any(p.items.get(k) is not None for p in fin.annual for k in _DEBT_ITEMS)
+
+
 def net_debt_latest(inputs: ValueInputs) -> float | None:
     """Newest balance sheet: every interest-bearing line tagged, less cash and current
-    marketable securities. None when neither debt nor cash is tagged."""
+    marketable securities. None when neither debt nor cash is tagged, or when debt is untagged
+    in the newest year but tagged in an earlier one (see ``debt_untagged``)."""
+    if debt_untagged(inputs):
+        return None
     debt_parts = [
         _latest(inputs, k)
         for k in (
@@ -215,6 +235,29 @@ def check_at_least(id_: str, actual: float | None, bar: float, detail: str = "")
         threshold=bar,
         detail=detail,
     )
+
+
+def check_positive_years(
+    id_: str, years: list[Year], values: list[float | None], minimum: float, n: int = 5
+) -> Check:
+    """At least *minimum* of the newest *n* years positive. Enough positives pass; if the
+    positives plus the years with no figure could still reach the bar the check is UNKNOWN,
+    naming the missing years (a missing year is not a loss); otherwise it fails."""
+    if len(years) < n:
+        return Check(id=id_, state="unknown", threshold=minimum, detail="fewer than 5 fiscal years")
+    positives = count_positive(values, n)
+    missing = [str(y.end.year) for y, v in zip(years[:n], values[:n], strict=False) if v is None]
+    if positives >= minimum:
+        return Check(id=id_, state="pass", actual=float(positives), threshold=minimum)
+    if positives + len(missing) >= minimum:
+        return Check(
+            id=id_,
+            state="unknown",
+            actual=float(positives),
+            threshold=minimum,
+            detail=f"no figure for FY{', FY'.join(missing)}",
+        )
+    return Check(id=id_, state="fail", actual=float(positives), threshold=minimum)
 
 
 def check_at_most(id_: str, actual: float | None, bar: float, detail: str = "") -> Check:
@@ -266,21 +309,11 @@ def operating_health(
 
     min_profitable = h.cyclical_profitable_years_min if cyclical else h.profitable_years_min
     ni = [y.net_income for y in years]
-    checks.append(
-        check_at_least(
-            "health.profitable_years",
-            float(count_positive(ni)) if len(years) >= 5 else None,
-            float(min_profitable),
-        )
-    )
+    checks.append(check_positive_years("health.profitable_years", years, ni, float(min_profitable)))
     min_fcf_years = h.cyclical_fcf_positive_years_min if cyclical else h.fcf_positive_years_min
     fcf_years = [y.fcf for y in years]
     checks.append(
-        check_at_least(
-            "health.fcf_positive_years",
-            float(count_positive(fcf_years)) if len(years) >= 5 else None,
-            float(min_fcf_years),
-        )
+        check_positive_years("health.fcf_positive_years", years, fcf_years, float(min_fcf_years))
     )
     if not cyclical:
         fcf = ttm_fcf(inputs)
@@ -294,6 +327,7 @@ def operating_health(
         )
 
     nd = net_debt_latest(inputs)
+    untagged_note = "debt untagged in the latest year" if debt_untagged(inputs) else ""
     ebit_ttm, da_ttm = _ttm(inputs, "operating_income"), _ttm(inputs, "depreciation_amortization")
     if cyclical:
         ebitda = median_of(
@@ -321,7 +355,10 @@ def operating_health(
     elif nd is None or ebitda is None:
         checks.append(
             Check(
-                id="health.net_debt_to_ebitda", state="unknown", threshold=h.net_debt_to_ebitda_max
+                id="health.net_debt_to_ebitda",
+                state="unknown",
+                threshold=h.net_debt_to_ebitda_max,
+                detail=untagged_note,
             )
         )
     elif ebitda <= 0:
@@ -372,7 +409,8 @@ def operating_health(
                 "health.interest_coverage",
                 implied,
                 h.interest_coverage_min,
-                f"implied: interest expense not tagged; gross debt charged "
+                untagged_note
+                or f"implied: interest expense not tagged; gross debt charged "
                 f"{h.assumed_interest_rate:.0%}",
             )
         )
@@ -423,11 +461,7 @@ def financial_health(
     checks: list[Check] = []
     ni = [y.net_income for y in years]
     checks.append(
-        check_at_least(
-            "bank.profitable_years",
-            float(count_positive(ni)) if len(years) >= 5 else None,
-            float(b.profitable_years_min),
-        )
+        check_positive_years("bank.profitable_years", years, ni, float(b.profitable_years_min))
     )
     rote = rote_series(years)
     med = median_of(rote)

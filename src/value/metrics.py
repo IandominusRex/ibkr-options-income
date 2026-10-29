@@ -6,7 +6,7 @@ None, never zero, except where a docstring says otherwise and why.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from statistics import median, pstdev
 
@@ -14,6 +14,8 @@ from src.common.value_types import ValueFinancials
 
 # A ratio between adjacent share counts at or beyond this (or its inverse) is a split, a reverse
 # split, or something the scorecard cannot explain (spec §6.3, "share-class mapping applied").
+# A ratio inside the band is left alone unless it sits within tolerance of a split factor
+# (so the 3-for-2 at 1.5 is reachable; any other sub-1.8 move, e.g. an acquisition, is ignored).
 SPLIT_RATIO = 1.8
 _SPLIT_FACTORS = (1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0)
 _SPLIT_TOLERANCE = 0.05
@@ -57,6 +59,9 @@ class Year:
     cet1_pct: float | None
     premiums: float | None
     benefits_losses_expenses: float | None
+    # No debt line tagged this year although an older year in the window has one: the debt is
+    # untagged here, not zero (unknown is never zero).
+    debt_untagged: bool = False
 
     @property
     def fcf(self) -> float | None:
@@ -142,9 +147,9 @@ def normalise_shares(
         if not newer or not older:
             continue
         ratio = newer / older
-        if 1.0 / SPLIT_RATIO < ratio < SPLIT_RATIO:
-            continue
         factor = _split_factor(ratio)
+        if factor is None and 1.0 / SPLIT_RATIO < ratio < SPLIT_RATIO:
+            continue
         if factor is None:
             note.unexplained.append(f"share count jumps {ratio:.2f}x into FY{label}")
             continue
@@ -217,6 +222,9 @@ def build_years(fin: ValueFinancials) -> tuple[list[Year], ShareNormalisation]:
                 benefits_losses_expenses=it.get("benefits_losses_expenses"),
             )
         )
+    for i, y in enumerate(years):
+        if y.debt is None and any(o.debt is not None for o in years[i + 1 :]):
+            years[i] = replace(y, debt_untagged=True)
     return years, note
 
 
@@ -262,8 +270,9 @@ def roic(y: Year) -> float | None:
     """NOPAT over year-end invested capital (equity + debt - cash), as a fraction.
 
     Tax rate = tax / pre-tax income, clamped to [0, 35%]; 21% when either is missing or pre-tax
-    income is not positive. None when invested capital is not positive."""
-    if y.operating_income is None or y.equity is None:
+    income is not positive. None when invested capital is not positive or when the year's debt
+    is untagged although an older year's is (untagged debt is not zero)."""
+    if y.operating_income is None or y.equity is None or y.debt_untagged:
         return None
     rate = 0.21
     if y.tax is not None and y.pretax is not None and y.pretax > 0:

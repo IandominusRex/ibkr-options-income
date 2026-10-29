@@ -141,3 +141,33 @@ def value_session() -> Iterator[Session]:
         raise
     finally:
         s.close()
+
+
+def record_run(
+    session: Session,
+    *,
+    kind: str,
+    started_at: datetime,
+    finished_at: datetime | None,
+    as_of: date,
+    ruleset_version: str,
+    ruleset_hash: str,
+    names: int,
+    rs_cutoff_6m: float | None,
+    summary_json: str,
+) -> ValueRunRow:
+    """Add one ``value_runs`` row. The only way a caller outside this package records a run,
+    so ``src/value/`` stays the sole constructor of value.db rows."""
+    row = ValueRunRow(
+        kind=kind,
+        started_at=started_at,
+        finished_at=finished_at,
+        as_of=as_of,
+        ruleset_version=ruleset_version,
+        ruleset_hash=ruleset_hash,
+        names=names,
+        rs_cutoff_6m=rs_cutoff_6m,
+        summary_json=summary_json,
+    )
+    session.add(row)
+    return row

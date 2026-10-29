@@ -139,6 +139,60 @@ def test_a_cyclical_is_judged_across_the_cycle() -> None:
     assert h["health.interest_coverage"].actual == pytest.approx(282.5 / 10)
 
 
+def test_enough_positive_years_pass_even_with_a_missing_year() -> None:
+    fin = financials(
+        net_income=[300, 266, 238, None, 187], capital_expenditure=[80, 75, 70, None, None]
+    )
+    h = _health(inputs(fin=fin))
+    assert h["health.profitable_years"].state == "pass"  # 4 positive, bar 4
+    assert h["health.fcf_positive_years"].state == "pass"  # 3 positive, bar 3
+
+
+def test_missing_years_that_could_have_cleared_the_bar_are_unknown() -> None:
+    fin = financials(
+        net_income=[300, 266, None, None, 187], capital_expenditure=[80, 75, None, None, None]
+    )
+    h = _health(inputs(fin=fin))
+    assert h["health.profitable_years"].state == "unknown"  # 3 positive + 2 missing >= 4
+    assert "2023" in h["health.profitable_years"].detail
+    assert "2022" in h["health.profitable_years"].detail
+    assert h["health.fcf_positive_years"].state == "unknown"  # 2 positive + 3 missing >= 3
+    assert "2021" in h["health.fcf_positive_years"].detail
+
+
+def test_too_few_positive_years_fail_even_counting_the_missing_ones() -> None:
+    fin = financials(net_income=[300, -10, -5, None, -3])
+    h = _health(inputs(fin=fin))
+    assert h["health.profitable_years"].state == "fail"  # 1 positive + 1 missing < 4
+
+
+def test_a_bank_with_missing_profit_years_is_unknown_not_failed() -> None:
+    c = _bank(net_income=[30, 28, None, None, 22])
+    assert c["bank.profitable_years"].state == "unknown"  # 3 positive + 2 missing >= 4
+
+
+def test_untagged_debt_in_the_latest_year_is_unknown_not_net_cash() -> None:
+    fin = financials(long_term_debt=[None, 420, 440, 460, 480])
+    h = _health(inputs(fin=fin))
+    assert h["health.net_debt_to_ebitda"].state == "unknown"
+    assert "untagged" in h["health.net_debt_to_ebitda"].detail
+    assert gates.net_debt_latest(inputs(fin=fin)) is None
+
+
+def test_untagged_debt_leaves_implied_coverage_unknown() -> None:
+    fin = financials(long_term_debt=[None, 420, 440, 460, 480])
+    fin.ttm.pop("interest_expense")
+    h = _health(inputs(fin=fin))
+    assert h["health.interest_coverage"].state == "unknown"
+    assert "untagged" in h["health.interest_coverage"].detail
+
+
+def test_a_company_that_never_tagged_debt_still_reads_as_net_cash() -> None:
+    fin = financials(long_term_debt=[None, None, None, None, None])
+    assert gates.net_debt_latest(inputs(fin=fin)) == -500.0
+    assert _health(inputs(fin=fin))["health.net_debt_to_ebitda"].state == "pass"
+
+
 def test_net_debt_with_negative_ebitda_fails() -> None:
     fin = financials(
         long_term_debt=[1500, 420, 440, 460, 480],

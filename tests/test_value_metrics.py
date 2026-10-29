@@ -43,6 +43,19 @@ def test_an_acquisition_sized_change_is_left_alone() -> None:
     assert note.adjustments == [] and note.unexplained == []
 
 
+def test_a_three_for_two_split_is_detected() -> None:
+    shares, note = normalise_shares(150, [150, 150, 100, 100, 100, 100], ENDS)
+    assert shares == [150, 150, 150, 150, 150, 150]
+    assert note.adjustments == ["shares FY2023 and earlier x1.5 (split)"]
+    assert note.unexplained == []
+
+
+def test_a_near_one_and_a_half_jump_outside_tolerance_is_left_alone() -> None:
+    shares, note = normalise_shares(160, [160, 160, 100, 100, 100, 100], ENDS)  # 1.60x
+    assert shares == [160, 160, 100, 100, 100, 100]
+    assert note.adjustments == [] and note.unexplained == []
+
+
 def test_a_jump_that_is_no_split_is_unexplained() -> None:
     _, note = normalise_shares(None, [100, 37, 37, 37, 37, 37], ENDS)
     assert note.unexplained == ["share count jumps 2.70x into FY2024"]
@@ -60,6 +73,14 @@ def test_series_helpers_ignore_missing_years() -> None:
     assert stdev_of([1.0, None]) is None
     assert stdev_of([2.0, 4.0, 4.0, 4.0, 5.0]) == pytest.approx(0.9797958971)
     assert count_positive([1, -1, None, 2, 0, 5]) == 2
+
+
+def test_a_year_with_untagged_debt_among_tagged_ones_has_no_roic() -> None:
+    years, _ = build_years(financials(long_term_debt=[None, 420, 440, 460, 480]))
+    assert roic(years[0]) is None
+    assert roic(years[1]) is not None
+    years, _ = build_years(financials(long_term_debt=[None] * 5))
+    assert roic(years[0]) is not None  # never tagged: debt-free
 
 
 def test_years_derive_gross_profit_debt_cash_and_cet1() -> None:

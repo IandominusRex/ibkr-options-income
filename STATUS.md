@@ -364,7 +364,8 @@ Claude, no Telegram, no web, no daemon.
 - Known limitations: CET1 is not tagged in companyfacts for BAC/JPM (`banks.require_cet1`
   decides, Task 15); method C is absent until point-in-time prices exist; the combined ratio is
   approximated from total benefits, losses and expenses; holidays are not known to the earnings
-  window; prices carry yfinance's survivorship bias.
+  window; prices carry yfinance's survivorship bias; Piotroski scores a missing component 0
+  (plan ruling 18) and `long_term_debt or 0.0` gives untagged debt the debt-free point.
 
 ## Built (2026-10-28 — web overhaul Part 3: Portfolio and Activity, the sizing record, the audit lists)
 

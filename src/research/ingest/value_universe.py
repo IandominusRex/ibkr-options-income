@@ -44,7 +44,10 @@ def enqueue_value_universe(
     counts = {"fundamentals": 0, "prices": 0, "no_cik": 0}
     with research_session() as s:
         ciks = {r.symbol: r.cik for r in s.query(SymbolRow).filter(SymbolRow.symbol.in_(names))}
-        fetched = {r.cik: r.fetched_at for r in s.query(CompanyFactsRawRow)}
+        fetched = {
+            cik: at
+            for cik, at in s.execute(select(CompanyFactsRawRow.cik, CompanyFactsRawRow.fetched_at))
+        }
         bars = {
             sym: (n, last)
             for sym, n, last in s.execute(

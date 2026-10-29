@@ -220,7 +220,7 @@ def _persist(
     from src.common.config import get_config
     from src.value.funnel import build_funnel
     from src.value.ruleset import ruleset_id
-    from src.value.store import ValueRunRow, init_value_db, value_session
+    from src.value.store import init_value_db, record_run, value_session
     from src.value.ticker_file import persist
 
     vcfg = get_config().value
@@ -242,18 +242,17 @@ def _persist(
                 cfg=vcfg.ticker_file,
                 session_row=True,
             )
-        s.add(
-            ValueRunRow(
-                kind="dry_run",
-                started_at=now - timedelta(seconds=time.monotonic() - t0),
-                finished_at=now,
-                as_of=as_of,
-                ruleset_version=version,
-                ruleset_hash=digest,
-                names=len(cards),
-                rs_cutoff_6m=cutoff,
-                summary_json=build_funnel(cards).model_dump_json(),
-            )
+        record_run(
+            s,
+            kind="dry_run",
+            started_at=now - timedelta(seconds=time.monotonic() - t0),
+            finished_at=now,
+            as_of=as_of,
+            ruleset_version=version,
+            ruleset_hash=digest,
+            names=len(cards),
+            rs_cutoff_6m=cutoff,
+            summary_json=build_funnel(cards).model_dump_json(),
         )
 
 

@@ -80,7 +80,7 @@ def financials(
     n = max(len(v) for v in data.values())
     annual = []
     for i in range(n):
-        items = {k: float(v[i]) for k, v in data.items() if i < len(v) and v[i] is not None}
+        items = {k: float(x) for k, v in data.items() if i < len(v) and (x := v[i]) is not None}
         annual.append(
             AnnualPeriod(
                 period_end=YEAR_ENDS[i] if i < 5 else date(2020 - (i - 5), 12, 31),
