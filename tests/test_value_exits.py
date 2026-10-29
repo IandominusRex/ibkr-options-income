@@ -73,6 +73,14 @@ def test_the_trail_arms_half_way_to_fair_value_and_is_never_lowered() -> None:
     assert events == [("trail", 1.0)]
 
 
+def test_an_armed_leg_never_stops_below_breakeven_even_without_atr() -> None:
+    """Review M3: spec §7 - once armed the stop is never below the breakeven."""
+    state, _ = run(leg(atr=None), [bar(1, 111.0)])  # arms; the initial stop was 85
+    assert state.armed and state.stop == pytest.approx(100.0)
+    _, events = run(state, [bar(2, 99.0)])
+    assert events == [("trail", 1.0)]
+
+
 def test_half_sells_at_fair_value_then_the_trail_tightens_to_two_atr() -> None:
     state, events = run(leg(), [bar(1, 121.0, atr14=2.0)])
     assert events == [("arm", 0.0), ("half", 0.5)]
@@ -105,14 +113,30 @@ def test_the_peak_signal_when_rsi_falls_back_through_seventy() -> None:
     [
         (DayFacts(piotroski=3.0), None, "F-score 3"),
         (DayFacts(altman_z=1.5), None, "Altman Z 1.50"),
-        (DayFacts(), 120.0, "fair value"),
+        # a fair value re-marked from a new filing to below 90% of the price, price under SMA50
+        (DayFacts(python_fair_value=90.0, latest_accn="0000000001-26-000002"), 120.0, "fair value"),
     ],
 )
 def test_thesis_exits_fire_under_every_policy(policy, facts, sma50, detail) -> None:
-    fv = 90.0 if detail == "fair value" else 120.0  # 90 < 0.9 x 105 with the close under SMA50
-    state, events = run(leg(policy, fv=fv), [bar(1, 105.0, sma50=sma50)], facts)
-    assert events == [("thesis", 1.0)]
+    state, events = run(leg(policy, fv=120.0), [bar(1, 105.0, sma50=sma50)], facts)
+    assert events[-1] == ("thesis", 1.0)
     assert state.pending_reason == "thesis"
+
+
+@pytest.mark.parametrize("policy", ["value", "hold12"])
+def test_the_static_fair_value_rule_fires_only_on_a_session_with_a_remark(policy) -> None:
+    """Review I5 (ruling 14): a price that ran past a static fair value is the ride. FV 130, the
+    price at 131 / 150 / 148 under a 149 SMA50, no new filing: the remainder is not sold."""
+    state, events = run(
+        leg(policy, fv=130.0),
+        [bar(1, 131.0), bar(2, 150.0, sma50=140.0), bar(3, 148.0, sma50=149.0)],
+    )
+    assert ("thesis", 0.5) not in events and ("thesis", 1.0) not in events
+    assert not state.closed
+    # The same bar on a session that re-marks fair value from a new accession does fire.
+    newer = DayFacts(python_fair_value=130.0, latest_accn="0000000001-26-000002")
+    _, events = run(state, [bar(4, 148.0, sma50=149.0)], newer)
+    assert events[-1][0] == "thesis"
 
 
 def test_value_sells_half_at_fair_value_and_rides_the_rest_until_a_remark_below() -> None:
@@ -165,6 +189,32 @@ def test_no_automatic_exit_reads_the_effective_fair_value() -> None:
         leg("hold12", fv=120.0, effective=100.0), [bar(1, 115.0, sma50=120.0)], DayFacts()
     )
     assert events == [("proposal", 0.0)] and state.pending == 0.0
+
+
+def test_the_peak_signal_reads_pythons_fair_value_not_the_effective_one() -> None:
+    """Review I1: full's peak exit sells with no tap, so it may not key off Claude's number.
+    Python FV 120, effective 105: the price crosses only the effective value, then slips under
+    the 20-day average. The half-sale reads 105; the peak signal waits for Python's 120."""
+    state, events = run(
+        leg(fv=120.0, effective=105.0),
+        [bar(1, 106.0), bar(2, 111.0, open=107.0), bar(3, 110.5, sma20=111.0)],
+    )
+    kinds = [k for k, _ in events]
+    assert "peak" not in kinds and not state.above_fv_seen
+    assert kinds.count("half") == 1
+    assert kinds.count("proposal") == 1  # one note, once per episode
+    state, events = run(state, [bar(4, 121.0), bar(5, 119.0, sma20=120.0)])
+    assert events[-1] == ("peak", state.pending) and state.above_fv_seen
+
+
+def test_the_two_atr_trail_waits_for_pythons_fair_value_too() -> None:
+    """Decision (review I1): the half-sale itself reads the effective value (ruling 15), but the
+    2 x ATR tightening is a stop that sells by itself, so it keys off Python's fair value."""
+    state, _ = run(leg(fv=120.0, effective=105.0), [bar(1, 111.0, atr14=2.0)])
+    assert state.half_sold and not state.above_fv_seen
+    assert state.stop == pytest.approx(105.0)  # 111 - 3 x 2, not 111 - 2 x 2
+    state, _ = run(state, [bar(2, 121.0, open=112.0, atr14=2.0)])
+    assert state.above_fv_seen and state.stop == pytest.approx(117.0)  # 121 - 2 x 2
 
 
 def test_a_closed_leg_does_not_move() -> None:

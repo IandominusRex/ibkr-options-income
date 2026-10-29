@@ -396,7 +396,16 @@ the value book. It is **deterministic tier**:
   module that may import `src.value_ai` (Part 4), it is never imported itself, and its whole
   process loads no wheel layer, no Claude and no `ib_async` (a `sys.modules` test).
 - The exit engine (`src/value/exits.py`) is pure; every exit that would send reads Python's fair
-  value, and an exit only Claude's value would fire is a tap proposal (spec §7, revision 3).
+  value (the half-sale target alone reads the effective one), and an exit only Claude's value would
+  fire is a tap proposal (spec §7, revision 3). That covers `full`'s peak signal and its 2 x ATR
+  tightening, which key off a close at or above Python's value. The static fair-value thesis rule
+  (value below 90% of the price, price under the 50-day average) fires only on a session that
+  re-marked fair value from a new filing. An exit-logic change after the first live row needs a
+  `value_rules` bump even though the code is outside the hash.
+- Held and shadow names that leave the universe stay fresh through a plain file, not an import:
+  the value process writes `data/value_keep_fresh.json` (`src/common/value_keep_fresh.py`, stdlib
+  only) after each night and the research sweep reads it. They are scored under `held:<universe>`
+  and never open a new entry.
 - Parts 1–2 place, size and gate nothing: every shadow row is hypothetical. The written exception
   for Claude's value verdict (spec §8.2, §18) is added with Part 4.
 

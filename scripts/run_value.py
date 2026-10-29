@@ -17,7 +17,7 @@ import logging
 import signal
 import threading
 
-from scripts.value_feed import earnings_dates, market_facts
+from scripts.value_feed import FactsCache, NightRetry, earnings_dates
 from src.common.config import get_config
 from src.common.logging import setup_logging
 from src.value.service import plan_run, run_nightly, startup_check
@@ -25,14 +25,35 @@ from src.value.service import plan_run, run_nightly, startup_check
 log = logging.getLogger("value")
 
 
+_retry = NightRetry()
+_facts = FactsCache()
+
+
 def _tick() -> None:
     plan = plan_run()
     if plan is None:
         return
+    if not _retry.ready(plan.as_of):
+        return  # this session failed within the hour: no refetch of ~1,000 names
     workers = get_config().value.service.market_facts_workers
     log.info("value: scoring %d names for %s", len(plan.names), plan.as_of)
-    facts = market_facts(plan.fetch_names, workers)
-    run_nightly(plan, facts=facts, earnings=earnings_dates(plan.as_of))
+    try:
+        facts = _facts.get(plan.as_of, plan.fetch_names, workers)
+        run_nightly(plan, facts=facts, earnings=earnings_dates(plan.as_of))
+    except Exception:
+        n = _retry.failed(plan.as_of)
+        level = logging.CRITICAL if n >= _retry.critical_after else logging.ERROR
+        log.log(
+            level,
+            "value: the nightly run for %s failed (failure %d); retrying in %d s at the earliest",
+            plan.as_of,
+            n,
+            _retry.retry_seconds,
+            exc_info=True,
+        )
+        return
+    _retry.succeeded()
+    _facts.clear()
 
 
 def main() -> None:

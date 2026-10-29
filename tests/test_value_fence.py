@@ -164,6 +164,27 @@ def test_the_trading_path_never_imports_the_value_book() -> None:
     assert offenders == []
 
 
+def test_research_reaches_the_value_book_only_through_the_keep_fresh_file() -> None:
+    """Review I4: the research sweep keeps held names fresh from a plain file. It imports no
+    ``src.value`` and no ``value.db`` code, and ``src/value/`` opens no research store."""
+    offenders = [
+        str(p.relative_to(ROOT))
+        for p in sorted((ROOT / "src" / "research").rglob("*.py"))
+        if _reaches(imported_modules(p), "src.value")
+    ]
+    assert offenders == []
+    keep = imported_modules(ROOT / "src" / "common" / "value_keep_fresh.py")
+    stdlib = {"__future__", "json", "logging", "os", "collections", "pathlib"}
+    assert {m.split(".")[0] for m in keep} <= stdlib | {"src"}
+    assert not [m for m in keep if m.startswith("src.") and not m.startswith("src.common.config")]
+    writes_research = [
+        str(p.relative_to(ROOT))
+        for p in VALUE
+        if _reaches(imported_modules(p), "src.research.store")
+    ]
+    assert writes_research == []
+
+
 def test_only_src_value_constructs_value_rows() -> None:
     rows = (
         "ValueTickerFileRow(",

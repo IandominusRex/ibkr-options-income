@@ -362,11 +362,20 @@ order, no Claude, no Telegram, no web, no IBKR connection.
   list); M1–M4, M6–M8 still deferred (plan rulings 2 and 4).
 - Known limitations: the baseline track only (Claude's is Part 4); no shock stops, re-evaluations or
   going-concern exit (Part 3); a split during a holding freezes the entry as `rebase_needed` until
-  Part 3's rebase; missed sessions are not back-filled (the next night scores the newest one; the
+  Part 3's rebase (the guard trips when the entry bar moved more than 25% from the recorded entry
+  price, or when the bar on a leg's last stepped session moved more than 25% from the close the leg
+  last saw there, so it still works once the entry bar has left the provider's ~2-year window);
+  missed sessions are not back-filled (the next night scores the newest one; the
   exit legs still step every bar); controls carry fixed-horizon returns only; the ranked record forms
   on the first run of each month and its first period is partial; returns use yfinance bars with
   their survivorship bias; nothing sets `last_viewed_at` until Part 6, so no name is followed yet;
   the v1 fraction-valued keys stay fractions (M6).
+- Whole-branch review fixes (2026-10-30): `full`'s peak exit and 2 x ATR tightening read Python's
+  fair value only; the static fair-value thesis rule fires only on a re-mark session; a night that
+  fails is retried at most hourly with its market facts cached for the session (CRITICAL after
+  three failures); names held in the shadow record but out of the universe keep getting bars and
+  filings through `data/value_keep_fresh.json` and are scored as `held:<universe>` (never opening a
+  new entry). Deferred Minors are listed in the plan's Progress log.
 
 ## Built (2026-10-29 — value book Part 1: the scorecard and the calibration dry run)
 

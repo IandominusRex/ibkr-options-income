@@ -2059,7 +2059,11 @@ places an order or sends a message.
    the universe — writes the ticker files and runs the **shadow record**: Python's READY verdicts
    enter at the next session's open with control groups beside them, each READY entry is carried
    under the three exit policies (`value` is the live one; `full` and `hold12` are diagnostics), and
-   returns are marked at 21, 63 and 126 sessions against SPY. Nothing is ever ordered.
+   returns are marked at 21, 63 and 126 sessions against SPY. Nothing is ever ordered. A night
+   that fails is retried at most once an hour (CRITICAL in `logs/value.log` after three failures for
+   one session). A name the record holds that you later remove from the universe is still scored
+   (as `held:<universe>`, never opening a new entry) and its bars and filings stay fresh: the
+   process writes their symbols to `data/value_keep_fresh.json` (git-ignored) for the research sweep.
 6. **Read the record:** `python -m scripts.value_report` (add `--postmortems` for one postmortem per
    closed position). It proves nothing for months; spec §12 says what it can and cannot show.
 

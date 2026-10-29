@@ -81,7 +81,9 @@ class LegState(BaseModel):
     stop: float | None = None
     armed: bool = False
     half_sold: bool = False
-    above_fv_seen: bool = False
+    above_fv_seen: bool = False  # a close at or above PYTHON's fair value (not the effective one)
+    peak_proposed: bool = False  # the effective-only crossing has been noted once
+    last_close: float | None = None  # the last stepped close: the split guard's reference
     rsi_hot: bool = False
     highest_close: float
     sessions: int = 0
@@ -156,6 +158,7 @@ def step(
             return s, events
 
     close = day.close
+    s.last_close = close
     s.sessions += 1
     s.highest_close = max(s.highest_close, close)
     value = (s.proceeds + s.remaining * close) / s.entry_price
@@ -200,7 +203,9 @@ def step(
             return s, events
     bar = cfg.thesis_fv_below_price_pct / 100.0
     below_trend = day.sma50 is not None and close < day.sma50
-    if below_trend and s.fair_value is not None and s.fair_value < close * bar:
+    # Only on a session that re-marked fair value from a new filing (review I5): a static value
+    # sitting below a price that ran past it is the ride, not an exit (ruling 14).
+    if remarked and below_trend and s.fair_value is not None and s.fair_value < close * bar:
         sell(s.remaining, "thesis", f"fair value {s.fair_value:.2f} below {bar:.0%} of the price")
         return s, events
     if below_trend and s.effective_fair_value is not None and s.effective_fair_value < close * bar:
@@ -249,13 +254,24 @@ def _full(
         and close >= s.entry_price + cfg.arm_at_pct / 100.0 * (fv - s.entry_price)
     ):
         s.armed = True
+        if s.stop is None or s.stop < s.entry_price:
+            s.stop = s.entry_price  # armed: never below breakeven, even when ATR is unknown (M3)
         note("arm", f"close {close:.2f} past the half-way mark to {fv:.2f}")
     _half_at_fair_value(s, close, cfg, sell)
-    if s.effective_fair_value is not None and close >= s.effective_fair_value:
+    # The peak signal and the 2 x ATR tightening sell without a tap, so they read Python's fair
+    # value only (revision 3); a price that crossed just the effective value is one proposal.
+    if fv is not None and close >= fv:
         s.above_fv_seen = True
+    elif (
+        s.effective_fair_value is not None
+        and close >= s.effective_fair_value
+        and not s.peak_proposed
+    ):
+        s.peak_proposed = True
+        note("proposal", "the effective fair value alone is reached: a tap, no peak exit")
     if not s.armed:
         return
-    k = cfg.trail_atr_after_half if s.half_sold else cfg.trail_atr
+    k = cfg.trail_atr_after_half if s.half_sold and s.above_fv_seen else cfg.trail_atr
     if day.atr14 is not None:
         chandelier = max(s.highest_close - k * day.atr14, s.entry_price)
         if s.stop is None or chandelier > s.stop:

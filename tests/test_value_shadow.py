@@ -220,6 +220,38 @@ def test_a_split_freezes_the_entry_instead_of_firing_its_stop(value_db) -> None:
         assert s.scalars(select(ValueShadowEventRow)).first() is None
 
 
+def test_a_split_after_the_entry_bar_left_the_providers_window_still_freezes(value_db) -> None:
+    """Review I3: the provider serves ~2 years, so a long-held entry's bar is no longer in the
+    window to compare. The guard compares the bar now on the leg's last stepped session with the
+    close the leg last saw there."""
+    _open([ready()])
+    with value_session() as s:
+        shadow.fill_pending(s, {"STDY": bars([30.0, 31.0]), "SPY": bars([500.0] * 2)}, CFG)
+    market = {"STDY": bars([30.0, 31.0, 32.0, 33.0]), "SPY": bars([500.0] * 4)}
+    with value_session() as s:
+        shadow.step_legs(s, market, {}, CFG)
+    with value_session() as s:
+        legs = list(s.scalars(select(ValueShadowLegRow)))
+        assert all(json.loads(leg.state_json)["last_close"] == 33.0 for leg in legs)
+    # A 2-for-1 split: every bar halves, and the window no longer reaches back to the entry bar.
+    split = {"STDY": bars([16.0, 16.5, 16.6], start=2), "SPY": bars([500.0] * 3, start=2)}
+    with value_session() as s:
+        assert shadow.step_legs(s, split, {}, CFG) == (0, 2)
+    assert {r[3] for r in _rows()} == {"rebase_needed"}
+    with value_session() as s:
+        assert s.scalars(select(ValueShadowEventRow)).first() is None
+    # An ordinary move on that bar does not freeze.
+    _open([ready("OTHR", 30.0)])
+    with value_session() as s:
+        shadow.fill_pending(s, {"OTHR": bars([30.0, 31.0]), "SPY": bars([500.0] * 2)}, CFG)
+    calm = {"OTHR": bars([30.0, 31.0, 32.0, 33.0]), "SPY": bars([500.0] * 4)}
+    with value_session() as s:
+        shadow.step_legs(s, calm, {}, CFG)
+    later = {"OTHR": bars([31.0, 32.0, 36.0, 36.5], start=1), "SPY": bars([500.0] * 4, start=1)}
+    with value_session() as s:
+        assert shadow.step_legs(s, later, {}, CFG)[1] == 0
+
+
 def test_a_signal_that_never_gets_a_bar_is_voided(value_db) -> None:
     _open([ready()])
     market = {"STDY": bars([30.0]), "SPY": bars([500.0] * 6)}

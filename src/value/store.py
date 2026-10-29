@@ -55,7 +55,7 @@ class ValueTickerFileRow(ValueBase):
     symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
     computed_at: Mapped[datetime] = mapped_column(DateTime)
     as_of: Mapped[date] = mapped_column(Date)
-    universe: Mapped[str] = mapped_column(String(16))  # trading | evidence | lookup
+    universe: Mapped[str] = mapped_column(String(16))  # trading|evidence|lookup|held:*
     fingerprint_key: Mapped[str] = mapped_column(String(16))
     fingerprint_json: Mapped[str] = mapped_column(Text)
     ruleset_version: Mapped[str] = mapped_column(String(32))

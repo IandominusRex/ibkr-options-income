@@ -161,7 +161,13 @@ def go_live_line(entries: list[EntryView], track: str) -> str:
     marked: list[tuple[date, float]] = []
     for e in entries:
         ret, spy = e.returns.get(GO_LIVE_HORIZON), e.spy.get(GO_LIVE_HORIZON)
-        if e.track == track and e.kind == "ready" and e.entry_date and ret is not None and spy:
+        if (
+            e.track == track
+            and e.kind == "ready"
+            and e.entry_date
+            and ret is not None
+            and spy is not None
+        ):
             marked.append((e.entry_date, ret - spy))
     s = clustered_mean(marked)
     verdict = (

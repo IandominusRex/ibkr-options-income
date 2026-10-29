@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from src.common import value_inputs as vi
 from src.common.config import get_config
+from src.common.value_keep_fresh import write_keep_fresh
 from src.common.value_types import Classification, MarketFacts, ValueInputs
 from src.common.value_universe import build_value_universe
 from src.value import shadow
@@ -48,7 +49,9 @@ class RunPlan:
     """What tonight's run scores: the session it is for and every name with its universe tag."""
 
     as_of: date
-    tags: dict[str, str]  # symbol -> trading | evidence | lookup
+    # symbol -> trading | evidence | lookup | held:trading | held:evidence (held: out of the
+    # universe but still in the shadow record: scored, never eligible to enter)
+    tags: dict[str, str]
     etfs: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
     classification: dict[str, tuple[str, str]] = field(default_factory=dict)
@@ -138,7 +141,8 @@ def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None
         u = build_value_universe(vcfg, universe)
         tags = {s: u.tag(s) for s in u.all_names()}
         for symbol, entered_from in shadow_names(vs).items():
-            tags.setdefault(symbol, entered_from)
+            # Held but no longer in either universe: scored nightly, never eligible to enter.
+            tags.setdefault(symbol, f"held:{entered_from}")
         for symbol in followed_names(vs, now, vcfg.ticker_file.follow_days):
             tags.setdefault(symbol, "lookup")
     companies = [s for s in u.all_names() if s not in u.etfs]
@@ -282,5 +286,9 @@ def run_nightly(
                 rs_cutoff_6m=cutoff,
                 summary_json=json.dumps(summary, sort_keys=True),
             )
+            keep_fresh = sorted(shadow_names(vs))
+    # After the commit: a failed night leaves the previous list in place. The research sweep
+    # reads this file to keep held names' bars and filings current (spec §6.9).
+    write_keep_fresh(keep_fresh)
     log.info("value nightly %s: %d names; %s", plan.as_of, len(cards), json.dumps(summary))
     return summary

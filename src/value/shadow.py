@@ -13,8 +13,10 @@ The rules this module applies (the plan's rulings say why):
   entry blocks while its live-policy leg holds, a control entry until its horizons are marked;
 - horizon h is marked at the close of the h-th session after the entry session (SPY's sessions),
   from the bars as they stand that night, so a split adjusts both ends alike;
-- a leg's absolute levels cannot survive a split: an entry whose entry bar moved by more than 25%
-  is frozen as ``rebase_needed`` (Part 3 rebases).
+- a leg's absolute levels cannot survive a split: an entry is frozen as ``rebase_needed`` (Part 3
+  rebases) when its entry bar moved by more than 25% from the recorded entry price, or when the bar
+  on a leg's last stepped session moved by more than 25% from the close the leg saw there (the
+  provider's window is ~2 years, so a long-held entry's own bar eventually leaves it).
 """
 
 from __future__ import annotations
@@ -254,11 +256,25 @@ def _split_moved(row: ValueShadowRow, bars: list[DayBar]) -> bool:
     return bar is not None and abs(_price(bar) / row.entry_price - 1.0) > SPLIT_GUARD
 
 
+def _leg_split_moved(leg: ValueShadowLegRow, bars: list[DayBar]) -> bool:
+    """The provider rewrites only its own window (~2 years), so a long-held entry's bar is out of
+    reach; compare the bar now on the leg's last stepped session with the close the leg saw."""
+    if leg.last_step is None:
+        return False
+    last_close = LegState.model_validate_json(leg.state_json).last_close
+    bar = _bar_on(bars, leg.last_step)
+    return (
+        last_close is not None
+        and bar is not None
+        and abs(bar.close / last_close - 1.0) > SPLIT_GUARD
+    )
+
+
 def _freeze(row: ValueShadowRow) -> None:
     row.status = "rebase_needed"
     row.status_detail = (
-        f"the {row.entry_date} bar no longer matches the entry price {row.entry_price:.2f} "
-        "(a split?): frozen until Part 3's rebase"
+        f"the bars no longer match the recorded prices (entry {row.entry_price:.2f} on "
+        f"{row.entry_date}; a split?): frozen until Part 3's rebase"
     )
 
 
@@ -288,7 +304,11 @@ def step_legs(
             select(ValueShadowLegRow).where(
                 ValueShadowLegRow.shadow_id == row.id, ValueShadowLegRow.closed.is_(False)
             )
-        )
+        ).all()
+        if any(_leg_split_moved(leg, bars) for leg in legs):
+            _freeze(row)
+            frozen += 1
+            continue
         for leg in legs:
             state = LegState.model_validate_json(leg.state_json)
             days = [

@@ -18,6 +18,7 @@ from src.common.value_types import MarketFacts
 from src.common.value_universe import ValueUniverse
 from src.research.store.models import Base, CompanyFactsRawRow, DailyBarRow, SymbolRow
 from src.value import service
+from src.value.scorecard import build_scorecard
 from src.value.store import (
     ValueRunRow,
     ValueShadowRow,
@@ -150,6 +151,57 @@ def test_a_night_scores_persists_and_opens_the_shadow_record(dbs) -> None:
         assert (run.kind, run.as_of, run.ruleset_version) == ("nightly", AS_OF, "v2")
         assert {r.status for r in s.scalars(select(ValueShadowRow))} == {"pending"}
     assert service.plan_run(NOW, universe={}) is None  # done for AS_OF
+
+
+def test_a_held_name_that_left_the_universe_is_scored_but_not_eligible_to_enter(dbs) -> None:
+    """Review I4(b): GONE has an open shadow entry but is in neither universe. It is scored
+    nightly under ``held:<universe>``, and ``open_signals`` opens entries only for current members."""
+    from src.value import shadow
+    from tests.value_fixtures import inputs
+
+    gone = build_scorecard(inputs(symbol="GONE", close=30.0), get_config().value)
+    with value_session() as s:
+        shadow.open_signals(s, [gone], {"GONE": "evidence"}, {}, live_policy="value", now=NOW)
+    plan = service.plan_run(NOW, universe={})
+    assert plan is not None
+    assert plan.tags == {"STDY": "trading", "GONE": "held:evidence"}
+    assert shadow.SHADOW_UNIVERSES == ("trading", "evidence")
+    with value_session() as s:
+        for row in s.scalars(select(ValueShadowRow)):
+            row.status = "void"  # nothing blocks a re-entry now
+        assert shadow.open_signals(s, [gone], plan.tags, {}, live_policy="value", now=NOW) == {
+            "ready": 0,
+            "control_valuation": 0,
+            "control_health": 0,
+        }
+
+
+def test_a_night_writes_the_keep_fresh_list_for_the_research_sweep(dbs) -> None:
+    """Review I4(a): the names the shadow record holds are handed to the sweep as a plain file."""
+    import src.common.value_keep_fresh as kf
+
+    plan = service.plan_run(NOW, universe={})
+    assert plan is not None
+    assert kf.read_keep_fresh() == []
+    service.run_nightly(
+        plan,
+        facts={"STDY": MarketFacts(market_cap=3.0e9)},
+        earnings={"STDY": AS_OF + timedelta(days=60)},
+        now=NOW,
+    )
+    assert kf.read_keep_fresh() == ["STDY"]  # tonight's pending entries
+
+
+def test_a_failed_night_leaves_the_keep_fresh_list_alone(dbs, monkeypatch) -> None:
+    import src.common.value_keep_fresh as kf
+
+    kf.write_keep_fresh(["OLD"])
+    plan = service.plan_run(NOW, universe={})
+    assert plan is not None
+    monkeypatch.setattr(service.shadow, "process", lambda *a, **k: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        service.run_nightly(plan, facts={}, earnings={}, now=NOW)
+    assert kf.read_keep_fresh() == ["OLD"]
 
 
 def test_a_failed_night_leaves_value_db_as_it_was(dbs, monkeypatch) -> None:

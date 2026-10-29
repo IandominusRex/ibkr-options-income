@@ -79,6 +79,12 @@ def test_the_go_live_line_counts_only_the_tracks_ready_entries() -> None:
     assert "at or below zero: do not go live" in go_live_line(many, "baseline")
 
 
+def test_a_zero_spy_return_is_a_real_return_not_a_missing_one() -> None:
+    """Review M4: SPY flat over the horizon is 0.0, not unknown."""
+    flat = _entry(1, D1, 0.05, spy={21: 0.0, 63: 0.0, 126: None})
+    assert "n 1 of 30 needed" in go_live_line([flat], "baseline")
+
+
 def test_the_ranked_section_shows_each_bucket_and_the_spread() -> None:
     rows = [
         RankedView(

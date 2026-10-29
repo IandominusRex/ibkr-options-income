@@ -76,6 +76,16 @@ def _clear_effective_universe_cache():
 
 
 @pytest.fixture(autouse=True)
+def _value_keep_fresh_in_tmp(monkeypatch, tmp_path_factory):
+    """The value process writes data/value_keep_fresh.json after a night; no test may touch the
+    real one."""
+    monkeypatch.setattr(
+        "src.common.value_keep_fresh.KEEP_FRESH_FILE",
+        tmp_path_factory.mktemp("keep_fresh") / "value_keep_fresh.json",
+    )
+
+
+@pytest.fixture(autouse=True)
 def _mock_telegram_sender(monkeypatch):
     """Prevent tests from hitting the live Telegram API via sender.py helpers.
 

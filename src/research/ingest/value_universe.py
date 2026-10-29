@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import func, select
 
 from src.common.config import get_config
+from src.common.value_keep_fresh import read_keep_fresh
 from src.common.value_universe import build_value_universe
 from src.research.ingest.materialize import enqueue
 from src.research.store.models import CompanyFactsRawRow, DailyBarRow, SymbolRow
@@ -38,10 +39,13 @@ def last_weekday_before(today: date) -> date:
 
 
 def value_names() -> list[str]:
+    """Both universes, then the names the value book still holds in its shadow record that have
+    left them (a plain file the value process writes; spec §6.9, review I4)."""
     from src.common.universe import effective_universe
 
     cfg = get_config()
-    return build_value_universe(cfg.value, effective_universe()).all_names()
+    names = build_value_universe(cfg.value, effective_universe()).all_names()
+    return [*names, *(s for s in read_keep_fresh() if s not in set(names))]
 
 
 def enqueue_value_universe(
