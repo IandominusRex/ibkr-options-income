@@ -150,18 +150,19 @@ def test_names_the_scorecard_does_not_cover_are_not_applicable(kwargs, reason) -
 
 
 def test_a_bank_is_valued_on_tangible_book_and_held_unknown_without_cet1() -> None:
+    on = ValueCfg(ruleset_version="test", rules={"banks": {"require_cet1": True}})
     card = build_scorecard(
-        inputs(symbol="HBR", fin=financials(BANK), close=40.0, industry="Diversified Banks"), CFG
+        inputs(symbol="HBR", fin=financials(BANK), close=40.0, industry="Diversified Banks"), on
     )
     assert card.company_class == "bank" and list(card.lists) == ["deep_value"]
     deep = card.lists["deep_value"]
     assert deep.fair_value == pytest.approx(38.12437562437562)
     assert deep.verdict == "UNKNOWN"
-    off = ValueCfg(ruleset_version="test", rules={"banks": {"require_cet1": False}})
+    # The shipped default (CET1 off since the 2026-10-29 calibration dry run) judges it on the rest.
     assert (
         build_scorecard(
             inputs(symbol="HBR", fin=financials(BANK), close=40.0, industry="Diversified Banks"),
-            off,
+            CFG,
         )
         .lists["deep_value"]
         .verdict

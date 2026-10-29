@@ -1413,6 +1413,8 @@ class ValueClassificationCfg(_ValueModel):
             "Regional Banks",
             "Banks - Diversified",
             "Banks - Regional",
+            "Consumer Finance",
+            "Investment Banking & Brokerage",
         ]
     )
     insurer_industries: list[str] = Field(
@@ -1496,7 +1498,7 @@ class ValueBankCfg(_ValueModel):
     rote_median_min_pct: float = 10.0
     rote_stdev_max_pts: float = 4.0
     nco_multiple_max: float = 1.5
-    require_cet1: bool = True
+    require_cet1: bool = False
     cet1_min_pct: float = 6.5  # the 4.5% regulatory minimum + 2 points
     combined_ratio_max_pct: float = 100.0
     combined_ratio_years_min: int = 4
@@ -1609,7 +1611,7 @@ class ValueResearchSweepCfg(_ValueModel):
 class ValueCfg(_ValueModel):
     """The value book (config/value.yaml). Part 1: the scorecard, nothing that trades."""
 
-    ruleset_version: str = "v0-dryrun"
+    ruleset_version: str = "v1"
     db_url: str = "sqlite:///data/value.db"
     universe: ValueUniverseCfg = Field(default_factory=ValueUniverseCfg)
     ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)

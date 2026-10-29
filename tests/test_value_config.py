@@ -23,7 +23,7 @@ def test_the_example_spells_out_exactly_the_model_defaults() -> None:
 
 def test_get_config_loads_the_value_block() -> None:
     cfg = get_config().value
-    assert cfg.ruleset_version == "v0-dryrun"
+    assert cfg.ruleset_version == "v1"
     assert cfg.rules.margin_of_safety.deep_value[MarketRegime.NORMAL] == 25.0
     assert cfg.rules.margin_of_safety.quality_growth[MarketRegime.CRISIS] == 25.0
     assert cfg.rules.valuation.discount_rate_growth == 0.08
@@ -62,4 +62,10 @@ def test_a_frozen_version_refuses_rules_that_no_longer_match(monkeypatch) -> Non
     monkeypatch.setitem(FROZEN, "v9", "000000000000")
     with pytest.raises(ValueError, match="frozen"):
         ruleset_id(ValueCfg(ruleset_version="v9"))
-    assert ruleset_id(ValueCfg()) == ("v0-dryrun", ruleset_hash(ValueCfg().rules))
+    assert ruleset_id(ValueCfg()) == ("v1", ruleset_hash(ValueCfg().rules))
+
+
+def test_v1_is_frozen() -> None:
+    """Part 1, Task 16: the operator froze value_rules v1 after the calibration dry run."""
+    assert FROZEN["v1"] == ruleset_hash(ValueCfg().rules)
+    assert ruleset_id(get_config().value) == ("v1", FROZEN["v1"])

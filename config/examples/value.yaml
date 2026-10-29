@@ -7,7 +7,7 @@
 # (src/value/ruleset.py). Once `ruleset_version` is frozen (v1, after the calibration dry run,
 # spec §17), changing any rule is a version bump with a written reason, at most quarterly.
 
-ruleset_version: v0-dryrun
+ruleset_version: v1
 db_url: sqlite:///data/value.db
 
 universe:
@@ -39,7 +39,13 @@ rules:
     stale_item_days: 200
 
   classification:            # spec §6.4-6.5
-    bank_industries: [Diversified Banks, Regional Banks, Banks - Diversified, Banks - Regional]
+    bank_industries:
+      - Diversified Banks
+      - Regional Banks
+      - Banks - Diversified
+      - Banks - Regional
+      - Consumer Finance
+      - Investment Banking & Brokerage
     insurer_industries:
       - Property & Casualty Insurance
       - Multi-line Insurance
@@ -106,7 +112,7 @@ rules:
     rote_median_min_pct: 10.0
     rote_stdev_max_pts: 4.0
     nco_multiple_max: 1.5
-    require_cet1: true       # CET1 is not tagged in companyfacts for BAC or JPM (2026-10-29)
+    require_cet1: false      # off: CET1 is untagged for 12 of 13 banks in companyfacts and no risk-weighted-assets concept exists to derive it (calibration dry run, 2026-10-29)
     cet1_min_pct: 6.5
     combined_ratio_max_pct: 100.0
     combined_ratio_years_min: 4

@@ -101,7 +101,7 @@ def test_the_dry_run_scores_persists_and_prints_the_funnel(dbs, capsys, tmp_path
         assert row is not None and row.universe == "trading"
         assert row.verdict_deep == "WATCH"  # cheap enough; no earnings date is unknown timing
         run = s.query(ValueRunRow).one()
-        assert (run.kind, run.names, run.ruleset_version) == ("dry_run", 1, "v0-dryrun")
+        assert (run.kind, run.names, run.ruleset_version) == ("dry_run", 1, "v1")
 
 
 def test_no_persist_leaves_value_db_alone(dbs, tmp_path) -> None:

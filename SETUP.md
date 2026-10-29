@@ -2044,8 +2044,8 @@ a one-off **calibration dry run**: it places no order, sends no message and runs
    `python -m scripts.value_dry_run run --report value_dry_run.txt`. It prints how many names
    fall at each gate per list, GOOGL, META, BAC and MU with every number, the raw companyfacts
    storage and the run time.
-4. You read the funnel and settle the thresholds; then `ruleset_version` is frozen at `v1` and
-   every later rule change is a version bump with a written reason.
+4. `ruleset_version` is frozen at `v1` (`src/value/ruleset.py::FROZEN`); a rule change is a
+   version bump with a written reason.
 
 ### Scripts
 

@@ -11,8 +11,9 @@ import json
 
 from src.common.config import ValueCfg, ValueRulesCfg
 
-# Filled at the freeze (Part 1, Task 16): ruleset version -> the hash its rules must have.
-FROZEN: dict[str, str] = {}
+# value_rules v1, frozen 2026-10-29 by the operator after the calibration dry run (Part 1,
+# Task 16). A rule change is a new version with a written reason, at most quarterly (spec §6.8).
+FROZEN: dict[str, str] = {"v1": "e1a1b3b096b1"}
 
 
 def ruleset_hash(rules: ValueRulesCfg) -> str:

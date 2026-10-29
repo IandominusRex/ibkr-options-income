@@ -212,8 +212,12 @@ def _bank(cfg: ValueCfg | None = None, **overrides):
     return {c.id: c for c in gates.financial_health(inp, years, rules, insurer=False)}
 
 
+CET1_ON = ValueCfg(rules={"banks": {"require_cet1": True}})
+
+
 def test_a_bank_without_tagged_cet1_is_unknown_never_a_silent_pass() -> None:
-    h = _bank()
+    """With the check required (it ships off since the calibration dry run, 2026-10-29)."""
+    h = _bank(CET1_ON)
     assert h["bank.cet1"].state == "unknown"
     assert h["bank.rote_median"].actual == pytest.approx(14.025974025974024)
     assert h["bank.nco"].actual == pytest.approx((2.0 / 1000) / (1.5 / 800))
@@ -227,8 +231,19 @@ def test_the_operator_may_switch_the_cet1_check_off() -> None:
 
 
 def test_a_tagged_cet1_is_checked() -> None:
-    assert _bank(cet1_ratio=[0.118, None, None, None, None])["bank.cet1"].state == "pass"
-    assert _bank(cet1_ratio=[0.05, None, None, None, None])["bank.cet1"].state == "fail"
+    assert _bank(CET1_ON, cet1_ratio=[0.118, None, None, None, None])["bank.cet1"].state == "pass"
+    assert _bank(CET1_ON, cet1_ratio=[0.05, None, None, None, None])["bank.cet1"].state == "fail"
+
+
+def test_the_calibration_defaults_cet1_off_and_financials_as_banks() -> None:
+    """Calibration dry run, 2026-10-29: CET1 is untagged for 12 of 13 banks, so it ships off; and
+    Consumer Finance and Investment Banking & Brokerage names take the bank rules."""
+    assert ValueCfg().rules.banks.require_cet1 is False
+    assert _bank()["bank.cet1"].state == "not_applicable"
+    for industry in ("Consumer Finance", "Investment Banking & Brokerage"):
+        inp = inputs(symbol="X", fin=financials(BANK), close=40.0, industry=industry)
+        years, _ = gates.build_years_for(inp)
+        assert gates.classify(inp, years, ValueCfg().rules) == "bank"
 
 
 def test_a_credit_turn_fails_the_charge_off_gate() -> None:

@@ -361,8 +361,17 @@ Claude, no Telegram, no web, no daemon.
   and `select_ttm`; 23 value line items in `config/research_concepts.yaml`; the research
   worker's `prices` job kind and `value_sweep` (off).
 - `scripts/value_dry_run.py`, `scripts/value_universe_snapshot.py`, the two snapshot CSVs.
-- Known limitations: CET1 is not tagged in companyfacts for BAC/JPM (`banks.require_cet1`
-  decides, Task 15); method C is absent until point-in-time prices exist; the combined ratio is
+- **Frozen:** `value_rules: v1` = `e1a1b3b096b1` on 2026-10-29; the operator's calibration
+  decisions: growth valuation kept (`discount_rate_growth` 0.08, `growth_sbc_share` 0.5,
+  `realised_cap_growth` 0.20); data-quality floors kept; `banks.require_cet1` set to `false` (12
+  of 13 banks do not tag CET1 and no risk-weighted-assets concept exists to derive it); Consumer
+  Finance and Investment Banking & Brokerage added to `bank_industries`; margin-of-safety bars
+  and the 60% review line kept; ~2 GB of raw companyfacts accepted.
+- Known limitations: with `banks.require_cet1` off, a bank's capital adequacy is not checked at
+  all, even where CET1 is tagged (HBAN), and RF reads READY on P/TBV alone; dual-class filers
+  whose EDGAR share count covers one class (V, MA, CMCSA, BRK-B, ...) fail the market-cap
+  cross-check and read UNKNOWN; Beneish is UNKNOWN for 158 of 519 names (mostly no gross-margin
+  inputs); method C is absent until point-in-time prices exist; the combined ratio is
   approximated from total benefits, losses and expenses; holidays are not known to the earnings
   window; prices carry yfinance's survivorship bias; Piotroski scores a missing component 0
   (plan ruling 18) and `long_term_debt or 0.0` gives untagged debt the debt-free point.
