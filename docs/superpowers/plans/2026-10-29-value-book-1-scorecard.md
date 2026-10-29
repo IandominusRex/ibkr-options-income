@@ -97,7 +97,7 @@ agent's own model name (a Sonnet executor writes its Sonnet name; an Opus one wr
 | 8 Valuation: A, B, C, D, P/TBV | done | 7171170 | test_value_valuation.py 10 passed; ruff check/format clean; mypy src/value clean (7 files) | 2026-10-29 | Ruling: code extracted verbatim; tests green on first run, no red run observed. Cost if wrong: none |
 | 9 Timing and the scorecard | done | e5af279 | test_value_scorecard.py 24 passed; all tests/test_value_*.py 107 passed. **Section B exit gate:** pytest 5111 passed + 1 skipped (baseline 4996 + 115), ruff check . clean, mypy src clean (310 files); protected-file diff empty | 2026-10-29 | Ruling: code extracted verbatim; no red run observed, every pinned number matched first time. Ruling: the section prompt's 'baseline-plus-115 = 5034 + 115 = 5149' double-counted Section A; the 115 new tests (8+7+28+10+24 = 77 in B, plus A's 38) are relative to the 4996 baseline, so the exit count is 5111 (5034 + 77). Branch is 5 (A) + 5 task commits + 1 docs commit = 11 ahead of main. Cost if wrong: none |
 | **C entry checks** | done | (none) | C1–C4 pass; Section B exit re-verified by the orchestrator: 11 commits ahead of main, pytest 5111 passed + 1 skipped, ruff clean, mypy clean (310 files), protected-file diff empty, 77 new Section B tests | 2026-10-29 | Ruling: C3's grep matches the word "yfinance" in a `detail=` string (gates.py:128, :140) and a comment (timing.py:35) — no import, no I/O, so the scorecard is still pure. Ruling: counts shift by Section A/B's extra `docs(plan)` commits — C1's "prints 9" is 11, C's exit "14 in all" is 17 (5 task commits + 1 final `docs(plan)`), and C's pytest target is baseline 4996 + 141 = 5137. The C entry row rides Task 10's commit. Cost if wrong: none |
-| 10 Rank score and the relative-strength line | pending | | | | |
+| 10 Rank score and the relative-strength line | done | f73a288 | test_value_rank.py 5 passed; ruff check/format clean; mypy src/value/rank.py clean | 2026-10-29 | Ruling: code and tests extracted verbatim from the plan and run together, so no red run was observed (5 green at once, pinned numbers matched). Cost if wrong: none |
 | 11 `value.db` and the ticker file | pending | | | | |
 | 12 Funnel and fences | pending | | | | |
 | 13 The dry-run script | pending | | | | |
@@ -6119,7 +6119,7 @@ silent; protected-file diff empty.
   dict[str, RankEntry]`; `filed_lists(cards, deep, growth) -> dict[str, ListName]`;
   `rs_cutoff(prices, bottom_pct) -> float | None`.
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_value_rank.py`
+- [x] **Step 1: Write the failing tests** — `tests/test_value_rank.py`
 
 ```python
 """The rank score, the filed list and the relative-strength line (value book spec §6.6, §6.8)."""
@@ -6194,10 +6194,10 @@ def test_the_relative_strength_line_is_the_bottom_thirty_percent() -> None:
     assert rs_cutoff([None, *series], 30.0) == pytest.approx(0.03)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named
   'src.value.rank'`.
 
-- [ ] **Step 3: Create `src/value/rank.py`**
+- [x] **Step 3: Create `src/value/rank.py`**
 
 ```python
 """The rank score (spec §6.8) and the run's relative-strength line (spec §6.6). Pure: no I/O.
@@ -6350,12 +6350,12 @@ def rs_cutoff(prices: list[PriceSeries | None], bottom_pct: float) -> float | No
     return excess[lo] + (excess[hi] - excess[lo]) * (k - lo)
 ```
 
-- [ ] **Step 4: Run the tests** — 5 passed.
+- [x] **Step 4: Run the tests** — 5 passed.
 
-- [ ] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/rank.py
+- [x] **Step 5: Gates** — `ruff check`, `ruff format --check`, `mypy` on `src/value/rank.py
   tests/test_value_rank.py`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/rank.py tests/test_value_rank.py docs/superpowers/plans/2026-10-29-value-book-1-scorecard.md
