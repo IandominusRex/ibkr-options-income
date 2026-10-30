@@ -32,6 +32,8 @@ PURE = (
     "exits",
     "ranked",
     "report",
+    "residuals",
+    "reevaluate",
 )
 
 FORBIDDEN_FOR_VALUE = (
@@ -194,6 +196,7 @@ def test_only_src_value_constructs_value_rows() -> None:
         "ValueShadowLegRow(",
         "ValueShadowEventRow(",
         "ValueRankedRow(",
+        "ValueReevaluationRow(",
     )
     offenders = []
     for p in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
@@ -209,6 +212,7 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
         "import json, sys\n"
         "import src.value.scorecard, src.value.store, src.value.ticker_file, src.value.funnel\n"
         "import src.value.exits, src.value.shadow, src.value.service, src.value.report\n"
+        "import src.value.residuals, src.value.reevaluate\n"
         "import src.common.value_inputs, src.common.value_universe\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('src.'))))\n"
     )
@@ -272,6 +276,8 @@ def test_the_value_process_loads_no_wheel_layer_and_no_ibkr() -> None:
         "    importlib.import_module(m.name)\n"
         "import scripts.value_feed\n"
         "import src.news.store.readonly, src.news.store.queries, src.data.factory\n"
+        # what the service imports lazily, inside functions (review M11)
+        "import src.common.universe, src.storage.regime_state\n"
         "print(json.dumps(sorted(sys.modules)))\n"
     )
     env = {**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"}
@@ -283,3 +289,17 @@ def test_the_value_process_loads_no_wheel_layer_and_no_ibkr() -> None:
     assert [m for m in forbidden if _reaches(loaded, m)] == []
     assert not _reaches(loaded, "src.news.store.session")
     assert not _reaches(loaded, "ib_async")
+
+
+def test_the_research_worker_owns_the_filings_feed() -> None:
+    """Spec §6.9: the submissions and going-concern jobs live in src/research and fetch through
+    src/data; the value side reads their table only through the neutral loader."""
+    for name in ("submissions", "going_concern"):
+        mods = imported_modules(ROOT / "src" / "research" / "ingest" / f"{name}.py")
+        assert _reaches(mods, "src.data.factory") and not _reaches(mods, "src.value")
+    readers = [
+        str(p.relative_to(ROOT))
+        for p in [*VALUE, *(ROOT / "scripts").glob("value_*.py")]
+        if "FilingIndexRow" in p.read_text(encoding="utf-8")
+    ]
+    assert readers == []  # only src/common/value_inputs.py names the table

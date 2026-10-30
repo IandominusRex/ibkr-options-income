@@ -6,7 +6,8 @@ Usage:
 No IBKR connection, no clientId (Parts 1-4). Every ``value.service.poll_seconds`` it asks
 ``src.value.service.plan_run`` whether a settled session is waiting to be scored; when one is
 (after ``value.service.run_hour_et``), it gathers the plain data ``src/value/`` may not fetch
-itself (``scripts/value_feed.py``) and runs the night. Idles when the ruleset check fails.
+itself (``scripts/value_feed.py``: earnings dates, news volume, market facts) and runs the
+night, its §7.1 re-evaluations included. Idles when the ruleset check fails.
 Runs until SIGINT/SIGTERM. Supervised by scripts.start like the other daemons.
 
 The only module that will import ``src.value_ai`` (Part 4). Never import this file: check it
@@ -17,7 +18,13 @@ import logging
 import signal
 import threading
 
-from scripts.value_feed import FactsCache, NightRetry, earnings_dates
+from scripts.value_feed import (
+    FactsCache,
+    NightRetry,
+    earnings_dates,
+    news_volume,
+    recent_earnings,
+)
 from src.common.config import get_config
 from src.common.logging import setup_logging
 from src.value.service import plan_run, run_nightly, startup_check
@@ -39,7 +46,13 @@ def _tick() -> None:
     log.info("value: scoring %d names for %s", len(plan.names), plan.as_of)
     try:
         facts = _facts.get(plan.as_of, plan.fetch_names, workers)
-        run_nightly(plan, facts=facts, earnings=earnings_dates(plan.as_of))
+        run_nightly(
+            plan,
+            facts=facts,
+            earnings=earnings_dates(plan.as_of),
+            recent_earnings=recent_earnings(plan.as_of, plan.positions),
+            news=news_volume(sorted(plan.positions)),
+        )
     except Exception:
         n = _retry.failed(plan.as_of)
         level = logging.CRITICAL if n >= _retry.critical_after else logging.ERROR

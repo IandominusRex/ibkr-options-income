@@ -114,7 +114,7 @@ is the executing agent's own model name.
 | 5 The residual model and the triggers | done | `252b910` | tests/test_value_reevaluate (10) + fence 24 passed; ruff check/format clean on 3 files; mypy residuals.py and reevaluate.py clean | 2026-10-30 | No deviations; the plan's files reproduced exactly (extracted verbatim). Ruling 11 (residual model: 250-session fit before the day, 60-session sigma, min 120 returns, raw 10% backstop): cost if wrong is the `ValueReevaluationCfg` numbers. Ruling 3 (trigger 6 deferred to Part 4): `TriggerKind` has no `kill` member; adding one is a Literal entry. Both new modules are added to the fence's pure list in Task 8. |
 | 6 The store: `value_reevaluations` and the plan column | done | `1f45225` | tests/test_value_store (8) + shadow + report + fence 43 passed; ruff check/format clean; mypy store.py clean. **Section B exit full gate:** pytest 5278 passed, 1 skipped (baseline 5239 + 39); `ruff check .` clean; `mypy src` 324 files clean; protected-file diff empty; 3 task commits (`ec73f68`, `252b910`, `1f45225`) on top of Section A's 4, plus this docs commit | 2026-10-30 | No deviations. Ruling 16 (`plan` column, default `main`, added by `init_value_db` via `_ADDED_COLUMNS`): cost if wrong is a column drop and a re-add under another name, no data of Part 2's changes. |
 | **C entry checks** | passed | 8 commits on `main..HEAD` | C2: pytest 5278 passed, 1 skipped (baseline + 39); ruff clean; mypy 324 files; C3/C4 greps all match; Section B protected-file diff empty; 32 GiB free | 2026-10-30 | Operator said "complete everything": sections run back to back, the merge/push still asked. Section C exit target: baseline + 52 = 5291 |
-| 7 The shadow record: rebase, re-evaluations, the original twin | | | | | |
+| 7 The shadow record: rebase, re-evaluations, the original twin | done | `b0743cd` | Red first: 11 failed, 9 passed in tests/test_value_shadow.py (`rebase`, `ReevalContext`, the `mark_horizons` count). Green: tests/test_value_shadow (20) + service + store + report + fence 60 passed; ruff check/format clean on 2 files; mypy shadow.py clean | 2026-10-30 | No deviations. The test diff applied by `git apply`; shadow.py extracted verbatim from the plan's code block. Ruling 17 (rebase replaces the freeze; dividends rebase too; a single provider-corrected bar rebases the levels): cost if wrong is a tolerance (`REBASE_TOLERANCE`). Rulings 12-16 (per-entry re-evaluation, the shocks, the 8-K thesis exit, the original twin) applied as written: each is one branch in `step_legs`/`_Reevaluator`. The commit also carried the orchestrator's "C entry checks" row. |
 | 8 The process: plain data, the regime step, the fences | | | | | |
 | 9 The report: re-evaluated against original | | | | | |
 | **D entry checks** | | | | | |
@@ -4674,7 +4674,7 @@ def process(
   `value_feed.recent_earnings(as_of, symbols) -> dict[str, list[date]]`,
   `value_feed.news_volume(symbols, now=None) -> dict[str, NewsVolume]`.
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_feed.py`:
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_feed.py`:
 
 ```diff
 diff --git a/tests/test_value_feed.py b/tests/test_value_feed.py
@@ -4903,13 +4903,13 @@ index c88173d..cd9faa1 100644
 +    assert readers == []  # only src/common/value_inputs.py names the table
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_feed.py tests/test_value_service.py tests/test_value_fence.py`
   Expected: FAIL — `AttributeError: module 'scripts.value_feed' has no attribute 'recent_earnings'`,
   `RunPlan` has no `positions`. The fence tests pass at once (record that).
 
-- [ ] **Step 3: The service** — apply to `src/value/service.py`:
+- [x] **Step 3: The service** — apply to `src/value/service.py`:
 
 ```diff
 diff --git a/src/value/service.py b/src/value/service.py
@@ -5047,7 +5047,7 @@ index df02bfc..1e90f84 100644
                  name: dict(Counter(c.verdict_for(name) for c in cards))
 ```
 
-- [ ] **Step 4: The feed and the entrypoint** — apply to `scripts/value_feed.py`:
+- [x] **Step 4: The feed and the entrypoint** — apply to `scripts/value_feed.py`:
 
 ```diff
 diff --git a/scripts/value_feed.py b/scripts/value_feed.py
@@ -5188,7 +5188,7 @@ index 6127944..eab10ba 100644
          level = logging.CRITICAL if n >= _retry.critical_after else logging.ERROR
 ```
 
-- [ ] **Step 5: Run the tests and the probes**
+- [x] **Step 5: Run the tests and the probes**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_feed.py tests/test_value_service.py tests/test_value_fence.py tests/test_news_fence.py tests/test_web_fence.py tests/test_eval_skills.py`
   Expected: PASS (`test_value_feed.py` 9, `test_value_service.py` 11, `test_value_fence.py` 15).
@@ -5197,7 +5197,7 @@ index 6127944..eab10ba 100644
   scripts/run_value.py` clean. **Red runs to record:** add `import src.engine.risk_engine` to
   `src/value/reevaluate.py` → the fence fails; remove it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/service.py scripts/value_feed.py scripts/run_value.py tests/test_value_feed.py tests/test_value_service.py tests/test_value_fence.py

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 import src.common.value_inputs as vi
 import src.value.store as store
 from src.common.config import get_config
-from src.common.value_types import MarketFacts
+from src.common.value_types import MarketFacts, NewsVolume
 from src.common.value_universe import ValueUniverse
 from src.research.store.models import Base, CompanyFactsRawRow, DailyBarRow, SymbolRow
 from src.value import service
@@ -218,6 +218,52 @@ def test_a_failed_night_leaves_value_db_as_it_was(dbs, monkeypatch) -> None:
         assert s.get(ValueTickerFileRow, "STDY") is None
         assert s.scalars(select(ValueRunRow)).first() is None
     assert service.plan_run(NOW, universe={}) is not None  # the next poll retries
+
+
+def test_a_night_hands_the_reevaluation_inputs_to_the_shadow_record(dbs, monkeypatch) -> None:
+    """Spec §7.1: earnings dates and news volume arrive as plain data; the regime trigger fires
+    on a step from the regime the previous night recorded."""
+    with value_session() as s:
+        record_run(
+            s,
+            kind="nightly",
+            started_at=NOW,
+            finished_at=NOW,
+            as_of=AS_OF - timedelta(days=1),
+            ruleset_version="v3",
+            ruleset_hash="x",
+            names=1,
+            rs_cutoff_6m=None,
+            summary_json=json.dumps({"regime": "cautious"}),
+        )
+        assert service.previous_regime(s) == "cautious"
+    monkeypatch.setattr(vi, "load_regime", lambda: "stressed")
+    seen: dict = {}
+    real = service.shadow.process
+
+    def spy(*a, **k):
+        seen.update(k)
+        return real(*a, **k)
+
+    monkeypatch.setattr(service.shadow, "process", spy)
+    plan = service.plan_run(NOW, universe={})
+    assert plan is not None and plan.positions == set()
+    news = {"STDY": NewsVolume(last_24h=9, daily_median_30d=1.0)}
+    service.run_nightly(
+        plan,
+        facts={"STDY": MarketFacts(market_cap=3.0e9)},
+        earnings={"STDY": AS_OF + timedelta(days=60)},
+        now=NOW,
+        recent_earnings={"STDY": [AS_OF]},
+        news=news,
+    )
+    assert seen["regime_stepped"] is True
+    assert (seen["news"], seen["earnings"]) == (news, {"STDY": [AS_OF]})
+    with value_session() as s:
+        for row in s.scalars(select(ValueShadowRow)):
+            row.status = "open"
+        assert service.open_positions(s) == {"STDY"}
+        assert service.previous_regime(s) == "stressed"
 
 
 def test_an_old_private_config_idles_the_process_instead_of_crash_looping(monkeypatch) -> None:

@@ -1,8 +1,9 @@
 """The value process's nightly run (spec §6.8, §6.9, §9.7): score both universes, the followed
 names and every shadow name once a session has closed, write the ticker files, run the shadow
-record and log the run. ``scripts/run_value.py`` is the thin entrypoint: it gathers the plain
-data this module may not fetch itself (earnings dates from news.db, yfinance market facts) and
-calls :func:`plan_run` and :func:`run_nightly`.
+record (with its §7.1 re-evaluations, Part 3) and log the run. ``scripts/run_value.py`` is the
+thin entrypoint: it gathers the plain data this module may not fetch itself (earnings dates and
+news volume from news.db, yfinance market facts) and calls :func:`plan_run` and
+:func:`run_nightly`.
 
 No IBKR connection and no clientId in Parts 1-4 (clientId 31 arrives with Stage 3). Reads
 research.db read-only through ``src/common/value_inputs.py``; writes value.db only. One run is
@@ -25,9 +26,9 @@ from sqlalchemy.orm import Session
 from src.common import value_inputs as vi
 from src.common.config import get_config
 from src.common.value_keep_fresh import write_keep_fresh
-from src.common.value_types import Classification, MarketFacts, ValueInputs
+from src.common.value_types import Classification, MarketFacts, NewsVolume, ValueInputs
 from src.common.value_universe import build_value_universe
-from src.value import shadow
+from src.value import reevaluate, shadow
 from src.value.rank import filed_lists, rank_list, rs_cutoff
 from src.value.ruleset import ruleset_id
 from src.value.scorecard import build_scorecard
@@ -55,6 +56,7 @@ class RunPlan:
     etfs: set[str] = field(default_factory=set)
     evidence: set[str] = field(default_factory=set)
     classification: dict[str, tuple[str, str]] = field(default_factory=dict)
+    positions: set[str] = field(default_factory=set)  # open READY entries: re-evaluated tonight
 
     @property
     def names(self) -> list[str]:
@@ -107,14 +109,40 @@ def followed_names(vs: Session, now: datetime, follow_days: int) -> list[str]:
 
 
 def shadow_names(vs: Session) -> dict[str, str]:
-    """Every name with a pending or open shadow entry, and the universe it entered from: held
-    and shadow names stay fresh even after they leave the universe (spec §6.9)."""
+    """Every name with a shadow entry the record still carries (pending, open, or frozen for a
+    rebase), and the universe it entered from: held and shadow names stay fresh even after they
+    leave the universe (spec §6.9)."""
     rows = vs.execute(
         select(ValueShadowRow.symbol, ValueShadowRow.universe).where(
-            ValueShadowRow.status.in_(("pending", "open"))
+            ValueShadowRow.status.in_(shadow.HELD)
         )
     )
     return {symbol: universe for symbol, universe in rows}
+
+
+def open_positions(vs: Session) -> set[str]:
+    """The names with an open READY entry: the positions §7.1 re-evaluates tonight."""
+    return set(
+        vs.scalars(
+            select(ValueShadowRow.symbol).where(
+                ValueShadowRow.status == "open", ValueShadowRow.kind == "ready"
+            )
+        )
+    )
+
+
+def previous_regime(vs: Session) -> str | None:
+    """The regime the last nightly run recorded (trigger 7 fires on a step from it)."""
+    row = vs.scalars(
+        select(ValueRunRow)
+        .where(ValueRunRow.kind == "nightly")
+        .order_by(ValueRunRow.as_of.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    regime = json.loads(row.summary_json or "{}").get("regime")
+    return regime if isinstance(regime, str) else None
 
 
 def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None) -> RunPlan | None:
@@ -145,6 +173,7 @@ def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None
             tags.setdefault(symbol, f"held:{entered_from}")
         for symbol in followed_names(vs, now, vcfg.ticker_file.follow_days):
             tags.setdefault(symbol, "lookup")
+        positions = open_positions(vs)
     companies = [s for s in u.all_names() if s not in u.etfs]
     with vi.research_read() as rs:
         assert rs is not None
@@ -163,6 +192,7 @@ def plan_run(now: datetime | None = None, universe: dict[str, Any] | None = None
         etfs=set(u.etfs),
         evidence=set(u.evidence),
         classification=dict(u.classification),
+        positions=positions,
     )
 
 
@@ -214,9 +244,12 @@ def run_nightly(
     facts: dict[str, MarketFacts],
     earnings: dict[str, date],
     now: datetime | None = None,
+    recent_earnings: dict[str, list[date]] | None = None,
+    news: dict[str, NewsVolume] | None = None,
 ) -> dict[str, Any]:
     """Score, rank, persist the ticker files, run the shadow record and log the run, all in one
-    value.db transaction. Returns the run's summary."""
+    value.db transaction. Returns the run's summary. *recent_earnings* (report dates up to the
+    session) and *news* (trigger 5) are the plain data §7.1's re-evaluations read."""
     vcfg = get_config().value
     version, digest = ruleset_id(vcfg)
     started = now or _now()
@@ -248,6 +281,9 @@ def run_nightly(
                     session_row=tag != "lookup",
                 )
             vs.flush()
+            stepped = reevaluate.regime_stepped(
+                previous_regime(vs), regime, vcfg.rules.reevaluation
+            )
             record = shadow.process(
                 vs,
                 rs,
@@ -260,6 +296,9 @@ def run_nightly(
                 version=version,
                 digest=digest,
                 now=started,
+                earnings=recent_earnings,
+                news=news,
+                regime_stepped=stepped,
             )
             verdicts = {
                 name: dict(Counter(c.verdict_for(name) for c in cards))

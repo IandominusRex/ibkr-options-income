@@ -1,7 +1,9 @@
-"""The plain data the value process hands to ``src/value/`` (spec §6.6, §6.9): earnings dates
-from news.db and yfinance market facts. ``src/value/`` may fetch neither itself: news.db is
-enrichment's database and yfinance is a network provider, so ``scripts/run_value.py`` gathers
-both here and passes them in as dicts.
+"""The plain data the value process hands to ``src/value/`` (spec §6.6, §6.9, §7.1): earnings
+dates and news volume from news.db, and yfinance market facts. ``src/value/`` may fetch none of
+them itself: news.db is enrichment's database and yfinance is a network provider, so
+``scripts/run_value.py`` gathers them here and passes them in as dicts. News volume only ever
+opens a re-evaluation (spec §7.1, trigger 5): it reads the deterministic ``news_items`` columns
+(``src.analytics.sentiment``'s rule), never a post or an explanation.
 
 Importable (no side effects at import), so it is tested and fenced; ``scripts/run_value.py`` is
 not imported by anything.
@@ -13,13 +15,16 @@ import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from statistics import median
 
-from src.common.value_types import MarketFacts
+from src.common.value_types import MarketFacts, NewsVolume
 
 log = logging.getLogger(__name__)
 
 EARNINGS_HORIZON_DAYS = 180
+RECENT_EARNINGS_DAYS = 14  # report dates a catch-up night may step over (spec §7.1 trigger 3)
+NEWS_BASELINE_DAYS = 30  # trigger 5: the daily median is over the 30 days before the last 24h
 RETRY_SECONDS = 3600.0  # a failed night is retried at most once an hour
 CRITICAL_AFTER = 3  # failures for one session before the log turns CRITICAL
 
@@ -38,6 +43,49 @@ def earnings_dates(as_of: date) -> dict[str, date]:
             return out
         for e in queries.earnings_between(s, as_of, as_of + timedelta(days=EARNINGS_HORIZON_DAYS)):
             out.setdefault(e.symbol, e.report_date)
+    return out
+
+
+def recent_earnings(as_of: date, symbols: set[str]) -> dict[str, list[date]]:
+    """Each name's report dates in the ``RECENT_EARNINGS_DAYS`` up to *as_of* (spec §7.1
+    trigger 3: "the earnings_events date passes"). Unreadable news.db: an empty dict."""
+    import src.news.store.queries as queries
+    from src.news.store.readonly import read_only_session
+
+    out: dict[str, list[date]] = {}
+    if not symbols:
+        return out
+    with read_only_session() as s:
+        if s is None:
+            return out
+        start = as_of - timedelta(days=RECENT_EARNINGS_DAYS)
+        for e in queries.earnings_between(s, start, as_of, symbols):
+            out.setdefault(e.symbol, []).append(e.report_date)
+    return out
+
+
+def news_volume(symbols: list[str], now: datetime | None = None) -> dict[str, NewsVolume]:
+    """Each name's news items over the 24 hours to *now* and the median of its daily counts over
+    the ``NEWS_BASELINE_DAYS`` before them, from the deterministic ``news_items`` columns only
+    (spec §7.1 trigger 5). Unreadable news.db: an empty dict, so no trigger fires."""
+    import src.news.store.queries as queries
+    from src.news.store.readonly import read_only_session
+
+    now = now or datetime.now(UTC)
+    day = timedelta(days=1)
+    since = now - day * (NEWS_BASELINE_DAYS + 1)
+    out: dict[str, NewsVolume] = {}
+    with read_only_session() as s:
+        if s is None:
+            return out
+        for symbol in symbols:
+            stamps = [ts for _, ts, _, _ in queries.ticker_sentiment_rows(s, symbol, since)]
+            counts = [0] * (NEWS_BASELINE_DAYS + 1)  # [0] = the last 24 hours
+            for ts in stamps:
+                k = int((now - ts) / day)
+                if 0 <= k <= NEWS_BASELINE_DAYS and ts <= now:
+                    counts[k] += 1
+            out[symbol] = NewsVolume(last_24h=counts[0], daily_median_30d=median(counts[1:]))
     return out
 
 
