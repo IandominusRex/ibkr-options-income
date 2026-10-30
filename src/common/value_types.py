@@ -72,11 +72,33 @@ class DayBar(BaseModel):
 
     date: date
     open: float | None = None
+    high: float | None = None
+    low: float | None = None
     close: float
     sma20: float | None = None
     sma50: float | None = None
     rsi14: float | None = None
     atr14: float | None = None
+
+
+class FilingEvent(BaseModel):
+    """One filing from EDGAR's submissions feed (spec §7.1 trigger 4): a periodic report or an
+    8-K with its item tags. ``going_concern`` is the research worker's read of a periodic filing
+    (None: not read, or not a periodic filing)."""
+
+    accn: str
+    form: str
+    filed: date
+    items: list[str] = Field(default_factory=list)
+    going_concern: bool | None = None
+
+
+class NewsVolume(BaseModel):
+    """Spec §7.1 trigger 5, handed in as plain data by the value process: one name's news items
+    over the last 24 hours and its daily median over the 30 days before them."""
+
+    last_24h: int
+    daily_median_30d: float
 
 
 class Classification(BaseModel):

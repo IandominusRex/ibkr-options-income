@@ -19,6 +19,7 @@ from src.research.store.models import (
     Base,
     CompanyFactsRawRow,
     DailyBarRow,
+    FilingIndexRow,
     FinancialRow,
     SymbolRow,
 )
@@ -192,6 +193,8 @@ def test_day_bars_carry_the_technicals_measured_at_each_close() -> None:
     later = vi.build_day_bars(bars, after=days[57].date)
     assert [d.date for d in later] == [days[58].date, days[59].date]
     assert later[0].sma50 == days[58].sma50  # measured on the whole history, not the tail
+    assert days[5].high == pytest.approx(bars["high"].iloc[5])  # the shock rules read the low
+    assert days[5].low == pytest.approx(bars["low"].iloc[5])
     no_open = vi.build_day_bars(bars.drop(columns=["open"]))
     assert no_open[0].open is None  # unknown, never zero
     assert vi.build_day_bars(bars.iloc[:0]) == []
@@ -279,6 +282,56 @@ def test_the_shadow_records_readers(research_file) -> None:
         assert vi.symbol_is_etf(s, "STDY") is False and vi.symbol_is_etf(s, "NONE") is False
         assert vi.filings_coverage(s, ["STDY", "NONE"]) == (1, 2)
         assert vi.filings_coverage(s, []) == (0, 0)
+
+
+def test_the_filings_feed_readers(research_file) -> None:
+    engine = create_engine(f"sqlite:///{research_file}")
+    with Session(engine) as s:
+        for accn, form, filed, items, gc in (
+            ("a1", "10-Q", date(2025, 5, 5), "", False),
+            ("a2", "8-K", date(2025, 8, 26), "5.02,9.01", None),
+            ("a3", "10-Q", date(2025, 8, 28), "", True),
+            ("a4", "10-Q", date(2025, 11, 4), "", None),  # filed later, not read yet
+        ):
+            s.add(
+                FilingIndexRow(
+                    accn=accn,
+                    cik="0000000001",
+                    form=form,
+                    filed=filed,
+                    items=items,
+                    going_concern=gc,
+                )
+            )
+        s.commit()
+    with vi.research_read() as s:
+        assert s is not None
+        got = vi.filings_between(s, ["STDY", "NONE"], date(2025, 8, 1), date(2025, 8, 28))
+        assert [(f.accn, f.form, f.items) for f in got["STDY"]] == [
+            ("a2", "8-K", ["5.02", "9.01"]),
+            ("a3", "10-Q", []),
+        ]  # after the start, on or before the end, oldest first
+        assert (
+            "NONE" not in got
+            and vi.filings_between(s, [], date(2025, 1, 1), date(2026, 1, 1)) == {}
+        )
+        assert vi.going_concern_flags(s, ["STDY"], date(2025, 8, 27)) == {"STDY": False}
+        assert vi.going_concern_flags(s, ["STDY"], date(2025, 12, 1)) == {"STDY": True}
+        assert vi.going_concern_flags(s, ["STDY"], date(2025, 5, 1)) == {}  # unknown, not "no"
+
+
+def test_a_research_db_without_the_filings_index_reads_as_empty(tmp_path, monkeypatch) -> None:
+    """The value process may run before the research worker has created the new table."""
+    path = tmp_path / "old.db"
+    engine = create_engine(f"sqlite:///{path}")
+    SymbolRow.__table__.create(engine)
+    monkeypatch.setattr(vi, "_resolve_path", lambda: str(path))
+    vi.reset_engine()
+    with vi.research_read() as s:
+        assert s is not None
+        assert vi.filings_between(s, ["STDY"], date(2025, 1, 1), date(2026, 1, 1)) == {}
+        assert vi.going_concern_flags(s, ["STDY"], date(2026, 1, 1)) == {}
+    vi.reset_engine()
 
 
 def test_a_missing_research_db_is_none_not_an_error(tmp_path, monkeypatch) -> None:

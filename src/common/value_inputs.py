@@ -24,6 +24,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.analytics.technicals import atr14_series, rsi14_series
@@ -31,6 +32,7 @@ from src.common.config import get_config
 from src.common.value_types import (
     AnnualPeriod,
     DayBar,
+    FilingEvent,
     InstantPoint,
     MarketFacts,
     PriceSeries,
@@ -44,7 +46,13 @@ from src.research.ingest.concepts import (
     select_ttm,
 )
 from src.research.schemas import Fact
-from src.research.store.models import CompanyFactsRawRow, DailyBarRow, FinancialRow, SymbolRow
+from src.research.store.models import (
+    CompanyFactsRawRow,
+    DailyBarRow,
+    FilingIndexRow,
+    FinancialRow,
+    SymbolRow,
+)
 
 log = logging.getLogger(__name__)
 
@@ -209,6 +217,8 @@ def build_day_bars(bars: pd.DataFrame, after: date | None = None) -> list[DayBar
         return []
     close = bars["close"].astype(float)
     opens = _column(bars["open"]) if "open" in bars.columns else [None] * len(close)
+    highs = _column(bars["high"].astype(float))
+    lows = _column(bars["low"].astype(float))
     sma20 = _column(close.rolling(20).mean())
     sma50 = _column(close.rolling(50).mean())
     rsi = _column(rsi14_series(close), 15)
@@ -222,6 +232,8 @@ def build_day_bars(bars: pd.DataFrame, after: date | None = None) -> list[DayBar
             DayBar(
                 date=day,
                 open=opens[i],
+                high=highs[i],
+                low=lows[i],
                 close=float(close.iloc[i]),
                 sma20=sma20[i],
                 sma50=sma50[i],
@@ -346,6 +358,65 @@ def closes_on(session: Session, symbols: list[str], day: date) -> dict[str, floa
         )
     )
     return {symbol: float(close) for symbol, close in rows if close is not None}
+
+
+def filings_between(
+    session: Session, symbols: list[str], start: date, end: date
+) -> dict[str, list[FilingEvent]]:
+    """Each symbol's indexed filings filed after *start* and on or before *end*, oldest first
+    (spec §7.1 trigger 4). Empty when the research worker has not built the index yet."""
+    if not symbols:
+        return {}
+    try:
+        rows = session.execute(
+            select(SymbolRow.symbol, FilingIndexRow)
+            .join(FilingIndexRow, FilingIndexRow.cik == SymbolRow.cik)
+            .where(
+                SymbolRow.symbol.in_(symbols),
+                FilingIndexRow.filed > start,
+                FilingIndexRow.filed <= end,
+            )
+            .order_by(FilingIndexRow.filed, FilingIndexRow.accn)
+        ).all()
+    except OperationalError:  # a research.db the worker has not migrated yet
+        log.warning("value_inputs: research.db has no filing_index yet")
+        return {}
+    out: dict[str, list[FilingEvent]] = {}
+    for symbol, row in rows:
+        out.setdefault(symbol, []).append(
+            FilingEvent(
+                accn=row.accn,
+                form=row.form,
+                filed=row.filed,
+                items=[t for t in row.items.split(",") if t],
+                going_concern=row.going_concern,
+            )
+        )
+    return out
+
+
+def going_concern_flags(session: Session, symbols: list[str], as_of: date) -> dict[str, bool]:
+    """Each symbol's going-concern read of its newest **read** periodic filing filed on or before
+    *as_of* (spec §7). A name none of whose recent periodic filings has been read is absent:
+    unknown, never "no doubt"."""
+    periodic = ("10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A")
+    if not symbols:
+        return {}
+    try:
+        rows = session.execute(
+            select(SymbolRow.symbol, FilingIndexRow.going_concern)
+            .join(FilingIndexRow, FilingIndexRow.cik == SymbolRow.cik)
+            .where(
+                SymbolRow.symbol.in_(symbols),
+                FilingIndexRow.form.in_(periodic),
+                FilingIndexRow.filed <= as_of,
+                FilingIndexRow.going_concern.is_not(None),
+            )
+            .order_by(FilingIndexRow.filed, FilingIndexRow.accn)
+        ).all()
+    except OperationalError:
+        return {}
+    return {symbol: bool(flag) for symbol, flag in rows}  # the newest read wins
 
 
 def current_fingerprint_parts(session: Session, symbol: str) -> dict[str, Any]:

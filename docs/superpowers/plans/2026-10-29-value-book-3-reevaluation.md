@@ -107,7 +107,7 @@ is the executing agent's own model name.
 |---|---|---|---|---|---|
 | **A entry checks** | passed | 0 commits (branch at `1dad9dc`) | A2 baseline: pytest 5239 passed, 1 skipped; ruff clean; mypy 320 files; A3 greps all match; A4 hash `d07717fe5348`, no Part 3 code; 34 GiB free | 2026-10-30 | Operator asked to execute the plan; the two "rulings to confirm" (dividend rebase, strict going-concern) are taken at the plan defaults. Plan targets: Section A exit = baseline + 14 = 5253 |
 | 1 Ruleset v3: the re-evaluation rules | done | `3c3d25d` | tests/test_value_config + dry_run + service + private_config + scorecard 59 passed; hash printed `ad8841127029` as planned; ruff check/format and mypy (2 files) clean | 2026-10-30 | No deviations. Applied by Edit rather than `git apply`; the plan's diffs were reproduced exactly. Ruling 1 (v3 = v2 + `rules.reevaluation`): cost if wrong is a re-pin before the first v3 night, a v4 after. |
-| 2 The research worker's filings feed | | | | | |
+| 2 The research worker's filings feed | done | `c681018` | 86 passed (test_research_submissions 9 new, test_value_universe 13, plus edgar/materialize/store/fundamentals/worker/fence); ruff check/format clean on 9 files; mypy src/data src/research clean (46 files) | 2026-10-30 | No deviations; the plan's code reproduced exactly (value_universe.py written whole, same content as the diff). Rulings 7 (20h submissions age, 400-day keep, ETag), 8 (SPDR eleven + SPY), 9 (P2-M2: refetch the bar on the last weekday, `last <= due`), 5 (strict going-concern pattern; cost if wrong is one regex) applied as written. |
 | 3 The readers: filings, the going-concern flag, the day's low | | | | | |
 | **B entry checks** | | | | | |
 | 4 The exit engine's Part 3 rules | | | | | |
@@ -1907,7 +1907,7 @@ index 256f37c..2ace4d0 100644
   `value_inputs.going_concern_flags(session, symbols, as_of) -> dict[str, bool]` (the newest **read**
   periodic filing; a name with none read is absent).
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_inputs.py`:
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_inputs.py`:
 
 ```diff
 diff --git a/tests/test_value_inputs.py b/tests/test_value_inputs.py
@@ -1990,13 +1990,13 @@ index d401fc7..fc723a3 100644
      vi.reset_engine()
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py`
   Expected: FAIL — `AttributeError: 'DayBar' object has no attribute 'high'` and
   `module 'src.common.value_inputs' has no attribute 'filings_between'`.
 
-- [ ] **Step 3: The shapes** — apply to `src/common/value_types.py` (it still imports only the
+- [x] **Step 3: The shapes** — apply to `src/common/value_types.py` (it still imports only the
   standard library and pydantic: `test_value_types_is_plain_pydantic`):
 
 ```diff
@@ -2042,7 +2042,7 @@ index cad7621..2496552 100644
      industry: str | None = None
 ```
 
-- [ ] **Step 4: The readers** — apply to `src/common/value_inputs.py`:
+- [x] **Step 4: The readers** — apply to `src/common/value_inputs.py`:
 
 ```diff
 diff --git a/src/common/value_inputs.py b/src/common/value_inputs.py
@@ -2166,13 +2166,13 @@ index 47eb429..5564fa6 100644
      ``financials`` and the newest bar, without parsing the raw payload."""
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_inputs.py tests/test_value_shadow.py tests/test_value_fence.py`
   Expected: PASS (`test_value_inputs.py` 15). Then ruff check/format and `.venv/bin/mypy
   src/common/value_types.py src/common/value_inputs.py` — clean.
 
-- [ ] **Step 6: Commit, then the section's Progress-log commit**
+- [x] **Step 6: Commit, then the section's Progress-log commit**
 
   ```bash
   git add src/common/value_types.py src/common/value_inputs.py tests/test_value_inputs.py
