@@ -115,7 +115,7 @@ is the executing agent's own model name.
 | 6 The store: `value_reevaluations` and the plan column | done | `1f45225` | tests/test_value_store (8) + shadow + report + fence 43 passed; ruff check/format clean; mypy store.py clean. **Section B exit full gate:** pytest 5278 passed, 1 skipped (baseline 5239 + 39); `ruff check .` clean; `mypy src` 324 files clean; protected-file diff empty; 3 task commits (`ec73f68`, `252b910`, `1f45225`) on top of Section A's 4, plus this docs commit | 2026-10-30 | No deviations. Ruling 16 (`plan` column, default `main`, added by `init_value_db` via `_ADDED_COLUMNS`): cost if wrong is a column drop and a re-add under another name, no data of Part 2's changes. |
 | **C entry checks** | passed | 8 commits on `main..HEAD` | C2: pytest 5278 passed, 1 skipped (baseline + 39); ruff clean; mypy 324 files; C3/C4 greps all match; Section B protected-file diff empty; 32 GiB free | 2026-10-30 | Operator said "complete everything": sections run back to back, the merge/push still asked. Section C exit target: baseline + 52 = 5291 |
 | 7 The shadow record: rebase, re-evaluations, the original twin | done | `b0743cd` | Red first: 11 failed, 9 passed in tests/test_value_shadow.py (`rebase`, `ReevalContext`, the `mark_horizons` count). Green: tests/test_value_shadow (20) + service + store + report + fence 60 passed; ruff check/format clean on 2 files; mypy shadow.py clean | 2026-10-30 | No deviations. The test diff applied by `git apply`; shadow.py extracted verbatim from the plan's code block. Ruling 17 (rebase replaces the freeze; dividends rebase too; a single provider-corrected bar rebases the levels): cost if wrong is a tolerance (`REBASE_TOLERANCE`). Rulings 12-16 (per-entry re-evaluation, the shocks, the 8-K thesis exit, the original twin) applied as written: each is one branch in `step_legs`/`_Reevaluator`. The commit also carried the orchestrator's "C entry checks" row. |
-| 8 The process: plain data, the regime step, the fences | | | | | |
+| 8 The process: plain data, the regime step, the fences | done | `fd9d7a2` | Red first: 4 failed, 31 passed (feed 3, service 1; the three fence tests passed at once, as the plan says). Green: tests/test_value_feed (9) + service (11) + fence (15) + news_fence + web_fence + eval_skills 71 passed; `py_compile` of run_value.py and value_feed.py silent; ruff check/format clean on 6 files; mypy service.py, value_feed.py, run_value.py clean. Red run recorded: `import src.engine.risk_engine` added to `reevaluate.py` failed 3 fence tests; removed | 2026-10-30 | No deviations; all diffs applied by `git apply`. Ruling 21 (plain data: `recent_earnings`, `news_volume`; trigger 7 steps from the previous nightly run's regime, unknown is never a step): cost if wrong is the feed functions and one `summary_json` read. P2-M11 (the `sys.modules` probe also loads `src.common.universe`, `src.storage.regime_state`) applied. |
 | 9 The report: re-evaluated against original | | | | | |
 | **D entry checks** | | | | | |
 | 10 Stage 1b: the point-in-time backtest | | | | | |
@@ -5220,7 +5220,7 @@ index 6127944..eab10ba 100644
 The pinned numbers: two closed `full` pairs, re-evaluated −5% and +2% against original −12% and
 +2%: means −1.5% vs −5.0%, so re-evaluation saved 3.5% an entry.
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_report.py`:
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_report.py`:
 
 ```diff
 diff --git a/tests/test_value_report.py b/tests/test_value_report.py
@@ -5339,12 +5339,12 @@ index ec8da2f..9961806 100644
 +    assert "1 re-evaluation(s), 1 major; triggers move 1; 1 rebase(s)" in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py`
   Expected: FAIL — `ImportError: cannot import name 'ReevaluationView'`.
 
-- [ ] **Step 3: The report** — apply to `src/value/report.py`:
+- [x] **Step 3: The report** — apply to `src/value/report.py`:
 
 ```diff
 diff --git a/src/value/report.py b/src/value/report.py
@@ -5577,7 +5577,7 @@ index 69685fc..b3f0376 100644
  
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py tests/test_value_shadow.py tests/test_value_fence.py`
   Expected: PASS (`test_value_report.py` 10). `py_compile scripts/value_report.py` silent; ruff

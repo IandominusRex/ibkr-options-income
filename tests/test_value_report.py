@@ -1,5 +1,6 @@
-"""The shadow record's report (value book spec §6.8, §7, §11, §12): clustered errors, the go-live
-line, the three policies side by side, the ranked record, postmortems, and the script."""
+"""The shadow record's report (value book spec §6.8, §7, §7.1, §11, §12): clustered errors, the
+go-live line, the three policies side by side, the re-evaluations against the original plan, the
+ranked record, postmortems, and the script."""
 
 from __future__ import annotations
 
@@ -16,15 +17,18 @@ from src.value.report import (
     EventView,
     LegView,
     RankedView,
+    ReevaluationView,
     closest_gate,
     clustered_mean,
     go_live_line,
     postmortem,
     ranked_section,
+    reevaluation_section,
     render,
 )
 from src.value.scorecard import build_scorecard
 from src.value.store import (
+    ValueReevaluationRow,
     ValueShadowEventRow,
     ValueShadowLegRow,
     ValueShadowRow,
@@ -96,6 +100,55 @@ def test_the_ranked_section_shows_each_bucket_and_the_spread() -> None:
     assert "top     months   1  mean +3.0%/month" in text
     assert "top - bottom: mean +4.0%/month over 1" in text
     assert "no month closed yet" in "\n".join(ranked_section([]))
+
+
+def test_the_reevaluation_section_sets_each_policys_plan_against_the_original() -> None:
+    """Spec §7.1: the shadow ledger carries the position twice from the first trigger, so the
+    report can say whether re-evaluation saved money or only churned. Two closed full pairs:
+    re-evaluated -5% and +2% vs original -12% and +2%: re-evaluation saved 3.5% an entry."""
+
+    def leg(i: int, policy: str, plan: str, ret: float | None) -> LegView:
+        return LegView(shadow_id=i, policy=policy, plan=plan, closed=ret is not None, ret=ret)
+
+    legs = [
+        leg(1, "full", "main", -0.05),
+        leg(1, "full", "original", -0.12),
+        leg(2, "full", "main", 0.02),
+        leg(2, "full", "original", 0.02),
+        leg(1, "value", "main", None),
+        leg(1, "value", "original", None),
+    ]
+    reevals = [
+        ReevaluationView(shadow_id=1, list_name="deep_value", severity="major", kinds=["move"]),
+        ReevaluationView(
+            shadow_id=2, list_name="deep_value", severity="minor", kinds=["earnings", "filing"]
+        ),
+    ]
+    text = "\n".join(reevaluation_section(legs, reevals, rebases=3))
+    assert "2 re-evaluation(s), 1 major; triggers earnings 1, filing 1, move 1; 3 rebase(s)" in text
+    assert "full     2 closed pair(s): re-evaluated -1.5% vs original -5.0%" in text
+    assert "re-evaluation saved +3.5% an entry" in text
+    assert "value    no entry with both plans closed yet" in text
+    assert "none yet; 0 rebase(s)" in "\n".join(reevaluation_section([], [], 0))
+
+
+def test_the_policy_section_reads_the_main_plan_only() -> None:
+    entries = [_entry(1, D1, 0.05)]
+    legs = [
+        LegView(shadow_id=1, policy="value", closed=True, ret=0.1, spy_ret=0.0, sessions=5),
+        LegView(shadow_id=1, policy="value", plan="original", closed=True, ret=-0.3, sessions=5),
+    ]
+    text = render(
+        entries,
+        legs,
+        [],
+        [],
+        fair_values_now={},
+        live_policy="value",
+        track="baseline",
+        postmortems=False,
+    )
+    assert "value (live)         closed 1/1  return +10.0%" in text
 
 
 def test_the_gate_closest_to_wrong_is_the_passing_check_with_least_room() -> None:
@@ -227,3 +280,25 @@ def test_the_script_reads_value_db_and_prints_the_record(value_db, capsys) -> No
     assert SURVIVORSHIP in out
     assert "[baseline · deep_value · ready] 1 entries" in out
     assert "## STDY deep_value #1" in out and "2026-01-07 fill 100% @ 33.00" in out
+    assert "-- Re-evaluations (spec §7.1" in out and "none yet; 0 rebase(s)" in out
+    with value_session() as s:
+        s.add(
+            ValueReevaluationRow(
+                shadow_id=1,
+                symbol="STDY",
+                list_name="deep_value",
+                session=D2,
+                last_session=D2,
+                severity="major",
+                triggers_json='[{"kind": "move"}]',
+                plan_before_json="{}",
+                plan_after_json="{}",
+                verdict_at_entry="READY",
+                ruleset_version="v3",
+                ruleset_hash="x",
+                created_at=datetime(2026, 1, 6),
+            )
+        )
+        s.add(ValueShadowEventRow(shadow_id=1, policy="all", day=D3, kind="rebase"))
+    assert value_report.main([]) == 0
+    assert "1 re-evaluation(s), 1 major; triggers move 1; 1 rebase(s)" in capsys.readouterr().out

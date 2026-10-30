@@ -6,20 +6,31 @@
 Reads data/value.db (select only; on a new install it first creates the empty tables) and
 prints: the survivorship caveat, the
 go-live line of spec §12, fixed-horizon returns against SPY with errors clustered by entry date,
-the three exit policies side by side, the ranked monthly record and, with ``--postmortems``, one
-postmortem per closed position. No IBKR connection, no network.
+the three exit policies side by side, the re-evaluations of §7.1 (the re-evaluated plan against the
+original), the ranked monthly record and, with ``--postmortems``, one postmortem per closed
+position. No IBKR connection, no network.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.common.config import get_config
-from src.value.report import HORIZONS, EntryView, EventView, LegView, RankedView, render
+from src.value.report import (
+    HORIZONS,
+    EntryView,
+    EventView,
+    LegView,
+    RankedView,
+    ReevaluationView,
+    render,
+)
 from src.value.store import (
     ValueRankedRow,
+    ValueReevaluationRow,
     ValueShadowEventRow,
     ValueShadowLegRow,
     ValueShadowRow,
@@ -64,6 +75,7 @@ def load(args: argparse.Namespace) -> str:
             LegView(
                 shadow_id=g.shadow_id,
                 policy=g.policy,
+                plan=g.plan,
                 closed=g.closed,
                 exit_date=g.exit_date,
                 ret=g.ret_exit,
@@ -79,6 +91,7 @@ def load(args: argparse.Namespace) -> str:
             EventView(
                 shadow_id=v.shadow_id,
                 policy=v.policy,
+                plan=v.plan,
                 day=v.day,
                 kind=v.kind,
                 price=v.price,
@@ -102,6 +115,21 @@ def load(args: argparse.Namespace) -> str:
             for r in s.scalars(select(ValueRankedRow).order_by(ValueRankedRow.formed_on))
             if not args.ruleset or r.ruleset_version == args.ruleset
         ]
+        reevaluations = [
+            ReevaluationView(
+                shadow_id=r.shadow_id,
+                list_name=r.list_name,
+                severity=r.severity,
+                kinds=[t["kind"] for t in json.loads(r.triggers_json)],
+            )
+            for r in s.scalars(select(ValueReevaluationRow))
+            if r.shadow_id in ids
+        ]
+        rebases = s.scalar(
+            select(func.count())
+            .select_from(ValueShadowEventRow)
+            .where(ValueShadowEventRow.kind == "rebase", ValueShadowEventRow.shadow_id.in_(ids))
+        )
         now: dict[tuple[str, str], float | None] = {}
         for f in s.scalars(select(ValueTickerFileRow)):
             now[(f.symbol, "deep_value")] = f.fair_value_deep
@@ -115,6 +143,8 @@ def load(args: argparse.Namespace) -> str:
         live_policy=vcfg.rules.exits.live_policy,
         track=args.track,
         postmortems=args.postmortems,
+        reevaluations=reevaluations,
+        rebases=int(rebases or 0),
     )
 
 

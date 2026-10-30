@@ -3,8 +3,9 @@
 ``scripts/value_report.py`` reads value.db and hands plain views in. Returns are measured at
 fixed horizons on every entry, marked to market, with standard errors clustered by entry date
 (spec §12); the three exit policies side by side on the same READY entries (spec §7); the
-ranked monthly record (spec §6.8); and a postmortem per closed position (spec §11). The report
-proves nothing on its own: it is what a human reads before any go-live decision.
+ranked monthly record (spec §6.8); a postmortem per closed position (spec §11); and (Part 3) the
+re-evaluations of §7.1 with the re-evaluated plan beside the original one. The report proves
+nothing on its own: it is what a human reads before any go-live decision.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ class EntryView(BaseModel):
 class LegView(BaseModel):
     shadow_id: int
     policy: str
+    plan: str = "main"  # main | original (the twin carried untouched from the first trigger)
     closed: bool
     exit_date: date | None = None
     ret: float | None = None
@@ -62,11 +64,19 @@ class LegView(BaseModel):
 class EventView(BaseModel):
     shadow_id: int
     policy: str
+    plan: str = "main"
     day: date
     kind: str
     price: float | None = None
     fraction: float = 0.0
     detail: str = ""
+
+
+class ReevaluationView(BaseModel):
+    shadow_id: int
+    list_name: str
+    severity: str
+    kinds: list[str] = Field(default_factory=list)
 
 
 class RankedView(BaseModel):
@@ -188,7 +198,7 @@ def policy_section(entries: list[EntryView], legs: list[LegView], live_policy: s
     groups: dict[tuple[str, str], list[LegView]] = defaultdict(list)
     for leg in legs:
         e = by_id.get(leg.shadow_id)
-        if e is not None:
+        if e is not None and leg.plan == "main":
             groups[(e.list_name, leg.policy)].append(leg)
     if not groups:
         return [*lines, "  no READY entries yet"]
@@ -206,6 +216,44 @@ def policy_section(entries: list[EntryView], legs: list[LegView], live_policy: s
             f"vs SPY {_pct(mean(vs) if vs else None)}  max DD {_pct(mean(dd) if dd else None)}  "
             f"held {mean(g.sessions for g in done):.0f} sessions  "
             f"sells/entry {mean(g.sells for g in done):.1f}"
+        )
+    return lines
+
+
+def reevaluation_section(
+    legs: list[LegView], reevaluations: list[ReevaluationView], rebases: int
+) -> list[str]:
+    """Spec §7.1, "measured like everything else": how often each trigger fired, and per policy
+    the re-evaluated plan against the original one on the entries that have both, closed."""
+    lines = ["-- Re-evaluations (spec §7.1; the original plan carried beside the re-evaluated) --"]
+    if not reevaluations:
+        return [*lines, f"  none yet; {rebases} rebase(s) of a split or a dividend adjustment"]
+    kinds: dict[str, int] = defaultdict(int)
+    for r in reevaluations:
+        for k in r.kinds:
+            kinds[k] += 1
+    major = sum(1 for r in reevaluations if r.severity == "major")
+    lines.append(
+        f"  {len(reevaluations)} re-evaluation(s), {major} major; triggers "
+        + ", ".join(f"{k} {n}" for k, n in sorted(kinds.items()))
+        + f"; {rebases} rebase(s)"
+    )
+    pairs: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    main = {(g.shadow_id, g.policy): g for g in legs if g.plan == "main"}
+    for twin in (g for g in legs if g.plan == "original"):
+        m = main.get((twin.shadow_id, twin.policy))
+        if m is not None and m.ret is not None and twin.ret is not None:
+            pairs[twin.policy].append((m.ret, twin.ret))
+    for policy in sorted({g.policy for g in legs if g.plan == "original"}):
+        done = pairs.get(policy, [])
+        if not done:
+            lines.append(f"  {policy:<8} no entry with both plans closed yet")
+            continue
+        saved = mean(a - b for a, b in done)
+        lines.append(
+            f"  {policy:<8} {len(done)} closed pair(s): re-evaluated {_pct(mean(a for a, _ in done))}"
+            f" vs original {_pct(mean(b for _, b in done))}: re-evaluation "
+            f"{'saved' if saved > 0 else 'cost'} {_pct(abs(saved))} an entry"
         )
     return lines
 
@@ -279,7 +327,7 @@ def postmortem(
         f" now {fair_value_now}",
     ]
     for leg in sorted(legs, key=lambda g: g.policy):
-        mine = [e for e in events if e.policy == leg.policy]
+        mine = [e for e in events if e.policy == leg.policy and e.plan == leg.plan]
         story = "; ".join(
             f"{e.day} {e.kind}"
             + (f" {e.fraction:.0%} @ {e.price:.2f}" if e.kind == "fill" and e.price else "")
@@ -314,6 +362,8 @@ def render(
     live_policy: str,
     track: str,
     postmortems: bool,
+    reevaluations: list[ReevaluationView] | None = None,
+    rebases: int = 0,
 ) -> str:
     versions = sorted({e.ruleset_version for e in entries})
     lines = [
@@ -325,6 +375,8 @@ def render(
         "",
         *policy_section(entries, legs, live_policy),
         "",
+        *reevaluation_section(legs, reevaluations or [], rebases),
+        "",
         *ranked_section(ranked),
     ]
     if postmortems:
@@ -333,7 +385,7 @@ def render(
         for e in closed:
             lines += postmortem(
                 e,
-                [g for g in legs if g.shadow_id == e.id],
+                [g for g in legs if g.shadow_id == e.id and g.plan == "main"],
                 [v for v in events if v.shadow_id == e.id],
                 fair_values_now.get((e.symbol, e.list_name)),
             )
