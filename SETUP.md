@@ -2031,11 +2031,12 @@ that survived checking.
 
 ---
 
-## 19. The value book, Parts 1–2: the scorecard, the nightly process and the shadow record
+## 19. The value book, Parts 1–3: the scorecard, the nightly process, the shadow record and its re-evaluations
 
 The value book scores healthy companies against what they are worth
 (`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
-a one-off **calibration dry run**; Part 2 adds a nightly process and the **shadow record**. Neither
+a one-off **calibration dry run**; Part 2 adds a nightly process and the **shadow record**; Part 3
+adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtest. None of them
 places an order or sends a message.
 
 1. `cp config/examples/value.yaml config/value.yaml` (git-ignored; every key has a code default).
@@ -2046,11 +2047,12 @@ places an order or sends a message.
    `python -m scripts.value_dry_run run --report value_dry_run.txt`. It prints how many names
    fall at each gate per list, GOOGL, META, BAC and MU with every number, the raw companyfacts
    storage and the run time.
-4. `ruleset_version` is frozen at `v2` (`src/value/ruleset.py::FROZEN`: v1 = the entry rules the
-   operator froze after the dry run, v2 = v1 + `rules.exits`); a rule change is a version bump with
-   a written reason. **After pulling Part 2, refresh the private copy before restarting:**
-   `cp config/examples/value.yaml config/value.yaml` (a private file still saying v1 makes the
-   value process idle with a CRITICAL line in `logs/value.log`).
+4. `ruleset_version` is frozen at `v3` (`src/value/ruleset.py::FROZEN`: v1 = the entry rules the
+   operator froze after the dry run, v2 = v1 + `rules.exits`, v3 = v2 + `rules.reevaluation` and
+   Part 3's exit-engine rules); a rule change is a version bump with a written reason. **After
+   pulling Part 2 or Part 3, refresh the private copy before restarting:**
+   `cp config/examples/value.yaml config/value.yaml` (a private file still saying v1 or v2 makes
+   the value process idle with a CRITICAL line in `logs/value.log`).
 5. **The nightly process (Part 2).** `scripts.start` / `./ibkr restart` runs `value_service`
    (`python -m scripts.run_value`; `--no-value` skips it). With `research_sweep.enabled: true` the
    research worker fetches every value name's filings and bars at 02:00 ET (the first sweep stores
@@ -2066,6 +2068,21 @@ places an order or sends a message.
    process writes their symbols to `data/value_keep_fresh.json` (git-ignored) for the research sweep.
 6. **Read the record:** `python -m scripts.value_report` (add `--postmortems` for one postmortem per
    closed position). It proves nothing for months; spec §12 says what it can and cannot show.
+7. **Re-evaluations (Part 3).** Each night every open READY shadow entry is checked, session by
+   session, for spec §7.1's triggers: a move net of its sector ETF (XLK, XLF, ...: the research
+   sweep now fetches their bars, and every name's EDGAR filing list, each night), a five-session
+   drift, an earnings report, a 10-Q/10-K or an 8-K item, a news-volume spike, a step into a stressed
+   or crisis regime, 90 quiet days. A re-evaluation is recorded in `value_reevaluations`; a Major 8-K
+   item (1.03, 3.01, 4.02) sells every policy's shadow position; under `full` only, a shock moves the
+   stop. From the first trigger the entry also carries its **original plan** untouched, and
+   `value_report` prints whether re-evaluating saved money. Splits and dividend adjustments are
+   rebased mechanically. For the names the record holds, the research worker reads each new
+   10-K/10-Q once for a going-concern doubt the filing asserts; one is a thesis exit.
+8. **Stage 1b:** `python -m scripts.value_backtest` scores Python's rules on the first session of
+   each month over ~8 years, point in time, and prints the caveats first (survivorship, stand-ins).
+   It reads `research.db` read-only and caches ten years of bars in `data/value_backtest/`
+   (`--bars research` uses only what research.db holds; `--limit N` or `--names A,B` for a quick run).
+   The full evidence universe takes a while and fetches ~500 price histories the first time.
 
 ### Scripts
 
@@ -2076,6 +2093,7 @@ places an order or sends a message.
 | `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
 | `python -m scripts.run_value` | The value process. Normally started by `scripts.start` / `./ibkr restart`; `--no-value` skips it. Logs to `logs/value.log` (`./ibkr logs value`). |
 | `python -m scripts.value_report [--track baseline] [--universe all\|trading\|evidence] [--ruleset V] [--postmortems]` | Prints the shadow record from `data/value.db` (read only). |
+| `python -m scripts.value_backtest [--universe evidence\|trading] [--names A,B] [--limit N] [--start D] [--end D] [--bars provider\|research] [--refresh] [--out F]` | Stage 1b: the point-in-time backtest of Python's rules (Part 3). |
 
 ## Troubleshooting
 

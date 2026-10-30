@@ -6512,7 +6512,7 @@ new script → SETUP scripts table and ARCHITECTURE `scripts/`; features built �
 `docs/web/*`, `How the scan works.md`, `UNIVERSE_RESEARCH.md` and `.opencode/` are unchanged
 (ruling 23) — record that as a ruling.
 
-- [ ] **Step 1: ARCHITECTURE.md** — apply:
+- [x] **Step 1: ARCHITECTURE.md** — apply:
 
 ```diff
 diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
@@ -6632,7 +6632,7 @@ index 9795705..de26984 100644
  ---
 ```
 
-- [ ] **Step 2: SETUP.md** — apply:
+- [x] **Step 2: SETUP.md** — apply:
 
 ```diff
 diff --git a/SETUP.md b/SETUP.md
@@ -6704,7 +6704,7 @@ index 6f4ff15..f26e730 100644
  
 ```
 
-- [ ] **Step 3: STATUS.md** — apply:
+- [x] **Step 3: STATUS.md** — apply:
 
 ```diff
 diff --git a/STATUS.md b/STATUS.md
@@ -6760,7 +6760,7 @@ index f86112b..9c28c1e 100644
  Plan: `docs/superpowers/plans/2026-10-29-value-book-2-shadow-record.md`. Deterministic only: no
 ```
 
-- [ ] **Step 4: CLAUDE.md** — apply:
+- [x] **Step 4: CLAUDE.md** — apply:
 
 ```diff
 diff --git a/CLAUDE.md b/CLAUDE.md
@@ -6784,10 +6784,10 @@ index be9f433..8d220c8 100644
  Enforced by `tests/test_value_fence.py` — keep it green.
 ```
 
-- [ ] **Step 5: The full gate** (Section exit) and a re-read of the trigger table in `CLAUDE.md`
+- [x] **Step 5: The full gate** (Section exit) and a re-read of the trigger table in `CLAUDE.md`
   against `git diff --stat main...HEAD`: every row that matches has its doc edited.
 
-- [ ] **Step 6: Commit, then the section's Progress-log commit**
+- [x] **Step 6: Commit, then the section's Progress-log commit**
 
   ```bash
   git add ARCHITECTURE.md SETUP.md STATUS.md CLAUDE.md docs/superpowers/plans/2026-10-29-value-book-3-reevaluation.md

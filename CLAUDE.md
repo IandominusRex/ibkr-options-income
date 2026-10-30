@@ -406,7 +406,13 @@ the value book. It is **deterministic tier**:
   the value process writes `data/value_keep_fresh.json` (`src/common/value_keep_fresh.py`, stdlib
   only) after each night and the research sweep reads it. They are scored under `held:<universe>`
   and never open a new entry.
-- Parts 1–2 place, size and gate nothing: every shadow row is hypothetical. The written exception
+- Re-evaluation (Part 3, spec §7.1) is Python's: `src/value/residuals.py` and `reevaluate.py` are
+  pure, and only a Major move (a shock, `full` only) or a Major 8-K item changes a plan. News volume
+  and earnings dates arrive as plain data from `scripts/value_feed.py` and only ever open a
+  re-evaluation. The EDGAR filing list and the going-concern read are research-worker jobs
+  (`src/research/ingest/submissions.py`, `going_concern.py`); `src/value/` reads their table only
+  through `src/common/value_inputs.py`.
+- Parts 1–3 place, size and gate nothing: every shadow row is hypothetical. The written exception
   for Claude's value verdict (spec §8.2, §18) is added with Part 4.
 
 Enforced by `tests/test_value_fence.py` — keep it green.

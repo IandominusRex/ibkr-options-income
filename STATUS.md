@@ -343,9 +343,44 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
-| **Value book Parts 3–6** | Re-evaluation, shock stops, the corporate-action rebase and Stage 1b; Claude as the analyst (and the Claude track of the shadow record); Stage 3 money (paper); web and Telegram (with the follow window's `last_viewed_at`, digests, review cards and a watchdog check) — the roadmap in the Part 2 plan; each part is planned after the previous one merges. |
+| **Value book Parts 4–6** | Claude as the analyst (and the Claude track of the shadow record); Stage 3 money (paper); web and Telegram (with the follow window's `last_viewed_at`, digests, review cards and a watchdog check) — the roadmap in the Part 2 plan; each part is planned after the previous one merges. |
 
 ---
+
+## Built (2026-10-30 — value book Part 3: re-evaluation and Stage 1b)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-3-reevaluation.md`. Deterministic only: no
+order, no Claude, no Telegram, no web, no IBKR connection.
+
+- `value_rules: v3` = v2 + `rules.reevaluation`, frozen at `ad8841127029` (v1 and v2 still hash as
+  pinned once the new blocks are removed); it also versions the exit-engine code below.
+- The research worker's EDGAR `submissions` job (every value name, nightly: `filing_index` with
+  forms and 8-K items) and `going_concern` job (the shadow record's names: each new 10-K/10-Q read
+  once for an asserted doubt); the sweep also fetches SPY's and eleven sector ETFs' bars, and
+  refetches the last weekday's bar every night (M2).
+- Re-evaluation (spec §7.1) on every open READY shadow entry, every session: the sector-ETF residual
+  model (z of 3, five-session drift, a 10% raw backstop), earnings, filings and 8-K items, news
+  volume, the regime step, 90 quiet days; the three-session debounce; `value_reevaluations`; the
+  original-plan twin of each leg; shock stops under `full` only; the 8-K 1.03/3.01/4.02 and
+  going-concern thesis exits under every policy.
+- The corporate-action rebase: every recorded price level is multiplied by the ratio the provider
+  rewrote the bars by (splits and dividend adjustments alike); Part 2's `rebase_needed` entries are
+  re-opened. Controls are never frozen (M7); SPY's entry price is read on one basis (M8).
+- Exit-engine minors: tonight's facts on tonight's session only (M1), unknown F-score components
+  count against the exit (M5), Altman Z read on a new filing only (M6), the effective-only proposal
+  once per episode (M14). M11's `sys.modules` probe now loads the lazy imports.
+- Stage 1b: `src/value/backtest.py` and `scripts/value_backtest.py` (ten years of bars, cached in
+  `data/value_backtest/`; the yfinance provider gained a 10y period).
+- `value_report` prints the re-evaluations and each policy's re-evaluated vs original plan.
+- Known limitations: trigger 6 (a Claude kill-trigger near firing) waits for Part 4; the hourly RTH
+  check of triggers 1 and 4 and "pause adds" wait for held positions (Part 5); cards for Major and
+  Minor re-evaluations wait for Part 6; the residual model needs 120 aligned sessions (the 10% raw
+  move stands in before that); a single bar the provider corrects (not a corporate action) is
+  rebased too; the going-concern read is a strict sentence pattern (it can miss a doubt phrased with
+  "evaluated" or "could", by design, rather than sell on boilerplate); the backtest's caveats
+  (survivorship twice, earnings and market-cap stand-ins, a normal regime) print with it. SEC load
+  (M13): companyfacts every second night for ~520 filers (~1 GB), the submissions feed nightly
+  (~520 small JSON reads), a handful of filing documents for held names.
 
 ## Built (2026-10-29 — value book Part 2: the value process and the shadow record)
 
