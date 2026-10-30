@@ -142,7 +142,13 @@ def research_db(tmp_path, monkeypatch):
 
 def test_the_sweep_queues_only_what_each_name_lacks(research_db) -> None:
     from src.research.ingest.value_universe import enqueue_value_universe
-    from src.research.store.models import CompanyFactsRawRow, DailyBarRow, IngestJobRow, SymbolRow
+    from src.research.store.models import (
+        CompanyFactsRawRow,
+        DailyBarRow,
+        IngestJobRow,
+        SubmissionsStateRow,
+        SymbolRow,
+    )
     from src.research.store.session import research_session
 
     today = date(2026, 10, 29)
@@ -158,11 +164,26 @@ def test_the_sweep_queues_only_what_each_name_lacks(research_db) -> None:
         )
         for i in range(260):
             s.add(DailyBarRow(symbol="FRESH", date=today - timedelta(days=260 - i), close=1.0))
+        s.add(SubmissionsStateRow(cik="0000000001", fetched_at=now))
     counts = enqueue_value_universe(["FRESH", "STALE", "NOCIK"], today=today)
-    assert counts == {"fundamentals": 1, "prices": 2, "no_cik": 1}
+    assert counts == {
+        "fundamentals": 1,
+        "submissions": 1,
+        "going_concern": 0,
+        "prices": 3,
+        "no_cik": 1,
+    }
     with research_session() as s:
         jobs = sorted((j.symbol, j.kind) for j in s.query(IngestJobRow))
-    assert jobs == [("NOCIK", "prices"), ("STALE", "fundamentals"), ("STALE", "prices")]
+    # FRESH's bars end on the due weekday: refetched, since that bar may have been written while
+    # its session was still forming (review M2).
+    assert jobs == [
+        ("FRESH", "prices"),
+        ("NOCIK", "prices"),
+        ("STALE", "fundamentals"),
+        ("STALE", "prices"),
+        ("STALE", "submissions"),
+    ]
 
 
 def test_the_drain_runs_a_prices_job(research_db, monkeypatch) -> None:
@@ -213,22 +234,40 @@ def test_bars_are_stale_once_they_miss_the_last_weekday() -> None:
     assert last_weekday_before(date(2026, 11, 4)) == date(2026, 11, 3)
 
 
-def test_the_nightly_sweep_refreshes_yesterdays_bars_and_spys(research_db, monkeypatch) -> None:
+def test_the_nightly_sweep_refreshes_every_bar_and_the_benchmarks(research_db, monkeypatch) -> None:
     from src.research.ingest import value_universe as sweep
     from src.research.store.models import DailyBarRow, IngestJobRow
     from src.research.store.session import research_session
 
     monday = date(2026, 11, 2)
     with research_session() as s:
-        for symbol, last in (("FRESH", date(2026, 10, 30)), ("OLD", date(2026, 10, 29))):
+        for symbol, last in (("TODAY", monday), ("OLD", date(2026, 10, 29))):
             for i in range(260):
                 s.add(DailyBarRow(symbol=symbol, date=last - timedelta(days=i), close=1.0))
-    monkeypatch.setattr(sweep, "value_names", lambda: ["FRESH", "OLD"])
-    assert sweep.enqueue_value_universe(today=monday) == {
-        "fundamentals": 0,
-        "prices": 2,
-        "no_cik": 2,
-    }
+    monkeypatch.setattr(sweep, "value_names", lambda: ["TODAY", "OLD"])
+    counts = sweep.enqueue_value_universe(today=monday)
+    etfs = sweep.benchmark_names()
+    assert etfs[0] == "SPY" and "XLK" in etfs and "XLRE" in etfs and len(etfs) == 12
+    assert counts["prices"] == 1 + len(etfs) and counts["no_cik"] == 2
     with research_session() as s:
-        jobs = sorted((j.symbol, j.kind) for j in s.query(IngestJobRow))
-    assert jobs == [("OLD", "prices"), ("SPY", "prices")]  # SPY's bars, never its filings
+        jobs = {(j.symbol, j.kind) for j in s.query(IngestJobRow)}
+    # SPY's and the sector ETFs' bars, never their filings; a bar dated today is not refetched.
+    assert jobs == {("OLD", "prices"), *((e, "prices") for e in etfs)}
+
+
+def test_the_sweep_reads_held_names_filings_for_a_going_concern_doubt(
+    research_db, monkeypatch
+) -> None:
+    from src.research.ingest import value_universe as sweep
+    from src.research.store.models import IngestJobRow, SymbolRow
+    from src.research.store.session import research_session
+
+    with research_session() as s:
+        s.add(SymbolRow(symbol="HELD", cik="0000000001"))
+        s.add(SymbolRow(symbol="FREE", cik="0000000002"))
+    monkeypatch.setattr(sweep, "read_keep_fresh", lambda: ["HELD"])
+    counts = sweep.enqueue_value_universe(["HELD", "FREE"], today=date(2026, 11, 2))
+    assert counts["going_concern"] == 1 and counts["submissions"] == 2
+    with research_session() as s:
+        kinds = {j.kind for j in s.query(IngestJobRow).filter_by(symbol="HELD")}
+    assert kinds == {"fundamentals", "submissions", "going_concern", "prices"}

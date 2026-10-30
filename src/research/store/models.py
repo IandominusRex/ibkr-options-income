@@ -193,8 +193,38 @@ class IngestJobRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
-    kind: Mapped[str] = mapped_column(String(32))  # fundamentals | prices | news | quote
+    kind: Mapped[str] = mapped_column(String(32))  # fundamentals|prices|submissions|going_concern
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text)
     enqueued_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class FilingIndexRow(Base):
+    """One filing from a filer's EDGAR ``submissions`` feed (value book spec §7.1, §8.5): its form,
+    dates and 8-K item tags, kept for ``submissions.KEEP_DAYS``. Written by the ``submissions``
+    job; a periodic filing's ``going_concern`` by the ``going_concern`` job (None: not read)."""
+
+    __tablename__ = "filing_index"
+
+    accn: Mapped[str] = mapped_column(String(32), primary_key=True)
+    cik: Mapped[str] = mapped_column(String(10))
+    form: Mapped[str] = mapped_column(String(16))
+    filed: Mapped[date] = mapped_column(Date)
+    report_date: Mapped[date | None] = mapped_column(Date)
+    items: Mapped[str] = mapped_column(String(128), default="")  # 8-K item tags, "2.02,9.01"
+    primary_document: Mapped[str | None] = mapped_column(String(200))
+    going_concern: Mapped[bool | None] = mapped_column(Boolean)
+    going_concern_detail: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_filing_index_cik_filed", "cik", "filed"),)
+
+
+class SubmissionsStateRow(Base):
+    """When each filer's ``submissions`` feed was last read, and its ETag (a 304 is free)."""
+
+    __tablename__ = "submissions_state"
+
+    cik: Mapped[str] = mapped_column(String(10), primary_key=True)
+    etag: Mapped[str | None] = mapped_column(String(128))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)

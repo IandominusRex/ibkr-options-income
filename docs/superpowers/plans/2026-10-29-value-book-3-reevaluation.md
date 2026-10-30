@@ -106,7 +106,7 @@ is the executing agent's own model name.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | **A entry checks** | passed | 0 commits (branch at `1dad9dc`) | A2 baseline: pytest 5239 passed, 1 skipped; ruff clean; mypy 320 files; A3 greps all match; A4 hash `d07717fe5348`, no Part 3 code; 34 GiB free | 2026-10-30 | Operator asked to execute the plan; the two "rulings to confirm" (dividend rebase, strict going-concern) are taken at the plan defaults. Plan targets: Section A exit = baseline + 14 = 5253 |
-| 1 Ruleset v3: the re-evaluation rules | | | | | |
+| 1 Ruleset v3: the re-evaluation rules | done | `3c3d25d` | tests/test_value_config + dry_run + service + private_config + scorecard 59 passed; hash printed `ad8841127029` as planned; ruff check/format and mypy (2 files) clean | 2026-10-30 | No deviations. Applied by Edit rather than `git apply`; the plan's diffs were reproduced exactly. Ruling 1 (v3 = v2 + `rules.reevaluation`): cost if wrong is a re-pin before the first v3 night, a v4 after. |
 | 2 The research worker's filings feed | | | | | |
 | 3 The readers: filings, the going-concern flag, the day's low | | | | | |
 | **B entry checks** | | | | | |
@@ -570,7 +570,7 @@ with pytest = baseline + 14 (2 + 10 + 2); protected-file diff empty;
   `quiet_days`, `debounce_sessions`, `down_shock_atr`; `ValueCfg.ruleset_version == "v3"`;
   `FROZEN["v3"] == "ad8841127029"`.
 
-- [ ] **Step 1: Write the failing tests** — apply this diff to `tests/test_value_config.py` (it
+- [x] **Step 1: Write the failing tests** — apply this diff to `tests/test_value_config.py` (it
   replaces `test_v1_stays_pinned_and_v2_is_frozen` and `test_v2_changes_no_entry_rule`):
 
 ```diff
@@ -693,13 +693,13 @@ index 645c80f..5b9ad89 100644
           assert (run.kind, run.as_of, run.ruleset_version) == ("nightly", AS_OF, "v3")
   ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py`
   Expected: FAIL — `AttributeError: 'ValueRulesCfg' object has no attribute 'reevaluation'` (and the
   v3 assertions).
 
-- [ ] **Step 3: The config model** — apply to `src/common/config.py`:
+- [x] **Step 3: The config model** — apply to `src/common/config.py`:
 
 ```diff
 diff --git a/src/common/config.py b/src/common/config.py
@@ -802,7 +802,7 @@ index 7bbb6ad..a7511c5 100644
      ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)
 ```
 
-- [ ] **Step 4: The example file** — apply to `config/examples/value.yaml` (the keys must equal the
+- [x] **Step 4: The example file** — apply to `config/examples/value.yaml` (the keys must equal the
   model defaults: `test_the_example_spells_out_exactly_the_model_defaults`):
 
 ```diff
@@ -875,7 +875,7 @@ index ef80f88..1fedaab 100644
 +    down_shock_atr: 0.5      # full only: the stop rises to the shock low - 0.5 x ATR(14) before it
 ```
 
-- [ ] **Step 5: Check the hash, then pin it.** Run:
+- [x] **Step 5: Check the hash, then pin it.** Run:
 
   ```bash
   .venv/bin/python -c "from src.common.config import ValueCfg; from src.value.ruleset import ruleset_hash; print(ruleset_hash(ValueCfg().rules))"
@@ -903,7 +903,7 @@ index 124aad6..93db8a5 100644
  def ruleset_hash(rules: ValueRulesCfg) -> str:
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py tests/test_private_config.py tests/test_value_scorecard.py`
   Expected: PASS (`test_value_config.py` 16 tests). Then `.venv/bin/ruff check src/common/config.py
@@ -911,7 +911,7 @@ index 124aad6..93db8a5 100644
   tests/test_value_service.py`, `.venv/bin/ruff format --check` on the same files, and
   `.venv/bin/mypy src/common/config.py src/value/ruleset.py` — all clean.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   ```bash
   git add docs/superpowers/plans/2026-10-29-value-book-3-reevaluation.md src/common/config.py config/examples/value.yaml src/value/ruleset.py tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py
@@ -943,7 +943,7 @@ index 124aad6..93db8a5 100644
   `submissions` and `going_concern`; `value_universe.benchmark_names() -> tuple[str, ...]`;
   `enqueue_value_universe` counts gain `submissions` and `going_concern`.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_research_submissions.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_research_submissions.py`:
 
 ```python
 """The research worker's EDGAR submissions feed and going-concern read (value book spec §7, §7.1,
@@ -1290,13 +1290,13 @@ index ed9cf55..addfeda 100644
 +    assert kinds == {"fundamentals", "submissions", "going_concern", "prices"}
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_submissions.py tests/test_value_universe.py`
   Expected: FAIL — `ImportError: cannot import name 'going_concern' from 'src.research.ingest'`
   (and the sweep counts).
 
-- [ ] **Step 3: The EDGAR client** — apply to `src/data/edgar_backend.py` (`get_json` keeps its
+- [x] **Step 3: The EDGAR client** — apply to `src/data/edgar_backend.py` (`get_json` keeps its
   contract; the GET, the limiter, the breaker and the retries move to `_get`, which `get_text`
   shares):
 
@@ -1436,7 +1436,7 @@ index f72ef3c..bc33dc5 100644
  class BulkPriceProvider(Protocol):
 ```
 
-- [ ] **Step 4: The research tables** — apply to `src/research/store/models.py`
+- [x] **Step 4: The research tables** — apply to `src/research/store/models.py`
   (`init_research_db` creates new tables with `create_all`; no migration is needed):
 
 ```diff
@@ -1486,7 +1486,7 @@ index 7fe50d2..2845f87 100644
 +    fetched_at: Mapped[datetime] = mapped_column(DateTime)
 ```
 
-- [ ] **Step 5: The two jobs** — create `src/research/ingest/submissions.py`:
+- [x] **Step 5: The two jobs** — create `src/research/ingest/submissions.py`:
 
 ```python
 """The research worker's ``submissions`` job (value book spec §7.1 trigger 4, §8.5): each filer's
@@ -1709,7 +1709,7 @@ def ingest_going_concern(symbol: str, cik: str, *, today: date | None = None) ->
     return len(todo)
 ```
 
-- [ ] **Step 6: The drain and the sweep** — apply to `src/research/ingest/materialize.py`:
+- [x] **Step 6: The drain and the sweep** — apply to `src/research/ingest/materialize.py`:
 
 ```diff
 diff --git a/src/research/ingest/materialize.py b/src/research/ingest/materialize.py
@@ -1873,14 +1873,14 @@ index 256f37c..2ace4d0 100644
      log.info("Value sweep queued %s for %d names", counts, len(names))
 ```
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_research_submissions.py tests/test_value_universe.py tests/test_edgar_backend.py tests/test_edgar_companyfacts.py tests/test_research_materialize.py tests/test_research_store.py tests/test_ingest_fundamentals.py tests/test_research_worker.py tests/test_value_fence.py`
   Expected: PASS (`test_research_submissions.py` 9, `test_value_universe.py` 13). Then
   `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the nine touched files and
   `.venv/bin/mypy src/data src/research` — all clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
   ```bash
   git add src/data/edgar_backend.py src/data/protocols.py src/research/store/models.py src/research/ingest/submissions.py src/research/ingest/going_concern.py src/research/ingest/materialize.py src/research/ingest/value_universe.py tests/test_research_submissions.py tests/test_value_universe.py

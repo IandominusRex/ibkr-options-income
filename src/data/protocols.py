@@ -158,6 +158,15 @@ class FilingsProvider(Protocol):
         """
         ...
 
+    def get_submissions(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
+        """The filer's recent filings (EDGAR's ``submissions`` feed): forms, dates, 8-K item
+        tags, primary documents. Same ``(payload, etag)`` contract as ``get_company_facts``."""
+        ...
+
+    def get_filing_text(self, cik: str, accn: str, document: str) -> str:
+        """One filing's primary document as text; ``""`` when unavailable. Never raises."""
+        ...
+
 
 @runtime_checkable
 class BulkPriceProvider(Protocol):

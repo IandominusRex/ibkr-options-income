@@ -23,6 +23,8 @@ log = logging.getLogger(__name__)
 
 DIRECTORY_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accn}/{document}"
 
 
 def _contact_email() -> str:
@@ -78,12 +80,13 @@ class EdgarClient:
         )
         self._max_retries = max_retries
 
-    def get_json(self, url: str, *, etag: str | None = None) -> tuple[dict | None, str | None]:
-        """Fetch JSON. Returns (payload, etag); (None, etag) on 304 or on failure."""
+    def _get(self, url: str, *, etag: str | None = None) -> httpx.Response | None:
+        """One GET under the rate limit and the circuit breaker, retried on a throttle or a
+        transient outage. The 200 or 304 response; None on any failure or an open circuit."""
         breaker = get_breaker("edgar")
         if not breaker.allow():
             # Open circuit: no network call. The affected section renders UNAVAILABLE.
-            return None, etag
+            return None
 
         headers = {"User-Agent": user_agent()}
         if etag:
@@ -96,14 +99,11 @@ class EdgarClient:
             except httpx.HTTPError as exc:
                 log.warning("EDGAR request failed for %s: %s", url, exc)
                 breaker.record_failure()
-                return None, etag
+                return None
 
-            if resp.status_code == 304:
+            if resp.status_code in (200, 304):
                 breaker.record_success()
-                return None, etag
-            if resp.status_code == 200:
-                breaker.record_success()
-                return resp.json(), resp.headers.get("ETag", etag)
+                return resp
             if resp.status_code in (403, 429, 500, 502, 503, 504) and attempt < self._max_retries:
                 # 403/429: throttle. 5xx: EDGAR transient outage. Retry with backoff.
                 retry_after = resp.headers.get("Retry-After")
@@ -114,9 +114,23 @@ class EdgarClient:
                 continue
             log.warning("EDGAR returned %s for %s", resp.status_code, url)
             breaker.record_failure()
-            return None, etag
+            return None
         breaker.record_failure()
-        return None, etag
+        return None
+
+    def get_json(self, url: str, *, etag: str | None = None) -> tuple[dict | None, str | None]:
+        """Fetch JSON. Returns (payload, etag); (None, etag) on 304 or on failure."""
+        resp = self._get(url, etag=etag)
+        if resp is None or resp.status_code == 304:
+            return None, etag
+        return resp.json(), resp.headers.get("ETag", etag)
+
+    def get_text(self, url: str) -> str | None:
+        """Fetch a document as text (a filing's primary document). None on failure."""
+        resp = self._get(url)
+        if resp is None or resp.status_code != 200:
+            return None
+        return resp.text
 
 
 class EdgarSymbolDirectoryProvider:
@@ -152,7 +166,9 @@ class EdgarSymbolDirectoryProvider:
 
 
 class EdgarFilingsProvider:
-    """XBRL company facts. One document per filer, sometimes tens of megabytes."""
+    """XBRL company facts (one document per filer, sometimes tens of megabytes), the filer's
+    ``submissions`` feed (its recent filings with form, dates and 8-K item tags) and a filing's
+    primary document."""
 
     def __init__(self, client: EdgarClient | None = None) -> None:
         self._client = client or EdgarClient()
@@ -165,3 +181,22 @@ class EdgarFilingsProvider:
             COMPANYFACTS_URL.format(cik=cik.zfill(10)), etag=etag
         )
         return payload or {}, new_etag
+
+    def get_submissions(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
+        """The filer's ``submissions/CIK##########.json``: its recent filings. Same contract as
+        :meth:`get_company_facts` (``({}, etag)`` on a 304 or a failure)."""
+        cik = (cik or "").strip()
+        if not cik:
+            return {}, None
+        payload, new_etag = self._client.get_json(
+            SUBMISSIONS_URL.format(cik=cik.zfill(10)), etag=etag
+        )
+        return payload or {}, new_etag
+
+    def get_filing_text(self, cik: str, accn: str, document: str) -> str:
+        """A filing's primary document as text; ``""`` when unavailable. Never raises."""
+        cik = (cik or "").strip().lstrip("0")
+        if not cik or not accn or not document:
+            return ""
+        url = ARCHIVE_URL.format(cik=cik, accn=accn.replace("-", ""), document=document)
+        return self._client.get_text(url) or ""
