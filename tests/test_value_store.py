@@ -132,3 +132,40 @@ def test_record_run_adds_one_value_runs_row(value_db) -> None:
         row = s.query(ValueRunRow).one()
         assert (row.kind, row.names, row.rs_cutoff_6m) == ("dry_run", 3, -0.02)
         assert row.as_of == date(2026, 10, 29)
+
+
+def test_init_adds_the_plan_columns_to_a_part_2_database(tmp_path, monkeypatch) -> None:
+    """Part 3 adds ``plan`` to two tables a live value.db already has: create_all never alters
+    a table, so init_value_db adds the column, and a Part 2 row reads as the main plan."""
+    from sqlalchemy import create_engine, select, text
+
+    from src.value.store import ValueReevaluationRow, ValueShadowEventRow, ValueShadowLegRow
+
+    path = tmp_path / "value.db"
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    with engine.begin() as c:
+        c.execute(
+            text(
+                "CREATE TABLE value_shadow_legs (id INTEGER PRIMARY KEY, shadow_id INTEGER, "
+                "policy VARCHAR(8), state_json TEXT, last_step DATE, closed BOOLEAN, "
+                "exit_date DATE, ret_exit FLOAT, spy_ret_exit FLOAT, max_drawdown FLOAT, "
+                "sessions INTEGER, sells INTEGER)"
+            )
+        )
+        c.execute(
+            text(
+                "INSERT INTO value_shadow_legs (id, shadow_id, policy, state_json, closed, "
+                "sessions, sells) VALUES (1, 7, 'value', '{}', 0, 0, 0)"
+            )
+        )
+    engine.dispose()
+    monkeypatch.setattr(store, "_resolve_url", lambda: f"sqlite:///{path.as_posix()}")
+    store.reset_engine()
+    init_value_db()
+    init_value_db()  # idempotent
+    with value_session() as s:
+        leg = s.get(ValueShadowLegRow, 1)
+        assert leg is not None and leg.plan == "main"
+        assert s.scalars(select(ValueReevaluationRow)).first() is None
+        assert s.scalars(select(ValueShadowEventRow)).first() is None
+    store.reset_engine()

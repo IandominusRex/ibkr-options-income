@@ -18,6 +18,13 @@ Part 2 tables (the shadow record, spec §6.8, §7, §12):
 - ``value_shadow_events`` - every exit event and fill, append-only;
 - ``value_ranked`` - the ranked monthly record: top tenth, bottom tenth and the whole universe
   per list, each held to the next formation.
+
+Part 3 (spec §7.1):
+- ``value_reevaluations`` - one row per re-evaluation of a shadow entry: the triggers, the
+  severity, the plan before and after the session's close;
+- ``value_shadow_legs.plan`` / ``value_shadow_events.plan`` - ``main`` (the re-evaluated plan) or
+  ``original`` (the twin carried untouched from the first trigger on); added to an existing
+  value.db by ``init_value_db``.
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ from sqlalchemy import (
     Text,
     create_engine,
     event,
+    inspect,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -165,6 +174,7 @@ class ValueShadowLegRow(ValueBase):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     shadow_id: Mapped[int] = mapped_column(Integer, index=True)
     policy: Mapped[str] = mapped_column(String(8))  # full | value | hold12
+    plan: Mapped[str] = mapped_column(String(8), default="main")  # main | original (Part 3)
     state_json: Mapped[str] = mapped_column(Text)  # src.value.exits.LegState
     last_step: Mapped[date | None] = mapped_column(Date, nullable=True)
     closed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -183,7 +193,8 @@ class ValueShadowEventRow(ValueBase):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     shadow_id: Mapped[int] = mapped_column(Integer, index=True)
-    policy: Mapped[str] = mapped_column(String(8))
+    policy: Mapped[str] = mapped_column(String(8))  # full | value | hold12 | all (a rebase)
+    plan: Mapped[str] = mapped_column(String(8), default="main")  # main | original (Part 3)
     day: Mapped[date] = mapped_column(Date)
     kind: Mapped[str] = mapped_column(String(16))
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -212,8 +223,40 @@ class ValueRankedRow(ValueBase):
     missing: Mapped[int] = mapped_column(Integer, default=0)  # members without a bar at an end
 
 
+class ValueReevaluationRow(ValueBase):
+    """One re-evaluation (spec §7.1) of a shadow entry. A trigger within ``debounce_sessions``
+    that is not more severe joins the open row (``last_session``, ``triggers_json``) instead of
+    opening a new one. ``review_state`` is Claude's, for held names, from Part 4 on."""
+
+    __tablename__ = "value_reevaluations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    shadow_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    list_name: Mapped[str] = mapped_column(String(16))
+    session: Mapped[date] = mapped_column(Date)  # the session it opened on
+    last_session: Mapped[date] = mapped_column(Date)  # the newest session a trigger joined
+    severity: Mapped[str] = mapped_column(String(8))  # minor | major
+    triggers_json: Mapped[str] = mapped_column(Text)  # [{day, kind, severity, ...}]
+    plan_before_json: Mapped[str] = mapped_column(Text)  # {policy: {stop, armed, ...}}
+    plan_after_json: Mapped[str] = mapped_column(Text)
+    verdict_at_entry: Mapped[str] = mapped_column(String(16))
+    verdict_now: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    review_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ruleset_version: Mapped[str] = mapped_column(String(32))
+    ruleset_hash: Mapped[str] = mapped_column(String(12))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+
+# Columns added after a table's first release: create_all never ALTERs an existing table
+# (the src/spreads/store.py pattern).
+_ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "value_shadow_legs": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
+    "value_shadow_events": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
+}
 
 
 def _resolve_url() -> str:
@@ -246,8 +289,22 @@ def reset_engine() -> None:
     _engine, _SessionLocal = None, None
 
 
+def _add_missing_columns(engine: Engine) -> None:
+    insp = inspect(engine)
+    for table, cols in _ADDED_COLUMNS.items():
+        if not insp.has_table(table):
+            continue
+        have = {c["name"] for c in insp.get_columns(table)}
+        for name, ddl in cols:
+            if name not in have:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_value_db() -> None:
-    ValueBase.metadata.create_all(get_value_engine())
+    engine = get_value_engine()
+    ValueBase.metadata.create_all(engine)
+    _add_missing_columns(engine)
 
 
 @contextmanager

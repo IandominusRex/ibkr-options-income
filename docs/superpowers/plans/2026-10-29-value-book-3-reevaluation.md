@@ -111,7 +111,7 @@ is the executing agent's own model name.
 | 3 The readers: filings, the going-concern flag, the day's low | done | `a78750e` | tests/test_value_inputs + shadow + fence 42 passed; ruff check/format clean; mypy clean. **Section A exit full gate:** pytest 5253 passed, 1 skipped (baseline 5239 + 14); `ruff check .` clean; `mypy src` 322 files clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; 3 task commits on `main..HEAD` before this docs commit | 2026-10-30 | No deviations. Ruling 10 (readers tolerate an unmigrated research.db: `{}` on `OperationalError`) implemented and tested. `build_day_bars` reads `bars["high"]`/`["low"]` unconditionally (as the ATR line already did). |
 | **B entry checks** | passed | 4 commits on `main..HEAD` | B2: pytest 5253 passed, 1 skipped (baseline + 14); ruff clean; mypy 322 files; FROZEN holds v3 `ad8841127029`; B3/B4 greps all match. Section A protected-file diff empty | 2026-10-30 | Section B exit target: baseline + 39 = 5278 |
 | 4 The exit engine's Part 3 rules | done | `ec73f68` | tests/test_value_exits (43 collected) + shadow + fence 70 passed; ruff check/format clean; mypy exits.py clean | 2026-10-30 | No deviations. Applied by `git apply` of the plan's diffs, extracted verbatim. The commit also carried the orchestrator's "B entry checks" row. `LegState` gained `fv_proposed`, `seen_accn`, `trail_floor`, all defaulted so Part 2's stored legs load; `open_leg` seeds `seen_accn=fv_accn`. Cost-if-wrong notes: ruling 14 (shock stop uses the ATR on the bar before; no ATR means no shock stop) and ruling 15 (8-K thesis exit under every policy) are each one branch in `_shock`/`step`. |
-| 5 The residual model and the triggers | | | | | |
+| 5 The residual model and the triggers | done | `252b910` | tests/test_value_reevaluate (10) + fence 24 passed; ruff check/format clean on 3 files; mypy residuals.py and reevaluate.py clean | 2026-10-30 | No deviations; the plan's files reproduced exactly (extracted verbatim). Ruling 11 (residual model: 250-session fit before the day, 60-session sigma, min 120 returns, raw 10% backstop): cost if wrong is the `ValueReevaluationCfg` numbers. Ruling 3 (trigger 6 deferred to Part 4): `TriggerKind` has no `kill` member; adding one is a Literal entry. Both new modules are added to the fence's pure list in Task 8. |
 | 6 The store: `value_reevaluations` and the plan column | | | | | |
 | **C entry checks** | | | | | |
 | 7 The shadow record: rebase, re-evaluations, the original twin | | | | | |
@@ -2659,7 +2659,7 @@ over 60 sessions is σ = 0.005 × √(60/59) = 0.0050422. A −4% day on a flat 
 z = −0.04 / σ = −7.93 (Major, down); five days of −0.8% net of the sector is a drift of
 −0.04 / (σ × √5) = −3.55 (Minor) while no single day reaches |z| = 3.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_reevaluate.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_reevaluate.py`:
 
 ```python
 """Re-evaluation (value book spec §7.1, §16): the sector-ETF residual model, every trigger on a
@@ -2890,12 +2890,12 @@ def test_a_level_change_waits_for_the_close() -> None:
     assert [(e.kind, e.fraction) for e in events] == [("stop", 1.0)]
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_reevaluate.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value.residuals'`.
 
-- [ ] **Step 3: The residual model** — create `src/value/residuals.py`:
+- [x] **Step 3: The residual model** — create `src/value/residuals.py`:
 
 ```python
 """The sector-ETF residual model behind re-evaluation triggers 1 and 2 (spec §7.1). Pure: no I/O.
@@ -2996,7 +2996,7 @@ def moves(
     return out
 ```
 
-- [ ] **Step 4: The triggers** — create `src/value/reevaluate.py`:
+- [x] **Step 4: The triggers** — create `src/value/reevaluate.py`:
 
 ```python
 """Re-evaluation (spec §7.1): which triggers fire on a session, how severe the re-evaluation is,
@@ -3207,13 +3207,13 @@ def plan_actions(
     )
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_reevaluate.py tests/test_value_fence.py`
   Expected: PASS (10 + the fence). Then ruff check/format and `.venv/bin/mypy src/value/residuals.py
   src/value/reevaluate.py` — clean. (Task 8 adds both modules to the fence's pure list.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   ```bash
   git add src/value/residuals.py src/value/reevaluate.py tests/test_value_reevaluate.py
