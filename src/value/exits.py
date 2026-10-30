@@ -13,7 +13,13 @@ Every exit that would send without a tap reads **Python's** fair value only (rev
 half-sale target reads the effective fair value (Python's on the baseline track; Claude's
 clamped value on Part 4's track). An exit only the effective value would fire is a ``proposal``
 event: it waits for a tap and sells nothing. Fair value is re-marked only when a new filing lands
-(a new accession). §7.1's shock stops and re-evaluations are Part 3.
+(a new accession).
+
+Part 3 (spec §7.1, ``value_rules`` v3): a session's re-evaluation reaches a leg as a ``Reeval``.
+Its 8-K thesis exit (items 1.03, 3.01, 4.02) sells under every policy; its shock stops apply under
+``full`` only, at the close: a down-shock raises the stop to the shock low - 0.5 x ATR(14) measured
+before the shock, an up-shock arms the trail from the shock low. A going-concern doubt the filing
+asserts is a thesis exit under every policy (§7).
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ EventKind = Literal[
     "time",
     "proposal",
     "fill",
+    "shock",
 ]
 _DONE = 1e-9
 
@@ -57,7 +64,18 @@ class DayFacts(BaseModel):
     effective_fair_value: float | None = None
     latest_accn: str | None = None
     piotroski: float | None = None
+    piotroski_missing: int = 0  # F-score components unknown (each scored 0 in ``piotroski``)
     altman_z: float | None = None
+    going_concern: bool | None = None  # the newest read periodic filing asserts a doubt
+
+
+class Reeval(BaseModel):
+    """What one session's re-evaluation (spec §7.1) does to a leg at that session's close: built
+    by ``src.value.reevaluate.plan_actions`` from Python's triggers only."""
+
+    stop_at_least: float | None = None  # full: a down-shock's floor for the stop
+    arm_from: float | None = None  # full: an up-shock arms the trail from this low
+    thesis: str | None = None  # every policy: an 8-K item that is a thesis exit on its own
 
 
 class ExitEvent(BaseModel):
@@ -83,7 +101,10 @@ class LegState(BaseModel):
     half_sold: bool = False
     above_fv_seen: bool = False  # a close at or above PYTHON's fair value (not the effective one)
     peak_proposed: bool = False  # the effective-only crossing has been noted once
-    last_close: float | None = None  # the last stepped close: the split guard's reference
+    fv_proposed: bool = False  # the effective-only thesis proposal is noted once per episode
+    seen_accn: str | None = None  # the newest accession this leg has read (the Z exit's clock)
+    trail_floor: float | None = None  # an up-shock's trail floor until the half-way mark
+    last_close: float | None = None  # the last stepped close: the rebase's reference
     rsi_hot: bool = False
     highest_close: float
     sessions: int = 0
@@ -100,6 +121,26 @@ class LegState(BaseModel):
     def exit_return(self) -> float | None:
         """Return over cost once every share is sold; None while any is held."""
         return self.proceeds / self.entry_price - 1.0 if self.closed else None
+
+    def rebased(self, ratio: float) -> LegState:
+        """Every absolute price level times *ratio* (a split or a dividend adjustment rewrote
+        the bars, spec §7.1): returns, fractions and drawdowns are unchanged."""
+
+        def times(v: float | None) -> float | None:
+            return None if v is None else v * ratio
+
+        return self.model_copy(
+            update={
+                "entry_price": self.entry_price * ratio,
+                "fair_value": times(self.fair_value),
+                "effective_fair_value": times(self.effective_fair_value),
+                "stop": times(self.stop),
+                "trail_floor": times(self.trail_floor),
+                "highest_close": self.highest_close * ratio,
+                "last_close": times(self.last_close),
+                "proceeds": self.proceeds * ratio,
+            }
+        )
 
 
 def open_leg(
@@ -126,16 +167,22 @@ def open_leg(
         fair_value=fair_value,
         effective_fair_value=effective_fair_value,
         fv_accn=fv_accn,
+        seen_accn=fv_accn,
         stop=stop,
         highest_close=entry_price,
     )
 
 
 def step(
-    state: LegState, day: DayBar, facts: DayFacts | None, cfg: ValueExitsCfg
+    state: LegState,
+    day: DayBar,
+    facts: DayFacts | None,
+    cfg: ValueExitsCfg,
+    reeval: Reeval | None = None,
 ) -> tuple[LegState, list[ExitEvent]]:
     """Advance one leg by one session: fill yesterday's signal at today's open, then read
-    today's close. Never mutates *state*."""
+    today's close, then apply the session's re-evaluation (*reeval*, spec §7.1). Never mutates
+    *state*."""
     if state.closed:
         return state, []
     s = state.model_copy()
@@ -176,6 +223,10 @@ def step(
         events.append(ExitEvent(day=day.date, kind=kind, price=close, detail=detail))
 
     # A new filing re-marks fair value, up or down (spec §7). Price and news never do.
+    filed = facts is not None and facts.latest_accn is not None and facts.latest_accn != s.seen_accn
+    if filed:
+        assert facts is not None
+        s.seen_accn = facts.latest_accn
     remarked = False
     if (
         facts is not None
@@ -195,12 +246,23 @@ def step(
 
     # Thesis exits: every policy, Python's numbers only.
     if facts is not None:
-        if facts.piotroski is not None and facts.piotroski <= cfg.thesis_piotroski_max:
-            sell(s.remaining, "thesis", f"F-score {facts.piotroski:.0f}")
+        f_score = facts.piotroski
+        # An unknown component scores 0 in the F-score: fire only if it would still be at or
+        # under the bar with every unknown component a point (review M5).
+        if f_score is not None and f_score + facts.piotroski_missing <= cfg.thesis_piotroski_max:
+            sell(s.remaining, "thesis", f"F-score {f_score:.0f}")
             return s, events
-        if facts.altman_z is not None and facts.altman_z < cfg.thesis_altman_z_below:
+        # Altman Z carries the market cap, so it is read when a new filing lands, not every
+        # session the price moves (review M6).
+        if filed and facts.altman_z is not None and facts.altman_z < cfg.thesis_altman_z_below:
             sell(s.remaining, "thesis", f"Altman Z {facts.altman_z:.2f}")
             return s, events
+        if facts.going_concern:
+            sell(s.remaining, "thesis", "the filing asserts a going-concern doubt")
+            return s, events
+    if reeval is not None and reeval.thesis is not None:
+        sell(s.remaining, "thesis", reeval.thesis)
+        return s, events
     bar = cfg.thesis_fv_below_price_pct / 100.0
     below_trend = day.sma50 is not None and close < day.sma50
     # Only on a session that re-marked fair value from a new filing (review I5): a static value
@@ -208,8 +270,16 @@ def step(
     if remarked and below_trend and s.fair_value is not None and s.fair_value < close * bar:
         sell(s.remaining, "thesis", f"fair value {s.fair_value:.2f} below {bar:.0%} of the price")
         return s, events
-    if below_trend and s.effective_fair_value is not None and s.effective_fair_value < close * bar:
+    # The tap proposal is for what only the effective value says, once per episode (M14).
+    effective_only = (
+        below_trend
+        and s.effective_fair_value is not None
+        and s.effective_fair_value < close * bar
+        and not (s.fair_value is not None and s.fair_value < close * bar)
+    )
+    if effective_only and not s.fv_proposed:
         note("proposal", "the effective fair value alone is below 90% of the price: a tap")
+    s.fv_proposed = effective_only
 
     if s.policy == "full":
         _full(s, close, day, cfg, sell, note)
@@ -229,7 +299,22 @@ def step(
             sell(s.remaining, "catastrophe", f"close {close:.2f} <= {floor:.2f}")
         elif s.sessions >= cfg.hold12_sessions:
             sell(s.remaining, "time", f"{s.sessions} sessions")
+    if s.policy == "full" and reeval is not None and s.pending < s.remaining - _DONE:
+        _shock(s, reeval, note)
     return s, events
+
+
+def _shock(s: LegState, reeval: Reeval, note: Note) -> None:
+    """Spec §7.1, ``full`` only, at the close: a stop never loosens."""
+    if reeval.stop_at_least is not None and (s.stop is None or reeval.stop_at_least > s.stop):
+        s.stop = reeval.stop_at_least
+        note("shock", f"down-shock: stop raised to {s.stop:.2f}")
+    if reeval.arm_from is not None and not s.armed:
+        s.armed = True
+        s.trail_floor = reeval.arm_from
+        if s.stop is None or reeval.arm_from > s.stop:
+            s.stop = reeval.arm_from
+        note("shock", f"up-shock: trail armed from the shock low {reeval.arm_from:.2f}")
 
 
 def _half_at_fair_value(s: LegState, close: float, cfg: ValueExitsCfg, sell: Sell) -> None:
@@ -247,16 +332,17 @@ def _full(
         sell(s.remaining, kind, f"close {close:.2f} < stop {s.stop:.2f}")
         return
     fv = s.fair_value
-    if (
-        not s.armed
-        and fv is not None
+    halfway = (
+        fv is not None
         and fv > s.entry_price
         and close >= s.entry_price + cfg.arm_at_pct / 100.0 * (fv - s.entry_price)
-    ):
-        s.armed = True
+    )
+    if halfway and (not s.armed or s.trail_floor is not None):
+        if not s.armed:
+            note("arm", f"close {close:.2f} past the half-way mark to {fv:.2f}")
+        s.armed, s.trail_floor = True, None  # an up-shock's floor gives way to the breakeven
         if s.stop is None or s.stop < s.entry_price:
             s.stop = s.entry_price  # armed: never below breakeven, even when ATR is unknown (M3)
-        note("arm", f"close {close:.2f} past the half-way mark to {fv:.2f}")
     _half_at_fair_value(s, close, cfg, sell)
     # The peak signal and the 2 x ATR tightening sell without a tap, so they read Python's fair
     # value only (revision 3); a price that crossed just the effective value is one proposal.
@@ -273,7 +359,8 @@ def _full(
         return
     k = cfg.trail_atr_after_half if s.half_sold and s.above_fv_seen else cfg.trail_atr
     if day.atr14 is not None:
-        chandelier = max(s.highest_close - k * day.atr14, s.entry_price)
+        floor = s.entry_price if s.trail_floor is None else s.trail_floor
+        chandelier = max(s.highest_close - k * day.atr14, floor)
         if s.stop is None or chandelier > s.stop:
             s.stop = chandelier  # a stop is never lowered
     if day.rsi14 is not None and day.rsi14 > cfg.peak_rsi_high:

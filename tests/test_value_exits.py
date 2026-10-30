@@ -1,6 +1,7 @@
-"""The exit engine as a state machine (value book spec §7, §16): stop, arm, half at fair value,
-trail, peak, thesis, catastrophe, time; fair value re-marked only on a new filing; no automatic
-exit reads the effective (Claude) fair value."""
+"""The exit engine as a state machine (value book spec §7, §7.1, §16): stop, arm, half at fair
+value, trail, peak, thesis, catastrophe, time; fair value re-marked only on a new filing; no
+automatic exit reads the effective (Claude) fair value; Part 3's shock stops (full only), the 8-K
+and going-concern thesis exits, and the rebase."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from src.value.exits import (
     POLICIES,
     DayFacts,
     LegState,
+    Reeval,
     benchmark_return,
     open_leg,
     step,
@@ -112,7 +114,8 @@ def test_the_peak_signal_when_rsi_falls_back_through_seventy() -> None:
     ("facts", "sma50", "detail"),
     [
         (DayFacts(piotroski=3.0), None, "F-score 3"),
-        (DayFacts(altman_z=1.5), None, "Altman Z 1.50"),
+        (DayFacts(altman_z=1.5, latest_accn="0000000001-26-000002"), None, "Altman Z 1.50"),
+        (DayFacts(going_concern=True), None, "going-concern"),
         # a fair value re-marked from a new filing to below 90% of the price, price under SMA50
         (DayFacts(python_fair_value=90.0, latest_accn="0000000001-26-000002"), 120.0, "fair value"),
     ],
@@ -234,3 +237,90 @@ def test_the_benchmark_return_matches_the_fills() -> None:
     assert benchmark_return([(d1, 0.5), (d2, 0.5)], opens, 500.0) == pytest.approx(0.02)
     assert benchmark_return([(d1, 0.5), (D0, 0.5)], opens, 500.0) is None
     assert benchmark_return([], opens, 500.0) is None
+
+
+def test_an_unknown_f_score_component_counts_against_the_exit() -> None:
+    """Review M5: an unknown component scores 0, so F-score 3 with one unknown could be 4."""
+    _, events = run(leg("value"), [bar(1, 105.0)], DayFacts(piotroski=3.0, piotroski_missing=1))
+    assert events == []
+    _, events = run(leg("value"), [bar(1, 105.0)], DayFacts(piotroski=2.0, piotroski_missing=1))
+    assert events == [("thesis", 1.0)]
+
+
+def test_the_altman_z_exit_is_read_only_when_a_new_filing_lands() -> None:
+    """Review M6: Z carries the market cap. A new filing with Z 2.0 holds; the price then falls
+    and tonight's Z reads 1.5 on the same filing: no sale until the next filing says so."""
+    newer = "0000000001-26-000002"
+    state, events = run(leg("value"), [bar(1, 105.0)], DayFacts(altman_z=2.0, latest_accn=newer))
+    assert events == [] and state.seen_accn == newer
+    state, events = run(state, [bar(2, 95.0)], DayFacts(altman_z=1.5, latest_accn=newer))
+    assert events == []
+    third = DayFacts(altman_z=1.5, latest_accn="0000000001-26-000003")
+    _, events = run(state, [bar(3, 95.0)], third)
+    assert events == [("thesis", 1.0)]
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_an_8k_thesis_item_sells_under_every_policy(policy) -> None:
+    state, events = step(leg(policy), bar(1, 104.0), None, CFG, Reeval(thesis="8-K item 1.03"))
+    assert [(e.kind, e.fraction, e.detail) for e in events] == [("thesis", 1.0, "8-K item 1.03")]
+    assert state.pending == 1.0
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_a_down_shock_raises_only_fulls_stop_and_never_lowers_it(policy) -> None:
+    """Spec §7.1: shock stops apply under full only; the stop tightens, never loosens."""
+    state, events = step(leg(policy), bar(1, 99.0), None, CFG, Reeval(stop_at_least=96.0))
+    if policy == "full":
+        assert state.stop == pytest.approx(96.0) and [e.kind for e in events] == ["shock"]
+        state, events = step(state, bar(2, 98.0), None, CFG, Reeval(stop_at_least=90.0))
+        assert state.stop == pytest.approx(96.0) and events == []
+        _, events = step(state, bar(3, 95.5), None, CFG)
+        assert [(e.kind, e.fraction) for e in events] == [("stop", 1.0)]
+    else:
+        assert state.stop is None and events == []
+
+
+def test_an_up_shock_arms_the_trail_from_the_shock_low() -> None:
+    """Spec §7.1: the trail arms at once, trailing from the shock session's low; at the half-way
+    mark §7's breakeven floor takes over."""
+    state, events = step(leg(), bar(1, 101.0, low=97.0), None, CFG, Reeval(arm_from=97.0))
+    assert [e.kind for e in events] == ["shock"]
+    assert state.armed and state.trail_floor == 97.0 and state.stop == pytest.approx(97.0)
+    _, events = step(state, bar(2, 96.5), None, CFG)
+    assert [(e.kind, e.fraction) for e in events] == [("trail", 1.0)]
+    later, events = step(state, bar(2, 111.0, atr14=2.0), None, CFG)
+    assert events == [] and later.trail_floor is None
+    assert later.stop == pytest.approx(105.0)  # 111 - 3 x 2, above the breakeven
+
+
+def test_the_effective_only_proposal_is_noted_once_per_episode() -> None:
+    """Review M14: one tap proposal per episode, and none on the baseline track, where Python's
+    value says the same thing (its exit waits for a re-mark)."""
+    closes = [115.0, 116.0, 105.0, 115.0]
+    _, events = run(
+        leg("hold12", fv=120.0, effective=100.0),
+        [bar(i + 1, c, sma50=120.0) for i, c in enumerate(closes)],
+    )
+    assert events == [("proposal", 0.0), ("proposal", 0.0)]
+    _, events = run(
+        leg("hold12", fv=100.0), [bar(i + 1, c, sma50=120.0) for i, c in enumerate(closes)]
+    )
+    assert events == []
+
+
+def test_a_rebase_scales_every_price_level_and_no_return() -> None:
+    state, _ = run(leg(), [bar(1, 121.0, atr14=2.0), bar(2, 123.0, open=122.0, atr14=2.0)])
+    half = state.rebased(0.5)
+    assert (half.entry_price, half.fair_value, half.stop, half.highest_close) == (
+        50.0,
+        60.0,
+        pytest.approx(state.stop / 2),
+        61.5,
+    )
+    assert half.last_close == 61.5 and half.proceeds == pytest.approx(state.proceeds / 2)
+    assert (half.remaining, half.max_drawdown, half.peak_value) == (
+        state.remaining,
+        state.max_drawdown,
+        state.peak_value,
+    )
