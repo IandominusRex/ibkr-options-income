@@ -260,6 +260,8 @@ class TestYFinancePriceProviderGoldenMaster:
             (400, "2y"),  # BulkPriceProvider's documented default lookback (Task 4.1)
             (730, "2y"),
             (999, "5y"),
+            (1830, "5y"),
+            (3660, "10y"),  # the value book's Stage 1b backtest
         ]
         for lookback, expected in cases:
             ticker = _make_ticker(history_df=pd.DataFrame())

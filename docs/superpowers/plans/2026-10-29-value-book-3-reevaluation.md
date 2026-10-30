@@ -118,8 +118,8 @@ is the executing agent's own model name.
 | 8 The process: plain data, the regime step, the fences | done | `fd9d7a2` | Red first: 4 failed, 31 passed (feed 3, service 1; the three fence tests passed at once, as the plan says). Green: tests/test_value_feed (9) + service (11) + fence (15) + news_fence + web_fence + eval_skills 71 passed; `py_compile` of run_value.py and value_feed.py silent; ruff check/format clean on 6 files; mypy service.py, value_feed.py, run_value.py clean. Red run recorded: `import src.engine.risk_engine` added to `reevaluate.py` failed 3 fence tests; removed | 2026-10-30 | No deviations; all diffs applied by `git apply`. Ruling 21 (plain data: `recent_earnings`, `news_volume`; trigger 7 steps from the previous nightly run's regime, unknown is never a step): cost if wrong is the feed functions and one `summary_json` read. P2-M11 (the `sys.modules` probe also loads `src.common.universe`, `src.storage.regime_state`) applied. |
 | 9 The report: re-evaluated against original | done | `5c811ef` | Red first: `ImportError: cannot import name 'ReevaluationView'` (collection error). Green: tests/test_value_report (10) + shadow + fence 45 passed; `py_compile scripts/value_report.py` silent; ruff check/format clean on 3 files; mypy report.py and value_report.py clean. **Section C exit full gate:** pytest 5291 passed, 1 skipped (baseline 5239 + 52); `ruff check .` clean; `mypy src` 324 files clean; `py_compile` of run_value.py, value_feed.py, value_report.py silent; protected-file diff empty; 3 task commits (`b0743cd`, `fd9d7a2`, `5c811ef`) on top of Section A and B's 7 (11 on `main..HEAD` before this docs commit) | 2026-10-30 | No deviations; all diffs applied by `git apply`. The pinned numbers (re-evaluated -1.5% vs original -5.0%, saved 3.5% an entry) hold. Rulings 16 and 18 (M12: `value_report`'s `init_value_db` is now load-bearing for the `plan` column): cost if wrong is none, the report reads `plan` with a `main` default. |
 | **D entry checks** | passed | 12 commits on `main..HEAD` | D2: pytest 5291 passed, 1 skipped (baseline + 52); ruff clean; mypy 324 files; D3 greps all match; Section C protected-file diff empty and py_compile silent; 32 GiB free | 2026-10-30 | Section D exit target: baseline + 59 = 5298 |
-| 10 Stage 1b: the point-in-time backtest | | | | | |
-| 11 The backtest script and ten years of bars | | | | | |
+| 10 Stage 1b: the point-in-time backtest | done | `32b2a63` | Red first: `ImportError: cannot import name 'backtest' from 'src.value'` (collection error). Green: tests/test_value_backtest (4) + fence 19 passed; ruff check/format clean on 2 files; mypy backtest.py clean | 2026-10-30 | No deviations; test file and module extracted verbatim from the plan. The commit also carried the orchestrator's "D entry checks" row. Ruling 20 (Stage 1b stand-ins: next filing for the earnings date, EDGAR count x price for the cap, a normal regime, today's universe; printed as caveats): cost if wrong is a script. |
+| 11 The backtest script and ten years of bars | done | see git log | Red first: 4 failed (3 new backtest tests on the missing script, `3660 -> 10y`). Green: tests/test_value_backtest (7) + test_data_providers + fence 68 passed; `py_compile scripts/value_backtest.py` silent; ruff check/format and mypy (script + yfinance_backend) clean; script not run against live data | 2026-10-30 | No deviations; the script extracted verbatim, the two small diffs applied by Edit. Ruling 22 (no real run here; operator runs it post-merge): cost if wrong is none. |
 | 12 Docs | | | | | |
 | **Whole-branch review (opus)** | | | | | |
 | **Review fix pass (sonnet)** | | | | | |
@@ -5657,7 +5657,7 @@ two formations (2025-02-03, 2025-03-03); only S0 moves, 20 to 22 from the Februa
 clusters whose residual sums are +5% and −5% the clustered SE is 0.625% too, t = 1.00. The February
 deep-value top tenth (S0 alone) returns +10%, the whole list +1%.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_backtest.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_backtest.py`:
 
 ```python
 """Stage 1b (value book spec §12): the point-in-time backtest of Python's rules."""
@@ -5794,12 +5794,12 @@ def test_a_run_scores_each_formation_records_ready_entries_and_the_ranked_record
     assert "deep_value      n 16 (2 dates) mean excess +0.6% t 1.00: the rules beat SPY" in text
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_backtest.py`
   Expected: FAIL — `ImportError: cannot import name 'backtest' from 'src.value'`.
 
-- [ ] **Step 3: The backtest** — create `src/value/backtest.py`:
+- [x] **Step 3: The backtest** — create `src/value/backtest.py`:
 
 ```python
 """Stage 1b (spec §12): a point-in-time backtest of Python's rules. No I/O of its own:
@@ -6139,12 +6139,12 @@ def render(result: BacktestResult) -> str:
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_backtest.py tests/test_value_fence.py`
   Expected: PASS (4 + the fence). ruff check/format and `.venv/bin/mypy src/value/backtest.py` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add src/value/backtest.py tests/test_value_backtest.py
@@ -6167,7 +6167,7 @@ def render(result: BacktestResult) -> str:
   `load_payload(symbol)`, `main(argv, *, fetch) -> int` (2 when the ruleset is not frozen or SPY has
   no bars); `_period_for_lookback(3660) == "10y"`.
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_value_backtest.py`:
+- [x] **Step 1: Write the failing tests** — append to `tests/test_value_backtest.py`:
 
 ```python
 def test_provider_bars_are_cached_and_normalised(tmp_path) -> None:
@@ -6272,13 +6272,13 @@ index 1d34633..604791f 100644
              ticker = _make_ticker(history_df=pd.DataFrame())
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_backtest.py tests/test_data_providers.py`
   Expected: FAIL — `ImportError: cannot import name 'value_backtest' from 'scripts'` and
   `3660→10y`.
 
-- [ ] **Step 3: The period, the cache's ignore line, the script** — apply to
+- [x] **Step 3: The period, the cache's ignore line, the script** — apply to
   `src/data/yfinance_backend.py`:
 
 ```diff
@@ -6486,7 +6486,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_backtest.py tests/test_data_providers.py tests/test_value_fence.py`
   Expected: PASS (`test_value_backtest.py` 7). `py_compile scripts/value_backtest.py` silent; ruff
@@ -6494,7 +6494,7 @@ if __name__ == "__main__":
   **Do not run the script against the live `research.db` or fetch real bars here** (ruling 22: the
   operator runs it after the merge).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add scripts/value_backtest.py src/data/yfinance_backend.py tests/test_data_providers.py .gitignore tests/test_value_backtest.py

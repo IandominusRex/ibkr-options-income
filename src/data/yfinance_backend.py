@@ -42,7 +42,9 @@ def _period_for_lookback(lookback_days: int) -> str:
         return "1y"
     if lookback_days <= 730:
         return "2y"
-    return "5y"
+    if lookback_days <= 1830:
+        return "5y"
+    return "10y"  # the value book's Stage 1b backtest (scripts/value_backtest.py)
 
 
 class YFinancePriceProvider:

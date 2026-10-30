@@ -130,3 +130,87 @@ def test_a_run_scores_each_formation_records_ready_entries_and_the_ranked_record
     # 16 deep-value entries over two dates, one of them +10%: a mean of 0.625%; the clustered
     # SE is 0.625% too (two clusters, residual sums +5% and -5%), so t = 1.00.
     assert "deep_value      n 16 (2 dates) mean excess +0.6% t 1.00: the rules beat SPY" in text
+
+
+def test_provider_bars_are_cached_and_normalised(tmp_path) -> None:
+    from scripts import value_backtest as script
+
+    calls: list[str] = []
+
+    def fetch(symbol: str) -> pd.DataFrame:
+        calls.append(symbol)
+        idx = pd.DatetimeIndex(["2025-01-02", "2025-01-03"], name="Date")
+        return pd.DataFrame(
+            {
+                "Open": [1.0, 2.0],
+                "High": [1.5, 2.5],
+                "Low": [0.5, 1.5],
+                "Close": [1.2, 2.2],
+                "Volume": [10, 20],
+                "Dividends": [0, 0],
+            },
+            index=idx,
+        )
+
+    first = script.provider_bars(["MU"], cache=tmp_path, fetch=fetch)
+    assert list(first["MU"].columns) == ["open", "high", "low", "close", "volume"]
+    assert list(first["MU"].index) == [date(2025, 1, 2), date(2025, 1, 3)]
+    again = script.provider_bars(["MU"], cache=tmp_path, fetch=fetch)
+    assert calls == ["MU"] and again["MU"]["close"].tolist() == [1.2, 2.2]
+    script.provider_bars(["MU"], cache=tmp_path, fetch=fetch, refresh=True)
+    assert calls == ["MU", "MU"]
+    empty = script.provider_bars(["NONE"], cache=tmp_path, fetch=lambda s: pd.DataFrame())
+    assert empty == {} and not (tmp_path / "NONE.csv").exists()
+
+
+@pytest.fixture()
+def research(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    import src.common.value_inputs as vi
+    from src.research.store.models import Base, CompanyFactsRawRow, DailyBarRow, SymbolRow
+
+    path = tmp_path / "research.db"
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(SymbolRow(symbol="STDY", cik="0000000001"))
+        s.add(
+            CompanyFactsRawRow(
+                cik="0000000001",
+                payload_json=json.dumps(companyfacts()),
+                fetched_at=datetime(2026, 1, 1),
+            )
+        )
+        for d in pd.bdate_range("2024-01-01", "2025-12-31").date:
+            for sym, px in (("STDY", 30.0), ("SPY", 500.0)):
+                s.add(
+                    DailyBarRow(symbol=sym, date=d, open=px, high=px, low=px, close=px, volume=1e6)
+                )
+        s.commit()
+    monkeypatch.setattr(vi, "_resolve_path", lambda: str(path))
+    vi.reset_engine()
+    yield path
+    vi.reset_engine()
+
+
+def test_the_script_runs_read_only_on_research_bars(research, capsys) -> None:
+    from scripts import value_backtest as script
+
+    argv = ["--bars", "research", "--names", "STDY", "--start", "2025-06-01", "--end", "2025-06-30"]
+    assert script.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "1 names, 1 monthly formations 2025-06-02..2025-06-02" in out
+    assert out.index("! Prices carry") < out.index("-- Fixed horizons")
+
+
+def test_the_script_refuses_a_ruleset_that_is_not_frozen(monkeypatch, capsys) -> None:
+    from scripts import value_backtest as script
+
+    monkeypatch.setattr(get_config().value, "ruleset_version", "v2")  # v2's pin, v3's rules
+    assert script.main(["--bars", "research", "--names", "STDY"]) == 2
+    assert "frozen" in capsys.readouterr().out

@@ -53,6 +53,7 @@ data/watchdog_state.json
 data/sentiment_history.json
 data/value_keep_fresh.json
 data/value_keep_fresh.json.tmp
+data/value_backtest/
 data/backups/
 # Daily credit spreads: the ThetaData cache (licensed market data), exported trade CSVs, the halt switch
 data/spreads_bt/
