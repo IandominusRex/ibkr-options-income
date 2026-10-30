@@ -542,3 +542,26 @@ def test_process_reads_the_filings_feed_and_the_going_concern_flag(value_db, res
             s, research, [ready()], as_of=SESSIONS[3], version="v3", digest="x", now=NOW, **night
         )
     assert all(leg.pending == 1.0 for leg in _legs("original").values())
+
+
+def test_an_entry_whose_legs_all_closed_on_a_fill_is_not_rebased_next_night(value_db) -> None:
+    """Review I2: the fill session returned before ``last_close`` was set while ``last_step`` moved
+    to it, so the next night's rebase read that day's close over the previous close as if the
+    provider had rewritten the bars (a bogus x1.03 on every level and a "rebase" event)."""
+    _open([ready()])
+    with value_session() as s:
+        shadow.fill_pending(s, {"STDY": bars([30.0, 31.0]), "SPY": bars([500.0] * 2)}, CFG)
+    crash = {"STDY": bars([30.0, 31.0, 10.0, 10.3]), "SPY": bars([500.0] * 4)}
+    with value_session() as s:  # the close-out signals on SESSIONS[2], fills at SESSIONS[3]'s open
+        shadow.step_legs(s, crash, {}, CFG)
+    with value_session() as s:
+        legs = list(s.scalars(select(ValueShadowLegRow)))
+        assert legs and all(g.closed and g.last_step == SESSIONS[3] for g in legs)
+    with value_session() as s:
+        assert shadow.rebase(s, crash, SESSIONS[3]) == (0, 0)
+    with value_session() as s:
+        row = s.scalars(select(ValueShadowRow)).first()
+        assert row.entry_price == pytest.approx(31.0)
+        assert not list(
+            s.scalars(select(ValueShadowEventRow).where(ValueShadowEventRow.kind == "rebase"))
+        )

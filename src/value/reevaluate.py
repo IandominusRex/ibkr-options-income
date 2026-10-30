@@ -189,13 +189,13 @@ def plan_actions(
     thesis = next(
         (t for t in triggers if t.kind == "filing" and t.severity == "major" and t.item), None
     )
-    low = bar.low if bar.low is not None else bar.close
+    low = bar.low  # unknown is never zero: no low, no shock level (ruling 14)
     atr = before.atr14 if before is not None else None
     stop = None
     arm = None
-    if shock is not None and shock.direction == "down" and atr is not None:
+    if shock is not None and shock.direction == "down" and atr is not None and low is not None:
         stop = low - cfg.down_shock_atr * atr
-    if shock is not None and shock.direction == "up":
+    if shock is not None and shock.direction == "up" and low is not None:
         arm = low
     if stop is None and arm is None and thesis is None:
         return None

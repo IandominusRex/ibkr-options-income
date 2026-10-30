@@ -361,8 +361,8 @@ order, no Claude, no Telegram, no web, no IBKR connection.
 - Re-evaluation (spec §7.1) on every open READY shadow entry, every session: the sector-ETF residual
   model (z of 3, five-session drift, a 10% raw backstop), earnings, filings and 8-K items, news
   volume, the regime step, 90 quiet days; the three-session debounce; `value_reevaluations`; the
-  original-plan twin of each leg; shock stops under `full` only; the 8-K 1.03/3.01/4.02 and
-  going-concern thesis exits under every policy.
+  original-plan twin of each leg; shock stops under `full` only; the 8-K 1.03/3.01/4.02 thesis exit
+  (main plan only; the twin is untouched) and the going-concern thesis exit, under every policy.
 - The corporate-action rebase: every recorded price level is multiplied by the ratio the provider
   rewrote the bars by (splits and dividend adjustments alike); Part 2's `rebase_needed` entries are
   re-opened. Controls are never frozen (M7); SPY's entry price is read on one basis (M8).
@@ -378,7 +378,9 @@ order, no Claude, no Telegram, no web, no IBKR connection.
   move stands in before that); a single bar the provider corrects (not a corporate action) is
   rebased too; the going-concern read is a strict sentence pattern (it can miss a doubt phrased with
   "evaluated" or "could", by design, rather than sell on boilerplate); the backtest's caveats
-  (survivorship twice, earnings and market-cap stand-ins, a normal regime) print with it. SEC load
+  (survivorship twice, earnings and market-cap stand-ins, a normal regime, prices adjusted for later
+  dividends) print with it, and a name whose share count jumps in a filing after a formation is not
+  scored at that formation (as-filed shares vs split-adjusted prices; the names are printed). SEC load
   (M13): companyfacts every second night for ~520 filers (~1 GB), the submissions feed nightly
   (~520 small JSON reads), a handful of filing documents for held names.
 

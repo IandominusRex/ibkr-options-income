@@ -30,7 +30,11 @@ _DOUBT = re.compile(r"substantial\s+doubt\b.*\bgoing\s+concern\b", re.I)
 _ASSERT = re.compile(r"\braise[sd]?\b", re.I)
 _HEDGE = re.compile(
     r"\b(no|not|none|could|can|may|might|would|should|if|whether|unless|absent|absence|"
-    r"alleviat\w*|mitigat\w*|evaluat\w*|assess\w*)\b",
+    r"alleviat\w*|mitigat\w*|evaluat\w*|assess\w*|"
+    # someone else's doubt (a tenant, a customer, a borrower ...) is not the filer's
+    r"tenants?|customers?|suppliers?|vendors?|borrowers?|lessees?|licensees?|counterpart\w*|"
+    # a doubt the filing says is over
+    r"resolved|eliminated|removed|overcome)\b|\bno\s+longer\b|\bpreviously\s+raised\b",
     re.I,
 )
 

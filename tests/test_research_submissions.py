@@ -234,3 +234,57 @@ def test_the_drain_runs_both_new_job_kinds(research_db, monkeypatch) -> None:
     with research_session() as s:
         failed = s.query(IngestJobRow).filter_by(symbol="NOCIK").one()
     assert "Cannot run job kind" in (failed.last_error or "")
+
+
+def test_a_failed_read_with_a_stored_etag_is_not_a_304(research_db, monkeypatch) -> None:
+    """Review I1: a 5xx or an open breaker used to come back as ``(None, etag_in)``, which the job
+    stamped as an unchanged feed and did not retry: a filing indexed after its session was
+    stepped is never counted. A failure must raise; a real 304 must still only stamp."""
+    from src.research.store.models import SubmissionsStateRow
+    from src.research.store.session import research_session
+
+    status = {"code": 200}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        if status["code"] == 200:
+            return httpx.Response(200, json=FEED, headers={"ETag": "e1"})
+        return httpx.Response(status["code"])
+
+    provider = EdgarFilingsProvider(
+        client=EdgarClient(transport=httpx.MockTransport(handler), max_retries=0)
+    )
+    monkeypatch.setattr(sub, "get_filings_provider", lambda: provider)
+    today = date(2026, 10, 30)
+    assert sub.ingest_submissions("AAPL", "0000320193", today=today) == 2
+    with research_session() as s:
+        stamped = s.get(SubmissionsStateRow, "0000320193").fetched_at
+    status["code"] = 503
+    with pytest.raises(RuntimeError, match="No submissions feed"):
+        sub.ingest_submissions("AAPL", "0000320193", today=today)
+    with research_session() as s:
+        row = s.get(SubmissionsStateRow, "0000320193")
+        assert (row.etag, row.fetched_at) == ("e1", stamped)  # nothing was stamped
+    status["code"] = 304
+    assert sub.ingest_submissions("AAPL", "0000320193", today=today) == 0  # a 304 stamps only
+    assert provider.get_submissions("320193", etag="e1") == ({}, "e1")
+    status["code"] = 503
+    assert provider.get_submissions("320193", etag="e1") == ({}, None)
+
+
+def test_a_doubt_about_someone_else_or_one_since_resolved_is_not_flagged() -> None:
+    third_party = (
+        "<p>Losses at the tenant raise substantial doubt about its ability to continue as a "
+        "going concern.</p>"
+    )
+    resolved = (
+        "<p>Conditions that previously raised substantial doubt about our ability to continue as "
+        "a going concern have been resolved.</p>"
+    )
+    customers = (
+        "<p>Several of our customers report conditions that raise substantial doubt about their "
+        "ability to continue as a going concern.</p>"
+    )
+    assert gc.detect_going_concern(third_party) is None
+    assert gc.detect_going_concern(resolved) is None
+    assert gc.detect_going_concern(customers) is None
+    assert gc.detect_going_concern(AUDITOR) is not None  # the auditor's own paragraph still is

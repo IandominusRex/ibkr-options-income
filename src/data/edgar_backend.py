@@ -120,10 +120,21 @@ class EdgarClient:
 
     def get_json(self, url: str, *, etag: str | None = None) -> tuple[dict | None, str | None]:
         """Fetch JSON. Returns (payload, etag); (None, etag) on 304 or on failure."""
+        payload, new_etag, _failed = self.get_json_status(url, etag=etag)
+        return payload, new_etag
+
+    def get_json_status(
+        self, url: str, *, etag: str | None = None
+    ) -> tuple[dict | None, str | None, bool]:
+        """Fetch JSON. Returns (payload, etag, failed): a 304 is ``(None, etag, False)`` and a
+        failure (open circuit, network error, an error status after the retries) is
+        ``(None, etag, True)``, so a caller that must not mistake the one for the other can."""
         resp = self._get(url, etag=etag)
-        if resp is None or resp.status_code == 304:
-            return None, etag
-        return resp.json(), resp.headers.get("ETag", etag)
+        if resp is None:
+            return None, etag, True
+        if resp.status_code == 304:
+            return None, etag, False
+        return resp.json(), resp.headers.get("ETag", etag), False
 
     def get_text(self, url: str) -> str | None:
         """Fetch a document as text (a filing's primary document). None on failure."""
@@ -183,14 +194,17 @@ class EdgarFilingsProvider:
         return payload or {}, new_etag
 
     def get_submissions(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
-        """The filer's ``submissions/CIK##########.json``: its recent filings. Same contract as
-        :meth:`get_company_facts` (``({}, etag)`` on a 304 or a failure)."""
+        """The filer's ``submissions/CIK##########.json``: its recent filings. ``({}, etag)`` on a
+        304 (the stored ETag comes back unchanged); ``({}, None)`` on a failure, so a caller
+        holding an ETag can tell the two apart (a failed read must not pass for "unchanged")."""
         cik = (cik or "").strip()
         if not cik:
             return {}, None
-        payload, new_etag = self._client.get_json(
+        payload, new_etag, failed = self._client.get_json_status(
             SUBMISSIONS_URL.format(cik=cik.zfill(10)), etag=etag
         )
+        if failed:
+            return {}, None
         return payload or {}, new_etag
 
     def get_filing_text(self, cik: str, accn: str, document: str) -> str:

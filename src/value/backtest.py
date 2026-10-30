@@ -21,7 +21,9 @@ import pandas as pd
 from src.common.config import ValueCfg
 from src.common.value_inputs import build_price_series, build_value_financials
 from src.common.value_types import Classification, PriceSeries, ValueInputs
+from src.research.ingest.concepts import load_concept_map, resolve_line_item
 from src.value import gates
+from src.value.metrics import SPLIT_RATIO
 from src.value.rank import rank_list, rs_cutoff
 from src.value.ranked import BUCKETS, buckets, equal_weight_return
 from src.value.report import (
@@ -50,6 +52,11 @@ CAVEATS = (
     "The regime is taken as normal throughout (no point-in-time regime record): the required "
     "margins are the normal regime's.",
     "Classification (sector, industry) is today's.",
+    "Prices are the provider's adjusted history, rewritten for every dividend paid after each "
+    "formation: a past price reads lower than it traded, so margins of safety err high (a "
+    "look-ahead the cached bars cannot undo). Splits are handled: a name whose share count "
+    "jumps in a filing made after a formation is not scored at that formation, because its "
+    "as-filed per-share figures and its adjusted prices are on different bases.",
     "Claude cannot be backtested (its training data holds the outcomes): this is Python's "
     "baseline only.",
 )
@@ -69,6 +76,7 @@ class BacktestResult:
     dates: list[date]
     names: int
     scored: int = 0  # scorecards whose data quality passed
+    excluded: dict[str, int] = field(default_factory=dict)  # symbol -> formations not scored
     entries: list[EntryView] = field(default_factory=list)
     ranked: list[RankedView] = field(default_factory=list)
 
@@ -101,6 +109,30 @@ def next_periodic_filing(payload: dict | None, after: date) -> date | None:
                     if filed > after and (best is None or filed < best):
                         best = filed
     return best
+
+
+def split_filing_dates(payload: dict | None) -> list[date]:
+    """The filing dates whose diluted share count jumps by a split's size against the period
+    before it. The bars are adjusted for every later split while the filings are as filed, so a
+    name with such a filing after a formation has per-share figures and prices on different
+    bases there. Each period counts as its first filing reported it (a later filing's restated
+    comparative would hide the jump); a jump of 1.8x either way is a split or something as
+    large, and either way the basis cannot be reconciled."""
+    spec = load_concept_map().get("shares_diluted")
+    facts = resolve_line_item(payload, spec) if payload and spec else None
+    first: dict[date, tuple[date, int, float]] = {}
+    for f in facts or []:
+        span = (f.end - f.start).days if f.start else 0
+        key = (f.filed, span)
+        if f.value > 0 and (f.end not in first or key < first[f.end][:2]):
+            first[f.end] = (f.filed, span, f.value)
+    out: list[date] = []
+    ends = sorted(first)
+    for older, newer in zip(ends, ends[1:], strict=False):
+        ratio = first[newer][2] / first[older][2]
+        if not (1.0 / SPLIT_RATIO < ratio < SPLIT_RATIO):
+            out.append(first[newer][0])
+    return sorted(out)
 
 
 def _cut(bars: pd.DataFrame, as_of: date) -> pd.DataFrame:
@@ -215,13 +247,20 @@ def run(
         for d in dates
     }
     cards: dict[date, list[ValueScorecard]] = {d: [] for d in dates}
+    excluded: dict[str, int] = {}
     for n in names:
         frame = bars.get(n.symbol, empty)
         payload = load_payload(n.symbol)
+        splits = split_filing_dates(payload)
         for d in dates:
+            if any(filed > d for filed in splits):
+                excluded[n.symbol] = excluded.get(n.symbol, 0) + 1
+                continue
             price = price_at(frame, spy, d)
             cards[d].append(slim(score(inputs_at(n, payload, price, d, cfg, cutoffs[d]), cfg)))
-    out = BacktestResult(version=version, digest=digest, dates=dates, names=len(names))
+    out = BacktestResult(
+        version=version, digest=digest, dates=dates, names=len(names), excluded=excluded
+    )
     entry_id = 0
     for k, d in enumerate(dates):
         out.scored += sum(1 for c in cards[d] if c.data_quality == "pass")
@@ -294,6 +333,18 @@ def _closes(bars: dict[str, pd.DataFrame], symbols: list[str], day: date) -> dic
     return out
 
 
+def _excluded_lines(excluded: dict[str, int]) -> list[str]:
+    if not excluded:
+        return []
+    count = len(excluded)
+    plural = "" if count == 1 else "s"
+    listing = ", ".join(f"{s} ({n})" for s, n in sorted(excluded.items()))
+    return [
+        f"! {count} name{plural} excluded from at least one formation (formations skipped), "
+        f"a split or a share-count jump following it: {listing}"
+    ]
+
+
 def render(result: BacktestResult) -> str:
     """The backtest's report: the caveats first, then the shadow report's sections."""
     span = f"{result.dates[0]}..{result.dates[-1]}" if result.dates else "no dates"
@@ -303,6 +354,7 @@ def render(result: BacktestResult) -> str:
         f"{result.names} names, {len(result.dates)} monthly formations {span}, "
         f"{result.scored} scorecards with data quality passing",
         *(f"! {c}" for c in CAVEATS),
+        *_excluded_lines(result.excluded),
         "",
         *horizon_section(result.entries),
         "",

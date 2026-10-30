@@ -160,7 +160,8 @@ class FilingsProvider(Protocol):
 
     def get_submissions(self, cik: str, *, etag: str | None = None) -> tuple[dict, str | None]:
         """The filer's recent filings (EDGAR's ``submissions`` feed): forms, dates, 8-K item
-        tags, primary documents. Same ``(payload, etag)`` contract as ``get_company_facts``."""
+        tags, primary documents. ``({}, etag)`` on a 304; ``({}, None)`` on a failure, which a
+        caller holding an ETag must not mistake for a 304."""
         ...
 
     def get_filing_text(self, cik: str, accn: str, document: str) -> str:

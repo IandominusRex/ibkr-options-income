@@ -302,3 +302,16 @@ def test_the_script_reads_value_db_and_prints_the_record(value_db, capsys) -> No
         s.add(ValueShadowEventRow(shadow_id=1, policy="all", day=D3, kind="rebase"))
     assert value_report.main([]) == 0
     assert "1 re-evaluation(s), 1 major; triggers move 1; 1 rebase(s)" in capsys.readouterr().out
+
+
+def test_a_postmortem_names_the_rebases_that_moved_its_levels() -> None:
+    """Review minor: a rebase event is recorded under policy ``all``, so the per-policy story
+    never showed it."""
+    e = _entry(1, D1, 0.05, status="closed")
+    events = [
+        EventView(
+            shadow_id=1, policy="all", day=D2, kind="rebase", detail="every price level x 0.5"
+        )
+    ]
+    text = "\n".join(postmortem(e, [], events, None))
+    assert f"rebased {D2}: every price level x 0.5" in text

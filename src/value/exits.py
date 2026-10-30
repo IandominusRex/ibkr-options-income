@@ -202,6 +202,7 @@ def step(
         s.pending, s.pending_reason = 0.0, ""
         if s.remaining <= _DONE:
             s.remaining, s.closed, s.exit_date = 0.0, True, day.date
+            s.last_close = day.close  # the rebase's reference moves with last_step (review I2)
             return s, events
 
     close = day.close
@@ -223,6 +224,8 @@ def step(
         events.append(ExitEvent(day=day.date, kind=kind, price=close, detail=detail))
 
     # A new filing re-marks fair value, up or down (spec §7). Price and news never do.
+    # A Part 2 leg loads with seen_accn None, so its first v3 night counts as a filing night (the
+    # Altman Z exit is read once without a new filing: accepted, review minor M6 residue).
     filed = facts is not None and facts.latest_accn is not None and facts.latest_accn != s.seen_accn
     if filed:
         assert facts is not None

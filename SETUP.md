@@ -2073,8 +2073,8 @@ places an order or sends a message.
    sweep now fetches their bars, and every name's EDGAR filing list, each night), a five-session
    drift, an earnings report, a 10-Q/10-K or an 8-K item, a news-volume spike, a step into a stressed
    or crisis regime, 90 quiet days. A re-evaluation is recorded in `value_reevaluations`; a Major 8-K
-   item (1.03, 3.01, 4.02) sells every policy's shadow position; under `full` only, a shock moves the
-   stop. From the first trigger the entry also carries its **original plan** untouched, and
+   item (1.03, 3.01, 4.02) sells the main plan's position under every policy (the original-plan twin
+   is untouched); under `full` only, a shock moves the stop. From the first trigger the entry also carries its **original plan** untouched, and
    `value_report` prints whether re-evaluating saved money. Splits and dividend adjustments are
    rebased mechanically. For the names the record holds, the research worker reads each new
    10-K/10-Q once for a going-concern doubt the filing asserts; one is a thesis exit.

@@ -214,3 +214,100 @@ def test_the_script_refuses_a_ruleset_that_is_not_frozen(monkeypatch, capsys) ->
     monkeypatch.setattr(get_config().value, "ruleset_version", "v2")  # v2's pin, v3's rules
     assert script.main(["--bars", "research", "--names", "STDY"]) == 2
     assert "frozen" in capsys.readouterr().out
+
+
+def shares_payload(rows: list[tuple[str, str, float]]) -> dict:
+    """A payload carrying only diluted share counts: (period end, filed, shares) per fiscal year."""
+    entries = [
+        {
+            "val": v,
+            "start": f"{e[:4]}-01-01",
+            "end": e,
+            "filed": f,
+            "form": "10-K",
+            "accn": f"0000000001-{f[2:4]}-000001",
+            "fy": int(e[:4]),
+            "fp": "FY",
+        }
+        for e, f, v in rows
+    ]
+    return {
+        "facts": {
+            "us-gaap": {
+                "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": entries}}
+            }
+        }
+    }
+
+
+SPLITTER = shares_payload(
+    [
+        ("2022-12-31", "2023-02-10", 100e6),
+        ("2023-12-31", "2024-02-10", 101e6),
+        ("2024-12-31", "2025-02-20", 404e6),  # a 4-for-1 split lands between the formations
+    ]
+)
+
+
+def test_a_split_after_a_formation_makes_the_basis_irreconcilable() -> None:
+    """The bars are adjusted for every later split; the as-filed share count is not. A filing
+    that shows a count jump filed after the formation marks the name for that formation."""
+    assert bt.split_filing_dates(SPLITTER) == [date(2025, 2, 20)]
+    assert bt.split_filing_dates(None) == []
+    steady = shares_payload(
+        [("2023-12-31", "2024-02-10", 100e6), ("2024-12-31", "2025-02-10", 98e6)]
+    )
+    assert bt.split_filing_dates(steady) == []
+    # a restated comparative filed later does not hide it: the first filing of a period counts
+    restated = shares_payload(
+        [("2022-12-31", "2023-02-10", 100e6), ("2023-12-31", "2024-02-10", 101e6)]
+    )
+    restated["facts"]["us-gaap"]["WeightedAverageNumberOfDilutedSharesOutstanding"]["units"][
+        "shares"
+    ].append(
+        {
+            "val": 400e6,
+            "start": "2022-01-01",
+            "end": "2022-12-31",
+            "filed": "2025-02-20",
+            "form": "10-K",
+            "accn": "x",
+        }
+    )
+    assert bt.split_filing_dates(restated) == []
+
+
+def test_a_run_never_scores_a_name_whose_split_follows_the_formation() -> None:
+    names = [bt.BacktestName("SPLT"), bt.BacktestName("PLAIN")]
+    bars = {s: frame([20.0] * 180) for s in ("SPLT", "PLAIN")}
+    spy = frame([500.0] * 180)
+    payloads = {
+        "SPLT": SPLITTER,
+        "PLAIN": shares_payload([("2024-12-31", "2025-01-15", 100e6)]),
+    }
+    scored: list[tuple[str, date]] = []
+
+    def score(i, cfg):
+        scored.append((i.symbol, i.as_of))
+        return build_scorecard(inputs(symbol=i.symbol, close=20.0), CFG)
+
+    dates = bt.formation_dates(SESSIONS, date(2025, 2, 1), date(2025, 3, 31))
+    result = bt.run(
+        names,
+        bars=bars,
+        spy=spy,
+        load_payload=payloads.get,
+        dates=dates,
+        cfg=CFG,
+        version="v3",
+        digest="x",
+        score=score,
+    )
+    assert ("SPLT", date(2025, 2, 3)) not in scored  # Feb 3 precedes the split's filing
+    assert ("SPLT", date(2025, 3, 3)) in scored  # March 3 sees the new basis
+    assert {s for s, _ in scored if s == "PLAIN"} == {"PLAIN"} and len(scored) == 3
+    assert result.excluded == {"SPLT": 1}
+    assert all(e.symbol != "SPLT" or e.signal_date != date(2025, 2, 3) for e in result.entries)
+    text = bt.render(result)
+    assert "! 1 name excluded from at least one formation" in text and "SPLT" in text
+    assert "every dividend" in text  # the adjusted prices' other rewrite is named, not fixed

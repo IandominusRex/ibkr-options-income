@@ -224,3 +224,14 @@ def test_a_level_change_waits_for_the_close() -> None:
     assert [e.kind for e in events] == ["shock"] and after.pending == 0.0
     _, events = step(after, DayBar(date=DAY + timedelta(days=1), close=94.3), None, ValueExitsCfg())
     assert [(e.kind, e.fraction) for e in events] == [("stop", 1.0)]
+
+
+def test_an_unknown_low_means_no_shock_level() -> None:
+    """Review minor: ruling 14, unknown is never zero. A bar with no low must not stand its close
+    in for it (a close above the low would tighten the stop or set the trail's floor higher)."""
+    before = DayBar(date=DAY - timedelta(days=1), close=100.0, atr14=2.0)
+    bar = DayBar(date=DAY, close=92.0)
+    down = [rv.Trigger(kind="move", severity="major", direction="down")]
+    up = [rv.Trigger(kind="move", severity="major", direction="up")]
+    assert rv.plan_actions(down, bar, before, CFG) is None
+    assert rv.plan_actions(up, bar, before, CFG) is None

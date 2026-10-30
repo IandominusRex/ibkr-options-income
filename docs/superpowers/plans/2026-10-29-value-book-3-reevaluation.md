@@ -121,8 +121,8 @@ is the executing agent's own model name.
 | 10 Stage 1b: the point-in-time backtest | done | `32b2a63` | Red first: `ImportError: cannot import name 'backtest' from 'src.value'` (collection error). Green: tests/test_value_backtest (4) + fence 19 passed; ruff check/format clean on 2 files; mypy backtest.py clean | 2026-10-30 | No deviations; test file and module extracted verbatim from the plan. The commit also carried the orchestrator's "D entry checks" row. Ruling 20 (Stage 1b stand-ins: next filing for the earnings date, EDGAR count x price for the cap, a normal regime, today's universe; printed as caveats): cost if wrong is a script. |
 | 11 The backtest script and ten years of bars | done | `1e0e0d8` | Red first: 4 failed (3 new backtest tests on the missing script, `3660 -> 10y`). Green: tests/test_value_backtest (7) + test_data_providers + fence 68 passed; `py_compile scripts/value_backtest.py` silent; ruff check/format and mypy (script + yfinance_backend) clean; script not run against live data | 2026-10-30 | No deviations; the script extracted verbatim, the two small diffs applied by Edit. Ruling 22 (no real run here; operator runs it post-merge): cost if wrong is none. |
 | 12 Docs | done | `7fa45e6` | Four doc diffs applied by `git apply` unchanged (ARCHITECTURE, SETUP, STATUS, CLAUDE). **Section D exit full gate:** pytest 5298 passed, 1 skipped (baseline 5239 + 59); `ruff check .` clean; `mypy src` 325 files clean; `py_compile` of run_value.py, value_feed.py, value_report.py, value_backtest.py, value_dry_run.py silent; protected-file diff empty; 15 commits on `main..HEAD` before this docs commit (3 Section D task commits `32b2a63`, `1e0e0d8`, `7fa45e6`) | 2026-10-30 | Ruling 23 (README.md, docs/web/*, How the scan works.md, UNIVERSE_RESEARCH.md, .opencode/ unchanged; the trigger table matches only ARCHITECTURE, SETUP, STATUS, CLAUDE for these changes, no new Telegram command, config key beyond Task 1, or command kind): cost if wrong is a doc edit. |
-| **Whole-branch review (opus)** | | | | | |
-| **Review fix pass (sonnet)** | | | | | |
+| **Whole-branch review (opus)** | done | (review only) | n/a | 2026-10-30 | 1 Critical, 2 Important, 8 Minor. **C1** Stage 1b compared as-filed per-share figures with split-adjusted bars (look-ahead; spurious READYs for every later splitter). **I1** a failed submissions fetch was stored as a 304 and the filing lost. **I2** a spurious rebase followed any entry whose legs all closed on a fill. Minor: going-concern false positives (third-party and resolved phrasing); unknown low fell back to the close in `plan_actions`; `positions` computed before `fill_pending`; postmortems hid `rebase` events; Part 2 legs load with `seen_accn=None`; a halted name never receives tonight's facts; the re-evaluation section compares closed pairs only; SETUP said a Major 8-K sells every policy's position (main plan only). Fixed or deferred: see the next row. |
+| **Review fix pass (sonnet)** | done | `fix(value): whole-branch review fixes` (one commit, hash in `git log`) | pytest 5305 passed, 1 skipped (5298 + 7 new tests); `ruff check .` clean; `ruff format --check` clean on touched files; `mypy src` 325 files clean; `py_compile` of the five scripts silent; protected-file diff empty. Each new test was run red first (C1: `split_filing_dates` missing; I1: the 503 test failed on the old client; I2: rebase returned (2, 0); the three minors failed before their fixes) | 2026-10-30 | See rulings below. |
 
 ## Roadmap (this plan is Part 3 of 6)
 
@@ -6910,3 +6910,48 @@ index be9f433..8d220c8 100644
 - **Proportion.** Complete code by the operator's brief (Sonnet executors with no room for doubt);
   the spec is cited, not restated. Modified files are given as exact diffs whose anchors the entry
   checks grep; `shadow.py`, rewritten around a per-session loop, is given whole.
+
+### Review fix pass rulings (2026-10-30)
+
+- **C1 fixed, the sound way (ruling 24).** The bars are adjusted for later splits and dividends,
+  while `build_value_financials(as_of=)` is as filed. The payload itself says when a split lands:
+  `backtest.split_filing_dates` takes each period's diluted share count **as its first filing reported
+  it** (a later restated comparative would hide the jump), orders periods by end, and returns the
+  filing date of every period whose count jumps 1.8x either way (`SPLIT_RATIO`) against the one before.
+  A name is **not scored** at a formation dated before such a filing (a basis that cannot be reconciled
+  is excluded, never rescaled: no factor is guessed). `BacktestResult.excluded` counts formations per
+  symbol; `render` prints the names and counts in the caveats, and a static caveat names the split
+  rule. Cost: a name with a real (non-split) 1.8x share jump, such as a large merger, is excluded from
+  earlier formations as well (conservative). **Not fixable from existing data, now a printed caveat:**
+  the dividend half of the adjustment (every past price reads lower than it traded, so margins of
+  safety err high); undoing it needs unadjusted closes, a new fetch, left to the operator's run.
+  No `rules:` key changed, so no re-pin: v3's hash is unchanged.
+- **I1 fixed (ruling 25).** `EdgarClient.get_json_status` returns `(payload, etag, failed)`;
+  `get_json` delegates (contract unchanged); `EdgarFilingsProvider.get_submissions` returns
+  `({}, None)` on a failure, so `ingest_submissions` (which treats `{}` plus the same stored ETag as
+  a 304) now raises on a failure and the drain retries. `get_company_facts` is unchanged (its caller
+  reuses the cached payload on a failure, which loses nothing). **Deferred part: trigger 4 robust to
+  late indexing.** Keying on unseen accessions needs a per-entry record of counted accessions, the
+  feed window widened back to the signal date and a dedupe against recorded triggers, across
+  `service.py`, `shadow.py` and `reevaluate.py`. With the failure fix a filing is indexed on the next
+  nightly sweep, so the remaining window is EDGAR's own indexing lag across a session boundary.
+  Cost if it bites: an 8-K item 1.03 counted a session late (never lost for `going_concern`/Z exits);
+  Part 5, which adds the hourly check of trigger 4, is the natural place.
+- **I2 fixed (ruling 26).** `step` now sets `last_close` on the fill session that closes the leg
+  (the `last_step` it already moves), so `_ratio` compares like with like. An exit-logic change, but
+  v3 has no live row yet: no `value_rules` bump or re-pin is needed before the merge.
+- **Minors fixed (trivial):** going-concern hedge list extended (tenants, customers, suppliers,
+  borrowers, lessees, licensees, counterparties; resolved, eliminated, removed, overcome, no longer,
+  previously raised), the cost being a missed doubt, the fail-safe direction of ruling 5;
+  `plan_actions` with an unknown low sets no shock stop and no trail arm (ruling 14); postmortems print
+  the entry's `rebase` events; SETUP and STATUS now say a Major 8-K sells the main plan only
+  (ARCHITECTURE and CLAUDE already said "under every policy", which is right).
+- **Minors accepted or deferred:** `exits.py` Part 2 legs load with `seen_accn=None`, so the first v3
+  night reads Altman Z without a new filing: **accepted** as a one-time exception (commented in
+  `step`). `service.py` `positions` before `fill_pending` (an entry filled tonight misses news volume
+  and recent earnings on its entry session only; moving it means reordering the night's transaction):
+  **deferred**, cost one session of two minor triggers. A name with no bar dated `as_of` (a halt) never
+  receives tonight's facts (it catches up when it trades; changing it means a per-name `tonight`):
+  **deferred**. `report.py` re-evaluation section compares only pairs where both plans closed (twins
+  outlast mains, so the early sample skews): **deferred**, cost a presentation change once real pairs
+  exist.

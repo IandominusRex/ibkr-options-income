@@ -337,6 +337,9 @@ def postmortem(
             f"   {leg.policy}: exit {leg.exit_date} return {_pct(leg.ret)} (SPY {_pct(leg.spy_ret)})"
             f", max DD {_pct(leg.max_drawdown)}: {story or 'no events'}"
         )
+    for e in events:
+        if e.kind == "rebase":  # recorded under policy ``all``: every leg's levels moved
+            lines.append(f"   rebased {e.day}: {e.detail or 'every price level'}")
     marks = " · ".join(
         f"{h}: {_pct(entry.returns.get(h))} (SPY {_pct(entry.spy.get(h))})" for h in HORIZONS
     )
