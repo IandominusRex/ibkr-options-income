@@ -112,7 +112,7 @@ is the executing agent's own model name.
 | **B entry checks** | passed | 4 commits on `main..HEAD` | B2: pytest 5253 passed, 1 skipped (baseline + 14); ruff clean; mypy 322 files; FROZEN holds v3 `ad8841127029`; B3/B4 greps all match. Section A protected-file diff empty | 2026-10-30 | Section B exit target: baseline + 39 = 5278 |
 | 4 The exit engine's Part 3 rules | done | `ec73f68` | tests/test_value_exits (43 collected) + shadow + fence 70 passed; ruff check/format clean; mypy exits.py clean | 2026-10-30 | No deviations. Applied by `git apply` of the plan's diffs, extracted verbatim. The commit also carried the orchestrator's "B entry checks" row. `LegState` gained `fv_proposed`, `seen_accn`, `trail_floor`, all defaulted so Part 2's stored legs load; `open_leg` seeds `seen_accn=fv_accn`. Cost-if-wrong notes: ruling 14 (shock stop uses the ATR on the bar before; no ATR means no shock stop) and ruling 15 (8-K thesis exit under every policy) are each one branch in `_shock`/`step`. |
 | 5 The residual model and the triggers | done | `252b910` | tests/test_value_reevaluate (10) + fence 24 passed; ruff check/format clean on 3 files; mypy residuals.py and reevaluate.py clean | 2026-10-30 | No deviations; the plan's files reproduced exactly (extracted verbatim). Ruling 11 (residual model: 250-session fit before the day, 60-session sigma, min 120 returns, raw 10% backstop): cost if wrong is the `ValueReevaluationCfg` numbers. Ruling 3 (trigger 6 deferred to Part 4): `TriggerKind` has no `kill` member; adding one is a Literal entry. Both new modules are added to the fence's pure list in Task 8. |
-| 6 The store: `value_reevaluations` and the plan column | | | | | |
+| 6 The store: `value_reevaluations` and the plan column | done | `1f45225` | tests/test_value_store (8) + shadow + report + fence 43 passed; ruff check/format clean; mypy store.py clean. **Section B exit full gate:** pytest 5278 passed, 1 skipped (baseline 5239 + 39); `ruff check .` clean; `mypy src` 324 files clean; protected-file diff empty; 3 task commits (`ec73f68`, `252b910`, `1f45225`) on top of Section A's 4, plus this docs commit | 2026-10-30 | No deviations. Ruling 16 (`plan` column, default `main`, added by `init_value_db` via `_ADDED_COLUMNS`): cost if wrong is a column drop and a re-add under another name, no data of Part 2's changes. |
 | **C entry checks** | | | | | |
 | 7 The shadow record: rebase, re-evaluations, the original twin | | | | | |
 | 8 The process: plain data, the regime step, the fences | | | | | |
@@ -3233,7 +3233,7 @@ def plan_actions(
   `created_at`); `ValueShadowLegRow.plan` and `ValueShadowEventRow.plan` (`main` | `original`,
   default `main`); `init_value_db()` adds the two columns to an existing database.
 
-- [ ] **Step 1: Write the failing test** — apply to `tests/test_value_store.py`:
+- [x] **Step 1: Write the failing test** — apply to `tests/test_value_store.py`:
 
 ```diff
 diff --git a/tests/test_value_store.py b/tests/test_value_store.py
@@ -3283,12 +3283,12 @@ index 841e6d7..cfce7ad 100644
 +    store.reset_engine()
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_store.py`
   Expected: FAIL — `ImportError: cannot import name 'ValueReevaluationRow'`.
 
-- [ ] **Step 3: The tables** — apply to `src/value/store.py`:
+- [x] **Step 3: The tables** — apply to `src/value/store.py`:
 
 ```diff
 diff --git a/src/value/store.py b/src/value/store.py
@@ -3404,13 +3404,13 @@ index 6556e50..3edfe46 100644
  @contextmanager
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_store.py tests/test_value_shadow.py tests/test_value_report.py tests/test_value_fence.py`
   Expected: PASS (`test_value_store.py` 8). Then ruff check/format and `.venv/bin/mypy
   src/value/store.py` — clean.
 
-- [ ] **Step 5: Commit, then the section's Progress-log commit**
+- [x] **Step 5: Commit, then the section's Progress-log commit**
 
   ```bash
   git add src/value/store.py tests/test_value_store.py
