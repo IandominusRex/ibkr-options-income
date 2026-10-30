@@ -1,4 +1,4 @@
-"""config/value.yaml: the typed model, its committed example and the ruleset hash (Parts 1-2)."""
+"""config/value.yaml: the typed model, its committed example and the ruleset hash (Parts 1-3)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_the_example_spells_out_exactly_the_model_defaults() -> None:
 
 def test_get_config_loads_the_value_block() -> None:
     cfg = get_config().value
-    assert cfg.ruleset_version == "v2"
+    assert cfg.ruleset_version == "v3"
     assert cfg.rules.margin_of_safety.deep_value[MarketRegime.NORMAL] == 25.0
     assert cfg.rules.margin_of_safety.quality_growth[MarketRegime.CRISIS] == 25.0
     assert cfg.rules.valuation.discount_rate_growth == 0.08
@@ -65,23 +65,54 @@ def test_a_frozen_version_refuses_rules_that_no_longer_match(monkeypatch) -> Non
     monkeypatch.setitem(FROZEN, "v9", "000000000000")
     with pytest.raises(ValueError, match="frozen"):
         ruleset_id(ValueCfg(ruleset_version="v9"))
-    assert ruleset_id(ValueCfg()) == ("v2", ruleset_hash(ValueCfg().rules))
+    assert ruleset_id(ValueCfg()) == ("v3", ruleset_hash(ValueCfg().rules))
 
 
-def test_v1_stays_pinned_and_v2_is_frozen() -> None:
-    """Part 1 froze v1 (the entry rules) after the calibration dry run; Part 2 froze v2 = v1 +
-    the exit rules, before the shadow ledger's first row."""
-    assert FROZEN["v1"] == "e1a1b3b096b1"
-    assert FROZEN["v2"] == ruleset_hash(ValueCfg().rules)
-    assert ruleset_id(get_config().value) == ("v2", FROZEN["v2"])
-
-
-def test_v2_changes_no_entry_rule() -> None:
-    """Every rule but the new exits block hashes exactly as v1 did: no verdict moves."""
+def _hash_without(*blocks: str) -> str:
     rules = ValueCfg().rules.model_dump(mode="json")
-    del rules["exits"]
+    for block in blocks:
+        del rules[block]
     blob = json.dumps(rules, sort_keys=True, separators=(",", ":"))
-    assert hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12] == FROZEN["v1"]
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def test_v1_and_v2_stay_pinned_and_v3_is_frozen() -> None:
+    """Part 1 froze v1 (the entry rules); Part 2 froze v2 = v1 + the exit rules; Part 3 froze
+    v3 = v2 + the re-evaluation rules, before the first re-evaluation (spec §7.1)."""
+    assert FROZEN["v1"] == "e1a1b3b096b1" and FROZEN["v2"] == "d07717fe5348"
+    assert FROZEN["v3"] == ruleset_hash(ValueCfg().rules)
+    assert ruleset_id(get_config().value) == ("v3", FROZEN["v3"])
+
+
+def test_v3_changes_no_entry_rule_and_no_exit_threshold() -> None:
+    """Without the reevaluation block the rules hash exactly as v2's; without exits too, as
+    v1's: no verdict and no exit threshold moves. Part 3's exit-engine changes are code, carried
+    by the version bump (an exit-logic change after the first live row needs one)."""
+    assert _hash_without("reevaluation") == FROZEN["v2"]
+    assert _hash_without("reevaluation", "exits") == FROZEN["v1"]
+
+
+def test_the_reevaluation_rules_are_in_the_ruleset() -> None:
+    """Spec §7.1: every re-evaluation threshold is under the ruleset version."""
+    cfg = ValueCfg()
+    assert cfg.rules.reevaluation.sector_etfs["Information Technology"] == "XLK"
+    for change in ({"abnormal_z": 2.5}, {"major_8k_items": ["1.03"]}, {"quiet_days": 60}):
+        moved = ValueCfg(**{"rules": {"reevaluation": change}})
+        assert ruleset_hash(moved.rules) != ruleset_hash(cfg.rules)
+
+
+def test_nonsense_reevaluation_keys_are_refused() -> None:
+    for bad in (
+        {"abnormal_z": 0.0},
+        {"drift_sessions": 1},
+        {"min_history_sessions": 30},
+        {"beta_sessions": 100},
+        {"minor_8k_items": ["1.03"]},
+        {"regime_states": ["panic"]},
+        {"sigma_window": 60},
+    ):
+        with pytest.raises(ValidationError):
+            ValueCfg(**{"rules": {"reevaluation": bad}})
 
 
 def test_the_exit_rules_are_in_the_ruleset() -> None:

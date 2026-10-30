@@ -1,15 +1,16 @@
 # The value book (docs/superpowers/specs/2026-10-28-value-swing-book-design.md).
 #
-# Copy to config/value.yaml (git-ignored) to tune it. Parts 1-2 build the scorecard and the shadow
-# record only: nothing here can place, size or gate an order.
+# Copy to config/value.yaml (git-ignored) to tune it. Parts 1-3 build the scorecard, the shadow
+# record and its re-evaluations only: nothing here can place, size or gate an order.
 #
 # Everything under `rules:` can change a verdict, so it is hashed into the ruleset fingerprint
 # (src/value/ruleset.py). Once `ruleset_version` is frozen, changing any rule is a version bump
 # with a written reason, at most quarterly. v1 (2026-10-29) froze the entry rules after the
 # calibration dry run; v2 (Part 2) adds `rules.exits` before the shadow ledger's first row and
-# changes no entry rule.
+# changes no entry rule; v3 (Part 3) adds `rules.reevaluation` (spec §7.1) and the exit engine's
+# Part 3 rules (shock stops, the 8-K and going-concern thesis exits), and changes no entry rule.
 
-ruleset_version: v2
+ruleset_version: v3
 db_url: sqlite:///data/value.db
 
 universe:
@@ -170,3 +171,41 @@ rules:
     thesis_fv_below_price_pct: 90.0  # ... fair value below 90% of the price, under the 50-day SMA
     catastrophe_stop_pct: 30.0   # value and hold12: a close 30% below the average cost
     hold12_sessions: 252
+
+  reevaluation:              # spec §7.1: when a held or shadow position's plan is re-evaluated
+    abnormal_z: 3.0          # 1: |one-session return net of the sector ETF, in residual sds| (Major)
+    raw_move_pct: 10.0       # ... a raw move this large when the history is too short (Major)
+    drift_z: 3.0             # 2: |cumulative residual over drift_sessions| in the same units (Minor)
+    drift_sessions: 5
+    beta_sessions: 250       # the residual model's beta window, sessions before the day
+    sigma_sessions: 60       # the residual's sd over the prior 60 sessions, the day excluded
+    min_history_sessions: 120    # fewer aligned returns: the raw backstop only
+    sector_etfs:             # GICS (snapshots) and yfinance sector names -> SPDR sector ETF
+      Communication Services: XLC
+      Consumer Discretionary: XLY
+      Consumer Cyclical: XLY
+      Consumer Staples: XLP
+      Consumer Defensive: XLP
+      Energy: XLE
+      Financials: XLF
+      Financial Services: XLF
+      Health Care: XLV
+      Healthcare: XLV
+      Industrials: XLI
+      Information Technology: XLK
+      Technology: XLK
+      Materials: XLB
+      Basic Materials: XLB
+      Real Estate: XLRE
+      Utilities: XLU
+    fallback_etf: SPY        # a sector the map lacks
+    major_8k_items: ["1.03", "3.01", "4.02"]   # 4: bankruptcy, delisting, non-reliance (Major;
+                                               # a thesis exit under every policy)
+    minor_8k_items: ["1.01", "2.01", "2.05", "2.06", "4.01", "5.02"]   # deals, restructuring,
+                                               # impairment, auditor, CEO/CFO (Minor)
+    news_multiple: 4.0       # 5: 24-hour items >= 4 x the 30-day daily median ...
+    news_min_items: 5        # ... and >= 5 items (Minor)
+    regime_states: [stressed, crisis]          # 7: the market regime steps into one (Minor)
+    quiet_days: 90           # 8: this many days with no re-evaluation (Minor)
+    debounce_sessions: 3     # a trigger this close to an open re-evaluation joins it, unless Major
+    down_shock_atr: 0.5      # full only: the stop rises to the shock low - 0.5 x ATR(14) before it

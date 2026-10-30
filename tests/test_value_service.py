@@ -148,7 +148,7 @@ def test_a_night_scores_persists_and_opens_the_shadow_record(dbs) -> None:
         )
         assert s.scalars(select(ValueTickerHistoryRow)).first() is not None
         run = s.scalars(select(ValueRunRow)).one()
-        assert (run.kind, run.as_of, run.ruleset_version) == ("nightly", AS_OF, "v2")
+        assert (run.kind, run.as_of, run.ruleset_version) == ("nightly", AS_OF, "v3")
         assert {r.status for r in s.scalars(select(ValueShadowRow))} == {"pending"}
     assert service.plan_run(NOW, universe={}) is None  # done for AS_OF
 

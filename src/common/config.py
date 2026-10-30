@@ -1600,6 +1600,71 @@ class ValueExitsCfg(_ValueModel):
         return self
 
 
+_SECTOR_ETFS = {
+    # GICS sectors (the snapshots) and yfinance's names (names outside them), SPDR sector ETFs.
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Cyclical": "XLY",
+    "Consumer Staples": "XLP",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Financials": "XLF",
+    "Financial Services": "XLF",
+    "Health Care": "XLV",
+    "Healthcare": "XLV",
+    "Industrials": "XLI",
+    "Information Technology": "XLK",
+    "Technology": "XLK",
+    "Materials": "XLB",
+    "Basic Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
+}
+
+
+class ValueReevaluationCfg(_ValueModel):
+    """Spec §7.1: when a held or shadow position's plan is re-evaluated, and how. Under
+    ``rules:``, so every key is in the ruleset fingerprint (v3)."""
+
+    abnormal_z: float = 3.0  # trigger 1: |one-session residual z| at or above this is Major
+    raw_move_pct: float = 10.0  # ... the backstop when the history is too short for a z
+    drift_z: float = 3.0  # trigger 2: |cumulative residual z| over drift_sessions, Minor
+    drift_sessions: int = 5
+    beta_sessions: int = 250  # the residual model's beta window (sessions before the day)
+    sigma_sessions: int = 60  # the residual's standard deviation, prior sessions, day excluded
+    min_history_sessions: int = 120  # fewer aligned returns than this: the raw backstop only
+    sector_etfs: dict[str, str] = Field(default_factory=lambda: dict(_SECTOR_ETFS))
+    fallback_etf: str = "SPY"  # a sector with no ETF in the map
+    major_8k_items: list[str] = Field(default_factory=lambda: ["1.03", "3.01", "4.02"])
+    minor_8k_items: list[str] = Field(
+        default_factory=lambda: ["1.01", "2.01", "2.05", "2.06", "4.01", "5.02"]
+    )
+    news_multiple: float = 4.0  # trigger 5: 24-hour items at least 4 x the 30-day daily median
+    news_min_items: int = 5  # ... and at least 5 items
+    regime_states: list[MarketRegime] = Field(
+        default_factory=lambda: [MarketRegime.STRESSED, MarketRegime.CRISIS]
+    )
+    quiet_days: int = 90  # trigger 8: this many days with no re-evaluation
+    debounce_sessions: int = 3  # a trigger this close to an open re-evaluation joins it
+    down_shock_atr: float = 0.5  # full only: the stop rises to the shock low - 0.5 x ATR before
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueReevaluationCfg:
+        if min(self.abnormal_z, self.drift_z, self.raw_move_pct, self.news_multiple) <= 0:
+            raise ValueError("value reevaluation thresholds must be positive")
+        if self.drift_sessions < 2 or self.sigma_sessions < 10:
+            raise ValueError("value reevaluation.drift_sessions >= 2, sigma_sessions >= 10")
+        if self.min_history_sessions < self.sigma_sessions + 2:
+            raise ValueError("value reevaluation.min_history_sessions must exceed sigma_sessions")
+        if self.beta_sessions < self.min_history_sessions:
+            raise ValueError("value reevaluation.beta_sessions must be >= min_history_sessions")
+        if set(self.major_8k_items) & set(self.minor_8k_items):
+            raise ValueError("value reevaluation: an 8-K item is either major or minor")
+        if self.debounce_sessions < 0 or self.quiet_days < 1 or self.down_shock_atr < 0:
+            raise ValueError("value reevaluation: debounce >= 0, quiet_days >= 1, shock ATR >= 0")
+        return self
+
+
 class ValueRulesCfg(_ValueModel):
     """Every key that can change a verdict. Hashed into the ruleset fingerprint (spec §6.8)."""
 
@@ -1612,6 +1677,7 @@ class ValueRulesCfg(_ValueModel):
     margin_of_safety: ValueMarginCfg = Field(default_factory=ValueMarginCfg)
     timing: ValueTimingCfg = Field(default_factory=ValueTimingCfg)
     exits: ValueExitsCfg = Field(default_factory=ValueExitsCfg)
+    reevaluation: ValueReevaluationCfg = Field(default_factory=ValueReevaluationCfg)
 
 
 class ValueUniverseCfg(_ValueModel):
@@ -1660,10 +1726,10 @@ class ValueServiceCfg(_ValueModel):
 
 
 class ValueCfg(_ValueModel):
-    """The value book (config/value.yaml). Parts 1-2: the scorecard and the shadow record,
-    nothing that trades."""
+    """The value book (config/value.yaml). Parts 1-3: the scorecard, the shadow record and its
+    re-evaluations, nothing that trades."""
 
-    ruleset_version: str = "v2"
+    ruleset_version: str = "v3"
     db_url: str = "sqlite:///data/value.db"
     universe: ValueUniverseCfg = Field(default_factory=ValueUniverseCfg)
     ticker_file: ValueTickerFileCfg = Field(default_factory=ValueTickerFileCfg)
