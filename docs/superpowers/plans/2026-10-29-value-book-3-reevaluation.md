@@ -110,7 +110,7 @@ is the executing agent's own model name.
 | 2 The research worker's filings feed | done | `c681018` | 86 passed (test_research_submissions 9 new, test_value_universe 13, plus edgar/materialize/store/fundamentals/worker/fence); ruff check/format clean on 9 files; mypy src/data src/research clean (46 files) | 2026-10-30 | No deviations; the plan's code reproduced exactly (value_universe.py written whole, same content as the diff). Rulings 7 (20h submissions age, 400-day keep, ETag), 8 (SPDR eleven + SPY), 9 (P2-M2: refetch the bar on the last weekday, `last <= due`), 5 (strict going-concern pattern; cost if wrong is one regex) applied as written. |
 | 3 The readers: filings, the going-concern flag, the day's low | done | `a78750e` | tests/test_value_inputs + shadow + fence 42 passed; ruff check/format clean; mypy clean. **Section A exit full gate:** pytest 5253 passed, 1 skipped (baseline 5239 + 14); `ruff check .` clean; `mypy src` 322 files clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; 3 task commits on `main..HEAD` before this docs commit | 2026-10-30 | No deviations. Ruling 10 (readers tolerate an unmigrated research.db: `{}` on `OperationalError`) implemented and tested. `build_day_bars` reads `bars["high"]`/`["low"]` unconditionally (as the ATR line already did). |
 | **B entry checks** | passed | 4 commits on `main..HEAD` | B2: pytest 5253 passed, 1 skipped (baseline + 14); ruff clean; mypy 322 files; FROZEN holds v3 `ad8841127029`; B3/B4 greps all match. Section A protected-file diff empty | 2026-10-30 | Section B exit target: baseline + 39 = 5278 |
-| 4 The exit engine's Part 3 rules | | | | | |
+| 4 The exit engine's Part 3 rules | done | `ec73f68` | tests/test_value_exits (43 collected) + shadow + fence 70 passed; ruff check/format clean; mypy exits.py clean | 2026-10-30 | No deviations. Applied by `git apply` of the plan's diffs, extracted verbatim. The commit also carried the orchestrator's "B entry checks" row. `LegState` gained `fv_proposed`, `seen_accn`, `trail_floor`, all defaulted so Part 2's stored legs load; `open_leg` seeds `seen_accn=fv_accn`. Cost-if-wrong notes: ruling 14 (shock stop uses the ATR on the bar before; no ATR means no shock stop) and ruling 15 (8-K thesis exit under every policy) are each one branch in `_shock`/`step`. |
 | 5 The residual model and the triggers | | | | | |
 | 6 The store: `value_reevaluations` and the plan column | | | | | |
 | **C entry checks** | | | | | |
@@ -2257,7 +2257,7 @@ The transitions this task adds (on top of Part 2's Task 4 table), in the order `
 | 6 | close ≥ the half-way mark while armed by an up-shock | full | the trail floor gives way to the breakeven |
 | 7 | after the close's own checks, nothing sold in full | full | `stop_at_least` raises the stop (never lowers it); `arm_from` arms an unarmed leg with that floor; each a `shock` event |
 
-- [ ] **Step 1: Write the failing tests** — apply to `tests/test_value_exits.py`:
+- [x] **Step 1: Write the failing tests** — apply to `tests/test_value_exits.py`:
 
 ```diff
 diff --git a/tests/test_value_exits.py b/tests/test_value_exits.py
@@ -2386,12 +2386,12 @@ index 5a50411..ddaf4ec 100644
 +    )
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_exits.py`
   Expected: FAIL — `ImportError: cannot import name 'Reeval' from 'src.value.exits'`.
 
-- [ ] **Step 3: The engine** — apply to `src/value/exits.py`:
+- [x] **Step 3: The engine** — apply to `src/value/exits.py`:
 
 ```diff
 diff --git a/src/value/exits.py b/src/value/exits.py
@@ -2621,13 +2621,13 @@ index bb68d5e..52ed1b8 100644
      if day.rsi14 is not None and day.rsi14 > cfg.peak_rsi_high:
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_exits.py tests/test_value_shadow.py tests/test_value_fence.py`
   Expected: PASS (`test_value_exits.py` 43 collected). Then ruff check/format and `.venv/bin/mypy
   src/value/exits.py` — clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   ```bash
   git add src/value/exits.py tests/test_value_exits.py
