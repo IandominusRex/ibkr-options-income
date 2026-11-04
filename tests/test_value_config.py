@@ -168,3 +168,37 @@ def test_nonsense_exit_and_service_keys_are_refused() -> None:
 def test_part_2_turns_the_research_sweep_on() -> None:
     assert ValueCfg().research_sweep.enabled is True
     assert ValueCfg().service.run_hour_et == 6
+
+
+def test_the_book_is_off_and_holds_no_cash_back_by_default() -> None:
+    """Revision 4 (2026-10-30): no pot; the 30% is a ceiling; the book is off until the operator
+    turns it on, and only paper ever trades."""
+    book = ValueCfg().book
+    assert book.enabled is False and book.ceiling_pct_of_net_liq == 30.0
+    assert (book.name_cap_pct, book.max_positions, book.max_list_share_pct) == (8.0, 20, 70.0)
+    assert book.release.min_profit_pct == 0.0 and book.release.preferred_profit_pct == 25.0
+    assert book.tiers.deep_value == [(25.0, 3.0), (35.0, 5.0), (45.0, 8.0)]
+    assert ruleset_hash(ValueCfg(**{"book": {"enabled": True}}).rules) == FROZEN["v4"]
+
+
+def test_nonsense_book_keys_are_refused() -> None:
+    for bad in (
+        {"book": {"ceiling_pct_of_net_liq": 0.0}},
+        {"book": {"drawdown_stop_pct": 30.0}},
+        {"book": {"tiers": {"deep_value": [[35.0, 5.0], [25.0, 3.0]]}}},
+        {"book": {"release": {"min_profit_pct": -5.0}}},
+        {"book": {"release": {"preferred_profit_pct": 0.0, "min_profit_pct": 10.0}}},
+        {"book": {"pot_pct": 30.0}},
+    ):
+        with pytest.raises(ValidationError):
+            ValueCfg(**bad)
+
+
+def test_an_enabled_book_needs_its_client_id(monkeypatch) -> None:
+    cfg = get_config()
+    assert cfg.ibkr.client_ids["value"] == 31
+    data = cfg.model_dump(by_alias=True)
+    data["value"]["book"]["enabled"] = True
+    data["ibkr"]["client_ids"].pop("value")
+    with pytest.raises(ValidationError, match="client_ids.value"):
+        type(cfg).model_validate(data)

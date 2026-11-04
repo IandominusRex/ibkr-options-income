@@ -81,6 +81,8 @@ class Secrets(BaseSettings):
     telegram_thread_spreads: str = Field(default="", alias="TELEGRAM_THREAD_SPREADS")
     # News thread (docs/superpowers/specs/2026-10-09-news-thread-design.md).
     telegram_thread_news: str = Field(default="", alias="TELEGRAM_THREAD_NEWS")
+    # The value book's thread (docs/superpowers/specs/2026-10-28-value-swing-book-design.md §9.7).
+    telegram_thread_value: str = Field(default="", alias="TELEGRAM_THREAD_VALUE")
     finnhub_api_key: str = Field(default="", alias="FINNHUB_API_KEY")
 
 
@@ -1840,6 +1842,92 @@ class ValueClaudeCfg(_ValueModel):
         return self
 
 
+class ValueTiersCfg(_ValueModel):
+    """Spec §9.5 (§6.0's table): size by the effective margin of safety, per list. Each row is
+    (margin from, in percent; size, in percent of the book's ceiling); the highest row the margin
+    reaches applies, below the first row nothing is bought."""
+
+    deep_value: list[tuple[float, float]] = Field(
+        default_factory=lambda: [(25.0, 3.0), (35.0, 5.0), (45.0, 8.0)]
+    )
+    quality_growth: list[tuple[float, float]] = Field(
+        default_factory=lambda: [(10.0, 3.0), (20.0, 5.0), (30.0, 8.0)]
+    )
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueTiersCfg:
+        for rows in (self.deep_value, self.quality_growth):
+            froms = [f for f, _ in rows]
+            if not rows or froms != sorted(froms) or any(not 0 < s <= 100 for _, s in rows):
+                raise ValueError("value book.tiers: rows ascend by margin; sizes in (0, 100]")
+        return self
+
+
+class ValueReleaseCfg(_ValueModel):
+    """Capital release (operator, 2026-10-30; spec revision 4): when a valid value buy cannot be
+    funded, the wheel closes cash-secured puts at breakeven or better (never at a loss),
+    preferring those at least ``preferred_profit_pct`` of max profit captured, fewest closes that
+    release enough. Deterministic; the Rules Engine gates each close twice."""
+
+    enabled: bool = True
+    min_profit_pct: float = 0.0  # breakeven: the close never realises a loss
+    preferred_profit_pct: float = 25.0
+    max_closes_per_request: int = 3
+    max_closes_per_day: int = 4
+    max_release_pct_per_day: float = 10.0  # collateral released per ET day, % of net liq
+    request_ttl_hours: float = 30.0  # a request not funded by then lapses
+    cooldown_days: int = 3  # after a lapsed request, none for that name for this long
+    max_spread_pct: float = 25.0  # a quote wider than this (of the mid) is not closed into
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueReleaseCfg:
+        if self.min_profit_pct < 0:
+            raise ValueError("value book.release.min_profit_pct must be >= 0: never at a loss")
+        if self.preferred_profit_pct < self.min_profit_pct:
+            raise ValueError("value book.release.preferred_profit_pct >= min_profit_pct")
+        if min(self.max_closes_per_request, self.max_closes_per_day) < 1:
+            raise ValueError("value book.release: at least one close")
+        return self
+
+
+class ValueBookCfg(_ValueModel):
+    """Stage 3, money in paper (spec §9 as amended by revision 4, 2026-10-30): the value book holds
+    **no cash back**. Its caps are ceilings on what it may hold, not reservations; a valid buy that
+    cannot be funded asks the wheel to release capital. Risk configuration, not rules: nothing here
+    changes a verdict, so it is outside the ruleset hash."""
+
+    enabled: bool = False  # no order of any kind without it; paper only whatever it says
+    ceiling_pct_of_net_liq: float = 30.0  # the book's cost at most this share of net liq
+    name_cap_pct: float = 8.0  # of the ceiling, per name
+    max_positions: int = 20
+    max_list_share_pct: float = 70.0  # of the ceiling, per list
+    tiers: ValueTiersCfg = Field(default_factory=ValueTiersCfg)
+    tranches: int = 3
+    tranche_min_sessions: int = 5  # sessions between two tranches of one name
+    illiquid_adv_pct: float = 1.0  # a position above this share of 20-day dollar volume
+    trend_brake_ceiling_pct: float = 50.0  # SPY under its 10-month SMA: entries stop, ceiling x
+    drawdown_stop_pct: float = 15.0  # the book down this far from its high: entries stop
+    drawdown_trim_pct: float = 25.0  # ... this far: a tap-only proposal to trim to half
+    quote_max_age_seconds: float = 30.0  # a send-time quote older than this is stale
+    cycle_minutes: int = 15  # the RTH cycle: reconcile, send, fund
+    proposal_ttl_hours: float = 30.0  # a proposal not acted on by then expires
+    attribution_grace_hours: float = 36.0  # unexplained shares older than this freeze the name
+    fill_timeout_seconds: float = 120.0
+    release: ValueReleaseCfg = Field(default_factory=ValueReleaseCfg)
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueBookCfg:
+        if not 0 < self.ceiling_pct_of_net_liq <= 100:
+            raise ValueError("value book.ceiling_pct_of_net_liq must be in (0, 100]")
+        if not 0 < self.name_cap_pct <= 100 or not 0 < self.max_list_share_pct <= 100:
+            raise ValueError("value book: name_cap_pct and max_list_share_pct in (0, 100]")
+        if self.max_positions < 1 or self.tranches < 1 or self.cycle_minutes < 1:
+            raise ValueError("value book: max_positions, tranches, cycle_minutes >= 1")
+        if not self.drawdown_stop_pct < self.drawdown_trim_pct:
+            raise ValueError("value book: drawdown_stop_pct < drawdown_trim_pct")
+        return self
+
+
 class ValueCfg(_ValueModel):
     """The value book (config/value.yaml). Parts 1-4: the scorecard, the shadow record, its
     re-evaluations and Claude as the analyst; nothing that trades."""
@@ -1852,6 +1940,7 @@ class ValueCfg(_ValueModel):
     service: ValueServiceCfg = Field(default_factory=ValueServiceCfg)
     rules: ValueRulesCfg = Field(default_factory=ValueRulesCfg)
     claude: ValueClaudeCfg = Field(default_factory=ValueClaudeCfg)
+    book: ValueBookCfg = Field(default_factory=ValueBookCfg)
 
 
 class _KeyedCfg(BaseModel):
@@ -2550,6 +2639,8 @@ class Config(BaseModel):
                 )
             if "spreads" not in self.ibkr.client_ids:
                 raise ValueError("ibkr.client_ids.spreads must be set when spreads.enabled is true")
+        if self.value.book.enabled and "value" not in self.ibkr.client_ids:
+            raise ValueError("ibkr.client_ids.value must be set when value book.enabled is true")
         return self
 
 

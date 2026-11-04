@@ -256,3 +256,36 @@ claude:                      # spec §8: Claude as the analyst (src/value_ai/). 
     min_ready: 5             # ... and at least 5
     clamp_rate_pct: 25.0     # or the 1.5x clamp binding on more than 25% of Claude's values ...
     min_values: 8            # ... read over at least 8 of them
+
+book:                        # Stage 3, paper only (spec §9, revision 4): no cash is held back; the
+                             # caps are ceilings, and a valid buy short of cash asks the wheel to
+                             # release capital. Risk config, outside the ruleset hash
+  enabled: false             # no value order of any kind without it (and never in live)
+  ceiling_pct_of_net_liq: 30.0   # the book's cost at most 30% of net liq (a ceiling, not a pot)
+  name_cap_pct: 8.0          # of the ceiling, per name (2.4% of net liq at the full ceiling)
+  max_positions: 20
+  max_list_share_pct: 70.0   # of the ceiling, per list
+  tiers:                     # [margin of safety from %, size % of the ceiling]
+    deep_value: [[25.0, 3.0], [35.0, 5.0], [45.0, 8.0]]
+    quality_growth: [[10.0, 3.0], [20.0, 5.0], [30.0, 8.0]]
+  tranches: 3                # 1/3 at READY, 1/3 on a higher low, 1/3 on a close above SMA50
+  tranche_min_sessions: 5
+  illiquid_adv_pct: 1.0      # refuse a position above 1% of 20-day dollar volume
+  trend_brake_ceiling_pct: 50.0  # SPY under its 10-month SMA: no entries, ceiling x 50%
+  drawdown_stop_pct: 15.0    # the book 15% below its high: no entries
+  drawdown_trim_pct: 25.0    # 25%: a tap-only proposal to trim each position to half
+  quote_max_age_seconds: 30.0
+  cycle_minutes: 15          # the RTH cycle (reconcile, send, fund)
+  proposal_ttl_hours: 30.0
+  attribution_grace_hours: 36.0  # unexplained shares older than this freeze the name
+  fill_timeout_seconds: 120.0
+  release:                   # capital release (operator, 2026-10-30)
+    enabled: true
+    min_profit_pct: 0.0      # breakeven or better: a release never realises a loss
+    preferred_profit_pct: 25.0   # those at 25% of max profit or more go first
+    max_closes_per_request: 3
+    max_closes_per_day: 4
+    max_release_pct_per_day: 10.0  # collateral released per ET day, % of net liq
+    request_ttl_hours: 30.0
+    cooldown_days: 3
+    max_spread_pct: 25.0

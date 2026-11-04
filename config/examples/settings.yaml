@@ -15,6 +15,7 @@ ibkr:
     exec: 14          # execution engine order-placement (approval_service daemon)
     scan: 15          # market data fetch during /scan command (approval_service daemon)
     spreads: 30       # daily credit-spread service (scripts.run_spreads) — config/spreads.yaml
+    value: 31         # value book, Stage 3 (scripts.run_value) — config/value.yaml → book
     healthcheck: 19
     # trading_skills MCP should be configured with clientId 20 (see .mcp.json)
     # dashboard should use clientId 21
