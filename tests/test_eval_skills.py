@@ -127,6 +127,8 @@ _ENRICHMENT_ONLY = (
     "src.news",
     # Claude picks the daily spread (2026-10-12 spec §5.4)
     "src.spreads_ai",
+    # Claude as the value book's analyst (2026-10-28 value book spec §8)
+    "src.value_ai",
 )
 
 

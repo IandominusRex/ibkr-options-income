@@ -34,6 +34,8 @@ PURE = (
     "report",
     "residuals",
     "reevaluate",
+    "claude_valuation",
+    "effective",
 )
 
 FORBIDDEN_FOR_VALUE = (
@@ -123,6 +125,7 @@ def test_the_input_loader_imports_no_enrichment_and_no_value_code() -> None:
         "src/common/value_inputs.py",
         "src/common/value_types.py",
         "src/common/value_universe.py",
+        "src/common/value_ai_types.py",
     ):
         mods = imported_modules(ROOT / rel)
         bad = [m for m in (*ENRICHMENT, "src.value") if _reaches(mods, m)]
@@ -130,8 +133,9 @@ def test_the_input_loader_imports_no_enrichment_and_no_value_code() -> None:
 
 
 def test_value_types_is_plain_pydantic() -> None:
-    mods = imported_modules(ROOT / "src" / "common" / "value_types.py")
-    assert {m.split(".")[0] for m in mods} <= {"__future__", "datetime", "typing", "pydantic"}
+    for name in ("value_types.py", "value_ai_types.py"):
+        mods = imported_modules(ROOT / "src" / "common" / name)
+        assert {m.split(".")[0] for m in mods} <= {"__future__", "datetime", "typing", "pydantic"}
 
 
 def test_value_opens_no_sec_client() -> None:
@@ -197,6 +201,13 @@ def test_only_src_value_constructs_value_rows() -> None:
         "ValueShadowEventRow(",
         "ValueRankedRow(",
         "ValueReevaluationRow(",
+        "ValueClaudeReadRow(",
+        "ValueClaudeVerdictRow(",
+        "ValueClaudeNoteRow(",
+        "ValueKillTriggerRow(",
+        "ValueClaudeFactRow(",
+        "ValueEffectiveRow(",
+        "ValueClaudeStateRow(",
     )
     offenders = []
     for p in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]:
@@ -213,6 +224,7 @@ def test_the_value_scorecard_loads_no_wheel_layer_even_transitively() -> None:
         "import src.value.scorecard, src.value.store, src.value.ticker_file, src.value.funnel\n"
         "import src.value.exits, src.value.shadow, src.value.service, src.value.report\n"
         "import src.value.residuals, src.value.reevaluate\n"
+        "import src.value.claude_valuation, src.value.effective\n"
         "import src.common.value_inputs, src.common.value_universe\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('src.'))))\n"
     )
@@ -303,3 +315,65 @@ def test_the_research_worker_owns_the_filings_feed() -> None:
         if "FilingIndexRow" in p.read_text(encoding="utf-8")
     ]
     assert readers == []  # only src/common/value_inputs.py names the table
+
+
+VALUE_AI = sorted((ROOT / "src" / "value_ai").rglob("*.py"))
+FORBIDDEN_FOR_VALUE_AI = (
+    "src.value",
+    "src.engine",
+    "src.execution",
+    "src.strategies",
+    "src.orchestrator",
+    "src.monitor",
+    "src.notify",
+    "src.ledger",
+    "src.storage",
+    "src.spreads",
+    "src.spreads_ai",
+    "src.api",
+    "src.reporting",
+    "src.research",
+)
+
+
+def test_value_ai_reaches_claude_only_through_the_cli_and_never_the_value_book() -> None:
+    """Spec §8, §16: src/value_ai/ imports nothing from src.value, the trading path, notify,
+    the ledger or the storage layer; from src.claude only the slim ``src.claude.cli``; it reads
+    news.db only through the read-only engine and the Session-parameterised queries."""
+    assert len(VALUE_AI) >= 5
+    offenders = []
+    for p in VALUE_AI:
+        mods = imported_modules(p)
+        offenders += [f"{p.name} -> {m}" for m in FORBIDDEN_FOR_VALUE_AI if _reaches(mods, m)]
+        offenders += [
+            f"{p.name} -> {m}"
+            for m in mods
+            if _reaches({m}, "src.claude") and not _reaches({m}, "src.claude.cli")
+        ]
+        offenders += [
+            f"{p.name} -> {m}"
+            for m in mods
+            if _reaches({m}, "src.news")
+            and not _reaches({m}, "src.news.store.readonly")
+            and not _reaches({m}, "src.news.store.queries")
+        ]
+    assert offenders == []
+
+
+def test_the_analyst_loads_no_wheel_layer_and_no_value_code() -> None:
+    """Importing the analyst (what scripts/run_value.py does) loads src.claude.cli alone from the
+    reasoning layer: no runner, prompt stack or memory, no src.value, no IBKR client, and never
+    news.db's read-write engine."""
+    probe = (
+        "import json, sys\nimport src.value_ai.analyst\nprint(json.dumps(sorted(sys.modules)))\n"
+    )
+    env = {**os.environ, "IBKR_CONFIG_USE_EXAMPLES": "1"}
+    out = subprocess.run(
+        [sys.executable, "-c", probe], cwd=ROOT, env=env, capture_output=True, text=True, check=True
+    )
+    loaded = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    claude = sorted(m for m in loaded if m.startswith("src.claude."))
+    assert claude == ["src.claude.cli"]
+    bad = [m for m in FORBIDDEN_FOR_VALUE_AI if _reaches(loaded, m)]
+    assert bad == [] and not _reaches(loaded, "ib_async")
+    assert not _reaches(loaded, "src.news.store.session")

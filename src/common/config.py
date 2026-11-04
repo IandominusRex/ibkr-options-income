@@ -2503,6 +2503,10 @@ class Config(BaseModel):
         """Where headless ``claude -p`` calls run: ``~`` expanded, outside the repo (validated)."""
         return Path(self.claude.workdir).expanduser()
 
+    def value_ai_workdir(self) -> Path:
+        """Where the value analyst's headless calls run: outside the repo (validated)."""
+        return Path(self.value.claude.workdir).expanduser()
+
     def spreads_ai_workdir(self) -> Path:
         """``~`` is expanded and an absolute path used as-is; a relative path still resolves under
         ROOT (keeps old configs working, but it puts the repo's CLAUDE.md in the picker's context)."""
