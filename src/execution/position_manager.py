@@ -80,6 +80,7 @@ async def close_short_position(
     ask: float,
     *,
     reason: CloseReason,
+    note: str = "",
 ) -> CloseResult:
     """Buy-to-close a short option position at mid, recording the full order/fill lifecycle.
 
@@ -109,7 +110,7 @@ async def close_short_position(
             state=OrderState.QUEUED,
             limit_price=limit_price,
             is_live=cfg.is_live,
-            detail=f"buy-to-close ({reason.value})",
+            detail=f"buy-to-close ({reason.value}){' ' + note if note else ''}",
             close_reason=reason.value,
         )
         session.add(order_row)

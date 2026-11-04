@@ -4,15 +4,19 @@ capital release - the selection, the Rules Engine's release gate and the runner.
 
 from __future__ import annotations
 
+import asyncio
+from datetime import date, datetime, timedelta
+
 import pytest
 
 from src.common.config import get_config
-from src.common.schemas import AccountSnapshot, OptionRight, PositionSnapshot
+from src.common.schemas import AccountSnapshot, CloseReason, OptionRight, PositionSnapshot
 from src.engine.capital import ReleaseCandidate, resolve_caps, seed_budgets, select_releases
 from src.engine.risk_engine import validate_candidates, validate_release
+from src.execution.position_manager import CloseResult
 from src.value.store import ValueAttributionRow, value_session
 from tests.test_engine import _candidate
-from tests.value_book_fixtures import NOW, order, proposal
+from tests.value_book_fixtures import NOW, funding, order, proposal
 
 RELEASE = get_config().value.book.release.model_dump()
 
@@ -126,3 +130,92 @@ def test_the_release_gate_never_closes_at_a_loss_or_a_call_and_caps_the_day() ->
     assert capped == ["release_daily_cap", "release_daily_notional"]  # 15,000 > 10% of 100,000
     wide = ReleaseCandidate("W:1", "W", 100.0, 1, 2.0, 0.5, 1.5)
     assert "release_spread_too_wide" in validate_release(wide, right=OptionRight.PUT, **args)
+
+
+def _put(symbol: str, strike: float, qty: int = -1) -> PositionSnapshot:
+    return PositionSnapshot(
+        symbol=f"{symbol} P",
+        sec_type="OPT",
+        position=qty,
+        avg_cost=0.0,
+        right=OptionRight.PUT,
+        strike=strike,
+        expiry=date.today() + timedelta(days=20),
+        underlying=symbol,
+    )
+
+
+def test_the_runner_closes_after_a_second_gate_on_a_fresh_quote(
+    value_book_db, book_on, monkeypatch, db
+) -> None:
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0, proposal_id=proposal("GOOGL", status="funding", cost=15_000.0))
+    credits = {"AAA": 2.0, "BBB": 2.0}
+    monkeypatch.setattr(cr, "chain_entry_credit_per_share", lambda s, pos: credits[pos.underlying])
+    monkeypatch.setattr(cr, "is_halted", lambda: False)
+    # The fixtures' clock (NOW), not the wall clock: the request lapses 30 hours after NOW.
+    read_book = cr.read_book
+    monkeypatch.setattr(cr, "read_book", lambda: read_book(NOW))
+    quotes = {"AAA": [(0.95, 1.05), (0.95, 1.05)], "BBB": [(1.75, 1.85)]}
+    closes: list[tuple[str, CloseReason, str]] = []
+
+    async def quote(pos):
+        return quotes[pos.underlying].pop(0)
+
+    async def close(ib, pos, bid, ask, *, reason, note):
+        closes.append((pos.underlying, reason, note))
+        return CloseResult("filled", pos.symbol, 1, (bid + ask) / 2, 1, (bid + ask) / 2)
+
+    async def net_liq():
+        return 100_000.0
+
+    sent = asyncio.run(
+        cr.run_capital_release(
+            object(),
+            object(),
+            quote=quote,
+            positions_fn=lambda: [_put("AAA", 100.0), _put("BBB", 150.0)],
+            net_liq_fn=net_liq,
+            close=close,
+        )
+    )
+    # AAA (50% kept, frees 10,000) covers the 9,000 need alone; BBB is not touched
+    assert sent == 1 and closes == [("AAA", CloseReason.CAPITAL_RELEASE, closes[0][2])]
+    assert closes[0][2].startswith("capital release request 1 ")
+
+
+def test_the_runner_waits_while_halted_or_with_the_book_off(value_book_db, monkeypatch) -> None:
+    from src.execution import capital_release as cr
+
+    funding("GOOGL", 9_000.0)
+    assert asyncio.run(cr.run_capital_release(object(), object())) == 0  # book off
+    monkeypatch.setattr(get_config().value.book, "enabled", True)
+    monkeypatch.setattr(cr, "is_halted", lambda: True)
+    assert asyncio.run(cr.run_capital_release(object(), object())) == 0
+
+
+def test_request_progress_reads_its_own_closes(db) -> None:
+    from src.execution.capital_release import day_counts, request_progress
+    from src.storage.models import OrderRow
+
+    with db() as s:
+        for state, filled, note in (("filled", 1, "request 3"), ("submitted", 0, "request 4")):
+            s.add(
+                OrderRow(
+                    candidate_id="close:AAA:20261120:100:P",
+                    state=state,
+                    limit_price=1.0,
+                    filled_qty=filled,
+                    detail=f"buy-to-close (capital_release) capital release {note} for GOOGL",
+                    close_reason="capital_release",
+                    created_at=datetime.now(),
+                )
+            )
+    with db() as s:
+        from sqlalchemy import select
+
+        rows = list(s.scalars(select(OrderRow)))
+    assert request_progress(rows, 3) == (False, 10_000.0)
+    assert request_progress(rows, 4) == (True, 0.0)
+    assert day_counts(rows) == (2, 10_000.0)

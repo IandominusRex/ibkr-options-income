@@ -1621,6 +1621,17 @@ async def _intraday_scan_loop(
                 except Exception:
                     logger.exception("Intraday loop: loss-exit check failed")
 
+            # 1a'. Capital release (value book revision 4): close CSPs at breakeven or better
+            #     to fund an approved value buy, gated by the Rules Engine. Off unless the value
+            #     book is enabled; idle while halted.
+            if ib_scan.isConnected():
+                try:
+                    from src.execution.capital_release import run_capital_release
+
+                    await run_capital_release(ib_scan, ib_exec, bot, chat_id)
+                except Exception:
+                    logger.exception("Intraday loop: capital release failed")
+
             # 1b. Periodic reconciliation (SYSTEM_REVIEW F7): recover entry fills missed during a
             #     mid-session reconnect, and record manual buy-to-closes done in TWS.
             if ib_exec is not None and ib_exec.isConnected():

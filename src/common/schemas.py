@@ -1023,6 +1023,9 @@ class CloseReason(StrEnum):
     ROLL = "roll"  # the buy-back leg of an executed roll
     MANUAL = "manual"  # closed outside the system; recorded by external-close reconciliation
     DEFENSIVE = "defensive"  # operator tapped Close on a roll-policy `close` decision
+    # A CSP at breakeven or better closed to fund an approved value-book buy (value book spec
+    # revision 4, 2026-10-30): src/execution/capital_release.py, gated by the Rules Engine.
+    CAPITAL_RELEASE = "capital_release"
 
 
 RollAction = Literal["roll", "assign", "let_called_away", "close", "hold", "defer"]

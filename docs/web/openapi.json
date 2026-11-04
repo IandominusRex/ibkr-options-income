@@ -6305,7 +6305,8 @@
           "loss_exit",
           "roll",
           "manual",
-          "defensive"
+          "defensive",
+          "capital_release"
         ],
         "title": "CloseReason",
         "description": "Why a short option was bought back \u2014 stamped on the closing order and its BUY fill.\n\n`VerdictOutcome.CLOSED_EARLY` says only *that* a leg closed before expiry; this says why,\nso profit-takes can be analysed apart from loss exits, rolls and hand-placed closes."

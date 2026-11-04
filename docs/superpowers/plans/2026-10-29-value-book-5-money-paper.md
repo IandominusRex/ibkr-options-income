@@ -124,6 +124,7 @@ is the executing agent's own model name.
 | Task 3 - the attribution rule and W | done | `f928237` | tests/test_value_attribution.py 5 passed (+5); with test_ledger_ingest and test_engine 127 passed; ruff check/format and `mypy src/common/books.py src/storage/wheel_shares.py` clean | 2026-11-04 | No deviation. Red run: collection `ImportError: cannot import name 'attribute'`. Nothing calls `attribute`, `value_sell_cap` or `value_exposure` yet (Section B and D wire them), and `value_exposure()` returns an inactive, I/O-free value while `value.book.enabled` is false, so the wheel is unchanged (cost if wrong: none today). `books.py` now imports `src.common.value_view` at module level; the existing engine, ledger and fence suites stay green. `src/storage/wheel_shares.py` is outside `src/common` and `src/value` but is the plan's own file for Task 3 and is not on the protected list |
 | Section B entry | checks B1–B2 passed | 4 commits on branch | pytest 5405 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 340 files | 2026-11-04 | B1: operator approval of E1–E3 and E5–E7 and of ruling 7's default recorded in the Section A entry row (2026-11-04). B2: all fourteen greps matched at the quoted line numbers. Section B exit target: baseline 5393 + 23 = 5416 passed, 1 skipped (cumulative: 12 from Section A + 7 + 3 + 1 in Section B) |
 | Section A exit | done | `2c762d5`, `324fca4`, `f928237` + this docs(plan) commit | **full gate: pytest 5405 passed, 1 skipped (baseline 5393 + 12)**; `ruff check .` clean; `mypy src` 340 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff (`src/orchestrator src/monitor src/spreads src/api src/news src/claude src/reporting src/research src/value_ai`, and `web`) empty | 2026-11-04 | `git diff --stat main...HEAD` touches only config/examples, .env.example, src/common, src/storage/wheel_shares.py, src/value/store.py, tests and the plan. Section B needs the operator's go-ahead |
+| Task 4 - the Rules Engine counts the value book; the release gate | done | `f79efbd` (also commits the Section B entry row) | tests/test_value_capital_release.py 7 passed (+7); with test_engine, test_capital, test_config_keys, test_regime_sizing_integration, test_scale_in_gate, test_cc_breakout 239 passed; regime/value/eval/spreads/web fences + test_value_view/attribution 84 passed; sizer/promote/profit-take suites (test_account_sizing, test_regime_limits, test_strategies, test_profit_take_schedule, test_promote_guard, test_promote_pipeline, test_drain_promote) 142 passed; ruff check/format and mypy on the 4 touched src files clean | 2026-11-04 | No deviation: the plan's diff applied cleanly at the B2 line numbers. Red run: collection `ImportError: cannot import name 'ReleaseCandidate'`. With the book off `value_exposure()` is I/O-free and returns claim 0, no names, nothing frozen, so `resolve_caps`, `seed_budgets` and every gate branch are byte-for-byte the old behaviour (`test_with_the_book_off_the_wheel_is_unchanged`, and every existing engine/sizer suite green unchanged). `regime_limits.py` now imports `src.common.books` (it already imported `src.common.config`); `tests/test_regime_fence.py` stays green, since books/value_view import no enrichment (cost if wrong: none) |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -1722,7 +1723,7 @@ $40,000 of wheel stock + $15,000 of value stock + a $30,000 approved buy + a $16
 $10,000), B (150, 2.00, 1.80: 10%, $15,000), C (60, 1.00, 0.20: 80%, $6,000): a $14,000 need takes B
 alone; $9,000 takes A (a preferred close, $100 given up); $15,000 takes A and C; $17,000 takes nothing.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_capital_release.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_capital_release.py`:
 
 ```python
 """The wheel's side of the value book (value book spec §9.2-§9.3 as amended by revision 4): the
@@ -1855,8 +1856,8 @@ def test_the_release_gate_never_closes_at_a_loss_or_a_call_and_caps_the_day() ->
     assert "release_spread_too_wide" in validate_release(wide, right=OptionRight.PUT, **args)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'ReleaseCandidate'`.
-- [ ] **Step 3: The engine** — apply:
+- [x] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'ReleaseCandidate'`.
+- [x] **Step 3: The engine** — apply:
 
 ```diff
 diff --git a/config/examples/risk_limits.yaml b/config/examples/risk_limits.yaml
@@ -2226,8 +2227,8 @@ index cc33311..2082cfb 100644
      scaled_caps = caps
 ```
 
-- [ ] **Step 4: Run them to see them pass** — `tests/test_value_capital_release.py tests/test_engine.py tests/test_capital.py tests/test_config_keys.py tests/test_regime_sizing_integration.py tests/test_scale_in_gate.py tests/test_cc_breakout.py`.
-- [ ] **Step 5: Gates and commit:**
+- [x] **Step 4: Run them to see them pass** — `tests/test_value_capital_release.py tests/test_engine.py tests/test_capital.py tests/test_config_keys.py tests/test_regime_sizing_integration.py tests/test_scale_in_gate.py tests/test_cc_breakout.py`.
+- [x] **Step 5: Gates and commit:**
 
   ```bash
   git add src/engine/capital.py src/engine/risk_engine.py src/strategies/cash_secured_put.py src/engine/regime_limits.py config/examples/risk_limits.yaml tests/test_value_capital_release.py
