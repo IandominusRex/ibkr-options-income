@@ -278,3 +278,136 @@ def test_drain_skips_a_command_awaiting_confirmation(value_book_db) -> None:
     )
     assert outcomes == [] and applied == [] and marked == []
     assert _row(pid).status == "pending"
+
+
+# --- Task 3: the 25% drawdown's "trim to half" (spec §9.6, rulings 3 and 11) ------------------
+
+EPISODE = vc.trim_episode(100_000.0, NOW)
+
+
+def _held(symbol: str, filled: float) -> int:
+    from datetime import date
+
+    from src.value.store import ValuePositionRow, value_session
+    from tests.value_book_fixtures import order
+
+    order(symbol, shares=filled, filled=filled)
+    with value_session() as vs:
+        pos = ValuePositionRow(
+            symbol=symbol, list_name="deep_value", status="open", opened_on=date(2026, 10, 1)
+        )
+        vs.add(pos)
+        vs.flush()
+        return pos.id
+
+
+def _offer(episode: str | None = EPISODE, **extra) -> None:
+    from src.value.book import set_state
+    from src.value.store import value_session
+
+    state: dict = {"high": 100_000.0, "value": 74_000.0, "stop": True, **extra}
+    if episode is not None:
+        state |= {"trim_offered_at": NOW.isoformat(), "episode": episode}
+    with value_session() as vs:
+        set_state(vs, "high_water", state, NOW)
+
+
+def _sells() -> list:
+    from sqlalchemy import select
+
+    from src.value.store import ValueProposalRow, value_session
+
+    with value_session() as vs:
+        rows = list(
+            vs.scalars(
+                select(ValueProposalRow)
+                .where(ValueProposalRow.kind == "sell")
+                .order_by(ValueProposalRow.id)
+            )
+        )
+        for r in rows:
+            vs.expunge(r)
+        return rows
+
+
+def test_trim_halves_every_filled_position(value_book_db) -> None:
+    _held("AAA", 10)
+    _held("BBB", 7)
+    _offer()
+    result = _apply("value_trim", {"episode": EPISODE}, by="telegram")
+    sells = _sells()
+    assert [(s.symbol, s.shares) for s in sells] == [("AAA", 5.0), ("BBB", 3.0)]
+    assert result == {"episode": EPISODE, "proposals": [s.id for s in sells]}
+    for s in sells:
+        assert s.status == "approved" and not s.needs_tap
+        assert (s.reason, s.cause, s.decided_by) == ("drawdown_trim", "python", "telegram")
+
+
+def test_trim_skips_a_name_with_an_open_sell(value_book_db) -> None:
+    from tests.value_book_fixtures import proposal
+
+    _held("AAA", 10)
+    _held("BBB", 7)
+    already = proposal("AAA", status="pending", kind="sell")
+    _offer()
+    _apply("value_trim", {"episode": EPISODE})
+    sells = _sells()
+    assert [(s.id, s.symbol, s.reason) for s in sells][0] == (already, "AAA", "tranche 1")
+    assert [(s.symbol, s.shares, s.reason) for s in sells[1:]] == [("BBB", 3.0, "drawdown_trim")]
+
+
+def test_trim_needs_the_current_episode(value_book_db) -> None:
+    from src.value.commands import ValueCommandFailed
+
+    _held("AAA", 10)
+    with pytest.raises(ValueCommandFailed) as exc:
+        _apply("value_trim", {"episode": EPISODE})
+    assert exc.value.reason == "no_trim_offered"
+    _offer()
+    with pytest.raises(ValueCommandFailed) as exc:
+        _apply("value_trim", {"episode": vc.trim_episode(99_000.0, NOW)})
+    assert exc.value.reason == "stale_proposal"
+    assert _sells() == []
+
+
+def test_a_second_trim_is_already_trimmed(value_book_db) -> None:
+    from src.value.commands import ValueCommandFailed
+
+    _held("AAA", 10)
+    _offer()
+    _apply("value_trim", {"episode": EPISODE})
+    with pytest.raises(ValueCommandFailed) as exc:
+        _apply("value_trim", {"episode": EPISODE})
+    assert exc.value.reason == "already_trimmed"
+    assert len(_sells()) == 1
+
+
+def test_the_trim_is_offered_once_per_episode(value_book_db) -> None:
+    from datetime import timedelta
+
+    from src.common.config import get_config
+    from src.value import book, live
+    from src.value.store import value_session
+
+    cfg = get_config().value
+    _held("AAA", 10)
+    with value_session() as vs:  # the high is 1,000 and nothing is offered yet
+        book.set_state(vs, "high_water", {"high": 1_000.0, "value": 1_000.0, "stop": False}, NOW)
+    snap = live.Snapshot(net_liq=100_000.0, marks={"AAA": 74.0})  # 740: 26% under the high
+    with value_session() as vs:
+        first = live._high_water(vs, snap, cfg, NOW)
+    with value_session() as vs:
+        state = book.get_state(vs, "high_water") or {}
+    assert first == vc.trim_episode(1_000.0, NOW) == state["episode"]
+    assert state["trim_offered_at"] == NOW.isoformat() and state["stop"] is True
+    with value_session() as vs:
+        again = live._high_water(vs, snap, cfg, NOW + timedelta(minutes=15))
+    with value_session() as vs:
+        kept = book.get_state(vs, "high_water") or {}
+    assert again is None
+    assert (kept["episode"], kept["trim_offered_at"]) == (
+        state["episode"],
+        state["trim_offered_at"],
+    )
+    reset = book.reset_drawdown({**kept, "trimmed": True, "trimmed_at": NOW.isoformat()})
+    assert reset == {"high": kept["value"], "value": kept["value"], "stop": False}

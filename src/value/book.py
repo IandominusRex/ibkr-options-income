@@ -39,6 +39,18 @@ from src.value.store import (
 
 WORKING = ("pending", "submitted", "partial")
 PYTHON_SELLS = ("stop", "trail", "peak", "thesis", "remark_below", "catastrophe", "time")
+TRIM_TTL_HOURS = 30.0  # a trim's approved sells: the same horizon as a funding request
+# the drawdown trim's episode in the high_water state (Part 6, ruling 11); a reset drops them
+TRIM_STATE_KEYS = ("trim_offered_at", "episode", "trimmed", "trimmed_at")
+
+
+class BookRefused(Exception):
+    """A book action that cannot apply, with a machine reason (``commands`` maps it to a failed
+    command; ``book`` never imports ``commands``)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass
@@ -99,6 +111,13 @@ def set_state(vs: Session, key: str, value: dict, now: datetime) -> None:
         vs.add(ValueBookStateRow(key=key, value=blob, updated_at=now))
     else:
         row.value, row.updated_at = blob, now
+
+
+def reset_drawdown(state: dict) -> dict:
+    """``--reset-drawdown`` (spec §9.6: a human resets the breaker): the high becomes today's
+    value, the stop lifts and the trim episode ends, so a later 25% drawdown is offered afresh."""
+    kept = {k: v for k, v in state.items() if k not in TRIM_STATE_KEYS}
+    return {**kept, "stop": False, "high": state.get("value", 0)}
 
 
 def reconcile(
@@ -369,6 +388,44 @@ def step_held(
 
 def sell_shares(held: float, fraction: float) -> int:
     return max(0, math.floor(held * min(1.0, fraction) + 1e-9))
+
+
+def trim_to_half(vs: Session, *, episode: str, by: str, now: datetime) -> list[int]:
+    """Spec §9.6 and Part 6 ruling 3: one tap sells half of every filled position, approved now; each sale is
+    still re-gated and capped by the sell cap at send time. Returns the new proposal ids."""
+    state = get_state(vs, "high_water") or {}
+    if not state.get("episode"):
+        raise BookRefused("no_trim_offered")
+    if state.get("episode") != episode:
+        raise BookRefused("stale_proposal")
+    if state.get("trimmed"):
+        raise BookRefused("already_trimmed")
+    held_now = totals(vs).names
+    made: list[int] = []
+    for pos in vs.scalars(select(ValuePositionRow).where(ValuePositionRow.status == "open")):
+        held = held_now.get(pos.symbol)
+        shares = sell_shares(held.filled if held else 0.0, 0.5)
+        if shares <= 0:
+            continue
+        row = propose(
+            vs,
+            kind="sell",
+            symbol=pos.symbol,
+            list_name=pos.list_name,
+            shares=float(shares),
+            price=None,
+            reason="drawdown_trim",
+            cause="python",
+            auto=True,
+            now=now,
+            ttl_hours=TRIM_TTL_HOURS,
+            position_id=pos.id,
+        )
+        if row is not None:
+            row.decided_by = by
+            made.append(row.id)
+    set_state(vs, "high_water", {**state, "trimmed": True, "trimmed_at": now.isoformat()}, now)
+    return made
 
 
 def apply_split(vs: Session, symbol: str, ratio: float, now: datetime) -> int:

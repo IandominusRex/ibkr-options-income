@@ -33,9 +33,11 @@ from sqlalchemy.orm import Session
 
 from src.common.books import is_spreads_underlying, value_sell_cap
 from src.common.config import ValueCfg
+from src.common.value_commands import trim_episode
 from src.common.value_types import DayBar
 from src.value import sizing
 from src.value.book import (
+    TRIM_STATE_KEYS,
     WORKING,
     open_position,
     propose,
@@ -414,7 +416,12 @@ async def cycle(
         )
         expire_proposals(vs, now)
         set_state(vs, SNAPSHOT, asdict(snap), now)
-        _high_water(vs, snap, cfg, now)
+        trim_offered = _high_water(vs, snap, cfg, now)
+        if trim_offered is not None:  # Task 4 renders the card with its one button
+            hw = book_state(vs, "high_water") or {}
+            high, value = float(hw.get("high", 0.0)), float(hw.get("value", 0.0))
+            down = (high - value) / high * 100.0 if high > 0 else 0.0
+            msgs.append(f"The value book is down {down:.0f}% from its high: trim to half?")
         sells = [
             (p.id, p.symbol, p.list_name, p.shares, p.reason)
             for p in vs.scalars(
@@ -538,9 +545,11 @@ async def resolve_working_orders(
     return msgs
 
 
-def _high_water(vs: Session, snap: Snapshot, cfg: ValueCfg, now: datetime) -> None:
+def _high_water(vs: Session, snap: Snapshot, cfg: ValueCfg, now: datetime) -> str | None:
     """The book's value (filled shares at their marks) against its high: the drawdown breaker
-    (spec §9.6) stops entries past ``drawdown_stop_pct``; a human resets it."""
+    (spec §9.6) stops entries past ``drawdown_stop_pct``; a human resets it. At
+    ``drawdown_trim_pct`` the trim to half is offered once per episode (Part 6, ruling 11): the
+    new episode's id is returned the first time, and ``None`` after (and until a reset)."""
     t = totals(vs)
     value = sum(n.filled * snap.marks.get(s, 0.0) for s, n in t.names.items())
     state = book_state(vs, "high_water") or {"high": 0.0, "stop": False}
@@ -548,7 +557,14 @@ def _high_water(vs: Session, snap: Snapshot, cfg: ValueCfg, now: datetime) -> No
     stop = bool(state.get("stop")) or (
         high > 0 and (high - value) / high * 100.0 >= cfg.book.drawdown_stop_pct
     )
-    set_state(vs, "high_water", {"high": high, "value": value, "stop": stop}, now)
+    trim = high > 0 and (high - value) / high * 100.0 >= cfg.book.drawdown_trim_pct
+    episode = {k: state[k] for k in TRIM_STATE_KEYS if k in state}
+    offered: str | None = None
+    if trim and not episode.get("trim_offered_at"):
+        offered = trim_episode(high, now)
+        episode |= {"trim_offered_at": now.isoformat(), "episode": offered}
+    set_state(vs, "high_water", {"high": high, "value": value, "stop": stop, **episode}, now)
+    return offered
 
 
 async def _sell(

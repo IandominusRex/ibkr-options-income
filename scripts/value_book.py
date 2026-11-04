@@ -19,7 +19,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from src.value.book import apply_split, clear_attribution, decide, get_state, set_state, totals
+from src.value.book import (
+    apply_split,
+    clear_attribution,
+    decide,
+    get_state,
+    reset_drawdown,
+    set_state,
+    totals,
+)
 from src.value.store import (
     ValueAttributionRow,
     ValueFundingRow,
@@ -57,9 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.split[0].upper()}: {count} order(s) restated x{new / old:g}; --clear it")
         if args.reset_drawdown:
             state = get_state(vs, "high_water") or {}
-            set_state(
-                vs, "high_water", {**state, "stop": False, "high": state.get("value", 0)}, now
-            )
+            set_state(vs, "high_water", reset_drawdown(state), now)  # also ends the trim episode
             print("drawdown breaker reset")
         t = totals(vs)
         print("holdings:")

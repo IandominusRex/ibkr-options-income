@@ -137,6 +137,7 @@ is the executing agent's own model name.
 | **Plan written** | done | (plan file only, uncommitted) | n/a | 2026-11-04 | Written by an Opus subagent after Parts 1–5 merged. Three operator questions were asked and answered the same day (rulings 1, 9 and 18); the plan writer's defaults on the digest, the watchdog, `/value NAME` and the web set were accepted by the operator (rulings 13, 15, 12, 30). |
 | **Section A entry** | done | 0 commits on `main..HEAD` | A1-A4 pass; worktree `.claude/worktrees/value-book-6`; baseline `python -m pytest -q` = **5506 passed, 1 skipped**; ruff clean; mypy 348 files clean | 2026-11-04 | Operator (2026-11-04) authorised running A through the Review Fix Pass without asking between sections; stops before the web (F-I). Section A exit target: 5506 + 28 = 5534. |
 | **Task 1** — value kinds, fingerprint, trading drain's skip | done | `11a490f` | targeted (`test_value_commands`, `test_value_fence`, `test_command_schemas`, `test_write_path_invariants`, `test_value_config`, `test_drain_promote`) 112 passed; `-k "command_drain or drain"` 137 passed; `test_openapi_current` 1 passed; ruff clean; mypy 349 files clean. **12 new** (11 in `test_value_commands.py`, the parametrised case counting five, + 1 fence) | 2026-11-04 | (a) `web/lib/api-types.ts` **not** regenerated: the orchestrator ruled api-types regeneration out of Section A, so only `docs/web/openapi.json` was regenerated (the pytest contract check); the Section A exit's web check is therefore "`web/` diff empty". Cost if wrong: one `npx openapi-typescript` run in a later section (E regenerates after its routes). (b) `docs/web/commands.md` documents kinds as sections, not table rows: added one section "The value book's kinds" holding a table with one row per kind, plus `value_put` on `promote`, the no-dedupe-key list in the routes table and the drain loop's step 2. Cost: wording. (c) Step 8's "(10 new)" disagrees with its own tests (11 + 1 fence = 12, as the File structure says); 12 is what landed. Cost: none. (d) `_LIVE_CONFIRM_KINDS` is the five-member set, written multi-line by `ruff format`. (e) `dedupe_key_for`'s docstring keeps its "twelve repeatable kinds" list and gains the plan's one sentence for the three value read-side kinds. Cost: wording. |
+| **Task 2** — the value process drains its kinds | done | `4c9b1ac` | `test_value_commands` + `test_value_fence` + `test_value_live` 71 passed; `py_compile scripts/run_value.py` silent; ruff clean; mypy 350 files clean. **11 new** (10 in `test_value_commands.py` + `test_the_value_entrypoint_drains_lazily`; `test_live_allows_read_kinds` is Task 8's, as the plan says) | 2026-11-04 | (a) `scripts/run_value.py` imports `import src.value.commands as vcmd`, not the plan's `from src.value import commands`: the fence's `ast` parser records the latter as `src.value`, outside the entrypoint allowlist. Cost: none. (b) `last_slow = time.monotonic() - poll`, not `0.0`: the monotonic clock's zero is undefined (boot time on macOS and Linux), so `0.0` could hold the first night/Claude/book tick back up to `poll_seconds` after a reboot. Cost: none. (c) `drain(rows, apply_fn, mark_fn)` takes 5-tuples `(id, kind, payload, requested_by, confirm_token)`, skips a row with a token (the filter moved in, as Step 1 asks), catches `ValueCommandFailed` and any exception (`handler_error`) itself, calls `mark_fn(id, result, reason, detail)` after `apply_fn` returns (value.db committed), and returns `DrainOutcome`s; `_drain_commands` builds the Telegram replies from them for `VALUE_ORDER_KINDS` requested by `telegram`. Cost: none. (d) `_trim` raised `not_built` until Task 3, as the plan says; `outcome_line` is the one-line Task 2 body. |
 
 *(Rows are added as each section and task lands; a ruling is any deviation from the task text, and why.)*
 
@@ -992,7 +993,7 @@ def _drain_commands() -> int:
   with `import time` added to the module's imports. Check `_book_tick`'s own `cycle_minutes` guard still bounds the RTH cycle
   (it does: it compares against the last cycle's time, line 122).
 
-- [ ] **Step 1: the failing tests** (append to `tests/test_value_commands.py`, eleven): `test_approve_needs_the_current_fingerprint`
+- [x] **Step 1: the failing tests** (append to `tests/test_value_commands.py`, eleven): `test_approve_needs_the_current_fingerprint`
   (a stale fingerprint → `stale_proposal`, the row stays `pending`); `test_approve_marks_who_decided` (`requested_by="telegram"`
   → `decided_by == "telegram"`, `status == "approved"`); `test_a_second_tap_is_a_no_op_answer` (second apply raises
   `already_approved`, `decided_at` unchanged); `test_reject_after_approve_is_refused`; `test_an_expired_proposal_expires`
@@ -1010,12 +1011,12 @@ def _drain_commands() -> int:
   `src.storage.app_commands` and `src.storage.db` are imported only inside a function body of `scripts/run_value.py`).
   Fixtures: `tests/test_value_live.py`'s value.db fixture pattern (an in-memory or `tmp_path` value.db through
   `value_session`), a proposal built with `book.propose(..., auto=False)`. **11 new.**
-- [ ] **Step 2: red.** `ModuleNotFoundError: No module named 'src.value.commands'`.
-- [ ] **Step 3: code** as above (with `drain` holding the loop; note that a `ValueCommandFailed` raised inside
+- [x] **Step 2: red.** `ModuleNotFoundError: No module named 'src.value.commands'`.
+- [x] **Step 3: code** as above (with `drain` holding the loop; note that a `ValueCommandFailed` raised inside
   `value_session()` rolls the value.db transaction back, so a refused tap changes nothing there — including
   `decide`'s own `expired` write, which `book.expire` repeats on the next cycle; `_drain_commands` only gathers rows, opens sessions and
   calls `drain`).
-- [ ] **Step 4: gates.** `python -m pytest tests/test_value_commands.py tests/test_value_fence.py tests/test_value_live.py -q`;
+- [x] **Step 4: gates.** `python -m pytest tests/test_value_commands.py tests/test_value_fence.py tests/test_value_live.py -q`;
   `python -m py_compile scripts/run_value.py` silent; ruff, `mypy src`. Commit
   `feat(value): the value process drains its own command kinds (spec 9.7)`.
 

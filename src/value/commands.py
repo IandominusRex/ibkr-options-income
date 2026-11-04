@@ -11,7 +11,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from src.common.value_commands import VALUE_ORDER_KINDS, proposal_fingerprint
-from src.value.book import decide
+from src.value.book import BookRefused, decide, trim_to_half
 from src.value.store import ValueProposalRow
 
 log = logging.getLogger(__name__)
@@ -79,7 +79,11 @@ def _reject(vs: Session, payload: dict, by: str, now: datetime) -> dict:
 
 @_register("value_trim")
 def _trim(vs: Session, payload: dict, by: str, now: datetime) -> dict:
-    raise ValueCommandFailed("not_built")  # Task 3 gives the trim its body
+    try:
+        created = trim_to_half(vs, episode=str(payload["episode"]), by=by, now=now)
+    except BookRefused as exc:
+        raise ValueCommandFailed(exc.reason) from exc
+    return {"episode": payload["episode"], "proposals": created}
 
 
 def outcome_line(kind: str, result: dict | None, reason: str | None) -> str:
