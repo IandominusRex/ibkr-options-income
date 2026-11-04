@@ -4,10 +4,15 @@ here; tests/test_value_fault_drills.py names all seven."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
 import pytest
+from sqlalchemy import select
 
 from src.common.books import attribute, is_value_order_ref, value_sell_cap
 from src.common.value_view import ValueHolding
+from src.ledger.contracts import stock_contract
 from tests.value_book_fixtures import order
 
 
@@ -32,6 +37,85 @@ def test_a_value_sell_never_uncovers_a_wheel_call() -> None:
     assert value_sell_cap(30, 120, 1) == 20  # the broker holds 20 fewer than the books say
     assert value_sell_cap(30, 100, 1) == 0
     assert is_value_order_ref("value:12") and not is_value_order_ref("CS:7")
+
+
+def _exec(qty: float, price: float, when: str, *, ref: str | None = None, exec_id: str):
+    from src.common.schemas import ParsedExecution
+
+    return ParsedExecution(
+        contract=stock_contract("GOOGL", "USD"),
+        trade_time=datetime.fromisoformat(when).replace(tzinfo=UTC),
+        quantity=qty,
+        price=price,
+        proceeds=-qty * price,
+        exec_id=exec_id,
+        account="U0000001",
+        source_kind="exec",
+        order_ref=ref,
+    )
+
+
+def test_an_order_ref_round_trips_live_flex_and_ingest(db) -> None:
+    """Spec §9.2: IBKR keeps orderRef on every execution; a value fill is tagged by it, never by
+    an order id (which collides across clientIds)."""
+    from xml.etree import ElementTree
+
+    from src.common.schemas import ParsedStatement
+    from src.ledger.flex import _flex_trade
+    from src.ledger.ingest import ingest
+    from src.ledger.live import fill_to_execution
+    from src.storage.models import BrokerExecutionRow
+    from src.storage.wheel_shares import wheel_shares
+
+    fill = SimpleNamespace(
+        contract=SimpleNamespace(secType="STK", symbol="GOOGL", currency="USD"),
+        execution=SimpleNamespace(
+            shares=30,
+            side="BOT",
+            time=datetime(2026, 11, 2, 15, 1, tzinfo=UTC),
+            price=150.0,
+            execId="v1",
+            permId=9,
+            orderId=7,
+            acctNumber="U0000001",
+            orderRef="value:7",
+        ),
+    )
+    live = fill_to_execution(fill)
+    assert live is not None and live.order_ref == "value:7"
+    el = ElementTree.fromstring(
+        '<Trade assetCategory="STK" symbol="GOOGL" currency="USD" quantity="30" '
+        'tradePrice="150" dateTime="20261102;100100" ibExecID="v1" orderReference="value:7" '
+        'accountId="U0000001"/>'
+    )
+    flex = _flex_trade(el)
+    assert flex is not None and flex.order_ref == "value:7"
+    wheel = [
+        _exec(100, 140.0, "2026-10-01T15:00:00", exec_id="w1"),  # an assignment at the strike
+        _exec(-20, 160.0, "2026-10-20T15:00:00", exec_id="w2"),
+    ]
+    ingest(ParsedStatement(account="U0000001", executions=[*wheel, live]), source="flex")
+    with db() as s:
+        books = {r.exec_id: r.book for r in s.scalars(select(BrokerExecutionRow))}
+    assert books == {"w1": "manual", "w2": "manual", "v1": "value"}
+    w = wheel_shares(["googl"])["GOOGL"]
+    assert w.shares == 80 and w.avg_cost == 140.0  # the value fill is not the wheel's
+
+
+def test_a_flex_only_fill_backfills_the_order_ref_and_retags(db) -> None:
+    """Drill: a fill that reached the ledger first without its orderRef is retagged when the
+    Flex row carrying it arrives."""
+    from src.common.schemas import ParsedStatement
+    from src.ledger.ingest import ingest
+    from src.storage.models import BrokerExecutionRow
+
+    bare = _exec(30, 150.0, "2026-11-02T15:01:00", exec_id="v1")
+    ingest(ParsedStatement(account="U0000001", executions=[bare]), source="csv")
+    tagged = bare.model_copy(update={"order_ref": "value:7"})
+    ingest(ParsedStatement(account="U0000001", executions=[tagged]), source="flex")
+    with db() as s:
+        row = s.scalars(select(BrokerExecutionRow)).one()
+        assert (row.book, row.order_ref) == ("value", "value:7")
 
 
 def test_a_split_corporate_action_restates_the_wheels_count() -> None:

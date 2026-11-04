@@ -1536,6 +1536,9 @@ class ParsedExecution(BaseModel):
     source_kind: LedgerSourceKind
     occurrence_idx: int = 0
     raw: dict[str, Any] = Field(default_factory=dict)
+    # The order's orderRef (live ``Execution.orderRef``; Flex ``orderReference``; an Activity CSV
+    # carries none). ``value:<id>`` marks a value-book fill (value book spec §9.2).
+    order_ref: str | None = None
 
 
 class ParsedCashEvent(BaseModel):

@@ -82,6 +82,7 @@ def fill_to_execution(fill: Any) -> ParsedExecution | None:
         account=ex.acctNumber or None,
         ibkr_realized_pnl=_value(getattr(rep, "realizedPNL", None)) if rep is not None else None,
         source_kind="exec",
+        order_ref=(getattr(ex, "orderRef", "") or "").strip() or None,
     )
 
 

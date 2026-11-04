@@ -206,6 +206,7 @@ def _flex_trade(el: ElementTree.Element) -> ParsedExecution | None:
         ibkr_realized_pnl=float(realized) if realized else None,
         source_kind="exec" if exec_id else "order",
         raw=dict(el.attrib),
+        order_ref=(el.get("orderReference") or "").strip() or None,
     )
 
 

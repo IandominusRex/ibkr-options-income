@@ -15,7 +15,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.common.books import is_spreads_underlying
+from src.common.books import is_spreads_underlying, is_value_order_ref
 from src.common.schemas import (
     LedgerImportResult,
     LedgerSource,
@@ -117,6 +117,10 @@ def _upsert_execution(
         if not row.codes and e.codes:
             row.codes = e.codes
             changed = True
+        if row.order_ref is None and e.order_ref:
+            row.order_ref = e.order_ref
+            changed = True
+            order_id_backfilled = True  # the book pass must see the new orderRef too
         return False, changed, order_id_backfilled, row.id
     c = e.contract
     new_row = BrokerExecutionRow(
@@ -146,6 +150,7 @@ def _upsert_execution(
         occurrence_idx=e.occurrence_idx,
         import_run_id=run_id,
         raw=e.raw,
+        order_ref=e.order_ref,
     )
     s.add(new_row)
     s.flush()
@@ -266,6 +271,20 @@ def _tag_spreads(s: Session, row_ids: set[int]) -> int:
     return tagged
 
 
+def _tag_value_book(s: Session, row_ids: set[int]) -> int:
+    """Tag ``book="value"`` on rows whose orderRef is the value book's (``value:<id>``, spec
+    §9.2). Runs before :func:`_tag_books`: order ids collide across clientIds, an orderRef does
+    not, so a value fill is never taken for a wheel one."""
+    if not row_ids:
+        return 0
+    tagged = 0
+    for r in s.scalars(select(BrokerExecutionRow).where(BrokerExecutionRow.id.in_(row_ids))):
+        if r.book != "value" and is_value_order_ref(r.order_ref):
+            r.book = "value"
+            tagged += 1
+    return tagged
+
+
 def _tag_books(s: Session, row_ids: set[int]) -> int:
     """Tag ``book="system"`` on rows in ``row_ids`` whose ``ib_order_id`` matches a known
     ``OrderRow`` (F17): rows inserted this run, and existing rows whose ``ib_order_id`` was
@@ -280,8 +299,8 @@ def _tag_books(s: Session, row_ids: set[int]) -> int:
         )
     )
     for r in rows:
-        if r.book == "spreads":
-            continue  # an order-id collision with a wheel order must never retag a spreads row
+        if r.book in ("spreads", "value"):
+            continue  # an order-id collision with a wheel order must never retag either
         for order in s.scalars(select(OrderRow).where(OrderRow.ib_order_id == r.ib_order_id)):
             snap = order.snapshot or {}
             if not snap or snap.get("underlying") == r.underlying:
@@ -408,6 +427,7 @@ def ingest(
             affected.add((e.contract.ident, et_date(e.trade_time)))
         counts["superseded"] = supersede_twins(s, affected)
         counts["spreads"] = _tag_spreads(s, touched_ids)
+        counts["value"] = _tag_value_book(s, touched_ids)
         counts["system"] = _tag_books(s, touched_ids)
         for c in statement.cash_events:
             counts[
@@ -431,6 +451,7 @@ def ingest(
             or any_backfill
             or bool(counts["system"])
             or bool(counts["spreads"])
+            or bool(counts["value"])
         )
 
         if source == "live" and not touched:

@@ -40,6 +40,8 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "snapshot": "JSON",
         "close_reason": "VARCHAR(16)",  # CloseReason on buy-to-close orders (2026-10-11)
     },
+    # The order's orderRef: "value:<id>" tags a value-book fill (value book Part 5, spec §9.2).
+    "broker_executions": {"order_ref": "VARCHAR(48)"},
     # risk_verdicts existed as an empty, unwired table long before anything wrote to it, so
     # deployed databases already have the original three-column shape. These are the columns
     # added when the assessment audit trail was turned on.
