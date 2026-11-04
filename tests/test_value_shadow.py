@@ -565,3 +565,83 @@ def test_an_entry_whose_legs_all_closed_on_a_fill_is_not_rebased_next_night(valu
         assert not list(
             s.scalars(select(ValueShadowEventRow).where(ValueShadowEventRow.kind == "rebase"))
         )
+
+
+def _ops(entries: dict[tuple[str, str], tuple[str, float]]):
+    from src.value.claude_valuation import ClaudeValue
+    from src.value.effective import ClaudeOpinion
+
+    return {
+        key: (ClaudeOpinion(verdict, fv, i), ClaudeValue(fv))
+        for i, (key, (verdict, fv)) in enumerate(entries.items())
+    }
+
+
+def test_the_claude_track_enters_on_the_effective_verdict(value_db) -> None:
+    """Spec §6.7, §6.8: the claude track enters trading names whose effective verdict, with
+    Claude's opinion applied, is READY; evidence names count toward the baseline only."""
+    dear = ready("DEAR", 45.0)  # Python: deep WAIT (ceiling 35.14), growth READY
+    ops = _ops(
+        {
+            ("DEAR", "deep_value"): ("READY", 70.0),  # 45 <= 70 x 0.75 = 52.50: READY
+            ("DEAR", "quality_growth"): ("NO", 80.0),  # Claude decides: no entry
+        }
+    )
+    tags = {"DEAR": "trading", "EVID": "evidence"}
+    with value_session() as s:
+        args = dict(live_policy="value", review_above_pct=60.0, now=NOW)
+        assert shadow.open_claude_signals(s, [dear, ready("EVID")], tags, {}, ops, **args) == 1
+        assert shadow.open_claude_signals(s, [dear], tags, {}, ops, **args) == 0  # blocked
+    with value_session() as s:
+        row = s.scalars(select(ValueShadowRow)).one()
+        assert (row.track, row.list_name, row.verdict) == ("claude", "deep_value", "READY")
+        assert row.fair_value == pytest.approx(46.853626592284414)  # Python's, for the exits
+        assert row.effective_fair_value == 70.0
+        assert row.margin_of_safety == pytest.approx((70.0 - 45.0) / 70.0)
+    assert _open([dear], tags={"DEAR": "trading"})["ready"] == 1  # the baseline: growth only
+
+
+def test_a_claude_track_leg_sells_half_at_claudes_fair_value_only(value_db) -> None:
+    """Spec §7: the half-sale reads the effective fair value; the close above Python's 46.85
+    sells nothing on its own (no re-mark), the close at Claude's 70 sells half."""
+    dear = ready("DEAR", 45.0)
+    ops = _ops({("DEAR", "deep_value"): ("READY", 70.0)})
+    with value_session() as s:
+        shadow.open_claude_signals(
+            s,
+            [dear],
+            {"DEAR": "trading"},
+            {},
+            ops,
+            live_policy="value",
+            review_above_pct=60.0,
+            now=NOW,
+        )
+    market = {"DEAR": bars([45.0, 46.0, 50.0, 71.0]), "SPY": bars([500.0] * 4)}
+    with value_session() as s:
+        shadow.fill_pending(s, market, CFG)
+    with value_session() as s:
+        shadow.step_legs(
+            s,
+            market,
+            {"DEAR": dear},
+            CFG,
+            as_of=SESSIONS[3],
+            claude_fv={("DEAR", "deep_value"): 70.0},
+        )
+    with value_session() as s:
+        halves = [
+            (e.policy, e.day) for e in s.scalars(select(ValueShadowEventRow)) if e.kind == "half"
+        ]
+    assert ("value", SESSIONS[3]) in halves and all(day == SESSIONS[3] for _, day in halves)
+
+
+def test_a_kill_trigger_near_firing_opens_a_reevaluation_tonight_only(value_db) -> None:
+    _entered()
+    market = {"STDY": bars([30.0, 31.0, 31.2, 31.1]), "SPY": bars([500.0] * 4)}
+    ctx = shadow.ReevalContext(kill={"STDY": ["gross_margin_below near (60.00 vs 56)"]})
+    with value_session() as s:
+        shadow.step_legs(s, market, {}, CFG, as_of=SESSIONS[3], context=ctx)
+    assert {r[2] for r in _reevaluations()} == {SESSIONS[3]}
+    assert _reevaluations()[0][4] == ["kill"]
+    assert all(not leg.pending for leg in _legs("main").values())  # it moves no level

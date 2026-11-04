@@ -119,6 +119,7 @@ is the executing agent's own model name.
 | B2 (Task 5) accepting a read: verdicts, opinions, effective verdict, breaker | done | `4cfca99` | red first (`ImportError: cannot import name 'claude_verdicts'`), then task gate: 26 passed (value_claude, value_fence); ruff check + format clean; mypy clean on `claude_verdicts.py`; 9 new tests | 2026-11-04 | No deviation; module and tests written whole as given. The pinned numbers (46.85 x 1.5, uncapped 106.19, 68.72) matched first time. Cost-if-wrong: per rulings 4, 5 and 8 (one function, one branch in `accept`, config numbers). |
 | B3 (Task 6) read queue, nightly wiring, process, operator CLI | done | `9034bfd` | red first (`ModuleNotFoundError: src.value.claude_reads`), then task gate: 62 passed (value_claude, value_fence, value_service, value_shadow); `py_compile` of `run_value.py` and `value_claude.py` silent; ruff check + format clean; mypy clean on 4 files; 4 new tests | 2026-11-04 | No deviation; edits to `service.py`, `run_value.py` and the fence test applied with Edit (same content). The existing nightly tests stayed green with the new effective-verdict block (no Claude rows, so Python's baseline is written and the breaker stays ok). `run_value.py` was never imported. Cost-if-wrong: reads inside the night would hold its transaction (ruling 19); otherwise config only. |
 | **Section B exit** | done | 3 task commits + this docs(plan) commit = 8 (`git log --oneline main..HEAD \| wc -l` printed 7 before it; plus the uncommitted-at-entry Section B entry row committed with Task 4) | **full gate: pytest 5352 passed, 1 skipped (baseline 5305 + 47)**; `ruff check .` clean; `mypy src` 335 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py scripts/value_claude.py` silent; `git status --short` clean | 2026-11-04 | New-test running total: 23 + 24 = 47 of 77 (Section B added 11 + 9 + 4 = 24). Section C target: baseline 5305 + 63 = 5368. |
+| C1 (Task 7) kill triggers, trigger 6 | done | `6c3e4b8` | red first (`ImportError: cannot import name 'update_kill_triggers'`; the plan expected `ModuleNotFoundError`, same cause), then task gate: 53 passed (kill_triggers, reevaluate, value_claude, value_fence); ruff check + format clean on the 5 touched files; mypy clean on 3 src files; 12 new tests (8 parametrized + 2 + 1 + 1 reevaluate) | 2026-11-04 | No deviation; `kill_triggers.py` written whole, the other edits applied with Edit (same content as the diff). The commit also carries the Section C entry row. Cost-if-wrong: per ruling 10, one predicate or one band. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -4628,7 +4629,7 @@ Steady Co's newest year: revenue grew 1600 / 1420 − 1 = 12.68%, gross margin 6
 `revenue_growth_below` at 15 has fired, at 12 is near (12.68 ≤ 12 + 1.2), at 5 is far (band 1
 point); `gross_margin_below` at 56 is near (60 ≤ 61.6).
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_kill_triggers.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_kill_triggers.py`:
 
 ```python
 """Claude's kill triggers, evaluated by Python (value book spec §8.4, §7.1 trigger 6)."""
@@ -4775,13 +4776,13 @@ index e70568a..581f84d 100644
 +    assert plan_actions(fired, DayBar(date=day, close=10.0, low=9.0), None, CFG) is None
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_kill_triggers.py tests/test_value_reevaluate.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value.kill_triggers'` and
   `TypeError: session_triggers() got an unexpected keyword argument 'kill'`.
 
-- [ ] **Step 3: The evaluation** — create `src/value/kill_triggers.py`:
+- [x] **Step 3: The evaluation** — create `src/value/kill_triggers.py`:
 
 ```python
 """Claude's kill-triggers, evaluated by Python (spec §8.4, §7.1 trigger 6). Pure: no I/O.
@@ -4883,7 +4884,7 @@ def check(
     return KillCheck(kind, threshold, actual, state)
 ```
 
-- [ ] **Step 4: Trigger 6 and the nightly update** — apply:
+- [x] **Step 4: Trigger 6 and the nightly update** — apply:
 
 ```diff
 diff --git a/src/value/claude_verdicts.py b/src/value/claude_verdicts.py
@@ -5002,12 +5003,12 @@ index 4a9ae0a..7105f42 100644
      if (day - last_reevaluation).days >= cfg.quiet_days:
 ```
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_kill_triggers.py tests/test_value_reevaluate.py tests/test_value_claude.py tests/test_value_fence.py`
   Expected: PASS.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the five touched files;
   `.venv/bin/mypy src/value/kill_triggers.py src/value/reevaluate.py src/value/claude_verdicts.py`.

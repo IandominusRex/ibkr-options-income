@@ -301,6 +301,7 @@ def run_nightly(
                 review_above_pct=review,
             )
             tripped = claude_verdicts.check_breaker(vs, vcfg, claude_night, started)
+            kill = claude_verdicts.update_kill_triggers(vs, cards, vcfg, plan.as_of)
             queued = plan_auto_reads(vs, started, vcfg) if vcfg.claude.enabled else {}
             stepped = reevaluate.regime_stepped(
                 previous_regime(vs), regime, vcfg.rules.reevaluation
@@ -320,6 +321,8 @@ def run_nightly(
                 earnings=recent_earnings,
                 news=news,
                 regime_stepped=stepped,
+                opinions=ops,
+                kill=kill,
             )
             verdicts = {
                 name: dict(Counter(c.verdict_for(name) for c in cards))

@@ -2,8 +2,14 @@
 fixed-horizon returns against SPY, and the ranked monthly record. Writes value.db only; reads
 research.db through the neutral read-only loader.
 
-Part 2 runs Python's **baseline** track alone; Part 4 adds Claude's track beside it. Nothing here
-can place, size or gate an order: every row is hypothetical.
+Two tracks (spec §6.8, §12): Python's **baseline** and, from Part 4, **claude**: the trading
+universe's names entered on the effective verdict with Claude's opinions applied (an Ollama
+verdict never is), whatever the breaker or the live switch say, so the record measures Claude's
+judgement for the go-live review. A Claude-track leg reads Claude's fair value (recomputed
+tonight) for its half-sale only; every exit that sends without a tap reads Python's (spec §7).
+Controls are entered on the baseline track only, and the claude track only while
+``value.claude.enabled`` is on. Nothing here can place, size or gate an order:
+every row is hypothetical.
 
 The rules this module applies (the plan's rulings say why):
 - a READY signal on the night of session D enters at the open of the next session after D;
@@ -45,6 +51,8 @@ from src.common.value_inputs import (
 )
 from src.common.value_types import DayBar, FilingEvent, NewsVolume
 from src.value import reevaluate
+from src.value.claude_valuation import ClaudeValue
+from src.value.effective import ClaudeOpinion, effective
 from src.value.exits import (
     POLICIES,
     DayFacts,
@@ -69,7 +77,9 @@ from src.value.store import (
 )
 
 BENCHMARK = "SPY"
-TRACK = "baseline"
+TRACK = BASELINE = "baseline"
+CLAUDE = "claude"
+Opinions = dict[tuple[str, str], tuple[ClaudeOpinion, ClaudeValue]]
 GRACE_SESSIONS = 5
 SHADOW_UNIVERSES = ("trading", "evidence")
 HELD = ("pending", "open", "rebase_needed")  # entries the record still carries
@@ -103,6 +113,7 @@ class ReevalContext:
     news: dict[str, NewsVolume] = field(default_factory=dict)
     regime_stepped: bool = False
     etf_for: dict[str, str] = field(default_factory=dict)  # symbol -> its sector ETF
+    kill: dict[str, list[str]] = field(default_factory=dict)  # trigger 6, tonight only
 
 
 def _actual(card: ValueScorecard, check_id: str) -> float | None:
@@ -121,16 +132,20 @@ def _missing_components(card: ValueScorecard, check_id: str) -> int:
 
 
 def day_facts(
-    card: ValueScorecard | None, list_name: str, going_concern: bool | None = None
+    card: ValueScorecard | None,
+    list_name: str,
+    going_concern: bool | None = None,
+    effective_fair_value: float | None = None,
 ) -> DayFacts | None:
-    """The night's Python numbers for one list (baseline track: effective = Python's)."""
+    """The night's Python numbers for one list. The effective fair value is Python's on the
+    baseline track and Claude's (recomputed tonight) on the claude track, when it has one."""
     if card is None:
         return None
     ev = card.lists.get(list_name)
     fv = ev.fair_value if ev is not None else None
     return DayFacts(
         python_fair_value=fv,
-        effective_fair_value=fv,
+        effective_fair_value=effective_fair_value if effective_fair_value is not None else fv,
         latest_accn=card.fingerprint.latest_accn,
         piotroski=_actual(card, "health.piotroski"),
         piotroski_missing=_missing_components(card, "health.piotroski"),
@@ -139,12 +154,14 @@ def day_facts(
     )
 
 
-def blocking_keys(vs: Session, live_policy: str) -> set[tuple[str, str, str]]:
-    """(kind, list, symbol) keys that may not enter again tonight."""
+def blocking_keys(
+    vs: Session, live_policy: str, track: str = BASELINE
+) -> set[tuple[str, str, str]]:
+    """(kind, list, symbol) keys of *track* that may not enter again tonight."""
     out: set[tuple[str, str, str]] = set()
     rows = vs.scalars(
         select(ValueShadowRow).where(
-            ValueShadowRow.track == TRACK,
+            ValueShadowRow.track == track,
             ValueShadowRow.status.in_(HELD),
         )
     )
@@ -172,10 +189,17 @@ def _entry(
     universe: str,
     atr14: float | None,
     now: datetime,
+    *,
+    track: str = BASELINE,
+    effective_fair_value: float | None = None,
+    margin_of_safety: float | None = None,
+    verdict: str | None = None,
 ) -> ValueShadowRow:
+    """A pending entry. On the claude track *verdict*, *effective_fair_value* and
+    *margin_of_safety* are the effective ones; ``fair_value`` is always Python's."""
     ev = card.lists[list_name]
     return ValueShadowRow(
-        track=TRACK,
+        track=track,
         kind=kind,
         list_name=list_name,
         symbol=card.symbol,
@@ -183,12 +207,14 @@ def _entry(
         signal_date=card.as_of,
         status="pending",
         status_detail="",
-        verdict=ev.verdict,
+        verdict=verdict or ev.verdict,
         signal_close=card.price,
         atr14=atr14,
         fair_value=ev.fair_value,
-        effective_fair_value=ev.fair_value,
-        margin_of_safety=ev.margin_of_safety,
+        effective_fair_value=effective_fair_value
+        if effective_fair_value is not None
+        else ev.fair_value,
+        margin_of_safety=margin_of_safety if margin_of_safety is not None else ev.margin_of_safety,
         required_mos_pct=ev.required_mos_pct,
         fv_accn=card.fingerprint.latest_accn,
         fingerprint_key=card.fingerprint.key(),
@@ -251,6 +277,52 @@ def open_signals(
             ):
                 add(card, name, "control_health")
     return counts
+
+
+def open_claude_signals(
+    vs: Session,
+    cards: list[ValueScorecard],
+    tags: dict[str, str],
+    atr: dict[str, float | None],
+    opinions: Opinions,
+    *,
+    live_policy: str,
+    review_above_pct: float,
+    now: datetime,
+) -> int:
+    """Tonight's claude-track READY signals: trading-universe names whose effective verdict,
+    with Claude's opinion applied, is READY (an unread name enters on Python's READY, as the
+    effective verdict would). Evidence-universe names count toward the baseline only (§12)."""
+    blocked = blocking_keys(vs, live_policy, CLAUDE)
+    opened = 0
+    for card in cards:
+        if tags.get(card.symbol) != "trading" or card.data_quality != "pass":
+            continue
+        for name in LISTS:
+            found = opinions.get((card.symbol, name))
+            eff = effective(
+                card, name, found[0] if found else None, review_above_pct=review_above_pct
+            )
+            key = ("ready", name, card.symbol)
+            if eff.verdict != "READY" or key in blocked or card.lists.get(name) is None:
+                continue
+            vs.add(
+                _entry(
+                    card,
+                    name,
+                    "ready",
+                    "trading",
+                    atr.get(card.symbol),
+                    now,
+                    track=CLAUDE,
+                    effective_fair_value=eff.fair_value,
+                    margin_of_safety=eff.margin_of_safety,
+                    verdict=eff.verdict,
+                )
+            )
+            blocked.add(key)
+            opened += 1
+    return opened
 
 
 def load_bars(rs: Session, symbols: set[str], as_of: date) -> dict[str, list[DayBar]]:
@@ -445,6 +517,7 @@ class _Reevaluator:
             regime_stepped=self.ctx.regime_stepped and tonight,
             last_reevaluation=self.last_day,
             cfg=self.cfg.rules.reevaluation,
+            kill=self.ctx.kill.get(sym) if tonight else None,
         )
 
     def record(
@@ -502,6 +575,7 @@ def step_legs(
     as_of: date | None = None,
     context: ReevalContext | None = None,
     now: datetime | None = None,
+    claude_fv: dict[tuple[str, str], float | None] | None = None,
 ) -> tuple[int, int]:
     """Run every open leg over the sessions it has not seen. Tonight's facts are read on the
     session dated *as_of* only (the name's newest bar when None, review M1). With a *context*,
@@ -533,6 +607,7 @@ def step_legs(
             card,
             row.list_name,
             None if context is None else context.going_concern.get(row.symbol),
+            (claude_fv or {}).get((row.symbol, row.list_name)) if row.track == CLAUDE else None,
         )
         states = {leg.id: LegState.model_validate_json(leg.state_json) for leg in legs}
         firsts = [leg.last_step for leg in legs]
@@ -758,11 +833,15 @@ def process(
     earnings: dict[str, list[date]] | None = None,
     news: dict[str, NewsVolume] | None = None,
     regime_stepped: bool = False,
+    opinions: Opinions | None = None,
+    kill: dict[str, list[str]] | None = None,
 ) -> ShadowSummary:
     """One night of the shadow record, in order: fill yesterday's signals, rebase what the
     provider rewrote, run the legs with §7.1's re-evaluations, mark the horizons, close what is
-    finished, open tonight's signals, then the ranked record. *earnings* (each name's recent
-    report dates) and *news* (trigger 5) are plain data from the value process."""
+    finished, open tonight's signals (both tracks), then the ranked record. *earnings* (each
+    name's recent report dates) and *news* (trigger 5) are plain data from the value process;
+    *opinions* are Claude's (Part 4: the claude track and its legs' fair values) and *kill* its
+    kill triggers near firing tonight (trigger 6)."""
     out = ShadowSummary()
     by_symbol = {c.symbol: c for c in cards}
     live = cfg.rules.exits.live_policy
@@ -792,15 +871,35 @@ def process(
         news=news or {},
         regime_stepped=regime_stepped,
         etf_for=etf_for,
+        kill=kill or {},
     )
+    ops = opinions or {}
     out.events, out.reevaluations = step_legs(
-        vs, market, by_symbol, cfg, as_of=as_of, context=context, now=now
+        vs,
+        market,
+        by_symbol,
+        cfg,
+        as_of=as_of,
+        context=context,
+        now=now,
+        claude_fv={k: v[1].fair_value for k, v in ops.items()},
     )
     out.marked = mark_horizons(vs, market)
     vs.flush()
     out.closed = close_finished(vs, as_of)
     vs.flush()
     out.opened = open_signals(vs, cards, tags, atr, live_policy=live, now=now)
+    if cfg.claude.enabled:  # no claude track while Claude is not reading: it would copy baseline
+        out.opened["claude"] = open_claude_signals(
+            vs,
+            cards,
+            tags,
+            atr,
+            ops,
+            live_policy=live,
+            review_above_pct=cfg.rules.margin_of_safety.review_above_pct,
+            now=now,
+        )
     out.ranked_formed, out.ranked_closed = run_ranked(
         vs, rs, cards, evidence, as_of=as_of, version=version, digest=digest
     )
