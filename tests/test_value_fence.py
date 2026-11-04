@@ -174,6 +174,11 @@ def test_the_trading_path_never_imports_the_value_book() -> None:
     assert offenders == []
 
 
+def test_value_commands_is_stdlib_only() -> None:
+    mods = imported_modules(ROOT / "src" / "common" / "value_commands.py")
+    assert {m.split(".")[0] for m in mods} <= {"__future__", "hashlib", "re", "datetime", "typing"}
+
+
 def test_research_reaches_the_value_book_only_through_the_keep_fresh_file() -> None:
     """Review I4: the research sweep keeps held names fresh from a plain file. It imports no
     ``src.value`` and no ``value.db`` code, and ``src/value/`` opens no research store."""

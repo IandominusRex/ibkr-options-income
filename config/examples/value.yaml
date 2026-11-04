@@ -289,3 +289,10 @@ book:                        # Stage 3, paper only (spec §9, revision 4): no ca
     request_ttl_hours: 30.0
     cooldown_days: 3
     max_spread_pct: 25.0
+telegram:                      # Part 6: the value process's taps and digest
+  commands_poll_seconds: 15    # how often the value process drains value_* commands
+  digest_enabled: true         # one message a night to TELEGRAM_THREAD_VALUE
+  no_progress_months: 9        # review card: held this long with no progress
+  fv_drop_pct: 10              # review card: fair value down this much while the price is not
+prompt_note:
+  enabled: true                # the VALUE NOTE in the wheel's review prompts (reduce-only reach)

@@ -40,6 +40,12 @@ class CommandKind(StrEnum):
     LEDGER_ANNOTATE = "ledger_annotate"
     LEDGER_CA_REVIEWED = "ledger_ca_reviewed"
     NEWS_BRIEF = "news_brief"
+    VALUE_APPROVE = "value_approve"
+    VALUE_REJECT = "value_reject"
+    VALUE_TRIM = "value_trim"
+    VALUE_SNAPSHOT = "value_snapshot"
+    VALUE_ANALYSE = "value_analyse"
+    VALUE_REFRESH = "value_refresh"
 
 
 # --- Payloads ---------------------------------------------------------------
@@ -59,6 +65,7 @@ class PromotePayload(BaseModel):
     strategy: Literal["covered_call", "cash_secured_put"]
     strike: float
     expiry: date
+    value_put: bool = False
 
 
 class RollRequestPayload(BaseModel):
@@ -169,6 +176,35 @@ class NewsBriefPayload(BaseModel):
     symbol: str = Field(pattern=r"^\$?[A-Za-z][A-Za-z0-9.\-]{0,9}$")
 
 
+_SYMBOL = r"^\$?[A-Za-z][A-Za-z0-9.\-]{0,9}$"
+
+
+class ValueDecisionPayload(BaseModel):
+    """A tap on a value proposal (spec §9.7). The value process re-gates and sends; this decides nothing else."""
+
+    model_config = ConfigDict(extra="forbid")
+    proposal_id: int = Field(ge=1)
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{10}$")
+
+
+class ValueTrimPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    episode: str = Field(pattern=r"^[0-9a-f]{10}$")
+
+
+class ValueSymbolPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(pattern=_SYMBOL)
+
+
+class ValueSnapshotPayload(BaseModel):
+    """Spec §6.9: the API showed this name's file; ``fingerprint`` is the input set it used (empty: stored)."""
+
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(pattern=_SYMBOL)
+    fingerprint: dict = Field(default_factory=dict)
+
+
 PAYLOAD_FOR: dict[CommandKind, type[BaseModel]] = {
     CommandKind.APPROVE: ApprovePayload,
     CommandKind.REJECT: RejectPayload,
@@ -186,6 +222,12 @@ PAYLOAD_FOR: dict[CommandKind, type[BaseModel]] = {
     CommandKind.LEDGER_ANNOTATE: LedgerAnnotatePayload,
     CommandKind.LEDGER_CA_REVIEWED: LedgerCaReviewedPayload,
     CommandKind.NEWS_BRIEF: NewsBriefPayload,
+    CommandKind.VALUE_APPROVE: ValueDecisionPayload,
+    CommandKind.VALUE_REJECT: ValueDecisionPayload,
+    CommandKind.VALUE_TRIM: ValueTrimPayload,
+    CommandKind.VALUE_SNAPSHOT: ValueSnapshotPayload,
+    CommandKind.VALUE_ANALYSE: ValueSymbolPayload,
+    CommandKind.VALUE_REFRESH: ValueSymbolPayload,
 }
 
 
@@ -216,7 +258,8 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     by row) and annotations are last-write-wins (``src.ledger.annotations.annotate``
     overwrites only the fields sent), so a dedupe key would only ever reject a second,
     possibly different, legitimate request. ``news_brief`` is repeatable — the news process
-    dedupes a symbol within ``news.briefs.dedupe_minutes``.
+    dedupes a symbol within ``news.briefs.dedupe_minutes``. The value read-side kinds are
+    repeatable: the value process dedupes its read queue.
     """
     if kind in (
         CommandKind.HALT,
@@ -231,6 +274,9 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
         CommandKind.LEDGER_ANNOTATE,
         CommandKind.LEDGER_CA_REVIEWED,
         CommandKind.NEWS_BRIEF,
+        CommandKind.VALUE_SNAPSHOT,
+        CommandKind.VALUE_ANALYSE,
+        CommandKind.VALUE_REFRESH,
     ):
         return None
     if kind in (CommandKind.APPROVE, CommandKind.REJECT):
@@ -242,6 +288,12 @@ def dedupe_key_for(kind: CommandKind, payload: BaseModel) -> str | None:
     if kind == CommandKind.ROLL_REQUEST:
         assert isinstance(payload, RollRequestPayload)
         return f"{kind.value}:{payload.position_symbol}"
+    if kind in (CommandKind.VALUE_APPROVE, CommandKind.VALUE_REJECT):
+        assert isinstance(payload, ValueDecisionPayload)
+        return f"{kind.value}:{payload.proposal_id}"
+    if kind == CommandKind.VALUE_TRIM:
+        assert isinstance(payload, ValueTrimPayload)
+        return f"{kind.value}:{payload.episode}"
     return None
 
 

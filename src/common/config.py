@@ -1775,6 +1775,31 @@ class ValueServiceCfg(_ValueModel):
         return self
 
 
+class ValueTelegramCfg(_ValueModel):
+    """Part 6: the value process's command poll and its nightly digest (rulings 7, 13)."""
+
+    commands_poll_seconds: int = 15
+    digest_enabled: bool = True
+    no_progress_months: int = (
+        9  # a review card: held this long, never past entry + 10% of the way to fair value
+    )
+    fv_drop_pct: float = (
+        10.0  # a review card: fair value down this much since entry while the price is not
+    )
+
+    @model_validator(mode="after")
+    def _sane(self) -> ValueTelegramCfg:
+        if not 5 <= self.commands_poll_seconds <= 300:
+            raise ValueError("value telegram.commands_poll_seconds must be 5-300")
+        return self
+
+
+class ValuePromptNoteCfg(_ValueModel):
+    """Part 6, ruling 9: the VALUE NOTE in the wheel's trade review, roll review and /scan NAME."""
+
+    enabled: bool = True
+
+
 class ValueClaudeModelsCfg(_ValueModel):
     """Spec §8.5: a model per call kind; "" = ``claude.model``. A cheaper model takes a kind only
     after it passes the blinded claim-level audit, recorded in STATUS.md."""
@@ -1941,6 +1966,8 @@ class ValueCfg(_ValueModel):
     rules: ValueRulesCfg = Field(default_factory=ValueRulesCfg)
     claude: ValueClaudeCfg = Field(default_factory=ValueClaudeCfg)
     book: ValueBookCfg = Field(default_factory=ValueBookCfg)
+    telegram: ValueTelegramCfg = Field(default_factory=ValueTelegramCfg)
+    prompt_note: ValuePromptNoteCfg = Field(default_factory=ValuePromptNoteCfg)
 
 
 class _KeyedCfg(BaseModel):

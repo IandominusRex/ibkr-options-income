@@ -41,8 +41,16 @@ router = APIRouter(prefix="/commands", tags=["commands"])
 # (halting when you did not mean to costs missed premium; failing to halt when you
 # meant to can cost a great deal more). Pinned by tests in tests/test_command_schemas.py
 # and tests/test_write_path_invariants.py::test_control_kinds_never_require_live_confirmation.
+# `value_approve` and `value_trim` reach an order through the value process (an approved buy may
+# release wheel capital), so they confirm in live too, though the value process refuses live.
 _LIVE_CONFIRM_KINDS: frozenset[CommandKind] = frozenset(
-    {CommandKind.APPROVE, CommandKind.PROMOTE, CommandKind.ROLL_REQUEST}
+    {
+        CommandKind.APPROVE,
+        CommandKind.PROMOTE,
+        CommandKind.ROLL_REQUEST,
+        CommandKind.VALUE_APPROVE,
+        CommandKind.VALUE_TRIM,
+    }
 )
 
 # Spec §5.2: exactly these three stages are a ranking decision the operator may

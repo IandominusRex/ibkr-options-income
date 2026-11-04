@@ -11,7 +11,9 @@ Design points that are not negotiable (see M1-write-foundation.md Task 1.5):
 1. ``drain_once`` never raises. A handler that throws marks its own command ``failed``
    with the exception text and the loop continues to the next one.
 2. An unknown kind is ``failed``, not skipped — a command sitting ``pending`` forever
-   is the failure mode the operator cannot see.
+   is the failure mode the operator cannot see. The value kinds
+   (``src/common/value_commands.VALUE_KINDS``) are never read here: the value process
+   drains them (spec §9.7); the TTL sweep still expires one it never picked up.
 3. A command with an outstanding ``confirm_token`` is **skipped**, not failed — it is
    waiting for a human, which is not an error. Skipping does not count toward the
    return value.
@@ -35,6 +37,7 @@ from sqlalchemy import select
 
 from src.common.books import is_spreads_underlying
 from src.common.config import get_config
+from src.common.value_commands import VALUE_KINDS
 from src.ibkr.portfolio import get_account_snapshot_async, get_positions
 from src.storage.app_commands import (
     expire_stale_commands,
@@ -102,7 +105,7 @@ async def drain_once(ib: IB | None, bot: Any, chat_id: str) -> int:
             log.info("command drain: expired %d stale command(s)", expired)
 
         # 2. Read pending commands (after expiry, so expired ones are not processed).
-        commands = pending_commands(s)
+        commands = pending_commands(s, exclude_kinds=VALUE_KINDS)
         s.commit()  # release the read lock before processing
 
     processed = 0

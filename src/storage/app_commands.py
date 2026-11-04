@@ -65,18 +65,21 @@ def enqueue_command(
     return row, True
 
 
-def pending_commands(session: Session, *, limit: int = 50) -> list[AppCommandRow]:
-    """All commands still awaiting application, oldest first."""
-    return list(
-        session.execute(
-            select(AppCommandRow)
-            .where(AppCommandRow.status == "pending")
-            .order_by(AppCommandRow.id)
-            .limit(limit)
-        )
-        .scalars()
-        .all()
-    )
+def pending_commands(
+    session: Session,
+    *,
+    limit: int = 50,
+    exclude_kinds: frozenset[str] | None = None,
+    only_kinds: frozenset[str] | None = None,
+) -> list[AppCommandRow]:
+    """All commands still awaiting application, oldest first. ``exclude_kinds``: the trading drain leaves the
+    value kinds for the value process (spec §9.7); ``only_kinds``: what the value process claims."""
+    q = select(AppCommandRow).where(AppCommandRow.status == "pending")
+    if exclude_kinds:
+        q = q.where(AppCommandRow.kind.not_in(sorted(exclude_kinds)))
+    if only_kinds:
+        q = q.where(AppCommandRow.kind.in_(sorted(only_kinds)))
+    return list(session.execute(q.order_by(AppCommandRow.id).limit(limit)).scalars().all())
 
 
 def mark_applied(session: Session, command_id: int, result: dict) -> None:

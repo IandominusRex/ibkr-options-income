@@ -21,7 +21,7 @@ means:
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/set_roll_mode/set_income_target/refresh/universe_add/universe_remove/news_brief — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, and a `universe_add` of a spreads-book underlying (SPY/SPX/XSP) is `422` `reserved_for_spreads_book`, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
+| `POST` | `/commands` | owner | Enqueue an intent. `201` if new, `200` if dedupe returned the existing row (kinds with no dedupe key — halt/resume/set_autonomy/set_roll_mode/set_income_target/refresh/universe_add/universe_remove/news_brief/value_snapshot/value_analyse/value_refresh — always get `201`). For `kind: "universe_add"`/`"universe_remove"` specifically, an unknown `symbol` (not in the research symbol directory) is `404` here too, and a `universe_add` of a spreads-book underlying (SPY/SPX/XSP) is `422` `reserved_for_spreads_book`, before a command row can exist — the same check `POST`/`DELETE /universe/{list_name}/{symbol}` already do, closing a path that would otherwise let this generic route bypass those thin wrappers' validation. |
 | `GET` | `/commands/{id}` | owner | Read one command's status (through the read-only engine). `404` if unknown. |
 | `POST` | `/commands/{id}/confirm` | owner | Supply the `confirm_token` for a live-mode order-reaching intent. `204` on success. `403` on a wrong or missing token (the token is NOT cleared). `409` when the command is not awaiting confirmation. |
 | `POST` | `/universe/{list_name}/{symbol}` | owner | Thin wrapper: creates a `universe_add` intent. `422` if `list_name` is not `would_own`/`watchlist`. `404` if `symbol` is not a known SEC filer. `422` (`reserved_for_spreads_book`) for a spreads-book underlying (SPY/SPX/XSP). Response is the same `CommandStatus` shape as `POST /commands`. See `docs/web/api.md` and the `universe_add` section below. |
@@ -116,7 +116,9 @@ is issued, steps 2-4 do not happen, and the drain applies normally.
 
 ### `promote` — promote an assessed contract to the approval queue
 
-- **Payload:** `{ candidate_id: str, symbol: str, strategy: str, strike: float, expiry: date }`
+- **Payload:** `{ candidate_id: str, symbol: str, strategy: str, strike: float, expiry: date, value_put: bool = false }`
+  — `value_put` (value book Part 5, declared in the schema since Part 6 ruling 8) marks a value-suggested
+  put; the drain checks its strike against the value book's ceiling (`above_value_ceiling` below).
 - **Dedupe key:** `promote:{candidate_id}`, scoped to `status == "pending"` rows only (fixed
   2026-09-11 — see STATUS.md's former "Remaining known issues" entry). `candidate_id` is stable
   across rescans, so a global dedupe key used to permanently block a fresh promote of the same
@@ -547,13 +549,49 @@ strike or expiry would rank on a fresh chain.
 
 ---
 
+## The value book's kinds (value book Part 6, spec §9.7)
+
+**Drained by the value process (`scripts/run_value.py`), not by `approval_service`.** The six
+`value_*` kinds are listed in `src/common/value_commands.VALUE_KINDS` (standard library only, so the
+API, `approval_service` and the value process share it without importing each other).
+`command_drain.drain_once` reads pending commands **excluding** these kinds, so they are never failed
+as `unknown_kind`; its TTL sweep (`approval.ttl_minutes`) still expires one the value process never
+picked up. The value process claims them every `value.telegram.commands_poll_seconds` (15 s), applies
+each inside `data/value.db` through `src/value/commands.py` (value.db commits first, then the command is
+marked; a crash between the two re-runs an idempotent handler, which answers `already_<status>`), and
+marks it applied or failed. A command with an outstanding live `confirm_token` is skipped, as in the
+trading drain. Telegram's value buttons (`vbook:` callback data) enqueue the same kinds with
+`requested_by: "telegram"`; the value process posts the outcome to `TELEGRAM_THREAD_VALUE`.
+
+| Kind | Sent by | Payload | Dedupe key | Live mode | Result | Failure reasons |
+|---|---|---|---|---|---|---|
+| `value_approve` | web, Telegram | `{ proposal_id: int >= 1, fingerprint: str }` (10 hex, `value_commands.proposal_fingerprint`), extra keys refused | `value_approve:{proposal_id}` | `needs_confirmation = true`; the value process then refuses it (`not_paper`) | `{proposal_id, decision: "approved", symbol, kind}` | `no_such_proposal`, `stale_proposal` (the fingerprint no longer matches the row: an old card), `already_<status>` (a second tap is a no-op answer, never a second decision), `expired`, `not_paper` |
+| `value_reject` | web, Telegram | as `value_approve` | `value_reject:{proposal_id}` | no confirmation; refused (`not_paper`) | `{proposal_id, decision: "rejected", symbol, kind}` | as `value_approve` |
+| `value_trim` | Telegram (the drawdown trim card) | `{ episode: str }` (10 hex, `value_commands.trim_episode`) | `value_trim:{episode}` | `needs_confirmation = true`; refused (`not_paper`) | `{episode, proposals: [id, ...]}`: one approved half-size sell per filled position | `no_trim_offered`, `stale_proposal` (the episode was reset), `already_trimmed`, `not_paper` |
+| `value_snapshot` | web (a ticker file shown) | `{ symbol: str, fingerprint: object }` (empty: the stored file) | none (repeatable) | no confirmation; allowed in live (read side) | handler lands in Part 6 Task 8 | `invalid_symbol` |
+| `value_analyse` | web, Telegram (`/value NAME analyse`) | `{ symbol: str }` | none (repeatable) | no confirmation; allowed in live | handler lands in Part 6 Task 8 | `claude_off` (`value.claude.enabled` is false), `invalid_symbol` |
+| `value_refresh` | web, Telegram (`/value NAME`) | `{ symbol: str }` | none (repeatable) | no confirmation; allowed in live | handler lands in Part 6 Task 8 | `invalid_symbol` |
+
+Every kind may also fail `handler_error` (an exception in the handler, with its text) or `unknown_kind`
+(a kind the value process has no handler for yet).
+
+**What an approval does, and may cause.** Approving changes the proposal row only: the value process's
+next RTH cycle (`value.book.cycle_minutes`) re-gates the buy or sale on a fresh quote at send time
+(`src/value/risk.py::validate`) and only clientId 31 sends. **A `value_approve` of a buy may cause
+capital-release closes of wheel cash-secured puts without another tap** (value book Part 5 ruling 7: a
+release inherits its buy's approval). Each close is gated by `risk_engine.validate_release` at decision
+and send time and never pays more than the entry credit less the required profit. The trim's sells are
+re-gated at send time and capped by the sell cap, like any other value sale.
+
+---
+
 ## The drain loop
 
 The drain runs inside `approval_service` (the process that holds the exec connection).
 Every `interval` seconds it:
 
 1. Expires stale commands past their TTL (`approval.ttl_minutes`).
-2. Reads all `pending` commands.
+2. Reads all `pending` commands, except the value book's kinds (the value process drains those; see above).
 3. For each: if a `confirm_token` is outstanding, **skips** it (not an error — it's
    waiting for a human). Otherwise calls the registered handler.
 4. A handler that throws marks **its own** command `failed` and the loop continues —
