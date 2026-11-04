@@ -166,6 +166,7 @@ with the most specific reason available:
 | The contract no longer prices | `contract_not_priced` | how many contracts were priced |
 | The Rules Engine now rejects it | `gate_rejected` | the verdict's `reasons` list, verbatim |
 | It priced but scored below the floor | `score_below_minimum` | the score and the threshold |
+| A value-suggested put (`value_put: true`, value book Part 5) is struck above the value book's ceiling, or the name has none | `above_value_ceiling` | the strike and the ceiling (`null` when none) |
 
 `chain_unavailable` is deliberately one reason covering two internal causes: a chain-fetch
 failure and an analytics/account-fetch failure both mean the same thing to the operator — there

@@ -652,3 +652,24 @@ async def test_a_score_floor_staged_promote_succeeds_despite_the_low_score(
     approval_id = drain_env.result(cid)["approval_id"]
     assert approval_id is not None
     assert drain_env.approval_status(approval_id) == ApprovalStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_a_value_put_above_the_value_ceiling_is_refused(
+    drain_env, fake_chain, monkeypatch
+) -> None:
+    """Value book §9.1: a value-suggested promote re-reads the strike ceiling at drain time; it
+    can only narrow what the wheel would send (the gate still runs for any strike under it)."""
+    from src.notify.command_drain import drain_once
+
+    monkeypatch.setattr("src.common.value_view.put_ceiling", lambda symbol: 170.0)
+    drain_env.seed_assessed("c1", stage="top_n", symbol="NVDA", strike=180.0)
+    fake_chain.will_price("NVDA", strike=180.0, gate="pass")
+    cid = drain_env.enqueue("promote", {**_payload(), "value_put": True})
+
+    await drain_once(drain_env.ib, drain_env.bot, "chat")
+
+    assert drain_env.status(cid) == "failed"
+    result = drain_env.result(cid)
+    assert result["reason"] == "above_value_ceiling"
+    assert result["detail"] == {"strike": 180.0, "ceiling": 170.0}

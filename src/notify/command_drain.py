@@ -319,6 +319,16 @@ async def _promote(*, command: Any, ib: Any, bot: Any, chat_id: str, **_: Any) -
     if match is None:
         raise CommandFailed("contract_not_priced", {"priced_count": len(priced.quotes)})
 
+    if command.payload.get("value_put"):
+        # Value book §9.1: a value-suggested put may not be struck above the price worth paying,
+        # read now through the read-only value view (no value book code is imported). Part 6's
+        # strip sets the flag (and adds it to the API model); it can only narrow what is sent.
+        from src.common.value_view import put_ceiling
+
+        ceiling = put_ceiling(payload.symbol)
+        if ceiling is None or match.strike > ceiling:
+            raise CommandFailed("above_value_ceiling", {"strike": match.strike, "ceiling": ceiling})
+
     verdict = priced.verdict_map.get(match.candidate_id)
     if verdict is None or verdict.verdict.value != "pass":
         reasons = list(verdict.reasons) if verdict is not None else []

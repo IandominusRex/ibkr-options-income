@@ -125,6 +125,7 @@ is the executing agent's own model name.
 | Section B entry | checks B1–B2 passed | 4 commits on branch | pytest 5405 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 340 files | 2026-11-04 | B1: operator approval of E1–E3 and E5–E7 and of ruling 7's default recorded in the Section A entry row (2026-11-04). B2: all fourteen greps matched at the quoted line numbers. Section B exit target: baseline 5393 + 23 = 5416 passed, 1 skipped (cumulative: 12 from Section A + 7 + 3 + 1 in Section B) |
 | Section A exit | done | `2c762d5`, `324fca4`, `f928237` + this docs(plan) commit | **full gate: pytest 5405 passed, 1 skipped (baseline 5393 + 12)**; `ruff check .` clean; `mypy src` 340 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff (`src/orchestrator src/monitor src/spreads src/api src/news src/claude src/reporting src/research src/value_ai`, and `web`) empty | 2026-11-04 | `git diff --stat main...HEAD` touches only config/examples, .env.example, src/common, src/storage/wheel_shares.py, src/value/store.py, tests and the plan. Section B needs the operator's go-ahead |
 | Task 4 - the Rules Engine counts the value book; the release gate | done | `f79efbd` (also commits the Section B entry row) | tests/test_value_capital_release.py 7 passed (+7); with test_engine, test_capital, test_config_keys, test_regime_sizing_integration, test_scale_in_gate, test_cc_breakout 239 passed; regime/value/eval/spreads/web fences + test_value_view/attribution 84 passed; sizer/promote/profit-take suites (test_account_sizing, test_regime_limits, test_strategies, test_profit_take_schedule, test_promote_guard, test_promote_pipeline, test_drain_promote) 142 passed; ruff check/format and mypy on the 4 touched src files clean | 2026-11-04 | No deviation: the plan's diff applied cleanly at the B2 line numbers. Red run: collection `ImportError: cannot import name 'ReleaseCandidate'`. With the book off `value_exposure()` is I/O-free and returns claim 0, no names, nothing frozen, so `resolve_caps`, `seed_budgets` and every gate branch are byte-for-byte the old behaviour (`test_with_the_book_off_the_wheel_is_unchanged`, and every existing engine/sizer suite green unchanged). `regime_limits.py` now imports `src.common.books` (it already imported `src.common.config`); `tests/test_regime_fence.py` stays green, since books/value_view import no enrichment (cost if wrong: none) |
+| Task 5 - the capital-release runner | done | `2c0e6b9` | tests/test_value_capital_release.py 10 passed (+3); with test_openapi_current, test_position_manager, test_close_fill_recovery 26 passed; ruff check/format and mypy on the 4 touched src files clean; `docs/web/openapi.json` +2/-1 (the enum gains `capital_release`), `web/lib/api-types.ts` one line | 2026-11-04 | **Step 0:** da-vinci invoked; sync check `OK 23`; `web/DESIGN.md` ratified; the change is one generated OpenAPI type line, no surface, so no DESIGN.md change and no finish step; npm/next never run. Red run: `ImportError: cannot import name 'capital_release'` / `ModuleNotFoundError`. **Three deviations:** (1) **test clock**: `test_the_runner_closes_after_a_second_gate_on_a_fresh_quote` as written failed `0 == 1` because the fixture's request expires at `NOW + 30h` = 2026-11-03 21:00, already past on the wall clock (the plan was written 2026-10-30); the test now pins `cr.read_book` to `read_book(NOW)`, test-only, no product change (cost if wrong: none; **Sections C-E: any test that reads `value_view.read_book()` or compares `expires_at` against the wall clock with the fixtures' `NOW` will hit the same thing**). (2) **a guard the plan's runner lacked**: `validate_release` gates each close alone against the day's caps, so a two-close set whose second close would cross `max_closes_per_day` or `max_release_pct_per_day` would be chosen, the first close sent and the second refused at send time, a partial release that ruling 3 forbids. `_service` now caps `max_closes_per_request` at the closes left today and starts no set whose total would pass today's notional cap (it only ever closes less; the guard has no test of its own, since the section's test count is fixed at +3; cost if wrong: one condition). (3) the module docstring said "ruling 15" for the approval inheritance; it is this plan's ruling 7. **For the whole-branch review (not changed here):** `_service` subtracts today's filled release closes from `needed_usd`, while Section C's `_fund` recomputes `needed_usd` from a fresh snapshot each cycle, so after a release that did not fully cover (a send-time refusal) the freed collateral is counted twice and the request can stall until it lapses (errs toward closing less) |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -2248,9 +2249,9 @@ index cc33311..2082cfb 100644
 net_liq_fn=None, close=close_short_position) -> int`; `day_counts(orders)`,
 `request_progress(orders, request_id)`.
 
-- [ ] **Step 0: `web/` rule.** Invoke the `da-vinci` skill (the operator's rule for any `web/`
+- [x] **Step 0: `web/` rule.** Invoke the `da-vinci` skill (the operator's rule for any `web/`
   change) and record that the change is one generated type line, no UI. Never run `npm` or `next`.
-- [ ] **Step 1: Write the failing tests** — apply:
+- [x] **Step 1: Write the failing tests** — apply:
 
 ```diff
 diff --git a/tests/test_value_capital_release.py b/tests/test_value_capital_release.py
@@ -2371,8 +2372,8 @@ index ce5b444..17b1bc6 100644
 +    assert day_counts(rows) == (2, 10_000.0)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.execution.capital_release'`.
-- [ ] **Step 3: The enum, the close note, the hook** — apply:
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.execution.capital_release'`.
+- [x] **Step 3: The enum, the close note, the hook** — apply:
 
 ```diff
 diff --git a/src/common/schemas.py b/src/common/schemas.py
@@ -2447,7 +2448,7 @@ index 630e5ff..9b6f3d4 100644
              /** Id */
 ```
 
-- [ ] **Step 4: The runner** — create `src/execution/capital_release.py`:
+- [x] **Step 4: The runner** — create `src/execution/capital_release.py`:
 
 ```python
 """Capital release (value book spec revision 4, operator decision 2026-10-30).
@@ -2674,15 +2675,15 @@ async def _service(
     return sent
 ```
 
-- [ ] **Step 5: The OpenAPI document** (it exposes `CloseReason`) — regenerate from the worktree root:
+- [x] **Step 5: The OpenAPI document** (it exposes `CloseReason`) — regenerate from the worktree root:
 
   ```bash
   .venv/bin/python -c "import json; from src.api.main import create_app; print(json.dumps(create_app().openapi(), indent=2))" > docs/web/openapi.json
   ```
 
   `git diff --stat docs/web/openapi.json` shows a 3-line change (the enum gains `capital_release`).
-- [ ] **Step 6: Run them to see them pass** — `tests/test_value_capital_release.py tests/test_openapi_current.py tests/test_position_manager.py tests/test_close_fill_recovery.py`.
-- [ ] **Step 7: Gates and commit:**
+- [x] **Step 6: Run them to see them pass** — `tests/test_value_capital_release.py tests/test_openapi_current.py tests/test_position_manager.py tests/test_close_fill_recovery.py`.
+- [x] **Step 7: Gates and commit:**
 
   ```bash
   git add src/execution/capital_release.py src/common/schemas.py src/execution/position_manager.py src/notify/approval_service.py docs/web/openapi.json web/lib/api-types.ts tests/test_value_capital_release.py
