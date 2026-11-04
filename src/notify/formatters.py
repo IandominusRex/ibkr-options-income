@@ -726,6 +726,21 @@ _REJECT_REASON_LABELS: dict[str, str] = {
     "live_greeks_required": "live mode requires IBKR-sourced greeks, unavailable at order time",
     "live_delta_out_of_range": "delta drifted outside target band between approval and order time",
     "live_premium_collapse": "live mid collapsed well below the approved premium (price moved against the trade)",
+    # Value book codes (Part 5/6): the wheel and the value book share one account and one book of
+    # shares; a capital-release close is a wheel put bought back to fund a value buy.
+    "reserved_for_spreads_book": "this underlying belongs to the spreads book",
+    "book_attribution_mismatch": "the value book's share count for this name is under review",
+    "value_book_unreadable": "the value book could not be read, so new puts wait",
+    "gross_notional_cap": "would pass the account's gross exposure cap (both books)",
+    "combined_name_cap": "this name across the wheel and the value book would pass its cap",
+    "above_value_ceiling": "strike above the value book's price worth paying",
+    "release_not_paper": "closing a put to fund a value buy is paper only",
+    "release_not_csp": "only a cash-secured put can be closed to free cash",
+    "release_no_quote": "no live quote to price a close that frees cash",
+    "release_spread_too_wide": "bid/ask too wide to close this put for cash",
+    "release_at_loss": "closing this put to free cash would lose money",
+    "release_daily_cap": "today's limit on puts closed to free cash is used up",
+    "release_daily_notional": "today's limit on cash freed by closing puts is used up",
 }
 
 
