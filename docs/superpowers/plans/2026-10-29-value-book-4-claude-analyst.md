@@ -109,6 +109,7 @@ is the executing agent's own model name.
 | Section / task | Status | Commits | Gate | Date | Rulings |
 |---|---|---|---|---|---|
 | Section A entry | checks A0–A4 passed | 0 (branch `feat/value-book-4` at `da5d3c3`) | **baseline: pytest 5305 passed, 1 skipped**; ruff clean; mypy 325 source files; df 30 GiB free | 2026-11-04 | A3 line numbers matched exactly; v3 hash `ad8841127029` confirmed; no Part 4 code present. Section A exit target: baseline + 23 = 5328 passed, 1 skipped |
+| A1 (Task 1) ruleset v4 | done | `4757ffd` | task gate: 72 passed (config, dry-run, service, scorecard, private-config, config-keys); ruff check + format clean; mypy clean on `config.py`, `ruleset.py`; v4 hash printed `be30d1eaa915` | 2026-11-04 | No deviation from the task text; the diffs were applied with Edit (same content). `claude` workdir default `~/.cache/ibkr-value-ai` passes the outside-repo validator. Cost-if-wrong: none beyond ruling 1 (before the first v4 night, re-pin; after it, a v5). |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -546,7 +547,7 @@ commit count from `git log --oneline main..HEAD | wc -l`.
   ValueClaudeBreakerCfg` (`sessions`, `ready_multiple`, `min_ready`, `clamp_rate_pct`,
   `min_values`)); `ValueCfg.ruleset_version == "v4"`; `FROZEN["v4"] == "be30d1eaa915"`.
 
-- [ ] **Step 1: Write the failing tests** — apply this diff (it replaces
+- [x] **Step 1: Write the failing tests** — apply this diff (it replaces
   `test_v1_and_v2_stay_pinned_and_v3_is_frozen` and `test_v3_changes_no_entry_rule_and_no_exit_threshold`):
 
 ```diff
@@ -667,13 +668,13 @@ index 1d46371..42f3440 100644
  
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py`
   Expected: FAIL — `AttributeError: 'ValueRulesCfg' object has no attribute 'claude'` (and the v4
   assertions).
 
-- [ ] **Step 3: The config model, the frozen hash and the example** — apply:
+- [x] **Step 3: The config model, the frozen hash and the example** — apply:
 
 ```diff
 diff --git a/config/examples/value.yaml b/config/examples/value.yaml
@@ -929,7 +930,7 @@ index 93db8a5..ac85fea 100644
  def ruleset_hash(rules: ValueRulesCfg) -> str:
 ```
 
-- [ ] **Step 4: Run them to see them pass, and check the hash**
+- [x] **Step 4: Run them to see them pass, and check the hash**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py tests/test_value_scorecard.py tests/test_private_config.py tests/test_config_keys.py`
   Expected: PASS. Then
@@ -937,7 +938,7 @@ index 93db8a5..ac85fea 100644
   prints `be30d1eaa915`. If it prints anything else, the config or the example differs from this
   plan: stop and report (do not re-pin).
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
   Run: `.venv/bin/ruff check src/common/config.py src/value/ruleset.py tests/test_value_config.py tests/test_value_dry_run.py tests/test_value_service.py`,
   the same paths with `.venv/bin/ruff format --check`, and `.venv/bin/mypy src/common/config.py src/value/ruleset.py`.

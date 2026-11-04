@@ -183,3 +183,16 @@ def test_the_scorecard_is_a_pure_function_of_its_inputs() -> None:
         build_scorecard(inputs(), CFG).model_dump_json()
         == build_scorecard(inputs(), CFG).model_dump_json()
     )
+
+
+def test_the_scorecard_carries_what_claudes_bounds_and_triggers_read() -> None:
+    """Spec §8.2, §8.4: the margins' 5-year median and best on each list's SBC basis, revenue
+    per share, the newest year's revenue growth and gross margin."""
+    m = build_scorecard(inputs(close=30.0), CFG).metrics
+    assert m["fcf_margin_median_5y"] == pytest.approx(0.15590551181102363)  # (FCF - SBC) / rev
+    assert m["fcf_margin_best_5y"] == pytest.approx(0.1625)
+    assert m["gfcf_margin_median_5y"] == pytest.approx(0.16850393700787403)  # half of SBC
+    assert m["gfcf_margin_best_5y"] == pytest.approx(0.175)
+    assert m["revenue_ps_ttm"] == pytest.approx(16.0)
+    assert m["revenue_growth_1y"] == pytest.approx(1600 / 1420 - 1)
+    assert m["gross_margin_latest"] == pytest.approx(0.6)

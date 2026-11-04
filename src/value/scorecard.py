@@ -12,7 +12,7 @@ from src.common.config import ValueCfg
 from src.common.schemas import MarketRegime
 from src.common.value_types import ValueInputs
 from src.value import gates, timing, valuation
-from src.value.metrics import Year, cagr, median_of, roic, stdev_of
+from src.value.metrics import Year, cagr, last_n, median_of, roic, stdev_of
 from src.value.ruleset import ruleset_id
 from src.value.schemas import (
     Check,
@@ -86,6 +86,37 @@ def normalised_fcf(
 
 def _fcf_ps_series(years: list[Year]) -> list[float | None]:
     return [None if y.fcf is None or not y.shares else y.fcf / y.shares for y in years]
+
+
+def _fcf_margins(years: list[Year], sbc_share: float) -> list[float | None]:
+    return [
+        None if y.fcf is None or not y.revenue else (y.fcf - sbc_share * (y.sbc or 0.0)) / y.revenue
+        for y in years
+    ]
+
+
+def claude_inputs(
+    inputs: ValueInputs, years: list[Year], per_share: float | None, growth_sbc_share: float
+) -> dict[str, float | None]:
+    """What Claude's drivers are bounded by and Python's kill-trigger menu reads (spec §8.2,
+    §8.4), all from filed history: the normalised FCF margin's 5-year median and best on each
+    list's SBC basis (all of it for deep value, ``growth_sbc_share`` for quality growth), TTM
+    revenue per share, and the newest year's revenue growth and gross margin (fractions)."""
+    out: dict[str, float | None] = {}
+    for prefix, share in (("fcf", 1.0), ("gfcf", growth_sbc_share)):
+        margins = last_n(_fcf_margins(years, share))
+        out[f"{prefix}_margin_median_5y"] = median(margins) if margins else None
+        out[f"{prefix}_margin_best_5y"] = max(margins) if margins else None
+    revenue = _ttm(inputs, "revenue")
+    out["revenue_ps_ttm"] = None if revenue is None or not per_share else revenue / per_share
+    newest, prior = (years[0], years[1]) if len(years) > 1 else (None, None)
+    out["revenue_growth_1y"] = (
+        newest.revenue / prior.revenue - 1.0
+        if newest is not None and prior is not None and newest.revenue and prior.revenue
+        else None
+    )
+    out["gross_margin_latest"] = years[0].gross_margin if years else None
+    return out
 
 
 def _verdict(
@@ -259,6 +290,7 @@ def build_scorecard(inputs: ValueInputs, cfg: ValueCfg) -> ValueScorecard:
         "gross_margin_stdev_5y": stdev_of([y.gross_margin for y in years]),
         "revenue_cagr_5y": cagr([y.revenue for y in years]),
     }
+    metrics.update(claude_inputs(inputs, years, per_share, v.growth_sbc_share))
     card = card.model_copy(
         update={
             "metrics": metrics,
