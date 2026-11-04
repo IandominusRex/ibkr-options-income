@@ -184,6 +184,11 @@ def _tick() -> None:
         return
     _retry.succeeded()
     _facts.clear()
+    if get_config().value.telegram.digest_enabled:
+        try:
+            _post_digest()
+        except Exception:  # noqa: BLE001 - the digest is a courtesy; the night already committed
+            log.exception("value: the nightly digest failed")
 
 
 def _drain_commands() -> int:
@@ -252,6 +257,25 @@ def _post_outbox() -> int:
         with value_session() as vs:
             outbox.mark_posted(vs, sent, now)
     return len(sent)
+
+
+def _post_digest() -> int:
+    """The night's one digest message (Part 6, ruling 13), after the run and the book's night step.
+    ``since`` is the last digest sent; an empty night sends nothing but still moves it on."""
+    import src.value.digest as digest
+    import src.value.notify as notify
+    from src.value.store import value_session
+
+    cfg = get_config().value
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with value_session() as vs:
+        since = digest.last_sent(vs) or now - timedelta(days=1)
+        d = digest.compose(vs, since=since, now=now, cfg=cfg)
+    sent = asyncio.run(notify.send([d.text])) if d.text else 0
+    if d.text is None or sent:
+        with value_session() as vs:
+            digest.mark_sent(vs, d, now)
+    return sent
 
 
 def main() -> None:

@@ -152,7 +152,7 @@ def proposal_card(
     return Card(key=f"proposal:{p.id}", text=_cap("\n".join(lines)), buttons=buttons)
 
 
-def _plan_levels(blob: str) -> str:
+def plan_levels(blob: str) -> str:
     """A re-evaluation's plan in one line: ``{policy: {stop, ...}}`` or a single leg's state."""
     try:
         plan = json.loads(blob or "{}")
@@ -190,8 +190,8 @@ def reevaluation_card(r: ValueReevaluationRow) -> Card:
     lines = [
         f"Major re-evaluation: {r.symbol} ({_LIST_WORDS.get(r.list_name, r.list_name)}), {r.session}",
         f"What fired: {what}.",
-        f"Plan before: {_plan_levels(r.plan_before_json)}.",
-        f"Plan now: {_plan_levels(r.plan_after_json)}.",
+        f"Plan before: {plan_levels(r.plan_before_json)}.",
+        f"Plan now: {plan_levels(r.plan_after_json)}.",
         "Adds on this name are paused while it is open; Claude's review is queued when it is on. "
         "Nothing here sells on its own.",
     ]

@@ -309,6 +309,8 @@ def test_the_value_entrypoint_imports_only_its_feed_and_the_service() -> None:
         "src.value.store",
         # Part 6 Task 4: the card outbox
         "src.value.outbox",
+        # Part 6 Task 6: the nightly digest
+        "src.value.digest",
     )
     mods = imported_modules(ROOT / "scripts" / "run_value.py")
     extra = sorted(m for m in mods if not any(m == a or m.startswith(a + ".") for a in allowed))
