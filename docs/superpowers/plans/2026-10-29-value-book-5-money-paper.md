@@ -129,7 +129,8 @@ is the executing agent's own model name.
 | Task 6 - a value put above the value ceiling | done | `cbe2fa3` | tests/test_drain_promote.py + test_openapi_current 15 passed (+1); ruff check/format and `mypy src/notify/command_drain.py` clean | 2026-11-04 | No deviation: the plan's test and code diffs applied cleanly and land on exactly the plan's blob hashes (`3443925`, `0a8013b`, `081d0a3`). Red run: the command was `applied`, not `failed`. `PromotePayload` keeps pydantic's default `extra="ignore"`, so `value_put` passes the model untouched and the drain reads it from the raw payload; the OpenAPI document does not change (ruling 25) (cost if wrong: none) |
 | Section C entry | checks C1–C2 passed | 8 commits on branch | pytest 5416 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 341 files | 2026-11-04 | C2: `revenue_cagr_5y` at 291 as quoted; `queue_read` at 157 (plan said 152; Part 4's review fixes moved it, text unchanged); `src/value/risk.py` and `book.py` absent. Orchestrator notes for Section C from Section B's report: (1) fixture clocks — any test comparing the fixtures' `NOW` with the wall clock fails now that `NOW + 30h` is past; pin the clock (`cr.read_book(NOW)` style) in tests, never change the fixtures' NOW; (2) possible double count of released collateral between the runner's `needed_usd` and `_fund`'s fresh recompute — Task 8 must recompute from a fresh account each cycle and not subtract closes already reflected in it; flagged for the whole-branch review. Section C exit target: baseline 5393 + 62 = 5455 passed, 1 skipped |
 | Section B exit | done | `f79efbd`, `2c0e6b9`, `cbe2fa3` + this docs(plan) commit (7 on the branch) | **full gate: pytest 5416 passed, 1 skipped (baseline 5393 + 23)**; `ruff check .` clean; `mypy src` 341 source files, no issues; `py_compile scripts/run_value.py` silent; protected-file diff empty; `git diff --stat main...HEAD -- web` lists only `web/lib/api-types.ts` (1 line); engine, sizer, profit-take and promote suites green | 2026-11-04 | Every edit outside `src/value`, `src/common`, `scripts`, `tests`, `config/examples`, `.env.example` and the docs is in E1-E3 and E5-E7 (`src/engine/{capital,risk_engine,regime_limits}.py`, `src/strategies/cash_secured_put.py`, `src/execution/{capital_release,position_manager}.py`, `src/notify/{approval_service,command_drain}.py`), plus Section A's `src/storage/wheel_shares.py`. The docs-trigger rows for the new module `src/execution/capital_release.py` (ARCHITECTURE.md folder guide, STATUS.md) are Task 15's, per the plan. Section C needs the operator's go-ahead |
-| Task 7 - the value gate and sizing | done | `f7d1a26` (also commits the Section C entry row) | tests/test_value_risk.py 23 passed (+23); with test_value_scorecard and test_value_fence 65 passed; ruff check/format and `mypy src/value/{risk,sizing,scorecard}.py` clean | 2026-11-04 | No deviation: the plan's code applied as written. Red run: collection `ImportError: cannot import name 'sizing' from 'src.value'`. The scorecard gains `metrics["adv_dollar_20"]` (a plain pass-through of `inputs.price.adv_dollar_20`); the scorecard, ticker-file and fence suites stay green, and `adv_dollar_20` is not in the ruleset hash input (cost if wrong: none). Nothing calls `risk.validate` or `sizing` yet except Task 8 |
+| Task 7 - the value gate and sizing | done | `b4f424c` (also commits the Section C entry row) | tests/test_value_risk.py 23 passed (+23); with test_value_scorecard and test_value_fence 65 passed; ruff check/format and `mypy src/value/{risk,sizing,scorecard}.py` clean | 2026-11-04 | No deviation: the plan's code applied as written. Red run: collection `ImportError: cannot import name 'sizing' from 'src.value'`. The scorecard gains `metrics["adv_dollar_20"]` (a plain pass-through of `inputs.price.adv_dollar_20`); the scorecard, ticker-file and fence suites stay green, and `adv_dollar_20` is not in the ruleset hash input (cost if wrong: none). Nothing calls `risk.validate` or `sizing` yet except Task 8 |
+| Task 8 - the book's rows, the executor, the night and the cycle | done | `6895151` | tests/test_value_live.py 14 passed (+14); with test_value_fence 31 passed; ruff check/format and `mypy src/value/{book,executor,live}.py` clean | 2026-11-04 | Red run: collection `ImportError: cannot import name 'book' from 'src.value'`; all 14 green on the first run of the code. **Two deviations, both harmless:** (1) `executor.send_order`'s closing `log.info` read `r.status` after its `with session()` block had closed; the status is now captured inside the block and logged from the local (cost if wrong: none, a log line). (2) **Double-count note (orchestrator note 2):** no code change in `_fund`/`buy_context`, both already do what the note asks: `ctx.gross_used` is built from this cycle's fresh broker snapshot (stock of both books + the CSP collateral still held + the other approved buys), and `_fund` recomputes `needed = cost - (room - gross_used)` from it every cycle and **overwrites** the stored `needed_usd`; it never subtracts a close made since, because a closed put is already out of the snapshot's collateral (docstrings say so). The double count the note flags lives on the other side, in Section B's `capital_release._service`, which subtracts today's filled release closes from the stored `needed_usd`: after a partial release, `_fund` has already rewritten `needed_usd` net of those closes and the runner subtracts them again, so it asks for too little; I left that file alone (Section B's, outside Section C). Cost if wrong: a request is under-served until the next cycle rewrites it, and the buy simply waits for room or lapses (errs toward closing less; no order is ever sent without the send-time room). Left for the whole-branch review. **Clock:** every time-sensitive call takes `NOW` as a parameter (`cycle(now=)`, `plan_night(now=)`, `decide(now=)`, `propose(now=)`); the wall clock appears only in `executor._now()` row timestamps, so no test needed pinning and the fixtures' `NOW` is untouched. Observation for the review (not changed): `_buy` gates at the ask and sends a mid `LimitOrder`, so the gate is the conservative side |
 
 ## Roadmap (this plan is Part 5 of 6)
 
@@ -3205,7 +3206,7 @@ deep-value tier 5% of the $30,000 ceiling = $1,500, a third = $500: 16 shares. A
 of $30.05 ($601) against $99,800 of CSP collateral on a $100,000 account needs $401 released; after
 $10,000 is released it buys.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_live.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_live.py`:
 
 ```python
 """The value book's money in paper (value book spec §7, §9, revision 4): the executor, the RTH
@@ -3638,8 +3639,8 @@ def test_on_a_frozen_name_only_a_stop_or_thesis_sale_sends(value_book_db) -> Non
     assert broker.placed[0][1:3] == ("sell", 50.0)
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'book' from 'src.value'`.
-- [ ] **Step 3: The book's rows** — create `src/value/book.py`:
+- [x] **Step 2: Run them to see them fail** — `ImportError: cannot import name 'book' from 'src.value'`.
+- [x] **Step 3: The book's rows** — create `src/value/book.py`:
 
 ```python
 """The value book's held positions, proposals and share reconcile (spec §7, §9.2, §9.5; revision 4).
@@ -4031,7 +4032,7 @@ def apply_split(vs: Session, symbol: str, ratio: float, now: datetime) -> int:
     return n
 ```
 
-- [ ] **Step 4: The executor** — create `src/value/executor.py`:
+- [x] **Step 4: The executor** — create `src/value/executor.py`:
 
 ```python
 """The value book's stock-order path (spec §9.7), as ``src/spreads/executor.py`` is for spreads.
@@ -4233,7 +4234,7 @@ class IbkrValueBroker:
         return Outcome(filled, avg or None, bool(trade.isDone()))
 ```
 
-- [ ] **Step 5: The night and the cycle** — create `src/value/live.py`:
+- [x] **Step 5: The night and the cycle** — create `src/value/live.py`:
 
 ```python
 """The value book's money, in paper (spec §9; revision 4): the night's proposals and the RTH cycle.
@@ -5011,8 +5012,8 @@ def mirror_reevaluations(vs: Session, day: date, now: datetime) -> int:
     return n
 ```
 
-- [ ] **Step 6: Run them to see them pass** — `tests/test_value_live.py tests/test_value_fence.py`.
-- [ ] **Step 7: Gates and commit:**
+- [x] **Step 6: Run them to see them pass** — `tests/test_value_live.py tests/test_value_fence.py`.
+- [x] **Step 7: Gates and commit:**
 
   ```bash
   git add src/value/book.py src/value/executor.py src/value/live.py tests/test_value_live.py
@@ -5026,7 +5027,7 @@ def mirror_reevaluations(vs: Session, day: date, now: datetime) -> int:
 **Files:** Create `src/value/stage3.py`, `src/value/notify.py`, `tests/test_value_stage3.py` (Tasks
 13 and 14 append).
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_stage3.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_stage3.py`:
 
 ```python
 """Stage 3's process side (value book spec §9.7, §7.1; Part 5): the broker snapshot, held
@@ -5070,8 +5071,8 @@ def test_the_notifier_logs_and_sends_nothing_without_a_token() -> None:
     assert asyncio.run(notify.send(["Value book: test"])) == 0
 ```
 
-- [ ] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.value.notify'`.
-- [ ] **Step 3: The modules** — create `src/value/notify.py`:
+- [x] **Step 2: Run them to see them fail** — `ModuleNotFoundError: No module named 'src.value.notify'`.
+- [x] **Step 3: The modules** — create `src/value/notify.py`:
 
 ```python
 """The value book's plain Telegram messages (spec §9.7), the minimum money needs: fills, a frozen
@@ -5252,9 +5253,9 @@ def _last_closes(rs: object, symbols: list[str], today: date) -> dict[str, float
     return out
 ```
 
-- [ ] **Step 4: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_fence.py`
+- [x] **Step 4: Run them to see them pass** — `tests/test_value_stage3.py tests/test_value_fence.py`
   (Part 2's `sys.modules` probe still loads no `ib_async`: the IBKR imports are inside functions).
-- [ ] **Step 5: Gates and commit:**
+- [x] **Step 5: Gates and commit:**
 
   ```bash
   git add src/value/stage3.py src/value/notify.py tests/test_value_stage3.py
