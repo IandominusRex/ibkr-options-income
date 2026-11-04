@@ -328,6 +328,29 @@ def test_a_crash_in_accept_closes_the_read_instead_of_re_spending_the_call(
         assert row.error == "RuntimeError" and "bad reply shape" in row.detail
 
 
+def test_the_between_callback_runs_before_each_read_and_may_fail(value_db) -> None:
+    """Review I3: the entrypoint drains taps between reads; a callback that raises never stops
+    the queue, and it runs outside any transaction, before the (slow) call."""
+    _file(CHEAP)
+    events: list[str] = []
+
+    def reader(req: AnalystRequest) -> AnalystResult:
+        events.append("read")
+        return _result(req.read_id)
+
+    def between() -> None:
+        events.append("between")
+        raise RuntimeError("drain failed")
+
+    with value_session() as s:
+        queue_read(s, "STDY", kind="standard", reason="request", now=NOW)
+        queue_read(s, "STDY", kind="review", reason="request", now=NOW)
+        queued = s.scalars(select(ValueClaudeReadRow)).all()
+    summary = run_queue(reader, now=NOW, cfg=ON, between=between)
+    assert len(queued) == 2 and summary["done"] == 2
+    assert events == ["between", "read", "between", "read"]
+
+
 def test_the_daily_caps_and_a_disabled_switch(value_db) -> None:
     _file(CHEAP)
     tight = ON.model_copy(

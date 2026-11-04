@@ -89,6 +89,7 @@ def due(vs: Session, now: datetime, cfg: ValueCfg) -> list[cards.Card]:
                     mos=mos,
                     verdict_by=by,
                     tranches=cfg.book.tranches,
+                    trim_pct=cfg.book.drawdown_trim_pct,
                 ),
             )
         )

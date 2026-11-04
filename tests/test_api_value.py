@@ -398,3 +398,34 @@ def test_every_value_route_needs_the_owner_token(client, vdb_file) -> None:
     for path in ("/value/top", "/value/book", "/value/positions", "/value/GOOGL"):
         assert client.get(path).status_code == 401
         assert client.get(path, headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_a_re_entry_starts_the_average_cost_again(value_book_db) -> None:
+    """Review I1: a sale's shares leave the running average, so a later buy is not blended with
+    the cost of shares already sold (buy 100 @ 50, sell @ 60, buy 100 @ 100, sell @ 110)."""
+    import src.api.value_db as vdb
+
+    steps = [
+        ("buy", 50.0, datetime(2026, 10, 1, 15, 0)),
+        ("sell", 60.0, datetime(2026, 10, 5, 15, 0)),
+        ("buy", 100.0, datetime(2026, 10, 10, 15, 0)),
+        ("sell", 110.0, datetime(2026, 10, 15, 15, 0)),
+    ]
+    with value_session() as s:
+        for side, price, at in steps:
+            s.add(
+                ValueOrderRow(
+                    symbol="REEN",
+                    list_name="deep_value",
+                    side=side,
+                    shares=100,
+                    filled=100,
+                    avg_price=price,
+                    status="filled",
+                    created_at=at,
+                )
+            )
+    with value_session() as s:
+        fills = vdb.read_fills(s)
+    assert fills is not None
+    assert [f["realised_usd"] for f in fills] == [None, 1000.0, None, 1000.0]

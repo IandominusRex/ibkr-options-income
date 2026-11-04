@@ -534,6 +534,16 @@ def test_only_value_db_opens_the_value_file_in_the_api() -> None:
     assert users == ["value_db.py"]
     text = (api / "value_db.py").read_text()
     assert "mode=ro" in text and "INSERT" not in text.upper().replace("INSERTED", "")
+    # The docstring says "mode=ro" too, so check the engine URL itself: the string that
+    # `create_engine` is given (an f-string's literal parts count) must carry the read-only flag.
+    urls = [
+        part.value
+        for call in ast.walk(ast.parse(text))
+        if isinstance(call, ast.Call) and getattr(call.func, "id", "") == "create_engine"
+        for part in ast.walk(call.args[0])
+        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+    ]
+    assert urls and "?mode=ro&uri=true" in "".join(urls)
 
 
 def test_the_api_imports_only_scorecard_and_schemas_from_value() -> None:

@@ -112,12 +112,23 @@ def _set_freshness(symbol: str, value: str | None) -> None:
         row.freshness_json = value
 
 
-def test_a_current_file_is_served_as_stored_and_sends_no_intent(client, vdb_file, research) -> None:
+def test_a_current_file_is_served_as_stored_and_marked_viewed_once_a_day(
+    client, vdb_file, research
+) -> None:
+    """Review M7 (reverses Task 14's "fresh file -> no intent"; spec §6.9 / ruling 19): the open
+    is recorded so the follow window sees it, as one empty-fingerprint snapshot a name a day."""
     _seed_file("STDY")
     _set_freshness("STDY", _fresh_json())
     body = client.get("/value/STDY", headers=OWNER).json()
     assert body["computed"] == "stored" and body["file"]["symbol"] == "STDY"
-    assert _snapshots() == []
+    (row,) = _snapshots()
+    assert row.payload == {"symbol": "STDY", "fingerprint": {}}
+    assert row.dedupe_key.startswith("value_snapshot:STDY:viewed:")
+    client.get("/value/STDY", headers=OWNER)  # pending: the same intent
+    with session_scope() as s:  # applied: still the same day, still no second one
+        s.get(AppCommandRow, row.id).status = "applied"
+    client.get("/value/STDY", headers=OWNER)
+    assert len(_snapshots()) == 1
 
 
 def test_a_stale_file_is_computed_now_and_one_snapshot_carries_its_inputs(

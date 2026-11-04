@@ -332,9 +332,13 @@ def run_queue(
     sections_for: SectionsFor | None = None,
     financials_for: FinancialsFor | None = None,
     limit: int | None = None,
+    between: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Run queued reads, best priority first, within today's caps. A filing read whose sections
-    are not in research.db yet waits (the research worker fetches them). Returns counts."""
+    are not in research.db yet waits (the research worker fetches them). Returns counts.
+    *between* runs before each read (never inside a transaction): a read takes tens of seconds
+    and the entrypoint drains the operator's taps there, so a tap does not wait out the queue.
+    A failing callback is logged and never stops the queue."""
     summary: dict[str, Any] = {"done": 0, "failed": 0, "skipped": 0, "waiting": 0}
     if not cfg.claude.enabled:
         return summary
@@ -347,6 +351,11 @@ def run_queue(
             )
         )
     for read_id in ids[:limit] if limit is not None else ids:
+        if between is not None:
+            try:
+                between()
+            except Exception:  # noqa: BLE001 - a failed drain waits for the next tick
+                log.exception("value claude reads: the between-reads callback failed")
         with value_session() as vs:
             row = vs.get(ValueClaudeReadRow, read_id)
             if row is None or row.status != "queued":

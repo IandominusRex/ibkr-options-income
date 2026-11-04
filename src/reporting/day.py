@@ -757,7 +757,7 @@ _VALUE_WORDS = {
     "catastrophe": "the catastrophe stop was hit",
     "time": "the holding period ended",
     "shock": "a shock stop fired",
-    "drawdown_trim": "the book fell 25% from its high: trimmed to half",
+    "drawdown_trim": "the book's drawdown passed its trim line: trimmed to half",
     "claude_broken": "Claude's review of the held name returned BROKEN",
     "claude_no": "Claude's verdict on the name turned NO",
 }
@@ -777,7 +777,11 @@ def _value_trade(v: ValueDayInput) -> DayTrade:
         facts.append(
             DayFact(
                 label="Claude's call",
-                text=f"Claude's value work called for this {v.side}; it waited for your tap.",
+                text=(
+                    "Claude's value work called for this sale; it waited for your tap."
+                    if v.side == "sell"
+                    else "Claude's value work called for this buy; Python's gates still applied."
+                ),
                 source="claude",
             )
         )

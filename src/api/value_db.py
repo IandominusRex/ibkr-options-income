@@ -458,7 +458,8 @@ def last_nightly_rs_cutoff(session: Session) -> float | None:
 def read_fills(session: Session) -> list[dict] | None:
     """Every filled value order, oldest first, with the proposal's reason and cause and, for a
     sale, the realised dollars: proceeds less the shares' running average cost (the buys filled
-    up to that sale). A fill with no price is left out: unknown cannot be shown as a trade."""
+    up to that sale, less the shares earlier sales took out of the average). A fill with no price is left out:
+    unknown cannot be shown as a trade."""
     rows = _rows(
         session,
         "SELECT o.id, o.symbol, o.list_name, o.side, o.filled, o.avg_price, o.reason AS order_reason, "
@@ -483,6 +484,9 @@ def read_fills(session: Session) -> list[dict] | None:
             held[key] = (bought + filled, spent + filled * price)
         elif bought > 0:
             realised = filled * (price - spent / bought)
+            # the shares sold leave the running average (a re-entry starts it afresh)
+            left = max(0.0, bought - filled)
+            held[key] = (left, 0.0 if left == 0.0 else spent * left / bought)
         out.append(
             {
                 "at": at,

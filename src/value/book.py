@@ -391,9 +391,31 @@ def sell_shares(held: float, fraction: float) -> int:
     return max(0, math.floor(held * min(1.0, fraction) + 1e-9))
 
 
-def trim_to_half(vs: Session, *, episode: str, by: str, now: datetime) -> list[int]:
+def _trim_card_stale(state: dict, trim_pct: float | None, now: datetime) -> bool:
+    """Review I5 (orchestrator ruling, conservative and reversible): the trim card stays
+    actionable only while the offer is at most ``TRIM_TTL_HOURS`` old and the book is still down
+    by ``trim_pct`` from its high. An unknown (missing or unreadable) number never refuses."""
+    offered = state.get("trim_offered_at")
+    if offered:
+        try:
+            if now - datetime.fromisoformat(str(offered)) > timedelta(hours=TRIM_TTL_HOURS):
+                return True
+        except ValueError:
+            pass
+    high, value = state.get("high"), state.get("value")
+    if trim_pct is not None and isinstance(high, int | float) and isinstance(value, int | float):
+        if high > 0 and (high - value) / high * 100.0 < trim_pct:
+            return True
+    return False
+
+
+def trim_to_half(
+    vs: Session, *, episode: str, by: str, now: datetime, trim_pct: float | None = None
+) -> list[int]:
     """Spec §9.6 and Part 6 ruling 3: one tap sells half of every filled position, approved now; each sale is
-    still re-gated and capped by the sell cap at send time. Returns the new proposal ids."""
+    still re-gated and capped by the sell cap at send time. Returns the new proposal ids.
+    Refused as ``stale_proposal`` when the offer is older than ``TRIM_TTL_HOURS`` or (given
+    *trim_pct*, ``book.drawdown_trim_pct``) the book has since recovered above that drawdown."""
     state = get_state(vs, "high_water") or {}
     if not state.get("episode"):
         raise BookRefused("no_trim_offered")
@@ -401,6 +423,8 @@ def trim_to_half(vs: Session, *, episode: str, by: str, now: datetime) -> list[i
         raise BookRefused("stale_proposal")
     if state.get("trimmed"):
         raise BookRefused("already_trimmed")
+    if _trim_card_stale(state, trim_pct, now):
+        raise BookRefused("stale_proposal")
     held_now = totals(vs).names
     made: list[int] = []
     for pos in vs.scalars(select(ValuePositionRow).where(ValuePositionRow.status == "open")):

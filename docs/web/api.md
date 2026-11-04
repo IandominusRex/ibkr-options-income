@@ -1659,7 +1659,7 @@ are a held name's; `plan` is its open position's exit plan (`null` for a name no
 
 `computed` (ruling 24, `src/api/value_lookup.py`): **`stored`** when the file's freshness key (the newest accession
 and bar in `research.db`, the regime, the ruleset: `src/common/value_freshness.py`) equals the key of the cheap
-parts now; **`now`** when the file is stale or absent and the scorecard was computed on open from `research.db`
+parts now (one empty-fingerprint `value_snapshot` a day per name marks it viewed); **`now`** when the file is stale or absent and the scorecard was computed on open from `research.db`
 (read-only), yfinance market facts and `news.db` earnings with the pure `build_scorecard`, inside
 `research.tiers.materialization_budget_seconds`, plus exactly one `value_snapshot` command carrying the input set
 for the value process to persist (the API never writes value.db); **`pending`** when the filings or bars are not in

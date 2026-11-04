@@ -80,3 +80,18 @@ def clear_confirm_token(command_id: int) -> None:
         s.execute(
             update(AppCommandRow).where(AppCommandRow.id == command_id).values(confirm_token=None)
         )
+
+
+def dedupe_key_seen(dedupe_key: str) -> bool:
+    """True when a command with this ``dedupe_key`` exists in ANY status (read-only path).
+    ``enqueue_command`` dedupes against pending rows only; a caller that wants "at most once per
+    key, ever" (the value file's once-a-day view mark) checks here first."""
+    from sqlalchemy import select
+
+    with trading_session() as s:
+        return (
+            s.execute(
+                select(AppCommandRow.id).where(AppCommandRow.dedupe_key == dedupe_key).limit(1)
+            ).first()
+            is not None
+        )

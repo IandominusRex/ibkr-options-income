@@ -729,15 +729,17 @@ async def handle_value_command(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         await asyncio.to_thread(_queue_value_intent, "value_analyse", sym)
         await update.message.reply_text(
-            f"Queued Claude's analysis of {sym}: the value process reads it and posts the result "
-            "to the value thread (it says so if Claude is off)."
+            f"Queued Claude's analysis of {sym}. The value process picks it up on its next pass; "
+            "if a read is produced it is stored with the name's file, and the value thread says "
+            "so here if Claude is off or the request fails."
         )
         return
     view = await asyncio.to_thread(vv.read_ticker_file, sym)
     if view is None:
         await asyncio.to_thread(_queue_value_intent, "value_refresh", sym)
         await update.message.reply_text(
-            f"{sym} is not scored yet. Asked the value process to score it; the card follows in the value thread."
+            f"{sym} is not scored yet. Asked the value process to score it; a card follows in the "
+            "value thread if the name can be scored (it says so there if it cannot)."
         )
         return
     now = _value_now()
@@ -753,7 +755,7 @@ async def handle_value_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await asyncio.to_thread(_queue_value_intent, "value_refresh", sym)
         lines.append(
             "This file is older than the last settled session. Asked the value process to refresh it; "
-            "the new card follows in the value thread."
+            "a new card follows in the value thread if it can be scored."
         )
     await update.message.reply_text("\n".join(lines))
 

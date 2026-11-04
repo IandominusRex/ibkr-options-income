@@ -105,6 +105,22 @@ def test_a_held_name_without_a_shadow_entry_gets_an_earnings_trigger(value_book_
     assert _held(inputs={}) == 0
 
 
+def test_a_held_trigger_row_carries_the_position_and_pauses_adds(value_book_db) -> None:
+    """Review M3: the held name's row is keyed by position_id (the gate's adds_paused reads it),
+    so a trigger on a name with no shadow entry pauses tranche adds for the debounce window."""
+    pid = _position()
+    _position("OTHR")
+    with value_session() as s:
+        assert live.adds_paused(s, "STDY", DAY, 3) is False  # nothing open yet
+    assert _held(inputs={"STDY": HeldInputs(earnings=[DAY])}) == 1
+    (row,) = _rows(pid)
+    assert row.position_id == pid and row.shadow_id == 0
+    with value_session() as s:
+        assert live.adds_paused(s, "STDY", DAY, 3) is True
+        assert live.adds_paused(s, "OTHR", DAY, 3) is False  # another name is not paused
+        assert live.adds_paused(s, "STDY", date(2026, 12, 15), 3) is False  # the window has passed
+
+
 def test_a_held_name_without_a_shadow_entry_gets_a_regime_trigger(value_book_db) -> None:
     pid = _position()
     assert _held(inputs={"STDY": HeldInputs(regime_stepped=True)}) == 1

@@ -85,6 +85,22 @@ def test_an_auto_proposal_card_has_no_buttons() -> None:
     assert "Approved by the system" in card.text
 
 
+def test_a_trim_sale_says_the_operator_tapped_and_names_the_configured_line() -> None:
+    """Review M5: the trim card's tap approved these sales (not "the system"), and the card quotes
+    drawdown_trim_pct rather than a fixed 25%."""
+    p = _proposal(
+        kind="sell", reason="drawdown_trim", needs_tap=False, status="approved", tranche=None
+    )
+    card = cards.proposal_card(
+        p, release_closes=3, fair_value=None, mos=None, verdict_by="python", trim_pct=30.0
+    )
+    assert "Approved by your tap on the trim card" in card.text
+    assert "Approved by the system" not in card.text
+    assert "down 30% from its high" in card.text and "25%" not in card.text
+    plain = cards.proposal_card(p, release_closes=3, fair_value=None, mos=None, verdict_by="python")
+    assert "25%" not in plain.text and "trim line" in plain.text
+
+
 def test_a_claude_sale_says_it_waits_for_you() -> None:
     p = _proposal(kind="sell", cause="claude", reason="claude_broken", tranche=None)
     card = cards.proposal_card(p, release_closes=3, fair_value=None, mos=None, verdict_by="claude")

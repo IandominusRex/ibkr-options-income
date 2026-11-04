@@ -135,6 +135,31 @@ def _book_tick() -> None:
         asyncio.run(notify.send(msgs))
 
 
+_last_between: float = 0.0
+BETWEEN_MIN_SECONDS = 5.0
+
+
+def _between(*, force: bool = False) -> None:
+    """Drain the operator's taps (and post the cards due) between the slow steps. The night, the
+    Claude queue and the RTH cycle run on this thread and each can take minutes; the trading
+    side expires a pending value command after ``approval.ttl_minutes``, so a tap must not wait
+    out the whole slow tick. Throttled (a queue of skipped reads would otherwise drain per item)
+    unless *force*; a failure waits for the main loop's next drain."""
+    global _last_between
+    now = time.monotonic()
+    if not force and now - _last_between < BETWEEN_MIN_SECONDS:
+        return
+    _last_between = now
+    try:
+        _drain_commands()
+    except Exception:  # noqa: BLE001 - commands wait for the next drain
+        log.exception("value: the between-steps command drain failed")
+    try:
+        _post_outbox()
+    except Exception:  # noqa: BLE001 - a card not posted is posted at the next tick
+        log.exception("value: the between-steps card outbox failed")
+
+
 def _claude_tick() -> None:
     """Claude's queued reads (spec §8.5): requests first, then the automatic set, within the
     day's caps. Each read commits on its own; a failed read is recorded, never retried blind."""
@@ -147,6 +172,7 @@ def _claude_tick() -> None:
         cfg=cfg,
         sections_for=_sections,
         financials_for=_financials,
+        between=_between,
     )
     if any(summary.values()):
         log.info("value: claude reads %s", summary)
@@ -205,7 +231,7 @@ def _drain_commands() -> int:
     """Claim the value kinds from app_commands, apply each in value.db, mark it (spec §9.7, ruling 1). The trading
     DB is imported here only: importing this script loads no wheel layer (the fence's probe)."""
     import src.value.commands as vcmd  # not `from src.value import`: the fence's ast reads that as src.value
-    from src.common.value_commands import VALUE_KINDS, VALUE_ORDER_KINDS
+    from src.common.value_commands import VALUE_KINDS
     from src.storage.app_commands import mark_applied, mark_failed, pending_commands
     from src.storage.db import session_scope
     from src.value.store import init_value_db, value_session
@@ -244,11 +270,7 @@ def _drain_commands() -> int:
             s.commit()
 
     outcomes = vcmd.drain(rows, _apply, _mark)
-    replies = [
-        vcmd.outcome_line(o.kind, o.result, o.reason)
-        for o in outcomes
-        if o.kind in VALUE_ORDER_KINDS and o.requested_by == "telegram"
-    ]
+    replies = vcmd.replies(outcomes)
     if replies:
         from src.value.notify import send
 
@@ -326,14 +348,17 @@ def main() -> None:
                 _tick()
             except Exception:  # noqa: BLE001 - a failed night is retried at the next poll
                 log.exception("value: the nightly run failed; retrying at the next poll")
+            _between(force=True)  # the night can take minutes: taps first
             try:
                 _claude_tick()
             except Exception:  # noqa: BLE001 - a failed read is recorded; the queue waits
                 log.exception("value: claude reads failed; the queue waits for the next poll")
+            _between(force=True)  # reads take minutes too: taps before the cycle sends orders
             try:
                 _book_tick()
             except Exception:  # noqa: BLE001 - a failed cycle sends nothing; the next one retries
                 log.exception("value: the book cycle failed; retrying at the next poll")
+            _between(force=True)
         if stop.wait(fast):
             break
 

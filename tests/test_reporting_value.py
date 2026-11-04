@@ -67,8 +67,9 @@ def test_a_value_only_month_counts_only_value_lines() -> None:
         [leg()],
         [value_close(), value_close(closed_at=datetime(2026, 9, 30, 15, 0))],
         strategy="value",
+        target=IncomeTarget(mode="fixed", amount=500.0),
     )
-    assert p.strategy == "value"
+    assert p.strategy == "value" and p.target == 500.0
     assert (p.premium_collected, p.bought_back, p.n_opened) == (0.0, 0.0, 0)
     assert p.value_realised == pytest.approx(120.0)  # September's close is not October's
     assert p.value_n_closed == 1 and p.net == pytest.approx(120.0)
@@ -131,6 +132,28 @@ def test_a_claude_caused_sale_is_labelled_as_claudes(api_db) -> None:
     assert t.reason is not None and "Claude" in t.reason
     claude_facts = [f for f in t.facts if f.source == "claude"]
     assert len(claude_facts) == 1 and "Claude" in claude_facts[0].text
+
+
+def test_the_tap_wording_is_for_sales_only_and_no_fixed_trim_percent(api_db) -> None:
+    """Review M4/M5: a Claude-caused buy needs no tap, so only a sale says it waited for one; and
+    the trim reason carries no hard-coded percentage (the line is configurable)."""
+    claude_buy = buy(reason="tranche 1", cause="claude", proposal_id=9)
+    (b,) = build_day_trades(api_db, [], [], [claude_buy], day=DAY, strategy="value")
+    (fact,) = [f for f in b.facts if f.source == "claude"]
+    assert "tap" not in fact.text and "buy" in fact.text
+    sale = buy(
+        side="sell",
+        reason="claude_no",
+        cause="claude",
+        proposal_id=10,
+        price=112.0,
+        realised_usd=1.0,
+    )
+    (s,) = build_day_trades(api_db, [], [], [sale], day=DAY, strategy="value")
+    assert "waited for your tap" in [f for f in s.facts if f.source == "claude"][0].text
+    trim = buy(side="sell", reason="drawdown_trim", price=90.0, realised_usd=-5.0)
+    (tr,) = build_day_trades(api_db, [], [], [trim], day=DAY, strategy="value")
+    assert tr.reason is not None and "25%" not in tr.reason and "trim" in tr.reason
 
 
 def test_the_calendar_puts_a_value_sale_on_its_day() -> None:

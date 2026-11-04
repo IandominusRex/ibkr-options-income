@@ -55,12 +55,14 @@ VALUE_REASON_LABELS: dict[str, str] = {
     "price_stale_at_send": "the quote was too old to send on",
     # command reasons
     "no_such_proposal": "that proposal no longer exists",
-    "stale_proposal": "the card is out of date (the proposal changed)",
+    "stale_proposal": "the card is out of date (it changed, is too old, or the drawdown has eased)",
     "expired": "the proposal expired before the tap",
     "handler_error": "the value process hit an error",
     "unknown_kind": "the value process does not know that command",
     "no_trim_offered": "no trim is on offer",
     "already_trimmed": "the trim was already made",
+    "no_data": "there are no price bars for that name yet",
+    "research_unavailable": "the research database could not be read",
     "claude_off": "Claude's reads are switched off (value.claude.enabled)",
     "bad_fingerprint": "the fingerprint on the request could not be read",
 }
@@ -78,7 +80,7 @@ _SELL_WORDS = {
     "time": "the holding period ended",
     "proposal": "an exit proposal",
     "shock": "a shock stop fired",
-    "drawdown_trim": "the book is down 25% from its high: trimming every holding to half",
+    "drawdown_trim": "the book's drawdown passed its trim line: trimming every holding to half",
     "claude_broken": "Claude's review of the held name returned BROKEN",
     "claude_no": "Claude's verdict on the name turned NO",
 }
@@ -92,9 +94,11 @@ def reason_words(code: str) -> str:
     return code.replace("_", " ")
 
 
-def _sell_reason(code: str) -> str:
+def _sell_reason(code: str, trim_pct: float | None = None) -> str:
     if code.startswith("tranche "):
         return f"scaling in, {code}"
+    if code == "drawdown_trim" and trim_pct is not None:  # the configured line, not a fixed 25%
+        return f"the book is down {trim_pct:g}% from its high: trimming every holding to half"
     return _SELL_WORDS.get(code, reason_words(code))
 
 
@@ -118,6 +122,7 @@ def proposal_card(
     mos: float | None,
     verdict_by: str,
     tranches: int | None = None,
+    trim_pct: float | None = None,
 ) -> Card:
     list_word = _LIST_WORDS.get(p.list_name, p.list_name.replace("_", " "))
     if p.kind == "buy":
@@ -139,7 +144,7 @@ def proposal_card(
     lines.append(
         f"Fair value {_money(fair_value)}, margin of safety {_pct(mos)} (verdict decided by {decider})."
     )
-    lines.append(f"Why: {_sell_reason(p.reason)}.")
+    lines.append(f"Why: {_sell_reason(p.reason, trim_pct)}.")
     if p.kind == "buy":
         lines.append(
             f"If cash is short, approving may close up to {release_closes} of the wheel's "
@@ -154,7 +159,11 @@ def proposal_card(
             ("Reject", callback_data("reject", p.id, fp)),
         )
     elif not p.needs_tap:
-        lines.append("Approved by the system; no tap needed.")
+        lines.append(
+            "Approved by your tap on the trim card."  # the trim creates these approved sells
+            if p.reason == "drawdown_trim"
+            else "Approved by the system; no tap needed."
+        )
     return Card(key=f"proposal:{p.id}", text=_cap("\n".join(lines)), buttons=buttons)
 
 
@@ -260,6 +269,13 @@ def outcome_line(kind: str, result: dict | None, reason: str | None) -> str:
     if reason is not None:
         return f"Not done ({kind.removeprefix('value_')}): {reason_words(reason)}."
     r = result or {}
+    if r.get("already"):  # a re-run or a double tap: the decision had already been made
+        if kind == "value_trim":
+            return "Trim: already made for this drawdown."
+        return (
+            f"Already {r.get('decision', 'decided')}: {r.get('kind', 'trade')} "
+            f"{r.get('symbol', '')} (proposal {r.get('proposal_id')})."
+        ).replace("  ", " ")
     if kind == "value_approve":
         return (
             f"Approved: {r.get('kind', 'trade')} {r.get('symbol', '')} (proposal {r.get('proposal_id')}). "

@@ -267,6 +267,21 @@ def score_one(
     return card.fingerprint
 
 
+def restamp_freshness(vs: Session, rs: Session, symbol: str, *, regime: str | None = None) -> bool:
+    """Rewrite a stored file's freshness key from the cheap input parts now, without recomputing
+    its card: the API's staleness test compares those parts, so a file whose card is unchanged
+    would otherwise stay "stale" (and be recomputed on every open) after a part moved that the
+    card's own fingerprint does not carry. Returns False when the name has no stored file."""
+    sym = symbol.upper()
+    row = vs.get(ValueTickerFileRow, sym)
+    if row is None:
+        return False
+    version, digest = ruleset_id(get_config().value)
+    parts = vi.current_fingerprint_parts(rs, sym)
+    row.freshness_json = freshness_json(parts, regime or vi.load_regime(), version, digest)
+    return True
+
+
 def held_names(vs: Session) -> set[str]:
     """Names the value book holds (Part 5): scored nightly, kept fresh, read for filings."""
     return set(vs.scalars(select(ValuePositionRow.symbol).where(ValuePositionRow.status == "open")))

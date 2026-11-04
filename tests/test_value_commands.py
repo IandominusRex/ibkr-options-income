@@ -156,20 +156,53 @@ def test_approve_marks_who_decided(value_book_db) -> None:
     assert row.status == "approved" and row.decided_by == "telegram"
 
 
-def test_a_second_tap_is_a_no_op_answer(value_book_db) -> None:
+def test_a_second_tap_is_an_idempotent_success(value_book_db) -> None:
+    """Review M6: the decision the command asks for is already applied (a crash between the
+    commit and the mark, a double tap): applied, not failed, and nothing is rewritten."""
     from datetime import timedelta
-
-    from src.value.commands import ValueCommandFailed
 
     pid, fp = _proposal()
     _apply("value_approve", {"proposal_id": pid, "fingerprint": fp})
     first = _row(pid).decided_at
-    with pytest.raises(ValueCommandFailed) as exc:
-        _apply(
-            "value_approve", {"proposal_id": pid, "fingerprint": fp}, now=NOW + timedelta(minutes=1)
-        )
-    assert exc.value.reason == "already_approved"
+    again = _apply(
+        "value_approve", {"proposal_id": pid, "fingerprint": fp}, now=NOW + timedelta(minutes=1)
+    )
+    assert again["decision"] == "approved" and again["already"] is True
     assert _row(pid).decided_at == first
+    from src.value import cards
+
+    assert cards.outcome_line("value_approve", again, None).startswith("Already approved")
+
+
+def test_a_rejected_proposal_rejects_idempotently_but_refuses_an_approve(value_book_db) -> None:
+    from src.value.commands import ValueCommandFailed
+
+    pid, fp = _proposal()
+    _apply("value_reject", {"proposal_id": pid, "fingerprint": fp})
+    assert _apply("value_reject", {"proposal_id": pid, "fingerprint": fp})["already"] is True
+    with pytest.raises(ValueCommandFailed) as exc:
+        _apply("value_approve", {"proposal_id": pid, "fingerprint": fp})
+    assert exc.value.reason == "already_rejected"
+    assert _row(pid).status == "rejected"
+
+
+def test_a_crash_re_run_is_marked_applied(value_book_db) -> None:
+    """The drain re-applies a command whose mark was lost; the second apply is a success."""
+    from src.value import commands as vcmd
+    from src.value.store import value_session
+
+    pid, fp = _proposal()
+
+    def apply_fn(kind: str, payload: dict, by: str) -> dict:
+        with value_session() as vs:
+            return vcmd.apply(vs, kind, payload, requested_by=by, now=NOW, live=False)
+
+    rows = [(1, "value_approve", {"proposal_id": pid, "fingerprint": fp}, "telegram", None)]
+    marked: list = []
+    vcmd.drain(rows, apply_fn, lambda *a: marked.append(a))  # the mark is "lost" after this
+    (out,) = vcmd.drain(rows, apply_fn, lambda *a: marked.append(a))
+    assert out.reason is None and out.result and out.result["already"] is True
+    assert marked[1][2] is None  # no failure reason on the re-run
 
 
 def test_reject_after_approve_is_refused(value_book_db) -> None:
@@ -246,7 +279,7 @@ def test_drain_marks_applied_and_failed(value_book_db) -> None:
 
     rows = [
         (1, "value_approve", {"proposal_id": pid, "fingerprint": fp}, "telegram", None),
-        (2, "value_approve", {"proposal_id": pid, "fingerprint": fp}, "web", None),
+        (2, "value_reject", {"proposal_id": pid, "fingerprint": fp}, "web", None),
         (3, "value_reject", {"proposal_id": 77, "fingerprint": fp}, "web", None),
         (4, "value_reject", {}, "web", None),
     ]
@@ -260,10 +293,57 @@ def test_drain_marks_applied_and_failed(value_book_db) -> None:
     assert marks[0][1] is not None and marks[0][1]["decision"] == "approved"
     assert [(o.cid, o.kind, o.requested_by, o.reason) for o in outcomes] == [
         (1, "value_approve", "telegram", None),
-        (2, "value_approve", "web", "already_approved"),
+        (2, "value_reject", "web", "already_approved"),
         (3, "value_reject", "web", "no_such_proposal"),
         (4, "value_reject", "web", "handler_error"),
     ]
+
+
+def test_replies_cover_telegram_order_kinds_and_failed_reads_only() -> None:
+    """Review I4: a failed read-side command asked from Telegram answers in the value thread."""
+    from src.value.commands import DrainOutcome, replies
+
+    out = [
+        DrainOutcome(1, "value_approve", "telegram", {"decision": "approved", "kind": "buy"}, None),
+        DrainOutcome(2, "value_approve", "web", None, "stale_proposal"),  # the web shows its own
+        DrainOutcome(3, "value_analyse", "telegram", None, "claude_off"),
+        DrainOutcome(4, "value_refresh", "telegram", None, "no_data"),
+        DrainOutcome(5, "value_refresh", "telegram", None, "research_unavailable"),
+        DrainOutcome(6, "value_refresh", "telegram", {"symbol": "X"}, None),  # its card speaks
+        DrainOutcome(7, "value_snapshot", "web", None, "no_data"),
+        DrainOutcome(8, "value_analyse", "telegram", {"symbol": "X", "queued": True}, None),
+    ]
+    lines = replies(out)
+    assert len(lines) == 4
+    assert lines[0].startswith("Approved")
+    assert lines[1] == "Not done (analyse): Claude's reads are switched off (value.claude.enabled)."
+    assert lines[2] == "Not done (refresh): there are no price bars for that name yet."
+    assert lines[3] == "Not done (refresh): the research database could not be read."
+
+
+def test_the_entrypoint_drains_between_the_slow_steps() -> None:
+    """Review I3: a tap must not wait out the night, the Claude queue and the cycle (the trading
+    side expires a pending value command after approval.ttl_minutes). Structural: the entrypoint
+    is never imported by a test, so its source is read."""
+    import ast
+    from pathlib import Path
+
+    src = Path("scripts/run_value.py").read_text()
+    tree = ast.parse(src)
+    forced = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and getattr(n.func, "id", "") == "_between"
+        and any(k.arg == "force" for k in n.keywords)
+    ]
+    assert len(forced) == 3  # after the night, after the queue, after the cycle
+    run_queue_calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "run_queue"
+    ]
+    assert run_queue_calls and any(k.arg == "between" for k in run_queue_calls[0].keywords)
 
 
 def test_drain_skips_a_command_awaiting_confirmation(value_book_db) -> None:
@@ -305,9 +385,10 @@ def _offer(episode: str | None = EPISODE, **extra) -> None:
     from src.value.book import set_state
     from src.value.store import value_session
 
-    state: dict = {"high": 100_000.0, "value": 74_000.0, "stop": True, **extra}
+    state: dict = {"high": 100_000.0, "value": 74_000.0, "stop": True}
     if episode is not None:
         state |= {"trim_offered_at": NOW.isoformat(), "episode": episode}
+    state |= extra
     with value_session() as vs:
         set_state(vs, "high_water", state, NOW)
 
@@ -370,16 +451,86 @@ def test_trim_needs_the_current_episode(value_book_db) -> None:
     assert _sells() == []
 
 
-def test_a_second_trim_is_already_trimmed(value_book_db) -> None:
+def test_a_recovered_drawdown_refuses_the_trim_card(value_book_db) -> None:
+    """Review I5 (operator ruling): the card stays actionable only while the book is still down
+    by drawdown_trim_pct (25) from its high."""
+    from src.value.commands import ValueCommandFailed
+
+    _held("AAA", 10)
+    _offer(value=80_000.0)  # 20% under the high: recovered since the offer
+    with pytest.raises(ValueCommandFailed) as exc:
+        _apply("value_trim", {"episode": EPISODE})
+    assert exc.value.reason == "stale_proposal"
+    assert _sells() == []
+
+
+def test_an_old_trim_card_is_refused(value_book_db) -> None:
+    from datetime import timedelta
+
+    from src.value.book import TRIM_TTL_HOURS
     from src.value.commands import ValueCommandFailed
 
     _held("AAA", 10)
     _offer()
-    _apply("value_trim", {"episode": EPISODE})
     with pytest.raises(ValueCommandFailed) as exc:
-        _apply("value_trim", {"episode": EPISODE})
-    assert exc.value.reason == "already_trimmed"
-    assert len(_sells()) == 1
+        _apply("value_trim", {"episode": EPISODE}, now=NOW + timedelta(hours=TRIM_TTL_HOURS + 1))
+    assert exc.value.reason == "stale_proposal"
+    assert _sells() == []
+    assert "out of date" in cards_words("stale_proposal")  # the reply says why
+
+
+def test_a_refused_trim_is_a_failed_command_with_a_reply(value_book_db) -> None:
+    from datetime import timedelta
+
+    from src.value import commands as vcmd
+    from src.value.store import value_session
+
+    _held("AAA", 10)
+    _offer()
+    marked: list = []
+
+    def apply_fn(kind: str, payload: dict, by: str) -> dict:
+        with value_session() as vs:
+            return vcmd.apply(
+                vs, kind, payload, requested_by=by, now=NOW + timedelta(hours=40), live=False
+            )
+
+    (out,) = vcmd.drain(
+        [(1, "value_trim", {"episode": EPISODE}, "telegram", None)],
+        apply_fn,
+        lambda *a: marked.append(a),
+    )
+    assert out.reason == "stale_proposal" and marked[0][2] == "stale_proposal"
+    assert vcmd.outcome_line(out.kind, None, out.reason).startswith("Not done (trim)")
+
+
+def cards_words(reason: str) -> str:
+    from src.value import cards
+
+    return cards.reason_words(reason)
+
+
+def test_a_still_valid_trim_card_is_applied(value_book_db) -> None:
+    from datetime import timedelta
+
+    from src.value.book import TRIM_TTL_HOURS
+
+    _held("AAA", 10)
+    _offer()
+    out = _apply("value_trim", {"episode": EPISODE}, now=NOW + timedelta(hours=TRIM_TTL_HOURS - 1))
+    assert len(out["proposals"]) == 1
+
+
+def test_a_second_trim_is_an_idempotent_success(value_book_db) -> None:
+    from src.value import cards
+
+    _held("AAA", 10)
+    _offer()
+    _apply("value_trim", {"episode": EPISODE})
+    again = _apply("value_trim", {"episode": EPISODE})
+    assert again == {"episode": EPISODE, "proposals": [], "already": True}
+    assert len(_sells()) == 1  # no second set of sales
+    assert cards.outcome_line("value_trim", again, None) == "Trim: already made for this drawdown."
 
 
 def test_the_trim_is_offered_once_per_episode(value_book_db) -> None:
@@ -550,6 +701,38 @@ def test_snapshot_records_moved_when_inputs_moved(value_book_db, research) -> No
     assert out["detail"] == "moved"
     row = _file("STDY")
     assert row is not None and row.fingerprint_key == fp.key()  # its own recomputation stands
+
+
+def test_snapshot_of_an_unchanged_card_restamps_a_stale_freshness_key(
+    value_book_db, research
+) -> None:
+    """Review I2: the API found the file stale by the cheap parts, but the card's fingerprint is
+    the stored one. The snapshot rewrites the freshness key from the parts now (no recompute),
+    so the next open is answered `stored` instead of recomputing for ever."""
+    import json
+
+    import src.common.value_inputs as vi
+    from src.common.config import get_config
+    from src.common.value_freshness import is_current, rules_digest
+    from src.value.store import ValueTickerFileRow, value_session
+
+    fp = _carried(research, regime="normal")
+    payload = {"symbol": "STDY", "fingerprint": fp.model_dump(mode="json")}
+    _read_apply("value_snapshot", payload)  # stores the file
+    cfg = get_config().value
+    digest = rules_digest(cfg.rules.model_dump(mode="json"))
+    with vi.research_read() as rs:
+        parts = vi.current_fingerprint_parts(rs, "STDY")
+    assert is_current(_file("STDY").freshness_json, parts, "normal", cfg.ruleset_version, digest)
+    with value_session() as vs:  # a cheap part the card does not carry moved since
+        row = vs.get(ValueTickerFileRow, "STDY")
+        row.freshness_json = json.dumps({"key": "0123456789abcdef", "parts": {}})
+    stale = _file("STDY")
+    assert not is_current(stale.freshness_json, parts, "normal", cfg.ruleset_version, digest)
+    _read_apply("value_snapshot", payload)  # the same card again
+    after = _file("STDY")
+    assert is_current(after.freshness_json, parts, "normal", cfg.ruleset_version, digest)
+    assert after.computed_at == stale.computed_at  # the card was not recomputed
 
 
 def test_refresh_scores_a_name_outside_the_universe_as_lookup(value_book_db, research) -> None:

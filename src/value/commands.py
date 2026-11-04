@@ -104,8 +104,19 @@ def _decision(vs: Session, payload: dict, by: str, now: datetime, *, approve: bo
     ):
         raise ValueCommandFailed("stale_proposal")
     status = decide(vs, pid, approve=approve, now=now, by=by)
+    asked = "approved" if approve else "rejected"
+    if status == f"already_{asked}":
+        # The decision this command asks for is already applied (a crash between the commit and
+        # the mark, a re-run, a double tap): idempotent success. A different state still fails.
+        return {
+            "proposal_id": pid,
+            "decision": asked,
+            "symbol": row.symbol,
+            "kind": row.kind,
+            "already": True,
+        }
     if status not in ("approved", "rejected"):
-        raise ValueCommandFailed(status, {"proposal_id": pid})  # already_<status> | expired
+        raise ValueCommandFailed(status, {"proposal_id": pid})  # already_<other> | expired
     return {"proposal_id": pid, "decision": status, "symbol": row.symbol, "kind": row.kind}
 
 
@@ -122,8 +133,16 @@ def _reject(vs: Session, payload: dict, by: str, now: datetime) -> dict:
 @_register("value_trim")
 def _trim(vs: Session, payload: dict, by: str, now: datetime) -> dict:
     try:
-        created = trim_to_half(vs, episode=str(payload["episode"]), by=by, now=now)
+        created = trim_to_half(
+            vs,
+            episode=str(payload["episode"]),
+            by=by,
+            now=now,
+            trim_pct=get_config().value.book.drawdown_trim_pct,
+        )
     except BookRefused as exc:
+        if exc.reason == "already_trimmed":  # this episode's trim is already made: idempotent
+            return {"episode": payload["episode"], "proposals": [], "already": True}
         raise ValueCommandFailed(exc.reason) from exc
     return {"episode": payload["episode"], "proposals": created}
 
@@ -154,6 +173,16 @@ def _score(
             )
         except ValueError as exc:  # no price bars for the name
             raise ValueCommandFailed("no_data", {"error": str(exc)}) from exc
+
+
+def _restamp(vs: Session, symbol: str, ctx: ReadContext, regime: str) -> None:
+    """The card stands, but the API found the file stale by the cheap input parts (a part the
+    card's fingerprint does not carry moved): stamp the parts now, or every open recomputes."""
+    if ctx.research is None:
+        return
+    with ctx.research() as rs:
+        if rs is not None:
+            service.restamp_freshness(vs, rs, symbol, regime=regime)
 
 
 def _viewed(vs: Session, symbol: str, now: datetime) -> ValueTickerFileRow:
@@ -198,6 +227,8 @@ def _snapshot(vs: Session, payload: dict, by: str, now: datetime, ctx: ReadConte
             own = _score(vs, symbol, ctx, now, fingerprint=raw)
             if own.key() != carried.key():
                 result["detail"] = "moved"
+        else:
+            _restamp(vs, symbol, ctx, carried.regime)
     _viewed(vs, symbol, now)
     return result
 
@@ -215,6 +246,19 @@ def _analyse(vs: Session, payload: dict, by: str, now: datetime, ctx: ReadContex
 def outcome_line(kind: str, result: dict | None, reason: str | None) -> str:
     """The plain reply the value process posts to TELEGRAM_THREAD_VALUE after a tap (the words are cards.py's)."""
     return cards.outcome_line(kind, result, reason)
+
+
+def replies(outcomes: Iterable[DrainOutcome]) -> list[str]:
+    """The lines the value process posts to the value thread after a drain: every Telegram-asked
+    order kind (success or failure), and any Telegram-asked read-side command that failed
+    (``claude_off``, ``no_data``, ``research_unavailable`` ...), so no `/value` request that the
+    bot said it queued ends in silence. A successful read-side command speaks through its own
+    card (or the file) and posts nothing here; the web's outcomes are shown on the web."""
+    return [
+        outcome_line(o.kind, o.result, o.reason)
+        for o in outcomes
+        if o.requested_by == "telegram" and (o.kind in VALUE_ORDER_KINDS or o.reason is not None)
+    ]
 
 
 # --- the drain (the entrypoint's loop body, testable without importing scripts/run_value.py) ---
@@ -239,7 +283,8 @@ class DrainOutcome:
 def drain(rows: Iterable[CommandTuple], apply_fn: ApplyFn, mark_fn: MarkFn) -> list[DrainOutcome]:
     """Apply each claimed command, then mark it: value.db commits inside ``apply_fn`` before
     ``mark_fn`` runs, so a crash between the two leaves the command pending and the next drain
-    re-applies it, which an idempotent handler answers ``already_<status>``. A command still
+    re-applies it, which an idempotent handler answers as applied (the decision it asks for is
+    already made) and any other state as ``already_<status>``. A command still
     awaiting its live confirmation is skipped (it waits for a human, as in the trading drain);
     one bad command never stops the rest."""
     out: list[DrainOutcome] = []

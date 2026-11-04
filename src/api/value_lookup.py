@@ -2,7 +2,8 @@
 
 ``lookup`` serves ``GET /value/{symbol}``. A stored file whose freshness key equals the key of the
 cheap input parts now (the newest accession and bar in research.db, the regime, the ruleset) is
-answered as ``stored``. A stale or absent one is computed **now** with the pure
+answered as ``stored`` and marked viewed by one ``value_snapshot`` with an empty fingerprint (at
+most one a day per name; spec §6.9, ruling 19). A stale or absent one is computed **now** with the pure
 ``src.value.scorecard.build_scorecard`` over ``src.common.value_inputs`` (research.db ``mode=ro``,
 market facts from yfinance, earnings from news.db read-only), inside the research materialisation
 budget, answered as ``computed: "now"``, and one ``value_snapshot`` intent carries the input set it
@@ -132,6 +133,25 @@ def _compute(
     return build_scorecard(inputs, cfg)
 
 
+def _note_view(symbol: str, user: User, today: date) -> None:
+    """A stored file that is fresh was shown: one ``value_snapshot`` with an EMPTY fingerprint
+    marks the name viewed (the follow window's input) and persists nothing else. At most one a
+    day per name (keyed on the date, checked in any status), so reloading a page never piles
+    them up. Showing the file never depends on it."""
+    key = f"value_snapshot:{symbol}:viewed:{today.isoformat()}"
+    try:
+        if api_commands.dedupe_key_seen(key):
+            return
+        api_commands.submit(
+            kind=CommandKind.VALUE_SNAPSHOT,
+            payload={"symbol": symbol, "fingerprint": {}},
+            user=user,
+            dedupe_key=key,
+        )
+    except Exception as exc:  # noqa: BLE001 - showing the file never depends on the intent
+        log.warning("value lookup: could not queue the view mark for %s (%s)", symbol, exc)
+
+
 def lookup(symbol: str, user: User, *, now: datetime | None = None) -> ValueTickerResponse | None:
     """The ticker file for *symbol* as the web shows it, or ``None`` when the name is unknown to
     both value.db and research.db (the route answers 404)."""
@@ -164,11 +184,13 @@ def lookup(symbol: str, user: User, *, now: datetime | None = None) -> ValueTick
     regime = vi.load_regime()
     version = cfg.value.ruleset_version
     digest = rules_digest(cfg.value.rules.model_dump(mode="json"))
+    today = now.astimezone(ZoneInfo(cfg.scheduler.timezone)).date()
     if (
         row is not None
         and stored is not None
         and is_current(row["freshness_json"], parts, regime, version, digest)
     ):
+        _note_view(sym, user, today)
         return stored
     missing = [
         kind
@@ -184,7 +206,6 @@ def lookup(symbol: str, user: User, *, now: datetime | None = None) -> ValueTick
         if stored is not None:
             return stored.model_copy(update={"computed": "pending"})
         return ValueTickerResponse(as_of=now, available=True, symbol=sym, computed="pending")
-    today = now.astimezone(ZoneInfo(cfg.scheduler.timezone)).date()
     card, timed_out = _within(
         _budget(),
         lambda: _compute(sym, today=today, prior=prior, rs_cutoff=rs_cutoff, regime=regime),
