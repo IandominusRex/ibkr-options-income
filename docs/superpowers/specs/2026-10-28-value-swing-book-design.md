@@ -24,6 +24,10 @@ once** (§9.2); the live exit policy defaults to `value` (§7); puts and shares 
 - **The go-live section now says what it can and cannot prove,** and the point-in-time backtest
   (Stage 1b) is mandatory.
 - **A calibration dry run is the first build step.**
+**Revision 4 (2026-10-30, operator decision, §21):** the 70/30 pot is dropped. The wheel sells
+cash-secured puts against the whole account; the value book holds no cash back, its caps become
+ceilings, and a valid value buy that cannot be funded **releases capital** by closing wheel CSPs at
+breakeven or better through the Rules Engine. §9.3 is amended in place; §21 records it.
 Builds on: `src/research/` (SEC fundamentals + the 40-check engine), `src/news/dossier.py` ("what
 Claude knows"), `src/regime/` (market regime), `src/spreads/` (the pattern for a second book in the
 same account), `src/strategies/buy_candidates.py` (the covered-call-suitability list this does not
@@ -879,6 +883,13 @@ these rules ship with Stage 3 and are proven by the fault drills below.*
   built (§14).
 
 ### 9.3 The pot — "dedicated" has to mean something
+> **Amended by revision 4 (2026-10-30, §21):** there is no pot and no reservation. The wheel keeps
+> selling CSPs against 100% of the account; the value book's 30% is a **ceiling** on what it may hold
+> at cost, the name cap, the 20 positions and the per-list share cap are ceilings within it, and a
+> valid buy short of cash asks the wheel to **release capital**. `value_liquidity_claim` keeps its
+> arithmetic (value stock at (1 − m)) and adds approved-but-unfilled buys instead of a ready buffer.
+> The text below is the superseded design, kept for the record; §21 is the one that is built.
+
 **Size (operator, 2026-10-29): 70% wheel, 30% value.** `config/value.yaml → sleeve.pct_of_net_liq:
 30` — the pot's capital at cost (unspent cash + cost of open value lots) is capped at 30% of net
 liquidation. My calls, to make 30% cheap to carry:
@@ -1074,7 +1085,8 @@ what "buy near the 52-week low" fights **[Opus]**. Hence §6.6 and §7.
 ## 14. Open decisions — the operator's
 
 1. ~~The pot?~~ **Answered (2026-10-29): 70% wheel / 30% value**, with a ready-buffer reservation, one
-   pot shared by both lists and each list capped at 70% of it (§9.3).
+   pot shared by both lists and each list capped at 70% of it (§9.3). **Superseded (2026-10-30) by revision 4
+   (§21):** no pot, no reservation; the 30% is a ceiling and a short buy releases capital.
 2. ~~May a wheel name be held as shares by the value book?~~ **Answered (revision 2): yes, shared**
    (§9.2).
 3. ~~Claude's adjustments in live?~~ **Answered (revision 2):** Claude decides on healthy names; in live
@@ -1261,3 +1273,53 @@ written. The author verified the code-level claims, all of which held:
 | GOOGL/META only after a ~50% fall? | Loosen the growth valuation now: r = 8%, half of SBC. Rough effect: GOOGL ~$101 → ~$151 Python, ~$227 with the clamp — still a ~30% fall from ~$300; the dry run prints the real numbers | §6.5, §17 |
 | When does ticker sharing switch on? | From the start of share-buying; the fault drills are build acceptance | §9.2 |
 | Whose shares are an assigned value-suggested put? | The wheel's, for v1 | §9.1 |
+
+## 21. Revision 4 — 2026-10-30: no reserved pot; capital release
+
+**The operator's decision (2026-10-30), superseding §14 question 1's 70/30 split and §9.3's ready
+buffer:** "the wheel keeps selling cash-secured puts against 100% of the account; the value book holds
+no cash in reserve. When there is a valid value-investing opportunity and the cash is not available,
+close certain wheel trades that are either at breakeven or 25% in profit, to release capital for the
+value trade." Built in Part 5 (`docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md`);
+its rulings set the details below and the operator may overturn any of them.
+
+**§9.3 as amended.**
+1. **Ceilings, not reservations.** `value.book.ceiling_pct_of_net_liq` (30) caps the book's cost; the
+   name cap (8% of that ceiling), `max_positions` (20) and the per-list share cap (70% of it) are
+   ceilings within it. Nothing is held back from the wheel.
+2. **The wheel's caps count what the value book actually holds.** `resolve_caps` subtracts
+   `books.value_exposure().claim = Σ value market value × (1 − m) + approved value buys not yet
+   filled` from excess liquidity before the reserve (m = `portfolio.value_maintenance_pct`, 25%); the
+   wheel's concentration tallies add the value book's stock per name; a CSP is refused when stock of
+   both books + CSP collateral + approved value buys would pass `portfolio.max_gross_notional_pct`
+   (100%) of net liquidation, and, on a name the value book holds, when one name across both books
+   would pass `portfolio.max_combined_name_pct` (15%). All of it applies only while
+   `value.book.enabled`.
+3. **Cash-only value buys.** A buy must fit inside the same gross cap; it never borrows.
+4. **Capital release.** A buy that passes every value gate except the gross cap (a READY name, every
+   gate passing, a tranche due, approved by the autonomy ladder or a tap) opens a funding request in
+   `value.db` for the shortfall. The trading process (each intraday cycle, `src/execution/
+   capital_release.py`) reads open requests through the read-only `value_view` and closes **the fewest
+   wheel cash-secured puts that free enough collateral**: only puts (a covered call frees no cash);
+   only at breakeven or better (`release.min_profit_pct` 0, never a loss), those at 25% of max profit
+   or more first (`preferred_profit_pct`); then the least premium given up, the most capital per
+   dollar given up; never a partial release (if no allowed set covers the need, nothing is closed); at
+   most 3 closes a request, 4 a day and 10% of net liquidation a day. Each close is gated by the Rules
+   Engine (`risk_engine.validate_release`) at decision time and again at send time on a fresh quote,
+   and sent through the wheel's own close path (`position_manager.close_short_position`: a
+   `LimitOrder` at mid, `qualifyContracts`, `req_fresh_mkt_data` quotes, cancel on timeout),
+   stamped `CloseReason.CAPITAL_RELEASE`. Deterministic Python; no LLM output selects, sizes, prices
+   or gates a release.
+5. **Close first, confirm, then buy.** The value process never buys on a promise: each RTH cycle it
+   re-reads its own fresh account and re-gates the buy; only when the room is there does the buy send.
+   An approved buy's cost is earmarked against the wheel's gross cap while its request is open, so the
+   wheel cannot re-sell into the freed collateral. A request lapses after `request_ttl_hours` (30) or
+   when its buy is refused or expires, and then nothing else happens; a name whose request lapsed asks
+   again only after `cooldown_days` (3).
+6. **Approval.** A release inherits its buy's approval: an auto buy (the autonomy ladder allows it)
+   releases automatically; a buy that waits for a tap opens no request until it is tapped. Halted: no
+   request is serviced.
+7. **Failure mode 1 (§13) under revision 4.** The guard is the gross cap across both books, the value
+   claim on excess liquidity and the earmark, not a reservation; the go-live line "the pot cannot be
+   funded without lowering the wheel's reserve" (§12) reads "a value buy needed a release that lowered
+   the wheel's reserve below its configured floor".

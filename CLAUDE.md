@@ -288,6 +288,10 @@ in `src/ledger/` is imported by `engine/`, `execution/`, or `strategies/`, and `
 imports nothing from `src.claude`, directly or at import time: `live.py` imports `src.execution.reconciliation`'s `_req_executions_bounded` lazily, inside its own wrapper, because a module-level import loaded `src.execution` and, through it, `src.claude.memory` into every process that attaches the ledger's commission hook, the spreads service included. Only the RTH sweep, which runs only inside `approval_service`, reaches it. `src/ledger/live.py` is the one place `ib_async` objects
 (`Fill`/`Execution`/`CommissionReport`) are converted to the ledger's own `ParsedExecution`
 schema — never passed across a module boundary raw, and never elsewhere in the ledger code.
+Since the value book (Part 5, spec §9.2) every execution also carries the broker's `orderRef`
+(`ParsedExecution.order_ref`, the `broker_executions.order_ref` column; live, Flex and the backfill
+the live and Flex feeds fill it; `ingest.py` backfills it onto an existing row), and `ingest.py` tags a `value:`-prefixed ref `book="value"` — the tag
+`src/storage/wheel_shares.py` excludes when it computes the wheel's own share count.
 Enforced by `tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger` (grepping
 engine/execution/strategies for `src.ledger`/`trade_ledger`), `::test_the_ledger_never_imports_the_enrichment_layer`
 and `::test_only_the_ledger_package_writes_the_ledger_tables` (only `src/ledger/` constructs the
@@ -408,11 +412,16 @@ the value book. It is **deterministic tier**:
   every SEC and price fetch; `src/value/` opens no SEC client.
 - Only `src/value/` constructs `data/value.db` rows (`ValueBase`); `scripts/` is scanned too, and the
   dry-run script logs its run through `src.value.store.record_run`.
-- The value process (`scripts/run_value.py`, Part 2) holds no IBKR connection: it hands
-  `src/value/` earnings dates from `news.db` and yfinance market facts as plain data
-  (`scripts/value_feed.py`), so `src/value/` never imports `src.news` or `src.data`. It is the only
-  module that imports `src.value_ai` (Part 4), it is never imported itself, and `src/value/` with
-  its feed loads no wheel layer, no Claude and no `ib_async` (a `sys.modules` test).
+- The value process (`scripts/run_value.py`, Part 2) holds no IBKR connection of its own through
+  Part 4 and, from Part 5, none at import: it hands `src/value/` earnings dates from `news.db` and
+  yfinance market facts as plain data (`scripts/value_feed.py`), so `src/value/` never imports
+  `src.news` or `src.data`. It is the only module that imports `src.value_ai` (Part 4), it is never
+  imported itself, and importing `src/value/` with its feed loads no wheel layer, no Claude and no
+  `ib_async` (a `sys.modules` test). From Part 5 the RTH cycle connects as clientId 31 for the
+  length of one cycle and disconnects (`src/value/stage3.py`, the one module that imports
+  `src.ibkr`, `src.storage.wheel_shares` and `src.storage.system_settings`, all lazily inside its
+  functions; `src/value/executor.py` imports `src.ibkr.market_data` lazily likewise). Besides those,
+  `src/value/` may read `src.common.books` (the attribution rule) and nothing else of the wheel.
 - **`src/value_ai/` (Part 4) is enrichment** (on `tests/test_eval_skills.py`'s list): Claude as the
   analyst. It reaches Claude only through `src.claude.cli` (slim, from `value.claude.workdir`,
   outside the repo), reads `news.db` only through `src.news.store.readonly` and `queries`, and
@@ -440,7 +449,26 @@ the value book. It is **deterministic tier**:
   through `src/common/value_inputs.py`.
 - Parts 1–4 place, size and gate nothing: every shadow row is hypothetical. Claude's verdict (the
   second written exception under the core invariant) decides the effective verdict, the `claude`
-  shadow track and `value_effective`; Part 5 is the first part where it can reach an order.
+  shadow track and `value_effective`.
+- **Part 5 (Stage 3, paper only) trades.** Its gate is `src/value/risk.py::validate` (pure,
+  deterministic, no model call, run at decision time and again at send time on a fresh quote); its
+  orders go only through `src/value/executor.py` on clientId 31 (`LimitOrder` at mid,
+  `qualifyContractsAsync`, `req_fresh_mkt_data`, `orderRef = "value:<id>"` written before
+  `placeOrder`); `src/value/stage3.py` imports ib_async and `src.ibkr` inside its functions only, so
+  importing `src.value` loads neither; the book idles when `LIVE_TRADING=true`. A sale only Claude's
+  number would make always waits for a tap.
+- **The wheel learns of the value book only through `src/common/value_view.py`** (value.db opened
+  `mode=ro` with plain SQL; imports only `src.common.config`) and `src/common/books.py`
+  (`attribute`, `value_sell_cap`, `value_exposure`); its own share count W comes from the ledger
+  (`src/storage/wheel_shares.py`), never broker minus value. Nothing on the trading path imports
+  `src.value`. While `value.book.enabled` is false every one of these is inert and the wheel is
+  unchanged.
+- **Capital release (revision 4, 2026-10-30)**: the value book holds no cash back; an approved buy
+  short of cash opens a funding request, and the trading process (`src/execution/
+  capital_release.py`, every intraday cycle) closes the fewest wheel cash-secured puts at breakeven
+  or better, each gated by `risk_engine.validate_release` twice and sent through
+  `position_manager.close_short_position` (`CloseReason.CAPITAL_RELEASE`). Deterministic; no LLM
+  output selects, sizes, prices or gates a release; it inherits its buy's approval.
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 

@@ -343,9 +343,54 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 | **Live trading for the spreads system; flow-based GEX; spreads web pages** | **Deliberately not built.** `src/spreads/service.py::run()` refuses `LIVE_TRADING=true` (shadow/paper only until a separate live plan exists). Intraday flow-based GEX needs a paid vendor feed — the map uses prior-close open interest. The spreads book has no web pages beyond the ledger's Book filter; `scripts.spreads_report` and the Telegram thread are its read side. |
 | **Trade ledger web dashboard** (`/ledger`, `/ledger/trades`, `/ledger/ticker/[symbol]`, `/ledger/import`) | **Built (Tasks 13-16 of docs/superpowers/plans/2026-10-05-trade-ledger.md, on `feat/trade-ledger`).** Overview (tiles, cumulative-P&L curve, monthly bars, ticker table), the filterable trades table with CSV export and a trade panel that edits annotations (`ledger_annotate`), the per-ticker drill-down (wheel cost-basis walk, lots, dividends, every trade) and the import page (CSV upload via `ledger_import`, feed status, corporate actions with a mark-reviewed button, import history). All reads go through `GET /ledger/*`; all writes through the command queue. See `web/CLAUDE.md`/`ARCHITECTURE.md` `web/`. |
 | **Trade ledger fence test** (`tests/test_web_fence.py::test_the_trading_path_never_imports_the_ledger`, `::test_the_ledger_never_imports_the_enrichment_layer`, `::test_only_the_ledger_package_writes_the_ledger_tables`) | **Built (Task 17 Step 1).** Asserts `engine/`/`execution/`/`strategies/` never import `src.ledger` or `trade_ledger`, `src/ledger/` imports nothing from `src.claude`, and only `src/ledger/` (plus the ORM definitions in `models.py`) constructs the six ledger-table rows. `test_reporting_never_writes_anything` separately covers `trade_ledger.py`'s no-writes rule. |
-| **Value book Parts 4–6** | Claude as the analyst (and the Claude track of the shadow record); Stage 3 money (paper); web and Telegram (with the follow window's `last_viewed_at`, digests, review cards and a watchdog check) — the roadmap in the Part 2 plan; each part is planned after the previous one merges. |
+| **Value book Part 6** | Web and Telegram (with the follow window's `last_viewed_at`, digests, review cards, the `value_approve` / `value_reject` buttons, the drawdown's "trim to half" card, the `value_put` field in the API's promote payload, the value book across Home and a watchdog check) — the roadmap in the Part 2 and Part 5 plans; planned after Part 5 merges. Parts 4 (Claude as the analyst) and 5 (money in paper) are built, below. |
 
 ---
+
+## Built (2026-10-30 — value book Part 5: money in paper, capital release)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-5-money-paper.md`. Paper only; off until
+`value.book.enabled`.
+
+- Spec revision 4 (§21): no reserved pot; the book's caps are ceilings; a valid buy short of cash
+  releases capital by closing wheel CSPs at breakeven or better (the Rules Engine's
+  `validate_release`, twice; `capital.select_releases`; `src/execution/capital_release.py`).
+- The value gate (`risk.py`), sizing and tranches (`sizing.py`), the book's rows (`book.py`), the
+  executor on clientId 31 with `orderRef`, the night's proposals and the RTH cycle (`live.py`,
+  `stage3.py`), plain notifications, `scripts/value_book.py`.
+- Share attribution: `orderRef` through the live, Flex and ledger paths (`book="value"`), the
+  wheel's own count W from the ledger (splits applied), the wheel's view `min(W, broker − V)`,
+  fail-closed reads, the reconcile with a grace and a freeze, the sell cap, the seven fault drills
+  as unit tests. The Rules Engine counts the value book (excess-liquidity claim, gross and combined
+  caps, freezes); `promote` refuses `above_value_ceiling` for a value put.
+- Known limitations: taps are a CLI until Part 6's buttons; the 25% "trim to half" drawdown
+  proposal is Part 6's; a held name with no open shadow entry gets only the hourly check of
+  triggers 1 and 4; W needs the ledger's whole history (import it before the first buy); a split
+  freezes the name until `value_book --split` and `--clear`; not live: a separate live plan is
+  needed.
+- New in the trading path (the only Rules-Engine edits, each inert while `value.book.enabled` is
+  false): `capital.py` (value claim, extra exposure, `ReleaseCandidate` / `release_reasons` /
+  `select_releases`), `risk_engine.py` (`book_attribution_mismatch`, `value_book_unreadable`,
+  `gross_notional_cap`, `combined_name_cap`, `validate_release` with the `release_*` reasons),
+  `regime_limits.py` and `strategies/cash_secured_put.py` (the same claim), `ibkr/portfolio.py`
+  (`wheel_view`, `include_value`), `execution/capital_release.py` and
+  `position_manager.close_short_position(note=)`, one call in the approval service's intraday loop,
+  and the ledger (`ParsedExecution.order_ref`, `broker_executions.order_ref`, `book="value"`).
+  Operator rulings (2026-11-04): a value-suggested put struck above the value ceiling is refused at
+  `promote` (`above_value_ceiling`); a release inherits its buy's approval; the combined name cap is
+  15%.
+- **Needs live verification before `value.book.enabled`** (paper): the seven scripted fault drills
+  (the unit-test versions in `tests/test_value_fault_drills.py` fake the broker); the first real
+  release close (a `LimitOrder` at mid on a paper CSP, both gates on a fresh quote) and the buy it
+  funds; that clientId 31 connects beside the other daemons and `orderRef` reaches the ledger
+  through both the live hook and a Flex pull (so the freshly bought shares tag `book="value"` and
+  W stays the wheel's); the grace window against a real Flex lag; the account's trade history
+  imported into the ledger first.
+- Flagged for review (not changed): `wheel_view` reads value.db even with the book off, so a
+  present-but-unreadable value.db fails the wheel closed on stock the ledger cannot explain;
+  `capital_release._service` subtracts today's filled release closes from a stored `needed_usd`
+  that the value process already rewrites net of them (errs toward closing less); value rows show in
+  the whole-account trade ledger as account truth, not split out (Part 6).
 
 ## Built (2026-10-30 — value book Part 4: Claude as the analyst)
 

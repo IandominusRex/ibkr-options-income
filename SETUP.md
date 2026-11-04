@@ -116,6 +116,7 @@ TELEGRAM_THREAD_BUY=56     # Buy-to-own recommendations
 TELEGRAM_THREAD_ACCOUNT=58 # Account snapshot
 TELEGRAM_THREAD_SPREADS=4308 # Daily credit-spread system (src/spreads/)
 TELEGRAM_THREAD_NEWS=4409  # News thread (src/news/, §17)
+TELEGRAM_THREAD_VALUE=     # Value book thread (src/value/, §19 step 10); empty = the main chat
 FINNHUB_API_KEY=           # Optional free Finnhub key (§17); empty = Finnhub dormant
 
 LIVE_TRADING=false              # Keep false until you are ready to go live
@@ -133,7 +134,8 @@ LIVE_TRADING=false              # Keep false until you are ready to go live
    topic you want the bot to use, and set the corresponding `TELEGRAM_THREAD_*` variable
    (`TELEGRAM_THREAD_SCAN`, `TELEGRAM_THREAD_CSP`, `TELEGRAM_THREAD_CC`, `TELEGRAM_THREAD_BUY`,
    `TELEGRAM_THREAD_ACCOUNT`, `TELEGRAM_THREAD_SPREADS` for the optional daily credit-spread
-   system, and `TELEGRAM_THREAD_NEWS` for the News thread, §17). Leave a variable unset for DMs or
+   system, `TELEGRAM_THREAD_NEWS` for the News thread, §17, and the optional
+   `TELEGRAM_THREAD_VALUE` for the value book's messages, §19). Leave a variable unset for DMs or
    plain (non-forum) groups.
 
 ---
@@ -2031,13 +2033,14 @@ that survived checking.
 
 ---
 
-## 19. The value book, Parts 1–4: the scorecard, the nightly process, the shadow record, its re-evaluations and Claude as the analyst
+## 19. The value book, Parts 1–5: the scorecard, the nightly process, the shadow record, its re-evaluations, Claude as the analyst and money in paper
 
 The value book scores healthy companies against what they are worth
 (`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
 a one-off **calibration dry run**; Part 2 adds a nightly process and the **shadow record**; Part 3
 adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtest; Part 4 adds
-**Claude as the analyst** (spec §8). None of them places an order or sends a message.
+**Claude as the analyst** (spec §8). None of Parts 1–4 places an order or sends a message; Part 5
+(step 10) does, in paper only and off by default.
 
 1. `cp config/examples/value.yaml config/value.yaml` (git-ignored; every key has a code default).
 2. The research worker refreshes the value universes nightly (`research_sweep.enabled`, on since
@@ -2103,6 +2106,23 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
    it cannot trip it twice). `python -m scripts.value_report` prints Claude's track beside the baseline's. In
    Claude Code, `/value SYMBOL` runs the interactive skill (`.claude/skills/value/`), which reads
    `python -m scripts.value_report --symbol SYMBOL --json`.
+10. **Money, in paper (Part 5).** Off until you set `book.enabled: true` in `config/value.yaml`
+    (paper only: the book idles with `LIVE_TRADING=true`). Before that: refresh
+    `config/settings.yaml` (`ibkr.client_ids.value: 31`) and `config/risk_limits.yaml`
+    (`portfolio.max_gross_notional_pct`, `max_combined_name_pct`, `value_maintenance_pct`) from
+    their examples; set `TELEGRAM_THREAD_VALUE` in `.env` (optional); import the account's trade
+    history into the ledger (Flex or an Activity CSV) so the wheel's own share count is complete;
+    and run the seven scripted fault drills of the Part 5 plan. Then the night proposes buys for
+    READY names with a tranche due (auto when the autonomy ladder allows, else a tap) and sells from
+    each held position's `value` plan (Python's exits auto with `automation.auto_close_enabled`;
+    anything only Claude's number would sell always waits for a tap), and every 15 minutes in RTH
+    the book reconciles its shares with the wheel's, sends approved orders on clientId 31 and, when a
+    buy is short of cash, asks the wheel to **release capital**: the trading process closes the
+    fewest of the wheel's cash-secured puts at breakeven or better (25% of max profit first), each
+    gated twice by the Rules Engine; the buy goes once the cash is there.
+    `python -m scripts.value_book` shows holdings, proposals, funding requests and freezes;
+    `--approve N` / `--reject N` are the taps; `--clear SYMBOL` clears a frozen share attribution;
+    `--split SYMBOL 2:1` restates the book after a split.
 
 ### Scripts
 
@@ -2113,6 +2133,7 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
 | `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
 | `python -m scripts.run_value` | The value process. Normally started by `scripts.start` / `./ibkr restart`; `--no-value` skips it. Logs to `logs/value.log` (`./ibkr logs value`). |
 | `python -m scripts.value_report [--track baseline\|claude] [--universe all\|trading\|evidence] [--ruleset V] [--postmortems]` | Prints the shadow record from `data/value.db` (read only), with Claude's track beside the baseline's (Part 4). `--symbol NVDA --json` prints one ticker file. |
+| `python -m scripts.value_book [--approve N] [--reject N] [--clear SYMBOL] [--split SYMBOL N:M] [--reset-drawdown]` | The value book's money (Part 5): holdings, proposals, funding requests, freezes; the taps. |
 | `python -m scripts.value_claude [--read SYMBOL] [--reset-breaker]` | Claude's side of the value book (Part 4): the breaker, today's read budget and the queue; queues a read; resets the breaker. |
 | `python -m scripts.value_backtest [--universe evidence\|trading] [--names A,B] [--limit N] [--start D] [--end D] [--bars provider\|research] [--refresh] [--out F]` | Stage 1b: the point-in-time backtest of Python's rules (Part 3). |
 
