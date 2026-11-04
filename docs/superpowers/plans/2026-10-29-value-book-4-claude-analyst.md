@@ -114,6 +114,7 @@ is the executing agent's own model name.
 | A3 (Task 3) effective verdict, Claude's tables | done | `39387a0` | task gate: 35 passed (effective, store, fence); ruff check + format clean; mypy clean on `effective.py`, `store.py` | 2026-11-04 | No deviation. `Effective`/`ClaudeOpinion` and the seven `value_claude_*`/`value_effective` tables as written; the new tables are created by the existing `create_all` in `init_value_db` (no migration needed, all new). Cost-if-wrong: one function (`effective.py`) per ruling 4. |
 | Section B entry | checks B1–B4 passed | 4 commits on branch | pytest 5328 passed, 1 skipped (re-verified by orchestrator); ruff clean; mypy 328 files | 2026-11-04 | B3 line numbers matched exactly; no `src/value_ai`. Section B exit target: baseline 5305 + 47 = 5352 passed, 1 skipped |
 | **Section A exit** | done | 3 task commits + this docs(plan) commit = 4 (`git log --oneline main..HEAD \| wc -l` printed 3 before it) | **full gate: pytest 5328 passed, 1 skipped (baseline 5305 + 23)**; `ruff check .` clean; `mypy src` 328 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py` silent; `git status --short` clean | 2026-11-04 | Section B entry: new-test running total 23 of 77; baseline for later targets stays 5305. |
+| B1 (Task 4) the analyst `src/value_ai/` and its fences | done | `c9ae196` | task gate: 71 passed (value_ai, value_fence, eval_skills, spreads_fence, news_fence, value_config); ruff check + format clean; mypy clean on `src/value_ai`, `config.py`; 11 new tests (9 + 2 fence) | 2026-11-04 | No deviation from the task text; files written whole, fence diffs applied with Edit. Ruling: the red run (Step 2) was skipped for this task, the tests and package were written together and first run green (the other tasks ran red first); cost-if-wrong: none, the tests assert the behaviour either way. The probe test confirms importing the analyst loads only `src.claude.cli` from the reasoning layer. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -2124,7 +2125,7 @@ particular no `data/value_filing_reads.json`: that file does not exist before Ta
   `analyst.Analyst(...).read(req, now) -> AnalystResult` (never raises),
   `Analyst.from_config(cfg)`.
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_value_ai.py`:
+- [x] **Step 1: Write the failing tests** — create `tests/test_value_ai.py`:
 
 ````python
 """The value analyst (src/value_ai/): prompts, strict parsing, the call (value book spec §8)."""
@@ -2462,13 +2463,13 @@ index cd9faa1..7309a72 100644
 +    assert not _reaches(loaded, "src.news.store.session")
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_ai.py tests/test_value_fence.py tests/test_eval_skills.py`
   Expected: FAIL — `ModuleNotFoundError: No module named 'src.value_ai'` (collection error) and the
   two new fence tests (`assert len(VALUE_AI) >= 5`, the probe's import).
 
-- [ ] **Step 3: The workdir helper** — apply:
+- [x] **Step 3: The workdir helper** — apply:
 
 ```diff
 diff --git a/src/common/config.py b/src/common/config.py
@@ -2488,7 +2489,7 @@ index 2ca14f3..22f26df 100644
          ROOT (keeps old configs working, but it puts the repo's CLAUDE.md in the picker's context)."""
 ```
 
-- [ ] **Step 4: The package** — create each file whole:
+- [x] **Step 4: The package** — create each file whole:
 
   `src/value_ai/__init__.py`:
 
@@ -3083,12 +3084,12 @@ class Analyst:
             )
 ```
 
-- [ ] **Step 5: Run them to see them pass**
+- [x] **Step 5: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_ai.py tests/test_value_fence.py tests/test_eval_skills.py tests/test_spreads_fence.py tests/test_news_fence.py tests/test_value_config.py`
   Expected: PASS.
 
-- [ ] **Step 6: Gates and commit**
+- [x] **Step 6: Gates and commit**
 
   Run: `.venv/bin/ruff check src/value_ai src/common/config.py tests/test_value_ai.py tests/test_value_fence.py tests/test_eval_skills.py`,
   the same paths with `.venv/bin/ruff format --check`, and `.venv/bin/mypy src/value_ai src/common/config.py`.
