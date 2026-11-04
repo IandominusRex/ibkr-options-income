@@ -485,6 +485,25 @@ the value book. It is **deterministic tier**:
   or better, each gated by `risk_engine.validate_release` twice and sent through
   `position_manager.close_short_position` (`CloseReason.CAPITAL_RELEASE`). Deterministic; no LLM
   output selects, sizes, prices or gates a release; it inherits its buy's approval.
+- **Part 6 (Telegram, the web, the book's surfaces) allowances and limits.**
+  - The six `value_*` command kinds (`src.common.value_commands.VALUE_KINDS`, standard library only)
+    are enqueued by the API and by `approval_service` (`vbook:` buttons) and drained only by the value
+    process (`src/value/commands.py`); `command_drain` skips them. `scripts/run_value.py` imports
+    `src.common.value_commands`, `src.value.commands` and, lazily inside `_drain_commands()` only,
+    `src.storage.app_commands` and `src.storage.db`, so it still loads no wheel layer at import.
+  - `approval_service` imports `src.common.value_commands` and `src.common.value_view`, never
+    `src.value`. `src/common/value_view.py` gains the standard library's `json` and imports
+    `src.common.value_commands` and `src.common.value_text` (pure) beside `src.common.config`.
+  - `src/claude/value_context.py` (enrichment, on `tests/test_eval_skills.py`'s list) reaches the book
+    only through `src.common.value_view` and `src.common.value_text`; nothing else under `src/claude/`
+    imports them, and none imports `src.value`. The VALUE NOTE is prompt text that can at most lower a
+    CSP's contract count through `claude_cut`.
+  - **The API imports from `src.value` only `scorecard` and `schemas`**
+    (`tests/test_value_fence.py::test_the_api_imports_only_scorecard_and_schemas_from_value`), reads
+    value.db only through `src/api/value_db.py` (`mode=ro`,
+    `test_only_value_db_opens_the_value_file_in_the_api`) and writes no value row: its one write is a
+    `value_snapshot` / `value_*` command through `src.api.commands`. `src/common/value_freshness.py`
+    (standard library only) holds the freshness key and the `value_rules` hash both sides share.
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 
@@ -592,7 +611,10 @@ console only: nothing in `src/engine/`, `src/strategies/` or `src/execution/` re
 `tests/test_approval_decided_by.py::test_the_trading_path_never_reads_who_decided` keeps it that
 way.
 
-Every web action is an intent drained by `approval_service`, never a direct mutation from the API
+Every web action is an intent drained by `approval_service`, **except the value book's kinds
+(`src/common/value_commands.VALUE_KINDS`), which the value process drains (spec §9.7):
+`approval_service` only forwards a Telegram tap as the same intent and its drain never reads them**,
+never a direct mutation from the API
 process: the drain's approve/reject handlers call `_process_button` unchanged, never reimplement
 it, and the Rules Engine remains the only path to an order — the web layer can propose (approve,
 promote, roll_request, universe edits) but cannot gate or size anything itself.

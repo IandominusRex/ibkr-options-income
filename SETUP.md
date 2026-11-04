@@ -740,6 +740,9 @@ Once the approval service is running, you can interact with the system from your
 | `/news` | Replies with a link to the latest news digest (or "No digest posted yet"). |
 | `/regime` | **Market regime** (2026-10-22). Shows the SPY and QQQ regimes (normal / cautious / stressed / crisis, the daily base and what raised it today), what each means for new puts (the CSP budget, the per-trade size and the new puts allowed today), the live inputs (VIX, VIX/VIX3M, the index's move) and whether the limits are active. The state is refreshed first, so the reply is current; with no market data yet it says so. A regime-change notice (orders thread) also says when opening orders already working at the broker are unchanged. |
 | `/regime off` / `/regime on` | Suspend every regime limit for the rest of this trading day (the next trading day's base is back under the limits), or resume them now. Closes, profit-takes, loss exits and rolls are never limited by the regime. **Not switched off by it:** the leveraged-ETF size limit, the same-day loss-exit block on a name, and the covered-call breakout rule (each has its own switch in `risk_limits.yaml`). |
+| `/value` | **Value book (Part 6, SETUP §19).** The top five READY or WATCH names per list (effective verdict, margin of safety, fair value, age) and each proposal waiting for your tap as its own message with **Approve / Reject** buttons. |
+| `/value NAME` | One name's stored ticker file with its age; a stale file is flagged and refreshed by the value process, and an unknown name is queued ("not scored yet"). |
+| `/value NAME analyse` | Queues Claude's read of the name (needs `claude.enabled: true` in `config/value.yaml`). |
 | `/expire` | Expires all pending approvals without executing any of them. Use when you decide not to trade for the day. |
 | `/health` | Connection status for both IBKR links, database reachability, time since last scan, and counts of pending approvals and open orders. |
 | `/help` | Lists all available commands. |
@@ -873,7 +876,9 @@ connection, the command-drain and (during market hours) intraday-monitor heartbe
 the intraday scan loop has completed recently during RTH, execution is not held halted by a circuit-breaker trip during RTH (an operator `/halt` is not alerted), the EOD report finished today after its
 scheduled time, no universe/held symbol's IV history has gone stale, and (while `news.enabled`)
 the news service's heartbeat in `data/news.db` is younger than `watchdog.news_max_age_minutes`
-(default 30; a missing `news.db` fails the check). A failing check sends a
+(default 30; a missing `news.db` fails the check), and (while `config/value.yaml` exists) the value process's
+last finished nightly run is not older than the last session's close plus `watchdog.value_grace_hours`
+(default 26; a missing `data/value.db` fails the check). A failing check sends a
 plain-text Telegram alert (re-sent every `watchdog.realert_minutes` while it stays failing, with a
 "recovered" notice once it clears); it has no IBKR connection and no clientId, and writes only
 `data/watchdog_state.json`.
@@ -2033,7 +2038,7 @@ that survived checking.
 
 ---
 
-## 19. The value book, Parts 1–5: the scorecard, the nightly process, the shadow record, its re-evaluations, Claude as the analyst and money in paper
+## 19. The value book, Parts 1–6: the scorecard, the nightly process, the shadow record, its re-evaluations, Claude as the analyst, money in paper and the Telegram and web surfaces
 
 The value book scores healthy companies against what they are worth
 (`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
@@ -2128,6 +2133,34 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
     `python -m scripts.value_book` shows holdings, proposals, funding requests and freezes;
     `--approve N` / `--reject N` are the taps; `--clear SYMBOL` clears a frozen share attribution;
     `--split SYMBOL 2:1` restates the book after a split.
+
+11. **Taps, cards and the digest (Part 6).** Every value proposal that waits for a tap is a card in
+    `TELEGRAM_THREAD_VALUE` with **Approve** and **Reject** buttons (or a click on the web). A tap is an
+    intent the **value process** drains within ~15 seconds (`value.telegram.commands_poll_seconds`),
+    never the approval service: it refuses a stale card (the proposal changed), an expired or already
+    decided proposal, and anything while `LIVE_TRADING=true`. **Approving only marks the proposal
+    approved:** the next RTH cycle (every `book.cycle_minutes`) re-gates it on a fresh quote and only
+    then sends; if cash is short the approval may let the wheel close up to
+    `book.release.max_closes_per_request` of its cash-secured puts at breakeven or better to fund it,
+    and those closes need no further tap. When the book falls `book.drawdown_trim_pct` (25%) from its
+    high, **one trim card** per drawdown episode offers to trim every holding to half (a tap creates
+    approved half-size sells, each still re-gated and capped at send time);
+    `python -m scripts.value_book --reset-drawdown` ends the episode. A **Major** re-evaluation of a held
+    name posts a card the same day; after each night one **digest** message lists the Minor
+    re-evaluations since the last, review cards (a kill trigger fired; held `telegram.no_progress_months`
+    with no progress; fair value down `telegram.fv_drop_pct` since entry while the price is not) and
+    the proposals waiting (nothing is sent when all are empty; `telegram.digest_enabled: false`
+    silences it). Held names with no shadow entry get the same re-evaluation triggers as a shadow
+    entry. The wheel's trade review, roll review and `/scan NAME` prompts carry a short **VALUE NOTE**
+    about the names the book knows (context only, and it can only ever lower a cash-secured put's
+    size; `prompt_note.enabled: false` removes it). The watchdog (§6b) alerts when the nightly run is
+    missing. **After pulling Part 6, re-copy** the `telegram:` and `prompt_note:` blocks of
+    `config/examples/value.yaml` into `config/value.yaml` and `watchdog.value_grace_hours` of
+    `config/examples/settings.yaml` into `config/settings.yaml` (every key has a default, so a stale
+    copy still loads), then `./ibkr restart` (the trading service before the API).
+12. **The web reads the book** (no setup beyond the API): `GET /value/top`, `/value/book`,
+    `/value/positions` and `/value/{symbol}` (`docs/web/api.md`). Opening a ticker file whose research
+    inputs moved computes it on the spot from `research.db` and asks the value process to store it.
 
 ### Scripts
 

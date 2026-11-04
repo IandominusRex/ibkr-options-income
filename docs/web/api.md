@@ -1335,7 +1335,7 @@ reads, plus the book's own spread positions from `data/spreads.db` (read through
 | Param | Type | Notes |
 |---|---|---|
 | `month` | `YYYY-MM` | default: the current New York month |
-| `strategy` | `all` \| `csp` \| `cc` \| `spread` | default `all`; a roll counts under the side it rolls (put roll = `csp`) |
+| `strategy` | `all` \| `csp` \| `cc` \| `spread` \| `value` | default `all`; a roll counts under the side it rolls (put roll = `csp`); `value` is the value book's sales only (Part 6) |
 | `book` | `paper` \| `live` | default: the running mode (a pay figure across paper and live means nothing, as with `/pnl/summary`) |
 
 The attribution rule, every date read in New York time:
@@ -1369,7 +1369,18 @@ The attribution rule, every date read in New York time:
   card says so instead of showing `$0` or the wheel's total as the whole month. A wheel-only
   strategy never reads the file and is always `true`.
 
-**Response — `MonthPayResponse`:** `{ as_of, book, pay: MonthPay, spreads_available }`.
+**The value book on the stub (value book Part 6, ruling 25).** `src/reporting/pay.py` also takes plain
+`ValuePayInput` values (one per filled value sale: its close time, symbol, realised dollars, proceeds less
+the shares' average cost) that `src/api/value_db.py` reads from `data/value.db` (`mode=ro`). They never join
+premium, `net` or the target (ruling 26: the target is the wheel's options-income wage and a share sale is a
+capital gain). `MonthPay` gains `value_realised` (`null` while nothing was sold in the month, never `0`),
+`value_commissions` (the known part; value.db holds no commissions), `value_commissions_complete` (`false`
+whenever a sale had none recorded, which is every sale today) and `value_n_closed`. With `strategy=value` the
+options figures are `0`, `net` is the value book's realised result less its known commissions and
+`progress_pct` is `null`. **`value_available`** is `false` only when the value book is in scope (`strategy`
+`all` or `value`) and `data/value.db` could not be read; it is independent of `spreads_available`.
+
+**Response — `MonthPayResponse`:** `{ as_of, book, pay: MonthPay, spreads_available, value_available }`.
 `MonthPay`: `{ month, strategy, premium_collected, bought_back, commissions, commissions_complete, net, n_opened, n_closed, month_start_value: float | null, target_pct: float | null, target_mode: "off" | "fixed" | "pct_of_account" | "pct_of_amount", target_amount: float | null, target_base: float | null, target: float | null, progress_pct: float | null, days_left }`.
 
 ### `GET /pnl/target` (web Home follow-ups, 2026-10-15)
@@ -1395,7 +1406,7 @@ and a rolled position) Claude's stored view, which carries `source: "claude"`.
 | Param | Type | Notes |
 |---|---|---|
 | `date` | `YYYY-MM-DD` | default: today in New York. Any date works (the calendar reuses it for a tapped day) |
-| `strategy` | `all` \| `csp` \| `cc` \| `spread` | default `all`; a roll counts under the side it rolls |
+| `strategy` | `all` \| `csp` \| `cc` \| `spread` \| `value` | default `all`; a roll counts under the side it rolls; `value` is the value book's fills (Part 6) |
 | `book` | `paper` \| `live` | default: the running mode |
 
 - **Opened:** a leg whose first SELL fill is on the day. The new short a roll opens is *not*
@@ -1416,9 +1427,16 @@ and a rolled position) Claude's stored view, which carries `source: "claude"`.
   cash held aside (a put), the shares' strike value (a call) or the most a spread can lose.
 - `spreads_available` is `false` only when a spreads book is in scope and `data/spreads.db`
   could not be read: the spreads cards are then missing, not absent.
+- **A value fill (value book Part 6, ruling 25)** is a card with `kind: "value"`, `source: "value"`: a buy is
+  `opened`, a sale `closed`. It is a share trade, so `strike` is the fill price per share, `contracts` the share
+  count, `expiry` the fill's New York date and `capital` the cash a buy laid out; `reason` says why in words
+  (scaling in, the stop, a thesis exit, the drawdown trim) and `net_pnl` on a sale is its realised dollars
+  (proceeds less the average cost; `null` if unknown). A sale only Claude's work called for (`cause: claude`)
+  carries a `facts` line labelled `source: "claude"`. They appear under `strategy` `all` or `value` and
+  `value_available` is `false` when `data/value.db` could not be read. `previous_day` / `next_day` count them too.
 
-**Response - `DayTradesResponse`:** `{ as_of, date, book, strategy, trades: DayTrade[], spreads_available }`, newest first.
-`DayTrade`: `{ key, action: "opened" | "closed" | "rolled", how, kind: "csp" | "cc" | "spread" | "other", source: "wheel" | "spreads", underlying, right, strike, long_strike, expiry, contracts, at, is_live, premium, bought_back, commissions, commissions_complete, net_pnl, capital, roc_pct, annualized_pct, pct_kept, dte_at_open, days_held, reason, facts: DayFact[], approval_id, review: DayReview | null, rolled_to: DayRolledTo | null, decided_by }`.
+**Response - `DayTradesResponse`:** `{ as_of, date, book, strategy, trades: DayTrade[], spreads_available, value_available }`, newest first.
+`DayTrade`: `{ key, action: "opened" | "closed" | "rolled", how, kind: "csp" | "cc" | "spread" | "value" | "other", source: "wheel" | "spreads" | "value", underlying, right, strike, long_strike, expiry, contracts, at, is_live, premium, bought_back, commissions, commissions_complete, net_pnl, capital, roc_pct, annualized_pct, pct_kept, dte_at_open, days_held, reason, facts: DayFact[], approval_id, review: DayReview | null, rolled_to: DayRolledTo | null, decided_by }`.
 
 **Who approved it (web overhaul Part 2).** `decided_by` (`"system"` | `"web"` | `"telegram"` | `null`) is on
 the opened and the rolled cards only, read from the approval the card links to (`approval_id`); a
@@ -1442,10 +1460,10 @@ the ledger). Owner-only.
 | Param | Type | Notes |
 |---|---|---|
 | `month` | `YYYY-MM` | default: the current New York month |
-| `strategy` | `all` \| `csp` \| `cc` \| `spread` | default `all` |
+| `strategy` | `all` \| `csp` \| `cc` \| `spread` \| `value` | default `all`; `value` is the value book's sales (Part 6) |
 | `book` | `paper` \| `live` | default: the running mode |
 
-**Response - `RealisedCalendarResponse`:** `{ as_of, book, calendar: MonthCalendar, spreads_available }`.
+**Response - `RealisedCalendarResponse`:** `{ as_of, book, calendar: MonthCalendar, spreads_available, value_available }`. With `strategy` `all` or `value` a value sale's realised dollars land on its close day (`complete` is `false` on a day with one: value.db holds no commissions).
 `MonthCalendar`: `{ month, strategy, days: { date, realized, n_closed, complete }[], total, n_closed, complete }`;
 `complete` is `false` when a closed leg that day has no commission recorded (the figure is a
 lower bound on the cost, an upper bound on the result).
@@ -1583,6 +1601,70 @@ API never imports `src.spreads`). Owner-only; writes nothing; never reaches IBKR
 `SpreadOrderOut`: `{ spread_id, kind: "open" | "close", ib_order_id, perm_id, filled_qty, price, commission,
 reason, created_at, mode, side: "put" | "call", expiry, short_strike, long_strike }`. `price` is per share and
 `null` when none was recorded; `reason` says why a close was sent (profit take, stop, expiry); `created_at` is UTC.
+
+## Value book (value book Part 6)
+
+Read-only views over `data/value.db`, the value process's own SQLite file
+(`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). The router
+(`src/api/routers/value.py`) reads it only through `src/api/value_db.py` (`mode=ro`, plain SQL, the same
+pattern as `spreads_db.py`) and imports from `src.value` only `scorecard` and `schemas`
+(`tests/test_value_fence.py::test_the_api_imports_only_scorecard_and_schemas_from_value`). All owner-only;
+none writes anything. **An absent or unreadable `data/value.db` is `available: false` with `200`, never an
+error and never "none".** Every response carries `as_of` (request time). The only web write is
+`POST /commands` of a `value_*` kind (`docs/web/commands.md`), which the value process drains.
+
+### `GET /value/top?list=deep_value|quality_growth`
+
+Up to ten names of the trading universe on one list by the **effective** verdict (READY, then WATCH, then
+WAIT; each by rank, higher first). **Response — `ValueTopResponse`:** `{ as_of, available, list_name, items }`;
+`ValueTopItem`: `{ symbol, list_name, verdict, decided_by: "claude" | "python", price, fair_value (the
+effective one), entry_ceiling, stop, half_sell, mos (a fraction), reasons (up to 3, Python's), put_ceiling,
+age_days }`. `stop` is always `null`: the live `value` policy sets no stop before the half sale, so there is no
+number to show for a name not yet held. `half_sell` is the effective fair value, the level the half sale fires
+at. `put_ceiling` is the highest effective entry ceiling among the name's priced lists, the ceiling of a
+value-suggested put.
+
+### `GET /value/book`
+
+**Response — `ValueBookResponse`:** `{ as_of, available, enabled (value.book.enabled), ceiling_usd (null until
+the RTH cycle has written an account snapshot; the trend brake applied), used_usd, positions (the open ones),
+proposals, funding, breakers, release_max_closes }`. `ValueProposalOut`: `{ id, kind: "buy" | "sell", symbol,
+list_name, shares, price, cost_usd, reason, cause: "python" | "claude", needs_tap, status, created_at,
+expires_at, fingerprint }` for the open proposals (pending, approved, funding, sent); **`fingerprint` is what
+a `value_approve` / `value_reject` command must carry back** (`value_commands.proposal_fingerprint`), so a
+tap on an old view cannot decide a different trade. `ValueBreakersOut`: `{ trend, drawdown, drawdown_pct,
+trim_offered, trim_episode (the id a `value_trim` command carries), trimmed }` (`null` where the value process
+has not written the state yet). `release_max_closes` is `value.book.release.max_closes_per_request`, the K in
+the approval sentence ("it may close up to K of your wheel's cash-secured puts").
+
+### `GET /value/positions?status=open|closed`
+
+**Response — `ValuePositionsResponse`:** `{ as_of, available, status, positions }`; `ValuePositionOut`: `{ id,
+symbol, list_name, status, shares, avg_cost, mark (the last price the value process saw), opened_at, closed_on,
+next_exit: { kind: "sell_half" | "stop", level } | null, realised_usd (null until a sale has filled) }`.
+
+### `GET /value/{symbol}`
+
+The ticker file. **Response — `ValueTickerResponse`:** `{ as_of, available, symbol, computed: "stored" | "now" |
+"pending", age_days, file, claude, reevaluations, plan }`. `file` is the scorecard with the effective verdicts
+laid over each list's baseline: `gates` (data quality and health, each `{ id, group, state, value, threshold,
+detail }`), `lists[]` (`baseline_verdict`, the effective `verdict` and `decided_by`, Python's `fair_value` and
+the `effective_fair_value`, `mos`, `entry_ceiling`, `methods[]` with `used` and `median` marked, the entry and
+timing `gates[]`), `metrics`, `put_ceiling`. **`claude` is `null` when Claude has read nothing for the name**,
+else `{ source: "claude", read_at, lists[] (a verdict per list with `why`, `fair_value`, `python_fair_value`,
+`cap_applied`, `drivers[]` `{ name, chosen, used, clamped, bound }`, `clamps[]`, `backend`), notes[], kill_triggers[]
+(`{ name, threshold, actual, state, distance_pct }`), facts[] (grounded only, `{ text, quote, filing }`) }`: it is
+Claude's text and numbers as Python bounded them and is always labelled; no Python field carries it. `reevaluations`
+are a held name's; `plan` is its open position's exit plan (`null` for a name not held).
+
+`computed` (ruling 24, `src/api/value_lookup.py`): **`stored`** when the file's freshness key (the newest accession
+and bar in `research.db`, the regime, the ruleset: `src/common/value_freshness.py`) equals the key of the cheap
+parts now; **`now`** when the file is stale or absent and the scorecard was computed on open from `research.db`
+(read-only), yfinance market facts and `news.db` earnings with the pure `build_scorecard`, inside
+`research.tiers.materialization_budget_seconds`, plus exactly one `value_snapshot` command carrying the input set
+for the value process to persist (the API never writes value.db); **`pending`** when the filings or bars are not in
+`research.db` yet (the research ingest is queued). Past the budget the stored file is answered. `404` when neither
+value.db nor `research.db` knows the symbol.
 
 ## News (news thread, spec §7.6)
 

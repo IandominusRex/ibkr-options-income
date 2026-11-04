@@ -61,6 +61,7 @@ live-cutover checklist), **[STATUS.md](STATUS.md)**; to fork and run it yourself
 | `/news NVDA` | Queue an on-demand news brief for any ticker; the news service posts it (headlines, facts, chart, 🧠 read) in the News topic |
 | `/news` | Link to the latest news digest |
 | `/regime` | Market regime for SPY and QQQ (normal / cautious / stressed / crisis) and what it means for new puts; `/regime off` suspends the regime limits for the rest of the trading day, `/regime on` resumes them |
+| `/value`, `/value NAME`, `/value NAME analyse` | The value book: the top names per list and the proposals waiting for your tap (with Approve / Reject buttons), one name's stored ticker file (refreshed in the background when stale), or a request for Claude's read of it |
 | `/expire` | Expire all pending approvals (clears the queue without executing) |
 | `/health` | System health check: IBKR connections, database, time since last scan, pending/open counts |
 | `/help` | List all commands |
