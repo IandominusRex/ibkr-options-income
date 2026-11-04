@@ -26,7 +26,7 @@ import logging
 import signal
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import src.common.value_inputs as vi
 from scripts.value_feed import (
@@ -39,7 +39,7 @@ from scripts.value_feed import (
 from src.common.config import get_config
 from src.common.logging import setup_logging
 from src.common.value_ai_types import AnalystRequest, AnalystResult, FilingSection
-from src.common.value_types import ValueFinancials
+from src.common.value_types import MarketFacts, ValueFinancials
 from src.value.claude_reads import run_queue
 from src.value.service import BookHooks, plan_run, run_nightly, startup_check
 from src.value_ai.analyst import Analyst
@@ -191,6 +191,16 @@ def _tick() -> None:
             log.exception("value: the nightly digest failed")
 
 
+def _market_one(symbol: str) -> tuple[MarketFacts, date | None]:
+    """One name's yfinance facts and next earnings date, for the read-side commands (a refresh or
+    a snapshot scores a single name). Both fall back to empty: a missing fact is UNKNOWN."""
+    facts = vi.fetch_market_facts(symbol)
+    try:
+        return facts, earnings_dates(datetime.now(UTC).date()).get(symbol)
+    except Exception:  # noqa: BLE001 - news.db is optional here
+        return facts, None
+
+
 def _drain_commands() -> int:
     """Claim the value kinds from app_commands, apply each in value.db, mark it (spec §9.7, ruling 1). The trading
     DB is imported here only: importing this script loads no wheel layer (the fence's probe)."""
@@ -214,7 +224,16 @@ def _drain_commands() -> int:
     def _apply(kind: str, payload: dict, by: str) -> dict:
         now = datetime.now(UTC).replace(tzinfo=None)
         with value_session() as vs:  # commits on exit, rolls back a refused tap
-            return vcmd.apply(vs, kind, payload, requested_by=by, now=now, live=cfg.is_live)
+            return vcmd.apply(
+                vs,
+                kind,
+                payload,
+                requested_by=by,
+                now=now,
+                live=cfg.is_live,
+                research=vi.research_read,
+                market=_market_one,
+            )
 
     def _mark(cid: int, result: dict | None, reason: str | None, detail: dict | None) -> None:
         with session_scope() as s:

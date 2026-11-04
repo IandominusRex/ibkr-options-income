@@ -411,3 +411,212 @@ def test_the_trim_is_offered_once_per_episode(value_book_db) -> None:
     )
     reset = book.reset_drawdown({**kept, "trimmed": True, "trimmed_at": NOW.isoformat()})
     assert reset == {"high": kept["value"], "value": kept["value"], "stop": False}
+
+
+# --- Task 8: the read-side kinds (snapshot, refresh, analyse) ---------------------------------
+
+
+@pytest.fixture()
+def research(tmp_path, monkeypatch):
+    """A research.db with two companies (STDY in the universe, OUT outside it) and SPY."""
+    import json
+
+    import pandas as pd
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    import src.common.value_inputs as vi
+    from src.common.value_universe import ValueUniverse
+    from src.research.store.models import Base, CompanyFactsRawRow, DailyBarRow, SymbolRow
+    from src.value import service
+    from tests.value_fixtures import AS_OF, companyfacts, price
+
+    path = tmp_path / "research.db"
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    closes = price(30.0).closes
+    days = pd.bdate_range(end=AS_OF, periods=len(closes)).date
+    with Session(engine) as s:
+        for sym, cik in (("STDY", "0000000001"), ("OUT", "0000000002")):
+            s.add(SymbolRow(symbol=sym, cik=cik, name=sym))
+            s.add(
+                CompanyFactsRawRow(
+                    cik=cik,
+                    payload_json=json.dumps(companyfacts()),
+                    fetched_at=datetime(2026, 3, 30),
+                )
+            )
+            for d, c in zip(days, closes, strict=True):
+                s.add(
+                    DailyBarRow(
+                        symbol=sym, date=d, open=c, high=c * 1.01, low=c * 0.99, close=c, volume=1e6
+                    )
+                )
+        for d in days:
+            s.add(DailyBarRow(symbol="SPY", date=d, open=500, high=500, low=500, close=500.0))
+        s.commit()
+    monkeypatch.setattr(vi, "_resolve_path", lambda: str(path))
+    vi.reset_engine()
+    monkeypatch.setattr(vi, "load_regime", lambda: "normal")
+    monkeypatch.setattr(
+        service,
+        "build_value_universe",
+        lambda cfg, universe: ValueUniverse(trading=["STDY"], evidence=["STDY"]),
+    )
+    monkeypatch.setattr("src.common.universe.effective_universe", lambda: {})
+    yield days
+    vi.reset_engine()
+
+
+def _read_apply(
+    kind: str, payload: dict, *, by: str = "telegram", live: bool = False, now: datetime = NOW
+):
+    import src.common.value_inputs as vi
+    from src.value import commands as vcmd
+    from src.value.store import value_session
+
+    with value_session() as vs:
+        return vcmd.apply(
+            vs, kind, payload, requested_by=by, now=now, live=live, research=vi.research_read
+        )
+
+
+def _file(symbol: str):
+    from src.value.store import ValueTickerFileRow, value_session
+
+    with value_session() as vs:
+        row = vs.get(ValueTickerFileRow, symbol)
+        if row is not None:
+            vs.expunge(row)
+        return row
+
+
+def test_snapshot_sets_last_viewed_at(value_book_db) -> None:
+    from src.value import service
+    from src.value.store import value_session
+    from tests.value_book_fixtures import ticker_file
+
+    ticker_file("LKUP", universe="lookup")
+    assert _file("LKUP").last_viewed_at is None
+    with value_session() as vs:
+        assert service.followed_names(vs, NOW, 30) == []
+    out = _read_apply("value_snapshot", {"symbol": "lkup", "fingerprint": {}})
+    assert out["symbol"] == "LKUP"
+    assert _file("LKUP").last_viewed_at == NOW
+    with value_session() as vs:
+        assert service.followed_names(vs, NOW, 30) == ["LKUP"]
+
+
+def _carried(days, *, regime: str = "cautious"):
+    """The fingerprint the API would carry: the input set of a score as of an earlier session."""
+    import src.common.value_inputs as vi
+    from src.common.config import get_config
+    from src.value import service
+    from src.value.ruleset import ruleset_id
+    from src.value.store import ValueTickerFileRow, value_session
+
+    version, digest = ruleset_id(get_config().value)
+    seed = {
+        "price_date": days[-10].isoformat(),
+        "regime": regime,
+        "ruleset_version": version,
+        "ruleset_hash": digest,
+    }
+    with value_session() as vs, vi.research_read() as rs:
+        fp = service.score_one(vs, rs, "STDY", now=NOW, fingerprint=seed, tag="trading")
+        vs.delete(vs.get(ValueTickerFileRow, "STDY"))  # the API's file is not stored yet
+    return fp
+
+
+def test_snapshot_persists_exactly_the_input_set_it_carries(value_book_db, research) -> None:
+    fp = _carried(research)
+    assert fp.price_date == research[-10] and fp.regime == "cautious"
+    assert _file("STDY") is None
+    out = _read_apply(
+        "value_snapshot", {"symbol": "STDY", "fingerprint": fp.model_dump(mode="json")}
+    )
+    row = _file("STDY")
+    assert row is not None and row.fingerprint_key == fp.key()  # not the newest bar's, not "normal"
+    assert row.as_of == research[-10] and row.last_viewed_at == NOW
+    assert out.get("detail") != "moved"
+    assert row.freshness_json is not None  # Task 8's column: the cheap parts it was computed on
+
+
+def test_snapshot_records_moved_when_inputs_moved(value_book_db, research) -> None:
+    fp = _carried(research)
+    carried = fp.model_dump(mode="json")
+    carried["price_close"] = float(carried["price_close"]) + 1.0  # the research worker moved
+    out = _read_apply("value_snapshot", {"symbol": "STDY", "fingerprint": carried})
+    assert out["detail"] == "moved"
+    row = _file("STDY")
+    assert row is not None and row.fingerprint_key == fp.key()  # its own recomputation stands
+
+
+def test_refresh_scores_a_name_outside_the_universe_as_lookup(value_book_db, research) -> None:
+    from src.common import value_view
+    from src.common.config import get_config
+    from src.value import cards, outbox
+    from src.value.store import value_session
+
+    out = _read_apply("value_refresh", {"symbol": "OUT"})
+    assert out["symbol"] == "OUT" and out["universe"] == "lookup"
+    row = _file("OUT")
+    assert row is not None and row.universe == "lookup" and row.freshness_json
+    assert _read_apply("value_refresh", {"symbol": "STDY"})["universe"] == "trading"
+    # a Telegram request posts a one-name card, once; the web's does not
+    with value_session() as vs:
+        due = [c for c in outbox.due(vs, NOW, get_config().value) if c.key.startswith("ticker:")]
+    assert {c.key for c in due} == {"ticker:OUT", "ticker:STDY"}
+    view = value_view.read_ticker_file("OUT")
+    assert view is not None
+    card = cards.ticker_card(view)
+    assert card.key == "ticker:OUT" and card.buttons == ()
+    assert (
+        "OUT" in card.text and view.verdict_deep in card.text and len(card.text) <= cards.MAX_CHARS
+    )
+    with value_session() as vs:
+        outbox.mark_posted(vs, ["ticker:OUT", "ticker:STDY"], NOW)
+    with value_session() as vs:
+        assert not [
+            c for c in outbox.due(vs, NOW, get_config().value) if c.key.startswith("ticker:")
+        ]
+    _read_apply("value_refresh", {"symbol": "OUT"}, by="web")
+    with value_session() as vs:
+        assert not [
+            c for c in outbox.due(vs, NOW, get_config().value) if c.key.startswith("ticker:")
+        ]
+
+
+def test_analyse_queues_a_request_read(value_book_db, monkeypatch) -> None:
+    from sqlalchemy import select
+
+    from src.common.config import get_config
+    from src.value.commands import ValueCommandFailed
+    from src.value.store import ValueClaudeReadRow, value_session
+
+    with pytest.raises(ValueCommandFailed) as exc:
+        _read_apply("value_analyse", {"symbol": "STDY"})
+    assert exc.value.reason == "claude_off"
+    monkeypatch.setattr(get_config().value.claude, "enabled", True)
+    out = _read_apply("value_analyse", {"symbol": "stdy"})
+    assert out["symbol"] == "STDY"
+    with value_session() as vs:
+        (read,) = vs.scalars(select(ValueClaudeReadRow)).all()
+    assert (read.symbol, read.kind, read.reason, read.priority, read.status) == (
+        "STDY",
+        "standard",
+        "request",
+        0,
+        "queued",
+    )
+
+
+def test_live_allows_read_kinds(value_book_db, monkeypatch) -> None:
+    from src.common.config import get_config
+    from tests.value_book_fixtures import ticker_file
+
+    monkeypatch.setattr(get_config().value.claude, "enabled", True)
+    ticker_file("STDY")
+    assert _read_apply("value_analyse", {"symbol": "STDY"}, live=True)["symbol"] == "STDY"
+    snap = _read_apply("value_snapshot", {"symbol": "STDY", "fingerprint": {}}, live=True)
+    assert snap["symbol"] == "STDY"

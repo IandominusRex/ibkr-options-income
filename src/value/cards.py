@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from src.common.value_commands import callback_data, proposal_fingerprint
 from src.value.store import ValueProposalRow, ValueReevaluationRow
+
+if TYPE_CHECKING:
+    from src.common.value_view import TickerFileView
 
 MAX_CHARS = 3500
 _LIST_WORDS = {"deep_value": "deep value", "quality_growth": "quality growth"}
@@ -57,6 +61,8 @@ VALUE_REASON_LABELS: dict[str, str] = {
     "unknown_kind": "the value process does not know that command",
     "no_trim_offered": "no trim is on offer",
     "already_trimmed": "the trim was already made",
+    "claude_off": "Claude's reads are switched off (value.claude.enabled)",
+    "bad_fingerprint": "the fingerprint on the request could not be read",
 }
 
 _SELL_WORDS = {
@@ -215,6 +221,30 @@ def trim_card(state: dict, positions: list[tuple[str, float]]) -> Card:
         text=_cap("\n".join(lines)),
         buttons=(("Trim to half", callback_data("trim", 0, episode)),),
     )
+
+
+def ticker_card(view: TickerFileView) -> Card:
+    """The one-name card a ``/value NAME`` refresh posts (Task 8): each list's verdict and who
+    decided it, the fair value and margin of safety, and the age. No button: it decides nothing."""
+    lines = [f"Value: {view.symbol} (scored on {view.as_of}, {view.universe})"]
+    for name, verdict, fair, mos in (
+        ("deep_value", view.verdict_deep, view.fair_value_deep, view.mos_deep),
+        ("quality_growth", view.verdict_growth, view.fair_value_growth, view.mos_growth),
+    ):
+        eff, by = view.effective.get(name, (verdict, "python"))
+        who = (
+            "" if eff == verdict and by == "python" else f" ({eff} by {by}; Python says {verdict})"
+        )
+        lines.append(
+            f"{_LIST_WORDS[name].capitalize()}: {verdict}{who}, fair value {_money(fair)}, "
+            f"margin of safety {_pct(mos)}"
+        )
+    lines.append(f"Price {_money(view.price)}.")
+    if view.held_shares:
+        lines.append(f"The value book holds {view.held_shares:g} shares.")
+    if view.open_reevaluation:
+        lines.append(f"A {view.open_reevaluation} re-evaluation is open.")
+    return Card(key=f"ticker:{view.symbol}", text=_cap("\n".join(lines)))
 
 
 def freeze_card(symbol: str, detail: str) -> Card:

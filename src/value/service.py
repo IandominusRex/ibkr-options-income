@@ -41,6 +41,7 @@ from src.value.claude_reads import plan_auto_reads, plan_filing_reads
 from src.value.rank import filed_lists, rank_list, rs_cutoff
 from src.value.residuals import moves
 from src.value.ruleset import ruleset_id
+from src.value.schemas import Fingerprint, ValueScorecard
 from src.value.scorecard import build_scorecard
 from src.value.store import (
     ValuePositionRow,
@@ -51,7 +52,7 @@ from src.value.store import (
     record_run,
     value_session,
 )
-from src.value.ticker_file import persist
+from src.value.ticker_file import freshness_json, persist
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +167,104 @@ class BookHooks:
     auto_close: bool
     halted: bool
     is_live: bool
+
+
+def universe_tag(symbol: str) -> str:
+    """``trading`` or ``evidence`` for a name in a universe, else ``lookup`` (spec §6.9)."""
+    from src.common.universe import effective_universe
+
+    u = build_value_universe(get_config().value, effective_universe())
+    return u.tag(symbol) if symbol in set(u.all_names()) else "lookup"
+
+
+def score_one(
+    vs: Session,
+    rs: Session,
+    symbol: str,
+    *,
+    now: datetime,
+    fingerprint: dict[str, Any] | None = None,
+    tag: str | None = None,
+    facts: MarketFacts | None = None,
+    next_earnings: date | None = None,
+) -> Fingerprint:
+    """Score and persist one name (Part 6, rulings 16 and 19): ``value_refresh`` (the newest
+    settled session, the regime now) and ``value_snapshot`` (exactly the input set a *fingerprint*
+    carries: the price bar's date, the regime and the ruleset; the accession is whatever was filed
+    by that date). *tag* is the file's universe (an existing file keeps its own, a new one is
+    ``lookup`` unless it is in a universe). Ranks and the filed list stay as the last night had
+    them: one name cannot be ranked alone. Returns the stored card's own fingerprint, which the
+    caller compares with the one it was given."""
+    vcfg = get_config().value
+    version, digest = ruleset_id(vcfg)
+    carried = Fingerprint.model_validate(fingerprint) if fingerprint else None
+    sym = symbol.upper()
+    existing = vs.get(ValueTickerFileRow, sym)
+    now_et = now.replace(tzinfo=UTC).astimezone(ZoneInfo(get_config().scheduler.timezone))
+    as_of = carried.price_date if carried is not None else None
+    if as_of is None:
+        as_of = vi.newest_bar_before(rs, shadow.BENCHMARK, now_et.date())
+    if as_of is None:
+        as_of = vi.newest_bar_before(rs, sym, now_et.date() + timedelta(days=1))
+    if as_of is None:
+        raise ValueError(f"no price bars for {sym}")
+    regime = carried.regime if carried is not None else vi.load_regime()
+    mf = facts or MarketFacts()
+    prior: Classification | None = None
+    if existing is not None:
+        try:
+            prior = ValueScorecard.model_validate_json(existing.scorecard_json).classification
+        except ValueError:
+            prior = None  # a file written by a test or an older ruleset: classify afresh
+    sector = (prior.sector if prior else None) or mf.sector
+    industry = (prior.industry if prior else None) or mf.industry
+    parts = vi.current_fingerprint_parts(rs, sym)  # before the inputs, as the night does
+    cik, payload = vi.read_payload(rs, sym)
+    stale = vcfg.rules.data_quality.stale_item_days
+    spy = vi.read_bars(rs, shadow.BENCHMARK, as_of)
+    last_run = vs.scalars(
+        select(ValueRunRow)
+        .where(ValueRunRow.kind == "nightly")
+        .order_by(ValueRunRow.as_of.desc())
+        .limit(1)
+    ).first()
+    inputs = ValueInputs(
+        symbol=sym,
+        cik=cik,
+        as_of=as_of,
+        financials=None
+        if payload is None
+        else vi.build_value_financials(payload, as_of=as_of, stale_item_days=stale),
+        price=vi.build_price_series(vi.read_bars(rs, sym, as_of), spy),
+        classification=Classification(
+            sector=sector,
+            industry=industry,
+            source="snapshot"
+            if prior and prior.industry
+            else ("yfinance" if mf.industry else "none"),
+            is_etf=mf.quote_type == "ETF" or vi.symbol_is_etf(rs, sym),
+        ),
+        yf_market_cap=mf.market_cap,
+        next_earnings=next_earnings or mf.next_earnings,
+        regime=regime,
+        rs_cutoff_6m=last_run.rs_cutoff_6m if last_run is not None else None,
+    )
+    card = build_scorecard(inputs, vcfg)
+    universe = tag or (existing.universe if existing is not None else None) or universe_tag(sym)
+    persist(
+        vs,
+        card,
+        universe=universe,
+        ranks={
+            "deep_value": existing.rank_deep if existing is not None else None,
+            "quality_growth": existing.rank_growth if existing is not None else None,
+        },
+        filed=existing.filed_list if existing is not None else None,
+        cfg=vcfg.ticker_file,
+        session_row=False,
+        freshness=freshness_json(parts, regime, version, digest),
+    )
+    return card.fingerprint
 
 
 def held_names(vs: Session) -> set[str]:
@@ -288,6 +387,8 @@ def run_nightly(
     with vi.research_read() as rs:
         if rs is None:
             raise RuntimeError("research.db not found")
+        # Read before the inputs: a filing or bar landing in between only makes a file stale once.
+        parts = {n: vi.current_fingerprint_parts(rs, n) for n in plan.names}
         inputs = load_inputs(plan, rs, facts=facts, earnings=earnings, regime=regime)
         cutoff = rs_cutoff([i.price for i in inputs], vcfg.rules.timing.rs_bottom_pct)
         inputs = [i.model_copy(update={"rs_cutoff_6m": cutoff}) for i in inputs]
@@ -310,6 +411,7 @@ def run_nightly(
                     filed=filed.get(card.symbol),
                     cfg=vcfg.ticker_file,
                     session_row=tag != "lookup",
+                    freshness=freshness_json(parts[card.symbol], regime, version, digest),
                 )
             vs.flush()
             review = vcfg.rules.margin_of_safety.review_above_pct

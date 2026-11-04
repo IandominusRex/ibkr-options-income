@@ -112,6 +112,8 @@ class ValueTickerFileRow(ValueBase):
     summary_json: Mapped[str] = mapped_column(Text)
     scorecard_json: Mapped[str] = mapped_column(Text)
     last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # The cheap input parts the file was computed on (Part 6, ruling 16): see ticker_file.is_current.
+    freshness_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ValueTickerHistoryRow(ValueBase):
@@ -570,6 +572,7 @@ _SessionLocal: sessionmaker[Session] | None = None
 # Columns added after a table's first release: create_all never ALTERs an existing table
 # (the src/spreads/store.py pattern).
 _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "value_ticker_files": (("freshness_json", "TEXT"),),
     "value_shadow_legs": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_shadow_events": (("plan", "VARCHAR(8) NOT NULL DEFAULT 'main'"),),
     "value_reevaluations": (("position_id", "INTEGER"), ("posted_at", "DATETIME")),

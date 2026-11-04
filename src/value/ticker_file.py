@@ -7,6 +7,7 @@ deleted. ``is_fresh`` compares a stored fingerprint with the current one.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -103,9 +104,11 @@ def persist(
     filed: str | None,
     cfg: ValueTickerFileCfg,
     session_row: bool,
+    freshness: str | None = None,
 ) -> WriteResult:
     """Upsert the latest row; append history when something changed, else (when
-    *session_row*) one compact row per as-of date."""
+    *session_row*) one compact row per as-of date. *freshness* is :func:`freshness_json` of the
+    cheap parts the card was computed on."""
     now = _now()
     new = summary(card, ranks, filed)
     row = session.get(ValueTickerFileRow, card.symbol)
@@ -136,6 +139,7 @@ def persist(
         price=card.price,
         summary_json=json.dumps(new, sort_keys=True),
         scorecard_json=full,
+        freshness_json=freshness,
     )
     if row is None:
         session.add(ValueTickerFileRow(symbol=card.symbol, **values))
@@ -174,6 +178,42 @@ def persist(
 def is_fresh(stored: Fingerprint | None, current: Fingerprint) -> bool:
     """Equal fingerprints mean the stored file stands; anything else recomputes (spec §6.9)."""
     return stored is not None and stored.key() == current.key()
+
+
+def freshness_key(parts: dict[str, Any], regime: str, version: str, digest: str) -> str:
+    """Part 6, ruling 16: a hash of the cheap input parts (the newest accession and the newest bar
+    in research.db), the regime and the ruleset. The scorecard's own fingerprint is not compared
+    with the cheap parts: the two latest-accession readings disagree by design."""
+    blob = json.dumps(
+        {"parts": parts, "regime": regime, "version": version, "digest": digest},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def freshness_json(parts: dict[str, Any], regime: str, version: str, digest: str) -> str:
+    """What ``value_ticker_files.freshness_json`` stores: the key and the parts it came from."""
+    return json.dumps(
+        {"key": freshness_key(parts, regime, version, digest), "parts": parts},
+        sort_keys=True,
+        default=str,
+    )
+
+
+def is_current(
+    stored_freshness_json: str | None, parts: dict[str, Any], regime: str, version: str, digest: str
+) -> bool:
+    """A file is current when the key stored beside it equals the key of the current cheap parts.
+    A file written before this column (None) or an unreadable one is stale: recomputed once."""
+    if not stored_freshness_json:
+        return False
+    try:
+        stored = json.loads(stored_freshness_json).get("key")
+    except (ValueError, AttributeError):
+        return False
+    return stored == freshness_key(parts, regime, version, digest)
 
 
 def stored_fingerprint(session: Session, symbol: str) -> Fingerprint | None:

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.common import value_view
 from src.common.config import ValueCfg
 from src.value import cards
 from src.value.book import get_state, set_state
@@ -28,6 +29,16 @@ from src.value.store import (
 )
 
 MAX_AGE = timedelta(hours=48)
+TICKER_QUEUE = (
+    "ticker_cards"  # value_book_state: {symbol: queued_at} for the one-name cards (Task 8)
+)
+
+
+def queue_ticker_card(vs: Session, symbol: str, now: datetime) -> None:
+    """A Telegram ``/value NAME`` refresh asks for its card; the next outbox tick posts it once."""
+    queue = dict(get_state(vs, TICKER_QUEUE) or {})
+    queue[symbol] = now.isoformat()
+    set_state(vs, TICKER_QUEUE, queue, now)
 
 
 def _trim_candidates(vs: Session) -> list[tuple[str, float]]:
@@ -109,6 +120,11 @@ def due(vs: Session, now: datetime, cfg: ValueCfg) -> list[cards.Card]:
         .order_by(ValueAttributionRow.symbol)
     ):
         out.append((a.since or a.updated_at, cards.freeze_card(a.symbol, a.detail)))
+    for symbol, queued in sorted((get_state(vs, TICKER_QUEUE) or {}).items()):
+        at = datetime.fromisoformat(queued)
+        view = value_view.read_ticker_file(symbol) if at > now - MAX_AGE else None
+        if view is not None:
+            out.append((at, cards.ticker_card(view)))
     out.sort(key=lambda t: t[0])
     return [c for _, c in out]
 
@@ -128,6 +144,10 @@ def mark_posted(vs: Session, keys: list[str], now: datetime) -> None:
             a = vs.get(ValueAttributionRow, ident)
             if a is not None:
                 a.posted_at = now
+        elif kind == "ticker":
+            queue = dict(get_state(vs, TICKER_QUEUE) or {})
+            if queue.pop(ident, None) is not None:
+                set_state(vs, TICKER_QUEUE, queue, now)
         elif kind == "trim":
             hw = get_state(vs, "high_water") or {}
             if hw.get("episode") == ident:

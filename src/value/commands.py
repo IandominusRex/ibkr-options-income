@@ -5,15 +5,21 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from src.common.config import get_config
 from src.common.value_commands import VALUE_ORDER_KINDS, proposal_fingerprint
-from src.value import cards
+from src.common.value_types import MarketFacts
+from src.value import cards, outbox, service
 from src.value.book import BookRefused, decide, trim_to_half
-from src.value.store import ValueProposalRow
+from src.value.claude_reads import queue_read
+from src.value.schemas import Fingerprint
+from src.value.store import ValueProposalRow, ValueTickerFileRow
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +33,21 @@ class ValueCommandFailed(Exception):
 Handler = Callable[[Session, dict, str, datetime], dict]
 HANDLERS: dict[str, Handler] = {}
 
+# The read-side kinds score a name, so they also read research.db and the market facts the
+# entrypoint fetches (src/value opens no SEC client and imports no data layer).
+ResearchFactory = Callable[[], AbstractContextManager[Session | None]]
+MarketFn = Callable[[str], tuple[MarketFacts, date | None]]  # symbol -> (facts, next earnings)
+
+
+@dataclass(frozen=True)
+class ReadContext:
+    research: ResearchFactory | None = None
+    market: MarketFn | None = None
+
+
+ReadHandler = Callable[[Session, dict, str, datetime, ReadContext], dict]
+READ_HANDLERS: dict[str, ReadHandler] = {}
+
 
 def _register(kind: str) -> Callable[[Handler], Handler]:
     def wrap(fn: Handler) -> Handler:
@@ -36,12 +57,32 @@ def _register(kind: str) -> Callable[[Handler], Handler]:
     return wrap
 
 
+def _register_read(kind: str) -> Callable[[ReadHandler], ReadHandler]:
+    def wrap(fn: ReadHandler) -> ReadHandler:
+        READ_HANDLERS[kind] = fn
+        return fn
+
+    return wrap
+
+
 def apply(
-    vs: Session, kind: str, payload: dict, *, requested_by: str, now: datetime, live: bool
+    vs: Session,
+    kind: str,
+    payload: dict,
+    *,
+    requested_by: str,
+    now: datetime,
+    live: bool,
+    research: ResearchFactory | None = None,
+    market: MarketFn | None = None,
 ) -> dict:
-    """One command. Raises ValueCommandFailed with a machine reason; the caller marks the command."""
+    """One command. Raises ValueCommandFailed with a machine reason; the caller marks the command.
+    The read-side kinds (snapshot, refresh, analyse) change no order state and run in live too."""
     if live and kind in VALUE_ORDER_KINDS:
         raise ValueCommandFailed("not_paper")
+    read = READ_HANDLERS.get(kind)
+    if read is not None:
+        return read(vs, payload, _by(requested_by), now, ReadContext(research, market))
     fn = HANDLERS.get(kind)
     if fn is None:
         raise ValueCommandFailed("unknown_kind")
@@ -85,6 +126,90 @@ def _trim(vs: Session, payload: dict, by: str, now: datetime) -> dict:
     except BookRefused as exc:
         raise ValueCommandFailed(exc.reason) from exc
     return {"episode": payload["episode"], "proposals": created}
+
+
+def _score(
+    vs: Session,
+    symbol: str,
+    ctx: ReadContext,
+    now: datetime,
+    *,
+    fingerprint: dict | None = None,
+) -> Fingerprint:
+    if ctx.research is None:
+        raise ValueCommandFailed("research_unavailable")
+    facts, earnings = ctx.market(symbol) if ctx.market is not None else (None, None)
+    with ctx.research() as rs:
+        if rs is None:
+            raise ValueCommandFailed("research_unavailable")
+        try:
+            return service.score_one(
+                vs,
+                rs,
+                symbol,
+                now=now,
+                fingerprint=fingerprint,
+                facts=facts,
+                next_earnings=earnings,
+            )
+        except ValueError as exc:  # no price bars for the name
+            raise ValueCommandFailed("no_data", {"error": str(exc)}) from exc
+
+
+def _viewed(vs: Session, symbol: str, now: datetime) -> ValueTickerFileRow:
+    vs.flush()
+    row = vs.get(ValueTickerFileRow, symbol)
+    assert row is not None
+    row.last_viewed_at = now
+    return row
+
+
+def _refresh_one(vs: Session, symbol: str, by: str, now: datetime, ctx: ReadContext) -> dict:
+    _score(vs, symbol, ctx, now)
+    row = _viewed(vs, symbol, now)
+    if by == "telegram":  # the asker is in the chat: post the fresh one-name card there
+        outbox.queue_ticker_card(vs, symbol, now)
+    return {"symbol": symbol, "universe": row.universe, "as_of": row.as_of.isoformat()}
+
+
+@_register_read("value_refresh")
+def _refresh(vs: Session, payload: dict, by: str, now: datetime, ctx: ReadContext) -> dict:
+    return _refresh_one(vs, str(payload["symbol"]).upper(), by, now, ctx)
+
+
+@_register_read("value_snapshot")
+def _snapshot(vs: Session, payload: dict, by: str, now: datetime, ctx: ReadContext) -> dict:
+    """Spec §6.9 / ruling 19: the API showed this name's file. Mark it viewed (the follow window's
+    input); when the API carried the input set it computed from and that is not what is stored,
+    persist a scorecard for exactly that set, recording ``detail: "moved"`` when the value
+    process's own recomputation from it comes out different (the research worker moved since)."""
+    symbol = str(payload["symbol"]).upper()
+    raw = payload.get("fingerprint") or {}
+    row = vs.get(ValueTickerFileRow, symbol)
+    if row is None and not raw:
+        return _refresh_one(vs, symbol, by, now, ctx)  # nothing stored, nothing carried
+    result: dict = {"symbol": symbol}
+    if raw:
+        try:
+            carried = Fingerprint.model_validate(raw)
+        except ValidationError as exc:
+            raise ValueCommandFailed("bad_fingerprint") from exc
+        if row is None or row.fingerprint_key != carried.key():
+            own = _score(vs, symbol, ctx, now, fingerprint=raw)
+            if own.key() != carried.key():
+                result["detail"] = "moved"
+    _viewed(vs, symbol, now)
+    return result
+
+
+@_register_read("value_analyse")
+def _analyse(vs: Session, payload: dict, by: str, now: datetime, ctx: ReadContext) -> dict:
+    """Spec §8.5: Claude's read at the "request" priority (the operator's requests come first)."""
+    if not get_config().value.claude.enabled:
+        raise ValueCommandFailed("claude_off")
+    symbol = str(payload["symbol"]).upper()
+    queue_read(vs, symbol, kind="standard", reason="request", now=now)
+    return {"symbol": symbol, "queued": True}
 
 
 def outcome_line(kind: str, result: dict | None, reason: str | None) -> str:
