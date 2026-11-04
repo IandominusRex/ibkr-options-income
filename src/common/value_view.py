@@ -4,6 +4,10 @@ Read-only: ``data/value.db`` opened ``mode=ro`` with plain SQL. Imports nothing 
 and no enrichment, so the engine, the strategies and execution may import it (with
 ``src.common.books``) and nothing else of the value book (tests/test_value_fence.py).
 
+Part 6 adds the read-only surface of the Telegram ``/value`` command and the watchdog
+(``read_ticker_file``, ``top_names``, ``open_proposals``, ``last_nightly_run``): each returns
+``None`` when value.db is missing or unreadable and never raises.
+
 ``read_book`` returns ``None`` when value.db exists but cannot be read: callers then **fail
 closed** (the wheel uses its own share count alone and writes no covered call on unexplained
 shares). A value.db that does not exist yet, or predates the Part 5 tables, is an empty book: no
@@ -15,10 +19,11 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from src.common.config import get_config
+from src.common.value_commands import proposal_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -204,3 +209,223 @@ def put_ceiling(symbol: str) -> float | None:
     except sqlite3.Error:
         return None
     return None if row is None or row[0] is None else float(row[0])
+
+
+# --- Part 6: the read-only surface of /value, the watchdog and (Task 10) the VALUE NOTE ---------
+
+_REEVAL_OPEN_DAYS = 10  # a held re-evaluation's last trigger within this many days reads as open
+LIST_NAMES = ("deep_value", "quality_growth")
+
+
+@dataclass(frozen=True, slots=True)
+class TickerFileView:
+    """One row of ``value_ticker_files``, the summary fields only."""
+
+    symbol: str
+    computed_at: datetime
+    as_of: date
+    universe: str
+    verdict_deep: str
+    verdict_growth: str
+    filed_list: str | None
+    fair_value_deep: float | None
+    fair_value_growth: float | None
+    mos_deep: float | None
+    mos_growth: float | None
+    price: float | None
+    effective: dict[str, tuple[str, str]]  # list -> (verdict, "claude" | "python")
+    held_shares: float
+    open_reevaluation: str | None  # severity of an open held re-evaluation
+    freshness_json: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalView:
+    id: int
+    kind: str
+    symbol: str
+    list_name: str
+    shares: float
+    price: float | None
+    reason: str
+    cause: str
+    needs_tap: bool
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    fingerprint: str
+
+
+def _open_ro() -> sqlite3.Connection | None:
+    path = _path()
+    if not path.exists():
+        return None
+    try:
+        return _connect(path)
+    except sqlite3.Error:
+        return None
+
+
+def _columns(con: sqlite3.Connection, table: str) -> set[str]:
+    return {str(r[1]) for r in con.execute(f"PRAGMA table_info({table})")}
+
+
+_FILE_COLS = (
+    "symbol, computed_at, as_of, universe, verdict_deep, verdict_growth, filed_list, "
+    "fair_value_deep, fair_value_growth, mos_deep, mos_growth, price"
+)
+
+
+def _file_view(con: sqlite3.Connection, row: tuple, fresh_col: bool) -> TickerFileView | None:
+    computed, as_of = _naive(row[1]), row[2]
+    if computed is None or not as_of:
+        return None
+    symbol = str(row[0]).upper()
+    effective = {
+        str(ln): (str(v), str(by))
+        for ln, v, by in con.execute(
+            "SELECT list_name, verdict, decided_by FROM value_effective WHERE symbol = ?",
+            (symbol,),
+        )
+    }
+    held = con.execute(
+        "SELECT COALESCE(SUM(CASE WHEN side = 'buy' THEN filled ELSE -filled END), 0) "
+        "FROM value_orders WHERE symbol = ?",
+        (symbol,),
+    ).fetchone()[0]
+    since = (datetime.now(UTC).date() - timedelta(days=_REEVAL_OPEN_DAYS)).isoformat()
+    sev = con.execute(
+        "SELECT r.severity FROM value_reevaluations r JOIN value_positions p ON p.id = r.position_id "
+        "WHERE r.symbol = ? AND p.status = 'open' AND (r.last_session >= ? "
+        "OR r.review_state IN ('WEAKENED', 'BROKEN')) ORDER BY r.id DESC LIMIT 1",
+        (symbol, since),
+    ).fetchone()
+    fresh = None
+    if fresh_col:
+        r = con.execute(
+            "SELECT freshness_json FROM value_ticker_files WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        fresh = None if r is None else r[0]
+    return TickerFileView(
+        symbol=symbol,
+        computed_at=computed,
+        as_of=date.fromisoformat(str(as_of)),
+        universe=str(row[3]),
+        verdict_deep=str(row[4]),
+        verdict_growth=str(row[5]),
+        filed_list=row[6],
+        fair_value_deep=row[7],
+        fair_value_growth=row[8],
+        mos_deep=row[9],
+        mos_growth=row[10],
+        price=row[11],
+        effective=effective,
+        held_shares=max(0.0, float(held or 0.0)),
+        open_reevaluation=None if sev is None else str(sev[0]),
+        freshness_json=fresh,
+    )
+
+
+def read_ticker_file(symbol: str) -> TickerFileView | None:
+    """The stored ticker file's summary, or None when there is none or value.db cannot be read."""
+    con = _open_ro()
+    if con is None:
+        return None
+    try:
+        with con:
+            row = con.execute(
+                f"SELECT {_FILE_COLS} FROM value_ticker_files WHERE symbol = ?", (symbol.upper(),)
+            ).fetchone()
+            if row is None:
+                return None
+            return _file_view(con, row, "freshness_json" in _columns(con, "value_ticker_files"))
+    except Exception as exc:  # noqa: BLE001 - a read surface never raises
+        log.warning("value_view: read_ticker_file failed (%s)", exc)
+        return None
+
+
+def top_names(list_name: str, n: int = 5) -> list[TickerFileView] | None:
+    """The top names on one list by the effective verdict: READY first, then WATCH, each by rank
+    (higher is better). None when value.db cannot be read; an empty list when it has none."""
+    if list_name not in LIST_NAMES:
+        return []
+    con = _open_ro()
+    if con is None:
+        return None
+    rank = "rank_deep" if list_name == "deep_value" else "rank_growth"
+    try:
+        with con:
+            fresh_col = "freshness_json" in _columns(con, "value_ticker_files")
+            rows = con.execute(
+                "SELECT "
+                + ", ".join(f"t.{c.strip()}" for c in _FILE_COLS.split(","))
+                + " FROM value_ticker_files t JOIN value_effective e "
+                "ON e.symbol = t.symbol AND e.list_name = ? "
+                "WHERE t.universe = 'trading' AND e.verdict IN ('READY', 'WATCH') "
+                f"ORDER BY CASE e.verdict WHEN 'READY' THEN 0 ELSE 1 END, t.{rank} DESC, t.symbol "
+                "LIMIT ?",
+                (list_name, int(n)),
+            ).fetchall()
+            return [v for r in rows if (v := _file_view(con, r, fresh_col)) is not None]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("value_view: top_names failed (%s)", exc)
+        return None
+
+
+def open_proposals() -> list[ProposalView] | None:
+    """Pending, approved, funding and sent proposals, oldest first, each with the fingerprint a
+    tap must carry back. None when value.db cannot be read."""
+    con = _open_ro()
+    if con is None:
+        return None
+    try:
+        with con:
+            rows = con.execute(
+                "SELECT id, kind, symbol, list_name, shares, price, reason, cause, needs_tap, "
+                "status, created_at, expires_at FROM value_proposals "
+                "WHERE status IN ('pending', 'approved', 'funding', 'sent') ORDER BY id"
+            ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("value_view: open_proposals failed (%s)", exc)
+        return None
+    out: list[ProposalView] = []
+    for pid, kind, sym, ln, shares, price, reason, cause, tap, status, c, e in rows:
+        created, expires = _naive(c), _naive(e)
+        if created is None or expires is None:
+            continue
+        out.append(
+            ProposalView(
+                int(pid),
+                str(kind),
+                str(sym),
+                str(ln),
+                float(shares),
+                price,
+                str(reason),
+                str(cause),
+                bool(tap),
+                str(status),
+                created,
+                expires,
+                proposal_fingerprint(int(pid), str(kind), str(sym), float(shares), created),
+            )
+        )
+    return out
+
+
+def last_nightly_run() -> datetime | None:
+    """When the newest finished nightly run ended (naive UTC), or None: never ran, no value.db,
+    or unreadable."""
+    con = _open_ro()
+    if con is None:
+        return None
+    try:
+        with con:
+            row = con.execute(
+                "SELECT MAX(finished_at) FROM value_runs WHERE kind = 'nightly' "
+                "AND finished_at IS NOT NULL"
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("value_view: last_nightly_run failed (%s)", exc)
+        return None
+    return None if row is None else _naive(row[0])

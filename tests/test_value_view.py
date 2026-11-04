@@ -134,3 +134,49 @@ def test_a_sent_buy_is_earmarked_by_its_unfilled_remainder(value_book_db) -> Non
         row = s.query(ValueOrderRow).one()
         row.status = "cancelled"  # nothing is working any more
     assert vv.read_book(NOW).earmarked_usd == 0.0
+
+
+# --- Part 6, Task 5: the read-only surface of /value -------------------------------------------
+
+
+def test_read_ticker_file_summarises_one_name(value_book_db) -> None:
+    from tests.value_book_fixtures import ticker_file
+
+    ticker_file("GOOGL", effective={"deep_value": ("READY", "claude")})
+    order("GOOGL", shares=10, filled=10, avg=100.0)
+    order("GOOGL", side="sell", shares=4, filled=4, avg=110.0)
+    view = vv.read_ticker_file("googl")
+    assert view is not None and view.symbol == "GOOGL"
+    assert view.effective == {"deep_value": ("READY", "claude")}
+    assert (view.verdict_deep, view.fair_value_deep, view.mos_deep) == ("READY", 140.0, 0.3)
+    assert view.held_shares == 6.0 and view.open_reevaluation is None
+    assert view.freshness_json is None  # the column arrives in Task 8
+    assert vv.read_ticker_file("NOPE") is None
+
+
+def test_top_names_puts_ready_before_watch_by_rank(value_book_db) -> None:
+    from tests.value_book_fixtures import ticker_file
+
+    deep = {"deep_value": ("READY", "python")}
+    ticker_file("LOWR", rank_deep=10.0, effective=deep)
+    ticker_file("HIGH", rank_deep=90.0, effective=deep)
+    ticker_file("WTCH", rank_deep=99.0, effective={"deep_value": ("WATCH", "python")})
+    ticker_file("WAIT", rank_deep=99.0, effective={"deep_value": ("WAIT", "python")})
+    ticker_file("HELD", rank_deep=99.0, universe="held:trading", effective=deep)
+    names = vv.top_names("deep_value", 5)
+    assert names is not None and [n.symbol for n in names] == ["HIGH", "LOWR", "WTCH"]
+    assert [n.symbol for n in vv.top_names("deep_value", 1) or []] == ["HIGH"]
+    assert vv.top_names("quality_growth") == []
+
+
+def test_open_proposals_carry_the_fingerprint_a_tap_needs(value_book_db) -> None:
+    from src.common.value_commands import proposal_fingerprint
+
+    pending = proposal("GOOGL", status="pending")
+    proposal("META", status="done")
+    proposal("MU", status="sent", kind="buy")
+    views = vv.open_proposals()
+    assert views is not None and [v.symbol for v in views] == ["GOOGL", "MU"]
+    first = views[0]
+    assert first.id == pending and first.needs_tap is True
+    assert first.fingerprint == proposal_fingerprint(pending, "buy", "GOOGL", 10.0, NOW)

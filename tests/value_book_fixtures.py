@@ -4,9 +4,16 @@ with value_view pointed at it) is in tests/conftest.py."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from src.value.store import ValueFundingRow, ValueOrderRow, ValueProposalRow, value_session
+from src.value.store import (
+    ValueEffectiveRow,
+    ValueFundingRow,
+    ValueOrderRow,
+    ValueProposalRow,
+    ValueTickerFileRow,
+    value_session,
+)
 
 NOW = datetime(2026, 11, 2, 15, 0)  # naive UTC: 10:00 ET, a Monday
 
@@ -79,3 +86,58 @@ def funding(
         s.add(row)
         s.flush()
         return row.id
+
+
+def ticker_file(
+    symbol: str,
+    *,
+    as_of: date = date(2026, 11, 2),
+    computed_at: datetime = NOW,
+    universe: str = "trading",
+    verdict_deep: str = "READY",
+    verdict_growth: str = "NO",
+    rank_deep: float | None = 80.0,
+    rank_growth: float | None = None,
+    fair_value_deep: float | None = 140.0,
+    mos_deep: float | None = 0.3,
+    price: float | None = 98.0,
+    effective: dict[str, tuple[str, str]] | None = None,
+) -> None:
+    """A ``value_ticker_files`` row (summary columns only) and, per list, its ``value_effective`` row."""
+    with value_session() as s:
+        s.add(
+            ValueTickerFileRow(
+                symbol=symbol,
+                computed_at=computed_at,
+                as_of=as_of,
+                universe=universe,
+                fingerprint_key="k" * 16,
+                fingerprint_json="{}",
+                ruleset_version="v4",
+                ruleset_hash="be30d1eaa915",
+                company_class="operating",
+                data_quality="pass",
+                health="pass",
+                verdict_deep=verdict_deep,
+                verdict_growth=verdict_growth,
+                fair_value_deep=fair_value_deep,
+                mos_deep=mos_deep,
+                rank_deep=rank_deep,
+                rank_growth=rank_growth,
+                price=price,
+                summary_json="{}",
+                scorecard_json="{}",
+            )
+        )
+        for list_name, (verdict, by) in (effective or {}).items():
+            s.add(
+                ValueEffectiveRow(
+                    symbol=symbol,
+                    list_name=list_name,
+                    as_of=as_of,
+                    verdict=verdict,
+                    decided_by=by,
+                    python_verdict=verdict,
+                    updated_at=computed_at,
+                )
+            )

@@ -565,6 +565,199 @@ async def handle_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"📰 Building {sym} brief → News thread")
 
 
+# ---------------------------------------------------------------------------
+# The value book (Part 6): taps become intents; /value reads the book read-only
+# ---------------------------------------------------------------------------
+
+
+def _value_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def handle_value_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """A tap on a value card (spec §9.7): forward it as an intent; the value process decides, re-gates and sends."""
+    query = update.callback_query
+    if query is None or not _is_authorized(update):
+        return
+    from src.common import value_commands as vc
+
+    parsed = vc.parse_callback(query.data or "")
+    if parsed is None:
+        logger.warning("Unexpected value callback_data: %r", query.data)
+        await query.answer("Not a value button.")
+        return
+    action, target, fp = parsed
+    kind, payload = (
+        ("value_trim", {"episode": fp})
+        if action == "trim"
+        else (f"value_{action}", {"proposal_id": target, "fingerprint": fp})
+    )
+    key = f"{kind}:{fp if action == 'trim' else target}"
+    from src.storage.app_commands import enqueue_command
+
+    with session_scope() as s:
+        _, created = enqueue_command(
+            s, kind=kind, payload=payload, requested_by="telegram", dedupe_key=key
+        )
+        s.commit()
+    await query.answer(
+        "Queued: the value process acts on it within a minute." if created else "Already queued."
+    )
+
+
+_VALUE_LISTS = (("deep_value", "Deep value"), ("quality_growth", "Quality growth"))
+
+
+def _ago(then: datetime, now: datetime) -> str:
+    minutes = max(0, int((now - then).total_seconds() // 60))
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    return f"{hours // 24} days ago"
+
+
+def _money(v: float | None) -> str:
+    return "n/a" if v is None else f"${v:,.2f}"
+
+
+def _pct(v: float | None) -> str:
+    return "n/a" if v is None else f"{v * 100:.0f}%"
+
+
+def _value_name_line(view: object, list_name: str, label: str) -> str:
+    from src.common.value_view import TickerFileView
+
+    assert isinstance(view, TickerFileView)
+    deep = list_name == "deep_value"
+    verdict, by = view.effective.get(
+        list_name, (view.verdict_deep if deep else view.verdict_growth, "python")
+    )
+    fair = view.fair_value_deep if deep else view.fair_value_growth
+    mos = view.mos_deep if deep else view.mos_growth
+    who = "Claude" if by == "claude" else "Python"
+    return f"{label}: {verdict} ({who}), fair value {_money(fair)}, margin of safety {_pct(mos)}"
+
+
+def _queue_value_intent(kind: str, symbol: str) -> bool:
+    from src.storage.app_commands import enqueue_command
+
+    with session_scope() as s:
+        _, created = enqueue_command(
+            s, kind=kind, payload={"symbol": symbol}, requested_by="telegram"
+        )
+        s.commit()
+    return created
+
+
+def _value_overview() -> tuple[str, list] | None:
+    """The /value text and the proposals waiting for a tap, or None when value.db cannot be read."""
+    from src.common import value_view as vv
+
+    now = _value_now()
+    lines: list[str] = []
+    for list_name, label in _VALUE_LISTS:
+        names = vv.top_names(list_name, 5)
+        if names is None:
+            return None
+        lines.append(f"{label}:")
+        if not names:
+            lines.append("  no READY or WATCH names")
+        for v in names:
+            lines.append(
+                f"  {_value_name_line(v, list_name, v.symbol)}, scored {_ago(v.computed_at, now)}"
+            )
+    proposals = vv.open_proposals()
+    if proposals is None:
+        return None
+    waiting = [p for p in proposals if p.needs_tap and p.status == "pending"]
+    lines.append(
+        f"Waiting for your tap: {len(waiting)}" if waiting else "Nothing is waiting for your tap."
+    )
+    return "\n".join(lines), waiting
+
+
+async def handle_value_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/value (top names and proposals), /value NAME (the stored file), /value NAME analyse (queue Claude's read).
+    Reads only src.common.value_view; it builds no scorecard and edits no table but app_commands."""
+    if not _is_authorized(update) or update.message is None:
+        return
+    import re
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from src.common import value_commands as vc
+    from src.common import value_view as vv
+    from src.common.market_hours import previous_session
+
+    args = list(context.args or [])
+    if not args:
+        overview = await asyncio.to_thread(_value_overview)
+        if overview is None:
+            await update.message.reply_text(
+                "There is no value book to read yet (value.db is missing or unreadable)."
+            )
+            return
+        text, waiting = overview
+        await update.message.reply_text(text)
+        for p in waiting:
+            rows = [
+                [
+                    InlineKeyboardButton(
+                        "Approve", callback_data=vc.callback_data("approve", p.id, p.fingerprint)
+                    ),
+                    InlineKeyboardButton(
+                        "Reject", callback_data=vc.callback_data("reject", p.id, p.fingerprint)
+                    ),
+                ]
+            ]
+            verb = "Buy" if p.kind == "buy" else "Sell"
+            await update.message.reply_text(
+                f"{verb} {p.shares:g} {p.symbol} (proposal {p.id}, at the close of {_money(p.price)}): "
+                f"{p.reason.replace('_', ' ')}",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+        return
+    sym = args[0].strip().lstrip("$").upper()
+    if not re.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", sym):
+        await update.message.reply_text(f"{args[0]!r} is not a ticker. Usage: /value NVDA")
+        return
+    if len(args) > 1:
+        if args[1].lower() not in ("analyse", "analyze"):
+            await update.message.reply_text("Usage: /value NAME or /value NAME analyse")
+            return
+        await asyncio.to_thread(_queue_value_intent, "value_analyse", sym)
+        await update.message.reply_text(
+            f"Queued Claude's analysis of {sym}: the value process reads it and posts the result "
+            "to the value thread (it says so if Claude is off)."
+        )
+        return
+    view = await asyncio.to_thread(vv.read_ticker_file, sym)
+    if view is None:
+        await asyncio.to_thread(_queue_value_intent, "value_refresh", sym)
+        await update.message.reply_text(
+            f"{sym} is not scored yet. Asked the value process to score it; the card follows in the value thread."
+        )
+        return
+    now = _value_now()
+    lines = [
+        f"{sym}: price {_money(view.price)}, file as of {view.as_of}, scored {_ago(view.computed_at, now)}"
+    ]
+    lines += [_value_name_line(view, ln, label) for ln, label in _VALUE_LISTS]
+    if view.held_shares > 0:
+        lines.append(f"The value book holds {view.held_shares:g} shares.")
+    if view.open_reevaluation:
+        lines.append(f"An open {view.open_reevaluation} re-evaluation is pausing adds.")
+    if view.as_of < previous_session(today_et()):
+        await asyncio.to_thread(_queue_value_intent, "value_refresh", sym)
+        lines.append(
+            "This file is older than the last settled session. Asked the value process to refresh it; "
+            "the new card follows in the value thread."
+        )
+    await update.message.reply_text("\n".join(lines))
+
+
 async def handle_scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Trigger a full live pipeline scan, or a single-ticker scan when a symbol is given.
 
@@ -2009,6 +2202,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CallbackQueryHandler(handle_button, pattern="^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(handle_live_confirm, pattern="^confirm_live:"))
     app.add_handler(CallbackQueryHandler(handle_close_short, pattern="^close_short:"))
+    app.add_handler(CallbackQueryHandler(handle_value_button, pattern="^vbook:"))
 
     # Commands
     app.add_handler(CommandHandler("help", handle_help_command))
@@ -2027,6 +2221,7 @@ async def _run_service(token: str, chat_id: str) -> None:
     app.add_handler(CommandHandler("regime", handle_regime_command))
     app.add_handler(CommandHandler("calendar", handle_calendar_command))
     app.add_handler(CommandHandler("campaigns", handle_campaigns_command))
+    app.add_handler(CommandHandler("value", handle_value_command))
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()

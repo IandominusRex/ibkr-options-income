@@ -461,7 +461,13 @@ def test_the_wheel_reads_the_value_book_only_through_the_read_only_view() -> Non
         "pathlib",
         "src",
     }
-    assert all(_reaches({m}, "src.common.config") for m in mods if m.startswith("src."))
+    # Part 6 (Task 5): the one widening of this fence, src.common.value_commands (standard library
+    # only; the proposal fingerprint a /value card's buttons must carry)
+    assert all(
+        _reaches({m}, "src.common.config") or _reaches({m}, "src.common.value_commands")
+        for m in mods
+        if m.startswith("src.")
+    )
     text = (ROOT / "src" / "common" / "value_view.py").read_text(encoding="utf-8")
     assert "mode=ro" in text and "INSERT" not in text.upper().replace("INSERTED", "")
     offenders = [
@@ -487,3 +493,12 @@ def test_the_money_modules_read_no_claude_prose_or_facts() -> None:
     assert offenders == []
     risk_mods = imported_modules(ROOT / "src" / "value" / "risk.py")
     assert not _reaches(risk_mods, "src.value.store")  # the gate reads nothing itself
+
+
+def test_approval_service_reaches_the_value_book_only_through_the_view() -> None:
+    """Part 6 ruling 6: a tap on a value card is forwarded as an intent. approval_service imports
+    the stdlib-only command module and the read-only view, and nothing under src.value."""
+    mods = imported_modules(ROOT / "src" / "notify" / "approval_service.py")
+    assert _reaches(mods, "src.common.value_view") and _reaches(mods, "src.common.value_commands")
+    assert not _reaches(mods, "src.value")
+    assert not _reaches(mods, "src.value_ai")
