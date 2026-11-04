@@ -9,7 +9,7 @@ grounded filing fact of that kind lands after the trigger was chosen; they have 
 neither has ``fcf_ttm_negative``, whose threshold is zero.
 
 Units: percent for revenue growth, dilution and gross margin; a multiple for net debt / EBITDA;
-dollars (millions, as filed) for TTM FCF.
+US dollars (raw, as companyfacts reports them) for TTM FCF; its threshold is zero.
 """
 
 from __future__ import annotations

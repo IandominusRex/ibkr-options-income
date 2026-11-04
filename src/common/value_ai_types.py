@@ -46,6 +46,15 @@ FactKind = Literal[
     "guidance_cut",
     "customer_loss",
 ]
+# The units a proposed fact may name; the USD ones are the keys of ``src/value/grounding.SCALE``.
+FACT_UNITS: tuple[str, ...] = (
+    "USD",
+    "USD_thousands",
+    "USD_millions",
+    "USD_billions",
+    "pct",
+    "count",
+)
 FACT_KINDS: tuple[str, ...] = (
     "one_off",
     "segment_revenue",

@@ -127,10 +127,11 @@ filed history, does the arithmetic and caps the result at 1.5x Python's own
 (`value.claude.apply_live: false`) until the go-live review has read the Claude-vs-baseline record;
 a breaker stops it applying when Claude's READYs run away from the baseline's or the cap binds too
 often; an Ollama-produced verdict, a malformed reply or a missing driver means Python's baseline.
-Claude never lifts a name over a gate, sets a price, a strike or a size directly, moves a stop, or
-causes an automatic sale (an exit only Claude's value would fire waits for a tap). Every verdict is
-recorded in `value_claude_verdicts` beside Python's baseline, and the `claude` shadow track measures
-it (`python -m scripts.value_report`).
+Claude never lifts a name over a gate or the Rules Engine, sets a price, a strike or a size
+directly, moves a stop, or causes an automatic sale (an exit only Claude's value would fire waits for
+a tap). `value_claude_verdicts` holds each verdict with its clamped drivers and the fair value Python
+computed from them (beside Python's own); the verdict that decides, and the baseline it replaced,
+are in `value_effective`, and the `claude` shadow track measures it (`python -m scripts.value_report`).
 
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 

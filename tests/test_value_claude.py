@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -245,11 +246,11 @@ def test_claude_applies_in_paper_in_live_only_with_apply_live_and_never_while_tr
         assert cv.applies(s, CFG, is_live=False) is True
 
 
-def _night(s, as_of: date, **claude: int) -> None:
+def _night(s, as_of: date, started_at: datetime = NOW, **claude: Any) -> None:
     s.add(
         ValueRunRow(
             kind="nightly",
-            started_at=NOW,
+            started_at=started_at,
             as_of=as_of,
             ruleset_version="v4",
             ruleset_hash="x",
@@ -277,7 +278,7 @@ def test_the_breaker_trips_on_the_ready_multiple_and_on_the_clamp_rate(value_db)
         )
         assert "Claude READY 10" in cv.breaker_state(s)["reason"]
     with value_session() as s:
-        cv.reset_breaker(s, NOW)
+        cv.reset_breaker(s, NOW - timedelta(days=1))  # before those nights: they still count
         # clamp rate: 3 of 9 values (33% > 25%) with at least 8 values read
         tonight = {"ready": 0, "baseline_ready": 0, "values": 3, "clamped": 3}
         assert cv.check_breaker(s, CFG, tonight, NOW) is True
@@ -419,3 +420,107 @@ def test_filing_reads_are_queued_once_per_filing_and_wait_for_their_sections(val
         calls.append, now=NOW + timedelta(days=8), cfg=ON, sections_for=lambda sym, accn: []
     )
     assert later["skipped"] == 1  # the sections never came: dropped after a week
+
+
+def test_a_reset_breaker_does_not_re_trip_on_the_window_that_tripped_it(value_db) -> None:
+    """Review I1: only nightly runs started after the reset count toward the next trip."""
+    quiet = {"ready": 0, "baseline_ready": 0, "values": 0, "clamped": 0}
+    with value_session() as s:
+        for i in range(3):
+            _night(
+                s,
+                date(2026, 10, 20 + i),
+                started_at=NOW - timedelta(days=3 - i),
+                ready=4,
+                baseline_ready=0,
+                values=0,
+                clamped=0,
+            )
+        assert cv.check_breaker(s, CFG, quiet, NOW) is True  # the window breaches
+        cv.reset_breaker(s, NOW)
+        assert cv.check_breaker(s, CFG, quiet, NOW + timedelta(days=1)) is False  # not again
+        assert cv.breaker_state(s)["tripped"] is False
+        # a night after the reset counts again
+        _night(
+            s,
+            date(2026, 11, 3),
+            started_at=NOW + timedelta(hours=1),
+            ready=5,
+            baseline_ready=0,
+            values=0,
+            clamped=0,
+        )
+        assert cv.check_breaker(s, CFG, quiet, NOW + timedelta(days=2)) is True
+
+
+def test_the_ready_guard_counts_distinct_names_not_name_nights(value_db) -> None:
+    """Review I5: one name held READY for five nights is not five READYs."""
+    one = {"ready": 1, "baseline_ready": 0, "values": 0, "clamped": 0, "ready_names": ["AAA"]}
+    with value_session() as s:
+        for i in range(4):
+            _night(s, date(2026, 10, 20 + i), started_at=NOW - timedelta(days=4 - i), **one)
+        assert cv.check_breaker(s, CFG, one, NOW) is False  # five name-nights, one name
+        assert cv.breaker_state(s)["tripped"] is False
+    with value_session() as s:
+        for row in s.scalars(select(ValueRunRow)):
+            s.delete(row)
+        for i, sym in enumerate(["AAA", "BBB", "CCC", "DDD"]):
+            _night(
+                s,
+                date(2026, 10, 20 + i),
+                started_at=NOW - timedelta(days=4 - i),
+                **{**one, "ready_names": [sym]},
+            )
+        tonight = {**one, "ready_names": ["EEE"]}
+        assert cv.check_breaker(s, CFG, tonight, NOW) is True  # five distinct names
+
+
+def test_night_counts_lists_the_names_behind_the_ready_count(value_db) -> None:
+    _file(DEAR)
+    _accept(
+        DEAR, _result(0, drivers=Drivers(growth=0.12, terminal=0.025, discount=0.09, margin=0.16))
+    )
+    with value_session() as s:
+        ops = cv.opinions(s, [DEAR], CFG.rules)
+        counts = cv.night_counts([DEAR], {"STDY": "trading"}, ops, 60.0)
+    assert counts["ready"] == 1 and counts["ready_names"] == ["STDY"]
+
+
+def test_a_same_filing_reread_with_unusable_drivers_keeps_the_earlier_opinion(value_db) -> None:
+    """Review I2: a re-read on the same accession that cannot be valued must not wipe out the
+    earlier usable value (which would hand the name back to Python's higher one)."""
+    _accept(CHEAP, _result(0, drivers=GOOD_DRIVERS))
+    (first,) = _verdicts()
+    assert first.fair_value is not None
+    broken = Drivers(growth=0.08, terminal=0.02, discount=0.10, margin=None)
+    out = _accept(CHEAP, _result(0, drivers=broken))
+    assert out.kept_earlier == 1 and out.verdicts == 0
+    assert out.refused and "earlier" in out.refused[0]
+    rows = _verdicts()
+    assert [r.id for r in rows] == [first.id] and rows[0].superseded is False
+    with value_session() as s:
+        _, value = cv.opinions(s, [CHEAP], CFG.rules)[("STDY", "deep_value")]
+        assert value.fair_value == pytest.approx(first.fair_value)
+    # on a new filing the unusable read is stored as it is
+    filed = build_scorecard(inputs(close=30.0, fin=financials(accn="0000000001-26-000002")), CFG)
+    _accept(filed, _result(0, drivers=broken))
+    assert _verdicts()[-1].fair_value is None
+
+
+def test_the_prompt_shows_dollar_metrics_in_millions() -> None:
+    """Review I3: companyfacts values are raw US dollars; the prompt says millions."""
+    card = CHEAP.model_copy(
+        update={
+            "metrics": {
+                **CHEAP.metrics,
+                "fcf_ttm": 1_050_000_000.0,
+                "sbc_ttm": 250_000_000.0,
+                "revenue_ttm": 12_345_000_000.0,
+            }
+        }
+    )
+    text = render_card(card)
+    assert "TTM FCF 1,050.00M · SBC 250.00M · revenue 12,345.00M" in text
+    assert "1,050,000,000" not in text
+    missing = CHEAP.model_copy(update={"metrics": {**CHEAP.metrics, "fcf_ttm": None}})
+    assert "TTM FCF n/a ·" in render_card(missing)

@@ -9,12 +9,13 @@ import pytest
 
 from src.research.ingest import filing_sections as fs
 
+PAD = "The business runs on long contracts and steady renewals across several regions. " * 4
 TOC = "Table of Contents Item 1. Business 3 Item 1A. Risk Factors 9 Item 7. MD&A 30 Item 8. 50 "
 BODY = (
-    "Item 1. Business We make widgets for hospitals and sell them under contract. "
-    "Item 1A. Risk Factors Our largest customer accounted for 18% of revenue. "
+    f"Item 1. Business We make widgets for hospitals and sell them under contract. {PAD}"
+    f"Item 1A. Risk Factors Our largest customer accounted for 18% of revenue. {PAD}"
     "Item 1B. Unresolved Staff Comments None. "
-    "Item 7. Management's Discussion Revenue grew 12% to $1,600 million on volume. "
+    f"Item 7. Management's Discussion Revenue grew 12% to $1,600 million on volume. {PAD}"
     "Item 8. Financial Statements ..."
 )
 TEN_K = f"<html><body><p>{TOC}</p><p>{BODY}</p></body></html>"
@@ -24,7 +25,7 @@ def test_a_10k_is_cut_into_items_1_1a_and_7_skipping_the_table_of_contents() -> 
     out = fs.slice_sections(TOC + BODY, "10-K")
     assert sorted(out) == ["Item 1 Business", "Item 1A Risk Factors", "Item 7 MD&A"]
     assert out["Item 1A Risk Factors"].startswith("Item 1A. Risk Factors Our largest customer")
-    assert out["Item 1A Risk Factors"].endswith("18% of revenue.")  # stops at Item 1B
+    assert out["Item 1A Risk Factors"].endswith(PAD.strip())  # stops at Item 1B
     assert "$1,600 million" in out["Item 7 MD&A"] and "Item 8" not in out["Item 7 MD&A"]
 
 
@@ -33,6 +34,94 @@ def test_caps_amendments_and_forms_without_items() -> None:
     out = fs.slice_sections(long, "10-Q/A")
     assert len(out["Item 2 MD&A"]) == 24_000
     assert fs.slice_sections("Annual report under the MJDS", "40-F") == {}
+
+
+def _lines(*parts: str) -> str:
+    return "\n".join(parts)
+
+
+BIG = "Revenue grew on volume and price across every segment this period, as discussed. " * 5
+
+
+def test_an_en_dash_10k_with_a_dotted_table_of_contents_is_cut_at_the_real_items() -> None:
+    """Review I4(a): en-dash headings, and a dotted table of contents is no section."""
+    text = _lines(
+        "Table of Contents",
+        "Item 1 – Business ........ 3",
+        "Item 1A – Risk Factors ........ 9",
+        "Item 7 – Management's Discussion ........ 30",
+        "Item 8 – Financial Statements ........ 50",
+        f"Item 1 – Business We make widgets. {BIG}",
+        f"Item 1A – Risk Factors One customer is 18% of revenue. {BIG}",
+        "Item 1B – Unresolved Staff Comments None.",
+        f"Item 7 – Management's Discussion Revenue grew 12%. {BIG}",
+        "Item 8 – Financial Statements ...",
+    )
+    out = fs.slice_sections(text, "10-K")
+    assert sorted(out) == ["Item 1 Business", "Item 1A Risk Factors", "Item 7 MD&A"]
+    assert out["Item 1A Risk Factors"].startswith("Item 1A – Risk Factors One customer")
+    assert "Item 1B" not in out["Item 1A Risk Factors"]
+    assert "Revenue grew 12%" in out["Item 7 MD&A"] and "Item 8" not in out["Item 7 MD&A"]
+
+
+def test_headings_without_punctuation_match_and_a_toc_alone_is_not_a_section() -> None:
+    body = _lines(
+        f"ITEM 1 BUSINESS We make widgets. {BIG}",
+        f"ITEM 1A RISK FACTORS One customer is 18% of revenue. {BIG}",
+        f"ITEM 7 MANAGEMENT'S DISCUSSION Revenue grew 12%. {BIG}",
+        "ITEM 8 FINANCIAL STATEMENTS",
+    )
+    assert sorted(fs.slice_sections(body, "10-K")) == [
+        "Item 1 Business",
+        "Item 1A Risk Factors",
+        "Item 7 MD&A",
+    ]
+    toc_only = _lines("Item 1 Business 3", "Item 1A Risk Factors 9", "Item 7 MD&A 30", "Item 8 50")
+    assert fs.slice_sections(toc_only, "10-K") == {}
+
+
+_TEN_Q = (
+    "PART I — FINANCIAL INFORMATION",
+    "Item 1. Financial Statements (Unaudited) Condensed statements follow.",
+    "Item 2. Management's Discussion and Analysis Revenue grew 9% in the quarter. {big}"
+    "Risk factors are in Part II, Item 1A. Risk Factors of this report. Margins held. {big}",
+    "Item 3. Quantitative and Qualitative Disclosures About Market Risk None.",
+    "PART II — OTHER INFORMATION",
+    "Item 1A. Risk Factors No material change.",
+    "Item 2. Unregistered Sales of Equity Securities We repurchased no shares.",
+)
+
+
+def test_a_10q_cross_reference_does_not_end_the_mdna_and_part_ii_item_2_is_not_it() -> None:
+    """Review I4(b): 'Part II, Item 1A.' inside the MD&A is prose, and Part II's Item 2 is not
+    the MD&A."""
+    text = _lines(*_TEN_Q).format(big=BIG)
+    for flat in (text, text.replace("\n", " ")):
+        out = fs.slice_sections(flat, "10-Q")
+        assert list(out) == ["Item 2 MD&A"]
+        mdna = out["Item 2 MD&A"]
+        assert mdna.startswith("Item 2. Management's Discussion")
+        assert "Margins held." in mdna  # past the cross-reference
+        assert "Unregistered" not in mdna and "Quantitative" not in mdna
+
+
+def test_a_10q_with_only_part_ii_item_2_has_no_mdna() -> None:
+    text = _lines(
+        "PART I — FINANCIAL INFORMATION",
+        "Item 3. Quantitative and Qualitative Disclosures About Market Risk None.",
+        "PART II — OTHER INFORMATION",
+        f"Item 2. Unregistered Sales of Equity Securities {BIG}",
+    )
+    assert fs.slice_sections(text, "10-Q") == {}
+
+
+def test_html_block_tags_become_line_breaks_for_the_heading_match() -> None:
+    raw = "<html><p>Item 1. Business</p><div>We make widgets</div><br>Item 2. Properties</html>"
+    assert fs.filing_text(raw).split("\n") == [
+        "Item 1. Business",
+        "We make widgets",
+        "Item 2. Properties",
+    ]
 
 
 class _Provider:

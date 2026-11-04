@@ -200,3 +200,15 @@ def test_the_skill_reads_the_same_schema_the_headless_prompt_uses() -> None:
     root = Path(__file__).resolve().parents[1]
     path = root / ".claude" / "skills" / "value" / "reference" / "output-schema.json"
     assert json.loads(path.read_text(encoding="utf-8")) == OUTPUT_SCHEMA
+
+
+def test_the_filing_prompt_offers_exactly_the_units_grounding_can_scale() -> None:
+    """Review Minor 4a: a unit the prompt offers but grounding cannot scale drops the fact."""
+    from src.common.value_ai_types import FACT_UNITS
+    from src.value.grounding import SCALE
+
+    filing = REQ.model_copy(update={"kind": "filing"})
+    text = build_prompt(filing, AnalystContext())
+    assert '"unit": "' + "|".join(FACT_UNITS) + '"' in text
+    assert {u for u in FACT_UNITS if u.startswith("USD")} == set(SCALE)
+    assert {"USD_millions", "pct", "count"} <= set(FACT_UNITS)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from src.common.value_ai_types import FACT_KINDS, KILL_KINDS, AnalystRequest
+from src.common.value_ai_types import FACT_KINDS, FACT_UNITS, KILL_KINDS, AnalystRequest
 from src.value_ai.context import AnalystContext
 
 PROMPT_VERSION = "value-v1"
@@ -182,7 +182,7 @@ def build_prompt(req: AnalystRequest, ctx: AnalystContext) -> str:
                 f"=== {req.symbol}: SCORECARD ===\n{req.card_text}",
                 f"=== FILING SECTIONS ===\n{sections or '(none)'}",
                 'Reply shape: {"lists": [], "facts": [{"kind": "...", "value": 0.0, "unit": '
-                '"USD|pct|count", "accn": "...", "quote": "...", "item": null}]}',
+                f'"{"|".join(FACT_UNITS)}", "accn": "...", "quote": "...", "item": null}}]}}',
             ]
         )
     blocks = [

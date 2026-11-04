@@ -60,6 +60,11 @@ def _fmt(v: float | None, pct: bool = False) -> str:
     return f"{v * 100:.1f}%" if pct else f"{v:,.2f}"
 
 
+def _fmt_m(v: float | None) -> str:
+    """Raw US dollars (companyfacts) as millions."""
+    return "n/a" if v is None else f"{v / 1e6:,.2f}M"
+
+
 def render_card(card: ValueScorecard) -> str:
     """The scorecard as labelled numbers for the prompt (unknown is ``n/a``, never zero)."""
     m = card.metrics
@@ -73,8 +78,8 @@ def render_card(card: ValueScorecard) -> str:
             f"{c.id.removeprefix('health.')} {c.state} ({_fmt(c.actual)} vs {_fmt(c.threshold)})"
             for c in card.health_checks
         ),
-        f"TTM FCF {_fmt(m.get('fcf_ttm'))}M · SBC {_fmt(m.get('sbc_ttm'))}M · revenue "
-        f"{_fmt(m.get('revenue_ttm'))}M · revenue/share {_fmt(m.get('revenue_ps_ttm'))}",
+        f"TTM FCF {_fmt_m(m.get('fcf_ttm'))} · SBC {_fmt_m(m.get('sbc_ttm'))} · revenue "
+        f"{_fmt_m(m.get('revenue_ttm'))} · revenue/share {_fmt(m.get('revenue_ps_ttm'))}",
         f"5-year revenue CAGR {_fmt(m.get('revenue_cagr_5y'), True)} · FCF/share CAGR "
         f"{_fmt(card.realised_fcf_ps_cagr, True)} · last year's revenue growth "
         f"{_fmt(m.get('revenue_growth_1y'), True)}",

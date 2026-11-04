@@ -125,6 +125,24 @@ def accept(
                 value, drivers = before, before.drivers  # between filings: lower, never raise
                 clamps.append("raised between filings: the earlier drivers stand")
                 out.kept_earlier += 1
+        if (
+            prev is not None
+            and prev.accn == accn
+            and value.fair_value is None
+            and claude_fair_value(
+                card, call_list.list_name, Drivers.model_validate_json(prev.drivers_json), rules
+            ).fair_value
+            is not None
+        ):
+            # between filings a re-read that cannot be valued (a driver missing, unreliable)
+            # never wipes out the earlier usable opinion: the earlier row stands
+            out.refused = [
+                *(out.refused or []),
+                f"{call_list.list_name}: unusable drivers on the same filing; the earlier "
+                "ones stand",
+            ]
+            out.kept_earlier += 1
+            continue
         if prev is not None:
             prev.superseded = True
         vs.add(
@@ -270,10 +288,12 @@ def night_counts(
     tags: dict[str, str],
     ops: dict[tuple[str, str], tuple[ClaudeOpinion, ClaudeValue]],
     review_above_pct: float,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Tonight's breaker inputs over the trading universe: Claude-decided READYs (opinions
-    applied), the baseline's READYs, Claude's usable fair values and how many the cap set."""
-    out = {"ready": 0, "baseline_ready": 0, "values": 0, "clamped": 0}
+    applied), the baseline's READYs, Claude's usable fair values and how many the cap set, plus
+    the names behind the READY count (the ``min_ready`` guard counts names, not name-nights)."""
+    out: dict[str, Any] = {"ready": 0, "baseline_ready": 0, "values": 0, "clamped": 0}
+    ready_names: set[str] = set()
     for card in cards:
         if tags.get(card.symbol) != "trading":
             continue
@@ -290,30 +310,51 @@ def night_counts(
             eff = effective(card, name, opinion, review_above_pct=review_above_pct)
             if eff.decided_by == "claude" and eff.verdict == "READY":
                 out["ready"] += 1
+                ready_names.add(card.symbol)
+    out["ready_names"] = sorted(ready_names)
     return out
 
 
-def check_breaker(vs: Session, cfg: ValueCfg, tonight: dict[str, int], now: datetime) -> bool:
+def _since(raw: object) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        at = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return at.replace(tzinfo=None)
+
+
+def check_breaker(vs: Session, cfg: ValueCfg, tonight: dict[str, Any], now: datetime) -> bool:
     """Trip the breaker when the last ``sessions`` nights (tonight included) breach either
-    rate. Returns whether it is tripped after tonight. Never resets itself."""
+    rate. Returns whether it is tripped after tonight. Never resets itself. Once the operator
+    has reset it, only nightly runs started after the reset count, so the window that tripped it
+    cannot trip it again. The ``min_ready`` guard counts distinct READY names over the window;
+    the multiple compares the READY counts as they are."""
     state = breaker_state(vs)
     if state.get("tripped"):
         return True
     b = cfg.claude.breaker
-    totals = dict(tonight)
-    runs = vs.scalars(
-        select(ValueRunRow)
-        .where(ValueRunRow.kind == "nightly")
-        .order_by(ValueRunRow.as_of.desc())
-        .limit(b.sessions - 1)
-    )
-    for run in runs:
+    keys = ("ready", "baseline_ready", "values", "clamped")
+    totals = {k: int(tonight.get(k, 0)) for k in keys}
+    names: set[str] = set(tonight.get("ready_names", ()))
+    legacy = 0 if "ready_names" in tonight else totals["ready"]  # a night with no names
+    query = select(ValueRunRow).where(ValueRunRow.kind == "nightly")
+    reset_at = _since(state.get("reset_at"))
+    if reset_at is not None:
+        query = query.where(ValueRunRow.started_at > reset_at)
+    for run in vs.scalars(query.order_by(ValueRunRow.as_of.desc()).limit(b.sessions - 1)):
         night = json.loads(run.summary_json or "{}").get("claude", {})
-        for key in totals:
+        for key in keys:
             totals[key] += int(night.get(key, 0))
+        if "ready_names" in night:
+            names.update(night["ready_names"])
+        else:
+            legacy += int(night.get("ready", 0))
+    distinct_ready = len(names) + legacy
     reason = None
     if (
-        totals["ready"] >= b.min_ready
+        distinct_ready >= b.min_ready
         and totals["ready"] > b.ready_multiple * totals["baseline_ready"]
     ):
         reason = (

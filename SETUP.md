@@ -2089,8 +2089,9 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
    until you set `claude.enabled: true` in `config/value.yaml` (they spend your subscription's
    tokens: at most `standard_reads_per_day` 15 and `deep_reads_per_day` 3, Sonnet by default). Then,
    after each night, the value process reads the top 15 healthy trading names per list Claude has not
-   read (and re-reads a name when a new filing lands, Python's fair value moves more than 5%, or the
-   verdict is a month old), and a filing read of each READY name's newest 10-K/10-Q once the research
+   read (and re-reads one of those top 15 when a new filing lands, Python's fair value moves more
+   than 5%, or the verdict is a month old; a name outside a list's top 15 is not re-read), and a
+   filing read of each READY name's newest 10-K/10-Q once the research
    worker has sliced it. Claude picks a verdict and valuation drivers; Python bounds the drivers,
    computes the fair value and caps it at 1.5x its own. On a healthy name Claude's verdict becomes
    the **effective** verdict (in paper; in live only with `claude.apply_live: true`), recorded in
@@ -2098,7 +2099,8 @@ adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtes
    verdict applying if its READYs run past 3x the baseline's or the cap binds on more than 25% of its
    values; `python -m scripts.value_claude` shows the breaker, today's budget and the queue,
    `--read SYMBOL` queues a read (run at the next poll) and `--reset-breaker` lets Claude's verdict
-   apply again. `python -m scripts.value_report` prints Claude's track beside the baseline's. In
+   apply again (only nights after the reset count toward the next trip, so the window that tripped
+   it cannot trip it twice). `python -m scripts.value_report` prints Claude's track beside the baseline's. In
    Claude Code, `/value SYMBOL` runs the interactive skill (`.claude/skills/value/`), which reads
    `python -m scripts.value_report --symbol SYMBOL --json`.
 
