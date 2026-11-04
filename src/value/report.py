@@ -355,6 +355,61 @@ def postmortem(
     return lines
 
 
+def claude_section(
+    baseline: list[EntryView],
+    claude: list[EntryView],
+    nights: list[dict[str, int]],
+    *,
+    breaker: str,
+    ready_multiple: float,
+    clamp_rate_pct: float,
+) -> list[str]:
+    """Spec §12, "Claude vs the baseline": per list, the two tracks' READY entries (trading
+    universe) at 63 sessions over SPY, the pairs both tracks entered on the same day, and how
+    often the 1.5x clamp bit and how many READYs Claude made against the baseline over the
+    nights read (*nights*: each nightly run's ``claude`` counts). It is not a pass/fail line;
+    it is what the operator reads before turning ``value.claude.apply_live`` on."""
+    lines = ["-- Claude vs the Python baseline (trading universe, READY, 63 sessions) --"]
+    h = GO_LIVE_HORIZON
+
+    def marked(rows: list[EntryView], list_name: str) -> dict[tuple[str, date], float]:
+        out: dict[tuple[str, date], float] = {}
+        for e in rows:
+            ret, spy = e.returns.get(h), e.spy.get(h)
+            if (
+                e.kind == "ready"
+                and e.universe == "trading"
+                and e.list_name == list_name
+                and e.entry_date is not None
+                and ret is not None
+                and spy is not None
+            ):
+                out[(e.symbol, e.entry_date)] = ret - spy
+        return out
+
+    for list_name in ("deep_value", "quality_growth"):
+        b, c = marked(baseline, list_name), marked(claude, list_name)
+        sb = clustered_mean([(d, x) for (_, d), x in b.items()])
+        sc = clustered_mean([(d, x) for (_, d), x in c.items()])
+        both = sorted(set(b) & set(c))
+        lines.append(
+            f"[{list_name}] baseline n {sb.n} excess {_pct(sb.mean)} · claude n {sc.n} "
+            f"excess {_pct(sc.mean)} · same name and day {len(both)} · claude only "
+            f"{len(set(c) - set(b))} · baseline only {len(set(b) - set(c))}"
+        )
+    ready = sum(n.get("ready", 0) for n in nights)
+    base = sum(n.get("baseline_ready", 0) for n in nights)
+    values = sum(n.get("values", 0) for n in nights)
+    clamped = sum(n.get("clamped", 0) for n in nights)
+    rate = "n/a" if not values else f"{clamped * 100.0 / values:.0f}%"
+    lines.append(
+        f"Last {len(nights)} nights: Claude READY {ready} vs the baseline's {base} (breaker at "
+        f"{ready_multiple:g}x) · the 1.5x clamp set {clamped} of {values} fair values ({rate}; "
+        f"breaker above {clamp_rate_pct:g}%) · breaker {breaker}"
+    )
+    return lines
+
+
 def render(
     entries: list[EntryView],
     legs: list[LegView],
@@ -367,6 +422,7 @@ def render(
     postmortems: bool,
     reevaluations: list[ReevaluationView] | None = None,
     rebases: int = 0,
+    claude_lines: list[str] | None = None,
 ) -> str:
     versions = sorted({e.ruleset_version for e in entries})
     lines = [
@@ -382,6 +438,8 @@ def render(
         "",
         *ranked_section(ranked),
     ]
+    if claude_lines:
+        lines += ["", *claude_lines]
     if postmortems:
         lines += ["", "-- Postmortems (closed positions) --"]
         closed = [e for e in entries if e.kind == "ready" and e.status == "closed"]

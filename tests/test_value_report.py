@@ -315,3 +315,31 @@ def test_a_postmortem_names_the_rebases_that_moved_its_levels() -> None:
     ]
     text = "\n".join(postmortem(e, [], events, None))
     assert f"rebased {D2}: every price level x 0.5" in text
+
+
+def test_claudes_track_is_printed_beside_the_baseline_with_the_breaker_rates() -> None:
+    """Spec §12: per list, both tracks' READY trading entries at 63 sessions, the pairs entered
+    on the same day, and the clamp and READY counts the breaker reads."""
+    from src.value.report import claude_section
+
+    baseline = [
+        _entry(1, D1, 0.05, universe="trading", symbol="AAA"),
+        _entry(2, D2, -0.01, universe="trading", symbol="BBB"),
+        _entry(3, D2, 0.20, universe="evidence", symbol="CCC"),  # evidence: baseline only
+    ]
+    claude = [
+        _entry(4, D1, 0.07, universe="trading", symbol="AAA", track="claude"),
+        _entry(5, D3, 0.03, universe="trading", symbol="DDD", track="claude"),
+    ]
+    nights = [{"ready": 3, "baseline_ready": 2, "values": 8, "clamped": 1}, {"ready": 1}]
+    lines = claude_section(
+        baseline, claude, nights, breaker="ok", ready_multiple=3.0, clamp_rate_pct=25.0
+    )
+    assert lines[1] == (
+        "[deep_value] baseline n 2 excess +1.0% · claude n 2 excess +4.0% · same name and "
+        "day 1 · claude only 1 · baseline only 1"
+    )
+    assert lines[3] == (
+        "Last 2 nights: Claude READY 4 vs the baseline's 2 (breaker at 3x) · the 1.5x clamp "
+        "set 1 of 8 fair values (12%; breaker above 25%) · breaker ok"
+    )

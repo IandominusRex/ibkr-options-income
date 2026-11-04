@@ -7,8 +7,9 @@ Reads data/value.db (select only; on a new install it first creates the empty ta
 prints: the survivorship caveat, the
 go-live line of spec §12, fixed-horizon returns against SPY with errors clustered by entry date,
 the three exit policies side by side, the re-evaluations of §7.1 (the re-evaluated plan against the
-original), the ranked monthly record and, with ``--postmortems``, one postmortem per closed
-position. No IBKR connection, no network.
+original), the ranked monthly record, Claude's track beside the baseline's with the breaker's two
+rates (Part 4, §12) and, with ``--postmortems``, one postmortem per closed position. No IBKR
+connection, no network.
 """
 
 from __future__ import annotations
@@ -17,8 +18,10 @@ import argparse
 import json
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from src.common.config import get_config
+from src.value.claude_verdicts import breaker_state
 from src.value.report import (
     HORIZONS,
     EntryView,
@@ -26,11 +29,13 @@ from src.value.report import (
     LegView,
     RankedView,
     ReevaluationView,
+    claude_section,
     render,
 )
 from src.value.store import (
     ValueRankedRow,
     ValueReevaluationRow,
+    ValueRunRow,
     ValueShadowEventRow,
     ValueShadowLegRow,
     ValueShadowRow,
@@ -38,6 +43,52 @@ from src.value.store import (
     init_value_db,
     value_session,
 )
+
+
+def _entry_view(r: ValueShadowRow) -> EntryView:
+    return EntryView(
+        id=r.id,
+        track=r.track,
+        kind=r.kind,
+        list_name=r.list_name,
+        symbol=r.symbol,
+        universe=r.universe,
+        status=r.status,
+        signal_date=r.signal_date,
+        entry_date=r.entry_date,
+        entry_price=r.entry_price,
+        fair_value=r.fair_value,
+        margin_of_safety=r.margin_of_safety,
+        ruleset_version=r.ruleset_version,
+        returns={h: getattr(r, f"ret_{h}") for h in HORIZONS},
+        spy={h: getattr(r, f"spy_{h}") for h in HORIZONS},
+        scorecard_json=r.scorecard_json if r.kind == "ready" else "",
+    )
+
+
+def _claude_lines(s: Session, ruleset: str | None) -> list[str]:
+    """Spec §12: Claude's track beside the baseline's, and the breaker's two rates."""
+    vcfg = get_config().value
+    q = select(ValueShadowRow).where(ValueShadowRow.kind == "ready")
+    if ruleset:
+        q = q.where(ValueShadowRow.ruleset_version == ruleset)
+    rows = [_entry_view(r) for r in s.scalars(q)]
+    runs = s.scalars(
+        select(ValueRunRow)
+        .where(ValueRunRow.kind == "nightly")
+        .order_by(ValueRunRow.as_of.desc())
+        .limit(vcfg.claude.breaker.sessions)
+    )
+    nights = [json.loads(r.summary_json or "{}").get("claude", {}) for r in runs]
+    state = breaker_state(s)
+    return claude_section(
+        [e for e in rows if e.track == "baseline"],
+        [e for e in rows if e.track == "claude"],
+        nights,
+        breaker=f"TRIPPED ({state.get('reason', '')})" if state.get("tripped") else "ok",
+        ready_multiple=vcfg.claude.breaker.ready_multiple,
+        clamp_rate_pct=vcfg.claude.breaker.clamp_rate_pct,
+    )
 
 
 def load(args: argparse.Namespace) -> str:
@@ -49,27 +100,7 @@ def load(args: argparse.Namespace) -> str:
             q = q.where(ValueShadowRow.universe == args.universe)
         if args.ruleset:
             q = q.where(ValueShadowRow.ruleset_version == args.ruleset)
-        entries = [
-            EntryView(
-                id=r.id,
-                track=r.track,
-                kind=r.kind,
-                list_name=r.list_name,
-                symbol=r.symbol,
-                universe=r.universe,
-                status=r.status,
-                signal_date=r.signal_date,
-                entry_date=r.entry_date,
-                entry_price=r.entry_price,
-                fair_value=r.fair_value,
-                margin_of_safety=r.margin_of_safety,
-                ruleset_version=r.ruleset_version,
-                returns={h: getattr(r, f"ret_{h}") for h in HORIZONS},
-                spy={h: getattr(r, f"spy_{h}") for h in HORIZONS},
-                scorecard_json=r.scorecard_json if r.kind == "ready" else "",
-            )
-            for r in s.scalars(q.order_by(ValueShadowRow.id))
-        ]
+        entries = [_entry_view(r) for r in s.scalars(q.order_by(ValueShadowRow.id))]
         ids = {e.id for e in entries}
         legs = [
             LegView(
@@ -130,6 +161,7 @@ def load(args: argparse.Namespace) -> str:
             .select_from(ValueShadowEventRow)
             .where(ValueShadowEventRow.kind == "rebase", ValueShadowEventRow.shadow_id.in_(ids))
         )
+        claude_lines = _claude_lines(s, args.ruleset)
         now: dict[tuple[str, str], float | None] = {}
         for f in s.scalars(select(ValueTickerFileRow)):
             now[(f.symbol, "deep_value")] = f.fair_value_deep
@@ -145,6 +177,7 @@ def load(args: argparse.Namespace) -> str:
         postmortems=args.postmortems,
         reevaluations=reevaluations,
         rebases=int(rebases or 0),
+        claude_lines=claude_lines,
     )
 
 
