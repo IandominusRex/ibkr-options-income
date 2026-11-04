@@ -2,9 +2,10 @@
 whether it joins the open one, and what it does to the plan. Pure: no I/O. Python decides all of
 it; Claude decides none (Part 4's review only ever reads the record).
 
-Triggers 1-5, 7 and 8 are here. Trigger 6 (a Claude kill-trigger within 10% of firing) needs
-Claude's kill-triggers and arrives with Part 4. Trigger 5 (news volume) and the earnings dates
-arrive as plain data; on their own they only open a re-evaluation: no stop and no exit reads them.
+Triggers 1-8 are here. Trigger 6 (a Claude-chosen kill-trigger within 10% of firing, Part 4) is
+evaluated by Python (``src/value/kill_triggers.py``) and, like trigger 5 (news volume) and the
+earnings dates, arrives as plain data; on their own they only open a re-evaluation: no stop and no
+exit reads them.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from src.value.exits import Reeval
 from src.value.residuals import Move
 
 Severity = Literal["minor", "major"]
-TriggerKind = Literal["move", "drift", "earnings", "filing", "news", "regime", "quiet"]
+TriggerKind = Literal["move", "drift", "earnings", "filing", "news", "kill", "regime", "quiet"]
 PERIODIC = ("10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A")
 EIGHT_K = ("8-K", "8-K/A")
 _RANK: dict[str, int] = {"minor": 1, "major": 2}
@@ -45,10 +46,12 @@ def session_triggers(
     regime_stepped: bool,
     last_reevaluation: date,
     cfg: ValueReevaluationCfg,
+    kill: list[str] | None = None,
 ) -> list[Trigger]:
     """Every trigger that fires on *day* for one position. *after* is the last session already
     checked (a filing or report dated after it and on or before *day* is new);
-    *last_reevaluation* is the last re-evaluation's session, or the entry date."""
+    *last_reevaluation* is the last re-evaluation's session, or the entry date. *kill*: the
+    name's kill triggers near or past firing tonight (trigger 6)."""
     out: list[Trigger] = []
     major_move = False
     if move is not None and move.z is not None:
@@ -127,6 +130,12 @@ def session_triggers(
                 kind="news",
                 severity="minor",
                 detail=f"{news.last_24h} items in 24h vs a daily median of {news.daily_median_30d:g}",
+            )
+        )
+    if kill:
+        out.append(
+            Trigger(
+                kind="kill", severity="minor", detail="Claude's kill trigger: " + "; ".join(kill)
             )
         )
     if regime_stepped:

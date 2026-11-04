@@ -235,3 +235,26 @@ def test_an_unknown_low_means_no_shock_level() -> None:
     up = [rv.Trigger(kind="move", severity="major", direction="up")]
     assert rv.plan_actions(down, bar, before, CFG) is None
     assert rv.plan_actions(up, bar, before, CFG) is None
+
+
+def test_trigger_6_is_minor_and_moves_no_level() -> None:
+    """Spec §7.1 trigger 6: a Claude-chosen kill trigger near firing opens a re-evaluation; like
+    news it is plain data, and plan_actions changes nothing for it."""
+    from src.value.reevaluate import plan_actions, session_triggers
+
+    day = date(2026, 4, 6)
+    fired = session_triggers(
+        day=day,
+        after=date(2026, 4, 3),
+        move=None,
+        filings=[],
+        earnings=[],
+        news=None,
+        regime_stepped=False,
+        last_reevaluation=day,
+        cfg=CFG,
+        kill=["revenue_growth_below near (4.20 vs 4)"],
+    )
+    assert [(t.kind, t.severity) for t in fired] == [("kill", "minor")]
+    assert "revenue_growth_below near" in fired[0].detail
+    assert plan_actions(fired, DayBar(date=day, close=10.0, low=9.0), None, CFG) is None

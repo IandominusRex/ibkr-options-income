@@ -25,10 +25,12 @@ from sqlalchemy.orm import Session
 
 from src.common.config import ValueCfg, ValueRulesCfg
 from src.common.value_ai_types import AnalystResult, Drivers, KillTrigger
+from src.value import kill_triggers
 from src.value.claude_valuation import ClaudeValue, claude_fair_value
 from src.value.effective import ClaudeOpinion, Effective, effective
 from src.value.schemas import LISTS, ValueScorecard
 from src.value.store import (
+    ValueClaudeFactRow,
     ValueClaudeNoteRow,
     ValueClaudeReadRow,
     ValueClaudeStateRow,
@@ -345,4 +347,43 @@ def persist_effective(
             else:
                 for key, value in values.items():
                     setattr(row, key, value)
+    return out
+
+
+def update_kill_triggers(
+    vs: Session, cards: list[ValueScorecard], cfg: ValueCfg, as_of: date
+) -> dict[str, list[str]]:
+    """Evaluate every active kill trigger on tonight's scorecard (spec §8.4) and record the
+    result on its row. Returns, per name, the lines of the triggers that are near or fired:
+    trigger 6's input for tonight's re-evaluations (spec §7.1)."""
+    by_symbol = {c.symbol: c for c in cards}
+    out: dict[str, list[str]] = {}
+    rows = vs.scalars(
+        select(ValueKillTriggerRow).where(
+            ValueKillTriggerRow.active.is_(True),
+            ValueKillTriggerRow.symbol.in_(list(by_symbol)),
+        )
+    ).all()
+    for t in rows:
+        facts = set(
+            vs.scalars(
+                select(ValueClaudeFactRow.kind).where(
+                    ValueClaudeFactRow.symbol == t.symbol,
+                    ValueClaudeFactRow.grounded.is_(True),
+                    ValueClaudeFactRow.created_at >= t.chosen_at,
+                )
+            )
+        )
+        c = kill_triggers.check(
+            t.kind,
+            t.threshold,
+            by_symbol[t.symbol],
+            near_pct=cfg.rules.claude.kill_near_pct,
+            facts_since=facts,
+        )
+        t.last_state, t.last_actual, t.last_checked = c.state, c.actual, as_of
+        if c.state == "fired" and t.fired_on is None:
+            t.fired_on = as_of
+        if c.state in ("near", "fired"):
+            out.setdefault(t.symbol, []).append(c.line())
     return out
