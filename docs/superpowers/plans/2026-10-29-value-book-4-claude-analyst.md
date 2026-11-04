@@ -121,6 +121,8 @@ is the executing agent's own model name.
 | **Section B exit** | done | 3 task commits + this docs(plan) commit = 8 (`git log --oneline main..HEAD \| wc -l` printed 7 before it; plus the uncommitted-at-entry Section B entry row committed with Task 4) | **full gate: pytest 5352 passed, 1 skipped (baseline 5305 + 47)**; `ruff check .` clean; `mypy src` 335 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py scripts/value_claude.py` silent; `git status --short` clean | 2026-11-04 | New-test running total: 23 + 24 = 47 of 77 (Section B added 11 + 9 + 4 = 24). Section C target: baseline 5305 + 63 = 5368. |
 | C1 (Task 7) kill triggers, trigger 6 | done | `6c3e4b8` | red first (`ImportError: cannot import name 'update_kill_triggers'`; the plan expected `ModuleNotFoundError`, same cause), then task gate: 53 passed (kill_triggers, reevaluate, value_claude, value_fence); ruff check + format clean on the 5 touched files; mypy clean on 3 src files; 12 new tests (8 parametrized + 2 + 1 + 1 reevaluate) | 2026-11-04 | No deviation; `kill_triggers.py` written whole, the other edits applied with Edit (same content as the diff). The commit also carries the Section C entry row. Cost-if-wrong: per ruling 10, one predicate or one band. |
 | C2 (Task 8) the claude track in the shadow record | done | `8702d97` | red first (`AttributeError`/`TypeError` as the plan expected: no `open_claude_signals`, no `kill` on `ReevalContext`), then task gate: 63 passed (shadow, service, report, fence); ruff check + format clean; mypy clean on `shadow.py`, `service.py`; 3 new tests | 2026-11-04 | No deviation; all hunks applied with Edit (same content). Checked that no other function in `shadow.py` filters by track, so claude rows fill, step, mark and close through the existing baseline code unchanged; baseline behaviour is unchanged (the existing 21 shadow tests and the service tests stayed green, `opened` gains `claude` only while `value.claude.enabled`). Cost-if-wrong: per ruling 7, per-track entry rules in one function. |
+| C3 (Task 9) the report: Claude beside the baseline | done | `412bed7` | red first (`ImportError: cannot import name 'claude_section'`), then task gate: 29 passed (report, fence); `py_compile` of `scripts/value_report.py` and `scripts/run_value.py` silent; ruff check + format clean on the 3 touched files; mypy clean on `report.py`, `value_report.py`; 1 new test (pinned lines matched first time) | 2026-11-04 | No deviation; edits applied with Edit (same content). `scripts/value_report.py` now imports `src.value.claude_verdicts.breaker_state` (inside the value fence, the fence test stays green). `run_value.py` and `value_report.py` were never imported. Cost-if-wrong: none (display only). |
+| **Section C exit** | done | 3 task commits + this docs(plan) commit | **full gate: pytest 5368 passed, 1 skipped (baseline 5305 + 63)**; `ruff check .` clean; `mypy src` 336 source files, clean; protected-file diff empty; `py_compile scripts/run_value.py scripts/value_report.py` silent; `git status --short` clean | 2026-11-04 | New-test running total: 47 + 16 = 63 of 77 (Section C added 12 + 3 + 1 = 16). Two checkbox-tick `sed` commands used line numbers one or two lines stale and matched nothing; the ticks were re-applied by correct line. |
 
 ## Roadmap (this plan is Part 4 of 6)
 
@@ -5045,7 +5047,7 @@ fair value of 70 and a margin of (70 − 45) / 70; its `value` leg sells half at
 above 70), and not at 50, though 50 is above Python's 46.85 (only a re-mark session can sell on
 Python's value there).
 
-- [ ] **Step 1: Write the failing tests** — append to `tests/test_value_shadow.py`:
+- [x] **Step 1: Write the failing tests** — append to `tests/test_value_shadow.py`:
 
 ```diff
 diff --git a/tests/test_value_shadow.py b/tests/test_value_shadow.py
@@ -5138,13 +5140,13 @@ index 64afb06..8d44c0c 100644
 +    assert all(not leg.pending for leg in _legs("main").values())  # it moves no level
 ```
 
-- [ ] **Step 2: Run them to see them fail**
+- [x] **Step 2: Run them to see them fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_shadow.py`
   Expected: FAIL — `AttributeError: module 'src.value.shadow' has no attribute 'open_claude_signals'`
   and `TypeError: ReevalContext.__init__() got an unexpected keyword argument 'kill'`.
 
-- [ ] **Step 3: The record** — apply:
+- [x] **Step 3: The record** — apply:
 
 ```diff
 diff --git a/src/value/service.py b/src/value/service.py
@@ -5430,13 +5432,13 @@ index b9a4155..3b9f3fc 100644
      )
 ```
 
-- [ ] **Step 4: Run them to see them pass**
+- [x] **Step 4: Run them to see them pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_shadow.py tests/test_value_service.py tests/test_value_report.py tests/test_value_fence.py`
   Expected: PASS (the existing service test's `opened` is unchanged: reads are off by default, so
   no claude track opens).
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the three touched files;
   `.venv/bin/mypy src/value/shadow.py src/value/service.py`.
@@ -5465,7 +5467,7 @@ The pinned lines: the baseline's two trading deep-value entries have 63-session 
 Claude's only, one the baseline's only; the evidence entry is excluded. Two nights: 4 Claude READYs
 against 2, and the clamp set 1 of 8 values (12%).
 
-- [ ] **Step 1: Write the failing test** — append to `tests/test_value_report.py`:
+- [x] **Step 1: Write the failing test** — append to `tests/test_value_report.py`:
 
 ```diff
 diff --git a/tests/test_value_report.py b/tests/test_value_report.py
@@ -5506,12 +5508,12 @@ index c910e69..445bb86 100644
 +    )
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [x] **Step 2: Run it to see it fail**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py`
   Expected: FAIL — `ImportError: cannot import name 'claude_section'`.
 
-- [ ] **Step 3: The section and the script** — apply:
+- [x] **Step 3: The section and the script** — apply:
 
 ```diff
 diff --git a/scripts/value_report.py b/scripts/value_report.py
@@ -5738,13 +5740,13 @@ index c057f9a..a596938 100644
          closed = [e for e in entries if e.kind == "ready" and e.status == "closed"]
 ```
 
-- [ ] **Step 4: Run it to see it pass**
+- [x] **Step 4: Run it to see it pass**
 
   Run: `.venv/bin/python -m pytest -q tests/test_value_report.py tests/test_value_fence.py` and
   `.venv/bin/python -m py_compile scripts/value_report.py`.
   Expected: PASS; silent.
 
-- [ ] **Step 5: Gates and commit**
+- [x] **Step 5: Gates and commit**
 
   Run: `.venv/bin/ruff check` and `.venv/bin/ruff format --check` on the three touched files;
   `.venv/bin/mypy src/value/report.py scripts/value_report.py`.
@@ -5754,7 +5756,7 @@ index c057f9a..a596938 100644
   git commit -m "feat(value): the report prints Claude's track beside the baseline's (spec 12)"
   ```
 
-- [ ] **Section C exit** — the full gate (pytest = baseline + 63), the protected-file diff
+- [x] **Section C exit** — the full gate (pytest = baseline + 63), the protected-file diff
   (empty), `py_compile` of `scripts/run_value.py` and `scripts/value_report.py`, `git status --short`
   (clean); fill the Task 9 row and the exit numbers, then:
 
