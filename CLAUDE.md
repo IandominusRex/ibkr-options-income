@@ -54,7 +54,7 @@ row that matches:
 | **New module under `src/reporting/`** | `ARCHITECTURE.md` folder guide · root `CLAUDE.md` analytics-tier section |
 | **New module under `src/news/`** or a new key in `config/examples/news.yaml` | `ARCHITECTURE.md` `src/news/` section · `SETUP.md` §17 News thread if operator-facing · root `CLAUDE.md` news-fence section if it changes what the package may import |
 | **New module under `src/spreads/`** or a new key in `config/examples/spreads.yaml` | `ARCHITECTURE.md` `src/spreads/` section · `SETUP.md` §16 if operator-facing · root `CLAUDE.md` spreads-fence section if it changes what the package may import |
-| **New module under `src/value/`** or a new key in `config/examples/value.yaml` | `ARCHITECTURE.md` `src/value/` section · `SETUP.md` §19 if operator-facing · root `CLAUDE.md` value-fence section if it changes what the package may import · a `rules:` key also bumps `ruleset_version` once v1 is frozen |
+| **New module under `src/value/` or `src/value_ai/`** or a new key in `config/examples/value.yaml` | `ARCHITECTURE.md` `src/value/` section · `SETUP.md` §19 if operator-facing · root `CLAUDE.md` value-fence section if it changes what the package may import · a `rules:` key also bumps `ruleset_version` once v1 is frozen |
 
 The goal: a user reading `README.md` or `ARCHITECTURE.md` should always get an accurate picture
 of the current codebase, not a stale one.
@@ -114,6 +114,23 @@ CSPs. A missing, malformed, out-of-range or Ollama-produced value means the dete
 Claude still never places, prices, gates any other field, or touches a close, a roll or a
 covered call. Every override is recorded in `sizing_actions` (`scripts/sizing_report.py`) and
 reviewed by a human before the live cutover.
+
+**A second written exception: Claude's value verdict (operator decisions 2026-10-28/29 —
+`docs/superpowers/specs/2026-10-28-value-swing-book-design.md` §8.2, §18).** On a name that passed
+every Python health, earnings-quality, list-entry and data gate, Claude's validated verdict decides
+the value book's effective verdict (READY / WATCH / WAIT / NO), bounded by Python's price and timing
+gates, and its fair value replaces Python's in the entry ceiling and the margin of safety, and from
+Part 5 the size tier and the wheel's value-suggested put ceiling. That fair value is never a number
+Claude typed: Claude returns drivers, Python clamps each into a bound taken from the company's own
+filed history, does the arithmetic and caps the result at 1.5x Python's own
+(`src/value/claude_valuation.py`). It is applied in paper and **record-only in live**
+(`value.claude.apply_live: false`) until the go-live review has read the Claude-vs-baseline record;
+a breaker stops it applying when Claude's READYs run away from the baseline's or the cap binds too
+often; an Ollama-produced verdict, a malformed reply or a missing driver means Python's baseline.
+Claude never lifts a name over a gate, sets a price, a strike or a size directly, moves a stop, or
+causes an automatic sale (an exit only Claude's value would fire waits for a tap). Every verdict is
+recorded in `value_claude_verdicts` beside Python's baseline, and the `claude` shadow track measures
+it (`python -m scripts.value_report`).
 
 ## The fence — the enrichment learning loop may not touch the deterministic layer
 
@@ -393,8 +410,16 @@ the value book. It is **deterministic tier**:
 - The value process (`scripts/run_value.py`, Part 2) holds no IBKR connection: it hands
   `src/value/` earnings dates from `news.db` and yfinance market facts as plain data
   (`scripts/value_feed.py`), so `src/value/` never imports `src.news` or `src.data`. It is the only
-  module that may import `src.value_ai` (Part 4), it is never imported itself, and its whole
-  process loads no wheel layer, no Claude and no `ib_async` (a `sys.modules` test).
+  module that imports `src.value_ai` (Part 4), it is never imported itself, and `src/value/` with
+  its feed loads no wheel layer, no Claude and no `ib_async` (a `sys.modules` test).
+- **`src/value_ai/` (Part 4) is enrichment** (on `tests/test_eval_skills.py`'s list): Claude as the
+  analyst. It reaches Claude only through `src.claude.cli` (slim, from `value.claude.workdir`,
+  outside the repo), reads `news.db` only through `src.news.store.readonly` and `queries`, and
+  imports nothing from `src.value`, the trading path, `src.notify`, `src.ledger`, `src.storage` or
+  `src.research`. It returns plain data (`src/common/value_ai_types.py`, pydantic only); `src/value/`
+  bounds, computes, clamps, grounds (`grounding.py`) and stores it, and reads its reads' cost and
+  priority itself (`claude_reads.py`). Importing the analyst loads `src.claude.cli` alone from the
+  reasoning layer (a `sys.modules` test).
 - The exit engine (`src/value/exits.py`) is pure; every exit that would send reads Python's fair
   value (the half-sale target alone reads the effective one), and an exit only Claude's value would
   fire is a tap proposal (spec §7, revision 3). That covers `full`'s peak signal and its 2 x ATR
@@ -412,8 +437,9 @@ the value book. It is **deterministic tier**:
   re-evaluation. The EDGAR filing list and the going-concern read are research-worker jobs
   (`src/research/ingest/submissions.py`, `going_concern.py`); `src/value/` reads their table only
   through `src/common/value_inputs.py`.
-- Parts 1–3 place, size and gate nothing: every shadow row is hypothetical. The written exception
-  for Claude's value verdict (spec §8.2, §18) is added with Part 4.
+- Parts 1–4 place, size and gate nothing: every shadow row is hypothetical. Claude's verdict (the
+  second written exception under the core invariant) decides the effective verdict, the `claude`
+  shadow track and `value_effective`; Part 5 is the first part where it can reach an order.
 
 Enforced by `tests/test_value_fence.py` — keep it green.
 

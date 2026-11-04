@@ -347,6 +347,34 @@ MCP so the headless `claude -p` subprocess can do ad-hoc lookups (`ib_portfolio`
 
 ---
 
+## Built (2026-10-30 — value book Part 4: Claude as the analyst)
+
+Plan: `docs/superpowers/plans/2026-10-29-value-book-4-claude-analyst.md`. Record-only: no order,
+no Telegram, no web, no IBKR connection.
+
+- `value_rules: v4` = v3 + `rules.claude` (driver bounds, the 1.5x clamp, kill-trigger ranges,
+  trigger 6's nearness), frozen at `be30d1eaa915`; v1-v3 still hash as pinned.
+- `src/value_ai/` (enrichment): the analyst, through the slim `src.claude.cli` from
+  `value.claude.workdir`; versioned prompts with one output schema (shared with the skill); strict
+  parsing; an Ollama fallback that is labelled and never decides.
+- `src/value/`: Claude's fair value computed by Python from bounded drivers and capped
+  (`claude_valuation.py`); the effective verdict (`effective.py`, `value_effective`); acceptance,
+  the between-filings rule, opinions recomputed nightly, the breaker (`claude_verdicts.py`); the
+  read queue with priorities and per-day caps (`claude_reads.py`); kill triggers evaluated nightly
+  and trigger 6 (`kill_triggers.py`); grounded facts (`grounding.py`); the `claude` shadow track and
+  the report's Claude-vs-baseline section.
+- The research worker's `filing_sections` job (the newest 10-K/10-Q of held and READY names, sliced).
+- `scripts/value_claude.py`, `value_report --symbol --json`, the interactive skill
+  `.claude/skills/value/`. Root `CLAUDE.md` carries the second written exception under the core
+  invariant.
+- Known limitations: reads are off until `value.claude.enabled`; the standard read does not read the
+  earnings release itself (the news clusters and, weeks later, the 10-Q's filing read stand in);
+  grounded facts adjust no number yet (they feed `guidance_cut` / `customer_loss` and the display);
+  `insider_selling_cluster` is not on the menu (no Form 4 feed); Claude's review of a held name
+  (§7.1 step 3) is built and tested but has no held name to read until Part 5; the effective verdict
+  is used by nothing that trades until Part 5; cheaper models per call kind wait for the blinded
+  audit (spec §8.5); the claude track opens only while reads are on, so its record starts then.
+
 ## Built (2026-10-30 — value book Part 3: re-evaluation and Stage 1b)
 
 Plan: `docs/superpowers/plans/2026-10-29-value-book-3-reevaluation.md`. Deterministic only: no
@@ -372,7 +400,7 @@ order, no Claude, no Telegram, no web, no IBKR connection.
 - Stage 1b: `src/value/backtest.py` and `scripts/value_backtest.py` (ten years of bars, cached in
   `data/value_backtest/`; the yfinance provider gained a 10y period).
 - `value_report` prints the re-evaluations and each policy's re-evaluated vs original plan.
-- Known limitations: trigger 6 (a Claude kill-trigger near firing) waits for Part 4; the hourly RTH
+- Known limitations: trigger 6 (a Claude kill-trigger near firing) waited for Part 4 (built there); the hourly RTH
   check of triggers 1 and 4 and "pause adds" wait for held positions (Part 5); cards for Major and
   Minor re-evaluations wait for Part 6; the residual model needs 120 aligned sessions (the 10% raw
   move stands in before that); a single bar the provider corrects (not a corporate action) is

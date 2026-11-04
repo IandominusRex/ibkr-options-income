@@ -2031,13 +2031,13 @@ that survived checking.
 
 ---
 
-## 19. The value book, Parts 1–3: the scorecard, the nightly process, the shadow record and its re-evaluations
+## 19. The value book, Parts 1–4: the scorecard, the nightly process, the shadow record, its re-evaluations and Claude as the analyst
 
 The value book scores healthy companies against what they are worth
 (`docs/superpowers/specs/2026-10-28-value-swing-book-design.md`). Part 1 is the scorecard and
 a one-off **calibration dry run**; Part 2 adds a nightly process and the **shadow record**; Part 3
-adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtest. None of them
-places an order or sends a message.
+adds **re-evaluations** (spec §7.1) and **Stage 1b**, the point-in-time backtest; Part 4 adds
+**Claude as the analyst** (spec §8). None of them places an order or sends a message.
 
 1. `cp config/examples/value.yaml config/value.yaml` (git-ignored; every key has a code default).
 2. The research worker refreshes the value universes nightly (`research_sweep.enabled`, on since
@@ -2083,6 +2083,24 @@ places an order or sends a message.
    It reads `research.db` read-only and caches ten years of bars in `data/value_backtest/`
    (`--bars research` uses only what research.db holds; `--limit N` or `--names A,B` for a quick run).
    The full evidence universe takes a while and fetches ~500 price histories the first time.
+9. **Claude as the analyst (Part 4).** `ruleset_version` becomes `v4` (v3 + `rules.claude`: the
+   driver bounds, the 1.5x clamp, the kill-trigger ranges): refresh the private copy
+   (`cp config/examples/value.yaml config/value.yaml`) before restarting. Claude reads are **off**
+   until you set `claude.enabled: true` in `config/value.yaml` (they spend your subscription's
+   tokens: at most `standard_reads_per_day` 15 and `deep_reads_per_day` 3, Sonnet by default). Then,
+   after each night, the value process reads the top 15 healthy trading names per list Claude has not
+   read (and re-reads a name when a new filing lands, Python's fair value moves more than 5%, or the
+   verdict is a month old), and a filing read of each READY name's newest 10-K/10-Q once the research
+   worker has sliced it. Claude picks a verdict and valuation drivers; Python bounds the drivers,
+   computes the fair value and caps it at 1.5x its own. On a healthy name Claude's verdict becomes
+   the **effective** verdict (in paper; in live only with `claude.apply_live: true`), recorded in
+   `value_effective`, and a `claude` shadow track runs beside the baseline. A breaker stops Claude's
+   verdict applying if its READYs run past 3x the baseline's or the cap binds on more than 25% of its
+   values; `python -m scripts.value_claude` shows the breaker, today's budget and the queue,
+   `--read SYMBOL` queues a read (run at the next poll) and `--reset-breaker` lets Claude's verdict
+   apply again. `python -m scripts.value_report` prints Claude's track beside the baseline's. In
+   Claude Code, `/value SYMBOL` runs the interactive skill (`.claude/skills/value/`), which reads
+   `python -m scripts.value_report --symbol SYMBOL --json`.
 
 ### Scripts
 
@@ -2092,7 +2110,8 @@ places an order or sends a message.
 | `python -m scripts.value_dry_run run [--as-of DATE] [--names A,B] [--limit N] [--no-persist] [--out cards.json] [--report report.txt]` | Scores every name, ranks both lists, writes `data/value.db`, prints the funnel. |
 | `python -m scripts.value_universe_snapshot` | Rebuilds the two committed universe CSVs from Wikipedia. |
 | `python -m scripts.run_value` | The value process. Normally started by `scripts.start` / `./ibkr restart`; `--no-value` skips it. Logs to `logs/value.log` (`./ibkr logs value`). |
-| `python -m scripts.value_report [--track baseline] [--universe all\|trading\|evidence] [--ruleset V] [--postmortems]` | Prints the shadow record from `data/value.db` (read only). |
+| `python -m scripts.value_report [--track baseline\|claude] [--universe all\|trading\|evidence] [--ruleset V] [--postmortems]` | Prints the shadow record from `data/value.db` (read only), with Claude's track beside the baseline's (Part 4). `--symbol NVDA --json` prints one ticker file. |
+| `python -m scripts.value_claude [--read SYMBOL] [--reset-breaker]` | Claude's side of the value book (Part 4): the breaker, today's read budget and the queue; queues a read; resets the breaker. |
 | `python -m scripts.value_backtest [--universe evidence\|trading] [--names A,B] [--limit N] [--start D] [--end D] [--bars provider\|research] [--refresh] [--out F]` | Stage 1b: the point-in-time backtest of Python's rules (Part 3). |
 
 ## Troubleshooting
