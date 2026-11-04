@@ -2,6 +2,8 @@
 
     python -m scripts.value_report [--track baseline] [--universe all|trading|evidence]
         [--ruleset VERSION] [--postmortems]
+    python -m scripts.value_report --symbol NVDA --json   # one ticker file, both halves
+
 
 Reads data/value.db (select only; on a new install it first creates the empty tables) and
 prints: the survivorship caveat, the
@@ -33,6 +35,10 @@ from src.value.report import (
     render,
 )
 from src.value.store import (
+    ValueClaudeNoteRow,
+    ValueClaudeVerdictRow,
+    ValueEffectiveRow,
+    ValueKillTriggerRow,
     ValueRankedRow,
     ValueReevaluationRow,
     ValueRunRow,
@@ -181,14 +187,94 @@ def load(args: argparse.Namespace) -> str:
     )
 
 
+def symbol_json(symbol: str) -> str:
+    """One name's ticker file as JSON (spec §8.6: what the interactive skill reads instead of
+    re-computing anything): Part 1 (the scorecard), the effective verdict per list, and Claude's
+    latest verdicts, notes and active kill triggers, each labelled with its source."""
+    init_value_db()
+    sym = symbol.upper()
+    with value_session() as s:
+        f = s.get(ValueTickerFileRow, sym)
+        if f is None:
+            return json.dumps({"symbol": sym, "error": "no ticker file"})
+        effective = {
+            e.list_name: {
+                "verdict": e.verdict,
+                "decided_by": e.decided_by,
+                "fair_value": e.fair_value,
+                "entry_ceiling": e.entry_ceiling,
+                "margin_of_safety": e.margin_of_safety,
+            }
+            for e in s.scalars(select(ValueEffectiveRow).where(ValueEffectiveRow.symbol == sym))
+        }
+        verdicts = [
+            {
+                "list": v.list_name,
+                "verdict": v.verdict,
+                "why": v.why,
+                "fair_value": v.fair_value,
+                "uncapped": v.uncapped,
+                "clamp_bound": v.clamp_bound,
+                "drivers": json.loads(v.drivers_json),
+                "backend": v.backend,
+                "written": v.created_at.isoformat(),
+            }
+            for v in s.scalars(
+                select(ValueClaudeVerdictRow).where(
+                    ValueClaudeVerdictRow.symbol == sym, ValueClaudeVerdictRow.superseded.is_(False)
+                )
+            )
+        ]
+        note = s.scalars(
+            select(ValueClaudeNoteRow)
+            .where(ValueClaudeNoteRow.symbol == sym)
+            .order_by(ValueClaudeNoteRow.id.desc())
+            .limit(1)
+        ).first()
+        triggers = [
+            {"kind": t.kind, "threshold": t.threshold, "state": t.last_state}
+            for t in s.scalars(
+                select(ValueKillTriggerRow).where(
+                    ValueKillTriggerRow.symbol == sym, ValueKillTriggerRow.active.is_(True)
+                )
+            )
+        ]
+        return json.dumps(
+            {
+                "symbol": sym,
+                "as_of": f.as_of.isoformat(),
+                "source": {"scorecard": "python", "claude": "claude"},
+                "scorecard": json.loads(f.scorecard_json),
+                "effective": effective,
+                "claude": {
+                    "verdicts": verdicts,
+                    "notes": None
+                    if note is None
+                    else {
+                        "profile": note.profile,
+                        "why_cheap": note.why_cheap,
+                        "thesis": note.thesis,
+                        "bear_case": note.bear_case,
+                        "review_state": note.review_state,
+                        "written": note.created_at.isoformat(),
+                    },
+                    "kill_triggers": triggers,
+                },
+            },
+            indent=1,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="The value book's shadow record (spec §6.8)")
     parser.add_argument("--track", default="baseline", choices=("baseline", "claude"))
     parser.add_argument("--universe", default="all", choices=("all", "trading", "evidence"))
     parser.add_argument("--ruleset", default=None, help="only this ruleset version")
     parser.add_argument("--postmortems", action="store_true")
+    parser.add_argument("--symbol", default=None, help="one ticker file (with --json)")
+    parser.add_argument("--json", action="store_true", help="with --symbol: print JSON")
     args = parser.parse_args(argv)
-    print(load(args))
+    print(symbol_json(args.symbol) if args.symbol else load(args))
     return 0
 
 

@@ -343,3 +343,44 @@ def test_claudes_track_is_printed_beside_the_baseline_with_the_breaker_rates() -
         "Last 2 nights: Claude READY 4 vs the baseline's 2 (breaker at 3x) · the 1.5x clamp "
         "set 1 of 8 fair values (12%; breaker above 25%) · breaker ok"
     )
+
+
+def test_one_ticker_file_prints_as_json_with_each_half_labelled(value_db) -> None:
+    """Spec §8.6: the skill reads this instead of re-computing anything."""
+    import json
+
+    from src.value.store import ValueClaudeVerdictRow
+    from src.value.ticker_file import persist
+
+    card = build_scorecard(inputs(close=30.0), get_config().value)
+    with value_session() as s:
+        persist(
+            s,
+            card,
+            universe="trading",
+            ranks={},
+            filed="deep_value",
+            cfg=get_config().value.ticker_file,
+            session_row=False,
+        )
+        s.add(
+            ValueClaudeVerdictRow(
+                read_id=1,
+                symbol="STDY",
+                list_name="deep_value",
+                verdict="READY",
+                drivers_json="{}",
+                fingerprint_key="k",
+                backend="cli",
+                fair_value=60.0,
+                created_at=datetime(2026, 11, 2),
+            )
+        )
+    out = json.loads(value_report.symbol_json("stdy"))
+    assert out["source"] == {"scorecard": "python", "claude": "claude"}
+    assert out["scorecard"]["symbol"] == "STDY"
+    assert out["claude"]["verdicts"][0]["fair_value"] == 60.0
+    assert json.loads(value_report.symbol_json("NONE")) == {
+        "symbol": "NONE",
+        "error": "no ticker file",
+    }

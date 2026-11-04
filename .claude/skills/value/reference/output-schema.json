@@ -1,0 +1,180 @@
+{
+  "type": "object",
+  "properties": {
+    "lists": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "list": {
+            "type": "string",
+            "enum": [
+              "deep_value",
+              "quality_growth"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "READY",
+              "WATCH",
+              "WAIT",
+              "NO"
+            ]
+          },
+          "why": {
+            "type": "string"
+          },
+          "drivers": {
+            "type": "object",
+            "properties": {
+              "growth": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "terminal": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "discount": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "margin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "rote": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "list",
+          "verdict",
+          "why",
+          "drivers"
+        ]
+      }
+    },
+    "profile": {
+      "type": "string"
+    },
+    "why_cheap": {
+      "type": "string"
+    },
+    "thesis": {
+      "type": "string"
+    },
+    "bear_case": {
+      "type": "string"
+    },
+    "kill_triggers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "revenue_growth_below",
+              "fcf_ttm_negative",
+              "net_debt_to_ebitda_above",
+              "dilution_above",
+              "gross_margin_below",
+              "guidance_cut",
+              "customer_loss"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    },
+    "review_state": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "INTACT",
+        "WEAKENED",
+        "BROKEN",
+        null
+      ]
+    },
+    "review_why": {
+      "type": "string"
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "one_off",
+              "segment_revenue",
+              "guidance",
+              "backlog",
+              "customer_concentration",
+              "covenant",
+              "share_class_count",
+              "guidance_cut",
+              "customer_loss"
+            ]
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": "string"
+          },
+          "accn": {
+            "type": "string"
+          },
+          "quote": {
+            "type": "string"
+          },
+          "item": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "accn",
+          "quote"
+        ]
+      }
+    }
+  },
+  "required": [
+    "lists"
+  ]
+}

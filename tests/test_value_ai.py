@@ -192,3 +192,11 @@ def test_context_without_news_db_says_so(monkeypatch, tmp_path) -> None:
     ro.reset_engine()
     assert gather("STDY", NOW, 5).unavailable == ["news"]
     ro.reset_engine()
+
+
+def test_the_skill_reads_the_same_schema_the_headless_prompt_uses() -> None:
+    """Spec §8.6: .claude/skills/value/reference/output-schema.json is generated from the prompts
+    (regenerate it with the plan's one-liner when OUTPUT_SCHEMA changes)."""
+    root = Path(__file__).resolve().parents[1]
+    path = root / ".claude" / "skills" / "value" / "reference" / "output-schema.json"
+    assert json.loads(path.read_text(encoding="utf-8")) == OUTPUT_SCHEMA
