@@ -25,6 +25,7 @@ from src.api.routers import (
     spreads,
     system,
     universe,
+    value,
     watchlist,
 )
 from src.common.config import get_config
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(news.router)
     app.include_router(claude_context.router)
     app.include_router(spreads.router)
+    app.include_router(value.router)
     app.include_router(universe.router)
     app.include_router(watchlist.router)
     app.include_router(commands.router)

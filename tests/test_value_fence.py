@@ -525,3 +525,27 @@ def test_claude_reaches_value_db_only_through_the_view() -> None:
     assert offenders == []
     ctx = imported_modules(ROOT / "src" / "claude" / "value_context.py")
     assert _reaches(ctx, "src.common.value_view") and _reaches(ctx, "src.common.value_text")
+
+
+def test_only_value_db_opens_the_value_file_in_the_api() -> None:
+    """Part 6 ruling 23/28: the API reaches data/value.db through one read-only module."""
+    api = ROOT / "src" / "api"
+    users = [p.name for p in api.rglob("*.py") if "value_db_url_abs" in p.read_text()]
+    assert users == ["value_db.py"]
+    text = (api / "value_db.py").read_text()
+    assert "mode=ro" in text and "INSERT" not in text.upper().replace("INSERTED", "")
+
+
+def test_the_api_imports_only_scorecard_and_schemas_from_value() -> None:
+    """Part 6 ruling 24: the pure scorecard is the one piece of src.value the API computes with."""
+    allowed = ("src.value.scorecard", "src.value.schemas")
+    offenders = []
+    for p in sorted((ROOT / "src" / "api").rglob("*.py")):
+        for m in imported_modules(p):
+            if m == "src.value" or (
+                _reaches({m}, "src.value") and not any(_reaches({m}, a) for a in allowed)
+            ):
+                offenders.append(f"{p.relative_to(ROOT)}: {m}")
+            if _reaches({m}, "src.value_ai"):
+                offenders.append(f"{p.relative_to(ROOT)}: {m}")
+    assert offenders == []

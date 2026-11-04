@@ -1208,6 +1208,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/value/top": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Value Top */
+        get: operations["value_top_value_top_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/value/book": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Value Book */
+        get: operations["value_book_value_book_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/value/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Value Positions */
+        get: operations["value_positions_value_positions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/value/{symbol}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Value Ticker */
+        get: operations["value_ticker_value__symbol__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/universe": {
         parameters: {
             query?: never;
@@ -5659,6 +5727,518 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** ValueBookResponse */
+        ValueBookResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Ceiling Usd */
+            ceiling_usd?: number | null;
+            /** Used Usd */
+            used_usd?: number | null;
+            /** Positions */
+            positions?: components["schemas"]["ValuePositionOut"][];
+            /** Proposals */
+            proposals?: components["schemas"]["ValueProposalOut"][];
+            /** Funding */
+            funding?: components["schemas"]["ValueFundingOut"][];
+            breakers?: components["schemas"]["ValueBreakersOut"];
+            /** Release Max Closes */
+            release_max_closes: number;
+        };
+        /** ValueBreakersOut */
+        ValueBreakersOut: {
+            /** Trend */
+            trend?: boolean | null;
+            /** Drawdown */
+            drawdown?: boolean | null;
+            /** Drawdown Pct */
+            drawdown_pct?: number | null;
+            /**
+             * Trim Offered
+             * @default false
+             */
+            trim_offered: boolean;
+            /** Trim Episode */
+            trim_episode?: string | null;
+            /**
+             * Trimmed
+             * @default false
+             */
+            trimmed: boolean;
+        };
+        /** ValueClaudeListOut */
+        ValueClaudeListOut: {
+            /** List Name */
+            list_name: string;
+            /** Verdict */
+            verdict: string;
+            /**
+             * Why
+             * @default
+             */
+            why: string;
+            /** Fair Value */
+            fair_value?: number | null;
+            /** Python Fair Value */
+            python_fair_value?: number | null;
+            /**
+             * Cap Applied
+             * @default false
+             */
+            cap_applied: boolean;
+            /** Unreliable */
+            unreliable?: string | null;
+            /** Drivers */
+            drivers?: components["schemas"]["ValueDriverOut"][];
+            /** Clamps */
+            clamps?: string[];
+            /** Backend */
+            backend: string;
+        };
+        /** ValueClaudeOut */
+        ValueClaudeOut: {
+            /**
+             * Source
+             * @default claude
+             * @constant
+             */
+            source: "claude";
+            /** Read At */
+            read_at?: string | null;
+            /** Lists */
+            lists?: components["schemas"]["ValueClaudeListOut"][];
+            /** Notes */
+            notes?: components["schemas"]["ValueNoteOut"][];
+            /** Kill Triggers */
+            kill_triggers?: components["schemas"]["ValueKillTriggerOut"][];
+            /** Facts */
+            facts?: components["schemas"]["ValueFactOut"][];
+        };
+        /** ValueDriverOut */
+        ValueDriverOut: {
+            /** Name */
+            name: string;
+            /** Chosen */
+            chosen?: number | null;
+            /** Used */
+            used?: number | null;
+            /**
+             * Clamped
+             * @default false
+             */
+            clamped: boolean;
+            /** Bound */
+            bound?: ("lo" | "hi") | null;
+        };
+        /** ValueFactOut */
+        ValueFactOut: {
+            /** Text */
+            text: string;
+            /** Quote */
+            quote: string;
+            /** Filing */
+            filing: string;
+        };
+        /** ValueFileOut */
+        ValueFileOut: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Computed At */
+            computed_at?: string | null;
+            /** Universe */
+            universe?: string | null;
+            /** Company Class */
+            company_class: string;
+            /** Data Quality */
+            data_quality: string;
+            /** Health */
+            health: string;
+            /** Not Applicable Reason */
+            not_applicable_reason?: string | null;
+            /** Price */
+            price?: number | null;
+            /** Ruleset Version */
+            ruleset_version: string;
+            /** Ruleset Hash */
+            ruleset_hash: string;
+            /** Gates */
+            gates?: components["schemas"]["ValueGateOut"][];
+            /** Lists */
+            lists?: components["schemas"]["ValueListOut"][];
+            /** Metrics */
+            metrics?: {
+                [key: string]: number | null;
+            };
+            /** Reverse Dcf Implied Growth */
+            reverse_dcf_implied_growth?: number | null;
+            /** Put Ceiling */
+            put_ceiling?: number | null;
+            /** Adjustments */
+            adjustments?: string[];
+        };
+        /** ValueFundingOut */
+        ValueFundingOut: {
+            /** Id */
+            id: number;
+            /** Proposal Id */
+            proposal_id: number;
+            /** Symbol */
+            symbol: string;
+            /** Needed Usd */
+            needed_usd: number;
+            /** Created At */
+            created_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /** ValueGateOut */
+        ValueGateOut: {
+            /** Id */
+            id: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "data_quality" | "health" | "entry" | "timing";
+            /** State */
+            state: string;
+            /** Value */
+            value?: number | null;
+            /** Threshold */
+            threshold?: number | null;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
+        /** ValueKillTriggerOut */
+        ValueKillTriggerOut: {
+            /** Name */
+            name: string;
+            /** Threshold */
+            threshold?: number | null;
+            /** Actual */
+            actual?: number | null;
+            /** State */
+            state?: string | null;
+            /** Distance Pct */
+            distance_pct?: number | null;
+        };
+        /** ValueListOut */
+        ValueListOut: {
+            /**
+             * List Name
+             * @enum {string}
+             */
+            list_name: "deep_value" | "quality_growth";
+            /** Baseline Verdict */
+            baseline_verdict: string;
+            /** Verdict */
+            verdict: string;
+            /**
+             * Decided By
+             * @enum {string}
+             */
+            decided_by: "claude" | "python";
+            /** Fair Value */
+            fair_value?: number | null;
+            /** Effective Fair Value */
+            effective_fair_value?: number | null;
+            /** Mos */
+            mos?: number | null;
+            /** Required Mos Pct */
+            required_mos_pct?: number | null;
+            /** Entry Ceiling */
+            entry_ceiling?: number | null;
+            /** Entry */
+            entry?: string | null;
+            /** Timing */
+            timing?: string | null;
+            /** Reasons */
+            reasons?: string[];
+            /**
+             * Mos Review
+             * @default false
+             */
+            mos_review: boolean;
+            /** Methods */
+            methods?: components["schemas"]["ValueMethodOut"][];
+            /** Gates */
+            gates?: components["schemas"]["ValueGateOut"][];
+        };
+        /** ValueMethodOut */
+        ValueMethodOut: {
+            /** Method */
+            method: string;
+            /** Value */
+            value?: number | null;
+            /** State */
+            state: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /**
+             * Used
+             * @default false
+             */
+            used: boolean;
+            /**
+             * Median
+             * @default false
+             */
+            median: boolean;
+        };
+        /** ValueNextExit */
+        ValueNextExit: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "sell_half" | "stop";
+            /** Level */
+            level: number;
+        };
+        /** ValueNoteOut */
+        ValueNoteOut: {
+            /** Kind */
+            kind: string;
+            /** Text */
+            text: string;
+        };
+        /** ValuePlanOut */
+        ValuePlanOut: {
+            /** Position Id */
+            position_id: number;
+            /** List Name */
+            list_name: string;
+            /** Opened At */
+            opened_at?: string | null;
+            /** Shares */
+            shares: number;
+            /** Avg Cost */
+            avg_cost?: number | null;
+            next_exit?: components["schemas"]["ValueNextExit"] | null;
+            /** Stop */
+            stop?: number | null;
+            /**
+             * Half Sold
+             * @default false
+             */
+            half_sold: boolean;
+            /** Fair Value */
+            fair_value?: number | null;
+            /** Effective Fair Value */
+            effective_fair_value?: number | null;
+        };
+        /** ValuePositionOut */
+        ValuePositionOut: {
+            /** Id */
+            id: number;
+            /** Symbol */
+            symbol: string;
+            /** List Name */
+            list_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
+            /** Shares */
+            shares: number;
+            /** Avg Cost */
+            avg_cost?: number | null;
+            /** Mark */
+            mark?: number | null;
+            /** Opened At */
+            opened_at?: string | null;
+            /** Closed On */
+            closed_on?: string | null;
+            next_exit?: components["schemas"]["ValueNextExit"] | null;
+            /** Realised Usd */
+            realised_usd?: number | null;
+        };
+        /** ValuePositionsResponse */
+        ValuePositionsResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "closed";
+            /** Positions */
+            positions?: components["schemas"]["ValuePositionOut"][];
+        };
+        /** ValueProposalOut */
+        ValueProposalOut: {
+            /** Id */
+            id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "buy" | "sell";
+            /** Symbol */
+            symbol: string;
+            /** List Name */
+            list_name: string;
+            /** Shares */
+            shares: number;
+            /** Price */
+            price?: number | null;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Cause
+             * @enum {string}
+             */
+            cause: "python" | "claude";
+            /** Needs Tap */
+            needs_tap: boolean;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Fingerprint */
+            fingerprint: string;
+        };
+        /** ValueReevaluationOut */
+        ValueReevaluationOut: {
+            /** Id */
+            id: number;
+            /** List Name */
+            list_name: string;
+            /** Session */
+            session?: string | null;
+            /** Last Session */
+            last_session?: string | null;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "major" | "minor";
+            /** Triggers */
+            triggers?: {
+                [key: string]: unknown;
+            }[];
+            /** Plan Before */
+            plan_before?: {
+                [key: string]: unknown;
+            };
+            /** Plan After */
+            plan_after?: {
+                [key: string]: unknown;
+            };
+            /** Review State */
+            review_state?: string | null;
+        };
+        /** ValueTickerResponse */
+        ValueTickerResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /** Symbol */
+            symbol: string;
+            /**
+             * Computed
+             * @default stored
+             * @enum {string}
+             */
+            computed: "stored" | "now" | "pending";
+            /** Age Days */
+            age_days?: number | null;
+            file?: components["schemas"]["ValueFileOut"] | null;
+            claude?: components["schemas"]["ValueClaudeOut"] | null;
+            /** Reevaluations */
+            reevaluations?: components["schemas"]["ValueReevaluationOut"][];
+            plan?: components["schemas"]["ValuePlanOut"] | null;
+        };
+        /** ValueTopItem */
+        ValueTopItem: {
+            /** Symbol */
+            symbol: string;
+            /**
+             * List Name
+             * @enum {string}
+             */
+            list_name: "deep_value" | "quality_growth";
+            /** Verdict */
+            verdict: string;
+            /**
+             * Decided By
+             * @enum {string}
+             */
+            decided_by: "claude" | "python";
+            /** Price */
+            price?: number | null;
+            /** Fair Value */
+            fair_value?: number | null;
+            /** Entry Ceiling */
+            entry_ceiling?: number | null;
+            /** Stop */
+            stop?: number | null;
+            /** Half Sell */
+            half_sell?: number | null;
+            /** Mos */
+            mos?: number | null;
+            /** Reasons */
+            reasons?: string[];
+            /** Put Ceiling */
+            put_ceiling?: number | null;
+            /** Age Days */
+            age_days?: number | null;
+        };
+        /** ValueTopResponse */
+        ValueTopResponse: {
+            /**
+             * As Of
+             * Format: date-time
+             */
+            as_of: string;
+            /** Available */
+            available: boolean;
+            /**
+             * List Name
+             * @enum {string}
+             */
+            list_name: "deep_value" | "quality_growth";
+            /** Items */
+            items?: components["schemas"]["ValueTopItem"][];
+        };
         /**
          * VerdictAgreement
          * @description How often Claude's verdict matched the deterministic baseline, and how each did.
@@ -7414,6 +7994,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpreadOrdersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    value_top_value_top_get: {
+        parameters: {
+            query?: {
+                list?: "deep_value" | "quality_growth";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValueTopResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    value_book_value_book_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValueBookResponse"];
+                };
+            };
+        };
+    };
+    value_positions_value_positions_get: {
+        parameters: {
+            query?: {
+                status?: "open" | "closed";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValuePositionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    value_ticker_value__symbol__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValueTickerResponse"];
                 };
             };
             /** @description Validation Error */

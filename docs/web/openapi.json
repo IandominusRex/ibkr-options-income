@@ -3606,6 +3606,183 @@
         }
       }
     },
+    "/value/top": {
+      "get": {
+        "tags": [
+          "value"
+        ],
+        "summary": "Value Top",
+        "operationId": "value_top_value_top_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "list",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "deep_value",
+                "quality_growth"
+              ],
+              "type": "string",
+              "default": "deep_value",
+              "title": "List"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValueTopResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/value/book": {
+      "get": {
+        "tags": [
+          "value"
+        ],
+        "summary": "Value Book",
+        "operationId": "value_book_value_book_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValueBookResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/value/positions": {
+      "get": {
+        "tags": [
+          "value"
+        ],
+        "summary": "Value Positions",
+        "operationId": "value_positions_value_positions_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "open",
+                "closed"
+              ],
+              "type": "string",
+              "default": "open",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuePositionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/value/{symbol}": {
+      "get": {
+        "tags": [
+          "value"
+        ],
+        "summary": "Value Ticker",
+        "operationId": "value_ticker_value__symbol__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValueTickerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/universe": {
       "get": {
         "tags": [
@@ -15005,6 +15182,1546 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ValueBookResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "ceiling_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ceiling Usd"
+          },
+          "used_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Usd"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/ValuePositionOut"
+            },
+            "type": "array",
+            "title": "Positions"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/ValueProposalOut"
+            },
+            "type": "array",
+            "title": "Proposals"
+          },
+          "funding": {
+            "items": {
+              "$ref": "#/components/schemas/ValueFundingOut"
+            },
+            "type": "array",
+            "title": "Funding"
+          },
+          "breakers": {
+            "$ref": "#/components/schemas/ValueBreakersOut"
+          },
+          "release_max_closes": {
+            "type": "integer",
+            "title": "Release Max Closes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "enabled",
+          "release_max_closes"
+        ],
+        "title": "ValueBookResponse"
+      },
+      "ValueBreakersOut": {
+        "properties": {
+          "trend": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trend"
+          },
+          "drawdown": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown"
+          },
+          "drawdown_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown Pct"
+          },
+          "trim_offered": {
+            "type": "boolean",
+            "title": "Trim Offered",
+            "default": false
+          },
+          "trim_episode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trim Episode"
+          },
+          "trimmed": {
+            "type": "boolean",
+            "title": "Trimmed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ValueBreakersOut"
+      },
+      "ValueClaudeListOut": {
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "title": "List Name"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "why": {
+            "type": "string",
+            "title": "Why",
+            "default": ""
+          },
+          "fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Value"
+          },
+          "python_fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python Fair Value"
+          },
+          "cap_applied": {
+            "type": "boolean",
+            "title": "Cap Applied",
+            "default": false
+          },
+          "unreliable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreliable"
+          },
+          "drivers": {
+            "items": {
+              "$ref": "#/components/schemas/ValueDriverOut"
+            },
+            "type": "array",
+            "title": "Drivers"
+          },
+          "clamps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Clamps"
+          },
+          "backend": {
+            "type": "string",
+            "title": "Backend"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_name",
+          "verdict",
+          "backend"
+        ],
+        "title": "ValueClaudeListOut"
+      },
+      "ValueClaudeOut": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "const": "claude",
+            "title": "Source",
+            "default": "claude"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "lists": {
+            "items": {
+              "$ref": "#/components/schemas/ValueClaudeListOut"
+            },
+            "type": "array",
+            "title": "Lists"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/ValueNoteOut"
+            },
+            "type": "array",
+            "title": "Notes"
+          },
+          "kill_triggers": {
+            "items": {
+              "$ref": "#/components/schemas/ValueKillTriggerOut"
+            },
+            "type": "array",
+            "title": "Kill Triggers"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ValueFactOut"
+            },
+            "type": "array",
+            "title": "Facts"
+          }
+        },
+        "type": "object",
+        "title": "ValueClaudeOut"
+      },
+      "ValueDriverOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "chosen": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen"
+          },
+          "used": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used"
+          },
+          "clamped": {
+            "type": "boolean",
+            "title": "Clamped",
+            "default": false
+          },
+          "bound": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "lo",
+                  "hi"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ValueDriverOut"
+      },
+      "ValueFactOut": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "filing": {
+            "type": "string",
+            "title": "Filing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "quote",
+          "filing"
+        ],
+        "title": "ValueFactOut"
+      },
+      "ValueFileOut": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          },
+          "universe": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Universe"
+          },
+          "company_class": {
+            "type": "string",
+            "title": "Company Class"
+          },
+          "data_quality": {
+            "type": "string",
+            "title": "Data Quality"
+          },
+          "health": {
+            "type": "string",
+            "title": "Health"
+          },
+          "not_applicable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Applicable Reason"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "ruleset_version": {
+            "type": "string",
+            "title": "Ruleset Version"
+          },
+          "ruleset_hash": {
+            "type": "string",
+            "title": "Ruleset Hash"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/ValueGateOut"
+            },
+            "type": "array",
+            "title": "Gates"
+          },
+          "lists": {
+            "items": {
+              "$ref": "#/components/schemas/ValueListOut"
+            },
+            "type": "array",
+            "title": "Lists"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Metrics"
+          },
+          "reverse_dcf_implied_growth": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverse Dcf Implied Growth"
+          },
+          "put_ceiling": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Put Ceiling"
+          },
+          "adjustments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Adjustments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "as_of",
+          "company_class",
+          "data_quality",
+          "health",
+          "ruleset_version",
+          "ruleset_hash"
+        ],
+        "title": "ValueFileOut"
+      },
+      "ValueFundingOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "proposal_id": {
+            "type": "integer",
+            "title": "Proposal Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "needed_usd": {
+            "type": "number",
+            "title": "Needed Usd"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "proposal_id",
+          "symbol",
+          "needed_usd"
+        ],
+        "title": "ValueFundingOut"
+      },
+      "ValueGateOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "group": {
+            "type": "string",
+            "enum": [
+              "data_quality",
+              "health",
+              "entry",
+              "timing"
+            ],
+            "title": "Group"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "group",
+          "state"
+        ],
+        "title": "ValueGateOut"
+      },
+      "ValueKillTriggerOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "actual": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "distance_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ValueKillTriggerOut"
+      },
+      "ValueListOut": {
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "enum": [
+              "deep_value",
+              "quality_growth"
+            ],
+            "title": "List Name"
+          },
+          "baseline_verdict": {
+            "type": "string",
+            "title": "Baseline Verdict"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "decided_by": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "python"
+            ],
+            "title": "Decided By"
+          },
+          "fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Value"
+          },
+          "effective_fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Fair Value"
+          },
+          "mos": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mos"
+          },
+          "required_mos_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Mos Pct"
+          },
+          "entry_ceiling": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Ceiling"
+          },
+          "entry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry"
+          },
+          "timing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timing"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "mos_review": {
+            "type": "boolean",
+            "title": "Mos Review",
+            "default": false
+          },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/ValueMethodOut"
+            },
+            "type": "array",
+            "title": "Methods"
+          },
+          "gates": {
+            "items": {
+              "$ref": "#/components/schemas/ValueGateOut"
+            },
+            "type": "array",
+            "title": "Gates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "list_name",
+          "baseline_verdict",
+          "verdict",
+          "decided_by"
+        ],
+        "title": "ValueListOut"
+      },
+      "ValueMethodOut": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "used": {
+            "type": "boolean",
+            "title": "Used",
+            "default": false
+          },
+          "median": {
+            "type": "boolean",
+            "title": "Median",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "state"
+        ],
+        "title": "ValueMethodOut"
+      },
+      "ValueNextExit": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sell_half",
+              "stop"
+            ],
+            "title": "Kind"
+          },
+          "level": {
+            "type": "number",
+            "title": "Level"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "level"
+        ],
+        "title": "ValueNextExit"
+      },
+      "ValueNoteOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "text"
+        ],
+        "title": "ValueNoteOut"
+      },
+      "ValuePlanOut": {
+        "properties": {
+          "position_id": {
+            "type": "integer",
+            "title": "Position Id"
+          },
+          "list_name": {
+            "type": "string",
+            "title": "List Name"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "shares": {
+            "type": "number",
+            "title": "Shares"
+          },
+          "avg_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cost"
+          },
+          "next_exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueNextExit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop"
+          },
+          "half_sold": {
+            "type": "boolean",
+            "title": "Half Sold",
+            "default": false
+          },
+          "fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Value"
+          },
+          "effective_fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Fair Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "position_id",
+          "list_name",
+          "shares"
+        ],
+        "title": "ValuePlanOut"
+      },
+      "ValuePositionOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "list_name": {
+            "type": "string",
+            "title": "List Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "shares": {
+            "type": "number",
+            "title": "Shares"
+          },
+          "avg_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cost"
+          },
+          "mark": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mark"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "closed_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed On"
+          },
+          "next_exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueNextExit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "realised_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realised Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "symbol",
+          "list_name",
+          "status",
+          "shares"
+        ],
+        "title": "ValuePositionOut"
+      },
+      "ValuePositionsResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/ValuePositionOut"
+            },
+            "type": "array",
+            "title": "Positions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "status"
+        ],
+        "title": "ValuePositionsResponse"
+      },
+      "ValueProposalOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "title": "Kind"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "list_name": {
+            "type": "string",
+            "title": "List Name"
+          },
+          "shares": {
+            "type": "number",
+            "title": "Shares"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "cause": {
+            "type": "string",
+            "enum": [
+              "python",
+              "claude"
+            ],
+            "title": "Cause"
+          },
+          "needs_tap": {
+            "type": "boolean",
+            "title": "Needs Tap"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "symbol",
+          "list_name",
+          "shares",
+          "reason",
+          "cause",
+          "needs_tap",
+          "status",
+          "created_at",
+          "expires_at",
+          "fingerprint"
+        ],
+        "title": "ValueProposalOut"
+      },
+      "ValueReevaluationOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "list_name": {
+            "type": "string",
+            "title": "List Name"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session"
+          },
+          "last_session": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Session"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "major",
+              "minor"
+            ],
+            "title": "Severity"
+          },
+          "triggers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Triggers"
+          },
+          "plan_before": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Plan Before"
+          },
+          "plan_after": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Plan After"
+          },
+          "review_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review State"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "list_name",
+          "severity"
+        ],
+        "title": "ValueReevaluationOut"
+      },
+      "ValueTickerResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "computed": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "now",
+              "pending"
+            ],
+            "title": "Computed",
+            "default": "stored"
+          },
+          "age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Days"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueFileOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claude": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueClaudeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reevaluations": {
+            "items": {
+              "$ref": "#/components/schemas/ValueReevaluationOut"
+            },
+            "type": "array",
+            "title": "Reevaluations"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValuePlanOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "symbol"
+        ],
+        "title": "ValueTickerResponse"
+      },
+      "ValueTopItem": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "list_name": {
+            "type": "string",
+            "enum": [
+              "deep_value",
+              "quality_growth"
+            ],
+            "title": "List Name"
+          },
+          "verdict": {
+            "type": "string",
+            "title": "Verdict"
+          },
+          "decided_by": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "python"
+            ],
+            "title": "Decided By"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "fair_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Value"
+          },
+          "entry_ceiling": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Ceiling"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop"
+          },
+          "half_sell": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Half Sell"
+          },
+          "mos": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mos"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "put_ceiling": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Put Ceiling"
+          },
+          "age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Days"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "list_name",
+          "verdict",
+          "decided_by"
+        ],
+        "title": "ValueTopItem"
+      },
+      "ValueTopResponse": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "title": "As Of"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "list_name": {
+            "type": "string",
+            "enum": [
+              "deep_value",
+              "quality_growth"
+            ],
+            "title": "List Name"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ValueTopItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "available",
+          "list_name"
+        ],
+        "title": "ValueTopResponse"
       },
       "VerdictAgreement": {
         "properties": {
